@@ -687,6 +687,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       ...result,
       recoveryAttempts: attempt,
       artifacts: {
+        ...result.artifacts,
         "stdout.log": stdoutPath,
         "stderr.log": stderrPath,
         "metrics.json": metricsPath,

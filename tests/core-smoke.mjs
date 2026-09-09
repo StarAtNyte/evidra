@@ -185,6 +185,17 @@ test("experiment executor parses the declared metric instead of a competition-sp
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("experiment executor rejects successful processes with missing declared artifacts", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-artifacts-"));
+  try {
+    const manifest = { id: "exp", resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { requiredArtifacts: ["predictions.json"] } };
+    const result = await new LocalExecutor().run(manifest, root, [process.execPath, "-e", "console.log('macro_f1: 0.5')"], undefined, "macro_f1");
+    assert.equal(result.status, "failed");
+    assert.equal(result.failureClass, "corrupt_artifact");
+    assert.match(result.stderr, /Missing required artifacts: predictions\.json/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("metric parser accepts evaluator JSON and keyed log output", () => {
   const parsed = parseMetricOutput('{"metrics":{"rmse":0.42},"metricsByFold":{"rmse":[0.4,0.44]}}\nrmse: 0.41\n', "rmse");
   assert.equal(parsed.metrics.rmse, 0.41);

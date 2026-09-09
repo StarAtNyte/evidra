@@ -397,7 +397,7 @@ experiment.command("run")
       writeFileSync(path, content);
       artifactPaths[name] = path;
     }
-    const recorded = { ...result, artifacts: artifactPaths };
+    const recorded = { ...result, artifacts: { ...result.artifacts, ...artifactPaths } };
     const resultStore = new ResearchStore(statePath);
     resultStore.saveRun({ id: result.runId, experimentId: id, status: recorded.status, payload: recorded });
     for (const [name, path] of Object.entries(artifactPaths)) resultStore.saveArtifact({ id: `${result.runId}-${name}`, runId: result.runId, name, path, checksum: sha256File(path) });

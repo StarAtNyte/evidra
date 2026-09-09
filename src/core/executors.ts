@@ -1,4 +1,6 @@
 import { runProcess, type ProcessControl } from "./process.js";
+import { existsSync, statSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { ExperimentManifest, ProcessResult, RunResult } from "./types.js";
 
 export interface ExperimentExecutor {
@@ -53,19 +55,32 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
 
 function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metricName: string): RunResult {
   const parsed = parseMetricOutput(result.stdout, metricName);
+  const artifacts: Record<string, string> = {};
+  const missing: string[] = [];
+  for (const name of manifest.evaluation?.requiredArtifacts ?? []) {
+    const path = resolve(result.cwd, name);
+    const rel = relative(result.cwd, path);
+    if (rel.startsWith("..") || isAbsolute(rel) || !existsSync(path) || !statSync(path).isFile()) {
+      missing.push(name);
+    } else {
+      artifacts[name] = path;
+    }
+  }
+  const artifactFailure = result.exitCode === 0 && missing.length > 0;
+  const stderr = artifactFailure ? `${result.stderr}\nMissing required artifacts: ${missing.join(", ")}` : result.stderr;
   return {
     runId: `${manifest.id}-${Date.now()}`,
-    status: result.exitCode === 0 ? "completed" : "failed",
-    exitCode: result.exitCode,
+    status: result.exitCode === 0 && !artifactFailure ? "completed" : "failed",
+    exitCode: artifactFailure ? 65 : result.exitCode,
     durationSeconds: result.durationMs / 1000,
     metrics: parsed.metrics,
     metricsByFold: parsed.metricsByFold,
-    artifacts: {},
+    artifacts,
     stdout: result.stdout,
-    stderr: result.stderr,
+    stderr,
     command: result.command,
     cwd: result.cwd,
-    ...(result.exitCode === 0 ? {} : { failureClass: failureClass(result) }),
+    ...(artifactFailure ? { failureClass: "corrupt_artifact" as const } : result.exitCode === 0 ? {} : { failureClass: failureClass(result) }),
   };
 }
 
