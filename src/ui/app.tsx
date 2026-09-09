@@ -3,7 +3,7 @@ import { Box, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
 import { join, relative } from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
 import { runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { executorFor } from "../core/executors.js";
@@ -11,6 +11,8 @@ import { ensureWorktree } from "../core/worktree.js";
 import { auditExperiment } from "../core/validation.js";
 import { sha256File } from "../core/evidence.js";
 import { compareRuns } from "../core/statistics.js";
+import { recoveryDelay, recoveryPlan } from "../core/recovery.js";
+import { prepareSubmission, validateSubmissionBundle } from "../core/submissions.js";
 import { auditData } from "../core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { retrieveSource, sourceClaims, sourceSearchText } from "../core/sources.js";
@@ -45,6 +47,7 @@ const COMMANDS = [
   ["/validation", "Inspect or generate validation policy"],
   ["/agents", "Show research-agent lanes and health"],
   ["/compute", "Show execution and compute health"],
+  ["/submission", "Prepare and validate a submission bundle"],
   ["/doctor", "Diagnose local research dependencies"],
   ["/provider", "Select codex or local provider"],
   ["/model", "Select the active model"],
@@ -82,6 +85,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"]],
   "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute budget", "Show campaign usage"]],
+  "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"]],
 };
 
 function loadConfig(path: string): SessionConfig {
@@ -90,6 +94,7 @@ function loadConfig(path: string): SessionConfig {
     const config = { ...defaultConfig, ...raw } as SessionConfig;
     // Older Evidra sessions used a model name that ChatGPT-account Codex does not accept.
     if (config.provider === "codex" && config.model === "gpt-5.3-codex") config.model = "default";
+    if (config.provider === "local" && /^(gpt|codex)/i.test(config.model)) config.model = "unconfigured";
     if (config.mode !== "research" && config.mode !== "challenge") config.mode = defaultConfig.mode;
     if (!["safe", "fast", "yolo"].includes(config.autonomy)) config.autonomy = defaultConfig.autonomy;
     return config;
@@ -129,6 +134,7 @@ function help(): string {
     "/agents                     Show research-agent health",
     "/compute                    Show execution and budget health",
     "/doctor                     Diagnose local dependencies",
+    "/submission [prepare|validate] Build or validate a safe bundle",
     "/provider [codex|local]      Select ChatGPT Codex or local Ollama",
     "/model [name]                Show or select the model (use default for Codex)",
     "/thinking [level]            Select model thinking effort",
@@ -146,6 +152,48 @@ function messageLabel(message: Message): string {
   const firstLine = message.text.split("\n", 1)[0] ?? "";
   if (/^(Usage|Project:|Evidra Workbench|Autonomous loop|Research agents|Executor policy|Data audit|Validation policy|Validation policy generated|Source retrieved|Recent research memory|Zero-to-hero|Phase:)/i.test(firstLine)) return firstLine.replace(/:.*/, "").slice(0, 30).toUpperCase();
   return "";
+}
+
+function RichText({ text }: { text: string }): React.JSX.Element {
+  const lines = text.split("\n");
+  const blocks: React.JSX.Element[] = [];
+  let codeLines: string[] = [];
+  let inCode = false;
+  const flushCode = (): void => {
+    if (!codeLines.length) return;
+    const captured = codeLines;
+    blocks.push(
+      <Box key={`code-${blocks.length}`} borderStyle="single" borderColor="cyan" paddingX={1} flexDirection="column" marginTop={1} marginBottom={1}>
+        {captured.map((line, index) => {
+          const color = line.startsWith("+") && !line.startsWith("+++") ? "green" : line.startsWith("-") && !line.startsWith("---") ? "red" : line.startsWith("@@") ? "cyan" : "white";
+          return <Text key={`${index}-${line}`} color={color}>{line || " "}</Text>;
+        })}
+      </Box>,
+    );
+    codeLines = [];
+  };
+  lines.forEach((line, index) => {
+    if (line.trimStart().startsWith("```")) {
+      if (inCode) flushCode();
+      else blocks.push(<Text key={`fence-${index}`} color="cyan">{line}</Text>);
+      inCode = !inCode;
+      return;
+    }
+    if (inCode) { codeLines.push(line); return; }
+    const diffColor = line.startsWith("+") && !line.startsWith("+++") ? "green" : line.startsWith("-") && !line.startsWith("---") ? "red" : line.startsWith("@@") ? "cyan" : line.startsWith("✓") ? "green" : line.startsWith("✗") ? "red" : line.startsWith("⚠") ? "yellow" : undefined;
+    const field = line.match(/^(\s*)([A-Za-z][A-Za-z0-9 _/-]{0,28}:)(.*)$/);
+    if (field) {
+      blocks.push(<Text key={`line-${index}`}><Text color="cyan">{field[1]}{field[2]}</Text><Text color="white">{field[3]}</Text></Text>);
+    } else if (line.trim().endsWith("?")) {
+      blocks.push(<Text key={`line-${index}`} color="yellow" bold>{line}</Text>);
+    } else if (/^(Autonomous research setup|Step \d+\/\d+)/i.test(line.trim())) {
+      blocks.push(<Text key={`line-${index}`} color="magenta" bold>{line}</Text>);
+    } else {
+      blocks.push(<Text key={`line-${index}`} color={diffColor ?? "white"}>{line || " "}</Text>);
+    }
+  });
+  if (inCode) flushCode();
+  return <Box flexDirection="column">{blocks}</Box>;
 }
 
 export function App({ root }: { root: string }): React.JSX.Element {
@@ -203,9 +251,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const loadModels = async (): Promise<void> => {
       try {
         const models = config.provider === "codex" ? await listCodexModels() : await listLocalModels();
-        if (active) setAvailableModels(models);
+        if (active) {
+          setAvailableModels(models);
+          if (config.provider === "local" && (!models.some((model) => model.id === config.model) || config.model === "unconfigured")) {
+            setConfig((current) => ({ ...current, model: models[0]?.id ?? "unconfigured" }));
+          }
+        }
       } catch {
-        if (active) setAvailableModels([]);
+        if (active) {
+          setAvailableModels([]);
+          if (config.provider === "local") setConfig((current) => ({ ...current, model: "unconfigured" }));
+        }
       }
     };
     void loadModels();
@@ -439,7 +495,21 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     const command = adapter.experimentCommand();
     setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
-    const result = await executorFor(manifest.resources.executor).run(manifest, experimentCwd, command, (control) => { activeProcess.current = control; });
+    const executor = executorFor(manifest.resources.executor);
+    let result = await executor.run(manifest, experimentCwd, command, (control) => { activeProcess.current = control; });
+    let attempt = 1;
+    while (result.status !== "completed") {
+      const plan = recoveryPlan(result.failureClass);
+      if (!plan.retry || attempt >= plan.maxAttempts) break;
+      const delay = recoveryDelay(plan, attempt);
+      const retryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      retryStore.appendEvent("run.retry.scheduled", { experimentId: id, runId: result.runId, attempt, delaySeconds: delay, failureClass: result.failureClass, action: plan.action });
+      retryStore.close();
+      setProgress(`Experiment ${id} · retry ${attempt + 1}/${plan.maxAttempts} after ${plan.action}...`);
+      await new Promise<void>((resolve) => setTimeout(resolve, delay * 1000));
+      attempt += 1;
+      result = await executor.run(manifest, experimentCwd, command, (control) => { activeProcess.current = control; });
+    }
     activeProcess.current = null;
     const artifactDir = join(root, ".sota", "artifacts", result.runId);
     mkdirSync(artifactDir, { recursive: true });
@@ -451,6 +521,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     writeFileSync(metricsPath, `${JSON.stringify(result.metrics, null, 2)}\n`);
     const recordedResult = {
       ...result,
+      recoveryAttempts: attempt,
       artifacts: { "stdout.log": stdoutPath, "stderr.log": stderrPath, "metrics.json": metricsPath },
     };
     const resultStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -965,7 +1036,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (!baseline || !candidate) { append("assistant", "Usage: /experiment compare <baseline-id> <candidate-id> (experiment or run ids accepted)"); return; }
         try {
           const comparison = compareRuns(RunResultSchema.parse(baseline.payload), RunResultSchema.parse(candidate.payload), activeAdapter().config.metric.name);
-          append("assistant", `Run comparison\n  baseline: ${comparison.baselineRunId} · ${comparison.baseline ?? "missing"}\n  candidate: ${comparison.candidateRunId} · ${comparison.candidate ?? "missing"}\n  delta: ${comparison.delta ?? "missing"}\n  result: ${comparison.direction}\n  evidence: ${comparison.evidence}\n\n${comparison.note}`);
+          append("assistant", `Run comparison\n  baseline: ${comparison.baselineRunId} · ${comparison.baseline ?? "missing"}\n  candidate: ${comparison.candidateRunId} · ${comparison.candidate ?? "missing"}\n  delta: ${comparison.delta ?? "missing"}\n  result: ${comparison.direction}\n  evidence: ${comparison.evidence}${comparison.probabilityImproved === undefined ? "" : `\n  probability improved: ${(comparison.probabilityImproved * 100).toFixed(1)}%\n  95% CI: [${comparison.confidenceInterval?.[0].toFixed(6)}, ${comparison.confidenceInterval?.[1].toFixed(6)}]`}\n\n${comparison.note}`);
         } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
         return;
       }
@@ -1065,6 +1136,38 @@ export function App({ root }: { root: string }): React.JSX.Element {
       checks.push(`modal: ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}`);
       append("assistant", `Evidra doctor\n${checks.map((check) => `  ${check}`).join("\n")}`);
       return;
+    }
+    if (request === "/submission" || request === "/submission status" || request.startsWith("/submission prepare") || request.startsWith("/submission validate")) {
+      const parts = request.split(/\s+/);
+      const action = parts[1] ?? "status";
+      const submissionsRoot = join(root, ".sota", "submissions");
+      if (action === "status") {
+        const bundles = existsSync(submissionsRoot) ? readdirSync(submissionsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name) : [];
+        append("assistant", bundles.length ? `Prepared submission bundles\n${bundles.map((id) => `- ${id}`).join("\n")}` : "No submission bundles prepared.");
+        return;
+      }
+      if (action === "validate") {
+        const target = parts[2];
+        if (!target) { append("assistant", "Usage: /submission validate <bundle-id-or-path>"); return; }
+        const path = target.startsWith("/") ? target : join(submissionsRoot, target);
+        const report = validateSubmissionBundle(path);
+        append("assistant", `Submission validation · ${path}\n${report.checks.map((check) => `${check.passed ? "✓" : "✗"} ${check.name} · ${check.detail}`).join("\n")}\n\nStatus: ${report.valid ? "VALID" : "NOT VALID"}`);
+        return;
+      }
+      if (action === "prepare") {
+        const experimentId = parts[2];
+        if (!experimentId) { append("assistant", "Usage: /submission prepare <experiment-id>"); return; }
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        const experiment = store.experiments().find((entry) => entry.id === experimentId);
+        const run = store.runs().find((entry) => entry.experimentId === experimentId);
+        store.close();
+        if (!experiment || !run) { append("assistant", `Experiment ${experimentId} must have a recorded run before a bundle can be prepared.`); return; }
+        try {
+          const bundle = prepareSubmission(root, experimentId, ExperimentManifestSchema.parse(experiment.payload), RunResultSchema.parse(run.payload), activeAdapter().config);
+          append("assistant", `Submission bundle prepared\n  id: ${bundle.id}\n  path: ${bundle.path}\n  next: /submission validate ${bundle.id}\n\nExternal submission remains approval-gated.`);
+        } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
+        return;
+      }
     }
     if (request === "/sources" || request === "/sources list" || request.startsWith("/sources search ") || request.startsWith("/sources show ")) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -1209,9 +1312,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
     <Box flexDirection="column" flexGrow={messages.length > 1 || busy ? 1 : 0} marginTop={1} paddingX={1}>
       {messages.slice(-16).map((message, index) => {
         const accent = message.role === "user" ? "yellow" : message.role === "system" ? "gray" : "green";
+        const label = messageLabel(message);
+        const body = label && message.role === "assistant" ? message.text.split("\n").slice(1).join("\n") : message.text;
         return <Box key={`${index}-${message.text}`} flexDirection="column" marginBottom={1} paddingX={1} borderStyle="round" borderColor={accent}>
-          <Text color={accent} bold>{message.role === "user" ? "›" : message.role === "assistant" ? "◆" : "·"}{messageLabel(message)}</Text>
-          <Text color={message.role === "system" ? "gray" : "white"}>{message.text}</Text>
+          <Text color={accent} bold>{message.role === "user" ? "›" : message.role === "assistant" ? "◆" : "·"}{label ? ` ${label}` : ""}</Text>
+          <RichText text={body} />
         </Box>;
       })}
     </Box>

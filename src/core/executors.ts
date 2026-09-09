@@ -33,6 +33,7 @@ function toRunResult(manifest: ExperimentManifest, result: ProcessResult): RunRe
     exitCode: result.exitCode,
     durationSeconds: result.durationMs / 1000,
     metrics,
+    metricsByFold: {},
     artifacts: {},
     stdout: result.stdout,
     stderr: result.stderr,

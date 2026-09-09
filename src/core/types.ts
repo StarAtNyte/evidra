@@ -153,6 +153,7 @@ export const RunResultSchema = z.object({
   exitCode: z.number().int(),
   durationSeconds: z.number().nonnegative(),
   metrics: z.record(z.string(), z.number().finite()).default({}),
+  metricsByFold: z.record(z.string(), z.array(z.number().finite())).default({}),
   artifacts: z.record(z.string(), z.string()).default({}),
   stdout: z.string().optional(),
   stderr: z.string().optional(),

@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
 import { createExperimentManifest, manifestSummary } from "./core/experiment-manifest.js";
 import { activePhaseGoal, definePhaseGoals } from "./core/phase-goals.js";
-import { PhaseGoalSchema } from "./core/types.js";
+import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "./core/types.js";
 import { whestbenchConfig } from "./competitions/whestbench.js";
 import { getCompetitionAdapter } from "./competitions/adapters.js";
 import { auditData } from "./core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "./core/validation-policy.js";
 import { retrieveSource, sourceClaims, sourceSearchText } from "./core/sources.js";
+import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
 import { runProcess } from "./core/process.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
@@ -111,6 +112,30 @@ sources.command("add").argument("<url>").action(async (url: string) => {
   console.log(`${retrieved.id}\n${retrieved.title}\n${retrieved.url}\nclaims: ${claims.length}\nhash: ${retrieved.contentHash}`);
 });
 program.addCommand(sources);
+
+const submission = new Command("submission").description("Prepare and validate safe submission bundles");
+submission.command("status").action(() => {
+  const directory = join(root, ".sota", "submissions");
+  const bundles = existsSync(directory) ? readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name) : [];
+  console.log(bundles.length ? bundles.join("\n") : "No submission bundles prepared.");
+});
+submission.command("validate").argument("<bundle>").action((bundle: string) => {
+  const path = bundle.startsWith("/") ? bundle : join(root, ".sota", "submissions", bundle);
+  const report = validateSubmissionBundle(path);
+  console.log(report.checks.map((check) => `${check.passed ? "✓" : "✗"} ${check.name} · ${check.detail}`).join("\n"));
+  if (!report.valid) process.exitCode = 1;
+});
+submission.command("prepare").argument("<experiment>").action((experimentId: string) => {
+  const store = new ResearchStore(statePath);
+  const experiment = store.experiments().find((entry) => entry.id === experimentId);
+  const run = store.runs().find((entry) => entry.experimentId === experimentId);
+  store.close();
+  if (!experiment || !run) throw new Error(`Experiment ${experimentId} must have a recorded run before preparation.`);
+  const adapter = activeCompetition();
+  const bundle = prepareSubmission(root, experimentId, ExperimentManifestSchema.parse(experiment.payload), RunResultSchema.parse(run.payload), adapter.config);
+  console.log(`Prepared ${bundle.id}\n${bundle.path}\nExternal submission remains approval-gated.`);
+});
+program.addCommand(submission);
 
 program.command("inspect").action(() => {
   const store = new ResearchStore(statePath);
