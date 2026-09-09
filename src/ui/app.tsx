@@ -1122,6 +1122,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (request.startsWith("/project init") || request.startsWith("/challenge init")) {
+      if (request.startsWith("/challenge init")) setConfig((current) => ({ ...current, mode: "challenge" }));
       const competitionId = request.split(/\s+/)[2] ?? "local-research";
       let adapter;
       try { adapter = loadCompetitionAdapter(root, competitionId); }
@@ -1144,14 +1145,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const counts = store.counts(); const events = store.eventCount(); const state = store.schedulerState(); const campaign = config.campaign;
       store.close();
       const elapsed = campaign ? Math.max(0, (Date.now() - Date.parse(campaign.startedAt)) / 60_000) : 0;
-      append("assistant", `Usage\n  provider: ${config.provider}\n  model: ${config.model}\n  thinking: ${config.reasoningEffort}\n  scheduler: ${state.status}\n  events: ${events}\n  hypotheses: ${counts.hypotheses} · claims: ${counts.claims} · decisions: ${counts.decisions}\n  experiments: ${counts.experiments} · runs: ${counts.runs} · artifacts: ${counts.artifacts}\n${campaign ? `\nCampaign\n  status: ${campaign.status}\n  elapsed: ${elapsed.toFixed(1)} / ${campaign.budgetMinutes} minutes\n  remaining: ${Math.max(0, campaign.budgetMinutes - elapsed).toFixed(1)} minutes\n  goal: ${campaign.goal}\n  stop: ${campaign.stopCondition}` : "\nNo autonomous campaign configured. Start one with /research."}`);
+      append("assistant", `Usage\n  provider: ${config.provider}\n  model: ${config.model}\n  thinking: ${config.reasoningEffort}\n  scheduler: ${state.status}\n  events: ${events}\n  hypotheses: ${counts.hypotheses} · claims: ${counts.claims} · decisions: ${counts.decisions}\n  experiments: ${counts.experiments} · runs: ${counts.runs} · artifacts: ${counts.artifacts}\n${campaign ? `\nCampaign\n  status: ${campaign.status}\n  elapsed: ${elapsed.toFixed(1)} / ${campaign.budgetMinutes} minutes\n  remaining: ${Math.max(0, campaign.budgetMinutes - elapsed).toFixed(1)} minutes\n  goal: ${campaign.goal}\n  stop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\n  provider retry: ${campaign.nextAttemptAt}` : ""}` : "\nNo autonomous campaign configured. Start one with /research."}`);
       return;
     }
     if (request === "/status" || request === "/project status") {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const project = store.project();
       const campaign = config.campaign;
-      append("assistant", project ? `Project: ${project.name}\nWorkspace: ${project.competitionId}\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\nEvents: ${store.eventCount()}${campaign ? `\nCampaign: ${campaign.status}\nGoal: ${campaign.goal}\nBudget: ${campaign.budgetMinutes} minutes\nStop: ${campaign.stopCondition}` : ""}` : "No Evidra project initialized. Start with /research to configure an autonomous campaign.");
+      append("assistant", project ? `Project: ${project.name}\nWorkspace: ${project.competitionId}\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\nEvents: ${store.eventCount()}${campaign ? `\nCampaign: ${campaign.status}\nGoal: ${campaign.goal}\nBudget: ${campaign.budgetMinutes} minutes\nStop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\nProvider retry: ${campaign.nextAttemptAt}` : ""}` : ""}` : "No Evidra project initialized. Start with /research to configure an autonomous campaign.");
       store.close();
       return;
     }
