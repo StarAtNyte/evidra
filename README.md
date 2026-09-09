@@ -170,6 +170,16 @@ From the shell:
       --budget 4h \
       --stop "stop after a replicated improvement or when evidence is inconclusive"
 
+Use a local model directly when Codex is unavailable:
+
+    evidra research \
+      --provider local \
+      --model qwen3.6:27b \
+      --thinking high \
+      --budget 90m
+
+The command checks the selected provider before starting repository inspection or baseline execution. The default Codex path can fall back to the configured local model only for recognized usage-limit failures; authentication and configuration errors are reported instead of silently starting an unconfigured run.
+
 ## General workspace manifests
 
 Evidra does not require a fixed competition name. A project can provide competition.json at its root or under competitions/<id>/competition.json:
