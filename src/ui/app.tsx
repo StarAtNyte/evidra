@@ -95,7 +95,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"]],
   "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute budget", "Show campaign usage"]],
-  "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"]],
+  "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"]],
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/resume": [["/resume", "Resume the latest saved session"], ["/resume ", "Resume a selected session"]],
@@ -154,7 +154,7 @@ function help(): string {
     "/compute                    Show execution and budget health",
     "/doctor                     Diagnose local dependencies",
     "!<shell command>            Run a shell command in the project workspace",
-    "/submission [prepare|validate] Build or validate a safe bundle",
+    "/submission [prepare|validate|approve] Build, validate, or approve a safe bundle",
     "/queue [status|recover]      Show or recover durable tasks",
     "/sessions                   List saved terminal sessions",
     "/resume [session-id]        Explicitly resume a saved session",
@@ -1391,13 +1391,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Evidra doctor\n${checks.map((check) => `  ${check}`).join("\n")}`);
       return;
     }
-    if (request === "/submission" || request === "/submission status" || request.startsWith("/submission prepare") || request.startsWith("/submission validate")) {
+    if (request === "/submission" || request === "/submission status" || request.startsWith("/submission prepare") || request.startsWith("/submission validate") || request.startsWith("/submission approve")) {
       const parts = request.split(/\s+/);
       const action = parts[1] ?? "status";
       const submissionsRoot = join(root, ".sota", "submissions");
       if (action === "status") {
-        const bundles = existsSync(submissionsRoot) ? readdirSync(submissionsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name) : [];
-        append("assistant", bundles.length ? `Prepared submission bundles\n${bundles.map((id) => `- ${id}`).join("\n")}` : "No submission bundles prepared.");
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        const submissions = store.submissions();
+        store.close();
+        append("assistant", submissions.length ? `Submission bundles\n${submissions.map((entry) => `- ${entry.status} ${entry.id} · experiment ${entry.experimentId}`).join("\n")}` : "No submission bundles prepared.");
         return;
       }
       if (action === "validate") {
@@ -1418,8 +1420,24 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (!experiment || !run) { append("assistant", `Experiment ${experimentId} must have a recorded run before a bundle can be prepared.`); return; }
         try {
           const bundle = prepareSubmission(root, experimentId, ExperimentManifestSchema.parse(experiment.payload), RunResultSchema.parse(run.payload), activeAdapter().config);
+          const recordStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+          recordStore.saveSubmission({ id: bundle.id, experimentId, path: bundle.path, status: "prepared", payload: { competition: activeAdapter().id } });
+          recordStore.close();
           append("assistant", `Submission bundle prepared\n  id: ${bundle.id}\n  path: ${bundle.path}\n  next: /submission validate ${bundle.id}\n\nExternal submission remains approval-gated.`);
         } catch (error) { appendError(error); }
+        return;
+      }
+      if (action === "approve") {
+        const bundleId = parts[2];
+        if (!bundleId) { append("assistant", "Usage: /submission approve <bundle-id>"); return; }
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        const entry = store.submissions().find((candidate) => candidate.id === bundleId);
+        if (!entry) { store.close(); append("assistant", `Submission bundle ${bundleId} is not registered.`); return; }
+        const report = validateSubmissionBundle(entry.path);
+        if (!report.valid) { store.close(); append("assistant", `Bundle ${bundleId} is not valid; approval was refused.`); return; }
+        store.updateSubmissionStatus(bundleId, "approved", { approvedAt: new Date().toISOString(), externalSubmission: "not configured" });
+        store.close();
+        append("assistant", `Submission ${bundleId} approved locally. External submission still requires an explicit platform adapter.`);
         return;
       }
     }

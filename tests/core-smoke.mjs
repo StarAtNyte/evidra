@@ -54,6 +54,19 @@ test("terminal sessions are fresh by default and explicitly resumable", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("submission approval is durable and cannot approve an invalid bundle", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-submission-state-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.saveSubmission({ id: "sub-1", experimentId: "exp-1", path: root, status: "prepared" });
+    assert.equal(store.submissions()[0].status, "prepared");
+    assert.equal(store.updateSubmissionStatus("sub-1", "approved", { approvedAt: "now" }), true);
+    assert.equal(store.submissions()[0].status, "approved");
+    assert.equal(store.updateSubmissionStatus("missing", "approved"), false);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("project-local competition manifests replace hardcoded adapters", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-competition-"));
   try {

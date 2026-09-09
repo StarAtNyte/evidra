@@ -122,6 +122,15 @@ export class ResearchStore {
         error TEXT,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS submissions (
+        id TEXT PRIMARY KEY,
+        experiment_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        status TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS work_queue (
         id TEXT PRIMARY KEY,
         kind TEXT NOT NULL,
@@ -239,6 +248,28 @@ export class ResearchStore {
       INSERT INTO agent_lanes (role, status, provider, model, task, error, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(role) DO UPDATE SET status = excluded.status, provider = excluded.provider, model = excluded.model, task = excluded.task, error = excluded.error, updated_at = excluded.updated_at
     `).run(lane.role, lane.status, lane.provider, lane.model, lane.task ?? null, lane.error ?? null, updatedAt);
+  }
+
+  saveSubmission(submission: { id: string; experimentId: string; path: string; status: "prepared" | "approved" | "rejected"; payload?: unknown }): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO submissions (id, experiment_id, path, status, payload_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET path = excluded.path, status = excluded.status, payload_json = excluded.payload_json, updated_at = excluded.updated_at
+    `).run(submission.id, submission.experimentId, submission.path, submission.status, JSON.stringify(submission.payload ?? {}), now, now);
+    this.appendEvent("submission.updated", { id: submission.id, experimentId: submission.experimentId, path: submission.path, status: submission.status });
+  }
+
+  updateSubmissionStatus(id: string, status: "prepared" | "approved" | "rejected", payload?: unknown): boolean {
+    const result = this.db.prepare("UPDATE submissions SET status = ?, payload_json = COALESCE(?, payload_json), updated_at = ? WHERE id = ?")
+      .run(status, payload === undefined ? null : JSON.stringify(payload), new Date().toISOString(), id);
+    if (result.changes) this.appendEvent("submission.updated", { id, status, payload });
+    return result.changes === 1;
+  }
+
+  submissions(): Array<{ id: string; experimentId: string; path: string; status: string; payload: unknown; createdAt: string; updatedAt: string }> {
+    const rows = this.db.prepare("SELECT * FROM submissions ORDER BY created_at DESC").all() as Array<{ id: string; experiment_id: string; path: string; status: string; payload_json: string; created_at: string; updated_at: string }>;
+    return rows.map((row) => ({ id: row.id, experimentId: row.experiment_id, path: row.path, status: row.status, payload: JSON.parse(row.payload_json), createdAt: row.created_at, updatedAt: row.updated_at }));
   }
 
   agentLanes(): Array<{ role: string; status: string; provider: string; model: string; task: string | null; error: string | null; updatedAt: string }> {

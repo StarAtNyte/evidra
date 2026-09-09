@@ -124,11 +124,12 @@ sources.command("add").argument("<url>").action(async (url: string) => {
 });
 program.addCommand(sources);
 
-const submission = new Command("submission").description("Prepare and validate safe submission bundles");
+const submission = new Command("submission").description("Prepare, approve, and validate safe submission bundles");
 submission.command("status").action(() => {
-  const directory = join(root, ".sota", "submissions");
-  const bundles = existsSync(directory) ? readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name) : [];
-  console.log(bundles.length ? bundles.join("\n") : "No submission bundles prepared.");
+  const store = new ResearchStore(statePath);
+  const submissions = store.submissions();
+  console.log(submissions.length ? submissions.map((entry) => `${entry.status} ${entry.id} · experiment ${entry.experimentId} · ${entry.path}`).join("\n") : "No submission bundles prepared.");
+  store.close();
 });
 submission.command("validate").argument("<bundle>").action((bundle: string) => {
   const path = bundle.startsWith("/") ? bundle : join(root, ".sota", "submissions", bundle);
@@ -144,7 +145,20 @@ submission.command("prepare").argument("<experiment>").action((experimentId: str
   if (!experiment || !run) throw new Error(`Experiment ${experimentId} must have a recorded run before preparation.`);
   const adapter = activeCompetition();
   const bundle = prepareSubmission(root, experimentId, ExperimentManifestSchema.parse(experiment.payload), RunResultSchema.parse(run.payload), adapter.config);
+  const recordStore = new ResearchStore(statePath);
+  recordStore.saveSubmission({ id: bundle.id, experimentId, path: bundle.path, status: "prepared", payload: { competition: adapter.id } });
+  recordStore.close();
   console.log(`Prepared ${bundle.id}\n${bundle.path}\nExternal submission remains approval-gated.`);
+});
+submission.command("approve").argument("<bundle>").action((bundle: string) => {
+  const store = new ResearchStore(statePath);
+  const entry = store.submissions().find((candidate) => candidate.id === bundle);
+  if (!entry) { store.close(); throw new Error(`Submission bundle ${bundle} is not registered.`); }
+  const report = validateSubmissionBundle(entry.path);
+  if (!report.valid) { store.close(); throw new Error(`Submission bundle is not valid; run evidra submission validate ${bundle}`); }
+  store.updateSubmissionStatus(bundle, "approved", { approvedAt: new Date().toISOString(), externalSubmission: "not configured" });
+  store.close();
+  console.log(`Approved ${bundle}. Evidra still requires an explicit platform adapter to submit externally.`);
 });
 program.addCommand(submission);
 
