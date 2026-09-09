@@ -496,7 +496,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         ultimateGoal: objective,
         phaseGoal: phaseGoal ?? null,
         constraints: { no_submission: true, no_file_edits: true },
-      }, { provider: config.provider, model: config.model, reasoningEffort: config.reasoningEffort, cwd: root, fallbackLocalModel: "qwen3.6:27b" }, setProgress);
+      }, { provider: config.provider, model: config.model, reasoningEffort: config.reasoningEffort, cwd: root, fallbackLocalModel: "qwen3.6:27b", onProcess: (control) => { activeProcess.current = control; } }, setProgress);
+      activeProcess.current = null;
       const completedLane = new ResearchStore(join(root, ".sota", "database.sqlite"));
       completedLane.updateAgentLane({ role: "research director", status: "idle", provider: config.provider, model: config.model, task: null });
       completedLane.close();
@@ -559,7 +560,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         role: "experiment engineer",
         objective: "Implement the selected hypothesis in this isolated worktree. Inspect the existing estimator, make the smallest reproducible change, run relevant tests or smoke checks, and leave the worktree ready for evaluation. Do not touch files outside this worktree and do not submit anything.",
         context: { manifest, hypothesis: hypothesis?.payload ?? null, worktree: experimentCwd },
-      }, { provider: config.provider, model: config.model, cwd: worktree, reasoningEffort: config.reasoningEffort, sandbox: "workspace-write" }, undefined, setProgress);
+      }, { provider: config.provider, model: config.model, cwd: worktree, reasoningEffort: config.reasoningEffort, sandbox: "workspace-write" }, undefined, setProgress, (control) => { activeProcess.current = control; });
     }
     const command = adapter.experimentCommand();
     setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
@@ -1471,7 +1472,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           mode: config.mode,
           instruction: "This is ordinary conversation, not a research cycle. Answer directly and concisely. Do not inspect files, run commands, edit code, propose experiments, or claim fresh measurements. If the user wants autonomous research, tell them to use /research.",
         },
-      }, { provider: config.provider, model: config.model, cwd: root, reasoningEffort: config.reasoningEffort, sandbox: "read-only" }, "qwen3.6:27b", setProgress);
+      }, { provider: config.provider, model: config.model, cwd: root, reasoningEffort: config.reasoningEffort, sandbox: "read-only" }, "qwen3.6:27b", setProgress, (control) => { activeProcess.current = control; });
       append("assistant", String(result.output));
     } catch (error) {
       append("assistant", error instanceof Error ? error.message : String(error));

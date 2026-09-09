@@ -32,6 +32,20 @@ test("durable research state and queue survive store reopen", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("terminal sessions are fresh by default and explicitly resumable", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-session-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.startSession("session-a", { config: { autonomy: "yolo" }, messages: [{ role: "user", text: "old" }] });
+    store.saveSession("session-a", { config: { autonomy: "yolo" }, messages: [{ role: "user", text: "old" }] });
+    store.startSession("session-b", { config: { autonomy: "safe" }, messages: [] });
+    assert.equal(store.session("session-a")?.status, "interrupted");
+    assert.equal(store.session("session-b")?.status, "active");
+    assert.deepEqual(store.session("session-a")?.payload, { config: { autonomy: "yolo" }, messages: [{ role: "user", text: "old" }] });
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("paired statistics and recovery are deterministic", () => {
   const comparison = compareMetricSeries([1, 2, 3], [0.8, 1.9, 2.7], true, 500);
   assert.equal(comparison.probabilityImproved, 1);

@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import type { AgentResult, AgentTask } from "../core/types.js";
+import type { ProcessControl } from "../core/process.js";
 
 export type AgentProvider = "codex" | "local";
 
@@ -104,11 +105,11 @@ export async function checkProvider(options: ExecAgentOptions): Promise<void> {
 export class CodexExecAgent {
   constructor(private readonly options: ExecAgentOptions) {}
 
-  run(task: AgentTask, onProgress?: (message: string) => void): Promise<AgentResult> {
+  run(task: AgentTask, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
     const prompt = `${task.objective}\n\nResearch context:\n${JSON.stringify(task.context, null, 2)}\n\n` +
       "Act as Evidra's research director. Return a concise, evidence-oriented answer. " +
       "Do not submit anything or expose credentials.";
-    if (this.options.provider === "local") return this.runOllama(prompt, onProgress);
+    if (this.options.provider === "local") return this.runOllama(prompt, onProgress, onProcess);
 
     if (!codexIsLoggedIn()) return Promise.reject(new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription."));
 
@@ -118,7 +119,20 @@ export class CodexExecAgent {
     args.push("-C", this.options.cwd, prompt);
 
     return new Promise((resolve, reject) => {
-      const child = spawn("codex", args, { cwd: this.options.cwd, stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawn("codex", args, { cwd: this.options.cwd, stdio: ["ignore", "pipe", "pipe"], detached: true });
+      let paused = false;
+      let settled = false;
+      const signalGroup = (signal: NodeJS.Signals): void => {
+        if (!child.pid) return;
+        try { process.kill(-child.pid, signal); } catch { try { child.kill(signal); } catch { /* already exited */ } }
+      };
+      const control: ProcessControl = {
+        pause: () => { if (!settled && !paused) { signalGroup("SIGSTOP"); paused = true; } },
+        resume: () => { if (!settled && paused) { signalGroup("SIGCONT"); paused = false; } },
+        terminate: () => { if (!settled) { if (paused) signalGroup("SIGCONT"); signalGroup("SIGTERM"); } },
+        get paused() { return paused; },
+      };
+      onProcess?.(control);
       let stdout = "";
       let stderr = "";
       let finalText = "";
@@ -154,6 +168,7 @@ export class CodexExecAgent {
       });
       child.on("error", reject);
       child.on("close", (code) => {
+        settled = true;
         if (code !== 0) {
           const diagnostic = `${stderr}\n${stdout}`.replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, "").trim();
           if (/not supported when using Codex with a ChatGPT account/i.test(diagnostic)) {
@@ -170,8 +185,17 @@ export class CodexExecAgent {
     });
   }
 
-  private async runOllama(prompt: string, onProgress?: (message: string) => void): Promise<AgentResult> {
+  private async runOllama(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
     onProgress?.("Calling local Ollama model...");
+    const abort = new AbortController();
+    let paused = false;
+    const control: ProcessControl = {
+      pause: () => { paused = true; },
+      resume: () => { paused = false; },
+      terminate: () => abort.abort(),
+      get paused() { return paused; },
+    };
+    onProcess?.(control);
     const response = await fetch(process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434/api/chat", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -181,6 +205,7 @@ export class CodexExecAgent {
         messages: [{ role: "user", content: prompt }],
         options: { temperature: 0.2 },
       }),
+      signal: abort.signal,
     });
     if (!response.ok) throw new Error(`Ollama request failed: ${response.status} ${await response.text()}`);
     const payload = await response.json() as { message?: { content?: string } };
@@ -196,15 +221,16 @@ export async function runWithLocalFallback(
   options: ExecAgentOptions,
   fallbackModel: string | undefined,
   onProgress?: (message: string) => void,
+  onProcess?: (control: ProcessControl) => void,
 ): Promise<AgentResult> {
   try {
-    return await new CodexExecAgent(options).run(task, onProgress);
+    return await new CodexExecAgent(options).run(task, onProgress, onProcess);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const limitReached = /rate limit|usage limit|quota|too many requests|429|not enough credits/i.test(message);
     if (options.provider !== "codex" || !fallbackModel || !limitReached) throw error;
     onProgress?.(`Codex limit reached; switching to local/${fallbackModel}...`);
     await checkProvider({ provider: "local", model: fallbackModel, cwd: options.cwd });
-    return new CodexExecAgent({ provider: "local", model: fallbackModel, cwd: options.cwd }).run(task, onProgress);
+    return new CodexExecAgent({ provider: "local", model: fallbackModel, cwd: options.cwd }).run(task, onProgress, onProcess);
   }
 }
