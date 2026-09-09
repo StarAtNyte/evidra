@@ -98,6 +98,8 @@ function loadConfig(path: string): SessionConfig {
   try {
     const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<SessionConfig>;
     const config = { ...defaultConfig, ...raw } as SessionConfig;
+    // Permissions are intentionally session-scoped. Never inherit fast/YOLO from a prior terminal.
+    config.autonomy = defaultConfig.autonomy;
     // Older Evidra sessions used a model name that ChatGPT-account Codex does not accept.
     if (config.provider === "codex" && config.model === "gpt-5.3-codex") config.model = "default";
     if (config.provider === "local" && /^(gpt|codex)/i.test(config.model)) config.model = "unconfigured";
@@ -110,7 +112,8 @@ function loadConfig(path: string): SessionConfig {
 
 function saveConfig(path: string, config: SessionConfig): void {
   mkdirSync(join(path, ".."), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  const { autonomy: _sessionOnlyPermissions, ...persistent } = config;
+  writeFileSync(path, `${JSON.stringify(persistent, null, 2)}\n`);
 }
 
 function parseBudgetMinutes(value: string): number | undefined {
@@ -677,7 +680,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
       setBusy(true); setProgress("Starting autonomous research...");
       try {
         await runAutonomousCycle(campaign);
-        if (campaign.status === "running" && !loopTimer.current) loopTimer.current = setInterval(() => { void runAutonomousCycle(campaign); }, 60_000);
       } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
       finally { setBusy(false); setProgress(""); }
       return;
@@ -740,7 +742,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setConfig((current) => ({ ...current, campaign }));
         if (request === "/resume" && !loopTimer.current) {
           void runAutonomousCycle(campaign);
-          loopTimer.current = setInterval(() => { void runAutonomousCycle(campaign); }, 60_000);
         }
       }
       append("assistant", request === "/pause" ? "Scheduling paused. Running jobs are unchanged." : "Scheduling resumed.");
@@ -1396,6 +1397,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
   };
   submitRef.current = submit;
 
+  useEffect(() => {
+    const campaign = config.campaign;
+    if (!campaign || campaign.status !== "running" || loopTimer.current) return;
+    void runAutonomousCycle(campaign);
+    loopTimer.current = setInterval(() => { void runAutonomousCycle(campaign); }, 60_000);
+  }, [config.campaign?.status]);
+
   return <Box flexDirection="column" padding={1} minHeight={Math.max(24, process.stdout.rows ?? 24)}>
     <Box borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1} flexDirection="column">
       <Text color="cyan" bold>{LOGO}</Text>
@@ -1403,7 +1411,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     </Box>
     <Box flexDirection="column" flexGrow={messages.length > 1 || busy ? 1 : 0} marginTop={1} paddingX={1}>
       {messages.slice(-16).map((message, index) => {
-        const accent = message.role === "user" ? "yellow" : message.role === "system" ? "gray" : "green";
+        const errorLike = message.role === "assistant" && /unreachable|not configured|not logged|failed|error|unavailable|refus/i.test(message.text);
+        const accent = message.role === "user" ? "yellow" : message.role === "system" ? "gray" : errorLike ? "red" : "green";
         const label = messageLabel(message);
         const body = label && message.role === "assistant" ? message.text.split("\n").slice(1).join("\n") : message.text;
         return <Box key={`${index}-${message.text}`} flexDirection="column" marginBottom={1} paddingX={1} borderStyle="round" borderColor={accent}>
