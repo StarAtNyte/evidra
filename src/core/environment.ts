@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { platform, arch, release, version } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { runProcess } from "./process.js";
 
 type Probe = { exitCode: number; stdout: string; stderr: string } | null;
@@ -56,9 +56,19 @@ export async function captureEnvironment(
     probe(["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"], cwd),
   ]);
   const lockfiles: Record<string, string> = {};
-  for (const name of LOCKFILES) {
-    const path = join(root, name);
-    if (existsSync(path)) lockfiles[relative(root, path)] = digest(readFileSync(path));
+  const roots = new Set<string>();
+  let cursor = resolve(cwd);
+  const boundary = resolve(root);
+  while (cursor === boundary || cursor.startsWith(`${boundary}/`)) {
+    roots.add(cursor);
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  roots.add(boundary);
+  for (const directory of roots) for (const name of LOCKFILES) {
+    const path = join(directory, name);
+    if (existsSync(path)) lockfiles[relative(boundary, path)] = digest(readFileSync(path));
   }
   const environment = Object.fromEntries(Object.entries(process.env)
     .filter(([key, value]) => Boolean(value) && !SECRET_KEY.test(key))
