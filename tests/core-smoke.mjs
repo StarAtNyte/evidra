@@ -24,6 +24,7 @@ import { ensureWorktree } from "../dist/core/worktree.js";
 import { activePhaseGoal, definePhaseGoals } from "../dist/core/phase-goals.js";
 import { submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
+import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -56,6 +57,15 @@ test("workspace root discovery keeps nested CLI invocations on the project state
     const uninitialized = mkdtempSync(join(tmpdir(), "evidra-uninitialized-"));
     try { assert.equal(findWorkspaceRoot(uninitialized), uninitialized); } finally { rmSync(uninitialized, { recursive: true, force: true }); }
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("research lane concurrency respects permission mode and local inference limits", () => {
+  assert.equal(researchLaneConcurrency({ autonomy: "safe", provider: "codex", requested: 6 }), 1);
+  assert.equal(researchLaneConcurrency({ autonomy: "fast", provider: "codex", requested: 6 }), 2);
+  const previous = process.env.OLLAMA_NUM_PARALLEL;
+  process.env.OLLAMA_NUM_PARALLEL = "1";
+  try { assert.equal(researchLaneConcurrency({ autonomy: "yolo", provider: "local", requested: 6 }), 1); }
+  finally { if (previous === undefined) delete process.env.OLLAMA_NUM_PARALLEL; else process.env.OLLAMA_NUM_PARALLEL = previous; }
 });
 
 test("terminal sessions are fresh by default and explicitly resumable", () => {

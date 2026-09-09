@@ -28,6 +28,7 @@ import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
 import { checkProvider, codexLoginStatus, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
+import { runResearchLanes } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
@@ -532,6 +533,27 @@ export function App({ root }: { root: string }): React.JSX.Element {
     try {
       activeSteer.current = null;
       await checkProvider({ provider: config.provider, model: config.model, cwd: root });
+      setProgress("Research 3/4 · independent lanes are investigating the evidence...");
+      const laneReports = await runResearchLanes(objective, {
+        mode: config.mode,
+        project,
+        observation,
+        recentEvents,
+        researchSources,
+        ultimateGoal: objective,
+      }, {
+        provider: config.provider,
+        model: config.model,
+        fallbackLocalModel: config.fallbackModel,
+        limitPolicy: config.limitPolicy,
+        reasoningEffort: config.reasoningEffort,
+        cwd: root,
+        storePath: join(root, ".sota", "database.sqlite"),
+        maxParallel: 6,
+        autonomy: config.autonomy,
+        onProgress: setProgress,
+      });
+      setProgress("Research 4/4 · director is cross-pollinating lane findings...");
       decision = await runResearchDirector(objective, {
         mode: config.mode,
         project,
@@ -541,6 +563,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         researchSources,
         ultimateGoal: objective,
         phaseGoal: phaseGoal ?? null,
+        laneReports,
         constraints: { no_submission: true, no_file_edits: true },
       }, {
         provider: config.provider,

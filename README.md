@@ -39,6 +39,8 @@ The deterministic controller remains the source of truth. Agents propose hypothe
 
 Provider exhaustion is an explicit runtime policy. In the TUI use `/limits fallback` to select an installed local Qwen/Ollama model automatically, `/limits wait` to resume after the Codex entitlement resets, or `/limits stop` to halt the active request. The fallback model can be pinned with `EVIDRA_FALLBACK_MODEL`.
 
+Lane concurrency is adaptive: `safe` runs one independent lane, `fast` permits a small parallel set, and `yolo` uses the largest bounded set supported by the host and provider. Local Ollama concurrency also respects `OLLAMA_NUM_PARALLEL`; the TUI never interprets YOLO as permission to exhaust a laptop, subscription, or external service.
+
 Implemented today:
 
 - Ink-based interactive TUI with Codex-style transcript output;

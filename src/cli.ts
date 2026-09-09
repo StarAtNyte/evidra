@@ -21,6 +21,7 @@ import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
+import { runResearchLanes } from "./agents/research-lanes.js";
 import { checkProvider, codexLoginStatus, isProviderUsageLimit, listLocalModels, providerRetryAfterMs } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
@@ -316,14 +317,16 @@ research
   .option("--provider <provider>", "agent provider: codex or local", "codex")
   .option("--model <model>", "provider model; use default for Codex", "default")
   .option("--thinking <effort>", "reasoning effort", "high")
+  .option("--lanes <count>", "maximum independent research lanes", "3")
   .option("--limit-policy <policy>", "on provider usage limit: wait, fallback, or stop", "wait")
-  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; limitPolicy: string }) => {
+  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; limitPolicy: string }) => {
     if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
     if (!["wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'wait', 'fallback', or 'stop'.");
     const adapter = activeCompetition();
     const objective = `${options.goal}. Stop condition: ${options.stop}`;
     const budget = durationMinutes(options.budget);
     const selectedModel = options.provider === "local" && options.model === "default" ? "qwen3.6:27b" : options.model;
+    const laneLimit = Math.max(1, Math.min(6, Number.parseInt(options.lanes, 10) || 1));
     await checkProvider({ provider: options.provider, model: selectedModel, cwd: root });
     const started = Date.now();
     const campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed" } = { goal: options.goal, budgetMinutes: budget, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running" };
@@ -351,7 +354,28 @@ research
       let decision: Awaited<ReturnType<typeof runResearchDirector>>;
       while (true) {
         try {
-          decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: options.goal, phaseGoal: phaseGoal ?? null }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? "qwen3.6:27b" : undefined, cwd: root, executeTool: researchToolExecutor(adapter) });
+          console.log("Research · independent lanes are investigating the evidence...");
+          const laneReports = await runResearchLanes(objective, {
+            project: activeProject,
+            competition: adapter.config,
+            observation,
+            recentEvents,
+            researchSources,
+            ultimateGoal: options.goal,
+            phaseGoal: phaseGoal ?? null,
+          }, {
+            provider: options.provider,
+            model: selectedModel,
+            fallbackLocalModel: options.limitPolicy === "fallback" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
+            limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop",
+            reasoningEffort: options.thinking,
+            cwd: root,
+            storePath: statePath,
+            maxParallel: laneLimit,
+            autonomy: "fast",
+          });
+          console.log("Research · director is cross-pollinating lane findings...");
+          decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: options.goal, phaseGoal: phaseGoal ?? null, laneReports }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter) });
           break;
         } catch (error) {
           if (options.limitPolicy !== "wait" || !isProviderUsageLimit(error)) throw error;
