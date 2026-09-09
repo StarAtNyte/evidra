@@ -1605,7 +1605,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       {queuedRequests.map((queued) => <Text key={queued.id} color="yellow">  ↳ {queued.text}</Text>)}
     </Box>}
     {busy && <Box paddingX={1} marginTop={1}>
-      <Text color="magenta" bold>{["⠋", "⠙", "⠹", "⠸"][busyFrame]}  {progress || "Working..."}</Text>
+      <Text color="magenta" bold>{["⠋", "⠙", "⠹", "⠸"][busyFrame]}  {progress || "Working..."}</Text><Text color="gray">  (esc to interrupt)</Text>
     </Box>}
     {picker && <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column" marginTop={1}>
       <Text color="cyan" bold>{picker === "model" ? `Select ${config.provider} model` : picker === "reasoning" ? "Select thinking effort" : picker === "mode" ? "Select workbench mode" : "Select permissions"}</Text>
