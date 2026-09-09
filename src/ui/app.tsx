@@ -1502,7 +1502,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   return <Box flexDirection="column" padding={1} minHeight={Math.max(24, process.stdout.rows ?? 24)}>
     <Box borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1} flexDirection="column">
       <Text color="cyan" bold>{LOGO}</Text>
-      <Text color="gray"><Text color="cyan" bold>EVIDRA WORKBENCH</Text>  │  MODE: <Text color="yellow" bold>{config.mode.toUpperCase()}</Text>  │  PROVIDER: <Text color="cyan">{config.provider}/{config.model}</Text>  │  THINKING: {config.reasoningEffort}  │  PERMISSIONS: <Text color="yellow" bold>{config.autonomy.toUpperCase()}</Text></Text>
+      <Text color="gray"><Text color="cyan" bold>EVIDRA WORKBENCH</Text>  │  MODE: <Text color="yellow" bold>{config.mode.toUpperCase()}</Text>  │  THINKING: {config.reasoningEffort}  │  PERMISSIONS: <Text color="yellow" bold>{config.autonomy.toUpperCase()}</Text></Text>
     </Box>
     <Box flexDirection="column" flexGrow={messages.length > 1 || busy ? 1 : 0} marginTop={1} paddingX={1}>
       {messages.slice(-16).map((message, index) => {
