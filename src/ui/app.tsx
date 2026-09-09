@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
 import { runProcess } from "../core/process.js";
+import { createExperimentManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { whestbenchConfig } from "../competitions/whestbench.js";
 import { checkProvider, codexLoginStatus, listCodexModels, listLocalModels, loginCodex, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
@@ -40,6 +41,7 @@ const COMMANDS = [
   ["/data", "Run data audits"],
   ["/validation", "Manage validation policy"],
   ["/experiments", "List and inspect experiments"],
+  ["/experiment", "Propose, audit, or run one immutable experiment"],
   ["/runs", "Inspect active runs"],
   ["/compute", "Inspect compute and budgets"],
   ["/evidence", "Inspect accepted evidence"],
@@ -110,6 +112,8 @@ function help(): string {
     "/sources [query]             Search cached research sources",
     "/hypotheses [list|rank]      Inspect the hypothesis graph",
     "/experiments                 List experiments",
+    "/experiment propose [hyp]    Create an immutable experiment manifest",
+    "/experiment show <id>        Show an experiment manifest",
     "/compute                     Show compute and budget state",
     "/autonomy [safe|fast|yolo]   Set autonomous execution policy",
     "/pause                       Pause autonomous scheduling",
@@ -530,6 +534,47 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const experiments = store.experiments();
       store.close();
       append("assistant", experiments.length ? experiments.slice(0, 20).map((entry) => `${entry.id} · ${JSON.stringify(entry.payload)}`).join("\n") : "No experiments recorded.");
+      return;
+    }
+    if (request === "/experiment" || request.startsWith("/experiment ")) {
+      const parts = request.split(/\s+/);
+      const action = parts[1] ?? "list";
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      if (action === "list") {
+        const experiments = store.experiments();
+        store.close();
+        append("assistant", experiments.length ? experiments.slice(0, 20).map((entry) => `${entry.id} · ${JSON.stringify(entry.payload)}`).join("\n") : "No experiments recorded.");
+        return;
+      }
+      if (action === "show") {
+        const experiment = store.experiments().find((entry) => entry.id === parts[2]);
+        store.close();
+        append("assistant", experiment ? JSON.stringify(experiment.payload, null, 2) : "Experiment not found.");
+        return;
+      }
+      if (action !== "propose") {
+        store.close();
+        append("assistant", "Use /experiment propose [hypothesis-id] or /experiment show <id>.");
+        return;
+      }
+      const hypotheses = store.hypotheses();
+      const hypothesisId = parts[2] ?? hypotheses[0]?.id;
+      if (!hypothesisId) {
+        store.close();
+        append("assistant", "No hypothesis exists. Run /research first.");
+        return;
+      }
+      const commit = await runProcess(["git", "rev-parse", "HEAD"], root);
+      if (commit.exitCode !== 0) {
+        store.close();
+        append("assistant", `Cannot create manifest: ${commit.stderr || commit.stdout}`);
+        return;
+      }
+      const id = `exp_${Date.now()}_${hypothesisId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
+      const manifest = createExperimentManifest({ id, hypothesisId, gitCommit: commit.stdout.trim(), datasetVersion: whestbenchConfig.datasetRevision }, whestbenchConfig);
+      store.saveExperiment({ id, payload: { ...manifest, status: "proposed" } });
+      store.close();
+      append("assistant", `Immutable experiment manifest created\n${manifestSummary(manifest)}\n\nNext: /experiment show ${id}`);
       return;
     }
     if (request === "/runs") {

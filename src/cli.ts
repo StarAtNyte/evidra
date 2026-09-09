@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
+import { createExperimentManifest, manifestSummary } from "./core/experiment-manifest.js";
 import { whestbenchConfig } from "./competitions/whestbench.js";
 import { runProcess } from "./core/process.js";
 import { ensureWorktree } from "./core/worktree.js";
@@ -128,6 +129,26 @@ program.command("baseline")
   });
 
 const experiment = new Command("experiment").description("Manage research experiments");
+experiment.command("propose")
+  .argument("[hypothesis]", "hypothesis identifier; defaults to the newest hypothesis")
+  .action(async (hypothesisId?: string) => {
+    const store = new ResearchStore(statePath);
+    const hypothesis = hypothesisId ?? store.hypotheses()[0]?.id;
+    if (!hypothesis) {
+      store.close();
+      throw new Error("No hypothesis exists. Run: evidra research propose");
+    }
+    const commit = await runProcess(["git", "rev-parse", "HEAD"], root);
+    if (commit.exitCode !== 0) {
+      store.close();
+      throw new Error(`Cannot create manifest: ${commit.stderr || commit.stdout}`);
+    }
+    const id = `exp_${Date.now()}_${hypothesis.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
+    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis, gitCommit: commit.stdout.trim(), datasetVersion: whestbenchConfig.datasetRevision }, whestbenchConfig);
+    store.saveExperiment({ id, payload: { ...manifest, status: "proposed" } });
+    store.close();
+    console.log(`Immutable experiment manifest created\n${manifestSummary(manifest)}`);
+  });
 experiment.command("run")
   .argument("<id>", "experiment identifier")
   .option("--baseline <name>", "starter-kit baseline to evaluate", "mean_propagation")
