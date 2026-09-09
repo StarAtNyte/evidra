@@ -684,10 +684,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request === "/exit" || request === "/quit") { exit(); return; }
     if (request === "/help") { append("assistant", help()); return; }
-    if (/^(hi|hello|hey|yo|ping)$/i.test(request)) {
-      append("assistant", `Ready. Research mode is active with ${config.provider}/${config.model}. Use /research to begin an empirical cycle or /mode to switch to Challenge.`);
-      return;
-    }
     if (request === "/workbench research" || request === "/mode research") {
       setConfig((current) => ({ ...current, mode: "research" }));
       append("assistant", "Research mode active. Natural-language prompts become research questions; challenge execution remains explicit.");
