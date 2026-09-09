@@ -18,6 +18,7 @@ import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, RESEARCH_TOOLS } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
 import { LocalExecutor, parseMetricOutput } from "../dist/core/executors.js";
+import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -238,6 +239,15 @@ test("paired statistics and recovery are deterministic", () => {
   assert(comparison.confidenceInterval[1] < 0);
   assert.equal(recoveryPlan("dependency").retry, false);
   assert.equal(recoveryPlan("transient_cloud").maxAttempts, 3);
+});
+
+test("metric registry computes common classification, regression, and ranking metrics", () => {
+  assert.equal(computeMetric("accuracy", ["a", "b", "a"], ["a", "a", "a"]), 2 / 3);
+  assert(Math.abs(computeMetric("macro_f1", [0, 1, 1, 0], [0, 1, 0, 0]) - 11 / 15) < 1e-12);
+  assert(Math.abs(computeMetric("rmse", [1, 3], [1, 2]) - 1 / Math.sqrt(2)) < 1e-12);
+  assert.equal(computeMetric("mae", [1, 3], [1, 2]), 0.5);
+  assert.equal(computeMetric("auroc", [0, 1, 0, 1], [0.1, 0.9, 0.2, 0.8]), 1);
+  assert.equal(metricDefinition("f1_macro").name, "macro_f1");
 });
 
 test("ensemble analysis exposes diversity and deterministic blends", () => {
