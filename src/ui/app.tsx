@@ -33,6 +33,7 @@ const COMMANDS = [
   ["/model", "Select the active model"],
   ["/thinking", "Select model thinking effort"],
   ["/autonomy", "Select safe, fast, or YOLO policy"],
+  ["/permissions", "Select what Evidra may do automatically"],
   ["/login", "Authenticate or check provider access"],
   ["/exit", "Quit Evidra"],
 ] as const;
@@ -49,6 +50,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/workbench": [["/workbench research", "Enter Research mode"], ["/workbench challenge", "Enter Challenge mode"]],
   "/mode": [["/mode research", "Enter Research mode"], ["/mode challenge", "Enter Challenge mode"]],
   "/autonomy": [["/autonomy safe", "Approval-gated"], ["/autonomy fast", "Run local work automatically"], ["/autonomy yolo", "Run routine work automatically"]],
+  "/permissions": [["/permissions safe", "Approval-gated"], ["/permissions fast", "Run local work automatically"], ["/permissions yolo", "Run routine work automatically"]],
   "/loop": [["/loop status", "Show loop state"], ["/loop once", "Run one research cycle"], ["/loop start", "Start autonomous loop"], ["/loop pause", "Pause loop"], ["/loop stop", "Stop loop"]],
   "/scheduler": [["/scheduler start", "Start scheduling"], ["/scheduler pause", "Pause scheduling"], ["/scheduler drain", "Finish active work only"]],
   "/thinking": REASONING_LEVELS.map((level) => [`/thinking ${level}`, `Thinking effort: ${level}`] as const),
@@ -88,6 +90,7 @@ function help(): string {
     "/thinking [level]            Select model thinking effort",
     "/login [codex|status]        Authenticate or check provider access",
     "/autonomy [safe|fast|yolo]   Set autonomous execution policy",
+    "/permissions                 Select what Evidra may do automatically",
     "/exit                        Quit Evidra",
     "",
     "Anything else is sent to the research director.",
@@ -106,7 +109,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const [progress, setProgress] = useState("");
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [selectedModel, setSelectedModel] = useState<AvailableModel | null>(null);
-  const [picker, setPicker] = useState<"model" | "reasoning" | null>(null);
+  const [picker, setPicker] = useState<"model" | "reasoning" | "mode" | "permissions" | null>(null);
   const [pickerIndex, setPickerIndex] = useState(0);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const loopTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -123,6 +126,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         ? COMMANDS.filter(([command]) => command.startsWith(input)).slice(0, 8)
         : [];
   const reasoningChoices = selectedModel?.supportedReasoningEfforts?.length ? selectedModel.supportedReasoningEfforts : REASONING_LEVELS;
+  const modeChoices: readonly WorkbenchMode[] = ["research", "challenge"];
+  const permissionChoices: readonly AutonomyLevel[] = ["safe", "fast", "yolo"];
 
   useEffect(() => saveConfig(configPath, config), [config, configPath]);
 
@@ -148,7 +153,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   useInput((value, key) => {
     if (key.ctrl && value === "c") exit();
     if (picker) {
-      const choices = picker === "model" ? availableModels : reasoningChoices;
+      const choices = picker === "model" ? availableModels : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : permissionChoices;
       if (key.escape) { setPicker(null); return; }
       if (key.downArrow) { setPickerIndex((current) => (current + 1) % choices.length); return; }
       if (key.upArrow) { setPickerIndex((current) => (current - 1 + choices.length) % choices.length); return; }
@@ -161,10 +166,20 @@ export function App({ root }: { root: string }): React.JSX.Element {
           setPicker("reasoning");
           const chosenEfforts = chosen.supportedReasoningEfforts?.length ? chosen.supportedReasoningEfforts : REASONING_LEVELS;
           setPickerIndex(Math.max(0, chosenEfforts.findIndex((effort) => effort === config.reasoningEffort)));
-        } else {
+        } else if (picker === "reasoning") {
           const effort = reasoningChoices[pickerIndex];
           setConfig((current) => ({ ...current, reasoningEffort: effort }));
           append("assistant", `Thinking effort selected: ${effort}`);
+          setPicker(null);
+        } else if (picker === "mode") {
+          const mode = modeChoices[pickerIndex];
+          setConfig((current) => ({ ...current, mode }));
+          append("assistant", `Mode selected: ${mode}`);
+          setPicker(null);
+        } else {
+          const autonomy = permissionChoices[pickerIndex];
+          setConfig((current) => ({ ...current, autonomy }));
+          append("assistant", `Permissions selected: ${autonomy}`);
           setPicker(null);
         }
       }
@@ -340,12 +355,18 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Challenge mode active for ${whestbenchConfig.name}. Experiments and runs are now the primary workflow.`);
       return;
     }
+    if (request === "/mode") {
+      setPicker("mode");
+      setPickerIndex(Math.max(0, modeChoices.indexOf(config.mode)));
+      append("assistant", "Select mode with ↑/↓ and Enter. Research gathers evidence; Challenge runs experiments.");
+      return;
+    }
     if (request === "/mode" || request === "/workbench") {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const counts = store.counts();
       const recent = store.recentEvents(5).map((event) => `${event.type} · ${event.createdAt}`).join("\n") || "No events yet.";
       store.close();
-      append("assistant", `Evidra Workbench\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\n\nResearch graph\n  hypotheses  ${counts.hypotheses}\n  claims      ${counts.claims}\n  edges       ${counts.edges}\n  sources     ${counts.sources}\n  decisions   ${counts.decisions}\n\nChallenge execution\n  experiments ${counts.experiments}\n  runs        ${counts.runs}\n  artifacts   ${counts.artifacts}\n\nRecent events\n${recent}\n\nSwitch with /workbench research or /workbench challenge.`);
+      append("assistant", `Evidra Workbench\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\n\nResearch graph\n  hypotheses  ${counts.hypotheses}\n  claims      ${counts.claims}\n  edges       ${counts.edges}\n  sources     ${counts.sources}\n  decisions   ${counts.decisions}\n\nChallenge execution\n  experiments ${counts.experiments}\n  runs        ${counts.runs}\n  artifacts   ${counts.artifacts}\n\nRecent events\n${recent}\n\nUse /mode to switch modes or /permissions to change automation permissions.`);
       return;
     }
     if (request === "/thinking" || request.startsWith("/thinking ")) {
@@ -355,11 +376,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
       else { setConfig((current) => ({ ...current, reasoningEffort: level })); append("assistant", `Thinking effort selected: ${level}`); }
       return;
     }
-    if (request === "/autonomy" || request.startsWith("/autonomy ")) {
+    if (request === "/autonomy" || request.startsWith("/autonomy ") || request === "/permissions" || request.startsWith("/permissions ")) {
       const level = request.split(/\s+/)[1] as AutonomyLevel | undefined;
-      if (!level) append("assistant", `Autonomy: ${config.autonomy}\nUse /autonomy safe, /autonomy fast, or /autonomy yolo.`);
+      if (!level) {
+        setPicker("permissions");
+        setPickerIndex(Math.max(0, permissionChoices.indexOf(config.autonomy)));
+        append("assistant", "Select permissions with ↑/↓ and Enter. YOLO allows routine implementation and local execution automatically.");
+      }
       else if (!["safe", "fast", "yolo"].includes(level)) append("assistant", "Choose safe, fast, or yolo.");
-      else { setConfig((current) => ({ ...current, autonomy: level })); append("assistant", `Autonomy policy selected: ${level}`); }
+      else { setConfig((current) => ({ ...current, autonomy: level })); append("assistant", `Permissions selected: ${level}`); }
       return;
     }
     if (request === "/pause" || request === "/resume") {
@@ -724,7 +749,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   return <Box flexDirection="column" padding={1} minHeight={Math.max(24, process.stdout.rows ?? 24)}>
     <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
       <Text color="cyan" bold>{LOGO}</Text>
-      <Text color="gray">Evidra Workbench  ·  {config.mode.toUpperCase()}  ·  {config.provider}/{config.model}  ·  thinking:{config.reasoningEffort}</Text>
+      <Text color="gray">Evidra Workbench  ·  {config.mode.toUpperCase()}  ·  {config.provider}/{config.model}  ·  thinking:{config.reasoningEffort}  ·  permissions:{config.autonomy}</Text>
     </Box>
     <Box flexDirection="column" marginTop={1}>
       {messages.slice(-16).map((message, index) => <Box key={`${index}-${message.text}`} marginBottom={1}>
@@ -735,9 +760,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
     </Box>
     {busy && <Text color="magenta"><Spinner type="dots" /> {progress}</Text>}
     {picker && <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column" marginTop={1}>
-      <Text color="cyan" bold>{picker === "model" ? `Select ${config.provider} model` : "Select thinking effort"}</Text>
+      <Text color="cyan" bold>{picker === "model" ? `Select ${config.provider} model` : picker === "reasoning" ? "Select thinking effort" : picker === "mode" ? "Select workbench mode" : "Select permissions"}</Text>
       <Text color="gray">↑/↓ navigate · Enter select · Esc cancel</Text>
-      {(picker === "model" ? availableModels : reasoningChoices).slice(Math.max(0, pickerIndex - 5), pickerIndex + 7).map((entry, index) => {
+      {(picker === "model" ? availableModels : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : permissionChoices).slice(Math.max(0, pickerIndex - 5), pickerIndex + 7).map((entry, index) => {
         const actualIndex = Math.max(0, pickerIndex - 5) + index;
         const label = typeof entry === "string" ? entry : `${entry.displayName}  ${entry.id}${entry.isDefault ? " · default" : ""}${entry.hidden ? " · hidden" : ""}`;
         return <Text key={typeof entry === "string" ? entry : entry.id} color={actualIndex === pickerIndex ? "yellow" : "white"}>
@@ -750,7 +775,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       <TextInput value={input} onChange={setInput} onSubmit={submit} placeholder="Ask Evidra to inspect, hypothesize, or run an experiment..." />
     </Box>
     <Box marginLeft={2}>
-      <Text color="gray">{config.provider} · {config.model} · thinking: {config.reasoningEffort}</Text>
+      <Text color="gray">{config.provider} · {config.model} · thinking: {config.reasoningEffort} · mode: {config.mode} · permissions: {config.autonomy}</Text>
     </Box>
     {suggestions.length > 0 && <Box flexDirection="column" marginLeft={2}>
       {suggestions.map(([command, description], index) => <Text key={command} color={index === suggestionIndex ? "cyan" : "gray"}>
