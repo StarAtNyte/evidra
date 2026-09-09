@@ -16,6 +16,7 @@ import { autonomyPolicy, guardCommand } from "../dist/core/permissions.js";
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, RESEARCH_TOOLS } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
+import { LocalExecutor } from "../dist/core/executors.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -156,6 +157,18 @@ test("research director executes typed tools and reasons over returned evidence"
     await new Promise((resolve) => server.close(resolve));
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("experiment executor parses the declared metric instead of a competition-specific metric", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-metric-"));
+  try {
+    const manifest = { id: "exp", resources: { executor: "local", timeoutMinutes: 1 } };
+    const result = await new LocalExecutor().run(manifest, root, [process.execPath, "-e", "console.log(JSON.stringify({metrics:{macro_f1:0.812},metricsByFold:{macro_f1:[0.8,0.824]}}))"], undefined, "macro_f1");
+    assert.equal(result.status, "completed");
+    assert.equal(result.metrics.macro_f1, 0.812);
+    assert.deepEqual(result.metricsByFold.macro_f1, [0.8, 0.824]);
+    assert.equal(result.metrics.final_layer_mse, undefined);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("paired statistics and recovery are deterministic", () => {

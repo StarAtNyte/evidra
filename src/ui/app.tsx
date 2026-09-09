@@ -622,7 +622,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const command = adapter.experimentCommand();
     setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
     const executor = executorFor(manifest.resources.executor);
-    let result = await executor.run(manifest, experimentCwd, command, (control) => { activeProcess.current = control; });
+    let result = await executor.run(manifest, experimentCwd, command, (control) => { activeProcess.current = control; }, adapter.config.metric.name);
     let attempt = 1;
     while (result.status !== "completed") {
       const plan = recoveryPlan(result.failureClass);
@@ -634,7 +634,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       setProgress(`Experiment ${id} · retry ${attempt + 1}/${plan.maxAttempts} after ${plan.action}...`);
       await new Promise<void>((resolve) => setTimeout(resolve, delay * 1000));
       attempt += 1;
-      result = await executor.run(manifest, experimentCwd, command, (control) => { activeProcess.current = control; });
+      result = await executor.run(manifest, experimentCwd, command, (control) => { activeProcess.current = control; }, adapter.config.metric.name);
     }
     activeProcess.current = null;
     const artifactDir = join(root, ".sota", "artifacts", result.runId);
