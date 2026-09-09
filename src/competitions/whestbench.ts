@@ -10,6 +10,13 @@ export const whestbenchConfig: CompetitionConfig = {
     command: ["uv", "run", "whest", "run", "--estimator", "estimator.py", "--split", "mini", "--runner", "subprocess"],
     estimatorPath: "estimator.py",
   },
+  researchSources: [
+    "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026",
+    "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026/discussion",
+    "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026/leaderboards",
+    "https://github.com/AIcrowd/whest-starterkit",
+    "https://github.com/AIcrowd/whestbench",
+  ],
   submission: {
     platform: "command",
     source: "workspace",

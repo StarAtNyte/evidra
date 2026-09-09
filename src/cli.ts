@@ -78,6 +78,23 @@ async function waitForControllerDirective(): Promise<"run" | "stop"> {
   }
 }
 
+async function ingestCompetitionSources(adapter: ReturnType<typeof activeCompetition>): Promise<void> {
+  if (!adapter.config.researchSources?.length) return;
+  const store = new ResearchStore(statePath);
+  const known = new Set(store.sources().map((entry) => (entry.payload as { url?: string }).url).filter(Boolean));
+  for (const url of adapter.config.researchSources) {
+    if (known.has(url)) continue;
+    try {
+      const source = await retrieveSource(url);
+      store.saveSource({ id: source.id, payload: { ...source, claims: sourceClaims(source.text) } });
+      store.appendEvent("challenge.source.ingested", { url, title: source.title, claims: sourceClaims(source.text).length });
+    } catch (error) {
+      store.appendEvent("challenge.source.failed", { url, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  store.close();
+}
+
 program.name("evidra").description("Research-focused autonomous experimentation workbench").version("0.1.0");
 
 program.command("init")
@@ -362,6 +379,7 @@ research
     if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
     if (!["wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'wait', 'fallback', or 'stop'.");
     const adapter = activeCompetition();
+    await ingestCompetitionSources(adapter);
     const objective = `${options.goal}. Stop condition: ${options.stop}`;
     const budget = durationMinutes(options.budget);
     const selectedModel = options.provider === "local" && options.model === "default" ? "qwen3.6:27b" : options.model;

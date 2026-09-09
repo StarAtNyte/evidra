@@ -16,6 +16,7 @@ export const CompetitionConfigSchema = z.object({
   workspacePath: z.string().optional(),
   baselineCommand: z.array(z.string()).optional(),
   experimentCommand: z.array(z.string()).optional(),
+  researchSources: z.array(z.string().url()).default([]),
   submission: z.object({
     platform: z.enum(["manual", "kaggle", "command"]).default("manual"),
     source: z.enum(["prediction", "workspace"]).default("prediction"),

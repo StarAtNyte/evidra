@@ -10,6 +10,7 @@ export const localResearchConfig: CompetitionConfig = {
   datasetRevision: "workspace",
   metric: { name: "custom", direction: "maximize" },
   evaluator: { command: ["true"], estimatorPath: "" },
+  researchSources: [],
   workspacePath: ".",
   baselineCommand: ["true"],
   experimentCommand: ["true"],
@@ -67,11 +68,10 @@ export function getCompetitionAdapter(id = "local-research"): CompetitionAdapter
  */
 export function loadCompetitionAdapter(projectRoot: string, id = "local-research"): CompetitionAdapter {
   const registered = adapters.get(id);
-  if (registered && id !== "whestbench" && id !== "local-research") return registered;
   if (id === "local-research") return manifestAdapter(localResearchConfig, projectRoot);
   const candidates = [
-    join(projectRoot, "competitions", id, "competition.json"),
     join(projectRoot, "competition.json"),
+    join(projectRoot, "competitions", id, "competition.json"),
   ];
   for (const path of candidates) {
     if (!existsSync(path)) continue;
