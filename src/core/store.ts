@@ -120,6 +120,14 @@ export class ResearchStore {
         claimed_at TEXT,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -267,6 +275,41 @@ export class ResearchStore {
     return result.changes;
   }
 
+  startSession(id: string, payload: unknown): void {
+    const now = new Date().toISOString();
+    const active = this.db.prepare("SELECT payload_json FROM sessions WHERE status = 'active'").all() as Array<{ payload_json: string }>;
+    for (const row of active) {
+      try {
+        const previous = JSON.parse(row.payload_json) as { pid?: number };
+        if (previous.pid && previous.pid !== process.pid) process.kill(previous.pid, "SIGTERM");
+      } catch { /* an old session may contain a partial payload */ }
+    }
+    this.db.prepare("UPDATE sessions SET status = 'interrupted', ended_at = ?, updated_at = ? WHERE status = 'active'").run(now, now);
+    this.db.prepare("INSERT OR REPLACE INTO sessions (id, status, payload_json, started_at, ended_at, updated_at) VALUES (?, 'active', ?, ?, NULL, ?)").run(id, JSON.stringify(payload), now, now);
+    this.appendEvent("session.started", { id });
+  }
+
+  saveSession(id: string, payload: unknown): void {
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE sessions SET payload_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(payload), now, id);
+  }
+
+  closeSession(id: string, status: "completed" | "interrupted" = "completed"): void {
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE sessions SET status = ?, ended_at = ?, updated_at = ? WHERE id = ?").run(status, now, now, id);
+    this.appendEvent(`session.${status}`, { id });
+  }
+
+  session(id: string): { id: string; status: string; payload: unknown; startedAt: string; endedAt: string | null; updatedAt: string } | undefined {
+    const row = this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as { id: string; status: string; payload_json: string; started_at: string; ended_at: string | null; updated_at: string } | undefined;
+    return row ? { id: row.id, status: row.status, payload: JSON.parse(row.payload_json), startedAt: row.started_at, endedAt: row.ended_at, updatedAt: row.updated_at } : undefined;
+  }
+
+  sessions(limit = 20): Array<{ id: string; status: string; payload: unknown; startedAt: string; endedAt: string | null; updatedAt: string }> {
+    const rows = this.db.prepare("SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?").all(limit) as Array<{ id: string; status: string; payload_json: string; started_at: string; ended_at: string | null; updated_at: string }>;
+    return rows.map((row) => ({ id: row.id, status: row.status, payload: JSON.parse(row.payload_json), startedAt: row.started_at, endedAt: row.ended_at, updatedAt: row.updated_at }));
+  }
+
   phaseGoals(): Array<{ id: string; phase: string; status: string; payload: unknown; updatedAt: string }> {
     const rows = this.db.prepare("SELECT id, phase, status, payload_json, updated_at FROM phase_goals ORDER BY rowid ASC").all() as Array<{ id: string; phase: string; status: string; payload_json: string; updated_at: string }>;
     return rows.map((row) => ({ id: row.id, phase: row.phase, status: row.status, payload: JSON.parse(row.payload_json), updatedAt: row.updated_at }));
@@ -295,6 +338,11 @@ export class ResearchStore {
       .run(JSON.stringify(decision), new Date().toISOString());
     this.appendEvent("research.decision", decision);
     return Number(result.lastInsertRowid);
+  }
+
+  decisions(): Array<{ id: number; payload: unknown; createdAt: string }> {
+    const rows = this.db.prepare("SELECT id, decision_json, created_at FROM decisions ORDER BY id DESC").all() as Array<{ id: number; decision_json: string; created_at: string }>;
+    return rows.map((row) => ({ id: row.id, payload: JSON.parse(row.decision_json), createdAt: row.created_at }));
   }
 
   saveClaim(claim: { id: string; payload: unknown }): void {

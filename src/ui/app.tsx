@@ -14,6 +14,7 @@ import { compareRuns } from "../core/statistics.js";
 import { recoveryDelay, recoveryPlan } from "../core/recovery.js";
 import { prepareSubmission, validateSubmissionBundle } from "../core/submissions.js";
 import { diversityReport, greedyBlend, loadPredictionVector, type PredictionVector } from "../core/ensemble.js";
+import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
 import { auditData } from "../core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { retrieveSource, sourceClaims, sourceSearchText } from "../core/sources.js";
@@ -50,7 +51,10 @@ const COMMANDS = [
   ["/compute", "Show execution and compute health"],
   ["/submission", "Prepare and validate a submission bundle"],
   ["/queue", "Show durable research work queue"],
+  ["/sessions", "List saved terminal sessions"],
+  ["/resume", "Resume a saved session explicitly"],
   ["/ensemble", "Analyze prediction diversity and blends"],
+  ["/report", "Generate portable research reports"],
   ["/doctor", "Diagnose local research dependencies"],
   ["/provider", "Select codex or local provider"],
   ["/model", "Select the active model"],
@@ -91,7 +95,10 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/compute": [["/compute status", "Show executor health"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"]],
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
+  "/sessions": [["/sessions", "List recent saved sessions"]],
+  "/resume": [["/resume", "Resume the latest saved session"], ["/resume ", "Resume a selected session"]],
   "/ensemble": [["/ensemble candidates", "List prediction artifacts"], ["/ensemble diversity", "Compare prediction diversity"], ["/ensemble propose", "Create an OOF blend candidate"]],
+  "/report": [["/report research", "Write a research report"], ["/report challenge", "Write a challenge report"], ["/report final", "Write a provenance report"]],
 };
 
 function loadConfig(path: string): SessionConfig {
@@ -103,6 +110,7 @@ function loadConfig(path: string): SessionConfig {
     // Older Evidra sessions used a model name that ChatGPT-account Codex does not accept.
     if (config.provider === "codex" && config.model === "gpt-5.3-codex") config.model = "default";
     if (config.provider === "local" && /^(gpt|codex)/i.test(config.model)) config.model = "unconfigured";
+    if (config.campaign?.status === "running") config.campaign = { ...config.campaign, status: "paused" };
     if (config.mode !== "research" && config.mode !== "challenge") config.mode = defaultConfig.mode;
     if (!["safe", "fast", "yolo"].includes(config.autonomy)) config.autonomy = defaultConfig.autonomy;
     return config;
@@ -145,7 +153,10 @@ function help(): string {
     "/doctor                     Diagnose local dependencies",
     "/submission [prepare|validate] Build or validate a safe bundle",
     "/queue [status|recover]      Show or recover durable tasks",
+    "/sessions                   List saved terminal sessions",
+    "/resume [session-id]        Explicitly resume a saved session",
     "/ensemble [candidates|diversity|propose] Analyze prediction artifacts",
+    "/report [research|challenge|final] Generate a portable report",
     "/provider [codex|local]      Select ChatGPT Codex or local Ollama",
     "/model [name]                Show or select the model (use default for Codex)",
     "/thinking [level]            Select model thinking effort",
@@ -225,6 +236,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const [setupStep, setSetupStep] = useState<"goal" | "budget" | "stop" | null>(null);
   const [setupDraft, setSetupDraft] = useState<{ goal?: string; budgetMinutes?: number }>({});
   const [inputMount, setInputMount] = useState(0);
+  const sessionId = useRef(`session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
+  const messagesRef = useRef<Message[]>(messages);
+  const configRef = useRef<SessionConfig>(config);
   const submitRef = useRef<(value: string) => Promise<void>>(async () => undefined);
   const suppressNextSubmit = useRef(false);
   const loopTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -253,9 +267,34 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const saved = store.campaign();
     store.close();
     if (saved && typeof saved === "object" && "goal" in saved && "budgetMinutes" in saved) {
-      setConfig((current) => ({ ...current, campaign: saved as ResearchCampaign }));
+      const campaign = saved as ResearchCampaign;
+      // A campaign from a previous process is resumable state, never a live worker.
+      setConfig((current) => ({ ...current, campaign: campaign.status === "running" ? { ...campaign, status: "paused" } : campaign }));
     }
   }, [config.campaign, root]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+    configRef.current = config;
+  }, [config, messages]);
+
+  useEffect(() => {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.startSession(sessionId.current, { pid: process.pid, config, messages });
+    store.close();
+    return () => {
+      const closing = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      closing.saveSession(sessionId.current, { pid: process.pid, config: configRef.current, messages: messagesRef.current });
+      closing.closeSession(sessionId.current, "interrupted");
+      closing.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.saveSession(sessionId.current, { pid: process.pid, config, messages });
+    store.close();
+  }, [config, messages, root]);
 
   useEffect(() => {
     let active = true;
@@ -282,6 +321,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   useEffect(() => setSuggestionIndex(0), [input]);
   useEffect(() => () => {
     if (loopTimer.current) clearInterval(loopTimer.current);
+    activeProcess.current?.terminate();
   }, []);
 
   useInput((value, key) => {
@@ -295,8 +335,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (!picker && key.escape && busy && activeProcess.current) {
-      activeProcess.current.pause();
-      setProgress("Paused · press /resume to continue");
+      activeProcess.current.terminate();
+      append("assistant", "Interrupted · stopping the active process and its child workers.");
+      setProgress("Interrupted · stopping...");
       return;
     }
     if (picker) {
@@ -728,6 +769,32 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
       else if (!["safe", "fast", "yolo"].includes(level)) append("assistant", "Choose safe, fast, or yolo.");
       else { setConfig((current) => ({ ...current, autonomy: level })); append("assistant", `Permissions selected: ${level}`); }
+      return;
+    }
+    if (request === "/sessions" || request.startsWith("/resume")) {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      if (request === "/sessions") {
+        const sessions = store.sessions(20).filter((session) => session.id !== sessionId.current);
+        store.close();
+        append("assistant", sessions.length ? `Saved sessions\n${sessions.map((session) => `- ${session.id} · ${session.status} · ${session.startedAt}`).join("\n")}` : "No previous sessions saved yet.");
+        return;
+      }
+      const requestedId = request.split(/\s+/)[1];
+      const saved = requestedId ? store.session(requestedId) : store.sessions(20).find((session) => session.id !== sessionId.current && session.status !== "active");
+      store.close();
+      if (!saved) { append("assistant", "No saved session found. Use /sessions to list resumable sessions."); return; }
+      const payload = saved.payload as { config?: Partial<SessionConfig>; messages?: Message[] };
+      const resumedMessages = Array.isArray(payload.messages) ? payload.messages : [];
+      const resumedConfig = { ...config, ...(payload.config ?? {}), autonomy: config.autonomy } as SessionConfig;
+      setMessages([...resumedMessages, { role: "system", text: `Resumed ${saved.id} · permissions remain ${config.autonomy.toUpperCase()} for this terminal.` }]);
+      setConfig(resumedConfig);
+      const campaign = resumedConfig.campaign;
+      if (campaign) {
+        const activeCampaign = { ...campaign, status: "running" } as ResearchCampaign;
+        persistCampaign(activeCampaign);
+        setConfig((current) => ({ ...current, campaign: activeCampaign }));
+        setTimeout(() => { void runAutonomousCycle(activeCampaign); }, 0);
+      }
       return;
     }
     if (request === "/pause" || request === "/resume") {
@@ -1263,6 +1330,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Ensemble candidate created\n  id: ${blendId}\n  members: ${vectors.length}\n  path: ${blendPath}\n  status: candidate\n\nEvaluate only on out-of-fold data before promotion.`);
       return;
     }
+    if (request === "/report" || request === "/report research" || request === "/report challenge" || request === "/report final" || request === "/export") {
+      const requested = request === "/export" ? "final" : (request.split(/\s+/)[1] ?? "research");
+      if (!["research", "challenge", "final"].includes(requested)) { append("assistant", "Usage: /report research, /report challenge, or /report final"); return; }
+      const kind = requested as ReportKind;
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const content = renderReport(store, kind);
+      const path = writeReport(root, kind, content);
+      store.appendEvent("report.generated", { kind, path }); store.close();
+      append("assistant", `Report generated\n  type: ${kind}\n  path: ${path}\n  sections: phase goals, evidence, sources, decisions, events${kind === "research" ? "" : ", experiments, runs, artifacts"}`);
+      return;
+    }
     if (request === "/sources" || request === "/sources list" || request.startsWith("/sources search ") || request.startsWith("/sources show ")) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const sources = store.sources();
@@ -1401,13 +1479,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
   };
   submitRef.current = submit;
 
-  useEffect(() => {
-    const campaign = config.campaign;
-    if (!campaign || campaign.status !== "running" || loopTimer.current) return;
-    void runAutonomousCycle(campaign);
-    loopTimer.current = setInterval(() => { void runAutonomousCycle(campaign); }, 60_000);
-  }, [config.campaign?.status]);
-
   return <Box flexDirection="column" padding={1} minHeight={Math.max(24, process.stdout.rows ?? 24)}>
     <Box borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1} flexDirection="column">
       <Text color="cyan" bold>{LOGO}</Text>
@@ -1415,7 +1486,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     </Box>
     <Box flexDirection="column" flexGrow={messages.length > 1 || busy ? 1 : 0} marginTop={1} paddingX={1}>
       {messages.slice(-16).map((message, index) => {
-        const errorLike = message.role === "assistant" && /unreachable|not configured|not logged|failed|error|unavailable|refus/i.test(message.text);
+        const errorLike = message.role === "assistant" && /unreachable|not configured|not logged|failed|error|unavailable|refus|interrupted/i.test(message.text);
         const accent = message.role === "user" ? "yellow" : message.role === "system" ? "gray" : errorLike ? "red" : "green";
         const label = messageLabel(message);
         const body = label && message.role === "assistant" ? message.text.split("\n").slice(1).join("\n") : message.text;

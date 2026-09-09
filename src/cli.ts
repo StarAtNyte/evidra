@@ -13,6 +13,7 @@ import { auditData } from "./core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "./core/validation-policy.js";
 import { retrieveSource, sourceClaims, sourceSearchText } from "./core/sources.js";
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
+import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
@@ -150,6 +151,18 @@ queue.command("recover").action(() => {
   store.close();
 });
 program.addCommand(queue);
+
+program.command("report")
+  .argument("[kind]", "research, challenge, or final", "research")
+  .action((kind: string) => {
+    if (!["research", "challenge", "final"].includes(kind)) throw new Error("Report kind must be research, challenge, or final.");
+    const store = new ResearchStore(statePath);
+    const content = renderReport(store, kind as ReportKind);
+    const path = writeReport(root, kind as ReportKind, content);
+    store.appendEvent("report.generated", { kind, path });
+    store.close();
+    console.log(path);
+  });
 
 program.command("inspect").action(() => {
   const store = new ResearchStore(statePath);

@@ -17,13 +17,19 @@ export function runProcess(
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const started = Date.now();
-    const child = spawn(command[0], command.slice(1), { cwd, shell: false });
+    // A detached process group lets interruption stop wrappers such as uv, python,
+    // and evaluator subprocesses together instead of leaving grandchildren alive.
+    const child = spawn(command[0], command.slice(1), { cwd, shell: false, detached: true });
     let paused = false;
     let settled = false;
+    const signalGroup = (signal: NodeJS.Signals): void => {
+      if (!child.pid) return;
+      try { process.kill(-child.pid, signal); } catch { try { child.kill(signal); } catch { /* already exited */ } }
+    };
     const control: ProcessControl = {
-      pause: () => { if (!settled && !paused) { child.kill("SIGSTOP"); paused = true; } },
-      resume: () => { if (!settled && paused) { child.kill("SIGCONT"); paused = false; } },
-      terminate: () => { if (!settled) child.kill("SIGTERM"); },
+      pause: () => { if (!settled && !paused) { signalGroup("SIGSTOP"); paused = true; } },
+      resume: () => { if (!settled && paused) { signalGroup("SIGCONT"); paused = false; } },
+      terminate: () => { if (!settled) { if (paused) signalGroup("SIGCONT"); signalGroup("SIGTERM"); } },
       get paused() { return paused; },
     };
     onProcess?.(control);
@@ -50,7 +56,7 @@ export function runProcess(
     }));
 
     const timer = setTimeout(() => {
-      child.kill("SIGTERM");
+      signalGroup("SIGTERM");
       finish({ command, cwd, exitCode: 124, durationMs: Date.now() - started, stdout, stderr: `${stderr}\nTimed out.` });
     }, timeoutMs);
   });
