@@ -126,7 +126,7 @@ Useful commands:
     /agents               Show agent lanes and health
     /compute              Show executor and budget health
     /queue                Show durable tasks and recover stale work
-    /submission           Prepare or validate a submission bundle
+    /submission           Prepare, validate, approve, or submit a bundle
     /report               Generate a portable report
     /sessions             List saved sessions
     /resume               Resume a saved session explicitly
@@ -196,7 +196,8 @@ Evidra does not require a fixed competition name. A project can provide competit
       },
       "workspacePath": ".",
       "baselineCommand": ["python", "baseline.py"],
-      "experimentCommand": ["python", "run_experiment.py"]
+      "experimentCommand": ["python", "run_experiment.py"],
+      "submission": { "platform": "manual" }
     }
 
 The manifest is intentionally small. Dataset manifests, split registries, metrics, worker protocols, and platform adapters belong in the workspace instead of being hardcoded into Evidra. Paths are checked to remain inside the project root.
@@ -224,7 +225,8 @@ Experiment execution is intended to be isolated and reproducible:
 4. implementation and checks run in that worktree;
 5. stdout, stderr, metrics, environment metadata, and checksums are saved;
 6. failed runs are classified and may be retried according to policy;
-7. accepted work can be reviewed and promoted separately.
+7. accepted work can be reviewed and promoted separately;
+8. an approved bundle can be submitted through a configured adapter.
 
 | Level | Default behavior |
 | --- | --- |
@@ -233,6 +235,21 @@ Experiment execution is intended to be isolated and reproducible:
 | yolo | Run the routine isolated workflow automatically while hard safety blocks remain active. |
 
 External submissions, destructive commands, secret access, and unrestricted execution are not enabled by selecting YOLO.
+
+Submission is always explicit and approval-gated. After preparing, validating, and approving a bundle, use `/submission submit <bundle-id>` or `evidra submission submit <bundle-id>`. Manual upload is the default. Kaggle can be configured without exposing credentials to agents:
+
+    "submission": {
+      "platform": "kaggle",
+      "competition": "my-competition",
+      "predictionFile": "submission.csv"
+    }
+
+Other platforms can use an argv-based command adapter. Supported placeholders are `{bundle}`, `{file}`, `{competition}`, and `{message}`; Evidra does not invoke a shell for adapter arguments:
+
+    "submission": {
+      "platform": "command",
+      "submitCommand": ["./scripts/submit", "--file", "{file}", "--message", "{message}"]
+    }
 
 ## Provider architecture
 
@@ -263,7 +280,7 @@ The next research-lab layers are:
 4. successive-halving scheduling and compute-normalized hypothesis prioritization;
 5. persistent role agents and independent review lanes;
 6. OOF prediction storage, error correlation, calibration, and ensemble search;
-7. Kaggle, HTTP, and manual submission adapters with approval gates;
+7. richer HTTP submission and score-polling adapters with approval gates;
 8. optional Modal, container, Slurm, and remote executor backends;
 9. a local browser dashboard on top of the same event/state model.
 
