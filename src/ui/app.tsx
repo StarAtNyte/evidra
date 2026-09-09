@@ -265,12 +265,21 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const entry = store.experiments().find((experiment) => experiment.id === id);
     if (!entry) { store.close(); throw new Error(`Experiment not found: ${id}`); }
     const manifest = ExperimentManifestSchema.parse(entry.payload);
+    const hypothesis = store.hypotheses().find((candidate) => candidate.id === manifest.hypothesisId);
     const entryPayload = entry.payload as Record<string, unknown>;
     store.saveExperiment({ id, payload: { ...entryPayload, status: "running" } });
     store.close();
     setProgress(`Experiment ${id} · creating isolated worktree...`);
     const worktree = await ensureWorktree(root, root, id);
     const experimentCwd = join(worktree, "competitions", "whestbench", "starterkit");
+    if (config.provider === "codex") {
+      setProgress(`Experiment ${id} · experiment engineer implementing the hypothesis...`);
+      await runWithLocalFallback({
+        role: "experiment engineer",
+        objective: "Implement the selected hypothesis in this isolated worktree. Inspect the existing estimator, make the smallest reproducible change, run relevant tests or smoke checks, and leave the worktree ready for evaluation. Do not touch files outside this worktree and do not submit anything.",
+        context: { manifest, hypothesis: hypothesis?.payload ?? null, worktree: experimentCwd },
+      }, { provider: config.provider, model: config.model, cwd: worktree, reasoningEffort: config.reasoningEffort, sandbox: "workspace-write" }, undefined, setProgress);
+    }
     const command = ["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"];
     setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
     const result = await executorFor(manifest.resources.executor).run(manifest, experimentCwd, command);

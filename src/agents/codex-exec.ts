@@ -8,6 +8,7 @@ export interface ExecAgentOptions {
   model: string;
   cwd: string;
   reasoningEffort?: string;
+  sandbox?: "read-only" | "workspace-write";
 }
 
 export interface AvailableModel {
@@ -111,7 +112,7 @@ export class CodexExecAgent {
 
     if (!codexIsLoggedIn()) return Promise.reject(new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription."));
 
-    const args = ["exec", "--json", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check"];
+    const args = ["exec", "--json", "--ephemeral", "--sandbox", this.options.sandbox ?? "read-only", "--skip-git-repo-check"];
     if (this.options.model && this.options.model !== "default") args.push("--model", this.options.model);
     if (this.options.reasoningEffort) args.push("-c", `model_reasoning_effort=\"${this.options.reasoningEffort}\"`);
     args.push("-C", this.options.cwd, prompt);
