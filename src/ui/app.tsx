@@ -5,7 +5,7 @@ import Spinner from "ink-spinner";
 import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
-import { runProcess, splitCommandLine } from "../core/process.js";
+import { runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { executorFor } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
 import { createExperimentManifest, manifestSummary } from "../core/experiment-manifest.js";
@@ -119,6 +119,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const submitRef = useRef<(value: string) => Promise<void>>(async () => undefined);
   const loopTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const loopBusy = useRef(false);
+  const activeProcess = useRef<ProcessControl | null>(null);
   const firstToken = input.split(/\s+/)[0];
   const suggestions: readonly (readonly [string, string])[] = input.startsWith("/ ") ? [] : input.startsWith("/model ")
     ? availableModels
@@ -156,7 +157,20 @@ export function App({ root }: { root: string }): React.JSX.Element {
   }, []);
 
   useInput((value, key) => {
-    if (key.ctrl && value === "c") exit();
+    if (key.ctrl && value === "c") {
+      if (input) {
+        setInput("");
+        setInputMount((current) => current + 1);
+        return;
+      }
+      exit();
+      return;
+    }
+    if (!picker && key.escape && busy && activeProcess.current) {
+      activeProcess.current.pause();
+      setProgress("Paused · press /resume to continue");
+      return;
+    }
     if (picker) {
       const choices = picker === "model" ? availableModels : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : permissionChoices;
       if (key.escape) { setPicker(null); return; }
@@ -229,7 +243,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const line = chunk.replace(/\s+/g, " ").trim();
           if (line) setProgress(`Research 2/3 · ${stream}: ${line.slice(-120)}`);
         },
+        (control) => { activeProcess.current = control; },
       );
+      activeProcess.current = null;
       observation.baseline = { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout.slice(-4000), stderr: baseline.stderr.slice(-4000) };
     }
     const evidenceStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -402,6 +418,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (request === "/pause" || request === "/resume") {
+      if (request === "/pause") activeProcess.current?.pause();
+      if (request === "/resume") activeProcess.current?.resume();
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       store.setSchedulerState({ status: request === "/pause" ? "paused" : "running", mode: config.mode, currentStep: null });
       store.close();
@@ -713,11 +731,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const result = await runProcess(command, root, 15 * 60_000, (stream, chunk) => {
           const line = chunk.replace(/\s+/g, " ").trim();
           if (line) setProgress(`${stream}: ${line.slice(-140)}`);
-        });
+        }, (control) => { activeProcess.current = control; });
         const output = [result.stdout.trim(), result.stderr.trim() ? `stderr:\n${result.stderr.trim()}` : ""].filter(Boolean).join("\n");
         append("assistant", `Command exited ${result.exitCode} in ${(result.durationMs / 1000).toFixed(1)}s\n$ ${command.join(" ")}\n${output || "(no output)"}`);
       } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
-      finally { setBusy(false); setProgress(""); }
+      finally { activeProcess.current = null; setBusy(false); setProgress(""); }
       return;
     }
     if (["/research status", "/research start", "/research pause", "/research stop"].includes(request)) {

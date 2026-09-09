@@ -1,18 +1,34 @@
 import { spawn } from "node:child_process";
 import type { ProcessResult } from "./types.js";
 
+export interface ProcessControl {
+  pause(): void;
+  resume(): void;
+  terminate(): void;
+  readonly paused: boolean;
+}
+
 export function runProcess(
   command: string[],
   cwd: string,
   timeoutMs = 15 * 60_000,
   onOutput?: (stream: "stdout" | "stderr", chunk: string) => void,
+  onProcess?: (control: ProcessControl) => void,
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const started = Date.now();
     const child = spawn(command[0], command.slice(1), { cwd, shell: false });
+    let paused = false;
+    let settled = false;
+    const control: ProcessControl = {
+      pause: () => { if (!settled && !paused) { child.kill("SIGSTOP"); paused = true; } },
+      resume: () => { if (!settled && paused) { child.kill("SIGCONT"); paused = false; } },
+      terminate: () => { if (!settled) child.kill("SIGTERM"); },
+      get paused() { return paused; },
+    };
+    onProcess?.(control);
     let stdout = "";
     let stderr = "";
-    let settled = false;
 
     const finish = (result: ProcessResult): void => {
       if (settled) return;
