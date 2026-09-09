@@ -399,7 +399,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
   });
 
-  const append = (role: Message["role"], text: string): void => setMessages((current) => [...current, { role, text }]);
+  const append = (role: Message["role"], text: string): void => {
+    if (!text.trim()) return;
+    setMessages((current) => [...current, { role, text }]);
+  };
   const appendError = (error: unknown): void => {
     if (interruptedProcess.current) return;
     append("assistant", error instanceof Error ? error.message : String(error));
