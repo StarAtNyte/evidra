@@ -17,6 +17,7 @@ export interface QueuedTask {
 
 export class ResearchStore {
   private readonly db: Database.Database;
+  private memoryFtsAvailable = false;
 
   constructor(path: string) {
     mkdirSync(dirname(path), { recursive: true });
@@ -151,6 +152,23 @@ export class ResearchStore {
         updated_at TEXT NOT NULL
       );
     `);
+    try {
+      this.db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(kind UNINDEXED, item_id UNINDEXED, content, created_at UNINDEXED)");
+      this.memoryFtsAvailable = true;
+      const indexed = (this.db.prepare("SELECT COUNT(*) AS count FROM memory_fts").get() as { count: number }).count;
+      if (indexed === 0) {
+        const insert = this.db.prepare("INSERT INTO memory_fts (kind, item_id, content, created_at) VALUES (?, ?, ?, ?)");
+        const backfill = this.db.transaction(() => {
+          for (const row of this.db.prepare("SELECT id, payload_json, created_at FROM evidence_claims").all() as Array<{ id: string; payload_json: string; created_at: string }>) insert.run("claim", row.id, row.payload_json, row.created_at);
+          for (const row of this.db.prepare("SELECT id, payload_json, created_at FROM hypotheses").all() as Array<{ id: string; payload_json: string; created_at: string }>) insert.run("hypothesis", row.id, row.payload_json, row.created_at);
+          for (const row of this.db.prepare("SELECT id, payload_json, created_at FROM research_sources").all() as Array<{ id: string; payload_json: string; created_at: string }>) insert.run("source", row.id, row.payload_json, row.created_at);
+        });
+        backfill();
+      }
+    } catch {
+      // Some SQLite builds omit FTS5; searchMemory retains a deterministic LIKE fallback.
+      this.memoryFtsAvailable = false;
+    }
   }
 
   close(): void {
@@ -203,8 +221,10 @@ export class ResearchStore {
   }
 
   saveHypothesis(hypothesis: { id: string; payload: unknown }): void {
-    this.db.prepare(`INSERT OR REPLACE INTO hypotheses (id, payload_json, created_at) VALUES (?, ?, ?)`)
-      .run(hypothesis.id, JSON.stringify(hypothesis.payload), new Date().toISOString());
+    const createdAt = new Date().toISOString();
+    const payload = JSON.stringify(hypothesis.payload);
+    this.db.prepare(`INSERT OR REPLACE INTO hypotheses (id, payload_json, created_at) VALUES (?, ?, ?)`).run(hypothesis.id, payload, createdAt);
+    this.indexMemory("hypothesis", hypothesis.id, payload, createdAt);
     this.appendEvent("hypothesis.created", hypothesis.payload);
   }
 
@@ -406,9 +426,17 @@ export class ResearchStore {
   }
 
   saveClaim(claim: { id: string; payload: unknown }): void {
-    this.db.prepare(`INSERT OR REPLACE INTO evidence_claims (id, payload_json, created_at) VALUES (?, ?, ?)`)
-      .run(claim.id, JSON.stringify(claim.payload), new Date().toISOString());
+    const createdAt = new Date().toISOString();
+    const payload = JSON.stringify(claim.payload);
+    this.db.prepare(`INSERT OR REPLACE INTO evidence_claims (id, payload_json, created_at) VALUES (?, ?, ?)`).run(claim.id, payload, createdAt);
+    this.indexMemory("claim", claim.id, payload, createdAt);
     this.appendEvent("evidence.claim.created", claim.payload);
+  }
+
+  private indexMemory(kind: "claim" | "hypothesis" | "source", id: string, content: string, createdAt: string): void {
+    if (!this.memoryFtsAvailable) return;
+    this.db.prepare("DELETE FROM memory_fts WHERE kind = ? AND item_id = ?").run(kind, id);
+    this.db.prepare("INSERT INTO memory_fts (kind, item_id, content, created_at) VALUES (?, ?, ?, ?)").run(kind, id, content, createdAt);
   }
 
   saveEdge(edge: { id: string; fromId: string; toId: string; relation: string; confidence: number; evidenceIds: string[] }): void {
@@ -418,8 +446,10 @@ export class ResearchStore {
   }
 
   saveSource(source: { id: string; payload: unknown }): void {
-    this.db.prepare(`INSERT OR REPLACE INTO research_sources (id, payload_json, created_at) VALUES (?, ?, ?)`)
-      .run(source.id, JSON.stringify(source.payload), new Date().toISOString());
+    const createdAt = new Date().toISOString();
+    const payload = JSON.stringify(source.payload);
+    this.db.prepare(`INSERT OR REPLACE INTO research_sources (id, payload_json, created_at) VALUES (?, ?, ?)`).run(source.id, payload, createdAt);
+    this.indexMemory("source", source.id, payload, createdAt);
     this.appendEvent("research.source.created", source.payload);
   }
 
@@ -442,6 +472,15 @@ export class ResearchStore {
   searchMemory(query: string, limit = 20): Array<{ kind: "claim" | "hypothesis" | "source"; id: string; payload: unknown; createdAt: string }> {
     const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean).map((term) => term.replace(/[\\%_]/g, "\\$&"));
     if (!terms.length) return [];
+    if (this.memoryFtsAvailable) {
+      try {
+        const ftsQuery = terms.map((term) => `"${term.replace(/"/g, '""')}"`).join(" AND ");
+        const rows = this.db.prepare("SELECT kind, item_id, content, created_at FROM memory_fts WHERE memory_fts MATCH ? ORDER BY created_at DESC LIMIT ?").all(ftsQuery, Math.max(1, Math.min(limit, 200))) as Array<{ kind: "claim" | "hypothesis" | "source"; item_id: string; content: string; created_at: string }>;
+        return rows.map((row) => ({ kind: row.kind, id: row.item_id, payload: JSON.parse(row.content), createdAt: row.created_at }));
+      } catch {
+        // Malformed FTS syntax falls back to the portable LIKE implementation below.
+      }
+    }
     const where = terms.map(() => "lower(payload_json) LIKE ? ESCAPE '\\'").join(" AND ");
     const parameters = terms.map((term) => `%${term}%`);
     const collect = (table: "evidence_claims" | "hypotheses" | "research_sources", kind: "claim" | "hypothesis" | "source") => {
