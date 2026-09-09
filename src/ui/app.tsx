@@ -8,12 +8,13 @@ import { ResearchStore } from "../core/store.js";
 import { runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { executorFor } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
+import { auditExperiment } from "../core/validation.js";
 import { createExperimentManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { whestbenchConfig } from "../competitions/whestbench.js";
 import { checkProvider, codexLoginStatus, listCodexModels, listLocalModels, loginCodex, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
-import { ExperimentManifestSchema } from "../core/types.js";
+import { ExperimentManifestSchema, RunResultSchema } from "../core/types.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string };
 type WorkbenchMode = "research" | "challenge";
@@ -58,7 +59,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
   "/research": [["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start research scheduling"], ["/research pause", "Pause research scheduling"]],
   "/challenge": [["/challenge status", "Show challenge state"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge baseline", "Run the canonical baseline"], ["/challenge start", "Start challenge zero-to-hero flow"]],
-  "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"]],
+  "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment audit", "Audit evidence gates"]],
 };
 
 function loadConfig(path: string): SessionConfig {
@@ -666,6 +667,24 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const experiment = store.experiments().find((entry) => entry.id === parts[2]);
         store.close();
         append("assistant", experiment ? JSON.stringify(experiment.payload, null, 2) : "Experiment not found.");
+        return;
+      }
+      if (action === "audit") {
+        const id = parts[2];
+        const experiment = store.experiments().find((candidate) => candidate.id === id);
+        if (!experiment) { store.close(); append("assistant", `Experiment not found: ${id ?? "(missing id)"}`); return; }
+        const payload = experiment.payload as Record<string, unknown>;
+        const run = store.runs().find((candidate) => candidate.id === payload.runId || candidate.experimentId === id);
+        const currentCommit = await runProcess(["git", "rev-parse", "HEAD"], root);
+        store.close();
+        if (!run) { append("assistant", `No run recorded for ${id}. Run the experiment first.`); return; }
+        try {
+          const manifest = ExperimentManifestSchema.parse(payload);
+          const runResult = RunResultSchema.parse(run.payload);
+          const audit = auditExperiment(manifest, runResult, { currentCommit: currentCommit.stdout.trim(), datasetVersion: whestbenchConfig.datasetRevision, splitVersion: manifest.splitVersion });
+          const gateLines = Object.entries(audit.gates).map(([name, passed]) => `  ${passed ? "✓" : "·"} ${name}`).join("\n");
+          append("assistant", `Evidence audit · ${id}\nStatus: ${audit.accepted ? "ACCEPTED" : "NOT ACCEPTED"}\n\n${gateLines}${audit.reasons.length ? `\n\nReasons:\n${audit.reasons.map((reason) => `- ${reason}`).join("\n")}` : ""}`);
+        } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
         return;
       }
       if (action === "run") {

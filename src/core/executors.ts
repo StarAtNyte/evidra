@@ -19,13 +19,25 @@ function failureClass(result: ProcessResult): RunResult["failureClass"] {
 }
 
 function toRunResult(manifest: ExperimentManifest, result: ProcessResult): RunResult {
+  const metrics: Record<string, number> = {};
+  for (const line of result.stdout.split("\n")) {
+    const columns = line.split("|").map((column) => column.trim());
+    if (columns.length >= 5 && /^\d[\d,]*$/.test(columns[0])) {
+      const value = Number(columns[columns.length - 1]);
+      if (Number.isFinite(value)) metrics.final_layer_mse = value;
+    }
+  }
   return {
     runId: `${manifest.id}-${Date.now()}`,
     status: result.exitCode === 0 ? "completed" : "failed",
     exitCode: result.exitCode,
     durationSeconds: result.durationMs / 1000,
-    metrics: {},
+    metrics,
     artifacts: {},
+    stdout: result.stdout,
+    stderr: result.stderr,
+    command: result.command,
+    cwd: result.cwd,
     ...(result.exitCode === 0 ? {} : { failureClass: failureClass(result) }),
   };
 }

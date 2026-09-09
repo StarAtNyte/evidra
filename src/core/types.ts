@@ -135,6 +135,10 @@ export const RunResultSchema = z.object({
   durationSeconds: z.number().nonnegative(),
   metrics: z.record(z.string(), z.number().finite()).default({}),
   artifacts: z.record(z.string(), z.string()).default({}),
+  stdout: z.string().optional(),
+  stderr: z.string().optional(),
+  command: z.array(z.string()).optional(),
+  cwd: z.string().optional(),
   failureClass: z.enum(["cuda_oom", "transient_cloud", "data_missing", "nan_loss", "dependency", "timeout", "corrupt_artifact", "invalid_metric", "code_regression", "auth", "rate_limit", "disk", "unknown"]).optional(),
 });
 
