@@ -1581,12 +1581,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
       <Text color="cyan" bold>{LOGO}</Text>
       <Text color="gray"><Text color="cyan" bold>EVIDRA WORKBENCH</Text>  │  MODE: <Text color="yellow" bold>{config.mode.toUpperCase()}</Text>  │  THINKING: {config.reasoningEffort}  │  PERMISSIONS: <Text color="yellow" bold>{config.autonomy.toUpperCase()}</Text></Text>
     </Box>
-    <Box flexDirection="column" flexGrow={messages.length > 1 || busy ? 1 : 0} marginTop={1} paddingX={1}>
+    <Box flexDirection="column" marginTop={1} paddingX={1}>
       {messages.slice(-16).map((message, index) => {
         if (message.kind === "tool") {
+          const [headline, ...details] = message.text.split("\n");
           return <Box key={`${index}-${message.text}`} flexDirection="column" marginBottom={1} paddingLeft={2}>
-            <Text color="gray">┆ tool</Text>
-            <RichText text={message.text} />
+            <Text color="gray" bold>• {headline}</Text>
+            {details.length > 0 && <Box paddingLeft={2}><RichText text={details.map((line) => `└ ${line}`).join("\n")} /></Box>}
           </Box>;
         }
         const errorLike = message.role === "assistant" && /unreachable|not configured|not logged|failed|error|unavailable|refus|interrupted/i.test(message.text);
@@ -1599,12 +1600,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
         </Box>;
       })}
     </Box>
-    {queuedRequests.length > 0 && <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginTop={1}>
-      <Text color="yellow" bold>QUEUED · {queuedRequests.length} waiting</Text>
-      {queuedRequests.map((queued) => <Text key={queued.id} color="yellow">› {queued.text}</Text>)}
+    {queuedRequests.length > 0 && <Box flexDirection="column" paddingX={1} marginTop={1}>
+      <Text color="yellow" bold>• QUEUED · {queuedRequests.length} waiting</Text>
+      {queuedRequests.map((queued) => <Text key={queued.id} color="yellow">  ↳ {queued.text}</Text>)}
     </Box>}
-    {busy && <Box borderStyle="single" borderColor="magenta" paddingX={1} marginTop={1}>
-      <Text color="magenta" bold>{["⠋", "⠙", "⠹", "⠸"][busyFrame]}  RUNNING  </Text><Text color="magenta">{progress}</Text>
+    {busy && <Box paddingX={1} marginTop={1}>
+      <Text color="magenta" bold>{["⠋", "⠙", "⠹", "⠸"][busyFrame]}  {progress || "Working..."}</Text>
     </Box>}
     {picker && <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column" marginTop={1}>
       <Text color="cyan" bold>{picker === "model" ? `Select ${config.provider} model` : picker === "reasoning" ? "Select thinking effort" : picker === "mode" ? "Select workbench mode" : "Select permissions"}</Text>
