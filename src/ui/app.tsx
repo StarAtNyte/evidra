@@ -115,6 +115,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const [picker, setPicker] = useState<"model" | "reasoning" | "mode" | "permissions" | null>(null);
   const [pickerIndex, setPickerIndex] = useState(0);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const [inputMount, setInputMount] = useState(0);
   const submitRef = useRef<(value: string) => Promise<void>>(async () => undefined);
   const loopTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const loopBusy = useRef(false);
@@ -192,6 +193,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (!suggestions.length) return;
     if (key.tab) {
       setInput(suggestions[suggestionIndex][0]);
+      setInputMount((current) => current + 1);
       return;
     }
     if (key.return) {
@@ -781,7 +783,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     </Box>}
     <Box borderStyle="round" borderColor={busy ? "gray" : "yellow"} paddingX={1} marginTop={1}>
       <Text color="yellow">› </Text>
-      <TextInput focus={!picker} showCursor={!picker} value={input} onChange={setInput} onSubmit={submit} placeholder="Ask Evidra to inspect, hypothesize, or run an experiment..." />
+      <TextInput key={inputMount} focus={!picker} showCursor={!picker} value={input} onChange={setInput} onSubmit={submit} placeholder="Ask Evidra to inspect, hypothesize, or run an experiment..." />
     </Box>
     <Box marginLeft={2}>
       <Text color="gray">{config.provider} · {config.model} · thinking: {config.reasoningEffort} · mode: {config.mode} · permissions: {config.autonomy}</Text>
