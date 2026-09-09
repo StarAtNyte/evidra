@@ -355,6 +355,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     append("user", request);
     if (request === "/exit" || request === "/quit") { exit(); return; }
     if (request === "/help") { append("assistant", help()); return; }
+    if (/^(hi|hello|hey|yo|ping)$/i.test(request)) {
+      append("assistant", `Ready. Research mode is active with ${config.provider}/${config.model}. Use /research to begin an empirical cycle or /mode to switch to Challenge.`);
+      return;
+    }
     if (request === "/workbench research" || request === "/mode research") {
       setConfig((current) => ({ ...current, mode: "research" }));
       append("assistant", "Research mode active. Natural-language prompts become research questions; challenge execution remains explicit.");
@@ -797,7 +801,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       <TextInput key={inputMount} focus={!picker} showCursor={!picker} value={input} onChange={setInput} onSubmit={submit} placeholder="Ask Evidra to inspect, hypothesize, or run an experiment..." />
     </Box>
     <Box marginLeft={2} marginTop={0}>
-      <Text color="gray">{config.provider.toUpperCase()} · {config.model} · THINKING: {config.reasoningEffort.toUpperCase()} · MODE: <Text color="yellow">{config.mode.toUpperCase()}</Text> · PERMISSIONS: <Text color="yellow">{config.autonomy.toUpperCase()}</Text></Text>
+      <Text color="white" bold>{config.provider.toUpperCase()} · {config.model} · THINKING: {config.reasoningEffort.toUpperCase()} · MODE: {config.mode.toUpperCase()} · PERMISSIONS: {config.autonomy.toUpperCase()}</Text>
     </Box>
   </Box>;
 }
