@@ -13,6 +13,9 @@ export const CompetitionConfigSchema = z.object({
     command: z.array(z.string()),
     estimatorPath: z.string(),
   }),
+  workspacePath: z.string().optional(),
+  baselineCommand: z.array(z.string()).optional(),
+  experimentCommand: z.array(z.string()).optional(),
 });
 
 export type CompetitionConfig = z.infer<typeof CompetitionConfigSchema>;

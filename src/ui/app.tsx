@@ -21,8 +21,7 @@ import { retrieveSource, sourceClaims, sourceSearchText } from "../core/sources.
 import { activePhaseGoal, definePhaseGoals } from "../core/phase-goals.js";
 import { createExperimentManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
-import { whestbenchConfig } from "../competitions/whestbench.js";
-import { getCompetitionAdapter } from "../competitions/adapters.js";
+import { loadCompetitionAdapter } from "../competitions/adapters.js";
 import { checkProvider, codexLoginStatus, listCodexModels, listLocalModels, loginCodex, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
@@ -423,7 +422,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const project = store.project();
     store.close();
-    return getCompetitionAdapter(project?.competitionId ?? "whestbench");
+    return loadCompetitionAdapter(root, project?.competitionId ?? "local-research");
   };
 
   const ensureActiveProject = (): void => {
@@ -994,13 +993,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
       store.close();
       append("assistant", request.endsWith("inspect") ? JSON.stringify(project?.config ?? null, null, 2) : project
         ? `Project: ${project.name}\nCompetition: ${project.competitionId}`
-        : "No project initialized. Use /hero start or evidra init whestbench.");
+        : "No project initialized. Use /research to begin, /project init <workspace>, or evidra init <workspace>.");
       return;
     }
     if (request.startsWith("/project init") || request.startsWith("/challenge init")) {
-      const competitionId = request.split(/\s+/)[2] ?? "whestbench";
+      const competitionId = request.split(/\s+/)[2] ?? "local-research";
       let adapter;
-      try { adapter = getCompetitionAdapter(competitionId); }
+      try { adapter = loadCompetitionAdapter(root, competitionId); }
       catch (error) { appendError(error); return; }
       const projectDir = join(root, "competitions", adapter.id);
       mkdirSync(join(projectDir, "experiments"), { recursive: true });

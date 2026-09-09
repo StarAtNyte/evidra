@@ -2,7 +2,7 @@
 
 Evidra is a research-focused autonomous experimentation workbench. It uses an agent runtime for reasoning and coding, while deterministic infrastructure owns experiments, evidence, budgets, artifacts, and submissions.
 
-The first trial competition is AIcrowd's ARC White-Box Estimation Challenge (WhestBench).
+The first trial competition is AIcrowd's ARC White-Box Estimation Challenge (WhestBench), but the workbench is designed for arbitrary empirical research workspaces and challenge manifests.
 
 ## Status
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +10,7 @@ import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submis
 import { sourceClaims } from "../dist/core/sources.js";
 import { diversityReport, greedyBlend } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
+import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -43,6 +44,27 @@ test("terminal sessions are fresh by default and explicitly resumable", () => {
     assert.equal(store.session("session-b")?.status, "active");
     assert.deepEqual(store.session("session-a")?.payload, { config: { autonomy: "yolo" }, messages: [{ role: "user", text: "old" }] });
     store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("project-local competition manifests replace hardcoded adapters", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-competition-"));
+  try {
+    const directory = join(root, "competitions", "toy");
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, "competition.json"), JSON.stringify({
+      id: "toy", name: "Toy Research", taskType: "regression", datasetRevision: "v1",
+      metric: { name: "rmse", direction: "minimize" },
+      evaluator: { command: ["python", "evaluate.py"], estimatorPath: "train.py" },
+      workspacePath: "competitions/toy/workspace",
+      baselineCommand: ["python", "baseline.py"],
+      experimentCommand: ["python", "run.py"],
+    }));
+    const adapter = loadCompetitionAdapter(root, "toy");
+    assert.equal(adapter.id, "toy");
+    assert.deepEqual(adapter.baselineCommand(), ["python", "baseline.py"]);
+    assert.deepEqual(adapter.experimentCommand(), ["python", "run.py"]);
+    assert.equal(adapter.workspacePath(root), join(root, "competitions/toy/workspace"));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

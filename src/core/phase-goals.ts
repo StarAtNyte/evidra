@@ -1,7 +1,7 @@
 import { PhaseGoalSchema, type PhaseGoal, type ResearchPhase } from "./types.js";
 
 const PHASES: Array<{ phase: ResearchPhase; title: string; objective: string; criteria: string[] }> = [
-  { phase: "orientation", title: "Understand the workspace", objective: "Inventory the repository, task, rules, data contract, and execution environment.", criteria: ["repository inventory recorded", "competition configuration loaded", "execution environment checked"] },
+  { phase: "orientation", title: "Understand the workspace", objective: "Inventory the repository, research question, rules, data contract, and execution environment.", criteria: ["repository inventory recorded", "workspace configuration loaded", "execution environment checked"] },
   { phase: "baseline", title: "Establish a trusted baseline", objective: "Run the canonical evaluator and record reproducible baseline metrics and logs.", criteria: ["baseline exits successfully", "primary metric parsed", "baseline artifacts checksummed"] },
   { phase: "data_audit", title: "Audit data and leakage", objective: "Find distribution problems, duplicates, leakage paths, and invalid assumptions before optimization.", criteria: ["data audit report recorded", "leakage audit completed", "critical findings resolved or explicitly accepted"] },
   { phase: "validation", title: "Lock validation policy", objective: "Choose a versioned validation and split policy that reflects plausible hidden test environments.", criteria: ["split version recorded", "primary metric defined", "validation policy locked"] },

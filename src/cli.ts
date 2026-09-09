@@ -7,8 +7,7 @@ import { materializeResearchDecision } from "./core/research-graph.js";
 import { createExperimentManifest, manifestSummary } from "./core/experiment-manifest.js";
 import { activePhaseGoal, definePhaseGoals } from "./core/phase-goals.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "./core/types.js";
-import { whestbenchConfig } from "./competitions/whestbench.js";
-import { getCompetitionAdapter } from "./competitions/adapters.js";
+import { loadCompetitionAdapter } from "./competitions/adapters.js";
 import { auditData } from "./core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "./core/validation-policy.js";
 import { retrieveSource, sourceClaims, sourceSearchText } from "./core/sources.js";
@@ -29,7 +28,7 @@ const activeCompetition = () => {
   const store = new ResearchStore(statePath);
   const project = store.project();
   store.close();
-  return getCompetitionAdapter(project?.competitionId ?? "whestbench");
+  return loadCompetitionAdapter(root, project?.competitionId ?? "local-research");
 };
 
 function durationMinutes(value: string): number {
@@ -42,9 +41,9 @@ function durationMinutes(value: string): number {
 program.name("evidra").description("Research-focused autonomous experimentation workbench").version("0.1.0");
 
 program.command("init")
-  .argument("<competition>", "competition adapter to initialize")
-  .action((competition: string) => {
-    const adapter = getCompetitionAdapter(competition);
+  .argument("<workspace>", "workspace or competition manifest to initialize")
+  .action((workspace: string) => {
+    const adapter = loadCompetitionAdapter(root, workspace);
     const projectDir = join(root, "competitions", adapter.id);
     mkdirSync(join(projectDir, "experiments"), { recursive: true });
     mkdirSync(join(projectDir, "reports"), { recursive: true });
@@ -65,10 +64,10 @@ program.command("status").action(() => {
   const store = new ResearchStore(statePath);
   const project = store.project();
   if (!project) {
-    console.log("No Evidra project initialized. Run: evidra init whestbench");
+    console.log("No Evidra project initialized. Start with: evidra init local-research or evidra init <workspace>");
   } else {
     console.log(`Project       ${project.name}`);
-    console.log(`Competition   ${project.competitionId}`);
+  console.log(`Workspace     ${project.competitionId}`);
     console.log(`Events        ${store.eventCount()}`);
   }
   store.close();
@@ -190,7 +189,10 @@ project.command("inspect").action(() => {
 program.addCommand(project);
 
 const challenge = new Command("challenge").description("Manage the active challenge adapter");
-challenge.command("list").action(() => console.log(`* ${whestbenchConfig.id} — ${whestbenchConfig.name}`));
+challenge.command("list").action(() => {
+  const adapter = activeCompetition();
+  console.log(`* ${adapter.id} — ${adapter.config.name}`);
+});
 challenge.command("status").action(() => {
   const store = new ResearchStore(statePath);
   const active = store.project();
@@ -317,13 +319,14 @@ research.command("propose")
 program.addCommand(research);
 
 program.command("baseline")
-  .description("Run the WhestBench starter-kit baseline locally")
+  .description("Run the active workspace baseline locally")
   .option("--name <name>", "starter-kit baseline", "mean_propagation")
   .action(async (options: { name: string }) => {
     const adapter = activeCompetition();
     const command = adapter.baselineCommand();
-    const nameIndex = command.length - 1;
-    if (options.name !== "mean_propagation") command[nameIndex] = options.name;
+    if (options.name !== "mean_propagation" && adapter.id === "arc-whestbench-2026") {
+      command.push("--baseline", options.name);
+    }
     const result = await runProcess(command, adapter.workspacePath(root));
     console.log(result.stdout);
     if (result.stderr) console.error(result.stderr);
@@ -346,7 +349,8 @@ experiment.command("propose")
       throw new Error(`Cannot create manifest: ${commit.stderr || commit.stdout}`);
     }
     const id = `exp_${Date.now()}_${hypothesis.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
-    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis, gitCommit: commit.stdout.trim(), datasetVersion: whestbenchConfig.datasetRevision }, whestbenchConfig);
+    const adapter = activeCompetition();
+    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision }, adapter.config);
     store.saveExperiment({ id, payload: { ...manifest, status: "proposed" } });
     store.close();
     console.log(`Immutable experiment manifest created\n${manifestSummary(manifest)}`);
@@ -355,17 +359,17 @@ experiment.command("run")
   .argument("<id>", "experiment identifier")
   .option("--baseline <name>", "starter-kit baseline to evaluate", "mean_propagation")
   .action(async (id: string, options: { baseline: string }) => {
-    const experimentDir = join(root, "competitions", "whestbench", "experiments", id);
+    const adapter = activeCompetition();
+    const experimentDir = join(adapter.workspacePath(root), "experiments", id);
     mkdirSync(experimentDir, { recursive: true });
-    const starterkitDir = join(root, "competitions", "whestbench", "starterkit");
-    const worktreePath = await ensureWorktree(starterkitDir, root, id);
+    const worktreePath = await ensureWorktree(adapter.workspacePath(root), root, id);
     const store = new ResearchStore(statePath);
     const experiment = {
       id,
       hypothesisId: "baseline-reproduction",
       parentCommit: "starterkit",
       worktreePath,
-      command: ["uv", "run", "python", "estimator.py", "--baseline", options.baseline],
+      command: [...adapter.experimentCommand()],
       status: "running" as const,
       createdAt: new Date().toISOString(),
     };
