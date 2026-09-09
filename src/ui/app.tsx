@@ -6,6 +6,7 @@ import { join, relative } from "node:path";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
 import { runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
+import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { executorFor } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
 import { auditExperiment } from "../core/validation.js";
@@ -675,7 +676,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const proposed = config.mode === "challenge" ? await proposeLatestExperiment() : null;
       append("assistant", cycle.text + (proposed?.text ?? ""));
       if (proposed && config.mode === "challenge") {
-        if (config.autonomy === "safe") {
+        if (!autonomyPolicy(config.autonomy).canRunIsolatedExperiments) {
           append("assistant", `Approval required before autonomous execution. The manifest is ready: ${proposed.id}\nRun /experiment run ${proposed.id} to approve this specific experiment, or switch to /permissions fast/yolo for automatic isolated execution.`);
         } else {
           append("assistant", await executeExperiment(proposed.id));
@@ -901,7 +902,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (request === "/hero start") {
-      setBusy(true); setProgress("Zero-to-hero: initializing WhestBench...");
+      setBusy(true); setProgress("Zero-to-hero: initializing the active workspace...");
       try {
         const adapter = activeAdapter();
         const projectDir = join(root, "competitions", adapter.id);
@@ -927,7 +928,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const proposed = await proposeLatestExperiment();
         append("assistant", decisionText + (proposed?.text ?? ""));
         if (proposed) {
-          if (config.autonomy === "safe") append("assistant", `Approval required before autonomous execution. Run /experiment run ${proposed.id} to approve it.`);
+          if (!autonomyPolicy(config.autonomy).canRunIsolatedExperiments) append("assistant", `Approval required before autonomous execution. Run /experiment run ${proposed.id} to approve it.`);
           else append("assistant", await executeExperiment(proposed.id));
         }
         const done = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -991,9 +992,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (request.startsWith("!")) {
       const rawCommand = request.slice(1).trim();
       const command = splitCommandLine(rawCommand);
-      const blocked = new Set(["sudo", "rm", "rmdir", "mkfs", "shutdown", "reboot", "poweroff"]);
       if (!rawCommand) { append("assistant", "Usage: !ls -la or !rg -n hypothesis src"); return; }
-      if (blocked.has(command[0])) { append("assistant", `Refusing dangerous command '${command[0]}'. Use a reviewed experiment manifest for destructive operations.`); return; }
+      const guard = guardCommand(command);
+      if (!guard.allowed) { append("assistant", `${guard.reason} Use a reviewed experiment manifest for destructive operations.`); return; }
       setBusy(true); setProgress(`Running !${rawCommand}...`);
       try {
         const result = await runProcess(["sh", "-lc", rawCommand], root, 15 * 60_000, (stream, chunk) => {
@@ -1011,7 +1012,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const project = store.project();
       store.close();
       append("assistant", request.endsWith("inspect") ? JSON.stringify(project?.config ?? null, null, 2) : project
-        ? `Project: ${project.name}\nCompetition: ${project.competitionId}`
+        ? `Project: ${project.name}\nWorkspace: ${project.competitionId}`
         : "No project initialized. Use /research to begin, /project init <workspace>, or evidra init <workspace>.");
       return;
     }
@@ -1045,7 +1046,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const project = store.project();
       const campaign = config.campaign;
-      append("assistant", project ? `Project: ${project.name}\nCompetition: ${project.competitionId}\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\nEvents: ${store.eventCount()}${campaign ? `\nCampaign: ${campaign.status}\nGoal: ${campaign.goal}\nBudget: ${campaign.budgetMinutes} minutes\nStop: ${campaign.stopCondition}` : ""}` : "No Evidra project initialized. Start with /research to configure an autonomous campaign.");
+      append("assistant", project ? `Project: ${project.name}\nWorkspace: ${project.competitionId}\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\nEvents: ${store.eventCount()}${campaign ? `\nCampaign: ${campaign.status}\nGoal: ${campaign.goal}\nBudget: ${campaign.budgetMinutes} minutes\nStop: ${campaign.stopCondition}` : ""}` : "No Evidra project initialized. Start with /research to configure an autonomous campaign.");
       store.close();
       return;
     }
@@ -1453,9 +1454,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (request === "/run" || request.startsWith("/run ") || request === "/shell" || request.startsWith("/shell ")) {
       const rawCommand = request.replace(/^\/(run|shell)\s*/, "");
       const command = splitCommandLine(rawCommand);
-      const blocked = new Set(["sudo", "rm", "rmdir", "mkfs", "shutdown", "reboot", "poweroff"]);
       if (!command.length) { append("assistant", "Usage: /run rg -n hypothesis src or /run uv run pytest"); return; }
-      if (blocked.has(command[0])) { append("assistant", `Refusing dangerous command '${command[0]}'. Use a reviewed experiment manifest for destructive operations.`); return; }
+      const guard = guardCommand(command);
+      if (!guard.allowed) { append("assistant", `${guard.reason} Use a reviewed experiment manifest for destructive operations.`); return; }
       setBusy(true); setProgress(`Running ${command.join(" ")}...`);
       try {
         const result = await runProcess(command, root, 15 * 60_000, (stream, chunk) => {

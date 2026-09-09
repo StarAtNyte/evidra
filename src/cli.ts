@@ -178,7 +178,7 @@ const project = new Command("project").description("Inspect the active Evidra pr
 project.command("status").action(() => {
   const store = new ResearchStore(statePath);
   const active = store.project();
-  console.log(active ? `${active.name}\nCompetition: ${active.competitionId}\nEvents: ${store.eventCount()}` : "No Evidra project initialized.");
+  console.log(active ? `${active.name}\nWorkspace: ${active.competitionId}\nEvents: ${store.eventCount()}` : "No Evidra project initialized.");
   store.close();
 });
 project.command("inspect").action(() => {
