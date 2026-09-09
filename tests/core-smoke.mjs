@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
@@ -20,6 +20,7 @@ import { runResearchDirector } from "../dist/agents/research-director.js";
 import { LocalExecutor, parseMetricOutput } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { captureEnvironment } from "../dist/core/environment.js";
+import { ensureWorktree } from "../dist/core/worktree.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -320,4 +321,27 @@ test("environment snapshots preserve reproducibility metadata without secrets", 
     assert.equal(snapshot.environment.EVIDRA_SMOKE_SECRET, undefined);
     assert.ok(snapshot.probes.node);
   } finally { delete process.env.EVIDRA_SMOKE_SECRET; rmSync(root, { recursive: true, force: true }); }
+});
+
+test("worktree isolation supports arbitrary repositories", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-worktree-"));
+  const repo = join(root, "repo");
+  mkdirSync(repo, { recursive: true });
+  try {
+    for (const command of [
+      ["git", "init", "-q"],
+      ["git", "config", "user.email", "evidra@test.invalid"],
+      ["git", "config", "user.name", "Evidra Test"],
+    ]) {
+      const result = await runProcess(command, repo);
+      assert.equal(result.exitCode, 0, result.stderr);
+    }
+    writeFileSync(join(repo, "train.R"), "cat('hello')\n");
+    assert.equal((await runProcess(["git", "add", "train.R"], repo)).exitCode, 0);
+    assert.equal((await runProcess(["git", "commit", "-qm", "initial"], repo)).exitCode, 0);
+    const worktree = await ensureWorktree(repo, root, "exp-r-language");
+    assert.equal(existsSync(join(worktree, "train.R")), true);
+    assert.equal(existsSync(join(worktree, ".git")), true);
+    await runProcess(["git", "worktree", "remove", "--force", worktree], repo);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
