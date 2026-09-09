@@ -38,7 +38,9 @@ export async function submitApprovedBundle(root: string, bundlePath: string, com
   const config = competition.submission;
   const platform = config?.platform ?? "manual";
   if (platform === "manual") throw new Error("Manual submission is configured. Upload the validated bundle and record its score with Evidra.");
-  const file = predictionFile(bundlePath, config?.predictionFile);
+  const template = config?.submitCommand ?? [];
+  const needsFile = platform === "kaggle" || Boolean(config?.predictionFile) || template.some((part) => part.includes("{file}"));
+  const file = needsFile ? predictionFile(bundlePath, config?.predictionFile) : "";
   const values = { bundle: bundlePath, file, competition: config?.competition ?? competition.id, message };
   const command = platform === "kaggle"
     ? ["kaggle", "competitions", "submit", "-c", values.competition, "-f", values.file, "-m", values.message]
@@ -46,7 +48,10 @@ export async function submitApprovedBundle(root: string, bundlePath: string, com
   if (!command.length) throw new Error("Command submission requires submission.submitCommand in competition.json.");
   const guard = guardCommand(command);
   if (!guard.allowed) throw new Error(`Submission command refused: ${guard.reason}`);
-  const result = await runProcess(command, root, 10 * 60_000, undefined, onProcess);
+  const workingDirectory = config?.workingDirectory ? resolve(root, config.workingDirectory) : root;
+  const workingRelative = relative(resolve(root), workingDirectory);
+  if (isAbsolute(workingRelative) || workingRelative.startsWith("..")) throw new Error("Submission workingDirectory must stay inside the project root.");
+  const result = await runProcess(command, workingDirectory, 10 * 60_000, undefined, onProcess);
   if (result.exitCode !== 0) throw new Error(`External submission failed (${result.exitCode}): ${result.stderr || result.stdout}`);
   return {
     validation,

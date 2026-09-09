@@ -10,4 +10,10 @@ export const whestbenchConfig: CompetitionConfig = {
     command: ["uv", "run", "whest", "run", "--estimator", "estimator.py", "--split", "mini", "--runner", "subprocess"],
     estimatorPath: "estimator.py",
   },
+  submission: {
+    platform: "command",
+    source: "workspace",
+    workingDirectory: "competitions/whestbench/starterkit",
+    submitCommand: ["uv", "run", "whest", "submit", "--estimator", "estimator.py", "--watch"],
+  },
 };
