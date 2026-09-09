@@ -559,7 +559,7 @@ program.command("baseline")
     if (options.name !== "mean_propagation" && adapter.id === "arc-whestbench-2026") {
       command.push("--baseline", options.name);
     }
-    const result = await runProcess(command, adapter.workspacePath(root));
+    const result = await runProcess(command, adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
     console.log(result.stdout);
     if (result.stderr) console.error(result.stderr);
     if (result.exitCode !== 0) process.exitCode = result.exitCode;
