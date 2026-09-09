@@ -278,23 +278,25 @@ program.addCommand(challenge);
 const research = new Command("research").description("Ask the embedded research agent for the next research decision");
 research
   .option("--goal <goal>", "ultimate research goal", "Improve the current workspace or research problem with robust, reproducible evidence")
-  .option("--budget <duration>", "autonomous budget, e.g. 90m or 4h")
+  .option("--budget <duration>", "autonomous budget, e.g. 90m or 4h", "60m")
   .option("--stop <condition>", "campaign stopping condition", "stop when the research director has sufficient evidence for the stated goal")
-  .action(async (options: { goal: string; budget?: string; stop: string }) => {
+  .action(async (options: { goal: string; budget: string; stop: string }) => {
     const adapter = activeCompetition();
     const objective = `${options.goal}. Stop condition: ${options.stop}`;
-    const budget = options.budget ? durationMinutes(options.budget) : undefined;
+    const budget = durationMinutes(options.budget);
     const started = Date.now();
+    const campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed" } = { goal: options.goal, budgetMinutes: budget, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running" };
     let cycle = 0;
     do {
       cycle += 1;
       const store = new ResearchStore(statePath);
       if (!store.project()) store.createProject({ id: `evidra-${adapter.id}`, name: adapter.config.name, competitionId: adapter.id, config: adapter.config });
-      if (!store.phaseGoals().length) for (const goal of definePhaseGoals(objective, "challenge")) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
+      store.saveCampaign(campaign);
+      if (!store.phaseGoals().length) for (const goal of definePhaseGoals(objective, "research")) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
       const phaseGoal = activePhaseGoal(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)));
       const recentEvents = store.recentEvents(20);
       const researchSources = store.sources().slice(0, 12).map((entry) => entry.payload);
-      console.log(`Research ${cycle}/∞ · inspecting workspace and baseline...`);
+      console.log(`Research ${cycle} · inspecting workspace and baseline (budget ${budget}m)...`);
       const gitStatus = await runProcess(["git", "status", "--short"], root);
       const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
       const baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), 15 * 60_000);
@@ -308,9 +310,28 @@ research
       const decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: options.goal, phaseGoal: phaseGoal ?? null }, { provider: "codex", model: "default", reasoningEffort: "high", fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });
       const decisionStore = new ResearchStore(statePath);
       materializeResearchDecision(decisionStore, decision);
+      if (phaseGoal) {
+        const now = new Date().toISOString();
+        const goals = decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));
+        const index = goals.findIndex((goal) => goal.id === phaseGoal.id);
+        if (index >= 0) {
+          const met = decision.goalStatus === "met";
+          decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: met ? "met" : "active", payload: { ...goals[index], status: met ? "met" : "active", attempts: phaseGoal.attempts + 1, updatedAt: now } });
+          if (met && goals[index + 1]) {
+            const next = goals[index + 1];
+            decisionStore.savePhaseGoal({ id: next.id, phase: next.phase, status: "active", payload: { ...next, status: "active", updatedAt: now } });
+          }
+        }
+      }
+      const elapsedMinutes = (Date.now() - started) / 60_000;
+      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || elapsedMinutes >= budget;
+      if (terminal) {
+        campaign.status = decision.goalStatus === "blocked" ? "paused" : "completed";
+        decisionStore.saveCampaign(campaign);
+      }
       decisionStore.close();
       console.log(formatResearchDecision(decision));
-      if (!budget || decision.decision === "stop" || decision.goalStatus === "blocked" || (Date.now() - started) / 60_000 >= budget) break;
+      if (terminal) break;
     } while (true);
   });
 research.command("propose")
