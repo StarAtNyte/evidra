@@ -1562,12 +1562,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (request.startsWith("/memory search ")) {
-      const query = request.slice("/memory search ".length).trim().toLowerCase();
+      const query = request.slice("/memory search ".length).trim();
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      const claims = store.claims().filter((claim) => JSON.stringify(claim.payload).toLowerCase().includes(query)).slice(0, 20);
-      const hypotheses = store.hypotheses().filter((hypothesis) => JSON.stringify(hypothesis.payload).toLowerCase().includes(query)).slice(0, 20);
+      const matches = store.searchMemory(query, 20);
       store.close();
-      append("assistant", [...claims.map((claim) => `claim ${claim.id}: ${String((claim.payload as { statement?: string }).statement ?? "")}`), ...hypotheses.map((hypothesis) => `hypothesis ${hypothesis.id}: ${String((hypothesis.payload as { title?: string }).title ?? "")}`)].join("\n") || "No matching research memory.");
+      append("assistant", matches.map((match) => `${match.kind} ${match.id}: ${String((match.payload as { statement?: string; title?: string; url?: string }).statement ?? (match.payload as { title?: string }).title ?? (match.payload as { url?: string }).url ?? "")}`).join("\n") || "No matching research memory.");
       return;
     }
     if (request === "/run" || request.startsWith("/run ") || request === "/shell" || request.startsWith("/shell ")) {

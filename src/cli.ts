@@ -124,6 +124,15 @@ sources.command("add").argument("<url>").action(async (url: string) => {
 });
 program.addCommand(sources);
 
+const memory = new Command("memory").description("Search durable research claims, hypotheses, and sources");
+memory.command("search").argument("<query>").action((query: string) => {
+  const store = new ResearchStore(statePath);
+  const matches = store.searchMemory(query, 20);
+  console.log(matches.length ? matches.map((match) => `${match.kind} ${match.id} · ${JSON.stringify(match.payload)}`).join("\n") : "No matching research memory.");
+  store.close();
+});
+program.addCommand(memory);
+
 const submission = new Command("submission").description("Prepare, approve, and validate safe submission bundles");
 submission.command("status").action(() => {
   const store = new ResearchStore(statePath);

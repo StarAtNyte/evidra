@@ -438,6 +438,20 @@ export class ResearchStore {
     return rows.map((row) => ({ id: row.id, payload: JSON.parse(row.payload_json), createdAt: row.created_at }));
   }
 
+  /** Database-backed keyword retrieval for durable research memory. */
+  searchMemory(query: string, limit = 20): Array<{ kind: "claim" | "hypothesis" | "source"; id: string; payload: unknown; createdAt: string }> {
+    const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean).map((term) => term.replace(/[\\%_]/g, "\\$&"));
+    if (!terms.length) return [];
+    const where = terms.map(() => "lower(payload_json) LIKE ? ESCAPE '\\'").join(" AND ");
+    const parameters = terms.map((term) => `%${term}%`);
+    const collect = (table: "evidence_claims" | "hypotheses" | "research_sources", kind: "claim" | "hypothesis" | "source") => {
+      const rows = this.db.prepare(`SELECT id, payload_json, created_at FROM ${table} WHERE ${where} ORDER BY created_at DESC LIMIT ?`).all(...parameters, Math.max(1, Math.min(limit, 200))) as Array<{ id: string; payload_json: string; created_at: string }>;
+      return rows.map((row) => ({ kind, id: row.id, payload: JSON.parse(row.payload_json), createdAt: row.created_at }));
+    };
+    return [...collect("evidence_claims", "claim"), ...collect("hypotheses", "hypothesis"), ...collect("research_sources", "source")]
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, Math.max(1, Math.min(limit, 200)));
+  }
+
   counts(): { hypotheses: number; experiments: number; runs: number; artifacts: number; decisions: number; claims: number; edges: number; sources: number } {
     const count = (table: string): number => (this.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
     return { hypotheses: count("hypotheses"), experiments: count("experiments"), runs: count("runs"), artifacts: count("artifacts"), decisions: count("decisions"), claims: count("evidence_claims"), edges: count("research_edges"), sources: count("research_sources") };

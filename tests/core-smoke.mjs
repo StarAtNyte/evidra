@@ -70,6 +70,22 @@ test("submission approval is durable and cannot approve an invalid bundle", () =
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("research memory search is durable and searches claims, hypotheses, and sources", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-memory-"));
+  try {
+    const db = join(root, ".sota", "database.sqlite");
+    const store = new ResearchStore(db);
+    store.saveClaim({ id: "claim-1", payload: { statement: "Group holdout reduces leakage risk", sourceType: "observation" } });
+    store.saveHypothesis({ id: "hyp-1", payload: { title: "Group-aware validation", mechanism: "Avoid duplicate groups" } });
+    store.saveSource({ id: "src-1", payload: { title: "Validation paper", url: "https://example.com/paper", claims: ["group holdout"] } });
+    assert.equal(store.searchMemory("group", 20).length, 3);
+    store.close();
+    const reopened = new ResearchStore(db);
+    assert.equal(reopened.searchMemory("leakage risk", 20)[0].id, "claim-1");
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("project-local competition manifests replace hardcoded adapters", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-competition-"));
   try {
