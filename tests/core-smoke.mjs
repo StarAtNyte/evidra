@@ -19,6 +19,7 @@ import { executeResearchTool, RESEARCH_TOOLS } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
 import { LocalExecutor, parseMetricOutput } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
+import { captureEnvironment } from "../dist/core/environment.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -302,4 +303,21 @@ test("process interruption terminates the detached worker group", async () => {
   control.terminate();
   const result = await promise;
   assert.notEqual(result.exitCode, 0);
+});
+
+test("environment snapshots preserve reproducibility metadata without secrets", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-environment-"));
+  try {
+    writeFileSync(join(root, "package-lock.json"), "{\"lockfileVersion\": 3}\n");
+    const previous = process.env.EVIDRA_SMOKE_SECRET;
+    process.env.EVIDRA_SMOKE_SECRET = "must-not-be-recorded";
+    const snapshot = await captureEnvironment(root, root, ["python", "train.py"], "local", "none");
+    if (previous === undefined) delete process.env.EVIDRA_SMOKE_SECRET;
+    else process.env.EVIDRA_SMOKE_SECRET = previous;
+    assert.equal(snapshot.executor, "local");
+    assert.equal(snapshot.gpu, "none");
+    assert.match(snapshot.lockfiles["package-lock.json"], /^sha256:/);
+    assert.equal(snapshot.environment.EVIDRA_SMOKE_SECRET, undefined);
+    assert.ok(snapshot.probes.node);
+  } finally { delete process.env.EVIDRA_SMOKE_SECRET; rmSync(root, { recursive: true, force: true }); }
 });

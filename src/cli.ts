@@ -17,6 +17,7 @@ import { runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
 import { executorFor, parseMetricOutput } from "./core/executors.js";
 import { sha256File } from "./core/evidence.js";
+import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { startInteractive } from "./session/interactive.js";
@@ -430,7 +431,8 @@ experiment.command("run")
     const artifactDir = join(root, ".sota", "artifacts", result.runId);
     mkdirSync(artifactDir, { recursive: true });
     const artifactPaths: Record<string, string> = {};
-    for (const [name, content] of Object.entries({ "stdout.log": result.stdout ?? "", "stderr.log": result.stderr ?? "", "metrics.json": `${JSON.stringify(result.metrics, null, 2)}\n`, ...(evaluator ? { "evaluator.stdout.log": evaluator.stdout, "evaluator.stderr.log": evaluator.stderr } : {}) })) {
+    const environment = await captureEnvironment(root, result.cwd ?? experimentCwd, result.command ?? command, manifest.resources.executor, manifest.resources.gpu);
+    for (const [name, content] of Object.entries({ "stdout.log": result.stdout ?? "", "stderr.log": result.stderr ?? "", "metrics.json": `${JSON.stringify(result.metrics, null, 2)}\n`, "environment.json": `${JSON.stringify(environment, null, 2)}\n`, ...(evaluator ? { "evaluator.stdout.log": evaluator.stdout, "evaluator.stderr.log": evaluator.stderr } : {}) })) {
       const path = join(artifactDir, name);
       writeFileSync(path, content);
       artifactPaths[name] = path;

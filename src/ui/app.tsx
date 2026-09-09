@@ -11,6 +11,7 @@ import { executorFor, parseMetricOutput } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
 import { auditExperiment } from "../core/validation.js";
 import { sha256File } from "../core/evidence.js";
+import { captureEnvironment } from "../core/environment.js";
 import { compareRuns } from "../core/statistics.js";
 import { recoveryDelay, recoveryPlan } from "../core/recovery.js";
 import { prepareSubmission, validateSubmissionBundle } from "../core/submissions.js";
@@ -672,17 +673,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       writeFileSync(evaluatorStdoutPath, evaluatorOutput.stdout);
       writeFileSync(evaluatorStderrPath, evaluatorOutput.stderr);
     }
-    writeFileSync(environmentPath, `${JSON.stringify({
-      capturedAt: new Date().toISOString(),
-      node: process.version,
-      platform: process.platform,
-      arch: process.arch,
-      cwd: result.cwd,
-      command: result.command,
-      executor: manifest.resources.executor,
-      gpu: manifest.resources.gpu ?? null,
-      environment: Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(TOKEN|KEY|SECRET|PASSWORD|COOKIE|AUTH)/i.test(key))),
-    }, null, 2)}\n`);
+    const environment = await captureEnvironment(root, result.cwd ?? experimentCwd, result.command ?? command, manifest.resources.executor, manifest.resources.gpu);
+    writeFileSync(environmentPath, `${JSON.stringify(environment, null, 2)}\n`);
     const recordedResult = {
       ...result,
       recoveryAttempts: attempt,
