@@ -13,6 +13,7 @@ export interface ExecAgentOptions {
   sandbox?: "read-only" | "workspace-write";
   onThread?: (threadId: string) => void;
   limitPolicy?: "wait" | "fallback" | "stop";
+  timeoutMs?: number;
 }
 
 export class ProviderUsageLimitError extends Error {
@@ -24,6 +25,11 @@ export class ProviderUsageLimitError extends Error {
 
 export function isProviderUsageLimit(error: unknown): boolean {
   return error instanceof ProviderUsageLimitError || /rate limit|usage limit|quota|too many requests|not enough credits/i.test(error instanceof Error ? error.message : String(error));
+}
+
+export function isRetryableAgentError(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return isProviderUsageLimit(error) || /network|unreachable|timed out|timeout|stream disconnected|connection termination|temporarily|did not return|invalid decision|returned invalid|turn failed|econnreset|ePIPE|503|502|504/i.test(text);
 }
 
 export function providerRetryAfterMs(error: unknown): number {
@@ -159,6 +165,11 @@ export class CodexExecAgent {
 
   private async runCodexSdk(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
     const abort = new AbortController();
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; abort.abort(); }, this.options.timeoutMs ?? 15 * 60_000);
+    const signalHandler = (): void => { abort.abort(); };
+    process.once("SIGTERM", signalHandler);
+    process.once("SIGINT", signalHandler);
     let paused = false;
     let settled = false;
     const control: ProcessControl = {
@@ -203,7 +214,7 @@ export class CodexExecAgent {
       return { provider: this.options.provider, threadId, output: finalText, usage };
     } catch (error) {
       settled = true;
-      if (abort.signal.aborted) throw new Error("Codex request interrupted.");
+      if (abort.signal.aborted) throw new Error(timedOut ? "Codex request timed out." : "Codex request interrupted.");
       const diagnostic = error instanceof Error ? error.message : String(error);
       if (/rate limit|usage limit|quota|too many requests|not enough credits|429/i.test(diagnostic)) {
         const retryAfterMs = providerRetryAfterMs(new Error(diagnostic));
@@ -212,6 +223,10 @@ export class CodexExecAgent {
       if (/not supported when using Codex with a ChatGPT account/i.test(diagnostic)) throw new Error("The selected model is not available for your ChatGPT Codex account. Use /model default.");
       if (/stream disconnected|network|timed out|upstream connect error|connection termination/i.test(diagnostic)) throw new Error("Codex is unreachable right now. Check your connection, then try again.");
       throw error;
+    } finally {
+      clearTimeout(timeout);
+      process.removeListener("SIGTERM", signalHandler);
+      process.removeListener("SIGINT", signalHandler);
     }
   }
 

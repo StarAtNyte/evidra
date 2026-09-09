@@ -2,7 +2,7 @@ import { z } from "zod";
 import { cpus, totalmem } from "node:os";
 import { ResearchStore } from "../core/store.js";
 import type { AgentProvider, ExecAgentOptions } from "./codex-exec.js";
-import { runWithLocalFallback } from "./codex-exec.js";
+import { isProviderUsageLimit, isRetryableAgentError, resolveLocalFallbackModel, runWithLocalFallback } from "./codex-exec.js";
 import type { ProcessControl } from "../core/process.js";
 import type { AutonomyLevel } from "../core/permissions.js";
 
@@ -109,15 +109,36 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
   store.close();
   options.onProgress?.(`Research lane · ${role} · investigating...`);
   try {
-    const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective), context }, {
-      provider: options.provider,
-      model: options.model,
-      limitPolicy: options.limitPolicy,
-      reasoningEffort: options.reasoningEffort,
-      cwd: options.cwd,
-      sandbox: "read-only",
-    }, options.fallbackLocalModel, options.onProgress, options.onProcess);
-    const parsed = ResearchLaneReportSchema.parse(parseJson(result.output));
+    let provider = options.provider;
+    let model = options.model;
+    let parsed: z.infer<typeof ResearchLaneReportSchema> | undefined;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 3 && !parsed; attempt += 1) {
+      try {
+        const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective), context }, {
+          provider,
+          model,
+          limitPolicy: options.limitPolicy,
+          reasoningEffort: options.reasoningEffort,
+          cwd: options.cwd,
+          sandbox: "read-only",
+        }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
+        parsed = ResearchLaneReportSchema.parse(parseJson(result.output));
+      } catch (error) {
+        lastError = error;
+        if (!isRetryableAgentError(error) || attempt === 3 || (isProviderUsageLimit(error) && options.limitPolicy === "wait")) throw error;
+        if (attempt === 1 && provider === "codex" && options.fallbackLocalModel && options.limitPolicy === "fallback" && !isProviderUsageLimit(error)) {
+          model = await resolveLocalFallbackModel(options.fallbackLocalModel);
+          provider = "local";
+          options.onProgress?.(`Research lane · ${role} · changing route to local/${model}...`);
+        } else {
+          const delayMs = attempt * 1_000;
+          options.onProgress?.(`Research lane · ${role} · retry ${attempt}/2 in ${delayMs / 1000}s...`);
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+    }
+    if (!parsed) throw lastError instanceof Error ? lastError : new Error("Lane did not produce a validated report.");
     const report: ResearchLaneReport = { ...parsed, role, status: "completed" };
     saveLaneEvent(options.storePath, role, report);
     const completed = new ResearchStore(options.storePath);

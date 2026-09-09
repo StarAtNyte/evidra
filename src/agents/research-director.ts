@@ -1,5 +1,5 @@
 import { ResearchDecisionSchema, type AgentResult, type ResearchDecision, type AgentTask } from "../core/types.js";
-import { runWithLocalFallback, type AgentProvider } from "./codex-exec.js";
+import { isProviderUsageLimit, isRetryableAgentError, runWithLocalFallback, type AgentProvider } from "./codex-exec.js";
 import type { ProcessControl } from "../core/process.js";
 import { RESEARCH_TOOLS, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
 
@@ -68,13 +68,27 @@ Rules: propose no more than five hypotheses; never invent measurements; distingu
     availableTools: options.executeTool ? RESEARCH_TOOLS : [],
   };
   for (let round = 0; round <= maxToolRounds; round += 1) {
-    const result: AgentResult = await runWithLocalFallback({
-      ...task,
-      context: workingContext,
-      objective: `${objective}\n\n${contract}`,
-    }, options, options.fallbackLocalModel, onProgress, options.onProcess);
-    const parsed = ResearchDecisionSchema.safeParse(extractJson(result.output));
-    if (!parsed.success) throw new Error(`Research director returned invalid decision: ${parsed.error.issues.map((issue) => issue.path.join(".") + " " + issue.message).join("; ")}`);
+    let parsed: ReturnType<typeof ResearchDecisionSchema.safeParse> | undefined;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const result: AgentResult = await runWithLocalFallback({
+          ...task,
+          context: workingContext,
+          objective: `${objective}\n\n${contract}`,
+        }, options, options.fallbackLocalModel, onProgress, options.onProcess);
+        parsed = ResearchDecisionSchema.safeParse(extractJson(result.output));
+        if (parsed.success) break;
+        throw new Error(`Research director returned invalid decision: ${parsed.error.issues.map((issue) => issue.path.join(".") + " " + issue.message).join("; ")}`);
+      } catch (error) {
+        lastError = error;
+        if (!isRetryableAgentError(error) || attempt === 3 || (isProviderUsageLimit(error) && options.limitPolicy === "wait")) throw error;
+        const delayMs = attempt * 1_000;
+        onProgress?.(`Director retry ${attempt}/2 in ${delayMs / 1000}s...`);
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    if (!parsed || !parsed.success) throw lastError instanceof Error ? lastError : new Error("Research director did not return a valid decision.");
     const decision = parsed.data;
     if (!decision.toolCalls.length || !options.executeTool) return { ...decision, toolCalls: [] };
     if (round === maxToolRounds) throw new Error(`Research director exceeded the ${maxToolRounds}-round tool limit.`);
