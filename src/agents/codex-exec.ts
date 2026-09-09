@@ -138,6 +138,7 @@ export class CodexExecAgent {
       let stdout = "";
       let stderr = "";
       let finalText = "";
+      const humanOutput: string[] = [];
 
       const handleLine = (line: string): void => {
         if (!line.trim()) return;
@@ -151,9 +152,13 @@ export class CodexExecAgent {
             onProgress?.("Thinking...");
           } else if (event.type === "turn.completed") {
             onProgress?.("Completed.");
+          } else if (event.type) {
+            // Codex's JSONL transport includes lifecycle notifications such as
+            // thread.started and turn.started. They are protocol, not assistant output.
           }
         } catch {
-          // Codex progress is JSONL; ignore non-JSON noise and retain it for diagnostics.
+          // Preserve only genuinely human-readable non-JSON output as a fallback.
+          humanOutput.push(line);
         }
       };
 
@@ -172,7 +177,7 @@ export class CodexExecAgent {
       child.on("close", (code) => {
         settled = true;
         if (code !== 0) {
-          const diagnostic = `${stderr}\n${stdout}`.replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, "").trim();
+          const diagnostic = `${stderr}\n${humanOutput.join("\n")}`.replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, "").trim();
           if (/not supported when using Codex with a ChatGPT account/i.test(diagnostic)) {
             reject(new Error(`The selected model is not available for your ChatGPT Codex account. Use /model default.`));
           } else if (/stream disconnected|network|timed out|upstream connect error|connection termination/i.test(diagnostic)) {
@@ -182,7 +187,7 @@ export class CodexExecAgent {
           }
           return;
         }
-        resolve({ provider: this.options.provider, output: finalText || stdout.trim(), usage: undefined });
+        resolve({ provider: this.options.provider, output: finalText || humanOutput.join("\n").trim(), usage: undefined });
       });
     });
   }

@@ -244,6 +244,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const loopTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const loopBusy = useRef(false);
   const activeProcess = useRef<ProcessControl | null>(null);
+  const interruptedProcess = useRef(false);
   const firstToken = input.split(/\s+/)[0];
   const suggestions: readonly (readonly [string, string])[] = input.startsWith("/ ") ? [] : input.startsWith("/model ")
     ? availableModels
@@ -335,6 +336,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (!picker && key.escape && busy && activeProcess.current) {
+      interruptedProcess.current = true;
       activeProcess.current.terminate();
       append("assistant", "Interrupted · stopping the active process and its child workers.");
       setProgress("Interrupted · stopping...");
@@ -398,6 +400,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
   });
 
   const append = (role: Message["role"], text: string): void => setMessages((current) => [...current, { role, text }]);
+  const appendError = (error: unknown): void => {
+    if (interruptedProcess.current) return;
+    append("assistant", error instanceof Error ? error.message : String(error));
+  };
 
   const activeAdapter = () => {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -702,6 +708,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const request = value.trim();
     setInput("");
     if (!request || busy) return;
+    interruptedProcess.current = false;
     append("user", request);
     if (setupStep) {
       if (request === "/cancel") {
@@ -723,7 +730,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       setBusy(true); setProgress("Starting autonomous research...");
       try {
         await runAutonomousCycle(campaign);
-      } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
+      } catch (error) { appendError(error); }
       finally { setBusy(false); setProgress(""); }
       return;
     }
@@ -971,7 +978,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const competitionId = request.split(/\s+/)[2] ?? "whestbench";
       let adapter;
       try { adapter = getCompetitionAdapter(competitionId); }
-      catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); return; }
+      catch (error) { appendError(error); return; }
       const projectDir = join(root, "competitions", adapter.id);
       mkdirSync(join(projectDir, "experiments"), { recursive: true });
       mkdirSync(join(projectDir, "reports"), { recursive: true });
@@ -1063,7 +1070,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         store.appendEvent("baseline.completed", { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr });
         store.close();
         append("assistant", `Baseline ${result.exitCode === 0 ? "completed" : "failed"}.\n${result.stdout || result.stderr}`);
-      } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
+      } catch (error) { appendError(error); }
       finally { setBusy(false); setProgress(""); }
       return;
     }
@@ -1139,7 +1146,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const audit = auditExperiment(manifest, runResult, { currentCommit: currentCommit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, splitVersion: manifest.splitVersion });
           const gateLines = Object.entries(audit.gates).map(([name, passed]) => `  ${passed ? "✓" : "·"} ${name}`).join("\n");
           append("assistant", `Evidence audit · ${id}\nStatus: ${audit.accepted ? "ACCEPTED" : "NOT ACCEPTED"}\n\n${gateLines}${audit.reasons.length ? `\n\nReasons:\n${audit.reasons.map((reason) => `- ${reason}`).join("\n")}` : ""}`);
-        } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
+        } catch (error) { appendError(error); }
         return;
       }
       if (action === "compare") {
@@ -1157,7 +1164,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         try {
           const comparison = compareRuns(RunResultSchema.parse(baseline.payload), RunResultSchema.parse(candidate.payload), activeAdapter().config.metric.name);
           append("assistant", `Run comparison\n  baseline: ${comparison.baselineRunId} · ${comparison.baseline ?? "missing"}\n  candidate: ${comparison.candidateRunId} · ${comparison.candidate ?? "missing"}\n  delta: ${comparison.delta ?? "missing"}\n  result: ${comparison.direction}\n  evidence: ${comparison.evidence}${comparison.probabilityImproved === undefined ? "" : `\n  probability improved: ${(comparison.probabilityImproved * 100).toFixed(1)}%\n  95% CI: [${comparison.confidenceInterval?.[0].toFixed(6)}, ${comparison.confidenceInterval?.[1].toFixed(6)}]`}\n\n${comparison.note}`);
-        } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
+        } catch (error) { appendError(error); }
         return;
       }
       if (action === "replicate") {
@@ -1188,7 +1195,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           store.saveExperiment({ id, payload: { ...manifest, status: "proposed", replicationOf: parentManifest.id } });
           store.close();
           append("assistant", `Independent replication manifest created\n${manifestSummary(manifest)}\nParent: ${parentManifest.id}\nNext: /experiment run ${id}`);
-        } catch (error) { store.close(); append("assistant", error instanceof Error ? error.message : String(error)); }
+        } catch (error) { store.close(); appendError(error); }
         return;
       }
       if (action === "run") {
@@ -1197,7 +1204,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (!id) { append("assistant", "Usage: /experiment run <id>"); return; }
         setBusy(true);
         try { append("assistant", await executeExperiment(id)); }
-        catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
+        catch (error) { appendError(error); }
         finally { setBusy(false); setProgress(""); }
         return;
       }
@@ -1287,7 +1294,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         try {
           const bundle = prepareSubmission(root, experimentId, ExperimentManifestSchema.parse(experiment.payload), RunResultSchema.parse(run.payload), activeAdapter().config);
           append("assistant", `Submission bundle prepared\n  id: ${bundle.id}\n  path: ${bundle.path}\n  next: /submission validate ${bundle.id}\n\nExternal submission remains approval-gated.`);
-        } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
+        } catch (error) { appendError(error); }
         return;
       }
     }
@@ -1416,7 +1423,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         }, (control) => { activeProcess.current = control; });
         const output = [result.stdout.trim(), result.stderr.trim() ? `stderr:\n${result.stderr.trim()}` : ""].filter(Boolean).join("\n");
         append("assistant", `Command exited ${result.exitCode} in ${(result.durationMs / 1000).toFixed(1)}s\n$ ${command.join(" ")}\n${output || "(no output)"}`);
-      } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
+      } catch (error) { appendError(error); }
       finally { activeProcess.current = null; setBusy(false); setProgress(""); }
       return;
     }
@@ -1448,7 +1455,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (objective === "next") {
         ensureActiveProject(); setBusy(true); setProgress("Starting empirical research cycle...");
         try { append("assistant", (await runResearchCycle("Inspect the current workspace and choose the highest-information next research action.")).text); }
-        catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
+        catch (error) { appendError(error); }
         finally { setBusy(false); setProgress(""); }
         return;
       }
