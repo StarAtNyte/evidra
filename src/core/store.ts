@@ -145,6 +145,12 @@ export class ResearchStore {
     this.appendEvent(`run.${run.status}`, { id: run.id, experimentId: run.experimentId, payload: run.payload });
   }
 
+  saveArtifact(artifact: { id: string; runId: string; name: string; path: string; checksum: string }): void {
+    this.db.prepare(`INSERT OR REPLACE INTO artifacts (id, run_id, name, path, checksum, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(artifact.id, artifact.runId, artifact.name, artifact.path, artifact.checksum, new Date().toISOString());
+    this.appendEvent("artifact.created", artifact);
+  }
+
   saveDecision(decision: unknown): number {
     const result = this.db.prepare(`INSERT INTO decisions (decision_json, created_at) VALUES (?, ?)`)
       .run(JSON.stringify(decision), new Date().toISOString());
@@ -198,6 +204,13 @@ export class ResearchStore {
   runs(): Array<{ id: string; experimentId: string; status: string; payload: unknown; updatedAt: string }> {
     const rows = this.db.prepare("SELECT id, experiment_id, status, payload_json, updated_at FROM runs ORDER BY updated_at DESC").all() as Array<{ id: string; experiment_id: string; status: string; payload_json: string; updated_at: string }>;
     return rows.map((row) => ({ id: row.id, experimentId: row.experiment_id, status: row.status, payload: JSON.parse(row.payload_json), updatedAt: row.updated_at }));
+  }
+
+  artifacts(runId?: string): Array<{ id: string; runId: string; name: string; path: string; checksum: string; createdAt: string }> {
+    const rows = (runId
+      ? this.db.prepare("SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at DESC").all(runId)
+      : this.db.prepare("SELECT * FROM artifacts ORDER BY created_at DESC").all()) as Array<{ id: string; run_id: string; name: string; path: string; checksum: string; created_at: string }>;
+    return rows.map((row) => ({ id: row.id, runId: row.run_id, name: row.name, path: row.path, checksum: row.checksum, createdAt: row.created_at }));
   }
 
   sources(): Array<{ id: string; payload: unknown; createdAt: string }> {

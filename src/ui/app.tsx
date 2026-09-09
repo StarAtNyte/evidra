@@ -9,6 +9,7 @@ import { runProcess, splitCommandLine, type ProcessControl } from "../core/proce
 import { executorFor } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
 import { auditExperiment } from "../core/validation.js";
+import { sha256File } from "../core/evidence.js";
 import { createExperimentManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { whestbenchConfig } from "../competitions/whestbench.js";
@@ -59,7 +60,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
   "/research": [["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start research scheduling"], ["/research pause", "Pause research scheduling"]],
   "/challenge": [["/challenge status", "Show challenge state"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge baseline", "Run the canonical baseline"], ["/challenge start", "Start challenge zero-to-hero flow"]],
-  "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment audit", "Audit evidence gates"]],
+  "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment audit", "Audit evidence gates"]],
 };
 
 function loadConfig(path: string): SessionConfig {
@@ -326,11 +327,26 @@ export function App({ root }: { root: string }): React.JSX.Element {
     setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
     const result = await executorFor(manifest.resources.executor).run(manifest, experimentCwd, command, (control) => { activeProcess.current = control; });
     activeProcess.current = null;
+    const artifactDir = join(root, ".sota", "artifacts", result.runId);
+    mkdirSync(artifactDir, { recursive: true });
+    const stdoutPath = join(artifactDir, "stdout.log");
+    const stderrPath = join(artifactDir, "stderr.log");
+    const metricsPath = join(artifactDir, "metrics.json");
+    writeFileSync(stdoutPath, result.stdout ?? "");
+    writeFileSync(stderrPath, result.stderr ?? "");
+    writeFileSync(metricsPath, `${JSON.stringify(result.metrics, null, 2)}\n`);
+    const recordedResult = {
+      ...result,
+      artifacts: { "stdout.log": stdoutPath, "stderr.log": stderrPath, "metrics.json": metricsPath },
+    };
     const resultStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    resultStore.saveRun({ id: result.runId, experimentId: id, status: result.status, payload: result });
-    resultStore.saveExperiment({ id, payload: { ...entryPayload, status: result.status === "completed" ? "completed" : "failed", runId: result.runId, worktreePath: experimentCwd } });
+    resultStore.saveRun({ id: result.runId, experimentId: id, status: recordedResult.status, payload: recordedResult });
+    for (const [name, path] of Object.entries(recordedResult.artifacts)) {
+      resultStore.saveArtifact({ id: `${result.runId}-${name}`, runId: result.runId, name, path, checksum: sha256File(path) });
+    }
+    resultStore.saveExperiment({ id, payload: { ...entryPayload, status: recordedResult.status === "completed" ? "completed" : "failed", runId: result.runId, worktreePath: experimentCwd } });
     resultStore.close();
-    return `\n\nExperiment ${id} ${result.status}\nRun: ${result.runId}\nExit code: ${result.exitCode}\nDuration: ${result.durationSeconds.toFixed(1)}s\nFailure: ${result.failureClass ?? "none"}`;
+    return `\n\nExperiment ${id} ${recordedResult.status}\nRun: ${recordedResult.runId}\nExit code: ${recordedResult.exitCode}\nDuration: ${recordedResult.durationSeconds.toFixed(1)}s\nMetric: ${recordedResult.metrics.final_layer_mse ?? "not parsed"}\nArtifacts: ${Object.keys(recordedResult.artifacts).join(", ")}\nFailure: ${recordedResult.failureClass ?? "none"}`;
   };
 
   const runAutonomousCycle = async (): Promise<void> => {
@@ -685,6 +701,37 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const gateLines = Object.entries(audit.gates).map(([name, passed]) => `  ${passed ? "✓" : "·"} ${name}`).join("\n");
           append("assistant", `Evidence audit · ${id}\nStatus: ${audit.accepted ? "ACCEPTED" : "NOT ACCEPTED"}\n\n${gateLines}${audit.reasons.length ? `\n\nReasons:\n${audit.reasons.map((reason) => `- ${reason}`).join("\n")}` : ""}`);
         } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
+        return;
+      }
+      if (action === "replicate") {
+        const parentId = parts[2];
+        const parent = store.experiments().find((candidate) => candidate.id === parentId);
+        if (!parent) { store.close(); append("assistant", `Experiment not found: ${parentId ?? "(missing id)"}`); return; }
+        try {
+          const parentManifest = ExperimentManifestSchema.parse(parent.payload);
+          const id = `rep_${Date.now()}_${parentManifest.hypothesisId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 28)}`;
+          const manifest = createExperimentManifest({
+            id,
+            parent: parentManifest.id,
+            hypothesisId: parentManifest.hypothesisId,
+            gitCommit: parentManifest.gitCommit,
+            datasetVersion: parentManifest.datasetVersion,
+            splitVersion: parentManifest.splitVersion,
+            configPatch: parentManifest.change.configPatch,
+            executor: parentManifest.resources.executor,
+            gpu: parentManifest.resources.gpu,
+            timeoutMinutes: parentManifest.resources.timeoutMinutes,
+            folds: parentManifest.evaluation.folds,
+            seeds: [...parentManifest.evaluation.seeds, Date.now() % 100000],
+            requiredArtifacts: parentManifest.evaluation.requiredArtifacts,
+            minimumPrimaryDelta: parentManifest.acceptance.minimumPrimaryDelta,
+            maximumRegressionShift: parentManifest.acceptance.maximumRegressionShift,
+            requireReplication: false,
+          }, whestbenchConfig);
+          store.saveExperiment({ id, payload: { ...manifest, status: "proposed", replicationOf: parentManifest.id } });
+          store.close();
+          append("assistant", `Independent replication manifest created\n${manifestSummary(manifest)}\nParent: ${parentManifest.id}\nNext: /experiment run ${id}`);
+        } catch (error) { store.close(); append("assistant", error instanceof Error ? error.message : String(error)); }
         return;
       }
       if (action === "run") {
