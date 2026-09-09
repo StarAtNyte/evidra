@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
 import { createExperimentManifest, manifestSummary } from "./core/experiment-manifest.js";
+import { activePhaseGoal, definePhaseGoals } from "./core/phase-goals.js";
+import { PhaseGoalSchema } from "./core/types.js";
 import { whestbenchConfig } from "./competitions/whestbench.js";
 import { runProcess } from "./core/process.js";
 import { ensureWorktree } from "./core/worktree.js";
@@ -102,6 +104,10 @@ research.command("propose")
   .action(async (objective: string) => {
     const store = new ResearchStore(statePath);
     const project = store.project();
+    if (!store.phaseGoals().length) {
+      for (const goal of definePhaseGoals(objective, "challenge")) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
+    }
+    const phaseGoal = activePhaseGoal(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)));
     console.log("Research 1/3 · inspecting repository...");
     const gitStatus = await runProcess(["git", "status", "--short"], root);
     const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
@@ -123,9 +129,25 @@ research.command("propose")
       constraints: { no_submission: true, no_file_edits: true },
       recentEvents,
       observation,
+      ultimateGoal: objective,
+      phaseGoal: phaseGoal ?? null,
     }, { provider: "codex", model: "default", reasoningEffort: "medium", fallbackLocalModel: "qwen3.6:27b", cwd: root });
     const decisionStore = new ResearchStore(statePath);
     materializeResearchDecision(decisionStore, decision);
+    if (phaseGoal) {
+      const now = new Date().toISOString();
+      decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: decision.goalStatus === "met" ? "met" : "active", payload: { ...phaseGoal, status: decision.goalStatus === "met" ? "met" : "active", attempts: phaseGoal.attempts + 1, updatedAt: now } });
+    }
+    if (phaseGoal && decision.goalStatus === "met") {
+      const goals = decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));
+      const index = goals.findIndex((goal) => goal.id === phaseGoal.id);
+      const now = new Date().toISOString();
+      if (index >= 0) {
+        decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: "met", payload: { ...goals[index], status: "met", updatedAt: now } });
+        const next = goals[index + 1];
+        if (next) decisionStore.savePhaseGoal({ id: next.id, phase: next.phase, status: "active", payload: { ...next, status: "active", updatedAt: now } });
+      }
+    }
     decisionStore.close();
     console.log(formatResearchDecision(decision));
   });

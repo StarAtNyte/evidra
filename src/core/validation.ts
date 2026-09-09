@@ -5,6 +5,8 @@ export interface ValidationContext {
   currentCommit: string;
   datasetVersion: string;
   splitVersion: string;
+  leakageAuditPassed?: boolean;
+  reviewerApproved?: boolean;
 }
 
 export function auditExperiment(manifest: ExperimentManifest, run: RunResult, context: ValidationContext): { accepted: boolean; reasons: string[]; gates: Record<string, boolean> } {
@@ -15,8 +17,8 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
     outputsComplete: manifest.evaluation.requiredArtifacts.every((artifact) => artifact in run.artifacts),
     predictionsValid: run.status === "completed" && run.exitCode === 0,
     metricsRecomputed: Object.keys(run.metrics).length > 0,
-    leakageAuditPassed: false,
-    reviewerApproved: false,
+    leakageAuditPassed: context.leakageAuditPassed ?? false,
+    reviewerApproved: context.reviewerApproved ?? false,
   };
   const result = evaluateEvidenceGate(manifest, gates);
   return { ...result, gates };

@@ -10,12 +10,14 @@ import { executorFor } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
 import { auditExperiment } from "../core/validation.js";
 import { sha256File } from "../core/evidence.js";
+import { compareRuns } from "../core/statistics.js";
+import { activePhaseGoal, definePhaseGoals } from "../core/phase-goals.js";
 import { createExperimentManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { whestbenchConfig } from "../competitions/whestbench.js";
 import { checkProvider, codexLoginStatus, listCodexModels, listLocalModels, loginCodex, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
-import { ExperimentManifestSchema, RunResultSchema } from "../core/types.js";
+import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string };
 type WorkbenchMode = "research" | "challenge";
@@ -60,7 +62,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
   "/research": [["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start research scheduling"], ["/research pause", "Pause research scheduling"]],
   "/challenge": [["/challenge status", "Show challenge state"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge baseline", "Run the canonical baseline"], ["/challenge start", "Start challenge zero-to-hero flow"]],
-  "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment audit", "Audit evidence gates"]],
+  "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"]],
 };
 
 function loadConfig(path: string): SessionConfig {
@@ -273,6 +275,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     setProgress("Research 3/3 · asking the director to analyze observed evidence and select the next experiment...");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const project = store.project();
+    if (!store.phaseGoals().length) {
+      for (const goal of definePhaseGoals(objective, config.mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
+    }
+    const phaseGoal = activePhaseGoal(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)));
     const recentEvents = store.recentEvents(20);
     store.close();
     await checkProvider({ provider: config.provider, model: config.model, cwd: root });
@@ -282,10 +288,26 @@ export function App({ root }: { root: string }): React.JSX.Element {
       competition: whestbenchConfig,
       recentEvents,
       observation,
+      ultimateGoal: objective,
+      phaseGoal: phaseGoal ?? null,
       constraints: { no_submission: true, no_file_edits: true },
     }, { provider: config.provider, model: config.model, reasoningEffort: config.reasoningEffort, cwd: root, fallbackLocalModel: "qwen3.6:27b" }, setProgress);
     const decisionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     materializeResearchDecision(decisionStore, decision);
+    if (phaseGoal) {
+      const now = new Date().toISOString();
+      decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: decision.goalStatus === "met" ? "met" : "active", payload: { ...phaseGoal, status: decision.goalStatus === "met" ? "met" : "active", attempts: phaseGoal.attempts + 1, updatedAt: now } });
+    }
+    if (phaseGoal && decision.goalStatus === "met") {
+      const goals = decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));
+      const index = goals.findIndex((goal) => goal.id === phaseGoal.id);
+      const now = new Date().toISOString();
+      if (index >= 0) {
+        decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: "met", payload: { ...goals[index], status: "met", updatedAt: now } });
+        const next = goals[index + 1];
+        if (next) decisionStore.savePhaseGoal({ id: next.id, phase: next.phase, status: "active", payload: { ...next, status: "active", updatedAt: now } });
+      }
+    }
     decisionStore.close();
     return formatResearchDecision(decision);
   };
@@ -412,9 +434,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (request === "/mode" || request === "/workbench") {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const counts = store.counts();
+      const activeGoal = activePhaseGoal(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)));
       const recent = store.recentEvents(5).map((event) => `${event.type} · ${event.createdAt}`).join("\n") || "No events yet.";
       store.close();
-      append("assistant", `Evidra Workbench\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\n\nResearch graph\n  hypotheses  ${counts.hypotheses}\n  claims      ${counts.claims}\n  edges       ${counts.edges}\n  sources     ${counts.sources}\n  decisions   ${counts.decisions}\n\nChallenge execution\n  experiments ${counts.experiments}\n  runs        ${counts.runs}\n  artifacts   ${counts.artifacts}\n\nRecent events\n${recent}\n\nUse /mode to switch modes or /permissions to change automation permissions.`);
+      append("assistant", `Evidra Workbench\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\n\nActive phase goal\n  ${activeGoal?.phase ?? "not initialized"}: ${activeGoal?.title ?? "Run /research to define goals"}\n  status: ${activeGoal?.status ?? "pending"}\n  attempts: ${activeGoal?.attempts ?? 0}\n\nResearch graph\n  hypotheses  ${counts.hypotheses}\n  claims      ${counts.claims}\n  edges       ${counts.edges}\n  sources     ${counts.sources}\n  decisions   ${counts.decisions}\n\nChallenge execution\n  experiments ${counts.experiments}\n  runs        ${counts.runs}\n  artifacts   ${counts.artifacts}\n\nRecent events\n${recent}\n\nUse /mode to switch modes or /permissions to change automation permissions.`);
       return;
     }
     if (request === "/thinking" || request.startsWith("/thinking ")) {
@@ -700,6 +723,24 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const audit = auditExperiment(manifest, runResult, { currentCommit: currentCommit.stdout.trim(), datasetVersion: whestbenchConfig.datasetRevision, splitVersion: manifest.splitVersion });
           const gateLines = Object.entries(audit.gates).map(([name, passed]) => `  ${passed ? "✓" : "·"} ${name}`).join("\n");
           append("assistant", `Evidence audit · ${id}\nStatus: ${audit.accepted ? "ACCEPTED" : "NOT ACCEPTED"}\n\n${gateLines}${audit.reasons.length ? `\n\nReasons:\n${audit.reasons.map((reason) => `- ${reason}`).join("\n")}` : ""}`);
+        } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
+        return;
+      }
+      if (action === "compare") {
+        const left = parts[2];
+        const right = parts[3];
+        const resolveRun = (reference: string | undefined) => {
+          if (!reference) return undefined;
+          const experiment = store.experiments().find((candidate) => candidate.id === reference);
+          return store.runs().find((candidate) => candidate.id === reference || candidate.experimentId === experiment?.id);
+        };
+        const baseline = resolveRun(left);
+        const candidate = resolveRun(right);
+        store.close();
+        if (!baseline || !candidate) { append("assistant", "Usage: /experiment compare <baseline-id> <candidate-id> (experiment or run ids accepted)"); return; }
+        try {
+          const comparison = compareRuns(RunResultSchema.parse(baseline.payload), RunResultSchema.parse(candidate.payload), whestbenchConfig.metric.name);
+          append("assistant", `Run comparison\n  baseline: ${comparison.baselineRunId} · ${comparison.baseline ?? "missing"}\n  candidate: ${comparison.candidateRunId} · ${comparison.candidate ?? "missing"}\n  delta: ${comparison.delta ?? "missing"}\n  result: ${comparison.direction}\n  evidence: ${comparison.evidence}\n\n${comparison.note}`);
         } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
         return;
       }

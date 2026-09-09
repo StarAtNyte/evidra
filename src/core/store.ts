@@ -80,6 +80,21 @@ export class ResearchStore {
         current_step TEXT,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS experiment_gates (
+        experiment_id TEXT PRIMARY KEY,
+        leakage_audit_passed INTEGER NOT NULL DEFAULT 0,
+        reviewer_approved INTEGER NOT NULL DEFAULT 0,
+        notes TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS phase_goals (
+        id TEXT PRIMARY KEY,
+        phase TEXT NOT NULL,
+        status TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -149,6 +164,36 @@ export class ResearchStore {
     this.db.prepare(`INSERT OR REPLACE INTO artifacts (id, run_id, name, path, checksum, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
       .run(artifact.id, artifact.runId, artifact.name, artifact.path, artifact.checksum, new Date().toISOString());
     this.appendEvent("artifact.created", artifact);
+  }
+
+  savePhaseGoal(goal: { id: string; phase: string; status: string; payload: unknown }): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`INSERT OR REPLACE INTO phase_goals (id, phase, status, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, COALESCE((SELECT created_at FROM phase_goals WHERE id = ?), ?), ?)`)
+      .run(goal.id, goal.phase, goal.status, JSON.stringify(goal.payload), goal.id, now, now);
+    this.appendEvent("phase_goal.updated", goal.payload);
+  }
+
+  phaseGoals(): Array<{ id: string; phase: string; status: string; payload: unknown; updatedAt: string }> {
+    const rows = this.db.prepare("SELECT id, phase, status, payload_json, updated_at FROM phase_goals ORDER BY rowid ASC").all() as Array<{ id: string; phase: string; status: string; payload_json: string; updated_at: string }>;
+    return rows.map((row) => ({ id: row.id, phase: row.phase, status: row.status, payload: JSON.parse(row.payload_json), updatedAt: row.updated_at }));
+  }
+
+  setExperimentGates(experimentId: string, gates: { leakageAuditPassed?: boolean; reviewerApproved?: boolean; notes?: string }): void {
+    const current = this.experimentGates(experimentId);
+    const updatedAt = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO experiment_gates (experiment_id, leakage_audit_passed, reviewer_approved, notes, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(experiment_id) DO UPDATE SET leakage_audit_passed = excluded.leakage_audit_passed, reviewer_approved = excluded.reviewer_approved, notes = excluded.notes, updated_at = excluded.updated_at
+    `).run(experimentId, (gates.leakageAuditPassed ?? current.leakageAuditPassed) ? 1 : 0, (gates.reviewerApproved ?? current.reviewerApproved) ? 1 : 0, gates.notes ?? current.notes, updatedAt);
+    this.appendEvent("experiment.gates.updated", { experimentId, ...gates, updatedAt });
+  }
+
+  experimentGates(experimentId: string): { leakageAuditPassed: boolean; reviewerApproved: boolean; notes: string; updatedAt: string } {
+    const row = this.db.prepare("SELECT leakage_audit_passed, reviewer_approved, notes, updated_at FROM experiment_gates WHERE experiment_id = ?").get(experimentId) as { leakage_audit_passed: number; reviewer_approved: number; notes: string; updated_at: string } | undefined;
+    return row
+      ? { leakageAuditPassed: row.leakage_audit_passed === 1, reviewerApproved: row.reviewer_approved === 1, notes: row.notes, updatedAt: row.updated_at }
+      : { leakageAuditPassed: false, reviewerApproved: false, notes: "", updatedAt: new Date(0).toISOString() };
   }
 
   saveDecision(decision: unknown): number {

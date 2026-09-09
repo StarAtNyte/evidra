@@ -32,6 +32,8 @@ export async function runResearchDirector(
   };
   const contract = `Return ONLY valid JSON matching this exact shape:
 {
+  "phase": "orientation|baseline|data_audit|validation|hypothesis|implementation|evaluation|replication|promotion",
+  "goalStatus": "active|blocked|met",
   "decision": "inspect|propose|run|replicate|stop",
   "bottleneck": "the current limiting factor",
   "rationale": "evidence-based reasoning",
@@ -62,5 +64,5 @@ export function formatResearchDecision(decision: ResearchDecision): string {
   const hypotheses = decision.hypotheses.length
     ? decision.hypotheses.map((hypothesis, index) => `${index + 1}. ${hypothesis.title}\n   Mechanism: ${hypothesis.mechanism}\n   Test: ${hypothesis.falsificationTest}\n   Expected delta: ${hypothesis.expectedMetricDelta.low} / ${hypothesis.expectedMetricDelta.median} / ${hypothesis.expectedMetricDelta.high}\n   Cost: ${hypothesis.computeCostGpuHours} GPU-hours · Risk: ${hypothesis.implementationRisk} · Leakage: ${hypothesis.leakageRisk}`).join("\n")
     : "No hypotheses proposed.";
-  return `Decision: ${decision.decision}\nBottleneck: ${decision.bottleneck}\n\n${decision.rationale}\n\nHypotheses:\n${hypotheses}\n\nNext action: ${decision.nextAction}`;
+  return `Phase: ${decision.phase} · Goal: ${decision.goalStatus}\nDecision: ${decision.decision}\nBottleneck: ${decision.bottleneck}\n\n${decision.rationale}\n\nHypotheses:\n${hypotheses}\n\nNext action: ${decision.nextAction}`;
 }

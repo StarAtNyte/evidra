@@ -42,6 +42,8 @@ export const ResearchHypothesisSchema = z.object({
 });
 
 export const ResearchDecisionSchema = z.object({
+  phase: z.enum(["orientation", "baseline", "data_audit", "validation", "hypothesis", "implementation", "evaluation", "replication", "promotion"]).default("hypothesis"),
+  goalStatus: z.enum(["active", "blocked", "met"]).default("active"),
   decision: z.enum(["inspect", "propose", "run", "replicate", "stop"]),
   bottleneck: z.string().min(1),
   rationale: z.string().min(1),
@@ -51,6 +53,23 @@ export const ResearchDecisionSchema = z.object({
 });
 
 export type ResearchDecision = z.infer<typeof ResearchDecisionSchema>;
+
+export const ResearchPhaseSchema = z.enum(["orientation", "baseline", "data_audit", "validation", "hypothesis", "implementation", "evaluation", "replication", "promotion"]);
+export type ResearchPhase = z.infer<typeof ResearchPhaseSchema>;
+
+export const PhaseGoalSchema = z.object({
+  id: z.string().min(1),
+  phase: ResearchPhaseSchema,
+  title: z.string().min(1),
+  objective: z.string().min(1),
+  completionCriteria: z.array(z.string().min(1)).min(1),
+  status: z.enum(["pending", "active", "blocked", "met"]).default("pending"),
+  evidenceIds: z.array(z.string()).default([]),
+  attempts: z.number().int().nonnegative().default(0),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type PhaseGoal = z.infer<typeof PhaseGoalSchema>;
 
 export const ResearchEdgeSchema = z.object({
   id: z.string().min(1),
