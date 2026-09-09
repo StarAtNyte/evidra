@@ -17,6 +17,7 @@ import { prepareSubmission, validateSubmissionBundle } from "../core/submissions
 import { diversityReport, greedyBlend, loadPredictionVector, type PredictionVector } from "../core/ensemble.js";
 import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
 import { auditData } from "../core/data-audit.js";
+import { executeResearchTool } from "../core/tools.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { retrieveSource, sourceClaims, sourceSearchText } from "../core/sources.js";
 import { activePhaseGoal, definePhaseGoals } from "../core/phase-goals.js";
@@ -533,7 +534,23 @@ export function App({ root }: { root: string }): React.JSX.Element {
         ultimateGoal: objective,
         phaseGoal: phaseGoal ?? null,
         constraints: { no_submission: true, no_file_edits: true },
-      }, { provider: config.provider, model: config.model, reasoningEffort: config.reasoningEffort, cwd: root, fallbackLocalModel: "qwen3.6:27b", onProcess: (control) => { activeProcess.current = control; }, onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, setProgress);
+      }, {
+        provider: config.provider,
+        model: config.model,
+        reasoningEffort: config.reasoningEffort,
+        cwd: root,
+        fallbackLocalModel: "qwen3.6:27b",
+        onProcess: (control) => { activeProcess.current = control; },
+        onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); },
+        executeTool: (call) => executeResearchTool(call, {
+          root,
+          storePath: join(root, ".sota", "database.sqlite"),
+          autonomy: config.autonomy,
+          competition: adapter.config,
+          onProgress: setProgress,
+          onProcess: (control) => { activeProcess.current = control; },
+        }),
+      }, setProgress);
       activeProcess.current = null;
       activeSteer.current = null;
       const completedLane = new ResearchStore(join(root, ".sota", "database.sqlite"));

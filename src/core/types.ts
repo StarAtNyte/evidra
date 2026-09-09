@@ -53,6 +53,10 @@ export const ResearchDecisionSchema = z.object({
   hypotheses: z.array(ResearchHypothesisSchema).max(5),
   selectedHypothesis: z.string().nullable(),
   nextAction: z.string().min(1),
+  toolCalls: z.array(z.object({
+    name: z.string().min(1),
+    arguments: z.record(z.unknown()).default({}),
+  })).max(8).default([]),
 });
 
 export type ResearchDecision = z.infer<typeof ResearchDecisionSchema>;

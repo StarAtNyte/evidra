@@ -37,6 +37,22 @@ export interface ResearchToolSpec {
   readOnly: boolean;
 }
 
+function recordToolEvent(context: ResearchToolContext, result: ResearchToolResult): void {
+  try {
+    const store = new ResearchStore(context.storePath);
+    const output = result.output === undefined ? undefined : JSON.stringify(result.output).slice(0, 8_000);
+    store.appendEvent(result.ok ? "research.tool.completed" : "research.tool.failed", {
+      name: result.name,
+      ok: result.ok,
+      error: result.error,
+      output,
+    });
+    store.close();
+  } catch {
+    // Tool audit logging must not turn a successful research observation into a failure.
+  }
+}
+
 export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   { name: "workspace.files", description: "List tracked and untracked workspace files excluding state and dependencies.", input: {}, readOnly: true },
   { name: "workspace.search", description: "Search text or regular expressions in the workspace.", input: { query: "text or regular expression", path: "optional relative path" }, readOnly: true },
@@ -150,8 +166,12 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       }
       default: throw new Error(`Unknown research tool: ${call.name}`);
     }
-    return { name: call.name, ok: true, output };
+    const result = { name: call.name, ok: true, output };
+    recordToolEvent(context, result);
+    return result;
   } catch (error) {
-    return { name: call.name, ok: false, error: error instanceof Error ? error.message : String(error) };
+    const result = { name: call.name, ok: false, error: error instanceof Error ? error.message : String(error) };
+    recordToolEvent(context, result);
+    return result;
   }
 }

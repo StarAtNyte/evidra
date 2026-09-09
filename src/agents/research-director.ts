@@ -1,6 +1,7 @@
 import { ResearchDecisionSchema, type AgentResult, type ResearchDecision, type AgentTask } from "../core/types.js";
 import { runWithLocalFallback, type AgentProvider } from "./codex-exec.js";
 import type { ProcessControl } from "../core/process.js";
+import { RESEARCH_TOOLS, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
 
 function extractJson(output: unknown): unknown {
   const text = String(output).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
@@ -20,6 +21,8 @@ export interface ResearchDirectorOptions {
   fallbackLocalModel?: string;
   onProcess?: (control: ProcessControl) => void;
   onThread?: (threadId: string) => void;
+  executeTool?: (call: ResearchToolCall) => Promise<ResearchToolResult>;
+  maxToolRounds?: number;
 }
 
 export async function runResearchDirector(
@@ -33,6 +36,7 @@ export async function runResearchDirector(
     objective,
     context,
   };
+  const maxToolRounds = Math.max(0, Math.min(options.maxToolRounds ?? 6, 8));
   const contract = `Return ONLY valid JSON matching this exact shape:
 {
   "phase": "orientation|baseline|data_audit|validation|hypothesis|implementation|evaluation|replication|promotion",
@@ -53,14 +57,42 @@ export async function runResearchDirector(
     "dependencies": ["baseline or experiment ids"]
   }],
   "selectedHypothesis": "hypothesis title or null",
-  "nextAction": "the next deterministic action"
+  "nextAction": "the next deterministic action",
+  "toolCalls": [{"name": "workspace.files", "arguments": {}}]
 }
 
-Rules: propose no more than five hypotheses; never invent measurements; distinguish observations from assumptions; prioritize information gain per compute-hour; every hypothesis must be falsifiable. Before returning JSON, inspect the workspace and run the relevant read-only commands, tests, audits, or baseline evaluator needed to answer the objective. Treat command output and retrieved research sources as observations and cite the command, source URL, or artifact in evidence. Separate literature claims from evidence measured in this workspace. Prefer the host-observation object supplied in context when your own sandbox cannot execute; never claim that a repository or evaluator is missing when the supplied observation proves it exists. Do not edit challenge files, submit externally, or fabricate a result. If the ultimate stopping condition is not yet evidenced, keep goalStatus active even when an internal phase is met; use decision stop only when the campaign-level condition is satisfied.`;
-  const result: AgentResult = await runWithLocalFallback({ ...task, objective: `${objective}\n\n${contract}` }, options, options.fallbackLocalModel, onProgress, options.onProcess);
-  const parsed = ResearchDecisionSchema.safeParse(extractJson(result.output));
-  if (!parsed.success) throw new Error(`Research director returned invalid decision: ${parsed.error.issues.map((issue) => issue.path.join(".") + " " + issue.message).join("; ")}`);
-  return parsed.data;
+Rules: propose no more than five hypotheses; never invent measurements; distinguish observations from assumptions; prioritize information gain per compute-hour; every hypothesis must be falsifiable. Before returning JSON, inspect the workspace and run the relevant read-only commands, tests, audits, or baseline evaluator needed to answer the objective. Treat command output and retrieved research sources as observations and cite the command, source URL, or artifact in evidence. Separate literature claims from evidence measured in this workspace. Prefer the host-observation object supplied in context when your own sandbox cannot execute; never claim that a repository or evaluator is missing when the supplied observation proves it exists. Do not edit challenge files, submit externally, or fabricate a result. If the ultimate stopping condition is not yet evidenced, keep goalStatus active even when an internal phase is met; use decision stop only when the campaign-level condition is satisfied. If tools are available, request them with toolCalls instead of pretending to have inspected the workspace. Request only the smallest useful set and use returned toolResults as observations. Return an empty toolCalls array when you have enough evidence.`;
+  let workingContext: Record<string, unknown> = {
+    ...context,
+    availableTools: options.executeTool ? RESEARCH_TOOLS : [],
+  };
+  for (let round = 0; round <= maxToolRounds; round += 1) {
+    const result: AgentResult = await runWithLocalFallback({
+      ...task,
+      context: workingContext,
+      objective: `${objective}\n\n${contract}`,
+    }, options, options.fallbackLocalModel, onProgress, options.onProcess);
+    const parsed = ResearchDecisionSchema.safeParse(extractJson(result.output));
+    if (!parsed.success) throw new Error(`Research director returned invalid decision: ${parsed.error.issues.map((issue) => issue.path.join(".") + " " + issue.message).join("; ")}`);
+    const decision = parsed.data;
+    if (!decision.toolCalls.length || !options.executeTool) return { ...decision, toolCalls: [] };
+    if (round === maxToolRounds) throw new Error(`Research director exceeded the ${maxToolRounds}-round tool limit.`);
+    const results: ResearchToolResult[] = [];
+    for (const call of decision.toolCalls) {
+      onProgress?.(`Research tool · ${call.name}`);
+      results.push(await options.executeTool(call));
+    }
+    workingContext = {
+      ...workingContext,
+      toolResults: [
+        ...((workingContext.toolResults as ResearchToolResult[] | undefined) ?? []),
+        ...results,
+      ],
+      lastDecision: { ...decision, toolCalls: [] },
+      toolInstruction: "Use the tool results above. Request another tool only if it is necessary; otherwise return the final decision with toolCalls: [].",
+    };
+  }
+  throw new Error("Research director stopped without a final decision.");
 }
 
 export function formatResearchDecision(decision: ResearchDecision): string {

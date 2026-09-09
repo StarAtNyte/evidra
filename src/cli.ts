@@ -14,6 +14,7 @@ import { retrieveSource, sourceClaims, sourceSearchText } from "./core/sources.j
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
+import { executeResearchTool } from "./core/tools.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { startInteractive } from "./session/interactive.js";
@@ -30,6 +31,14 @@ const activeCompetition = () => {
   store.close();
   return loadCompetitionAdapter(root, project?.competitionId ?? "local-research");
 };
+
+const researchToolExecutor = (competition: ReturnType<typeof activeCompetition>) => (call: Parameters<typeof executeResearchTool>[0]) => executeResearchTool(call, {
+  root,
+  storePath: statePath,
+  autonomy: "safe",
+  competition: competition.config,
+  onProgress: (message) => console.log(`· ${message}`),
+});
 
 function durationMinutes(value: string): number {
   const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*(m|min|minutes?|h|hours?|d|days?)?$/i);
@@ -255,7 +264,7 @@ research
       const projectStore = new ResearchStore(statePath);
       const activeProject = projectStore.project();
       projectStore.close();
-      const decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: options.goal, phaseGoal: phaseGoal ?? null }, { provider: "codex", model: "default", reasoningEffort: "high", fallbackLocalModel: "qwen3.6:27b", cwd: root });
+      const decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: options.goal, phaseGoal: phaseGoal ?? null }, { provider: "codex", model: "default", reasoningEffort: "high", fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });
       const decisionStore = new ResearchStore(statePath);
       materializeResearchDecision(decisionStore, decision);
       decisionStore.close();
@@ -296,7 +305,7 @@ research.command("propose")
       observation,
       ultimateGoal: objective,
       phaseGoal: phaseGoal ?? null,
-    }, { provider: "codex", model: "default", reasoningEffort: "medium", fallbackLocalModel: "qwen3.6:27b", cwd: root });
+    }, { provider: "codex", model: "default", reasoningEffort: "medium", fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });
     const decisionStore = new ResearchStore(statePath);
     materializeResearchDecision(decisionStore, decision);
     if (phaseGoal) {

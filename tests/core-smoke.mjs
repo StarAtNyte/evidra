@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:http";
 import test from "node:test";
 import { compareMetricSeries } from "../dist/core/statistics.js";
 import { recoveryPlan } from "../dist/core/recovery.js";
@@ -14,6 +15,7 @@ import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { autonomyPolicy, guardCommand } from "../dist/core/permissions.js";
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, RESEARCH_TOOLS } from "../dist/core/tools.js";
+import { runResearchDirector } from "../dist/agents/research-director.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -120,7 +122,40 @@ test("research tool registry exposes safe workspace tools", async () => {
     const denied = await executeResearchTool({ name: "shell.exec", arguments: { command: ["touch", "blocked.txt"] } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(denied.ok, false);
     assert(RESEARCH_TOOLS.some((tool) => tool.name === "source.retrieve"));
+    const eventStore = new ResearchStore(db);
+    const events = eventStore.recentEvents(10).map((event) => event.type);
+    eventStore.close();
+    assert(events.includes("research.tool.completed"));
+    assert(events.includes("research.tool.failed"));
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("research director executes typed tools and reasons over returned evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-director-"));
+  const previousHost = process.env.OLLAMA_HOST;
+  let calls = 0;
+  const server = createServer((_request, response) => {
+    calls += 1;
+    const decision = calls === 1
+      ? { phase: "orientation", goalStatus: "active", decision: "inspect", bottleneck: "Need workspace evidence", rationale: "The workspace has not been inspected yet.", hypotheses: [], selectedHypothesis: null, nextAction: "Inspect files", toolCalls: [{ name: "workspace.files", arguments: {} }] }
+      : { phase: "orientation", goalStatus: "active", decision: "propose", bottleneck: "Evidence is available", rationale: "The tool result is now available for the next decision.", hypotheses: [{ title: "Inspect the current implementation", mechanism: "Workspace evidence identifies the next testable change.", evidence: ["workspace.files returned repository files"], proposedChange: "Use the observed files to define a minimal experiment", falsificationTest: "The proposed experiment fails its validation check", expectedMetricDelta: { low: 0, median: 0, high: 0 }, computeCostGpuHours: 0, implementationRisk: "low", leakageRisk: "low", dependencies: [] }], selectedHypothesis: "Inspect the current implementation", nextAction: "Run the validation check", toolCalls: [] };
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${address.port}`;
+  try {
+    const decision = await runResearchDirector("Inspect this workspace", {}, { provider: "local", model: "test", cwd: root, maxToolRounds: 2, executeTool: async (call) => ({ name: call.name, ok: true, output: { files: ["notes.txt"] } }) });
+    assert.equal(calls, 2);
+    assert.equal(decision.decision, "propose");
+    assert.equal(decision.toolCalls.length, 0);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("paired statistics and recovery are deterministic", () => {
