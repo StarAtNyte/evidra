@@ -8,6 +8,7 @@ import { recoveryPlan } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { sourceClaims } from "../dist/core/sources.js";
+import { diversityReport, greedyBlend } from "../dist/core/ensemble.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -36,6 +37,12 @@ test("paired statistics and recovery are deterministic", () => {
   assert(comparison.confidenceInterval[1] < 0);
   assert.equal(recoveryPlan("dependency").retry, false);
   assert.equal(recoveryPlan("transient_cloud").maxAttempts, 3);
+});
+
+test("ensemble analysis exposes diversity and deterministic blends", () => {
+  const vectors = [{ id: "a", path: "a", values: [0, 1, 0, 1] }, { id: "b", path: "b", values: [0, 0, 1, 1] }];
+  assert.equal(diversityReport(vectors).length, 1);
+  assert.deepEqual(greedyBlend(vectors), [0, 0.5, 0.5, 1]);
 });
 
 test("source claims and submission provenance are auditable", () => {

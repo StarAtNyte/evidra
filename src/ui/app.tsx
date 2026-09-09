@@ -13,6 +13,7 @@ import { sha256File } from "../core/evidence.js";
 import { compareRuns } from "../core/statistics.js";
 import { recoveryDelay, recoveryPlan } from "../core/recovery.js";
 import { prepareSubmission, validateSubmissionBundle } from "../core/submissions.js";
+import { diversityReport, greedyBlend, loadPredictionVector, type PredictionVector } from "../core/ensemble.js";
 import { auditData } from "../core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { retrieveSource, sourceClaims, sourceSearchText } from "../core/sources.js";
@@ -49,6 +50,7 @@ const COMMANDS = [
   ["/compute", "Show execution and compute health"],
   ["/submission", "Prepare and validate a submission bundle"],
   ["/queue", "Show durable research work queue"],
+  ["/ensemble", "Analyze prediction diversity and blends"],
   ["/doctor", "Diagnose local research dependencies"],
   ["/provider", "Select codex or local provider"],
   ["/model", "Select the active model"],
@@ -89,6 +91,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/compute": [["/compute status", "Show executor health"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"]],
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
+  "/ensemble": [["/ensemble candidates", "List prediction artifacts"], ["/ensemble diversity", "Compare prediction diversity"], ["/ensemble propose", "Create an OOF blend candidate"]],
 };
 
 function loadConfig(path: string): SessionConfig {
@@ -139,6 +142,7 @@ function help(): string {
     "/doctor                     Diagnose local dependencies",
     "/submission [prepare|validate] Build or validate a safe bundle",
     "/queue [status|recover]      Show or recover durable tasks",
+    "/ensemble [candidates|diversity|propose] Analyze prediction artifacts",
     "/provider [codex|local]      Select ChatGPT Codex or local Ollama",
     "/model [name]                Show or select the model (use default for Codex)",
     "/thinking [level]            Select model thinking effort",
@@ -536,13 +540,25 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const stdoutPath = join(artifactDir, "stdout.log");
     const stderrPath = join(artifactDir, "stderr.log");
     const metricsPath = join(artifactDir, "metrics.json");
+    const environmentPath = join(artifactDir, "environment.json");
     writeFileSync(stdoutPath, result.stdout ?? "");
     writeFileSync(stderrPath, result.stderr ?? "");
     writeFileSync(metricsPath, `${JSON.stringify(result.metrics, null, 2)}\n`);
+    writeFileSync(environmentPath, `${JSON.stringify({
+      capturedAt: new Date().toISOString(),
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      cwd: result.cwd,
+      command: result.command,
+      executor: manifest.resources.executor,
+      gpu: manifest.resources.gpu ?? null,
+      environment: Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(TOKEN|KEY|SECRET|PASSWORD|COOKIE|AUTH)/i.test(key))),
+    }, null, 2)}\n`);
     const recordedResult = {
       ...result,
       recoveryAttempts: attempt,
-      artifacts: { "stdout.log": stdoutPath, "stderr.log": stderrPath, "metrics.json": metricsPath },
+      artifacts: { "stdout.log": stdoutPath, "stderr.log": stderrPath, "metrics.json": metricsPath, "environment.json": environmentPath },
     };
     const resultStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     resultStore.saveRun({ id: result.runId, experimentId: id, status: recordedResult.status, payload: recordedResult });
@@ -571,6 +587,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
           campaign.status = "completed";
           persistCampaign(campaign);
           setConfig((current) => ({ ...current, campaign: { ...campaign, status: "completed" } }));
+          const stopped = new ResearchStore(join(root, ".sota", "database.sqlite"));
+          stopped.setSchedulerState({ status: "idle", mode: config.mode, currentStep: "budget-exhausted" });
+          stopped.close();
           append("assistant", `Autonomous research stopped: budget exhausted (${campaign.budgetMinutes} minutes).`);
           return;
         }
@@ -596,12 +615,18 @@ export function App({ root }: { root: string }): React.JSX.Element {
         persistCampaign(campaign);
         setConfig((current) => ({ ...current, campaign: { ...campaign, status: "completed" } }));
         if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
+        const stopped = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        stopped.setSchedulerState({ status: "idle", mode: config.mode, currentStep: "campaign-complete" });
+        stopped.close();
         append("assistant", "Autonomous research stopping condition accepted by the research director.");
       } else if (campaign && cycle.goalStatus === "blocked") {
         campaign.status = "paused";
         persistCampaign(campaign);
         setConfig((current) => ({ ...current, campaign: { ...campaign, status: "paused" } }));
         if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
+        const blocked = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        blocked.setSchedulerState({ status: "paused", mode: config.mode, currentStep: "blocked" });
+        blocked.close();
         append("assistant", "Autonomous research paused because the current phase is blocked. Resolve the bottleneck, then use /resume.");
       }
     } catch (error) {
@@ -1210,6 +1235,34 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", tasks.length ? `Research queue\n${tasks.slice(0, 24).map((task) => `${task.status === "running" ? "●" : task.status === "queued" ? "○" : task.status === "completed" ? "✓" : "✗"} ${task.id} · ${task.kind} · priority ${task.priority} · attempts ${task.attempts}`).join("\n")}` : "Research queue is empty.");
       }
       store.close();
+      return;
+    }
+    if (request === "/ensemble" || request === "/ensemble candidates" || request === "/ensemble diversity" || request === "/ensemble propose") {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const vectors: PredictionVector[] = [];
+      for (const artifact of store.artifacts().filter((entry) => /prediction|oof/i.test(entry.name))) {
+        try { vectors.push(loadPredictionVector(artifact.id, artifact.path)); } catch { /* invalid candidates are reported below */ }
+      }
+      if (request === "/ensemble" || request === "/ensemble candidates") {
+        store.close();
+        append("assistant", vectors.length ? `Prediction candidates\n${vectors.map((vector) => `- ${vector.id} · ${vector.values.length} values · ${vector.path}`).join("\n")}` : "No valid prediction or OOF artifacts found. Completed runs must record prediction files before ensemble analysis.");
+        return;
+      }
+      if (vectors.length < 2) { store.close(); append("assistant", "At least two valid prediction artifacts are required for ensemble analysis."); return; }
+      const pairs = diversityReport(vectors);
+      if (request === "/ensemble diversity") {
+        store.close();
+        append("assistant", `Prediction diversity\n${pairs.map((pair) => `- ${pair.left} ↔ ${pair.right}\n  correlation: ${pair.correlation.toFixed(4)} · mean disagreement: ${pair.disagreement.toFixed(6)}`).join("\n")}`);
+        return;
+      }
+      const blend = greedyBlend(vectors);
+      const blendId = `blend_${Date.now()}`;
+      const blendPath = join(root, ".sota", "ensembles", `${blendId}.json`);
+      mkdirSync(join(root, ".sota", "ensembles"), { recursive: true });
+      writeFileSync(blendPath, `${JSON.stringify({ id: blendId, members: vectors.map((vector) => vector.id), values: blend, createdAt: new Date().toISOString(), status: "candidate" }, null, 2)}\n`);
+      store.appendEvent("ensemble.candidate.created", { id: blendId, path: blendPath, members: vectors.map((vector) => vector.id), diversity: pairs });
+      store.close();
+      append("assistant", `Ensemble candidate created\n  id: ${blendId}\n  members: ${vectors.length}\n  path: ${blendPath}\n  status: candidate\n\nEvaluate only on out-of-fold data before promotion.`);
       return;
     }
     if (request === "/sources" || request === "/sources list" || request.startsWith("/sources search ") || request.startsWith("/sources show ")) {
