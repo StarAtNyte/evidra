@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
-import Spinner from "ink-spinner";
 import { join, relative } from "node:path";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
@@ -1517,7 +1516,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       })}
     </Box>
     {busy && <Box borderStyle="single" borderColor="magenta" paddingX={1} marginTop={1}>
-      <Text color="magenta"><Spinner type="dots" />  RUNNING  </Text><Text color="magenta">{progress}</Text>
+      <Text color="magenta" bold>●  RUNNING  </Text><Text color="magenta">{progress}</Text>
     </Box>}
     {picker && <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column" marginTop={1}>
       <Text color="cyan" bold>{picker === "model" ? `Select ${config.provider} model` : picker === "reasoning" ? "Select thinking effort" : picker === "mode" ? "Select workbench mode" : "Select permissions"}</Text>
