@@ -187,9 +187,17 @@ try {
       await startInteractive(root, statePath);
     } else {
       // The TUI owns the primary Evidra experience; readline remains available for pipes and scripts.
+      process.stdout.write("\u001b[?1049h\u001b[H\u001b[2J");
+      let restored = false;
+      const restoreTerminal = (): void => {
+        if (restored) return;
+        restored = true;
+        process.stdout.write("\u001b[?1049l");
+      };
+      process.once("exit", restoreTerminal);
       await new Promise<void>((resolve) => {
         const instance = render(React.createElement(App, { root }));
-        instance.waitUntilExit().then(resolve);
+        instance.waitUntilExit().then(() => { restoreTerminal(); resolve(); });
       });
     }
   } else {

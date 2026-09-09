@@ -5,7 +5,7 @@ import Spinner from "ink-spinner";
 import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
-import { runProcess } from "../core/process.js";
+import { runProcess, splitCommandLine } from "../core/process.js";
 import { createExperimentManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { whestbenchConfig } from "../competitions/whestbench.js";
@@ -48,6 +48,7 @@ const COMMANDS = [
   ["/ensemble", "Analyze OOF diversity and blends"],
   ["/submission", "Prepare and record submissions"],
   ["/report", "Generate research reports"],
+  ["/run", "Run a visible shell-free workspace command"],
   ["/autonomy", "Select safe, fast, or YOLO policy"],
   ["/pause", "Pause autonomous scheduling"],
   ["/resume", "Resume autonomous scheduling"],
@@ -114,6 +115,7 @@ function help(): string {
     "/experiments                 List experiments",
     "/experiment propose [hyp]    Create an immutable experiment manifest",
     "/experiment show <id>        Show an experiment manifest",
+    "/run <command>              Run rg, grep, tests, Python, uv, or another command",
     "/compute                     Show compute and budget state",
     "/autonomy [safe|fast|yolo]   Set autonomous execution policy",
     "/pause                       Pause autonomous scheduling",
@@ -237,6 +239,19 @@ export function App({ root }: { root: string }): React.JSX.Element {
     return formatResearchDecision(decision);
   };
 
+  const proposeLatestExperiment = async (): Promise<string | null> => {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const hypothesis = store.hypotheses()[0];
+    if (!hypothesis) { store.close(); return null; }
+    const commit = await runProcess(["git", "rev-parse", "HEAD"], root);
+    if (commit.exitCode !== 0) { store.close(); throw new Error(`Cannot create manifest: ${commit.stderr || commit.stdout}`); }
+    const id = `exp_${Date.now()}_${hypothesis.id.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
+    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis.id, gitCommit: commit.stdout.trim(), datasetVersion: whestbenchConfig.datasetRevision }, whestbenchConfig);
+    store.saveExperiment({ id, payload: { ...manifest, status: "proposed" } });
+    store.close();
+    return `\n\nExperiment manifest proposed\n${manifestSummary(manifest)}\nNext: /experiment show ${id}`;
+  };
+
   const runAutonomousCycle = async (): Promise<void> => {
     if (loopBusy.current || busy) return;
     loopBusy.current = true;
@@ -249,7 +264,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const update = new ResearchStore(join(root, ".sota", "database.sqlite"));
       update.setSchedulerState({ status: "running", mode: config.mode, currentStep: "awaiting-next-cycle" });
       update.close();
-      append("assistant", result);
+      append("assistant", result + (config.mode === "challenge" ? (await proposeLatestExperiment() ?? "") : ""));
     } catch (error) {
       const update = new ResearchStore(join(root, ".sota", "database.sqlite"));
       update.setSchedulerState({ status: "paused", mode: config.mode, currentStep: "blocked" });
@@ -392,7 +407,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         baselineStore.close();
         setProgress("Zero-to-hero: generating the first falsifiable research decision...");
         append("assistant", `Baseline ${baseline.exitCode === 0 ? "completed" : "failed"}.\n${baseline.stdout || baseline.stderr}`);
-        append("assistant", await runResearchCycle("Starting from the verified baseline, identify the first highest-information experiment for WhestBench. Include a falsification test, leakage risks, compute estimate, and replication plan."));
+        const decisionText = await runResearchCycle("Starting from the verified baseline, identify the first highest-information experiment for WhestBench. Include a falsification test, leakage risks, compute estimate, and replication plan.");
+        const manifestText = await proposeLatestExperiment();
+        append("assistant", decisionText + (manifestText ?? ""));
         const done = new ResearchStore(join(root, ".sota", "database.sqlite"));
         done.setSchedulerState({ status: "idle", mode: "challenge", currentStep: null });
         done.close();
@@ -595,6 +612,24 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", sources.length ? sources.map((source) => `${source.id} · ${JSON.stringify(source.payload)}`).join("\n") : "No research sources cached yet.");
       return;
     }
+    if (request === "/run" || request.startsWith("/run ") || request === "/shell" || request.startsWith("/shell ")) {
+      const rawCommand = request.replace(/^\/(run|shell)\s*/, "");
+      const command = splitCommandLine(rawCommand);
+      const blocked = new Set(["sudo", "rm", "rmdir", "mkfs", "shutdown", "reboot", "poweroff"]);
+      if (!command.length) { append("assistant", "Usage: /run rg -n hypothesis src or /run uv run pytest"); return; }
+      if (blocked.has(command[0])) { append("assistant", `Refusing dangerous command '${command[0]}'. Use a reviewed experiment manifest for destructive operations.`); return; }
+      setBusy(true); setProgress(`Running ${command.join(" ")}...`);
+      try {
+        const result = await runProcess(command, root, 15 * 60_000, (stream, chunk) => {
+          const line = chunk.replace(/\s+/g, " ").trim();
+          if (line) setProgress(`${stream}: ${line.slice(-140)}`);
+        });
+        const output = [result.stdout.trim(), result.stderr.trim() ? `stderr:\n${result.stderr.trim()}` : ""].filter(Boolean).join("\n");
+        append("assistant", `Command exited ${result.exitCode} in ${(result.durationMs / 1000).toFixed(1)}s\n$ ${command.join(" ")}\n${output || "(no output)"}`);
+      } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
+      finally { setBusy(false); setProgress(""); }
+      return;
+    }
     if (["/research status", "/research start", "/research pause", "/research stop"].includes(request)) {
       const action = request.split(/\s+/)[1];
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -663,7 +698,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     } finally { setBusy(false); setProgress(""); }
   };
 
-  return <Box flexDirection="column" padding={1}>
+  return <Box flexDirection="column" padding={1} minHeight={Math.max(24, process.stdout.rows ?? 24)}>
     <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
       <Text color="cyan" bold>{LOGO}</Text>
       <Text color="gray">Evidra Workbench  ·  {config.mode.toUpperCase()}  ·  {config.provider}/{config.model}  ·  thinking:{config.reasoningEffort}</Text>
