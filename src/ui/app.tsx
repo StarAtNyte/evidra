@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
+import Spinner from "ink-spinner";
 import { join, relative } from "node:path";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
@@ -226,7 +227,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
   ]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState("");
+  const [progress, setProgressState] = useState("");
+  const progressRef = useRef("");
+  const progressLastPaint = useRef(0);
+  const progressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [selectedModel, setSelectedModel] = useState<AvailableModel | null>(null);
   const [picker, setPicker] = useState<"model" | "reasoning" | "mode" | "permissions" | null>(null);
@@ -244,6 +248,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const loopBusy = useRef(false);
   const activeProcess = useRef<ProcessControl | null>(null);
   const interruptedProcess = useRef(false);
+  const setProgress = (value: string): void => {
+    progressRef.current = value;
+    if (progressTimer.current) clearTimeout(progressTimer.current);
+    const paint = (): void => { progressLastPaint.current = Date.now(); setProgressState(progressRef.current); };
+    if (!value || Date.now() - progressLastPaint.current >= 120) paint();
+    else progressTimer.current = setTimeout(paint, 120);
+  };
   const firstToken = input.split(/\s+/)[0];
   const suggestions: readonly (readonly [string, string])[] = input.startsWith("/ ") ? [] : input.startsWith("/model ")
     ? availableModels
@@ -321,6 +332,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   useEffect(() => setSuggestionIndex(0), [input]);
   useEffect(() => () => {
     if (loopTimer.current) clearInterval(loopTimer.current);
+    if (progressTimer.current) clearTimeout(progressTimer.current);
     activeProcess.current?.terminate();
   }, []);
 
@@ -1516,7 +1528,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       })}
     </Box>
     {busy && <Box borderStyle="single" borderColor="magenta" paddingX={1} marginTop={1}>
-      <Text color="magenta" bold>●  RUNNING  </Text><Text color="magenta">{progress}</Text>
+      <Text color="magenta" bold><Spinner type="dots" />  RUNNING  </Text><Text color="magenta">{progress}</Text>
     </Box>}
     {picker && <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column" marginTop={1}>
       <Text color="cyan" bold>{picker === "model" ? `Select ${config.provider} model` : picker === "reasoning" ? "Select thinking effort" : picker === "mode" ? "Select workbench mode" : "Select permissions"}</Text>
