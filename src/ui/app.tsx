@@ -758,18 +758,21 @@ export function App({ root }: { root: string }): React.JSX.Element {
   submitRef.current = submit;
 
   return <Box flexDirection="column" padding={1} minHeight={Math.max(24, process.stdout.rows ?? 24)}>
-    <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
+    <Box borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1} flexDirection="column">
       <Text color="cyan" bold>{LOGO}</Text>
-      <Text color="gray">Evidra Workbench  ·  {config.mode.toUpperCase()}  ·  {config.provider}/{config.model}  ·  thinking:{config.reasoningEffort}  ·  permissions:{config.autonomy}</Text>
+      <Text color="gray"><Text color="cyan" bold>EVIDRA WORKBENCH</Text>  │  MODE: <Text color="yellow" bold>{config.mode.toUpperCase()}</Text>  │  PROVIDER: <Text color="cyan">{config.provider}/{config.model}</Text>  │  THINKING: {config.reasoningEffort}  │  PERMISSIONS: <Text color="yellow" bold>{config.autonomy.toUpperCase()}</Text></Text>
     </Box>
-    <Box flexDirection="column" marginTop={1}>
-      {messages.slice(-16).map((message, index) => <Box key={`${index}-${message.text}`} marginBottom={1}>
-        <Text color={message.role === "user" ? "yellow" : message.role === "system" ? "gray" : "green"}>
-          {message.role === "user" ? "> " : ""}{message.text}
+    <Box flexDirection="column" flexGrow={1} marginTop={1} paddingX={1}>
+      {messages.slice(-16).map((message, index) => <Box key={`${index}-${message.text}`} flexDirection="column" marginBottom={1} paddingLeft={1}>
+        <Text color={message.role === "user" ? "yellow" : message.role === "system" ? "gray" : "green"} bold>
+          {message.role === "user" ? "> " : message.role === "assistant" ? "│ " : "· "}{message.role === "assistant" ? "EVIDRA  " : ""}
         </Text>
+        <Text color={message.role === "user" ? "yellow" : message.role === "system" ? "gray" : "green"}>{message.text}</Text>
       </Box>)}
     </Box>
-    {busy && <Text color="magenta"><Spinner type="dots" /> {progress}</Text>}
+    {busy && <Box borderStyle="single" borderColor="magenta" paddingX={1} marginTop={1}>
+      <Text color="magenta"><Spinner type="dots" />  RUNNING  </Text><Text color="magenta">{progress}</Text>
+    </Box>}
     {picker && <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column" marginTop={1}>
       <Text color="cyan" bold>{picker === "model" ? `Select ${config.provider} model` : picker === "reasoning" ? "Select thinking effort" : picker === "mode" ? "Select workbench mode" : "Select permissions"}</Text>
       <Text color="gray">↑/↓ navigate · Enter select · Esc cancel</Text>
@@ -781,17 +784,20 @@ export function App({ root }: { root: string }): React.JSX.Element {
         </Text>;
       })}
     </Box>}
-    <Box borderStyle="round" borderColor={busy ? "gray" : "yellow"} paddingX={1} marginTop={1}>
+    {suggestions.length > 0 && <Box borderStyle="round" borderColor="cyan" flexDirection="column" marginTop={1}>
+      <Text color="black" backgroundColor="cyan" bold> SUGGESTIONS </Text>
+      {suggestions.map(([command, description], index) => <Box key={command} paddingX={2}>
+        <Text color={index === suggestionIndex ? "black" : "gray"} backgroundColor={index === suggestionIndex ? "cyan" : undefined}>
+          {index === suggestionIndex ? "› " : "  "}{command.padEnd(26, " ")} {description}
+        </Text>
+      </Box>)}
+    </Box>}
+    <Box borderStyle="round" borderColor={busy ? "gray" : "yellow"} paddingX={1} paddingY={0} marginTop={1}>
       <Text color="yellow">› </Text>
       <TextInput key={inputMount} focus={!picker} showCursor={!picker} value={input} onChange={setInput} onSubmit={submit} placeholder="Ask Evidra to inspect, hypothesize, or run an experiment..." />
     </Box>
-    <Box marginLeft={2}>
-      <Text color="gray">{config.provider} · {config.model} · thinking: {config.reasoningEffort} · mode: {config.mode} · permissions: {config.autonomy}</Text>
+    <Box marginLeft={2} marginTop={0}>
+      <Text color="gray">{config.provider.toUpperCase()} · {config.model} · THINKING: {config.reasoningEffort.toUpperCase()} · MODE: <Text color="yellow">{config.mode.toUpperCase()}</Text> · PERMISSIONS: <Text color="yellow">{config.autonomy.toUpperCase()}</Text></Text>
     </Box>
-    {suggestions.length > 0 && <Box flexDirection="column" marginLeft={2}>
-      {suggestions.map(([command, description], index) => <Text key={command} color={index === suggestionIndex ? "cyan" : "gray"}>
-        {index === suggestionIndex ? "› " : "  "}{command.padEnd(24, " ")} {description}
-      </Text>)}
-    </Box>}
   </Box>;
 }

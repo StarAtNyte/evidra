@@ -1,0 +1,21 @@
+{
+  "targets": [
+    {
+      "target": "fullscreen-evidra-workbench",
+      "projectId": "0bafecff-e8b8-4090-a4a8-b262e4ec85b3",
+      "activeDraftId": "57f249a3-c83c-4faa-b004-5cf9969bba25",
+      "title": "Premium Evidra Workbench Shell",
+      "kind": "new-target-existing-codebase",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        ".superdesign/init/theme.md",
+        ".superdesign/init/layouts.md",
+        ".superdesign/init/pages.md",
+        ".superdesign/init/extractable-components.md",
+        "src/ui/app.tsx"
+      ],
+      "canvasUrl": "https://superdesign.dev/teams/7b472279-ea96-4e9f-8f46-9261fb06ec91/projects/0bafecff-e8b8-4090-a4a8-b262e4ec85b3",
+      "previewUrl": "https://p.superdesign.dev/draft/57f249a3-c83c-4faa-b004-5cf9969bba25"
+    }
+  ]
+}
