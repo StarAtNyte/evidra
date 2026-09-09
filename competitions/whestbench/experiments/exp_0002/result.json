@@ -1,0 +1,31 @@
+{
+  "command": [
+    "uv",
+    "run",
+    "python",
+    "estimator.py",
+    "--baseline",
+    "mean_propagation"
+  ],
+  "cwd": "/home/at-office/Projects/Nitiz/Evidra/.sota/worktrees/exp_0002",
+  "exitCode": 0,
+  "durationMs": 23223,
+  "stdout": "--- Your estimator ---\nMLP: width=1024 depth=16 seed=0  (MC sampling seed=0)\n\n n_samples |    sampling_flops | estimator_flops | all_layers_mse | final_layer_mse\n-----------------------------------------------------------------------------------\n        10 |       336,439,296 |               0 |       0.744041 |        1.065473\n       100 |     3,363,803,136 |               0 |       0.744617 |        1.123958\n     1,000 |    33,637,441,536 |               0 |       0.745814 |        1.131387\n    10,000 |   336,373,825,536 |               0 |       0.746173 |        1.131690\n   100,000 | 3,363,737,665,536 |               0 |       0.745660 |        1.130490\n\n--- Baseline: mean_propagation ---\nMLP: width=1024 depth=16 seed=0  (MC sampling seed=0)\n\n n_samples |    sampling_flops | estimator_flops | all_layers_mse | final_layer_mse\n-----------------------------------------------------------------------------------\n        10 |       336,439,296 |      86,639,616 |       0.020202 |        0.009967\n       100 |     3,363,803,136 |      86,639,616 |       0.001866 |        0.000983\n     1,000 |    33,637,441,536 |      86,639,616 |       0.000398 |        0.000392\n    10,000 |   336,373,825,536 |      86,639,616 |       0.000195 |        0.000314\n   100,000 | 3,363,737,665,536 |      86,639,616 |       0.000171 |        0.000300\n",
+  "stderr": "Using CPython 3.10.20 interpreter at: /usr/bin/python3.10\nCreating virtual environment at: .venv\n   Building whest-starterkit @ file:///home/at-office/Projects/Nitiz/Evidra/.sota/worktrees/exp_0002\n      Built whest-starterkit @ file:///home/at-office/Projects/Nitiz/Evidra/.sota/worktrees/exp_0002\nwarning: Failed to hardlink files; falling back to full copy. This may lead to degraded performance.\n         If the cache and target directories are on different filesystems, hardlinking may not be supported.\n         If this is intentional, set `export UV_LINK_MODE=copy` or use `--link-mode=copy` to suppress this warning.\nInstalled 61 packages in 109ms\n/home/at-office/Projects/Nitiz/Evidra/.sota/worktrees/exp_0002/examples/02_mean_propagation.py:103: FlopscopeWarning: stats.norm.pdf promoted its float32 input to float64 to match scipy.stats. If float64 output was not intended, cast the result back with result.astype(np.float32) before downstream operations; float64 operations are billed at twice the float32 dtype rate.\n  phi_alpha = flops.stats.norm.pdf(alpha).astype(fnp.float32)  # phi(alpha)\n/home/at-office/Projects/Nitiz/Evidra/.sota/worktrees/exp_0002/examples/02_mean_propagation.py:104: FlopscopeWarning: stats.norm.cdf promoted its float32 input to float64 to match scipy.stats. If float64 output was not intended, cast the result back with result.astype(np.float32) before downstream operations; float64 operations are billed at twice the float32 dtype rate.\n  Phi_alpha = flops.stats.norm.cdf(alpha).astype(fnp.float32)  # Phi(alpha)\n",
+  "experiment": {
+    "id": "exp_0002",
+    "hypothesisId": "baseline-reproduction",
+    "parentCommit": "starterkit",
+    "worktreePath": "/home/at-office/Projects/Nitiz/Evidra/.sota/worktrees/exp_0002",
+    "command": [
+      "uv",
+      "run",
+      "python",
+      "estimator.py",
+      "--baseline",
+      "mean_propagation"
+    ],
+    "status": "running",
+    "createdAt": "2026-09-09T05:57:14.593Z"
+  }
+}

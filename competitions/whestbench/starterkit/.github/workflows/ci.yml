@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.10
+
+      - name: Sync dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Stage 1 smoke — root estimator.py
+        run: uv run python estimator.py
+
+      - name: Stage 1 smoke — examples
+        run: |
+          for f in examples/0*.py; do
+            echo "::group::$f"
+            uv run python "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Stage 2 smoke — whest validate
+        run: uv run whest validate --estimator estimator.py
+
+      - name: Stage 3 smoke — whest run (small)
+        run: uv run whest run --estimator estimator.py --n-mlps 2
+
+      - name: Stage 4 smoke — subprocess runner
+        run: uv run whest run --estimator estimator.py --n-mlps 2 --n-samples 20000 --runner subprocess
+
+      - name: Stage 5 smoke — package (single file and folder)
+        run: |
+          uv run whest package --estimator estimator.py --yes --output /tmp/single.tar.gz
+          uv run whest validate-package /tmp/single.tar.gz
+          uv run whest package --estimator . --yes --output /tmp/folder.tar.gz
+          uv run whest validate-package /tmp/folder.tar.gz
+
+      - name: Run pytest (unit + parity + README snapshot)
+        run: uv run pytest tests/ -v

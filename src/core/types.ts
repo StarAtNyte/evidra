@@ -1,0 +1,142 @@
+import { z } from "zod";
+
+export const CompetitionConfigSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  taskType: z.string(),
+  datasetRevision: z.string(),
+  metric: z.object({
+    name: z.string(),
+    direction: z.enum(["minimize", "maximize"]),
+  }),
+  evaluator: z.object({
+    command: z.array(z.string()),
+    estimatorPath: z.string(),
+  }),
+});
+
+export type CompetitionConfig = z.infer<typeof CompetitionConfigSchema>;
+
+export const HypothesisSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  mechanism: z.string(),
+  falsificationTest: z.string(),
+  expectedDelta: z.number(),
+  status: z.enum(["proposed", "testing", "supported", "rejected", "inconclusive"]),
+});
+
+export type Hypothesis = z.infer<typeof HypothesisSchema>;
+
+export const ResearchHypothesisSchema = z.object({
+  title: z.string().min(1),
+  mechanism: z.string().min(1),
+  evidence: z.array(z.string()),
+  proposedChange: z.string().min(1),
+  falsificationTest: z.string().min(1),
+  expectedMetricDelta: z.object({ low: z.number(), median: z.number(), high: z.number() }),
+  computeCostGpuHours: z.number().nonnegative(),
+  implementationRisk: z.enum(["low", "medium", "high"]),
+  leakageRisk: z.enum(["low", "medium", "high"]),
+  dependencies: z.array(z.string()),
+});
+
+export const ResearchDecisionSchema = z.object({
+  decision: z.enum(["inspect", "propose", "run", "replicate", "stop"]),
+  bottleneck: z.string().min(1),
+  rationale: z.string().min(1),
+  hypotheses: z.array(ResearchHypothesisSchema).max(5),
+  selectedHypothesis: z.string().nullable(),
+  nextAction: z.string().min(1),
+});
+
+export type ResearchDecision = z.infer<typeof ResearchDecisionSchema>;
+
+export const ExperimentSchema = z.object({
+  id: z.string(),
+  hypothesisId: z.string(),
+  parentCommit: z.string(),
+  worktreePath: z.string(),
+  command: z.array(z.string()),
+  status: z.enum(["proposed", "scheduled", "running", "completed", "failed", "invalid"]),
+});
+
+export type Experiment = z.infer<typeof ExperimentSchema>;
+
+export const ExperimentManifestSchema = z.object({
+  schemaVersion: z.number().int().positive().default(1),
+  id: z.string().min(1),
+  parent: z.string().nullable().default(null),
+  hypothesisId: z.string().min(1),
+  gitCommit: z.string().min(1),
+  datasetVersion: z.string().min(1),
+  splitVersion: z.string().min(1),
+  change: z.object({ configPatch: z.record(z.string(), z.unknown()) }),
+  resources: z.object({ executor: z.enum(["local", "modal"]), gpu: z.string().optional(), timeoutMinutes: z.number().positive() }),
+  evaluation: z.object({ folds: z.array(z.number().int().nonnegative()), seeds: z.array(z.number().int()), requiredArtifacts: z.array(z.string()) }),
+  acceptance: z.object({ minimumPrimaryDelta: z.number(), maximumRegressionShift: z.number(), requireReplication: z.boolean() }),
+  createdAt: z.string().datetime(),
+});
+
+export type ExperimentManifest = z.infer<typeof ExperimentManifestSchema>;
+
+export const RunResultSchema = z.object({
+  runId: z.string(),
+  status: z.enum(["completed", "failed", "orphaned", "cancelled"]),
+  exitCode: z.number().int(),
+  durationSeconds: z.number().nonnegative(),
+  metrics: z.record(z.string(), z.number().finite()).default({}),
+  artifacts: z.record(z.string(), z.string()).default({}),
+  failureClass: z.enum(["cuda_oom", "transient_cloud", "data_missing", "nan_loss", "dependency", "timeout", "corrupt_artifact", "invalid_metric", "code_regression", "auth", "rate_limit", "disk", "unknown"]).optional(),
+});
+
+export type RunResult = z.infer<typeof RunResultSchema>;
+
+export const EvidenceGateSchema = z.object({
+  validCommit: z.boolean(),
+  datasetMatch: z.boolean(),
+  splitMatch: z.boolean(),
+  outputsComplete: z.boolean(),
+  predictionsValid: z.boolean(),
+  metricsRecomputed: z.boolean(),
+  leakageAuditPassed: z.boolean(),
+  reviewerApproved: z.boolean(),
+});
+
+export type EvidenceGate = z.infer<typeof EvidenceGateSchema>;
+
+export interface AgentTask {
+  role: string;
+  objective: string;
+  context: Record<string, unknown>;
+  outputSchema?: string;
+}
+
+export interface AgentResult {
+  provider: string;
+  threadId?: string;
+  output: unknown;
+  usage?: { inputTokens?: number; outputTokens?: number };
+}
+
+export interface ResearchAgent {
+  run(task: AgentTask): Promise<AgentResult>;
+}
+
+export interface ExperimentExecutor {
+  run(experiment: Experiment): Promise<{
+    status: "completed" | "failed";
+    exitCode: number;
+    durationMs: number;
+    artifacts: string[];
+  }>;
+}
+
+export interface ProcessResult {
+  command: string[];
+  cwd: string;
+  exitCode: number;
+  durationMs: number;
+  stdout: string;
+  stderr: string;
+}
