@@ -32,6 +32,8 @@ The TUI is the primary interface. Every command is available after typing `/`; c
 /exit                         Exit the TUI
 ```
 
+Permission level is session-scoped and resets to `safe` when a new terminal session starts. Project state, evidence, and campaign metadata remain durable.
+
 Research mode emphasizes sources, claims, ideas, hypotheses, and decisions. Challenge mode emphasizes a competition’s rules, data, validation, experiments, runs, compute, and submissions.
 
 Plain text is ordinary conversation and is handled by the selected provider without repository inspection or experiment execution. Use `/research` or an autonomous loop when you want Evidra to inspect evidence and act.

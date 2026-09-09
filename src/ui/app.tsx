@@ -575,6 +575,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
 
   const runAutonomousCycle = async (campaignOverride?: ResearchCampaign): Promise<void> => {
     if (loopBusy.current || busy) return;
+    ensureActiveProject();
     loopBusy.current = true;
     setBusy(true); setProgress("Autonomous loop: choosing the next highest-information decision...");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -1345,7 +1346,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       if (action === "status") {
         const state = store.schedulerState();
-        append("assistant", `Research scheduler: ${state.status}\nCurrent step: ${state.currentStep ?? "idle"}`);
+        const goal = activePhaseGoal(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)));
+        const campaign = config.campaign;
+        const counts = store.counts();
+        append("assistant", `Research status\n  scheduler: ${state.status}\n  step: ${state.currentStep ?? "idle"}\n  phase: ${goal?.phase ?? "not initialized"}\n  phase goal: ${goal?.title ?? "none"}\n  attempts: ${goal?.attempts ?? 0}\n  decisions: ${counts.decisions} · hypotheses: ${counts.hypotheses} · claims: ${counts.claims}${campaign ? `\n\nCampaign\n  status: ${campaign.status}\n  goal: ${campaign.goal}\n  budget: ${campaign.budgetMinutes} minutes\n  stop: ${campaign.stopCondition}` : "\n\nNo campaign configured. Use /research to start one."}`);
       } else {
         const status = action === "start" ? "running" : action === "pause" ? "paused" : "idle";
         store.setSchedulerState({ status, mode: "research", currentStep: null });
