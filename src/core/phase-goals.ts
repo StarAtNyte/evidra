@@ -29,5 +29,7 @@ export function definePhaseGoals(ultimateGoal: string, mode: "research" | "chall
 }
 
 export function activePhaseGoal(goals: PhaseGoal[]): PhaseGoal | undefined {
-  return goals.find((goal) => goal.status === "active") ?? goals.find((goal) => goal.status === "pending");
+  // A blocked goal is the next goal to revisit after the operator resolves its
+  // bottleneck; never silently advance past it to a later pending phase.
+  return goals.find((goal) => goal.status === "active") ?? goals.find((goal) => goal.status === "blocked") ?? goals.find((goal) => goal.status === "pending");
 }

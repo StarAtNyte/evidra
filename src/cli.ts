@@ -316,7 +316,8 @@ research
         const index = goals.findIndex((goal) => goal.id === phaseGoal.id);
         if (index >= 0) {
           const met = decision.goalStatus === "met";
-          decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: met ? "met" : "active", payload: { ...goals[index], status: met ? "met" : "active", attempts: phaseGoal.attempts + 1, updatedAt: now } });
+          const nextStatus = met ? "met" : decision.goalStatus === "blocked" ? "blocked" : "active";
+          decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: nextStatus, payload: { ...goals[index], status: nextStatus, attempts: phaseGoal.attempts + 1, updatedAt: now } });
           if (met && goals[index + 1]) {
             const next = goals[index + 1];
             decisionStore.savePhaseGoal({ id: next.id, phase: next.phase, status: "active", payload: { ...next, status: "active", updatedAt: now } });

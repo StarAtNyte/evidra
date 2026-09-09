@@ -567,7 +567,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     materializeResearchDecision(decisionStore, decision);
     if (phaseGoal) {
       const now = new Date().toISOString();
-      decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: decision.goalStatus === "met" ? "met" : "active", payload: { ...phaseGoal, status: decision.goalStatus === "met" ? "met" : "active", attempts: phaseGoal.attempts + 1, updatedAt: now } });
+      const nextStatus = decision.goalStatus === "met" ? "met" : decision.goalStatus === "blocked" ? "blocked" : "active";
+      decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: nextStatus, payload: { ...phaseGoal, status: nextStatus, attempts: phaseGoal.attempts + 1, updatedAt: now } });
     }
     if (phaseGoal && decision.goalStatus === "met") {
       const goals = decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));

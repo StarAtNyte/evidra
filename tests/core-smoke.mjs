@@ -21,6 +21,7 @@ import { LocalExecutor, parseMetricOutput } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
+import { activePhaseGoal, definePhaseGoals } from "../dist/core/phase-goals.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -356,4 +357,11 @@ test("worktree isolation supports arbitrary repositories", async () => {
     assert.equal(existsSync(join(worktree, ".git")), true);
     await runProcess(["git", "worktree", "remove", "--force", worktree], repo);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("blocked phase goals remain the next resumable goal", () => {
+  const goals = definePhaseGoals("robust evidence", "research");
+  const blocked = { ...goals[0], status: "blocked" };
+  const pending = { ...goals[1], status: "pending" };
+  assert.equal(activePhaseGoal([blocked, pending])?.id, blocked.id);
 });
