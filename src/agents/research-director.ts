@@ -51,7 +51,7 @@ export async function runResearchDirector(
   "nextAction": "the next deterministic action"
 }
 
-Rules: propose no more than five hypotheses; never invent measurements; distinguish observations from assumptions; prioritize information gain per compute-hour; every hypothesis must be falsifiable; do not edit files or run commands in this planning call.`;
+Rules: propose no more than five hypotheses; never invent measurements; distinguish observations from assumptions; prioritize information gain per compute-hour; every hypothesis must be falsifiable. Before returning JSON, inspect the workspace and run the relevant read-only commands, tests, audits, or baseline evaluator needed to answer the objective. Treat command output as observations and cite the command or artifact in evidence. Do not edit challenge files, submit externally, or fabricate a result.`;
   const result: AgentResult = await runWithLocalFallback({ ...task, objective: `${objective}\n\n${contract}` }, options, options.fallbackLocalModel, onProgress);
   const parsed = ResearchDecisionSchema.safeParse(extractJson(result.output));
   if (!parsed.success) throw new Error(`Research director returned invalid decision: ${parsed.error.issues.map((issue) => issue.path.join(".") + " " + issue.message).join("; ")}`);

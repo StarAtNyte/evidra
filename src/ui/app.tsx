@@ -20,40 +20,17 @@ type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: 
 const defaultConfig: SessionConfig = { provider: "codex", model: "default", reasoningEffort: "medium", mode: "research", autonomy: "safe" };
 const COMMANDS = [
   ["/help", "Show commands"],
-  ["/workbench", "Show or switch Research/Challenge mode"],
   ["/mode", "Show or switch active mode"],
-  ["/project", "Manage the Evidra project"],
-  ["/challenge", "Inspect and run the active challenge"],
-  ["/hero", "Run the zero-to-hero challenge bootstrap"],
+  ["/research", "Inspect, run, and explain the next research decision"],
+  ["/challenge", "Run the active challenge workflow"],
+  ["/experiment", "Create or run a reproducible experiment"],
+  ["/loop", "Run the autonomous research loop"],
+  ["/status", "Show complete workbench state"],
   ["/provider", "Select codex or local provider"],
   ["/model", "Select the active model"],
   ["/thinking", "Select model thinking effort"],
-  ["/login codex", "Sign in with ChatGPT subscription (device code)"],
-  ["/login status", "Check Codex authentication"],
-  ["/status", "Show project state"],
-  ["/inspect", "Show competition configuration"],
-  ["/research", "Plan the next falsifiable research decision"],
-  ["/sources", "Manage research sources"],
-  ["/memory", "Search research memory"],
-  ["/hypotheses", "Manage the hypothesis graph"],
-  ["/graph", "Show research graph"],
-  ["/agents", "Inspect research agent lanes"],
-  ["/data", "Run data audits"],
-  ["/validation", "Manage validation policy"],
-  ["/experiments", "List and inspect experiments"],
-  ["/experiment", "Propose, audit, or run one immutable experiment"],
-  ["/runs", "Inspect active runs"],
-  ["/compute", "Inspect compute and budgets"],
-  ["/evidence", "Inspect accepted evidence"],
-  ["/ensemble", "Analyze OOF diversity and blends"],
-  ["/submission", "Prepare and record submissions"],
-  ["/report", "Generate research reports"],
-  ["/run", "Run a visible shell-free workspace command"],
   ["/autonomy", "Select safe, fast, or YOLO policy"],
-  ["/pause", "Pause autonomous scheduling"],
-  ["/resume", "Resume autonomous scheduling"],
-  ["/loop", "Run or inspect the autonomous research loop"],
-  ["/scheduler", "Control the experiment scheduler"],
+  ["/login", "Authenticate or check provider access"],
   ["/exit", "Quit Evidra"],
 ] as const;
 const LOGO = [
@@ -73,6 +50,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/scheduler": [["/scheduler start", "Start scheduling"], ["/scheduler pause", "Pause scheduling"], ["/scheduler drain", "Finish active work only"]],
   "/thinking": REASONING_LEVELS.map((level) => [`/thinking ${level}`, `Thinking effort: ${level}`] as const),
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
+  "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
 };
 
 function loadConfig(path: string): SessionConfig {
@@ -96,32 +74,17 @@ function saveConfig(path: string, config: SessionConfig): void {
 function help(): string {
   return [
     "/help                         Show commands",
-    "/workbench [research|challenge] Show or switch workbench mode",
     "/mode [research|challenge]   Show or switch active mode",
-    "/project status              Show project state",
-    "/challenge inspect           Show active challenge",
-    "/hero [start|status|stop]     Zero-to-hero baseline and research workflow",
+    "/research [question]         Inspect, run, and explain research automatically",
+    "/challenge [start|status]    Start or inspect the active challenge",
+    "/experiment [propose|run]    Create or run a reproducible experiment",
+    "/loop [once|start|pause]     Run the autonomous research loop",
+    "/status                      Show complete workbench state",
     "/provider [codex|local]      Select ChatGPT Codex or local Ollama",
     "/model [name]                Show or select the model (use default for Codex)",
     "/thinking [level]            Select model thinking effort",
-    "/login codex                 Sign in with ChatGPT subscription (device code)",
-    "/login codex browser          Use browser login via localhost callback",
-    "/login status                Show Codex login status",
-    "/status                      Show Evidra project state",
-    "/inspect                     Show competition configuration",
-    "/research [objective]        Plan the next falsifiable research decision",
-    "/sources [query]             Search cached research sources",
-    "/hypotheses [list|rank]      Inspect the hypothesis graph",
-    "/experiments                 List experiments",
-    "/experiment propose [hyp]    Create an immutable experiment manifest",
-    "/experiment show <id>        Show an experiment manifest",
-    "/run <command>              Run rg, grep, tests, Python, uv, or another command",
-    "/compute                     Show compute and budget state",
+    "/login [codex|status]        Authenticate or check provider access",
     "/autonomy [safe|fast|yolo]   Set autonomous execution policy",
-    "/pause                       Pause autonomous scheduling",
-    "/resume                      Resume autonomous scheduling",
-    "/loop [status|once|start|pause|stop] Run the autonomous research loop",
-    "/scheduler [start|pause|drain] Control experiment scheduling",
     "/exit                        Quit Evidra",
     "",
     "Anything else is sent to the research director.",
@@ -220,7 +183,48 @@ export function App({ root }: { root: string }): React.JSX.Element {
 
   const append = (role: Message["role"], text: string): void => setMessages((current) => [...current, { role, text }]);
 
+  const performResearchObservation = async (): Promise<Record<string, unknown>> => {
+    setProgress("Research 1/3 · inspecting repository and challenge state...");
+    const status = await runProcess(["git", "status", "--short"], root);
+    const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
+    const observation: Record<string, unknown> = {
+      gitStatus: status.stdout.trim().split("\n").filter(Boolean).slice(0, 40),
+      repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120),
+    };
+    if (config.mode === "challenge") {
+      setProgress("Research 2/3 · running the canonical baseline evaluator...");
+      const baseline = await runProcess(
+        ["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"],
+        join(root, "competitions", "whestbench", "starterkit"),
+        15 * 60_000,
+        (stream, chunk) => {
+          const line = chunk.replace(/\s+/g, " ").trim();
+          if (line) setProgress(`Research 2/3 · ${stream}: ${line.slice(-120)}`);
+        },
+      );
+      observation.baseline = { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout.slice(-4000), stderr: baseline.stderr.slice(-4000) };
+    }
+    const evidenceStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    evidenceStore.appendEvent("research.observation", observation);
+    evidenceStore.saveClaim({
+      id: `claim_observation_${Date.now()}`,
+      payload: {
+        statement: `Repository inspection and ${config.mode === "challenge" ? "canonical baseline execution" : "workspace inspection"} completed before the research decision.`,
+        scope: "current-workspace",
+        confidence: 1,
+        sourceType: "observation",
+        sourceId: `observation_${Date.now()}`,
+        status: "active",
+        observation,
+      },
+    });
+    evidenceStore.close();
+    return observation;
+  };
+
   const runResearchCycle = async (objective: string): Promise<string> => {
+    const observation = await performResearchObservation();
+    setProgress("Research 3/3 · asking the director to analyze observed evidence and select the next experiment...");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const project = store.project();
     const recentEvents = store.recentEvents(20);
@@ -231,6 +235,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       project,
       competition: whestbenchConfig,
       recentEvents,
+      observation,
       constraints: { no_submission: true, no_file_edits: true },
     }, { provider: config.provider, model: config.model, reasoningEffort: config.reasoningEffort, cwd: root, fallbackLocalModel: "qwen3.6:27b" }, setProgress);
     const decisionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -646,23 +651,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request === "/research" || request.startsWith("/research ")) {
       const objective = request.slice("/research".length).trim() || "Inspect the current baseline and propose the highest-information next experiment.";
-      setBusy(true); setProgress("Building research decision...");
-      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      const project = store.project();
-      const recentEvents = store.recentEvents(20);
-      store.close();
+      setBusy(true); setProgress("Starting empirical research cycle...");
       try {
-        await checkProvider({ provider: config.provider, model: config.model, cwd: root });
-        const decision = await runResearchDirector(objective, {
-          project,
-          competition: whestbenchConfig,
-          recentEvents,
-          constraints: { no_submission: true, no_file_edits: true },
-        }, { provider: config.provider, model: config.model, reasoningEffort: config.reasoningEffort, cwd: root, fallbackLocalModel: "qwen3.6:27b" }, setProgress);
-        const decisionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        materializeResearchDecision(decisionStore, decision);
-        decisionStore.close();
-        append("assistant", formatResearchDecision(decision));
+        append("assistant", await runResearchCycle(objective));
       } catch (error) {
         append("assistant", error instanceof Error ? error.message : String(error));
       } finally { setBusy(false); setProgress(""); }
@@ -674,21 +665,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     try {
       await checkProvider({ provider: config.provider, model: config.model, cwd: root });
       if (config.mode === "research") {
-        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        const project = store.project();
-        const recentEvents = store.recentEvents(20);
-        store.close();
-        const decision = await runResearchDirector(request, {
-          mode: config.mode,
-          project,
-          competition: whestbenchConfig,
-          recentEvents,
-          constraints: { no_submission: true, no_file_edits: true },
-        }, { provider: config.provider, model: config.model, reasoningEffort: config.reasoningEffort, cwd: root, fallbackLocalModel: "qwen3.6:27b" }, setProgress);
-        const decisionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        materializeResearchDecision(decisionStore, decision);
-        decisionStore.close();
-        append("assistant", formatResearchDecision(decision));
+        append("assistant", await runResearchCycle(request));
       } else {
         const result = await runWithLocalFallback({ role: "challenge scientist", objective: request, context: { mode: config.mode, competition: whestbenchConfig } }, { provider: config.provider, model: config.model, cwd: root, reasoningEffort: config.reasoningEffort }, "qwen3.6:27b", setProgress);
         append("assistant", String(result.output));

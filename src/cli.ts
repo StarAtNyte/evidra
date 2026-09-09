@@ -102,13 +102,27 @@ research.command("propose")
   .action(async (objective: string) => {
     const store = new ResearchStore(statePath);
     const project = store.project();
+    console.log("Research 1/3 · inspecting repository...");
+    const gitStatus = await runProcess(["git", "status", "--short"], root);
+    const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
+    console.log("Research 2/3 · running canonical baseline...");
+    const baseline = await runProcess(["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"], join(root, "competitions", "whestbench", "starterkit"));
+    const observation = {
+      gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40),
+      repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120),
+      baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout.slice(-4000), stderr: baseline.stderr.slice(-4000) },
+    };
+    store.appendEvent("research.observation", observation);
+    store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
     const recentEvents = store.recentEvents(20);
     store.close();
+    console.log("Research 3/3 · analyzing observed evidence...");
     const decision = await runResearchDirector(objective, {
       project,
       competition: whestbenchConfig,
       constraints: { no_submission: true, no_file_edits: true },
       recentEvents,
+      observation,
     }, { provider: "codex", model: "default", reasoningEffort: "medium", fallbackLocalModel: "qwen3.6:27b", cwd: root });
     const decisionStore = new ResearchStore(statePath);
     materializeResearchDecision(decisionStore, decision);
