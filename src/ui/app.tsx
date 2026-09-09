@@ -11,10 +11,13 @@ import { ensureWorktree } from "../core/worktree.js";
 import { auditExperiment } from "../core/validation.js";
 import { sha256File } from "../core/evidence.js";
 import { compareRuns } from "../core/statistics.js";
+import { auditData } from "../core/data-audit.js";
+import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { activePhaseGoal, definePhaseGoals } from "../core/phase-goals.js";
 import { createExperimentManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { whestbenchConfig } from "../competitions/whestbench.js";
+import { getCompetitionAdapter } from "../competitions/adapters.js";
 import { checkProvider, codexLoginStatus, listCodexModels, listLocalModels, loginCodex, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
@@ -22,7 +25,8 @@ import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../c
 type Message = { role: "user" | "assistant" | "system"; text: string };
 type WorkbenchMode = "research" | "challenge";
 type AutonomyLevel = "safe" | "fast" | "yolo";
-type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel };
+type ResearchCampaign = { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed" };
+type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; campaign?: ResearchCampaign };
 
 const defaultConfig: SessionConfig = { provider: "codex", model: "default", reasoningEffort: "medium", mode: "research", autonomy: "safe" };
 const COMMANDS = [
@@ -33,6 +37,7 @@ const COMMANDS = [
   ["/experiment", "Create or run a reproducible experiment"],
   ["/loop", "Run the autonomous research loop"],
   ["/status", "Show complete workbench state"],
+  ["/usage", "Show budget, activity, and campaign usage"],
   ["/provider", "Select codex or local provider"],
   ["/model", "Select the active model"],
   ["/thinking", "Select model thinking effort"],
@@ -61,7 +66,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
   "/research": [["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start research scheduling"], ["/research pause", "Pause research scheduling"]],
-  "/challenge": [["/challenge status", "Show challenge state"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge baseline", "Run the canonical baseline"], ["/challenge start", "Start challenge zero-to-hero flow"]],
+  "/challenge": [["/challenge status", "Show challenge state"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"], ["/challenge start", "Start challenge zero-to-hero flow"]],
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"]],
 };
 
@@ -83,11 +88,21 @@ function saveConfig(path: string, config: SessionConfig): void {
   writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
 }
 
+function parseBudgetMinutes(value: string): number | undefined {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*(m|min|minutes?|h|hours?|d|days?)?$/i);
+  if (!match) return undefined;
+  const amount = Number(match[1]);
+  const unit = (match[2] ?? "m").toLowerCase();
+  const multiplier = unit.startsWith("h") ? 60 : unit.startsWith("d") ? 1440 : 1;
+  const minutes = Math.round(amount * multiplier);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : undefined;
+}
+
 function help(): string {
   return [
     "/help                         Show commands",
     "/mode [research|challenge]   Show or switch active mode",
-    "/research [question]         Inspect, run, and explain research automatically",
+    "/research [next|question]    Configure autonomous research or run one cycle",
     "/challenge [start|status]    Start or inspect the active challenge",
     "/experiment [propose|run]    Create or run a reproducible experiment",
     "/loop [once|start|pause]     Run the autonomous research loop",
@@ -119,8 +134,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const [picker, setPicker] = useState<"model" | "reasoning" | "mode" | "permissions" | null>(null);
   const [pickerIndex, setPickerIndex] = useState(0);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const [setupStep, setSetupStep] = useState<"goal" | "budget" | "stop" | null>(null);
+  const [setupDraft, setSetupDraft] = useState<{ goal?: string; budgetMinutes?: number }>({});
   const [inputMount, setInputMount] = useState(0);
   const submitRef = useRef<(value: string) => Promise<void>>(async () => undefined);
+  const suppressNextSubmit = useRef(false);
   const loopTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const loopBusy = useRef(false);
   const activeProcess = useRef<ProcessControl | null>(null);
@@ -215,7 +233,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (key.return) {
-      void submitRef.current(suggestions[suggestionIndex][0]);
+      suppressNextSubmit.current = true;
+      const selected = suggestions[suggestionIndex][0];
+      setTimeout(() => {
+        suppressNextSubmit.current = false;
+        void submitRef.current(selected);
+      }, 0);
       return;
     }
     if (key.downArrow) {
@@ -229,6 +252,21 @@ export function App({ root }: { root: string }): React.JSX.Element {
 
   const append = (role: Message["role"], text: string): void => setMessages((current) => [...current, { role, text }]);
 
+  const activeAdapter = () => {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const project = store.project();
+    store.close();
+    return getCompetitionAdapter(project?.competitionId ?? "whestbench");
+  };
+
+  const ensureActiveProject = (): void => {
+    const adapter = activeAdapter();
+    mkdirSync(join(root, ".sota"), { recursive: true });
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    if (!store.project()) store.createProject({ id: `evidra-${adapter.id}`, name: adapter.config.name, competitionId: adapter.id, config: adapter.config });
+    store.close();
+  };
+
   const performResearchObservation = async (): Promise<Record<string, unknown>> => {
     setProgress("Research 1/3 · inspecting repository and challenge state...");
     const status = await runProcess(["git", "status", "--short"], root);
@@ -239,9 +277,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     };
     if (config.mode === "challenge") {
       setProgress("Research 2/3 · running the canonical baseline evaluator...");
+      const adapter = activeAdapter();
       const baseline = await runProcess(
-        ["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"],
-        join(root, "competitions", "whestbench", "starterkit"),
+        adapter.baselineCommand(),
+        adapter.workspacePath(root),
         15 * 60_000,
         (stream, chunk) => {
           const line = chunk.replace(/\s+/g, " ").trim();
@@ -270,7 +309,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     return observation;
   };
 
-  const runResearchCycle = async (objective: string): Promise<string> => {
+  const runResearchCycle = async (objective: string): Promise<{ text: string; goalStatus: "active" | "blocked" | "met" }> => {
     const observation = await performResearchObservation();
     setProgress("Research 3/3 · asking the director to analyze observed evidence and select the next experiment...");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -282,10 +321,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const recentEvents = store.recentEvents(20);
     store.close();
     await checkProvider({ provider: config.provider, model: config.model, cwd: root });
+    const adapter = activeAdapter();
     const decision = await runResearchDirector(objective, {
       mode: config.mode,
       project,
-      competition: whestbenchConfig,
+      competition: adapter.config,
       recentEvents,
       observation,
       ultimateGoal: objective,
@@ -309,7 +349,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
     }
     decisionStore.close();
-    return formatResearchDecision(decision);
+    return { text: formatResearchDecision(decision), goalStatus: decision.goalStatus };
   };
 
   const proposeLatestExperiment = async (): Promise<{ id: string; text: string } | null> => {
@@ -371,7 +411,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     return `\n\nExperiment ${id} ${recordedResult.status}\nRun: ${recordedResult.runId}\nExit code: ${recordedResult.exitCode}\nDuration: ${recordedResult.durationSeconds.toFixed(1)}s\nMetric: ${recordedResult.metrics.final_layer_mse ?? "not parsed"}\nArtifacts: ${Object.keys(recordedResult.artifacts).join(", ")}\nFailure: ${recordedResult.failureClass ?? "none"}`;
   };
 
-  const runAutonomousCycle = async (): Promise<void> => {
+  const runAutonomousCycle = async (campaignOverride?: ResearchCampaign): Promise<void> => {
     if (loopBusy.current || busy) return;
     loopBusy.current = true;
     setBusy(true); setProgress("Autonomous loop: choosing the next highest-information decision...");
@@ -379,13 +419,32 @@ export function App({ root }: { root: string }): React.JSX.Element {
     store.setSchedulerState({ status: "running", mode: config.mode, currentStep: "research" });
     store.close();
     try {
-      const result = await runResearchCycle("Run the next zero-to-hero research cycle: inspect current state, identify the highest-information bottleneck, and propose one falsifiable experiment with explicit validation and replication criteria.");
+      const campaign = campaignOverride ?? config.campaign;
+      if (campaign) {
+        const elapsed = (Date.now() - Date.parse(campaign.startedAt)) / 60_000;
+        if (elapsed >= campaign.budgetMinutes) {
+          campaign.status = "completed";
+          setConfig((current) => ({ ...current, campaign: { ...campaign, status: "completed" } }));
+          append("assistant", `Autonomous research stopped: budget exhausted (${campaign.budgetMinutes} minutes).`);
+          return;
+        }
+      }
+      const objective = campaign
+        ? `Work autonomously toward this ultimate research goal: ${campaign.goal}. Stop when this condition is met: ${campaign.stopCondition}. Continue through the active internal phase goal, gathering evidence and running safe local checks as needed.`
+        : "Run the next zero-to-hero research cycle: inspect current state, identify the highest-information bottleneck, and propose one falsifiable experiment with explicit validation and replication criteria.";
+      const cycle = await runResearchCycle(objective);
       const update = new ResearchStore(join(root, ".sota", "database.sqlite"));
       update.setSchedulerState({ status: "running", mode: config.mode, currentStep: "awaiting-next-cycle" });
       update.close();
       const proposed = config.mode === "challenge" ? await proposeLatestExperiment() : null;
-      append("assistant", result + (proposed?.text ?? ""));
+      append("assistant", cycle.text + (proposed?.text ?? ""));
       if (proposed && config.mode === "challenge" && config.autonomy === "yolo") append("assistant", await executeExperiment(proposed.id));
+      if (campaign && cycle.goalStatus === "met") {
+        campaign.status = "completed";
+        setConfig((current) => ({ ...current, campaign: { ...campaign, status: "completed" } }));
+        if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
+        append("assistant", `Autonomous research stopping condition met for phase ${cycle.goalStatus}.`);
+      }
     } catch (error) {
       const update = new ResearchStore(join(root, ".sota", "database.sqlite"));
       update.setSchedulerState({ status: "paused", mode: config.mode, currentStep: "blocked" });
@@ -399,6 +458,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
   };
 
   const submit = async (value: string): Promise<void> => {
+    if (suppressNextSubmit.current) {
+      suppressNextSubmit.current = false;
+      return;
+    }
     const pastedLines = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     if (pastedLines.length > 1) {
       setInput("");
@@ -409,6 +472,31 @@ export function App({ root }: { root: string }): React.JSX.Element {
     setInput("");
     if (!request || busy) return;
     append("user", request);
+    if (setupStep) {
+      if (request === "/cancel") {
+        setSetupStep(null); setSetupDraft({}); append("assistant", "Autonomous research setup cancelled."); return;
+      }
+      if (setupStep === "goal") {
+        setSetupDraft({ goal: request }); setSetupStep("budget");
+        append("assistant", "Step 2/3 · What is the maximum budget? Examples: 120m, 4h, 2d"); return;
+      }
+      if (setupStep === "budget") {
+        const budgetMinutes = parseBudgetMinutes(request);
+        if (!budgetMinutes) { append("assistant", "Please enter a positive budget such as 90m, 4h, or 2d."); return; }
+        setSetupDraft((current) => ({ ...current, budgetMinutes })); setSetupStep("stop");
+        append("assistant", "Step 3/3 · When should Evidra stop? Describe the success condition, or say ‘when the current research goal is met’."); return;
+      }
+      const campaign: ResearchCampaign = { goal: setupDraft.goal ?? "Advance the research project", budgetMinutes: setupDraft.budgetMinutes ?? 60, stopCondition: request, startedAt: new Date().toISOString(), status: "running" };
+      ensureActiveProject(); setConfig((current) => ({ ...current, campaign })); setSetupStep(null); setSetupDraft({});
+      append("assistant", `Autonomous research started\n  Goal: ${campaign.goal}\n  Budget: ${campaign.budgetMinutes} minutes\n  Stop: ${campaign.stopCondition}\n\nI will define internal phase goals, inspect evidence, run permitted checks, and continue until the condition or budget is reached.`);
+      setBusy(true); setProgress("Starting autonomous research...");
+      try {
+        await runAutonomousCycle(campaign);
+        if (campaign.status === "running" && !loopTimer.current) loopTimer.current = setInterval(() => { void runAutonomousCycle(campaign); }, 60_000);
+      } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
+      finally { setBusy(false); setProgress(""); }
+      return;
+    }
     if (request === "/exit" || request === "/quit") { exit(); return; }
     if (request === "/help") { append("assistant", help()); return; }
     if (/^(hi|hello|hey|yo|ping)$/i.test(request)) {
@@ -464,6 +552,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       store.setSchedulerState({ status: request === "/pause" ? "paused" : "running", mode: config.mode, currentStep: null });
       store.close();
+      if (config.campaign) setConfig((current) => ({ ...current, campaign: { ...current.campaign!, status: request === "/pause" ? "paused" : "running" } }));
       append("assistant", request === "/pause" ? "Scheduling paused. Running jobs are unchanged." : "Scheduling resumed.");
       return;
     }
@@ -545,7 +634,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         baselineStore.close();
         setProgress("Zero-to-hero: generating the first falsifiable research decision...");
         append("assistant", `Baseline ${baseline.exitCode === 0 ? "completed" : "failed"}.\n${baseline.stdout || baseline.stderr}`);
-        const decisionText = await runResearchCycle("Starting from the verified baseline, identify the first highest-information experiment for WhestBench. Include a falsification test, leakage risks, compute estimate, and replication plan.");
+        const decisionText = (await runResearchCycle("Starting from the verified baseline, identify the first highest-information experiment. Include a falsification test, leakage risks, compute estimate, and replication plan.")).text;
         const proposed = await proposeLatestExperiment();
         append("assistant", decisionText + (proposed?.text ?? ""));
         if (proposed && config.autonomy === "yolo") append("assistant", await executeExperiment(proposed.id));
@@ -629,15 +718,46 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Initialized ${whestbenchConfig.name}. Next: /challenge baseline or /hero start.`);
       return;
     }
+    if (request === "/usage") {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const counts = store.counts(); const events = store.eventCount(); const state = store.schedulerState(); const campaign = config.campaign;
+      store.close();
+      const elapsed = campaign ? Math.max(0, (Date.now() - Date.parse(campaign.startedAt)) / 60_000) : 0;
+      append("assistant", `Usage\n  provider: ${config.provider}\n  model: ${config.model}\n  thinking: ${config.reasoningEffort}\n  scheduler: ${state.status}\n  events: ${events}\n  hypotheses: ${counts.hypotheses} · claims: ${counts.claims} · decisions: ${counts.decisions}\n  experiments: ${counts.experiments} · runs: ${counts.runs} · artifacts: ${counts.artifacts}\n${campaign ? `\nCampaign\n  status: ${campaign.status}\n  elapsed: ${elapsed.toFixed(1)} / ${campaign.budgetMinutes} minutes\n  remaining: ${Math.max(0, campaign.budgetMinutes - elapsed).toFixed(1)} minutes\n  goal: ${campaign.goal}\n  stop: ${campaign.stopCondition}` : "\nNo autonomous campaign configured. Start one with /research."}`);
+      return;
+    }
     if (request === "/status" || request === "/project status") {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const project = store.project();
-      append("assistant", project ? `Project: ${project.name}\nCompetition: ${project.competitionId}\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\nEvents: ${store.eventCount()}` : "No Evidra project initialized.");
+      const campaign = config.campaign;
+      append("assistant", project ? `Project: ${project.name}\nCompetition: ${project.competitionId}\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\nEvents: ${store.eventCount()}${campaign ? `\nCampaign: ${campaign.status}\nGoal: ${campaign.goal}\nBudget: ${campaign.budgetMinutes} minutes\nStop: ${campaign.stopCondition}` : ""}` : "No Evidra project initialized. Start with /research to configure an autonomous campaign.");
       store.close();
       return;
     }
     if (request === "/challenge" || request === "/challenge status" || request === "/challenge list") {
       append("assistant", `Active challenge: ${whestbenchConfig.name}\nID: ${whestbenchConfig.id}\nMetric: ${whestbenchConfig.metric.name} (${whestbenchConfig.metric.direction})\nUse /challenge inspect or /challenge baseline.`);
+      return;
+    }
+    if (request === "/challenge audit") {
+      const adapter = getCompetitionAdapter(whestbenchConfig.id);
+      const report = auditData(adapter.workspacePath(root));
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      store.appendEvent("data.audit.completed", report);
+      store.saveClaim({ id: `claim_data_audit_${Date.now()}`, payload: { statement: `Data audit scanned ${report.scannedFiles} files and found ${report.duplicateGroups.length} exact duplicate group(s).`, scope: adapter.id, confidence: 1, sourceType: "observation", sourceId: `data_audit_${Date.now()}`, status: "active", report } });
+      store.close();
+      append("assistant", `Data audit · ${adapter.id}\nScanned: ${report.scannedFiles} files · ${report.totalBytes} bytes\nDuplicate groups: ${report.duplicateGroups.length}\nSkipped: ${report.skippedFiles.length}\n${report.warnings.length ? `Warnings:\n${report.warnings.map((warning) => `- ${warning}`).join("\n")}` : "No exact-duplicate or audit-limit warnings."}`);
+      return;
+    }
+    if (request === "/challenge policy") {
+      const adapter = getCompetitionAdapter(whestbenchConfig.id);
+      const policy = createValidationPolicy(adapter.config);
+      mkdirSync(join(root, ".sota"), { recursive: true });
+      const path = join(root, ".sota", "validation-policy.json");
+      const checksum = writeValidationPolicy(path, policy);
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      store.appendEvent("validation.policy.created", { path, checksum, policy });
+      store.close();
+      append("assistant", `Validation policy created\nVersion: ${policy.version}\nSplit: ${policy.primarySplit}\nSeeds: ${policy.seeds.join(", ")}\nMetric: ${policy.metric.name} (${policy.metric.direction})\nChecksum: ${checksum}`);
       return;
     }
     if (request === "/challenge baseline") {
@@ -861,10 +981,23 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (request === "/research" || request.startsWith("/research ")) {
-      const objective = request.slice("/research".length).trim() || "Inspect the current baseline and propose the highest-information next experiment.";
+      const objective = request.slice("/research".length).trim();
+      if (!objective || objective === "start") {
+        if (config.campaign?.status === "running") { append("assistant", "An autonomous research campaign is already running. Use /status or /usage to inspect it."); return; }
+        setSetupDraft({}); setSetupStep("goal");
+        append("assistant", "Autonomous research setup · Step 1/3\nWhat is the ultimate research goal?\n\nEvidra will define internal phase goals and continue until your stopping condition or budget is reached. Type /cancel to stop setup.");
+        return;
+      }
+      if (objective === "next") {
+        ensureActiveProject(); setBusy(true); setProgress("Starting empirical research cycle...");
+        try { append("assistant", (await runResearchCycle("Inspect the current workspace and choose the highest-information next research action.")).text); }
+        catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
+        finally { setBusy(false); setProgress(""); }
+        return;
+      }
       setBusy(true); setProgress("Starting empirical research cycle...");
       try {
-        append("assistant", await runResearchCycle(objective));
+        ensureActiveProject(); append("assistant", (await runResearchCycle(objective)).text);
       } catch (error) {
         append("assistant", error instanceof Error ? error.message : String(error));
       } finally { setBusy(false); setProgress(""); }
@@ -876,7 +1009,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     try {
       await checkProvider({ provider: config.provider, model: config.model, cwd: root });
       if (config.mode === "research") {
-        append("assistant", await runResearchCycle(request));
+        ensureActiveProject(); append("assistant", (await runResearchCycle(request)).text);
       } else {
         const result = await runWithLocalFallback({ role: "challenge scientist", objective: request, context: { mode: config.mode, competition: whestbenchConfig } }, { provider: config.provider, model: config.model, cwd: root, reasoningEffort: config.reasoningEffort }, "qwen3.6:27b", setProgress);
         append("assistant", String(result.output));

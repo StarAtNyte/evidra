@@ -8,6 +8,9 @@ import { createExperimentManifest, manifestSummary } from "./core/experiment-man
 import { activePhaseGoal, definePhaseGoals } from "./core/phase-goals.js";
 import { PhaseGoalSchema } from "./core/types.js";
 import { whestbenchConfig } from "./competitions/whestbench.js";
+import { getCompetitionAdapter } from "./competitions/adapters.js";
+import { auditData } from "./core/data-audit.js";
+import { createValidationPolicy, writeValidationPolicy } from "./core/validation-policy.js";
 import { runProcess } from "./core/process.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
@@ -19,26 +22,32 @@ import { App } from "./ui/app.js";
 const root = process.cwd();
 const statePath = join(root, ".sota", "database.sqlite");
 const program = new Command();
+const activeCompetition = () => {
+  const store = new ResearchStore(statePath);
+  const project = store.project();
+  store.close();
+  return getCompetitionAdapter(project?.competitionId ?? "whestbench");
+};
 
 program.name("evidra").description("Research-focused autonomous experimentation workbench").version("0.1.0");
 
 program.command("init")
   .argument("<competition>", "competition adapter to initialize")
   .action((competition: string) => {
-    if (competition !== "whestbench") throw new Error(`Unknown competition: ${competition}`);
-    const projectDir = join(root, "competitions", "whestbench");
+    const adapter = getCompetitionAdapter(competition);
+    const projectDir = join(root, "competitions", adapter.id);
     mkdirSync(join(projectDir, "experiments"), { recursive: true });
     mkdirSync(join(projectDir, "reports"), { recursive: true });
     mkdirSync(join(projectDir, "submissions"), { recursive: true });
     mkdirSync(join(root, ".sota"), { recursive: true });
     const configPath = join(projectDir, "competition.json");
-    if (!existsSync(configPath)) writeFileSync(configPath, `${JSON.stringify(whestbenchConfig, null, 2)}\n`);
+    if (!existsSync(configPath)) writeFileSync(configPath, `${JSON.stringify(adapter.config, null, 2)}\n`);
     const store = new ResearchStore(statePath);
     if (!store.project()) {
-      store.createProject({ id: "evidra-whestbench", name: whestbenchConfig.name, competitionId: whestbenchConfig.id, config: whestbenchConfig });
+      store.createProject({ id: `evidra-${adapter.id}`, name: adapter.config.name, competitionId: adapter.id, config: adapter.config });
     }
     store.close();
-    console.log(`Initialized Evidra project for ${whestbenchConfig.name}`);
+    console.log(`Initialized Evidra project for ${adapter.config.name}`);
     console.log(`Configuration: ${configPath}`);
   });
 
@@ -52,6 +61,21 @@ program.command("status").action(() => {
     console.log(`Competition   ${project.competitionId}`);
     console.log(`Events        ${store.eventCount()}`);
   }
+  store.close();
+});
+
+program.command("usage").description("Show research, experiment, and campaign usage").action(() => {
+  const store = new ResearchStore(statePath);
+  const counts = store.counts();
+  const project = store.project();
+  console.log(`Project       ${project?.name ?? "not initialized"}`);
+  console.log(`Events        ${store.eventCount()}`);
+  console.log(`Hypotheses    ${counts.hypotheses}`);
+  console.log(`Claims        ${counts.claims}`);
+  console.log(`Decisions     ${counts.decisions}`);
+  console.log(`Experiments   ${counts.experiments}`);
+  console.log(`Runs          ${counts.runs}`);
+  console.log(`Artifacts     ${counts.artifacts}`);
   store.close();
 });
 
@@ -85,13 +109,29 @@ challenge.command("list").action(() => console.log(`* ${whestbenchConfig.id} —
 challenge.command("status").action(() => {
   const store = new ResearchStore(statePath);
   const active = store.project();
-  console.log(`Challenge: ${whestbenchConfig.name}\nInitialized: ${active?.competitionId === whestbenchConfig.id ? "yes" : "no"}`);
+  const adapter = activeCompetition();
+  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}`);
   store.close();
 });
-challenge.command("inspect").action(() => console.log(JSON.stringify(whestbenchConfig, null, 2)));
+challenge.command("inspect").action(() => console.log(JSON.stringify(activeCompetition().config, null, 2)));
+challenge.command("audit").action(() => {
+  const adapter = activeCompetition();
+  const report = auditData(adapter.workspacePath(root));
+  const store = new ResearchStore(statePath);
+  store.appendEvent("data.audit.completed", report);
+  store.close();
+  console.log(JSON.stringify(report, null, 2));
+});
+challenge.command("policy").action(() => {
+  const adapter = activeCompetition();
+  const policy = createValidationPolicy(adapter.config);
+  mkdirSync(join(root, ".sota"), { recursive: true });
+  const path = join(root, ".sota", "validation-policy.json");
+  console.log(`Validation policy: ${path}\nChecksum: ${writeValidationPolicy(path, policy)}\n${JSON.stringify(policy, null, 2)}`);
+});
 challenge.command("baseline").description("Run the canonical baseline").action(async () => {
-  const cwd = join(root, "competitions", "whestbench", "starterkit");
-  const result = await runProcess(["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"], cwd);
+  const adapter = activeCompetition();
+  const result = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root));
   console.log(result.stdout);
   if (result.stderr) console.error(result.stderr);
   if (result.exitCode !== 0) process.exitCode = result.exitCode;
@@ -112,7 +152,8 @@ research.command("propose")
     const gitStatus = await runProcess(["git", "status", "--short"], root);
     const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
     console.log("Research 2/3 · running canonical baseline...");
-    const baseline = await runProcess(["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"], join(root, "competitions", "whestbench", "starterkit"));
+    const adapter = activeCompetition();
+    const baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root));
     const observation = {
       gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40),
       repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120),
@@ -125,7 +166,7 @@ research.command("propose")
     console.log("Research 3/3 · analyzing observed evidence...");
     const decision = await runResearchDirector(objective, {
       project,
-      competition: whestbenchConfig,
+      competition: adapter.config,
       constraints: { no_submission: true, no_file_edits: true },
       recentEvents,
       observation,
@@ -157,8 +198,11 @@ program.command("baseline")
   .description("Run the WhestBench starter-kit baseline locally")
   .option("--name <name>", "starter-kit baseline", "mean_propagation")
   .action(async (options: { name: string }) => {
-    const cwd = join(root, "competitions", "whestbench", "starterkit");
-    const result = await runProcess(["uv", "run", "python", "estimator.py", "--baseline", options.name], cwd);
+    const adapter = activeCompetition();
+    const command = adapter.baselineCommand();
+    const nameIndex = command.length - 1;
+    if (options.name !== "mean_propagation") command[nameIndex] = options.name;
+    const result = await runProcess(command, adapter.workspacePath(root));
     console.log(result.stdout);
     if (result.stderr) console.error(result.stderr);
     if (result.exitCode !== 0) process.exitCode = result.exitCode;
