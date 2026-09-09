@@ -56,6 +56,9 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/thinking": REASONING_LEVELS.map((level) => [`/thinking ${level}`, `Thinking effort: ${level}`] as const),
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
+  "/research": [["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start research scheduling"], ["/research pause", "Pause research scheduling"]],
+  "/challenge": [["/challenge status", "Show challenge state"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge baseline", "Run the canonical baseline"], ["/challenge start", "Start challenge zero-to-hero flow"]],
+  "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"]],
 };
 
 function loadConfig(path: string): SessionConfig {
@@ -112,6 +115,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const [picker, setPicker] = useState<"model" | "reasoning" | "mode" | "permissions" | null>(null);
   const [pickerIndex, setPickerIndex] = useState(0);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const submitRef = useRef<(value: string) => Promise<void>>(async () => undefined);
   const loopTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const loopBusy = useRef(false);
   const firstToken = input.split(/\s+/)[0];
@@ -188,6 +192,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (!suggestions.length) return;
     if (key.tab) {
       setInput(suggestions[suggestionIndex][0]);
+      return;
+    }
+    if (key.return) {
+      void submitRef.current(suggestions[suggestionIndex][0]);
       return;
     }
     if (key.downArrow) {
@@ -745,6 +753,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", error instanceof Error ? error.message : String(error));
     } finally { setBusy(false); setProgress(""); }
   };
+  submitRef.current = submit;
 
   return <Box flexDirection="column" padding={1} minHeight={Math.max(24, process.stdout.rows ?? 24)}>
     <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
@@ -772,7 +781,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     </Box>}
     <Box borderStyle="round" borderColor={busy ? "gray" : "yellow"} paddingX={1} marginTop={1}>
       <Text color="yellow">› </Text>
-      <TextInput value={input} onChange={setInput} onSubmit={submit} placeholder="Ask Evidra to inspect, hypothesize, or run an experiment..." />
+      <TextInput focus={!picker} showCursor={!picker} value={input} onChange={setInput} onSubmit={submit} placeholder="Ask Evidra to inspect, hypothesize, or run an experiment..." />
     </Box>
     <Box marginLeft={2}>
       <Text color="gray">{config.provider} · {config.model} · thinking: {config.reasoningEffort} · mode: {config.mode} · permissions: {config.autonomy}</Text>
