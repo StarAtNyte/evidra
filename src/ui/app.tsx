@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
-import Spinner from "ink-spinner";
 import { join, relative } from "node:path";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
@@ -228,6 +227,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   ]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyFrame, setBusyFrame] = useState(0);
   const [progress, setProgressState] = useState("");
   const progressRef = useRef("");
   const progressLastPaint = useRef(0);
@@ -243,7 +243,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const sessionId = useRef(`session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
   const messagesRef = useRef<Message[]>(messages);
   const configRef = useRef<SessionConfig>(config);
-  const submitRef = useRef<(value: string) => Promise<void>>(async () => undefined);
+  const submitRef = useRef<(value: string, fromQueue?: boolean) => Promise<void>>(async () => undefined);
+  const pendingRequests = useRef<string[]>([]);
   const suppressNextSubmit = useRef(false);
   const loopTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const loopBusy = useRef(false);
@@ -270,6 +271,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const reasoningChoices = selectedModel?.supportedReasoningEfforts?.length ? selectedModel.supportedReasoningEfforts : REASONING_LEVELS;
   const modeChoices: readonly WorkbenchMode[] = ["research", "challenge"];
   const permissionChoices: readonly AutonomyLevel[] = ["safe", "fast", "yolo"];
+
+  useEffect(() => {
+    if (!busy) { setBusyFrame(0); return undefined; }
+    const timer = setInterval(() => setBusyFrame((frame) => (frame + 1) % 4), 450);
+    return () => clearInterval(timer);
+  }, [busy]);
 
   useEffect(() => saveConfig(configPath, config), [config, configPath]);
 
@@ -715,7 +722,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
   };
 
-  const submit = async (value: string): Promise<void> => {
+  const submit = async (value: string, fromQueue = false): Promise<void> => {
     if (suppressNextSubmit.current) {
       suppressNextSubmit.current = false;
       return;
@@ -728,9 +735,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     const request = value.trim();
     setInput("");
-    if (!request || busy) return;
+    if (!request) return;
+    if (busy && !fromQueue) {
+      pendingRequests.current.push(request);
+      append("user", request);
+      return;
+    }
     interruptedProcess.current = false;
-    append("user", request);
+    if (!fromQueue) append("user", request);
     if (setupStep) {
       if (request === "/cancel") {
         setSetupStep(null); setSetupDraft({}); append("assistant", "Autonomous research setup cancelled."); return;
@@ -1529,6 +1541,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
   };
   submitRef.current = submit;
 
+  useEffect(() => {
+    if (busy || !pendingRequests.current.length) return;
+    const next = pendingRequests.current.shift();
+    if (next) setTimeout(() => { void submitRef.current(next, true); }, 0);
+  }, [busy]);
+
   return <Box flexDirection="column" padding={1} minHeight={Math.max(24, process.stdout.rows ?? 24)}>
     <Box borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1} flexDirection="column">
       <Text color="cyan" bold>{LOGO}</Text>
@@ -1547,7 +1565,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       })}
     </Box>
     {busy && <Box borderStyle="single" borderColor="magenta" paddingX={1} marginTop={1}>
-      <Text color="magenta" bold><Spinner type="dots" />  RUNNING  </Text><Text color="magenta">{progress}</Text>
+      <Text color="magenta" bold>{["⠋", "⠙", "⠹", "⠸"][busyFrame]}  RUNNING  </Text><Text color="magenta">{progress}</Text>
     </Box>}
     {picker && <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column" marginTop={1}>
       <Text color="cyan" bold>{picker === "model" ? `Select ${config.provider} model` : picker === "reasoning" ? "Select thinking effort" : picker === "mode" ? "Select workbench mode" : "Select permissions"}</Text>

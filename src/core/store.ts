@@ -2,6 +2,19 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
+export type QueueTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export interface QueuedTask {
+  id: string;
+  kind: string;
+  priority: number;
+  status: string;
+  payload: unknown;
+  attempts: number;
+  availableAt: string;
+  claimedAt: string | null;
+  updatedAt: string;
+}
+
 export class ResearchStore {
   private readonly db: Database.Database;
 
@@ -242,14 +255,14 @@ export class ResearchStore {
     this.appendEvent("queue.enqueued", task);
   }
 
-  queueTasks(status?: "queued" | "running" | "completed" | "failed" | "cancelled"): Array<{ id: string; kind: string; priority: number; status: string; payload: unknown; attempts: number; availableAt: string; claimedAt: string | null; updatedAt: string }> {
+  queueTasks(status?: QueueTaskStatus): QueuedTask[] {
     const rows = (status
       ? this.db.prepare("SELECT * FROM work_queue WHERE status = ? ORDER BY priority DESC, available_at ASC").all(status)
       : this.db.prepare("SELECT * FROM work_queue ORDER BY updated_at DESC").all()) as Array<{ id: string; kind: string; priority: number; status: string; payload_json: string; attempts: number; available_at: string; claimed_at: string | null; updated_at: string }>;
     return rows.map((row) => ({ id: row.id, kind: row.kind, priority: row.priority, status: row.status, payload: JSON.parse(row.payload_json), attempts: row.attempts, availableAt: row.available_at, claimedAt: row.claimed_at, updatedAt: row.updated_at }));
   }
 
-  claimNextTask(): { id: string; kind: string; priority: number; status: string; payload: unknown; attempts: number; availableAt: string; claimedAt: string | null; updatedAt: string } | undefined {
+  claimNextTask(): QueuedTask | undefined {
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
       const row = this.db.prepare("SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ? ORDER BY priority DESC, available_at ASC LIMIT 1").get(now) as { id: string } | undefined;
@@ -262,10 +275,16 @@ export class ResearchStore {
     return task;
   }
 
-  updateTask(id: string, status: "queued" | "running" | "completed" | "failed" | "cancelled", payload?: unknown): void {
+  updateTask(id: string, status: QueueTaskStatus, payload?: unknown): void {
     const now = new Date().toISOString();
     this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), updated_at = ? WHERE id = ?").run(status, payload === undefined ? null : JSON.stringify(payload), now, id);
     this.appendEvent(`queue.${status}`, { id, payload });
+  }
+
+  retryTask(id: string, payload: unknown, availableAt: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE work_queue SET status = 'queued', payload_json = ?, available_at = ?, claimed_at = NULL, updated_at = ? WHERE id = ?").run(JSON.stringify(payload), availableAt, now, id);
+    this.appendEvent("queue.retry_scheduled", { id, availableAt, payload });
   }
 
   requeueStaleTasks(maxAgeMs = 15 * 60_000): number {
