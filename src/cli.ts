@@ -11,6 +11,7 @@ import { whestbenchConfig } from "./competitions/whestbench.js";
 import { getCompetitionAdapter } from "./competitions/adapters.js";
 import { auditData } from "./core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "./core/validation-policy.js";
+import { retrieveSource, sourceClaims, sourceSearchText } from "./core/sources.js";
 import { runProcess } from "./core/process.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
@@ -28,6 +29,13 @@ const activeCompetition = () => {
   store.close();
   return getCompetitionAdapter(project?.competitionId ?? "whestbench");
 };
+
+function durationMinutes(value: string): number {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*(m|min|minutes?|h|hours?|d|days?)?$/i);
+  if (!match) throw new Error(`Invalid duration '${value}'. Use 90m, 4h, or 2d.`);
+  const multiplier = (match[2] ?? "m").toLowerCase().startsWith("h") ? 60 : (match[2] ?? "m").toLowerCase().startsWith("d") ? 1440 : 1;
+  return Math.max(1, Math.round(Number(match[1]) * multiplier));
+}
 
 program.name("evidra").description("Research-focused autonomous experimentation workbench").version("0.1.0");
 
@@ -78,6 +86,31 @@ program.command("usage").description("Show research, experiment, and campaign us
   console.log(`Artifacts     ${counts.artifacts}`);
   store.close();
 });
+
+const sources = new Command("sources").description("Retrieve and search durable research sources");
+sources.command("list").action(() => {
+  const store = new ResearchStore(statePath);
+  const entries = store.sources();
+  console.log(entries.length ? entries.map((entry) => `${entry.id} · ${String((entry.payload as { title?: string }).title ?? "Untitled")} · ${String((entry.payload as { url?: string }).url ?? "")}`).join("\n") : "No research sources cached.");
+  store.close();
+});
+sources.command("search").argument("<query>").action((query: string) => {
+  const store = new ResearchStore(statePath);
+  const entries = store.sources().filter((entry) => sourceSearchText(entry).includes(query.toLowerCase()));
+  console.log(entries.length ? entries.map((entry) => `${entry.id} · ${String((entry.payload as { title?: string }).title ?? "Untitled")}`).join("\n") : "No matching research sources.");
+  store.close();
+});
+sources.command("add").argument("<url>").action(async (url: string) => {
+  const retrieved = await retrieveSource(url);
+  const claims = sourceClaims(retrieved.text);
+  const store = new ResearchStore(statePath);
+  store.saveSource({ id: retrieved.id, payload: { ...retrieved, claims } });
+  for (const [index, statement] of claims.entries()) store.saveClaim({ id: `${retrieved.id}_claim_${index + 1}`, payload: { id: `${retrieved.id}_claim_${index + 1}`, statement, scope: retrieved.url, confidence: 0.35, sourceType: "literature", sourceId: retrieved.id, status: "active" } });
+  store.appendEvent("research.source.retrieved", { id: retrieved.id, url: retrieved.url, contentHash: retrieved.contentHash, claimCount: claims.length });
+  store.close();
+  console.log(`${retrieved.id}\n${retrieved.title}\n${retrieved.url}\nclaims: ${claims.length}\nhash: ${retrieved.contentHash}`);
+});
+program.addCommand(sources);
 
 program.command("inspect").action(() => {
   const store = new ResearchStore(statePath);
@@ -139,6 +172,43 @@ challenge.command("baseline").description("Run the canonical baseline").action(a
 program.addCommand(challenge);
 
 const research = new Command("research").description("Ask the embedded research agent for the next research decision");
+research
+  .option("--goal <goal>", "ultimate research goal", "Improve the current competition solution with robust, reproducible evidence")
+  .option("--budget <duration>", "autonomous budget, e.g. 90m or 4h")
+  .option("--stop <condition>", "campaign stopping condition", "stop when the research director has sufficient evidence for the stated goal")
+  .action(async (options: { goal: string; budget?: string; stop: string }) => {
+    const adapter = activeCompetition();
+    const objective = `${options.goal}. Stop condition: ${options.stop}`;
+    const budget = options.budget ? durationMinutes(options.budget) : undefined;
+    const started = Date.now();
+    let cycle = 0;
+    do {
+      cycle += 1;
+      const store = new ResearchStore(statePath);
+      if (!store.project()) store.createProject({ id: `evidra-${adapter.id}`, name: adapter.config.name, competitionId: adapter.id, config: adapter.config });
+      if (!store.phaseGoals().length) for (const goal of definePhaseGoals(objective, "challenge")) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
+      const phaseGoal = activePhaseGoal(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)));
+      const recentEvents = store.recentEvents(20);
+      const researchSources = store.sources().slice(0, 12).map((entry) => entry.payload);
+      console.log(`Research ${cycle}/∞ · inspecting workspace and baseline...`);
+      const gitStatus = await runProcess(["git", "status", "--short"], root);
+      const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
+      const baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), 15 * 60_000);
+      const observation = { gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40), repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120), baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout.slice(-4000), stderr: baseline.stderr.slice(-4000) } };
+      store.appendEvent("research.observation", observation);
+      store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
+      store.close();
+      const projectStore = new ResearchStore(statePath);
+      const activeProject = projectStore.project();
+      projectStore.close();
+      const decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: options.goal, phaseGoal: phaseGoal ?? null }, { provider: "codex", model: "default", reasoningEffort: "high", fallbackLocalModel: "qwen3.6:27b", cwd: root });
+      const decisionStore = new ResearchStore(statePath);
+      materializeResearchDecision(decisionStore, decision);
+      decisionStore.close();
+      console.log(formatResearchDecision(decision));
+      if (!budget || decision.decision === "stop" || decision.goalStatus === "blocked" || (Date.now() - started) / 60_000 >= budget) break;
+    } while (true);
+  });
 research.command("propose")
   .argument("[objective]", "research objective", "Inspect the current WhestBench baseline and propose three falsifiable estimator hypotheses.")
   .action(async (objective: string) => {

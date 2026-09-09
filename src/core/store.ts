@@ -95,6 +95,11 @@ export class ResearchStore {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS research_campaigns (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        payload_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -171,6 +176,20 @@ export class ResearchStore {
     this.db.prepare(`INSERT OR REPLACE INTO phase_goals (id, phase, status, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, COALESCE((SELECT created_at FROM phase_goals WHERE id = ?), ?), ?)`)
       .run(goal.id, goal.phase, goal.status, JSON.stringify(goal.payload), goal.id, now, now);
     this.appendEvent("phase_goal.updated", goal.payload);
+  }
+
+  saveCampaign(campaign: unknown): void {
+    const updatedAt = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO research_campaigns (id, payload_json, updated_at) VALUES (1, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET payload_json = excluded.payload_json, updated_at = excluded.updated_at
+    `).run(JSON.stringify(campaign), updatedAt);
+    this.appendEvent("research.campaign.updated", campaign);
+  }
+
+  campaign(): unknown | undefined {
+    const row = this.db.prepare("SELECT payload_json FROM research_campaigns WHERE id = 1").get() as { payload_json: string } | undefined;
+    return row ? JSON.parse(row.payload_json) : undefined;
   }
 
   phaseGoals(): Array<{ id: string; phase: string; status: string; payload: unknown; updatedAt: string }> {

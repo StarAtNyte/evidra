@@ -34,6 +34,8 @@ The TUI is the primary interface. Every command is available after typing `/`; c
 
 Research mode emphasizes sources, claims, ideas, hypotheses, and decisions. Challenge mode emphasizes a competition’s rules, data, validation, experiments, runs, compute, and submissions.
 
+Plain text is ordinary conversation and is handled by the selected provider without repository inspection or experiment execution. Use `/research` or an autonomous loop when you want Evidra to inspect evidence and act.
+
 ## Project and challenge
 
 ```text
