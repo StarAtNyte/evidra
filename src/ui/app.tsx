@@ -927,7 +927,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const activeCampaign = { ...campaign, status: "running" } as ResearchCampaign;
         persistCampaign(activeCampaign);
         setConfig((current) => ({ ...current, campaign: activeCampaign }));
-        setTimeout(() => { void runAutonomousCycle(activeCampaign); }, 0);
+        setTimeout(() => { void runAutonomousCycle(activeCampaign, true); }, 0);
       }
       return;
     }
@@ -973,6 +973,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const status = action === "stop" ? "idle" : "paused";
         if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
         store.setSchedulerState({ status, mode: config.mode, currentStep: null });
+        if (config.campaign) {
+          const campaign = { ...config.campaign, status: "paused" as const };
+          store.saveCampaign(campaign);
+          setConfig((current) => ({ ...current, campaign }));
+        }
         store.close();
         append("assistant", `Autonomous loop ${status}.`);
         return;
