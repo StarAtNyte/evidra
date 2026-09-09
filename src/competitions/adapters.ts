@@ -11,6 +11,7 @@ export const localResearchConfig: CompetitionConfig = {
   metric: { name: "custom", direction: "maximize" },
   evaluator: { command: ["true"], estimatorPath: "" },
   researchSources: [],
+  evaluatorTimeoutMinutes: 15,
   workspacePath: ".",
   baselineCommand: ["true"],
   experimentCommand: ["true"],

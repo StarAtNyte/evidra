@@ -358,7 +358,7 @@ challenge.command("policy").action(() => {
 });
 challenge.command("baseline").description("Run the canonical baseline").action(async () => {
   const adapter = activeCompetition();
-  const result = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root));
+  const result = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
   console.log(result.stdout);
   if (result.stderr) console.error(result.stderr);
   if (result.exitCode !== 0) process.exitCode = result.exitCode;
@@ -410,7 +410,7 @@ research
       console.log(`Research ${cycle} · inspecting workspace and baseline (budget ${budget}m)...`);
       const gitStatus = await runProcess(["git", "status", "--short"], root);
       const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
-      const baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), 15 * 60_000);
+      const baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
       const observation = { gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40), repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120), baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout.slice(-4000), stderr: baseline.stderr.slice(-4000) } };
       store.appendEvent("research.observation", observation);
       store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
@@ -508,7 +508,7 @@ research.command("propose")
     const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
     console.log("Research 2/3 · running canonical baseline...");
     const adapter = activeCompetition();
-    const baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root));
+    const baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
     const observation = {
       gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40),
       repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120),

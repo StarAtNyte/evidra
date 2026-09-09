@@ -17,6 +17,7 @@ export const whestbenchConfig: CompetitionConfig = {
     "https://github.com/AIcrowd/whest-starterkit",
     "https://github.com/AIcrowd/whestbench",
   ],
+  evaluatorTimeoutMinutes: 60,
   submission: {
     platform: "command",
     source: "workspace",

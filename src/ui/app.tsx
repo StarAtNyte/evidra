@@ -508,7 +508,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const baseline = await runProcess(
         adapter.baselineCommand(),
         adapter.workspacePath(root),
-        15 * 60_000,
+        adapter.config.evaluatorTimeoutMinutes * 60_000,
         (stream, chunk) => {
           const line = chunk.replace(/\s+/g, " ").trim();
           if (line) setProgress(`Research 2/3 · ${stream}: ${line.slice(-120)}`);
@@ -1133,7 +1133,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         store.setSchedulerState({ status: "running", mode: "challenge", currentStep: "baseline" });
         store.close();
         setConfig((current) => ({ ...current, mode: "challenge" }));
-        const baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root));
+        const baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
         const baselineStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
         baselineStore.appendEvent("baseline.completed", { exitCode: baseline.exitCode, stdout: baseline.stdout, stderr: baseline.stderr });
         baselineStore.setSchedulerState({ status: "running", mode: "challenge", currentStep: "research" });
@@ -1359,7 +1359,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const adapter = activeAdapter();
       setBusy(true); setProgress(`Running the canonical ${adapter.config.name} baseline...`);
       try {
-        const result = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root));
+        const result = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
         const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
         store.appendEvent("baseline.completed", { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr });
         store.close();
