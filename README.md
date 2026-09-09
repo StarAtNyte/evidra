@@ -59,7 +59,14 @@ EVIDRA_MODAL_WORKSPACE="$PWD" modal run modal_controller.py \
   --goal "maximize robust validation performance" --budget 4h --lanes 3
 ```
 
-This headless mode has no interactive TUI or implicit approval channel. Inspect or approve external actions from a trusted local session after attaching to the persisted state.
+For remote Codex access, create a Modal Secret containing `CODEX_API_KEY` and set its name before launching:
+
+```bash
+export EVIDRA_MODAL_CODEX_SECRET=evidra-codex
+EVIDRA_MODAL_WORKSPACE="$PWD" modal run modal_controller.py --goal "..." --budget 4h
+```
+
+This headless mode has no interactive TUI or implicit approval channel. Inspect or approve external actions from a trusted local session after attaching to the persisted state. A local ChatGPT subscription login is intentionally not copied into Modal.
 
 Provider and lane failures are recoverable. Transient network, timeout, stream, malformed-response, and service errors receive bounded retries with backoff; configured Codex-to-local fallback changes route when appropriate; every exhausted lane is recorded as failed evidence so the director can choose a different path instead of silently treating it as success. SDK subprocesses are cancelled on timeout and terminal interruption.
 

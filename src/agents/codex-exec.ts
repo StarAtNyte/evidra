@@ -69,6 +69,7 @@ export function codexLoginStatus(): string {
 }
 
 export function codexIsLoggedIn(): boolean {
+  if (process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY) return true;
   return spawnSync("codex", ["login", "status"], { stdio: "ignore" }).status === 0;
 }
 

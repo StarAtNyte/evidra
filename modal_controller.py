@@ -16,6 +16,7 @@ import modal
 WORKSPACE = Path(os.environ.get("EVIDRA_MODAL_WORKSPACE", ".")).resolve()
 REMOTE_WORKSPACE = Path("/workspace")
 STATE_VOLUME = modal.Volume.from_name(os.environ.get("EVIDRA_MODAL_STATE_VOLUME", "evidra-controller-state"), create_if_missing=True)
+CODEX_SECRET_NAME = os.environ.get("EVIDRA_MODAL_CODEX_SECRET")
 
 
 def include_workspace_path(path: str) -> bool:
@@ -34,9 +35,10 @@ image = (
     .add_local_dir(WORKSPACE, remote_path=str(REMOTE_WORKSPACE), ignore=ignore_workspace_path)
 )
 app = modal.App("evidra-controller")
+secrets = [modal.Secret.from_name(CODEX_SECRET_NAME)] if CODEX_SECRET_NAME else []
 
 
-@app.function(image=image, volumes={"/state": STATE_VOLUME}, timeout=24 * 60 * 60)
+@app.function(image=image, secrets=secrets, volumes={"/state": STATE_VOLUME}, timeout=24 * 60 * 60)
 def execute(goal: str, budget: str, provider: str = "codex", model: str = "default", lanes: int = 3) -> int:
     environment = {
         **os.environ,
