@@ -41,6 +41,8 @@ Provider exhaustion is an explicit runtime policy. In the TUI use `/limits fallb
 
 Lane concurrency is adaptive: `safe` runs one independent lane, `fast` permits a small parallel set, and `yolo` uses the largest bounded set supported by the host and provider. Local Ollama concurrency also respects `OLLAMA_NUM_PARALLEL`; the TUI never interprets YOLO as permission to exhaust a laptop, subscription, or external service.
 
+Provider and lane failures are recoverable. Transient network, timeout, stream, malformed-response, and service errors receive bounded retries with backoff; configured Codex-to-local fallback changes route when appropriate; every exhausted lane is recorded as failed evidence so the director can choose a different path instead of silently treating it as success. SDK subprocesses are cancelled on timeout and terminal interruption.
+
 Implemented today:
 
 - Ink-based interactive TUI with Codex-style transcript output;
