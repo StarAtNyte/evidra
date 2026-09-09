@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
 import { createExperimentManifest, manifestSummary } from "./core/experiment-manifest.js";
@@ -15,6 +15,8 @@ import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
+import { executorFor, parseMetricOutput } from "./core/executors.js";
+import { sha256File } from "./core/evidence.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { startInteractive } from "./session/interactive.js";
@@ -366,33 +368,46 @@ experiment.command("propose")
   });
 experiment.command("run")
   .argument("<id>", "experiment identifier")
-  .option("--baseline <name>", "starter-kit baseline to evaluate", "mean_propagation")
-  .action(async (id: string, options: { baseline: string }) => {
+  .action(async (id: string) => {
     const adapter = activeCompetition();
-    const experimentDir = join(adapter.workspacePath(root), "experiments", id);
-    mkdirSync(experimentDir, { recursive: true });
-    const worktreePath = await ensureWorktree(adapter.workspacePath(root), root, id);
     const store = new ResearchStore(statePath);
-    const experiment = {
-      id,
-      hypothesisId: "baseline-reproduction",
-      parentCommit: "starterkit",
-      worktreePath,
-      command: [...adapter.experimentCommand()],
-      status: "running" as const,
-      createdAt: new Date().toISOString(),
-    };
-    store.saveExperiment({ id, payload: experiment });
+    const entry = store.experiments().find((candidate) => candidate.id === id);
+    if (!entry) { store.close(); throw new Error(`Experiment ${id} is not registered. Run: evidra experiment propose`); }
+    const manifest = ExperimentManifestSchema.parse(entry.payload);
+    store.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "running" } });
     store.close();
-
-    const result = await runProcess(experiment.command, worktreePath);
-    const reportPath = join(experimentDir, "result.json");
-    writeFileSync(reportPath, `${JSON.stringify({ ...result, experiment }, null, 2)}\n`);
-    console.log(`Experiment ${id}: ${result.exitCode === 0 ? "completed" : "failed"}`);
-    console.log(`Report: ${reportPath}`);
-    console.log(result.stdout);
-    if (result.stderr) console.error(result.stderr);
-    if (result.exitCode !== 0) process.exitCode = result.exitCode;
+    const worktreePath = await ensureWorktree(root, root, id);
+    const experimentCwd = join(worktreePath, relative(root, adapter.workspacePath(root)));
+    const command = adapter.experimentCommand();
+    const executor = executorFor(manifest.resources.executor);
+    let result = await executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name);
+    const sameCommand = adapter.config.evaluator.command.length === command.length && adapter.config.evaluator.command.every((part, index) => part === command[index]);
+    let evaluator: { stdout: string; stderr: string; exitCode: number } | undefined;
+    if (result.status === "completed" && !sameCommand) {
+      const evaluated = await runProcess(adapter.config.evaluator.command, experimentCwd, manifest.resources.timeoutMinutes * 60_000);
+      evaluator = { stdout: evaluated.stdout, stderr: evaluated.stderr, exitCode: evaluated.exitCode };
+      const parsed = parseMetricOutput(evaluated.stdout, adapter.config.metric.name);
+      result = { ...result, status: evaluated.exitCode === 0 ? "completed" : "failed", exitCode: evaluated.exitCode, metrics: { ...result.metrics, ...parsed.metrics }, metricsByFold: { ...result.metricsByFold, ...parsed.metricsByFold }, stdout: `${result.stdout ?? ""}\n[EVALUATOR]\n${evaluated.stdout}`, stderr: `${result.stderr ?? ""}\n[EVALUATOR]\n${evaluated.stderr}`, ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
+    }
+    const artifactDir = join(root, ".sota", "artifacts", result.runId);
+    mkdirSync(artifactDir, { recursive: true });
+    const artifactPaths: Record<string, string> = {};
+    for (const [name, content] of Object.entries({ "stdout.log": result.stdout ?? "", "stderr.log": result.stderr ?? "", "metrics.json": `${JSON.stringify(result.metrics, null, 2)}\n`, ...(evaluator ? { "evaluator.stdout.log": evaluator.stdout, "evaluator.stderr.log": evaluator.stderr } : {}) })) {
+      const path = join(artifactDir, name);
+      writeFileSync(path, content);
+      artifactPaths[name] = path;
+    }
+    const recorded = { ...result, artifacts: artifactPaths };
+    const resultStore = new ResearchStore(statePath);
+    resultStore.saveRun({ id: result.runId, experimentId: id, status: recorded.status, payload: recorded });
+    for (const [name, path] of Object.entries(artifactPaths)) resultStore.saveArtifact({ id: `${result.runId}-${name}`, runId: result.runId, name, path, checksum: sha256File(path) });
+    resultStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: recorded.status === "completed" ? "completed" : "failed", runId: result.runId, worktreePath: experimentCwd } });
+    resultStore.close();
+    console.log(`Experiment ${id}: ${recorded.status}`);
+    console.log(`Run: ${result.runId}`);
+    console.log(`Metric (${adapter.config.metric.name}): ${recorded.metrics[adapter.config.metric.name] ?? "not parsed"}`);
+    console.log(`Artifacts: ${Object.keys(artifactPaths).join(", ")}`);
+    if (recorded.exitCode !== 0) process.exitCode = recorded.exitCode;
   });
 program.addCommand(experiment);
 
