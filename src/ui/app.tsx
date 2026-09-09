@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { ResearchStore } from "../core/store.js";
 import { runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
+import { QueueWorker } from "../core/queue-worker.js";
 import { executorFor } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
 import { auditExperiment } from "../core/validation.js";
@@ -27,6 +28,7 @@ import { formatResearchDecision, runResearchDirector } from "../agents/research-
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string };
+type QueuedRequest = { id: string; text: string };
 type WorkbenchMode = "research" | "challenge";
 type AutonomyLevel = "safe" | "fast" | "yolo";
 type ResearchCampaign = { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed" };
@@ -244,7 +246,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const messagesRef = useRef<Message[]>(messages);
   const configRef = useRef<SessionConfig>(config);
   const submitRef = useRef<(value: string, fromQueue?: boolean) => Promise<void>>(async () => undefined);
-  const pendingRequests = useRef<string[]>([]);
+  const pendingRequests = useRef<QueuedRequest[]>([]);
+  const [queuedRequests, setQueuedRequests] = useState<QueuedRequest[]>([]);
   const suppressNextSubmit = useRef(false);
   const loopTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const loopBusy = useRef(false);
@@ -674,9 +677,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
       queueTaskId = `task_research_${Date.now()}`;
       const queueStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
       queueStore.enqueueTask({ id: queueTaskId, kind: "research.cycle", priority: campaign ? 10 : 5, payload: { objective, campaign: campaign ?? null } });
-      queueStore.claimNextTask();
+      let cycle: Awaited<ReturnType<typeof runResearchCycle>> | undefined;
+      const worker = new QueueWorker(queueStore, async (task) => {
+        const payload = task.payload as { objective?: string };
+        cycle = await runResearchCycle(payload.objective ?? objective);
+        return cycle;
+      }, { concurrency: 1, maxAttempts: 1, kinds: ["research.cycle"] });
+      await worker.runOnce();
+      await worker.stop();
+      const queuedResult = queueStore.queueTasks().find((task) => task.id === queueTaskId);
       queueStore.close();
-      const cycle = await runResearchCycle(objective);
+      if (!cycle) throw new Error(`Research queue task ${queueTaskId} did not produce a cycle (${queuedResult?.status ?? "missing"}).`);
       const update = new ResearchStore(join(root, ".sota", "database.sqlite"));
       update.setSchedulerState({ status: "running", mode: config.mode, currentStep: "awaiting-next-cycle" });
       update.close();
@@ -689,7 +700,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
           append("assistant", await executeExperiment(proposed.id));
         }
       }
-      if (queueTaskId) { const queueStore = new ResearchStore(join(root, ".sota", "database.sqlite")); queueStore.updateTask(queueTaskId, "completed", { decision: cycle.decision, goalStatus: cycle.goalStatus }); queueStore.close(); }
       if (campaign && cycle.decision === "stop") {
         campaign.status = "completed";
         persistCampaign(campaign);
@@ -737,8 +747,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
     setInput("");
     if (!request) return;
     if (busy && !fromQueue) {
-      pendingRequests.current.push(request);
-      append("user", request);
+      const queued = { id: `queued_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, text: request };
+      pendingRequests.current.push(queued);
+      setQueuedRequests([...pendingRequests.current]);
       return;
     }
     interruptedProcess.current = false;
@@ -1544,7 +1555,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
   useEffect(() => {
     if (busy || !pendingRequests.current.length) return;
     const next = pendingRequests.current.shift();
-    if (next) setTimeout(() => { void submitRef.current(next, true); }, 0);
+    if (next) {
+      setQueuedRequests([...pendingRequests.current]);
+      setTimeout(() => { void submitRef.current(next.text, true); }, 0);
+    }
   }, [busy]);
 
   return <Box flexDirection="column" padding={1} minHeight={Math.max(24, process.stdout.rows ?? 24)}>
@@ -1564,6 +1578,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
         </Box>;
       })}
     </Box>
+    {queuedRequests.length > 0 && <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginTop={1}>
+      <Text color="yellow" bold>QUEUED · {queuedRequests.length} waiting</Text>
+      {queuedRequests.map((queued) => <Text key={queued.id} color="yellow">› {queued.text}</Text>)}
+    </Box>}
     {busy && <Box borderStyle="single" borderColor="magenta" paddingX={1} marginTop={1}>
       <Text color="magenta" bold>{["⠋", "⠙", "⠹", "⠸"][busyFrame]}  RUNNING  </Text><Text color="magenta">{progress}</Text>
     </Box>}

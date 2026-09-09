@@ -6,6 +6,7 @@ export interface QueueWorkerOptions {
   staleAfterMs?: number;
   retryDelayMs?: (task: QueuedTask, error: unknown) => number;
   pollIntervalMs?: number;
+  kinds?: string[];
 }
 
 export type QueueHandler = (task: QueuedTask, signal: AbortSignal) => Promise<unknown>;
@@ -17,6 +18,7 @@ export class QueueWorker {
   private readonly staleAfterMs: number;
   private readonly pollIntervalMs: number;
   private readonly retryDelayMs: (task: QueuedTask, error: unknown) => number;
+  private readonly kinds?: string[];
   private readonly active = new Set<Promise<void>>();
   private readonly abortController = new AbortController();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -28,6 +30,7 @@ export class QueueWorker {
     this.staleAfterMs = Math.max(1_000, options.staleAfterMs ?? 15 * 60_000);
     this.pollIntervalMs = Math.max(50, options.pollIntervalMs ?? 1_000);
     this.retryDelayMs = options.retryDelayMs ?? ((task) => Math.min(60_000, 1_000 * 2 ** Math.max(0, task.attempts - 1)));
+    this.kinds = options.kinds?.length ? [...options.kinds] : undefined;
   }
 
   async runOnce(): Promise<void> {
@@ -35,7 +38,7 @@ export class QueueWorker {
     do {
       this.store.requeueStaleTasks(this.staleAfterMs);
       while (!this.stopping && this.active.size < this.concurrency) {
-        const task = this.store.claimNextTask();
+        const task = this.store.claimNextTask(this.kinds);
         if (!task) break;
         const job = this.execute(task);
         this.active.add(job);

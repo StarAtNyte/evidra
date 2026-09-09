@@ -262,10 +262,13 @@ export class ResearchStore {
     return rows.map((row) => ({ id: row.id, kind: row.kind, priority: row.priority, status: row.status, payload: JSON.parse(row.payload_json), attempts: row.attempts, availableAt: row.available_at, claimedAt: row.claimed_at, updatedAt: row.updated_at }));
   }
 
-  claimNextTask(): QueuedTask | undefined {
+  claimNextTask(kinds?: string[]): QueuedTask | undefined {
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
-      const row = this.db.prepare("SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ? ORDER BY priority DESC, available_at ASC LIMIT 1").get(now) as { id: string } | undefined;
+      const query = kinds?.length
+        ? `SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ? AND kind IN (${kinds.map(() => "?").join(",")}) ORDER BY priority DESC, available_at ASC LIMIT 1`
+        : "SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ? ORDER BY priority DESC, available_at ASC LIMIT 1";
+      const row = (kinds?.length ? this.db.prepare(query).get(now, ...kinds) : this.db.prepare(query).get(now)) as { id: string } | undefined;
       if (!row) return undefined;
       this.db.prepare("UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, updated_at = ? WHERE id = ? AND status = 'queued'").run(now, now, row.id);
       return this.queueTasks().find((task) => task.id === row.id);

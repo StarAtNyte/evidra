@@ -13,6 +13,7 @@ import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { autonomyPolicy, guardCommand } from "../dist/core/permissions.js";
 import { QueueWorker } from "../dist/core/queue-worker.js";
+import { executeResearchTool, RESEARCH_TOOLS } from "../dist/core/tools.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -103,6 +104,22 @@ test("durable queue worker bounds concurrency and retries failures", async () =>
     assert.equal(store.queueTasks("completed").length, 2);
     assert.equal(attempts.get("one"), 2);
     store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("research tool registry exposes safe workspace tools", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-tools-"));
+  try {
+    writeFileSync(join(root, "notes.txt"), "hypothesis: tool registry\n");
+    const db = join(root, ".sota", "database.sqlite");
+    const files = await executeResearchTool({ name: "workspace.files" }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(files.ok, true);
+    assert.equal(files.output.files.includes("notes.txt"), true);
+    const search = await executeResearchTool({ name: "workspace.search", arguments: { query: "hypothesis" } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(search.ok, true);
+    const denied = await executeResearchTool({ name: "shell.exec", arguments: { command: ["touch", "blocked.txt"] } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(denied.ok, false);
+    assert(RESEARCH_TOOLS.some((tool) => tool.name === "source.retrieve"));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
