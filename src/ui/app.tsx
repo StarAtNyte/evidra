@@ -660,7 +660,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
       update.close();
       const proposed = config.mode === "challenge" ? await proposeLatestExperiment() : null;
       append("assistant", cycle.text + (proposed?.text ?? ""));
-      if (proposed && config.mode === "challenge" && config.autonomy === "yolo") append("assistant", await executeExperiment(proposed.id));
+      if (proposed && config.mode === "challenge") {
+        if (config.autonomy === "safe") {
+          append("assistant", `Approval required before autonomous execution. The manifest is ready: ${proposed.id}\nRun /experiment run ${proposed.id} to approve this specific experiment, or switch to /permissions fast/yolo for automatic isolated execution.`);
+        } else {
+          append("assistant", await executeExperiment(proposed.id));
+        }
+      }
       if (queueTaskId) { const queueStore = new ResearchStore(join(root, ".sota", "database.sqlite")); queueStore.updateTask(queueTaskId, "completed", { decision: cycle.decision, goalStatus: cycle.goalStatus }); queueStore.close(); }
       if (campaign && cycle.decision === "stop") {
         campaign.status = "completed";
@@ -773,7 +779,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (!level) {
         setPicker("permissions");
         setPickerIndex(Math.max(0, permissionChoices.indexOf(config.autonomy)));
-        append("assistant", "Select permissions with ↑/↓ and Enter. YOLO allows routine implementation and local execution automatically.");
+        append("assistant", "Select permissions with ↑/↓ and Enter. SAFE requires approval for experiments; FAST runs isolated experiments automatically; YOLO runs the full routine experiment loop. Destructive commands and external submission remain blocked in every mode.");
       }
       else if (!["safe", "fast", "yolo"].includes(level)) append("assistant", "Choose safe, fast, or yolo.");
       else { setConfig((current) => ({ ...current, autonomy: level })); append("assistant", `Permissions selected: ${level}`); }
@@ -906,7 +912,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const decisionText = (await runResearchCycle("Starting from the verified baseline, identify the first highest-information experiment. Include a falsification test, leakage risks, compute estimate, and replication plan.")).text;
         const proposed = await proposeLatestExperiment();
         append("assistant", decisionText + (proposed?.text ?? ""));
-        if (proposed && config.autonomy === "yolo") append("assistant", await executeExperiment(proposed.id));
+        if (proposed) {
+          if (config.autonomy === "safe") append("assistant", `Approval required before autonomous execution. Run /experiment run ${proposed.id} to approve it.`);
+          else append("assistant", await executeExperiment(proposed.id));
+        }
         const done = new ResearchStore(join(root, ".sota", "database.sqlite"));
         done.setSchedulerState({ status: "idle", mode: "challenge", currentStep: null });
         done.close();
