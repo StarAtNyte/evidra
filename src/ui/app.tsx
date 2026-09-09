@@ -1593,8 +1593,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const accent = message.role === "user" ? "yellow" : message.role === "system" ? "gray" : errorLike ? "red" : "green";
         const label = messageLabel(message);
         const body = label && message.role === "assistant" ? message.text.split("\n").slice(1).join("\n") : message.text;
-        return <Box key={`${index}-${message.text}`} flexDirection="column" marginBottom={1} paddingX={1} borderStyle="round" borderColor={accent}>
-          <Text color={accent} bold>{message.role === "user" ? "›" : message.role === "assistant" ? "◆" : "·"}{label ? ` ${label}` : ""}</Text>
+        return <Box key={`${index}-${message.text}`} flexDirection="column" marginBottom={1} paddingX={1}>
+          <Text color={accent} bold>{message.role === "user" ? "›" : message.role === "assistant" ? "•" : "·"}{label ? ` ${label}` : ""}</Text>
           <RichText text={body} />
         </Box>;
       })}
