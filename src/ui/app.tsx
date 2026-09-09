@@ -15,6 +15,7 @@ import { captureEnvironment } from "../core/environment.js";
 import { compareRuns } from "../core/statistics.js";
 import { recoveryDelay, recoveryPlan } from "../core/recovery.js";
 import { prepareSubmission, validateSubmissionBundle } from "../core/submissions.js";
+import { submitApprovedBundle } from "../core/submission-adapters.js";
 import { diversityReport, greedyBlend, loadPredictionVector, type PredictionVector } from "../core/ensemble.js";
 import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
 import { auditData } from "../core/data-audit.js";
@@ -96,7 +97,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"]],
   "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute budget", "Show campaign usage"]],
-  "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission record", "Record an external score"]],
+  "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission record", "Record an external score"]],
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/resume": [["/resume", "Resume the latest saved session"], ["/resume ", "Resume a selected session"]],
@@ -1426,7 +1427,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Evidra doctor\n${checks.map((check) => `  ${check}`).join("\n")}`);
       return;
     }
-    if (request === "/submission" || request === "/submission status" || request.startsWith("/submission prepare") || request.startsWith("/submission validate") || request.startsWith("/submission approve") || request.startsWith("/submission record")) {
+    if (request === "/submission" || request === "/submission status" || request.startsWith("/submission prepare") || request.startsWith("/submission validate") || request.startsWith("/submission approve") || request.startsWith("/submission submit") || request.startsWith("/submission record")) {
       const parts = request.split(/\s+/);
       const action = parts[1] ?? "status";
       const submissionsRoot = join(root, ".sota", "submissions");
@@ -1470,9 +1471,26 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (!entry) { store.close(); append("assistant", `Submission bundle ${bundleId} is not registered.`); return; }
         const report = validateSubmissionBundle(entry.path);
         if (!report.valid) { store.close(); append("assistant", `Bundle ${bundleId} is not valid; approval was refused.`); return; }
-        store.updateSubmissionStatus(bundleId, "approved", { approvedAt: new Date().toISOString(), externalSubmission: "not configured" });
+        store.updateSubmissionStatus(bundleId, "approved", { approvedAt: new Date().toISOString(), externalSubmission: "ready" });
         store.close();
-        append("assistant", `Submission ${bundleId} approved locally. External submission still requires an explicit platform adapter.`);
+        append("assistant", `Submission ${bundleId} approved locally. Run /submission submit ${bundleId} to submit through the configured adapter.`);
+        return;
+      }
+      if (action === "submit") {
+        const bundleId = parts[2];
+        if (!bundleId) { append("assistant", "Usage: /submission submit <bundle-id>"); return; }
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        const entry = store.submissions().find((candidate) => candidate.id === bundleId);
+        if (!entry) { store.close(); append("assistant", `Submission bundle ${bundleId} is not registered.`); return; }
+        if (entry.status !== "approved") { store.close(); append("assistant", `Submission ${bundleId} is '${entry.status}'. Run /submission approve first.`); return; }
+        setBusy(true); setProgress(`Submitting ${bundleId} through the configured adapter...`);
+        try {
+          const attempt = await submitApprovedBundle(root, entry.path, activeAdapter().config, "Evidra research submission", (control) => { activeProcess.current = control; });
+          store.updateSubmissionStatus(bundleId, "submitted", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), receipt: attempt.receipt });
+          store.appendEvent("submission.external.submitted", { id: bundleId, platform: attempt.receipt.platform, predictionFile: attempt.receipt.predictionFile, submittedAt: attempt.receipt.submittedAt });
+          append("assistant", `Submission ${bundleId} submitted via ${attempt.receipt.platform}\n${attempt.receipt.stdout.trim()}`);
+        } catch (error) { appendError(error); }
+        finally { activeProcess.current = null; store.close(); setBusy(false); setProgress(""); }
         return;
       }
       if (action === "record") {

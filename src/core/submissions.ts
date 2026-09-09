@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { CompetitionConfig, ExperimentManifest, RunResult } from "./types.js";
 
 export interface SubmissionValidation {
@@ -22,7 +22,7 @@ export function prepareSubmission(root: string, experimentId: string, manifest: 
   for (const [name, artifactPath] of Object.entries(run.artifacts)) {
     if (!existsSync(artifactPath)) continue;
     if (!/submission|prediction/i.test(name)) continue;
-    const destination = join(path, name.split(/[\\/]/).pop() ?? name);
+    const destination = join(path, basename(artifactPath));
     copyFileSync(artifactPath, destination);
     copied.push(destination);
   }

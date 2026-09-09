@@ -12,6 +12,7 @@ import { auditData } from "./core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "./core/validation-policy.js";
 import { retrieveSource, sourceClaims, sourceSearchText } from "./core/sources.js";
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
+import { submitApprovedBundle } from "./core/submission-adapters.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
@@ -169,7 +170,20 @@ submission.command("approve").argument("<bundle>").action((bundle: string) => {
   if (!report.valid) { store.close(); throw new Error(`Submission bundle is not valid; run evidra submission validate ${bundle}`); }
   store.updateSubmissionStatus(bundle, "approved", { approvedAt: new Date().toISOString(), externalSubmission: "not configured" });
   store.close();
-  console.log(`Approved ${bundle}. Evidra still requires an explicit platform adapter to submit externally.`);
+  console.log(`Approved ${bundle}. Submit explicitly with: evidra submission submit ${bundle}`);
+});
+submission.command("submit").argument("<bundle>").option("--message <message>", "submission message", "Evidra research submission").action(async (bundle: string, options: { message: string }) => {
+  const store = new ResearchStore(statePath);
+  const entry = store.submissions().find((candidate) => candidate.id === bundle);
+  if (!entry) { store.close(); throw new Error(`Submission bundle ${bundle} is not registered.`); }
+  if (entry.status !== "approved") { store.close(); throw new Error(`Submission ${bundle} is '${entry.status}'. Run submission approve first.`); }
+  const adapter = activeCompetition();
+  try {
+    const attempt = await submitApprovedBundle(root, entry.path, adapter.config, options.message);
+    store.updateSubmissionStatus(bundle, "submitted", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), receipt: attempt.receipt });
+    store.appendEvent("submission.external.submitted", { id: bundle, platform: attempt.receipt.platform, predictionFile: attempt.receipt.predictionFile, submittedAt: attempt.receipt.submittedAt });
+    console.log(`Submitted ${bundle} via ${attempt.receipt.platform}\n${attempt.receipt.stdout.trim()}`);
+  } finally { store.close(); }
 });
 submission.command("record").argument("<bundle>").requiredOption("--public-score <score>", "score returned by the competition platform").option("--platform <name>", "platform or evaluation source", "manual").action((bundle: string, options: { publicScore: string; platform: string }) => {
   const score = Number(options.publicScore);

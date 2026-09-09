@@ -22,6 +22,7 @@ import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
 import { activePhaseGoal, definePhaseGoals } from "../dist/core/phase-goals.js";
+import { submitApprovedBundle } from "../dist/core/submission-adapters.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -303,6 +304,24 @@ test("submission validation rejects unsafe checksum paths", () => {
     const report = validateSubmissionBundle(root);
     assert.equal(report.valid, false);
     assert.equal(report.checks.some((check) => check.name === "prediction-artifact" && !check.passed), true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("configured command submission requires a valid approved bundle and preserves a receipt", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-submit-adapter-"));
+  try {
+    const artifact = join(root, "prediction.csv");
+    writeFileSync(artifact, "id,prediction\n1,0.5\n");
+    const manifest = { schemaVersion: 1, id: "exp-2", parent: null, hypothesisId: "hyp-2", gitCommit: "abc", datasetVersion: "data", splitVersion: "split", change: { configPatch: {} }, resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0], seeds: [0], requiredArtifacts: [] }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 0, requireReplication: false }, createdAt: new Date().toISOString() };
+    const run = { runId: "run-2", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 1 }, artifacts: { prediction: artifact } };
+    const bundle = prepareSubmission(root, "exp-2", manifest, run, { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } });
+    const receipt = await submitApprovedBundle(root, bundle.path, {
+      id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" },
+      submission: { platform: "command", submitCommand: [process.execPath, "-e", "console.log(process.argv[1])", "{file}"] },
+    });
+    assert.equal(receipt.receipt.platform, "command");
+    assert.match(receipt.receipt.stdout, /prediction\.csv/);
+    await assert.rejects(() => submitApprovedBundle(root, bundle.path, { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } }), /Manual submission is configured/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

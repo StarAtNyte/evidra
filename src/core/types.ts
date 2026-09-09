@@ -16,6 +16,12 @@ export const CompetitionConfigSchema = z.object({
   workspacePath: z.string().optional(),
   baselineCommand: z.array(z.string()).optional(),
   experimentCommand: z.array(z.string()).optional(),
+  submission: z.object({
+    platform: z.enum(["manual", "kaggle", "command"]).default("manual"),
+    competition: z.string().optional(),
+    predictionFile: z.string().optional(),
+    submitCommand: z.array(z.string()).optional(),
+  }).optional(),
   validation: z.object({
     primarySplit: z.string().min(1).default("mini"),
     folds: z.array(z.number().int().nonnegative()).min(1).default([0]),
