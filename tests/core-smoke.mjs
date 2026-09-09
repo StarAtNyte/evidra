@@ -290,6 +290,18 @@ test("source claims and submission provenance are auditable", () => {
     const run = { runId: "run-1", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 1 }, artifacts: { submission: artifact } };
     const bundle = prepareSubmission(root, "exp-1", manifest, run, { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } });
     assert.equal(validateSubmissionBundle(bundle.path).valid, true);
+    assert.throws(() => prepareSubmission(root, "exp-1", manifest, { ...run, status: "failed" }, { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } }), /not successfully completed/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("submission validation rejects unsafe checksum paths", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-submission-path-"));
+  try {
+    writeFileSync(join(root, "provenance.json"), JSON.stringify({ submissionId: "sub-1", experimentId: "exp-1" }));
+    writeFileSync(join(root, "checksums.sha256"), "sha256:bad  ../outside.csv\n");
+    const report = validateSubmissionBundle(root);
+    assert.equal(report.valid, false);
+    assert.equal(report.checks.some((check) => check.name === "prediction-artifact" && !check.passed), true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
