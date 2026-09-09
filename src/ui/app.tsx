@@ -323,7 +323,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     const command = ["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"];
     setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
-    const result = await executorFor(manifest.resources.executor).run(manifest, experimentCwd, command);
+    const result = await executorFor(manifest.resources.executor).run(manifest, experimentCwd, command, (control) => { activeProcess.current = control; });
+    activeProcess.current = null;
     const resultStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     resultStore.saveRun({ id: result.runId, experimentId: id, status: result.status, payload: result });
     resultStore.saveExperiment({ id, payload: { ...entryPayload, status: result.status === "completed" ? "completed" : "failed", runId: result.runId, worktreePath: experimentCwd } });

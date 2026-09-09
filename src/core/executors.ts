@@ -1,9 +1,9 @@
-import { runProcess } from "./process.js";
+import { runProcess, type ProcessControl } from "./process.js";
 import type { ExperimentManifest, ProcessResult, RunResult } from "./types.js";
 
 export interface ExperimentExecutor {
   readonly kind: "local" | "modal";
-  run(manifest: ExperimentManifest, cwd: string, command: string[]): Promise<RunResult>;
+  run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void): Promise<RunResult>;
 }
 
 function failureClass(result: ProcessResult): RunResult["failureClass"] {
@@ -33,20 +33,20 @@ function toRunResult(manifest: ExperimentManifest, result: ProcessResult): RunRe
 export class LocalExecutor implements ExperimentExecutor {
   readonly kind = "local" as const;
 
-  async run(manifest: ExperimentManifest, cwd: string, command: string[]): Promise<RunResult> {
-    return toRunResult(manifest, await runProcess(command, cwd, manifest.resources.timeoutMinutes * 60_000));
+  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void): Promise<RunResult> {
+    return toRunResult(manifest, await runProcess(command, cwd, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess));
   }
 }
 
 export class ModalExecutor implements ExperimentExecutor {
   readonly kind = "modal" as const;
 
-  async run(manifest: ExperimentManifest, cwd: string, command: string[]): Promise<RunResult> {
+  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void): Promise<RunResult> {
     if (!process.env.MODAL_TOKEN_ID || !process.env.MODAL_TOKEN_SECRET) {
       throw new Error("Modal is not configured. Set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET, or choose local execution.");
     }
     const modalEntrypoint = process.env.EVIDRA_MODAL_ENTRYPOINT ?? "modal_app.py::run";
-    return toRunResult(manifest, await runProcess(["modal", "run", modalEntrypoint, "--", ...command], cwd, manifest.resources.timeoutMinutes * 60_000));
+    return toRunResult(manifest, await runProcess(["modal", "run", modalEntrypoint, "--", ...command], cwd, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess));
   }
 }
 
