@@ -29,6 +29,20 @@ export type ResearchLaneReport = z.infer<typeof ResearchLaneReportSchema> & {
   error?: string;
 };
 
+export const ResearchReviewSchema = z.object({
+  verdict: z.enum(["proceed", "revise", "reject"]),
+  summary: z.string().min(1),
+  objections: z.array(z.string()).max(12),
+  requiredChecks: z.array(z.string()).max(12),
+  independentReplication: z.boolean(),
+  confidence: z.number().min(0).max(1),
+});
+
+export type ResearchReview = z.infer<typeof ResearchReviewSchema> & {
+  status: "completed" | "failed";
+  error?: string;
+};
+
 export interface ResearchLanesOptions {
   provider: AgentProvider;
   model: string;
@@ -101,6 +115,45 @@ function saveLaneEvent(storePath: string, role: string, report: ResearchLaneRepo
     });
   }
   store.close();
+}
+
+/** Run an adversarial review after independent lanes have reported. */
+export async function runResearchCritic(
+  objective: string,
+  decision: unknown,
+  laneReports: ResearchLaneReport[],
+  options: ResearchLanesOptions,
+): Promise<ResearchReview> {
+  const store = new ResearchStore(options.storePath);
+  store.updateAgentLane({ role: "critic", status: "running", provider: options.provider, model: options.model, task: objective, error: null });
+  store.close();
+  options.onProgress?.("Research critic · checking assumptions and disagreement...");
+  const prompt = `${objective}\n\nYou are Evidra's independent critic. Review the proposed decision and independent lane reports below. Look for unsupported claims, leakage, invalid comparisons, missing controls, overconfident conclusions, and cheaper falsification tests. Do not rewrite the decision or invent measurements. Return ONLY JSON: {"verdict":"proceed|revise|reject","summary":"...","objections":["..."],"requiredChecks":["..."],"independentReplication":true,"confidence":0.0}.\n\nDecision:\n${JSON.stringify(decision)}\n\nLane reports:\n${JSON.stringify(laneReports)}`;
+  try {
+    const result = await runWithLocalFallback({ role: "critic", objective: prompt, context: { decision, laneReports } }, {
+      provider: options.provider,
+      model: options.model,
+      limitPolicy: options.limitPolicy,
+      reasoningEffort: options.reasoningEffort,
+      cwd: options.cwd,
+      sandbox: "read-only",
+    }, options.provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
+    const review: ResearchReview = { ...ResearchReviewSchema.parse(parseJson(result.output)), status: "completed" };
+    const completed = new ResearchStore(options.storePath);
+    completed.appendEvent("research.critic.completed", { review, objective });
+    const claimId = `claim_critic_${Date.now()}`;
+    completed.saveClaim({ id: claimId, payload: { id: claimId, statement: `[critic:${review.verdict}] ${review.summary}`, scope: "research decision review", confidence: review.confidence, sourceType: "review", sourceId: claimId, status: "active", objections: review.objections, requiredChecks: review.requiredChecks } });
+    completed.updateAgentLane({ role: "critic", status: "idle", provider: options.provider, model: options.model, task: null, error: null });
+    completed.close();
+    return review;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const failed = new ResearchStore(options.storePath);
+    failed.appendEvent("research.critic.failed", { objective, error: message });
+    failed.updateAgentLane({ role: "critic", status: "failed", provider: options.provider, model: options.model, task: objective, error: message });
+    failed.close();
+    return { verdict: "revise", summary: "Independent critic did not complete; do not promote this direction without manual review.", objections: [message], requiredChecks: ["rerun the independent critic"], independentReplication: true, confidence: 0, status: "failed", error: message };
+  }
 }
 
 async function runLane(role: ResearchLaneRole, objective: string, context: Record<string, unknown>, options: ResearchLanesOptions): Promise<ResearchLaneReport> {

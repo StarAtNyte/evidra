@@ -57,3 +57,25 @@ export function manifestSummary(manifest: ExperimentManifest): string {
     `replication ${manifest.acceptance.requireReplication ? "required" : "not required"}`,
   ].join("\n");
 }
+
+/** Create an independent child manifest without mutating the parent. */
+export function createReplicationManifest(parent: ExperimentManifest, competition: CompetitionConfig): ExperimentManifest {
+  return createExperimentManifest({
+    id: `rep_${Date.now()}_${parent.hypothesisId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 28)}`,
+    parent: parent.id,
+    hypothesisId: parent.hypothesisId,
+    gitCommit: parent.gitCommit,
+    datasetVersion: parent.datasetVersion,
+    splitVersion: parent.splitVersion,
+    configPatch: parent.change.configPatch,
+    executor: parent.resources.executor,
+    gpu: parent.resources.gpu,
+    timeoutMinutes: parent.resources.timeoutMinutes,
+    folds: parent.evaluation.folds,
+    seeds: [...parent.evaluation.seeds, Date.now() % 100000],
+    requiredArtifacts: parent.evaluation.requiredArtifacts,
+    minimumPrimaryDelta: parent.acceptance.minimumPrimaryDelta,
+    maximumRegressionShift: parent.acceptance.maximumRegressionShift,
+    requireReplication: false,
+  }, competition);
+}

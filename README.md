@@ -43,6 +43,8 @@ Lane concurrency is adaptive: `safe` runs one independent lane, `fast` permits a
 
 Provider and lane failures are recoverable. Transient network, timeout, stream, malformed-response, and service errors receive bounded retries with backoff; configured Codex-to-local fallback changes route when appropriate; every exhausted lane is recorded as failed evidence so the director can choose a different path instead of silently treating it as success. SDK subprocesses are cancelled on timeout and terminal interruption.
 
+Every research cycle now has an adversarial critic stage. The critic reviews lane disagreement and the director decision, records objections and required checks, and returns `proceed`, `revise`, or `reject`. Challenge experiments whose manifest requires replication automatically receive an independent child manifest and run in `fast`/`yolo` modes; `safe` mode prepares the child and waits for approval.
+
 Implemented today:
 
 - Ink-based interactive TUI with Codex-style transcript output;

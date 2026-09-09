@@ -23,12 +23,12 @@ import { executeResearchTool } from "../core/tools.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { retrieveSource, sourceClaims, sourceSearchText } from "../core/sources.js";
 import { activePhaseGoal, definePhaseGoals } from "../core/phase-goals.js";
-import { createExperimentManifest, manifestSummary } from "../core/experiment-manifest.js";
+import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
 import { checkProvider, codexLoginStatus, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
-import { runResearchLanes } from "../agents/research-lanes.js";
+import { runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
@@ -530,11 +530,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
     laneStore.close();
     const adapter = activeAdapter();
     let decision: Awaited<ReturnType<typeof runResearchDirector>>;
+    let laneReports: ResearchLaneReport[] = [];
+    let criticReview: ResearchReview | undefined;
     try {
       activeSteer.current = null;
       await checkProvider({ provider: config.provider, model: config.model, cwd: root });
       setProgress("Research 3/4 · independent lanes are investigating the evidence...");
-      const laneReports = await runResearchLanes(objective, {
+      laneReports = await runResearchLanes(objective, {
         mode: config.mode,
         project,
         observation,
@@ -583,6 +585,18 @@ export function App({ root }: { root: string }): React.JSX.Element {
           onProcess: (control) => { activeProcess.current = control; },
         }),
       }, setProgress);
+      criticReview = await runResearchCritic(objective, decision, laneReports, {
+        provider: config.provider,
+        model: config.model,
+        fallbackLocalModel: config.fallbackModel,
+        limitPolicy: config.limitPolicy,
+        reasoningEffort: config.reasoningEffort,
+        cwd: root,
+        storePath: join(root, ".sota", "database.sqlite"),
+        maxParallel: 1,
+        autonomy: config.autonomy,
+        onProgress: setProgress,
+      });
       activeProcess.current = null;
       activeSteer.current = null;
       const completedLane = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -612,7 +626,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
     }
     decisionStore.close();
-    return { text: formatResearchDecision(decision), goalStatus: decision.goalStatus, decision: decision.decision };
+    const reviewText = criticReview ? `\n\nCritic: ${criticReview.verdict} · confidence ${criticReview.confidence.toFixed(2)}\n${criticReview.summary}${criticReview.objections.length ? `\nObjections:\n${criticReview.objections.map((item) => `- ${item}`).join("\n")}` : ""}${criticReview.requiredChecks.length ? `\nRequired checks:\n${criticReview.requiredChecks.map((item) => `- ${item}`).join("\n")}` : ""}` : "";
+    return { text: formatResearchDecision(decision) + reviewText, goalStatus: decision.goalStatus, decision: decision.decision };
   };
 
   const proposeLatestExperiment = async (): Promise<{ id: string; text: string } | null> => {
@@ -627,6 +642,19 @@ export function App({ root }: { root: string }): React.JSX.Element {
     store.saveExperiment({ id, payload: { ...manifest, status: "proposed" } });
     store.close();
     return { id, text: `\n\nExperiment manifest proposed\n${manifestSummary(manifest)}\nNext: /experiment show ${id}` };
+  };
+
+  const prepareAutomaticReplication = (parentId: string): { id: string; text: string } | null => {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const parent = store.experiments().find((candidate) => candidate.id === parentId);
+    if (!parent) { store.close(); return null; }
+    const parentManifest = ExperimentManifestSchema.parse(parent.payload);
+    if (!parentManifest.acceptance.requireReplication) { store.close(); return null; }
+    const manifest = createReplicationManifest(parentManifest, activeAdapter().config);
+    store.saveExperiment({ id: manifest.id, payload: { ...manifest, status: "proposed", replicationOf: parentId, automatic: true } });
+    store.appendEvent("replication.manifest.created", { parentId, replicationId: manifest.id, automatic: true });
+    store.close();
+    return { id: manifest.id, text: `\n\nIndependent replication ${manifest.id} prepared for ${parentId}.\n${manifestSummary(manifest)}` };
   };
 
   const executeExperiment = async (id: string): Promise<string> => {
@@ -789,7 +817,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (!autonomyPolicy(config.autonomy).canRunIsolatedExperiments) {
           append("assistant", `Approval required before autonomous execution. The manifest is ready: ${proposed.id}\nRun /experiment run ${proposed.id} to approve this specific experiment, or switch to /permissions fast/yolo for automatic isolated execution.`);
         } else {
-          append("assistant", await executeExperiment(proposed.id));
+          const experimentText = await executeExperiment(proposed.id);
+          append("assistant", experimentText);
+          if (/Experiment .* completed/i.test(experimentText)) {
+            const replication = prepareAutomaticReplication(proposed.id);
+            if (replication) {
+              if (config.autonomy === "safe") append("assistant", `${replication.text}\nApproval required: run /experiment run ${replication.id}`);
+              else append("assistant", `${replication.text}\n\n${await executeExperiment(replication.id)}`);
+            }
+          }
         }
       }
       if (campaign && cycle.decision === "stop") {
@@ -1373,28 +1409,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (!parent) { store.close(); append("assistant", `Experiment not found: ${parentId ?? "(missing id)"}`); return; }
         try {
           const parentManifest = ExperimentManifestSchema.parse(parent.payload);
-          const id = `rep_${Date.now()}_${parentManifest.hypothesisId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 28)}`;
-          const manifest = createExperimentManifest({
-            id,
-            parent: parentManifest.id,
-            hypothesisId: parentManifest.hypothesisId,
-            gitCommit: parentManifest.gitCommit,
-            datasetVersion: parentManifest.datasetVersion,
-            splitVersion: parentManifest.splitVersion,
-            configPatch: parentManifest.change.configPatch,
-            executor: parentManifest.resources.executor,
-            gpu: parentManifest.resources.gpu,
-            timeoutMinutes: parentManifest.resources.timeoutMinutes,
-            folds: parentManifest.evaluation.folds,
-            seeds: [...parentManifest.evaluation.seeds, Date.now() % 100000],
-            requiredArtifacts: parentManifest.evaluation.requiredArtifacts,
-            minimumPrimaryDelta: parentManifest.acceptance.minimumPrimaryDelta,
-            maximumRegressionShift: parentManifest.acceptance.maximumRegressionShift,
-            requireReplication: false,
-          }, activeAdapter().config);
-          store.saveExperiment({ id, payload: { ...manifest, status: "proposed", replicationOf: parentManifest.id } });
+          const manifest = createReplicationManifest(parentManifest, activeAdapter().config);
+          store.saveExperiment({ id: manifest.id, payload: { ...manifest, status: "proposed", replicationOf: parentManifest.id } });
           store.close();
-          append("assistant", `Independent replication manifest created\n${manifestSummary(manifest)}\nParent: ${parentManifest.id}\nNext: /experiment run ${id}`);
+          append("assistant", `Independent replication manifest created\n${manifestSummary(manifest)}\nParent: ${parentManifest.id}\nNext: /experiment run ${manifest.id}`);
         } catch (error) { store.close(); appendError(error); }
         return;
       }

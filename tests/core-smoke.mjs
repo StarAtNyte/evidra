@@ -25,6 +25,7 @@ import { activePhaseGoal, definePhaseGoals } from "../dist/core/phase-goals.js";
 import { submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
+import { createExperimentManifest, createReplicationManifest } from "../dist/core/experiment-manifest.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -66,6 +67,24 @@ test("research lane concurrency respects permission mode and local inference lim
   process.env.OLLAMA_NUM_PARALLEL = "1";
   try { assert.equal(researchLaneConcurrency({ autonomy: "yolo", provider: "local", requested: 6 }), 1); }
   finally { if (previous === undefined) delete process.env.OLLAMA_NUM_PARALLEL; else process.env.OLLAMA_NUM_PARALLEL = previous; }
+});
+
+test("replication manifests preserve provenance while changing the independent seed", () => {
+  const competition = {
+    id: "test",
+    name: "Test",
+    taskType: "general",
+    datasetRevision: "data-v1",
+    metric: { name: "score", direction: "maximize" },
+    evaluator: { command: ["true"], estimatorPath: "" },
+  };
+  const parent = createExperimentManifest({ id: "exp-parent", hypothesisId: "hyp-1", gitCommit: "abc", datasetVersion: "data-v1", seeds: [17], requiredArtifacts: ["metrics.json"], requireReplication: true }, competition);
+  const child = createReplicationManifest(parent, competition);
+  assert.equal(child.parent, parent.id);
+  assert.equal(child.gitCommit, parent.gitCommit);
+  assert.equal(child.datasetVersion, parent.datasetVersion);
+  assert.deepEqual(child.evaluation.seeds.slice(0, 1), parent.evaluation.seeds);
+  assert.equal(child.acceptance.requireReplication, false);
 });
 
 test("terminal sessions are fresh by default and explicitly resumable", () => {

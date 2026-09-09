@@ -22,6 +22,7 @@ import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { runResearchLanes } from "./agents/research-lanes.js";
+import { runResearchCritic } from "./agents/research-lanes.js";
 import { checkProvider, codexLoginStatus, isProviderUsageLimit, listLocalModels, providerRetryAfterMs } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
@@ -352,6 +353,7 @@ research
       const activeProject = projectStore.project();
       projectStore.close();
       let decision: Awaited<ReturnType<typeof runResearchDirector>>;
+      let criticReview: Awaited<ReturnType<typeof runResearchCritic>> | undefined;
       while (true) {
         try {
           console.log("Research · independent lanes are investigating the evidence...");
@@ -376,6 +378,17 @@ research
           });
           console.log("Research · director is cross-pollinating lane findings...");
           decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: options.goal, phaseGoal: phaseGoal ?? null, laneReports }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter) });
+          criticReview = await runResearchCritic(objective, decision, laneReports, {
+            provider: options.provider,
+            model: selectedModel,
+            fallbackLocalModel: options.limitPolicy === "fallback" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
+            limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop",
+            reasoningEffort: options.thinking,
+            cwd: root,
+            storePath: statePath,
+            maxParallel: 1,
+            autonomy: "fast",
+          });
           break;
         } catch (error) {
           if (options.limitPolicy !== "wait" || !isProviderUsageLimit(error)) throw error;
@@ -411,6 +424,7 @@ research
       }
       decisionStore.close();
       console.log(formatResearchDecision(decision));
+      if (criticReview) console.log(`\nCritic: ${criticReview.verdict} · confidence ${criticReview.confidence.toFixed(2)}\n${criticReview.summary}${criticReview.objections.length ? `\nObjections:\n${criticReview.objections.map((item) => `- ${item}`).join("\n")}` : ""}`);
       if (terminal) break;
     } while (true);
   });
