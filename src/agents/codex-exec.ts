@@ -10,6 +10,12 @@ export interface ExecAgentOptions {
   cwd: string;
   reasoningEffort?: string;
   sandbox?: "read-only" | "workspace-write";
+  onThread?: (threadId: string) => void;
+}
+
+export function queueCodexMessage(threadId: string, message: string): boolean {
+  const result = spawnSync("codex", ["queue", "--thread", threadId, "--message", message], { stdio: "ignore" });
+  return result.status === 0;
 }
 
 export interface AvailableModel {
@@ -115,7 +121,7 @@ export class CodexExecAgent {
 
     if (!codexIsLoggedIn()) return Promise.reject(new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription."));
 
-    const args = ["exec", "--json", "--ephemeral", "--sandbox", this.options.sandbox ?? "read-only", "--skip-git-repo-check"];
+    const args = ["exec", "--json", "--sandbox", this.options.sandbox ?? "read-only", "--skip-git-repo-check"];
     if (this.options.model && this.options.model !== "default") args.push("--model", this.options.model);
     if (this.options.reasoningEffort) args.push("-c", `model_reasoning_effort=\"${this.options.reasoningEffort}\"`);
     args.push("-C", this.options.cwd, prompt);
@@ -143,8 +149,10 @@ export class CodexExecAgent {
       const handleLine = (line: string): void => {
         if (!line.trim()) return;
         try {
-          const event = JSON.parse(line) as { type?: string; item?: { type?: string; text?: string; command?: string } };
-          if (event.type === "item.completed" && event.item?.type === "agent_message" && event.item.text) {
+          const event = JSON.parse(line) as { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string } };
+          if (event.type === "thread.started" && event.thread_id) {
+            this.options.onThread?.(event.thread_id);
+          } else if (event.type === "item.completed" && event.item?.type === "agent_message" && event.item.text) {
             finalText = event.item.text;
           } else if (event.type === "item.started" && event.item?.type === "command_execution") {
             onProgress?.(`Running: ${event.item.command ?? "command"}`);

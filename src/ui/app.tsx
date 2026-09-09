@@ -23,12 +23,12 @@ import { activePhaseGoal, definePhaseGoals } from "../core/phase-goals.js";
 import { createExperimentManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
-import { checkProvider, codexLoginStatus, listCodexModels, listLocalModels, loginCodex, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, listCodexModels, listLocalModels, loginCodex, queueCodexMessage, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
 
-type Message = { role: "user" | "assistant" | "system"; text: string };
-type QueuedRequest = { id: string; text: string };
+type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
+type QueuedRequest = { id: string; text: string; dispatched?: boolean };
 type WorkbenchMode = "research" | "challenge";
 type AutonomyLevel = "safe" | "fast" | "yolo";
 type ResearchCampaign = { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed" };
@@ -252,6 +252,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const loopTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const loopBusy = useRef(false);
   const activeProcess = useRef<ProcessControl | null>(null);
+  const activeSteer = useRef<((message: string) => boolean) | null>(null);
   const interruptedProcess = useRef(false);
   const setProgress = (value: string): void => {
     progressRef.current = value;
@@ -425,6 +426,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (!text.trim()) return;
     setMessages((current) => [...current, { role, text }]);
   };
+  const appendTool = (text: string): void => {
+    if (!text.trim()) return;
+    setMessages((current) => [...current, { role: "system", kind: "tool", text }]);
+  };
   const appendError = (error: unknown): void => {
     if (interruptedProcess.current) return;
     append("assistant", error instanceof Error ? error.message : String(error));
@@ -516,6 +521,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const adapter = activeAdapter();
     let decision: Awaited<ReturnType<typeof runResearchDirector>>;
     try {
+      activeSteer.current = null;
       await checkProvider({ provider: config.provider, model: config.model, cwd: root });
       decision = await runResearchDirector(objective, {
         mode: config.mode,
@@ -527,8 +533,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         ultimateGoal: objective,
         phaseGoal: phaseGoal ?? null,
         constraints: { no_submission: true, no_file_edits: true },
-      }, { provider: config.provider, model: config.model, reasoningEffort: config.reasoningEffort, cwd: root, fallbackLocalModel: "qwen3.6:27b", onProcess: (control) => { activeProcess.current = control; } }, setProgress);
+      }, { provider: config.provider, model: config.model, reasoningEffort: config.reasoningEffort, cwd: root, fallbackLocalModel: "qwen3.6:27b", onProcess: (control) => { activeProcess.current = control; }, onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, setProgress);
       activeProcess.current = null;
+      activeSteer.current = null;
       const completedLane = new ResearchStore(join(root, ".sota", "database.sqlite"));
       completedLane.updateAgentLane({ role: "research director", status: "idle", provider: config.provider, model: config.model, task: null });
       completedLane.close();
@@ -587,11 +594,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const experimentCwd = join(worktree, relative(root, adapter.workspacePath(root)));
     if (config.provider === "codex") {
       setProgress(`Experiment ${id} · experiment engineer implementing the hypothesis...`);
+      activeSteer.current = null;
       await runWithLocalFallback({
         role: "experiment engineer",
         objective: "Implement the selected hypothesis in this isolated worktree. Inspect the existing estimator, make the smallest reproducible change, run relevant tests or smoke checks, and leave the worktree ready for evaluation. Do not touch files outside this worktree and do not submit anything.",
         context: { manifest, hypothesis: hypothesis?.payload ?? null, worktree: experimentCwd },
-      }, { provider: config.provider, model: config.model, cwd: worktree, reasoningEffort: config.reasoningEffort, sandbox: "workspace-write" }, undefined, setProgress, (control) => { activeProcess.current = control; });
+      }, { provider: config.provider, model: config.model, cwd: worktree, reasoningEffort: config.reasoningEffort, sandbox: "workspace-write", onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, undefined, setProgress, (control) => { activeProcess.current = control; });
+      activeSteer.current = null;
     }
     const command = adapter.experimentCommand();
     setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
@@ -747,7 +756,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     setInput("");
     if (!request) return;
     if (busy && !fromQueue) {
-      const queued = { id: `queued_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, text: request };
+      const dispatched = activeSteer.current?.(request) ?? false;
+      const queued = { id: `queued_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, text: request, dispatched };
       pendingRequests.current.push(queued);
       setQueuedRequests([...pendingRequests.current]);
       return;
@@ -946,7 +956,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         baselineStore.setSchedulerState({ status: "running", mode: "challenge", currentStep: "research" });
         baselineStore.close();
         setProgress("Zero-to-hero: generating the first falsifiable research decision...");
-        append("assistant", `Baseline ${baseline.exitCode === 0 ? "completed" : "failed"}.\n${baseline.stdout || baseline.stderr}`);
+        appendTool(`Baseline ${baseline.exitCode === 0 ? "completed" : "failed"}.\n${baseline.stdout || baseline.stderr}`);
         const decisionText = (await runResearchCycle("Starting from the verified baseline, identify the first highest-information experiment. Include a falsification test, leakage risks, compute estimate, and replication plan.")).text;
         const proposed = await proposeLatestExperiment();
         append("assistant", decisionText + (proposed?.text ?? ""));
@@ -1025,7 +1035,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           if (line) setProgress(`${stream}: ${line.slice(-140)}`);
         }, (control) => { activeProcess.current = control; });
         const output = [result.stdout.trim(), result.stderr.trim() ? `stderr:\n${result.stderr.trim()}` : ""].filter(Boolean).join("\n");
-        append("assistant", `Command exited ${result.exitCode} in ${(result.durationMs / 1000).toFixed(1)}s\n$ ${rawCommand}\n${output || "(no output)"}`);
+        appendTool(`Command exited ${result.exitCode} in ${(result.durationMs / 1000).toFixed(1)}s\n$ ${rawCommand}\n${output || "(no output)"}`);
       } catch (error) { appendError(error); }
       finally { activeProcess.current = null; setBusy(false); setProgress(""); }
       return;
@@ -1134,7 +1144,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
         store.appendEvent("baseline.completed", { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr });
         store.close();
-        append("assistant", `Baseline ${result.exitCode === 0 ? "completed" : "failed"}.\n${result.stdout || result.stderr}`);
+        appendTool(`Baseline ${result.exitCode === 0 ? "completed" : "failed"}.\n${result.stdout || result.stderr}`);
       } catch (error) { appendError(error); }
       finally { setBusy(false); setProgress(""); }
       return;
@@ -1453,7 +1463,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         }
         store.appendEvent("research.source.retrieved", { id: retrieved.id, url: retrieved.url, contentHash: retrieved.contentHash, claimCount: claims.length });
         store.close();
-        append("assistant", `Source retrieved\n  ${retrieved.id}\n  ${retrieved.title}\n  ${retrieved.url}\n  hash: ${retrieved.contentHash}\n  claims: ${claims.length}\n\n${retrieved.excerpt}`);
+        appendTool(`Source retrieved\n  ${retrieved.id}\n  ${retrieved.title}\n  ${retrieved.url}\n  hash: ${retrieved.contentHash}\n  claims: ${claims.length}\n\n${retrieved.excerpt}`);
       } catch (error) {
         append("assistant", error instanceof Error && error.name === "AbortError" ? "Source retrieval timed out after 20 seconds." : error instanceof Error ? error.message : String(error));
       } finally { clearTimeout(timeout); setBusy(false); setProgress(""); }
@@ -1487,7 +1497,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           if (line) setProgress(`${stream}: ${line.slice(-140)}`);
         }, (control) => { activeProcess.current = control; });
         const output = [result.stdout.trim(), result.stderr.trim() ? `stderr:\n${result.stderr.trim()}` : ""].filter(Boolean).join("\n");
-        append("assistant", `Command exited ${result.exitCode} in ${(result.durationMs / 1000).toFixed(1)}s\n$ ${command.join(" ")}\n${output || "(no output)"}`);
+        appendTool(`Command exited ${result.exitCode} in ${(result.durationMs / 1000).toFixed(1)}s\n$ ${command.join(" ")}\n${output || "(no output)"}`);
       } catch (error) { appendError(error); }
       finally { activeProcess.current = null; setBusy(false); setProgress(""); }
       return;
@@ -1534,6 +1544,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request.startsWith("/")) { append("assistant", `Unknown command: ${request}\n\n${help()}`); return; }
 
+    activeSteer.current = null;
     setBusy(true); setProgress(`Using ${config.provider}/${config.model}`);
     try {
       await checkProvider({ provider: config.provider, model: config.model, cwd: root });
@@ -1544,20 +1555,24 @@ export function App({ root }: { root: string }): React.JSX.Element {
           mode: config.mode,
           instruction: "This is ordinary conversation, not a research cycle. Answer directly and concisely. Do not inspect files, run commands, edit code, propose experiments, or claim fresh measurements. If the user wants autonomous research, tell them to use /research.",
         },
-      }, { provider: config.provider, model: config.model, cwd: root, reasoningEffort: config.reasoningEffort, sandbox: "read-only" }, "qwen3.6:27b", setProgress, (control) => { activeProcess.current = control; });
+      }, { provider: config.provider, model: config.model, cwd: root, reasoningEffort: config.reasoningEffort, sandbox: "read-only", onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, "qwen3.6:27b", setProgress, (control) => { activeProcess.current = control; });
       append("assistant", String(result.output));
     } catch (error) {
       append("assistant", error instanceof Error ? error.message : String(error));
-    } finally { setBusy(false); setProgress(""); }
+    } finally { activeSteer.current = null; setBusy(false); setProgress(""); }
   };
   submitRef.current = submit;
 
   useEffect(() => {
     if (busy || !pendingRequests.current.length) return;
-    const next = pendingRequests.current.shift();
+    const nextPending = pendingRequests.current.filter((request) => !request.dispatched);
+    const next = nextPending.shift();
+    pendingRequests.current = nextPending;
     if (next) {
       setQueuedRequests([...pendingRequests.current]);
       setTimeout(() => { void submitRef.current(next.text, true); }, 0);
+    } else {
+      setQueuedRequests([]);
     }
   }, [busy]);
 
@@ -1568,6 +1583,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
     </Box>
     <Box flexDirection="column" flexGrow={messages.length > 1 || busy ? 1 : 0} marginTop={1} paddingX={1}>
       {messages.slice(-16).map((message, index) => {
+        if (message.kind === "tool") {
+          return <Box key={`${index}-${message.text}`} flexDirection="column" marginBottom={1} paddingLeft={2}>
+            <Text color="gray">┆ tool</Text>
+            <RichText text={message.text} />
+          </Box>;
+        }
         const errorLike = message.role === "assistant" && /unreachable|not configured|not logged|failed|error|unavailable|refus|interrupted/i.test(message.text);
         const accent = message.role === "user" ? "yellow" : message.role === "system" ? "gray" : errorLike ? "red" : "green";
         const label = messageLabel(message);

@@ -19,6 +19,7 @@ export interface ResearchDirectorOptions {
   cwd: string;
   fallbackLocalModel?: string;
   onProcess?: (control: ProcessControl) => void;
+  onThread?: (threadId: string) => void;
 }
 
 export async function runResearchDirector(
