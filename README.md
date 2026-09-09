@@ -55,15 +55,29 @@ Use `/compute local` or `/compute modal` before proposing an experiment, or use 
 For unattended operation, `modal_controller.py` runs the Node controller headlessly in Modal and stores durable `.sota` state in a Modal Volume:
 
 ```bash
-EVIDRA_MODAL_WORKSPACE="$PWD" modal run modal_controller.py \
+EVIDRA_MODAL_WORKSPACE="$PWD" modal run modal_controller.py::run \
   --goal "maximize robust validation performance" --budget 4h --lanes 3
 ```
+
+The headless controller is controllable without attaching a second interactive agent. Its
+state is durable in the shared Modal Volume, and controls take effect at the next safe
+research-cycle boundary:
+
+```bash
+modal run modal_controller.py::run --action status
+modal run modal_controller.py::run --action pause
+modal run modal_controller.py::run --action resume
+modal run modal_controller.py::run --action stop
+```
+
+The same controls are available locally through `evidra controller status`, `pause`, `resume`,
+and `stop` (with `EVIDRA_MODAL_CONTROLLER_ENTRYPOINT` available for a non-default entrypoint).
 
 For remote Codex access, create a Modal Secret containing `CODEX_API_KEY` and set its name before launching:
 
 ```bash
 export EVIDRA_MODAL_CODEX_SECRET=evidra-codex
-EVIDRA_MODAL_WORKSPACE="$PWD" modal run modal_controller.py --goal "..." --budget 4h
+EVIDRA_MODAL_WORKSPACE="$PWD" modal run modal_controller.py::run --goal "..." --budget 4h
 ```
 
 This headless mode has no interactive TUI or implicit approval channel. Inspect or approve external actions from a trusted local session after attaching to the persisted state. A local ChatGPT subscription login is intentionally not copied into Modal.

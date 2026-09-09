@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
@@ -56,6 +56,28 @@ function durationMinutes(value: string): number {
   return Math.max(1, Math.round(Number(match[1]) * multiplier));
 }
 
+type ControllerDirective = "run" | "pause" | "stop";
+
+function controllerDirective(): ControllerDirective {
+  const path = process.env.EVIDRA_CONTROLLER_CONTROL_FILE;
+  if (!path || !existsSync(path)) return "run";
+  try {
+    const payload = JSON.parse(readFileSync(path, "utf8")) as { action?: string };
+    return payload.action === "pause" || payload.action === "stop" ? payload.action : "run";
+  } catch {
+    return "run";
+  }
+}
+
+async function waitForControllerDirective(): Promise<"run" | "stop"> {
+  while (true) {
+    const directive = controllerDirective();
+    if (directive === "stop") return "stop";
+    if (directive === "run") return "run";
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+  }
+}
+
 program.name("evidra").description("Research-focused autonomous experimentation workbench").version("0.1.0");
 
 program.command("init")
@@ -107,6 +129,21 @@ program.command("doctor").description("Check local providers, runtimes, and exec
   checks.push(`modal auth    ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}`);
   console.log(checks.join("\n"));
 });
+
+const controller = new Command("controller").description("Inspect or control a headless Modal Evidra controller");
+function controllerEntrypoint(): string {
+  return process.env.EVIDRA_MODAL_CONTROLLER_ENTRYPOINT ?? "modal_controller.py::run";
+}
+async function invokeModalController(action: "status" | "pause" | "resume" | "stop"): Promise<void> {
+  const result = await runProcess(["modal", "run", controllerEntrypoint(), "--", "--action", action], root, 120_000);
+  if (result.stdout.trim()) process.stdout.write(result.stdout);
+  if (result.stderr.trim()) process.stderr.write(result.stderr);
+  if (result.exitCode !== 0) process.exitCode = result.exitCode;
+}
+for (const action of ["status", "pause", "resume", "stop"] as const) {
+  controller.command(action).description(`${action[0].toUpperCase()}${action.slice(1)} the Modal controller`).action(() => invokeModalController(action));
+}
+program.addCommand(controller);
 
 program.command("usage").description("Show research, experiment, and campaign usage").action(() => {
   const store = new ResearchStore(statePath);
@@ -334,6 +371,16 @@ research
     const campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed" } = { goal: options.goal, budgetMinutes: budget, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running" };
     let cycle = 0;
     do {
+      const directive = await waitForControllerDirective();
+      if (directive === "stop") {
+        campaign.status = "paused";
+        const stoppedStore = new ResearchStore(statePath);
+        stoppedStore.saveCampaign(campaign);
+        stoppedStore.appendEvent("research.controller.stop", { cycle, reason: "remote controller stop request" });
+        stoppedStore.close();
+        console.log("Research controller stop requested; stopped at the next safe boundary.");
+        break;
+      }
       cycle += 1;
       const store = new ResearchStore(statePath);
       if (!store.project()) store.createProject({ id: `evidra-${adapter.id}`, name: adapter.config.name, competitionId: adapter.id, config: adapter.config });

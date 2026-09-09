@@ -8,6 +8,8 @@ state in a Modal Volume. The local TUI remains the attach/inspection client.
 from __future__ import annotations
 
 import os
+import json
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -29,13 +31,48 @@ def ignore_workspace_path(path: Path) -> bool:
 
 
 image = (
-    modal.Image.from_registry("node:22-bookworm")
-    .apt_install("python3", "python3-pip")
-    .pip_install("uv")
+    modal.Image.from_registry("python:3.11-slim-bookworm")
+    .apt_install("nodejs", "npm")
+    .run_commands("python -m pip install uv")
     .add_local_dir(WORKSPACE, remote_path=str(REMOTE_WORKSPACE), ignore=ignore_workspace_path)
 )
 app = modal.App("evidra-controller")
 secrets = [modal.Secret.from_name(CODEX_SECRET_NAME)] if CODEX_SECRET_NAME else []
+
+
+@app.function(volumes={"/state": STATE_VOLUME})
+def inspect_state() -> dict[str, object]:
+    database = Path("/state/database.sqlite")
+    if not database.exists():
+        return {"status": "not_initialized"}
+    connection = sqlite3.connect(database)
+    try:
+        counts = {}
+        for table in ("events", "hypotheses", "experiments", "runs", "artifacts", "decisions", "evidence_claims"):
+            try:
+                counts[table] = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            except sqlite3.OperationalError:
+                counts[table] = None
+        try:
+            campaign = connection.execute("SELECT payload_json FROM research_campaigns WHERE id = 1").fetchone()
+        except sqlite3.OperationalError:
+            campaign = None
+        try:
+            scheduler = connection.execute("SELECT status, mode, current_step, updated_at FROM scheduler_state WHERE id = 1").fetchone()
+        except sqlite3.OperationalError:
+            scheduler = None
+        return {"status": "ready", "counts": counts, "campaign": json.loads(campaign[0]) if campaign else None, "scheduler": scheduler}
+    finally:
+        connection.close()
+
+
+@app.function(volumes={"/state": STATE_VOLUME})
+def set_control(action: str) -> str:
+    if action not in {"pause", "resume", "stop"}:
+        raise ValueError("Controller action must be pause, resume, or stop")
+    Path("/state/controller-control.json").write_text(json.dumps({"action": action}), encoding="utf-8")
+    STATE_VOLUME.commit()
+    return action
 
 
 @app.function(image=image, secrets=secrets, volumes={"/state": STATE_VOLUME}, timeout=24 * 60 * 60)
@@ -44,6 +81,7 @@ def execute(goal: str, budget: str, provider: str = "codex", model: str = "defau
         **os.environ,
         "EVIDRA_STATE_DIR": "/state",
         "EVIDRA_CONTROLLER_MODE": "modal",
+        "EVIDRA_CONTROLLER_CONTROL_FILE": "/state/controller-control.json",
     }
     install = subprocess.run(["npm", "ci", "--ignore-scripts"], cwd=REMOTE_WORKSPACE, env=environment, text=True, check=False)
     if install.returncode != 0:
@@ -68,5 +106,13 @@ def execute(goal: str, budget: str, provider: str = "codex", model: str = "defau
 
 
 @app.local_entrypoint()
-def run(goal: str, budget: str = "4h", provider: str = "codex", model: str = "default", lanes: int = 3) -> None:
+def run(action: str = "start", goal: str = "", budget: str = "4h", provider: str = "codex", model: str = "default", lanes: int = 3) -> None:
+    if action == "status":
+        print(json.dumps(inspect_state.remote(), indent=2, default=str))
+        return
+    if action in {"pause", "resume", "stop"}:
+        print(f"Controller {set_control.remote(action)} request recorded.")
+        return
+    if action != "start" or not goal:
+        raise ValueError("Start requires --goal; actions are start, status, pause, resume, and stop")
     raise SystemExit(execute.remote(goal, budget, provider, model, lanes))
