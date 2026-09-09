@@ -694,7 +694,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     resultStore.saveExperiment({ id, payload: { ...entryPayload, status: recordedResult.status === "completed" ? "completed" : "failed", runId: result.runId, worktreePath: experimentCwd } });
     resultStore.close();
-    return `\n\nExperiment ${id} ${recordedResult.status}\nRun: ${recordedResult.runId}\nExit code: ${recordedResult.exitCode}\nDuration: ${recordedResult.durationSeconds.toFixed(1)}s\nMetric: ${recordedResult.metrics.final_layer_mse ?? "not parsed"}\nArtifacts: ${Object.keys(recordedResult.artifacts).join(", ")}\nFailure: ${recordedResult.failureClass ?? "none"}`;
+    const metricName = activeAdapter().config.metric.name;
+    return `\n\nExperiment ${id} ${recordedResult.status}\nRun: ${recordedResult.runId}\nExit code: ${recordedResult.exitCode}\nDuration: ${recordedResult.durationSeconds.toFixed(1)}s\nMetric (${metricName}): ${recordedResult.metrics[metricName] ?? "not parsed"}\nArtifacts: ${Object.keys(recordedResult.artifacts).join(", ")}\nFailure: ${recordedResult.failureClass ?? "none"}`;
   };
 
   const runAutonomousCycle = async (campaignOverride?: ResearchCampaign): Promise<void> => {
