@@ -3,6 +3,20 @@ import { writeFileSync } from "node:fs";
 import { z } from "zod";
 import type { CompetitionConfig } from "./types.js";
 
+export const SPLIT_STRATEGIES = [
+  { id: "random_holdout", description: "Random train/validation holdout." },
+  { id: "stratified_kfold", description: "Stratified K-fold validation." },
+  { id: "group_kfold", description: "Group-disjoint K-fold validation." },
+  { id: "stratified_group_kfold", description: "Stratified and group-disjoint K-fold validation." },
+  { id: "temporal_forward", description: "Forward-only temporal validation." },
+  { id: "leave_one_domain_out", description: "Leave one source or domain out." },
+  { id: "custom", description: "A workspace-defined split implementation." },
+] as const;
+
+export function splitStrategy(id: string): { id: string; description: string } {
+  return SPLIT_STRATEGIES.find((strategy) => strategy.id === id) ?? { id, description: "Workspace-defined split strategy." };
+}
+
 export const ValidationPolicySchema = z.object({
   version: z.string().min(1),
   datasetRevision: z.string().min(1),
@@ -16,12 +30,15 @@ export const ValidationPolicySchema = z.object({
 export type ValidationPolicy = z.infer<typeof ValidationPolicySchema>;
 
 export function createValidationPolicy(competition: CompetitionConfig): ValidationPolicy {
+  const split = competition.validation?.primarySplit ?? "mini";
+  const folds = competition.validation?.folds ?? [0];
+  const seeds = competition.validation?.seeds ?? [0, 1, 2];
   return ValidationPolicySchema.parse({
-    version: `${competition.id}:${competition.datasetRevision}:mini-v1`,
+    version: `${competition.id}:${competition.datasetRevision}:${split}-v1`,
     datasetRevision: competition.datasetRevision,
-    primarySplit: "mini",
-    folds: [0],
-    seeds: [0, 1, 2],
+    primarySplit: split,
+    folds,
+    seeds,
     metric: competition.metric,
     acceptance: { minimumDelta: competition.metric.direction === "minimize" ? -0.002 : 0.002, requireReplication: true, requireLeakageAudit: true, requireReview: true },
     createdAt: new Date().toISOString(),

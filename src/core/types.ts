@@ -16,6 +16,11 @@ export const CompetitionConfigSchema = z.object({
   workspacePath: z.string().optional(),
   baselineCommand: z.array(z.string()).optional(),
   experimentCommand: z.array(z.string()).optional(),
+  validation: z.object({
+    primarySplit: z.string().min(1).default("mini"),
+    folds: z.array(z.number().int().nonnegative()).min(1).default([0]),
+    seeds: z.array(z.number().int()).min(1).default([0, 1, 2]),
+  }).optional(),
 });
 
 export type CompetitionConfig = z.infer<typeof CompetitionConfigSchema>;

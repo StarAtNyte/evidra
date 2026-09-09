@@ -12,6 +12,7 @@ import { retrieveSource, sourceClaims } from "../dist/core/sources.js";
 import { diversityReport, greedyBlend } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
+import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
 import { autonomyPolicy, guardCommand } from "../dist/core/permissions.js";
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, RESEARCH_TOOLS } from "../dist/core/tools.js";
@@ -72,6 +73,19 @@ test("project-local competition manifests replace hardcoded adapters", () => {
     assert.deepEqual(adapter.experimentCommand(), ["python", "run.py"]);
     assert.equal(adapter.workspacePath(root), join(root, "competitions/toy/workspace"));
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("validation policy is manifest-driven and split strategies are discoverable", () => {
+  const policy = createValidationPolicy({
+    id: "toy", name: "Toy", taskType: "classification", datasetRevision: "data-v2",
+    metric: { name: "macro_f1", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" },
+    validation: { primarySplit: "stratified_group_kfold", folds: [0, 1, 2, 3, 4], seeds: [17, 41], },
+  });
+  assert.equal(policy.primarySplit, "stratified_group_kfold");
+  assert.deepEqual(policy.folds, [0, 1, 2, 3, 4]);
+  assert.equal(policy.version, "toy:data-v2:stratified_group_kfold-v1");
+  assert.equal(splitStrategy("stratified_group_kfold").id, "stratified_group_kfold");
+  assert.equal(splitStrategy("workspace_custom").id, "workspace_custom");
 });
 
 test("autonomy policy and shell guard enforce hard safety boundaries", () => {

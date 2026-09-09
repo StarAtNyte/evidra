@@ -27,7 +27,7 @@ export function createExperimentManifest(input: ManifestInput, competition: Comp
     hypothesisId: input.hypothesisId,
     gitCommit: input.gitCommit,
     datasetVersion: input.datasetVersion || competition.datasetRevision,
-    splitVersion: input.splitVersion ?? "mini-v1",
+    splitVersion: input.splitVersion ?? `${competition.id}:${competition.datasetRevision}:${competition.validation?.primarySplit ?? "mini"}-v1`,
     change: { configPatch: input.configPatch ?? {} },
     resources: {
       executor: input.executor ?? "local",
