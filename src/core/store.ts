@@ -284,6 +284,13 @@ export class ResearchStore {
     this.appendEvent(`queue.${status}`, { id, payload });
   }
 
+  /** Refresh a live claim so stale-task recovery cannot duplicate a healthy worker. */
+  heartbeatTask(id: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE work_queue SET claimed_at = ?, updated_at = ? WHERE id = ? AND status = 'running'").run(now, now, id);
+    return result.changes === 1;
+  }
+
   retryTask(id: string, payload: unknown, availableAt: string): void {
     const now = new Date().toISOString();
     this.db.prepare("UPDATE work_queue SET status = 'queued', payload_json = ?, available_at = ?, claimed_at = NULL, updated_at = ? WHERE id = ?").run(JSON.stringify(payload), availableAt, now, id);

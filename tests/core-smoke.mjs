@@ -124,6 +124,23 @@ test("durable queue worker bounds concurrency and retries failures", async () =>
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue heartbeats prevent live long-running work from being requeued", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-heartbeat-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "long", kind: "heartbeat", priority: 1, payload: {} });
+    let stale = -1;
+    const worker = new QueueWorker(store, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_250));
+      stale = store.requeueStaleTasks(1_000);
+    }, { staleAfterMs: 1_000, heartbeatMs: 250, maxAttempts: 1 });
+    await worker.runOnce();
+    assert.equal(stale, 0);
+    assert.equal(store.queueTasks("completed").length, 1);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("research tool registry exposes safe workspace tools", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-tools-"));
   try {

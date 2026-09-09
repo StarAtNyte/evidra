@@ -4,6 +4,7 @@ export interface QueueWorkerOptions {
   concurrency?: number;
   maxAttempts?: number;
   staleAfterMs?: number;
+  heartbeatMs?: number;
   retryDelayMs?: (task: QueuedTask, error: unknown) => number;
   pollIntervalMs?: number;
   kinds?: string[];
@@ -16,6 +17,7 @@ export class QueueWorker {
   private readonly concurrency: number;
   private readonly maxAttempts: number;
   private readonly staleAfterMs: number;
+  private readonly heartbeatMs: number;
   private readonly pollIntervalMs: number;
   private readonly retryDelayMs: (task: QueuedTask, error: unknown) => number;
   private readonly kinds?: string[];
@@ -28,6 +30,7 @@ export class QueueWorker {
     this.concurrency = Math.max(1, Math.floor(options.concurrency ?? 1));
     this.maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? 3));
     this.staleAfterMs = Math.max(1_000, options.staleAfterMs ?? 15 * 60_000);
+    this.heartbeatMs = Math.max(250, Math.min(options.heartbeatMs ?? Math.floor(this.staleAfterMs / 3), this.staleAfterMs - 1));
     this.pollIntervalMs = Math.max(50, options.pollIntervalMs ?? 1_000);
     this.retryDelayMs = options.retryDelayMs ?? ((task) => Math.min(60_000, 1_000 * 2 ** Math.max(0, task.attempts - 1)));
     this.kinds = options.kinds?.length ? [...options.kinds] : undefined;
@@ -65,6 +68,7 @@ export class QueueWorker {
   }
 
   private async execute(task: QueuedTask): Promise<void> {
+    const heartbeat = setInterval(() => { this.store.heartbeatTask(task.id); }, this.heartbeatMs);
     try {
       const result = await this.handler(task, this.abortController.signal);
       this.store.updateTask(task.id, "completed", { result });
@@ -77,6 +81,8 @@ export class QueueWorker {
       } else {
         this.store.updateTask(task.id, "failed", { error: error instanceof Error ? error.message : String(error), attempts: task.attempts });
       }
+    } finally {
+      clearInterval(heartbeat);
     }
   }
 }
