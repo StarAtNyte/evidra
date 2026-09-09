@@ -1,6 +1,19 @@
 import { spawn } from "node:child_process";
 import type { ProcessResult } from "./types.js";
 
+const MAX_CAPTURE_BYTES = 16 * 1024 * 1024;
+
+function appendCapture(current: string, chunk: string): string {
+  const next = current + chunk;
+  if (Buffer.byteLength(next, "utf8") <= MAX_CAPTURE_BYTES) return next;
+  // Keep both startup diagnostics and the final metric/reporting lines. A
+  // bounded controller must never be able to OOM on a verbose worker.
+  const half = Math.floor(MAX_CAPTURE_BYTES / 2);
+  const head = next.slice(0, half);
+  const tail = next.slice(-half);
+  return `${head}\n...[output truncated by Evidra at ${MAX_CAPTURE_BYTES} bytes]...\n${tail}`;
+}
+
 export interface ProcessControl {
   pause(): void;
   resume(): void;
@@ -43,8 +56,8 @@ export function runProcess(
       resolve(result);
     };
 
-    child.stdout.on("data", (chunk: Buffer) => { const text = chunk.toString(); stdout += text; onOutput?.("stdout", text); });
-    child.stderr.on("data", (chunk: Buffer) => { const text = chunk.toString(); stderr += text; onOutput?.("stderr", text); });
+    child.stdout.on("data", (chunk: Buffer) => { const text = chunk.toString(); stdout = appendCapture(stdout, text); onOutput?.("stdout", text); });
+    child.stderr.on("data", (chunk: Buffer) => { const text = chunk.toString(); stderr = appendCapture(stderr, text); onOutput?.("stderr", text); });
     child.on("error", reject);
     child.on("close", (exitCode) => finish({
       command,

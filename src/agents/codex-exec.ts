@@ -11,6 +11,29 @@ export interface ExecAgentOptions {
   reasoningEffort?: string;
   sandbox?: "read-only" | "workspace-write";
   onThread?: (threadId: string) => void;
+  limitPolicy?: "wait" | "fallback" | "stop";
+}
+
+export class ProviderUsageLimitError extends Error {
+  constructor(message: string, readonly retryAfterMs: number) {
+    super(message);
+    this.name = "ProviderUsageLimitError";
+  }
+}
+
+export function isProviderUsageLimit(error: unknown): boolean {
+  return error instanceof ProviderUsageLimitError || /rate limit|usage limit|quota|too many requests|not enough credits/i.test(error instanceof Error ? error.message : String(error));
+}
+
+export function providerRetryAfterMs(error: unknown): number {
+  if (error instanceof ProviderUsageLimitError) return error.retryAfterMs;
+  const text = error instanceof Error ? error.message : String(error);
+  const match = text.match(/(?:retry|reset)[^\d]*(\d+(?:\.\d+)?)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)/i);
+  if (!match) return 15 * 60_000;
+  const amount = Number(match[1]);
+  const unit = match[2].toLowerCase();
+  const multiplier = unit.startsWith("hour") || unit.startsWith("hr") ? 3_600_000 : unit.startsWith("min") ? 60_000 : 1_000;
+  return Math.max(5_000, Math.min(6 * 60 * 60_000, Math.round(amount * multiplier)));
 }
 
 export function queueCodexMessage(threadId: string, message: string): boolean {
@@ -186,7 +209,10 @@ export class CodexExecAgent {
         settled = true;
         if (code !== 0) {
           const diagnostic = `${stderr}\n${humanOutput.join("\n")}`.replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, "").trim();
-          if (/not supported when using Codex with a ChatGPT account/i.test(diagnostic)) {
+          if (/rate limit|usage limit|quota|too many requests|not enough credits|429/i.test(diagnostic)) {
+            const retryAfterMs = providerRetryAfterMs(new Error(diagnostic));
+            reject(new ProviderUsageLimitError(`Codex usage limit reached. Retrying in ${Math.ceil(retryAfterMs / 60_000)} minute(s).`, retryAfterMs));
+          } else if (/not supported when using Codex with a ChatGPT account/i.test(diagnostic)) {
             reject(new Error(`The selected model is not available for your ChatGPT Codex account. Use /model default.`));
           } else if (/stream disconnected|network|timed out|upstream connect error|connection termination/i.test(diagnostic)) {
             reject(new Error("Codex is unreachable right now. Check your connection, then try again."));
@@ -242,8 +268,8 @@ export async function runWithLocalFallback(
     return await new CodexExecAgent(options).run(task, onProgress, onProcess);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const limitReached = /rate limit|usage limit|quota|too many requests|429|not enough credits/i.test(message);
-    if (options.provider !== "codex" || !fallbackModel || !limitReached) throw error;
+    const limitReached = isProviderUsageLimit(error);
+    if (options.provider !== "codex" || !fallbackModel || !limitReached || options.limitPolicy === "wait" || options.limitPolicy === "stop") throw error;
     onProgress?.(`Codex limit reached; switching to local/${fallbackModel}...`);
     await checkProvider({ provider: "local", model: fallbackModel, cwd: options.cwd });
     return new CodexExecAgent({ provider: "local", model: fallbackModel, cwd: options.cwd }).run(task, onProgress, onProcess);

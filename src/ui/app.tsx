@@ -25,7 +25,7 @@ import { activePhaseGoal, definePhaseGoals } from "../core/phase-goals.js";
 import { createExperimentManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
-import { checkProvider, codexLoginStatus, listCodexModels, listLocalModels, loginCodex, queueCodexMessage, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
 
@@ -33,7 +33,7 @@ type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "me
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
 type WorkbenchMode = "research" | "challenge";
 type AutonomyLevel = "safe" | "fast" | "yolo";
-type ResearchCampaign = { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed" };
+type ResearchCampaign = { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; nextAttemptAt?: string; limitMessage?: string };
 type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; campaign?: ResearchCampaign };
 
 const defaultConfig: SessionConfig = { provider: "codex", model: "default", reasoningEffort: "medium", mode: "research", autonomy: "safe" };
@@ -502,7 +502,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     return observation;
   };
 
-  const runResearchCycle = async (objective: string): Promise<{ text: string; goalStatus: "active" | "blocked" | "met"; decision: "inspect" | "propose" | "run" | "replicate" | "stop" }> => {
+  const runResearchCycle = async (objective: string, campaign?: ResearchCampaign): Promise<{ text: string; goalStatus: "active" | "blocked" | "met"; decision: "inspect" | "propose" | "run" | "replicate" | "stop" }> => {
     const observation = await performResearchObservation();
     setProgress("Research 3/3 · asking the director to analyze observed evidence and select the next experiment...");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -539,6 +539,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         provider: config.provider,
         model: config.model,
         reasoningEffort: config.reasoningEffort,
+        limitPolicy: (campaign ?? config.campaign) ? "wait" : "fallback",
         cwd: root,
         fallbackLocalModel: "qwen3.6:27b",
         onProcess: (control) => { activeProcess.current = control; },
@@ -699,8 +700,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     return `\n\nExperiment ${id} ${recordedResult.status}\nRun: ${recordedResult.runId}\nExit code: ${recordedResult.exitCode}\nDuration: ${recordedResult.durationSeconds.toFixed(1)}s\nMetric (${metricName}): ${recordedResult.metrics[metricName] ?? "not parsed"}\nArtifacts: ${Object.keys(recordedResult.artifacts).join(", ")}\nFailure: ${recordedResult.failureClass ?? "none"}`;
   };
 
-  const runAutonomousCycle = async (campaignOverride?: ResearchCampaign): Promise<void> => {
+  const runAutonomousCycle = async (campaignOverride?: ResearchCampaign, autoContinue = false): Promise<void> => {
     if (loopBusy.current || busy) return;
+    const pendingCampaign = campaignOverride ?? config.campaign;
+    if (pendingCampaign?.nextAttemptAt && Date.parse(pendingCampaign.nextAttemptAt) > Date.now()) return;
     ensureActiveProject();
     loopBusy.current = true;
     setBusy(true); setProgress("Autonomous loop: choosing the next highest-information decision...");
@@ -711,6 +714,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
     let queueTaskId: string | undefined;
     try {
       const campaign = campaignOverride ?? config.campaign;
+      if (campaign?.nextAttemptAt) {
+        campaign.nextAttemptAt = undefined;
+        campaign.limitMessage = undefined;
+        persistCampaign(campaign);
+        setConfig((current) => ({ ...current, campaign: { ...campaign } }));
+      }
       if (campaign) {
         const elapsed = (Date.now() - Date.parse(campaign.startedAt)) / 60_000;
         if (elapsed >= campaign.budgetMinutes) {
@@ -733,7 +742,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       let cycle: Awaited<ReturnType<typeof runResearchCycle>> | undefined;
       const worker = new QueueWorker(queueStore, async (task) => {
         const payload = task.payload as { objective?: string };
-        cycle = await runResearchCycle(payload.objective ?? objective);
+        cycle = await runResearchCycle(payload.objective ?? objective, campaign);
         return cycle;
       }, { concurrency: 1, maxAttempts: 1, kinds: ["research.cycle"] });
       await worker.runOnce();
@@ -772,7 +781,26 @@ export function App({ root }: { root: string }): React.JSX.Element {
         blocked.close();
         append("assistant", "Autonomous research paused because the current phase is blocked. Resolve the bottleneck, then use /resume.");
       }
+      if (campaign?.status === "running" && autoContinue && !loopTimer.current) {
+        loopTimer.current = setInterval(() => { void runAutonomousCycle(); }, 60_000);
+        append("assistant", "Autonomous research will continue automatically. Use /loop pause or /loop stop to halt it.");
+      }
     } catch (error) {
+      const campaign = campaignOverride ?? config.campaign;
+      if (campaign && isProviderUsageLimit(error)) {
+        const retryAfterMs = providerRetryAfterMs(error);
+        const nextAttemptAt = new Date(Date.now() + retryAfterMs).toISOString();
+        const waiting = { ...campaign, status: "running" as const, nextAttemptAt, limitMessage: error instanceof Error ? error.message : String(error) };
+        persistCampaign(waiting);
+        setConfig((current) => ({ ...current, campaign: waiting }));
+        const waitingStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        waitingStore.setSchedulerState({ status: "running", mode: config.mode, currentStep: `provider-limit-until-${nextAttemptAt}` });
+        waitingStore.appendEvent("research.provider_limit.waiting", { retryAt: nextAttemptAt, retryAfterMs, provider: config.provider });
+        waitingStore.close();
+        if (!loopTimer.current) loopTimer.current = setInterval(() => { void runAutonomousCycle(); }, 60_000);
+        append("assistant", `Provider usage limit reached. Research is paused safely and will retry at ${nextAttemptAt}. The campaign budget remains durable; use /loop stop to cancel waiting.`);
+        return;
+      }
       if (queueTaskId) { const queueStore = new ResearchStore(join(root, ".sota", "database.sqlite")); queueStore.updateTask(queueTaskId, "failed", { error: error instanceof Error ? error.message : String(error) }); queueStore.close(); }
       const update = new ResearchStore(join(root, ".sota", "database.sqlite"));
       update.setSchedulerState({ status: "paused", mode: config.mode, currentStep: "blocked" });
@@ -827,7 +855,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Autonomous research started\n  Goal: ${campaign.goal}\n  Budget: ${campaign.budgetMinutes} minutes\n  Stop: ${campaign.stopCondition}\n\nI will define internal phase goals, inspect evidence, run permitted checks, and continue until the condition or budget is reached.`);
       setBusy(true); setProgress("Starting autonomous research...");
       try {
-        await runAutonomousCycle(campaign);
+        await runAutonomousCycle(campaign, true);
       } catch (error) { appendError(error); }
       finally { setBusy(false); setProgress(""); }
       return;
@@ -915,7 +943,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         persistCampaign(campaign);
         setConfig((current) => ({ ...current, campaign }));
         if (request === "/resume" && !loopTimer.current) {
-          void runAutonomousCycle(campaign);
+          void runAutonomousCycle(campaign, true);
         }
       }
       append("assistant", request === "/pause" ? "Scheduling paused. Running jobs are unchanged." : "Scheduling resumed.");
@@ -1128,11 +1156,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (request === "/challenge" || request === "/challenge status" || request === "/challenge list") {
+      setConfig((current) => ({ ...current, mode: "challenge" }));
       const adapter = activeAdapter();
       append("assistant", `Active challenge: ${adapter.config.name}\nID: ${adapter.id}\nMetric: ${adapter.config.metric.name} (${adapter.config.metric.direction})\nUse /challenge inspect or /challenge baseline.`);
       return;
     }
     if (request === "/challenge audit") {
+      setConfig((current) => ({ ...current, mode: "challenge" }));
       const adapter = activeAdapter();
       const report = auditData(adapter.workspacePath(root));
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -1143,6 +1173,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (request === "/challenge policy") {
+      setConfig((current) => ({ ...current, mode: "challenge" }));
       const adapter = activeAdapter();
       const policy = createValidationPolicy(adapter.config);
       mkdirSync(join(root, ".sota"), { recursive: true });
@@ -1181,6 +1212,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (request === "/challenge baseline") {
+      setConfig((current) => ({ ...current, mode: "challenge" }));
       const adapter = activeAdapter();
       setBusy(true); setProgress(`Running the canonical ${adapter.config.name} baseline...`);
       try {
@@ -1193,7 +1225,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
       finally { setBusy(false); setProgress(""); }
       return;
     }
-    if (request === "/inspect" || request === "/challenge inspect") { append("assistant", JSON.stringify(activeAdapter().config, null, 2)); return; }
+    if (request === "/inspect" || request === "/challenge inspect") {
+      if (request === "/challenge inspect") setConfig((current) => ({ ...current, mode: "challenge" }));
+      append("assistant", JSON.stringify(activeAdapter().config, null, 2)); return;
+    }
     if (request === "/hypotheses" || request.startsWith("/hypotheses ")) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const hypotheses = store.hypotheses();

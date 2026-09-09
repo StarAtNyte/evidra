@@ -20,7 +20,7 @@ import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
-import { checkProvider } from "./agents/codex-exec.js";
+import { checkProvider, isProviderUsageLimit, providerRetryAfterMs } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -284,8 +284,10 @@ research
   .option("--provider <provider>", "agent provider: codex or local", "codex")
   .option("--model <model>", "provider model; use default for Codex", "default")
   .option("--thinking <effort>", "reasoning effort", "high")
-  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string }) => {
+  .option("--limit-policy <policy>", "on provider usage limit: wait, fallback, or stop", "wait")
+  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; limitPolicy: string }) => {
     if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
+    if (!["wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'wait', 'fallback', or 'stop'.");
     const adapter = activeCompetition();
     const objective = `${options.goal}. Stop condition: ${options.stop}`;
     const budget = durationMinutes(options.budget);
@@ -314,7 +316,21 @@ research
       const projectStore = new ResearchStore(statePath);
       const activeProject = projectStore.project();
       projectStore.close();
-      const decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: options.goal, phaseGoal: phaseGoal ?? null }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, fallbackLocalModel: options.provider === "codex" ? "qwen3.6:27b" : undefined, cwd: root, executeTool: researchToolExecutor(adapter) });
+      let decision: Awaited<ReturnType<typeof runResearchDirector>>;
+      while (true) {
+        try {
+          decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: options.goal, phaseGoal: phaseGoal ?? null }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? "qwen3.6:27b" : undefined, cwd: root, executeTool: researchToolExecutor(adapter) });
+          break;
+        } catch (error) {
+          if (options.limitPolicy !== "wait" || !isProviderUsageLimit(error)) throw error;
+          const delay = providerRetryAfterMs(error);
+          const remainingMs = budget * 60_000 - (Date.now() - started);
+          if (remainingMs <= 0) throw new Error("Research budget expired while waiting for the provider usage limit to reset.");
+          const waitMs = Math.min(delay, remainingMs);
+          console.log(`Provider usage limit reached; waiting ${Math.ceil(waitMs / 60_000)} minute(s) before retrying. Campaign state is durable.`);
+          await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+        }
+      }
       const decisionStore = new ResearchStore(statePath);
       materializeResearchDecision(decisionStore, decision);
       if (phaseGoal) {

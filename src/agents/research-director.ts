@@ -19,6 +19,7 @@ export interface ResearchDirectorOptions {
   reasoningEffort?: string;
   cwd: string;
   fallbackLocalModel?: string;
+  limitPolicy?: "wait" | "fallback" | "stop";
   onProcess?: (control: ProcessControl) => void;
   onThread?: (threadId: string) => void;
   executeTool?: (call: ResearchToolCall) => Promise<ResearchToolResult>;
