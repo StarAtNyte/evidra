@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { ResearchSourceSchema, type ResearchSource } from "./types.js";
 
 export interface RetrievedSource extends ResearchSource {
@@ -8,6 +10,29 @@ export interface RetrievedSource extends ResearchSource {
 }
 
 const MAX_BYTES = 2 * 1024 * 1024;
+const MAX_REDIRECTS = 5;
+
+function privateAddress(address: string): boolean {
+  if (isIP(address) === 4) {
+    const octets = address.split(".").map(Number);
+    return octets[0] === 10 || octets[0] === 127 || (octets[0] === 169 && octets[1] === 254) ||
+      (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+      (octets[0] === 192 && octets[1] === 168) || octets[0] === 0;
+  }
+  if (isIP(address) === 6) {
+    const normalized = address.toLowerCase();
+    return normalized === "::1" || normalized === "::" || normalized.startsWith("fe80:") ||
+      normalized.startsWith("fc") || normalized.startsWith("fd");
+  }
+  return true;
+}
+
+async function assertPublicUrl(url: URL): Promise<void> {
+  if (!/^https?:$/.test(url.protocol)) throw new Error("Only http and https research sources are supported.");
+  if (url.username || url.password) throw new Error("Research source URLs may not contain credentials.");
+  const addresses = isIP(url.hostname) ? [url.hostname] : (await lookup(url.hostname, { all: true })).map((entry) => entry.address);
+  if (!addresses.length || addresses.some(privateAddress)) throw new Error(`Refusing private or loopback research source host: ${url.hostname}`);
+}
 
 function sourceId(url: string, contentHash: string): string {
   return `src_${createHash("sha256").update(`${url}\n${contentHash}`).digest("hex").slice(0, 20)}`;
@@ -27,9 +52,19 @@ function stripMarkup(input: string): string {
 }
 
 export async function retrieveSource(url: string, signal?: AbortSignal): Promise<RetrievedSource> {
-  const parsed = new URL(url);
-  if (!/^https?:$/.test(parsed.protocol)) throw new Error("Only http and https research sources are supported.");
-  const response = await fetch(parsed, { redirect: "follow", signal, headers: { "user-agent": "Evidra/0.1 research-workbench" } });
+  let parsed = new URL(url);
+  await assertPublicUrl(parsed);
+  let response: Response | undefined;
+  for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
+    response = await fetch(parsed, { redirect: "manual", signal, headers: { "user-agent": "Evidra/0.1 research-workbench" } });
+    if (response.status < 300 || response.status >= 400) break;
+    const location = response.headers.get("location");
+    if (!location) throw new Error(`Source retrieval returned redirect ${response.status} without a location.`);
+    if (redirect === MAX_REDIRECTS) throw new Error(`Source exceeded the ${MAX_REDIRECTS} redirect limit.`);
+    parsed = new URL(location, parsed);
+    await assertPublicUrl(parsed);
+  }
+  if (!response) throw new Error("Source retrieval did not return a response.");
   if (!response.ok) throw new Error(`Source retrieval failed (${response.status} ${response.statusText}).`);
   const contentType = response.headers.get("content-type") ?? "application/octet-stream";
   const length = Number(response.headers.get("content-length") ?? 0);

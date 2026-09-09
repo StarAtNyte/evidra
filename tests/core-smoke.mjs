@@ -8,7 +8,7 @@ import { compareMetricSeries } from "../dist/core/statistics.js";
 import { recoveryPlan } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
-import { sourceClaims } from "../dist/core/sources.js";
+import { retrieveSource, sourceClaims } from "../dist/core/sources.js";
 import { diversityReport, greedyBlend } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
@@ -202,6 +202,10 @@ test("source claims and submission provenance are auditable", () => {
     const bundle = prepareSubmission(root, "exp-1", manifest, run, { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } });
     assert.equal(validateSubmissionBundle(bundle.path).valid, true);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("source retrieval refuses loopback hosts before fetching", async () => {
+  await assert.rejects(() => retrieveSource("http://127.0.0.1:9/private"), /private or loopback/);
 });
 
 test("process interruption terminates the detached worker group", async () => {
