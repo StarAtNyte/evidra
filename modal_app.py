@@ -1,0 +1,75 @@
+"""Generic Evidra experiment worker for Modal.
+
+The local Evidra controller supplies an argv command and a workspace-relative
+working directory. Modal owns the compute container; no agent credentials or
+SQLite state are mounted into the worker.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import base64
+from pathlib import Path
+
+import modal
+
+WORKSPACE = Path(os.environ.get("EVIDRA_MODAL_WORKSPACE", ".")).resolve()
+REMOTE_WORKSPACE = Path("/workspace")
+GPU = os.environ.get("EVIDRA_MODAL_GPU") or None
+
+
+def include_workspace_path(path: str) -> bool:
+    excluded = {".git", ".sota", "node_modules", ".venv", "__pycache__", ".mypy_cache"}
+    return not any(part in excluded for part in Path(path).parts)
+
+
+def ignore_workspace_path(path: Path) -> bool:
+    return not include_workspace_path(str(path))
+
+
+image = modal.Image.debian_slim(python_version="3.11").pip_install("uv").add_local_dir(WORKSPACE, remote_path=str(REMOTE_WORKSPACE), ignore=ignore_workspace_path)
+app = modal.App("evidra-experiment")
+
+
+@app.function(
+    image=image,
+    gpu=GPU,
+    timeout=int(os.environ.get("EVIDRA_MODAL_TIMEOUT_SECONDS", "3600")),
+)
+def execute(command_json: str, cwd: str, artifacts_json: str = "[]") -> dict[str, object]:
+    command = json.loads(command_json)
+    if not isinstance(command, list) or not command or not all(isinstance(value, str) for value in command):
+        raise ValueError("Evidra Modal command must be a non-empty argv array")
+    relative_cwd = Path(cwd)
+    if relative_cwd.is_absolute() or ".." in relative_cwd.parts:
+        raise ValueError("Evidra Modal working directory must stay inside the mounted workspace")
+    working_directory = REMOTE_WORKSPACE / relative_cwd
+    if not working_directory.is_dir():
+        raise FileNotFoundError(f"Modal working directory does not exist: {working_directory}")
+    completed = subprocess.run(command, cwd=working_directory, capture_output=True, text=True, check=False)
+    artifact_payload: dict[str, str] = {}
+    for artifact in json.loads(artifacts_json):
+        relative_artifact = Path(artifact)
+        if relative_artifact.is_absolute() or ".." in relative_artifact.parts:
+            raise ValueError(f"Invalid declared artifact path: {artifact}")
+        artifact_path = working_directory / relative_artifact
+        if artifact_path.is_file() and artifact_path.stat().st_size <= 64 * 1024 * 1024:
+            artifact_payload[str(relative_artifact)] = base64.b64encode(artifact_path.read_bytes()).decode("ascii")
+    return {
+        "exitCode": completed.returncode,
+        "stdout": completed.stdout[-16 * 1024 * 1024 :],
+        "stderr": completed.stderr[-16 * 1024 * 1024 :],
+        "artifacts": artifact_payload,
+    }
+
+
+@app.local_entrypoint()
+def run(command_json: str, cwd: str = ".", artifacts_json: str = "[]", timeout_seconds: int = 3600) -> None:
+    # timeout_seconds is included in the CLI contract for observability; the
+    # function timeout is set when the app module is loaded.
+    del timeout_seconds
+    result = execute.remote(command_json, cwd, artifacts_json)
+    print(json.dumps(result))
+    raise SystemExit(int(result["exitCode"]))

@@ -1,6 +1,6 @@
 import { runProcess, type ProcessControl } from "./process.js";
-import { existsSync, statSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { ExperimentManifest, ProcessResult, RunResult } from "./types.js";
 
 export interface ExperimentExecutor {
@@ -95,15 +95,44 @@ export class LocalExecutor implements ExperimentExecutor {
 export class ModalExecutor implements ExperimentExecutor {
   readonly kind = "modal" as const;
 
+  constructor(private readonly workspaceRoot?: string) {}
+
   async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse"): Promise<RunResult> {
     if (!process.env.MODAL_TOKEN_ID || !process.env.MODAL_TOKEN_SECRET) {
       throw new Error("Modal is not configured. Set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET, or choose local execution.");
     }
+    const workspaceRoot = resolve(this.workspaceRoot ?? cwd);
+    const relativeCwd = relative(workspaceRoot, resolve(cwd));
+    if (relativeCwd.startsWith("..") || isAbsolute(relativeCwd)) throw new Error("Modal experiment cwd must stay inside the project workspace.");
     const modalEntrypoint = process.env.EVIDRA_MODAL_ENTRYPOINT ?? "modal_app.py::run";
-    return toRunResult(manifest, await runProcess(["modal", "run", modalEntrypoint, "--", ...command], cwd, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess), metricName);
+    const timeoutSeconds = Math.max(60, Math.round(manifest.resources.timeoutMinutes * 60));
+    const commandJson = JSON.stringify(command);
+    const args = ["run", modalEntrypoint, "--", "--command-json", commandJson, "--cwd", relativeCwd || ".", "--artifacts-json", JSON.stringify(manifest.evaluation?.requiredArtifacts ?? []), "--timeout-seconds", String(timeoutSeconds)];
+    const result = await runProcess(args, workspaceRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, {
+      ...process.env,
+      EVIDRA_MODAL_WORKSPACE: workspaceRoot,
+      ...(manifest.resources.gpu ? { EVIDRA_MODAL_GPU: manifest.resources.gpu } : {}),
+      EVIDRA_MODAL_TIMEOUT_SECONDS: String(timeoutSeconds),
+    });
+    let payload: { exitCode?: number; stdout?: string; stderr?: string; artifacts?: Record<string, string> } | undefined;
+    for (const line of result.stdout.trim().split("\n").reverse()) {
+      try {
+        const candidate = JSON.parse(line) as typeof payload;
+        if (candidate && typeof candidate === "object" && (typeof candidate.exitCode === "number" || candidate.artifacts)) { payload = candidate; break; }
+      } catch { /* Modal progress output is not the worker result. */ }
+    }
+    if (!payload) return toRunResult(manifest, { ...result, command, cwd }, metricName);
+    for (const [name, encoded] of Object.entries(payload.artifacts ?? {})) {
+      const destination = resolve(cwd, name);
+      const destinationRelative = relative(cwd, destination);
+      if (destinationRelative.startsWith("..") || isAbsolute(destinationRelative)) continue;
+      mkdirSync(dirname(destination), { recursive: true });
+      writeFileSync(destination, Buffer.from(encoded, "base64"));
+    }
+    return toRunResult(manifest, { ...result, command, exitCode: payload.exitCode ?? result.exitCode, stdout: payload.stdout ?? result.stdout, stderr: payload.stderr ?? result.stderr, cwd }, metricName);
   }
 }
 
-export function executorFor(kind: ExperimentManifest["resources"]["executor"]): ExperimentExecutor {
-  return kind === "modal" ? new ModalExecutor() : new LocalExecutor();
+export function executorFor(kind: ExperimentManifest["resources"]["executor"], workspaceRoot?: string): ExperimentExecutor {
+  return kind === "modal" ? new ModalExecutor(workspaceRoot) : new LocalExecutor();
 }

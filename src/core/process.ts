@@ -27,12 +27,13 @@ export function runProcess(
   timeoutMs = 15 * 60_000,
   onOutput?: (stream: "stdout" | "stderr", chunk: string) => void,
   onProcess?: (control: ProcessControl) => void,
+  environment?: NodeJS.ProcessEnv,
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const started = Date.now();
     // A detached process group lets interruption stop wrappers such as uv, python,
     // and evaluator subprocesses together instead of leaving grandchildren alive.
-    const child = spawn(command[0], command.slice(1), { cwd, shell: false, detached: true });
+    const child = spawn(command[0], command.slice(1), { cwd, shell: false, detached: true, env: environment });
     let paused = false;
     let settled = false;
     const signalGroup = (signal: NodeJS.Signals): void => {

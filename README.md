@@ -41,6 +41,26 @@ Provider exhaustion is an explicit runtime policy. In the TUI use `/limits fallb
 
 Lane concurrency is adaptive: `safe` runs one independent lane, `fast` permits a small parallel set, and `yolo` uses the largest bounded set supported by the host and provider. Local Ollama concurrency also respects `OLLAMA_NUM_PARALLEL`; the TUI never interprets YOLO as permission to exhaust a laptop, subscription, or external service.
 
+### Local controller versus Modal controller
+
+Normal operation is a local controller with a selectable experiment target:
+
+```text
+local TUI/controller ──► local experiment worker
+                     └─► Modal GPU experiment worker
+```
+
+Use `/compute local` or `/compute modal` before proposing an experiment, or use `evidra experiment propose --executor modal`. Modal workers receive the workspace and declared command, return logs and declared artifacts, and are evaluated by the same local evidence gates.
+
+For unattended operation, `modal_controller.py` runs the Node controller headlessly in Modal and stores durable `.sota` state in a Modal Volume:
+
+```bash
+EVIDRA_MODAL_WORKSPACE="$PWD" modal run modal_controller.py \
+  --goal "maximize robust validation performance" --budget 4h --lanes 3
+```
+
+This headless mode has no interactive TUI or implicit approval channel. Inspect or approve external actions from a trusted local session after attaching to the persisted state.
+
 Provider and lane failures are recoverable. Transient network, timeout, stream, malformed-response, and service errors receive bounded retries with backoff; configured Codex-to-local fallback changes route when appropriate; every exhausted lane is recorded as failed evidence so the director can choose a different path instead of silently treating it as success. SDK subprocesses are cancelled on timeout and terminal interruption.
 
 Every research cycle now has an adversarial critic stage. The critic reviews lane disagreement and the director decision, records objections and required checks, and returns `proceed`, `revise`, or `reject`. Challenge experiments whose manifest requires replication automatically receive an independent child manifest and run in `fast`/`yolo` modes; `safe` mode prepares the child and waits for approval.

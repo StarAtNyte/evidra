@@ -37,9 +37,10 @@ type WorkbenchMode = "research" | "challenge";
 type AutonomyLevel = "safe" | "fast" | "yolo";
 type ResearchCampaign = { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; nextAttemptAt?: string; limitMessage?: string };
 type LimitPolicy = "wait" | "fallback" | "stop";
-type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; limitPolicy: LimitPolicy; fallbackModel: string; campaign?: ResearchCampaign };
+type ExperimentExecutorKind = "local" | "modal";
+type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; limitPolicy: LimitPolicy; fallbackModel: string; experimentExecutor: ExperimentExecutorKind; campaign?: ResearchCampaign };
 
-const defaultConfig: SessionConfig = { provider: "codex", model: "default", reasoningEffort: "medium", mode: "research", autonomy: "safe", limitPolicy: "fallback", fallbackModel: process.env.EVIDRA_FALLBACK_MODEL ?? "auto" };
+const defaultConfig: SessionConfig = { provider: "codex", model: "default", reasoningEffort: "medium", mode: "research", autonomy: "safe", limitPolicy: "fallback", fallbackModel: process.env.EVIDRA_FALLBACK_MODEL ?? "auto", experimentExecutor: "local" };
 const COMMANDS = [
   ["/help", "Show commands"],
   ["/mode", "Show or switch active mode"],
@@ -100,7 +101,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"]],
   "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"]],
   "/limits": [["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Switch to local Qwen automatically"], ["/limits stop", "Stop when Codex is limited"]],
-  "/compute": [["/compute status", "Show executor health"], ["/compute budget", "Show campaign usage"]],
+  "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute modal", "Run experiments on Modal"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission record", "Record an external score"]],
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
@@ -120,6 +121,7 @@ function loadConfig(path: string): SessionConfig {
     if (config.provider === "local" && /^(gpt|codex)/i.test(config.model)) config.model = "unconfigured";
     if (!["wait", "fallback", "stop"].includes(config.limitPolicy)) config.limitPolicy = defaultConfig.limitPolicy;
     if (!config.fallbackModel) config.fallbackModel = defaultConfig.fallbackModel;
+    if (config.experimentExecutor !== "local" && config.experimentExecutor !== "modal") config.experimentExecutor = defaultConfig.experimentExecutor;
     if (config.campaign?.status === "running") config.campaign = { ...config.campaign, status: "paused" };
     if (config.mode !== "research" && config.mode !== "challenge") config.mode = defaultConfig.mode;
     if (!["safe", "fast", "yolo"].includes(config.autonomy)) config.autonomy = defaultConfig.autonomy;
@@ -160,7 +162,7 @@ function help(): string {
     "/validation [inspect|generate] Show validation policy",
     "/agents                     Show research-agent health",
     "/limits [wait|fallback|stop] Choose provider-limit behavior",
-    "/compute                    Show execution and budget health",
+    "/compute [local|modal|status] Select the experiment execution target",
     "/doctor                     Diagnose local dependencies",
     "!<shell command>            Run a shell command in the project workspace",
     "/submission [prepare|validate|approve|record] Manage safe bundles and external scores",
@@ -638,7 +640,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const commit = await runProcess(["git", "rev-parse", "HEAD"], root);
     if (commit.exitCode !== 0) { store.close(); throw new Error(`Cannot create manifest: ${commit.stderr || commit.stdout}`); }
     const id = `exp_${Date.now()}_${hypothesis.id.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
-    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis.id, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision }, adapter.config);
+    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis.id, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: config.experimentExecutor }, adapter.config);
     store.saveExperiment({ id, payload: { ...manifest, status: "proposed" } });
     store.close();
     return { id, text: `\n\nExperiment manifest proposed\n${manifestSummary(manifest)}\nNext: /experiment show ${id}` };
@@ -682,7 +684,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     const command = adapter.experimentCommand();
     setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
-    const executor = executorFor(manifest.resources.executor);
+    const executor = executorFor(manifest.resources.executor, root);
     let evaluatorOutput: { stdout: string; stderr: string; exitCode: number } | undefined;
     let result = await executor.run(manifest, experimentCwd, command, (control) => { activeProcess.current = control; }, adapter.config.metric.name);
     let attempt = 1;
@@ -1446,7 +1448,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
       const id = `exp_${Date.now()}_${hypothesisId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
       const adapter = activeAdapter();
-      const manifest = createExperimentManifest({ id, hypothesisId, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision }, adapter.config);
+      const manifest = createExperimentManifest({ id, hypothesisId, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: config.experimentExecutor }, adapter.config);
       store.saveExperiment({ id, payload: { ...manifest, status: "proposed" } });
       store.close();
       append("assistant", `Immutable experiment manifest created\n${manifestSummary(manifest)}\n\nNext: /experiment show ${id}`);
@@ -1468,7 +1470,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Research agents\n  codex: ${codex || "not authenticated"}\n  local: ${local}\n  concurrency: 1 active director lane\n\n${lanes.length ? lanes.map((lane) => `  ${lane.status === "running" ? "●" : lane.status === "failed" ? "✗" : lane.status === "blocked" ? "!" : "○"} ${lane.role} · ${lane.status} · ${lane.provider}/${lane.model}${lane.task ? `\n    ${lane.task.slice(0, 120)}` : ""}`).join("\n") : "  No lanes initialized; start /research to initialize the project."}`);
       return;
     }
-    if (request === "/compute" || request === "/compute status" || request === "/compute budget") {
+    if (request === "/compute" || request === "/compute status" || request === "/compute budget" || request === "/compute local" || request === "/compute modal") {
+      const selectedExecutor = request.split(/\s+/)[1];
+      if (selectedExecutor === "local" || selectedExecutor === "modal") {
+        setConfig((current) => ({ ...current, experimentExecutor: selectedExecutor }));
+        append("assistant", `Experiment execution target selected: ${selectedExecutor}${selectedExecutor === "modal" ? " (Modal credentials are checked when a Modal experiment starts)." : " (runs stay on this computer)."}`);
+        return;
+      }
       const campaign = config.campaign;
       append("assistant", `Executor policy\n  mode: ${config.mode}\n  autonomy: ${config.autonomy}\n  local: available through process workers\n  modal: ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}\n  fallback: local model on Codex usage limits${campaign ? `\n\nCampaign budget\n  elapsed: ${Math.max(0, (Date.now() - Date.parse(campaign.startedAt)) / 60_000).toFixed(1)} / ${campaign.budgetMinutes} minutes\n  status: ${campaign.status}` : ""}`);
       return;

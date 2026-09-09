@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
 import { createExperimentManifest, manifestSummary } from "./core/experiment-manifest.js";
@@ -31,7 +31,8 @@ import { App } from "./ui/app.js";
 import { findWorkspaceRoot } from "./core/workspace.js";
 
 const root = findWorkspaceRoot();
-const statePath = join(root, ".sota", "database.sqlite");
+const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
+const statePath = join(stateDirectory, "database.sqlite");
 const program = new Command();
 const activeCompetition = () => {
   const store = new ResearchStore(statePath);
@@ -502,7 +503,9 @@ program.command("baseline")
 const experiment = new Command("experiment").description("Manage research experiments");
 experiment.command("propose")
   .argument("[hypothesis]", "hypothesis identifier; defaults to the newest hypothesis")
-  .action(async (hypothesisId?: string) => {
+  .option("--executor <executor>", "experiment executor: local or modal", "local")
+  .action(async (hypothesisId: string | undefined, options: { executor: string }) => {
+    if (options.executor !== "local" && options.executor !== "modal") throw new Error("Executor must be 'local' or 'modal'.");
     const store = new ResearchStore(statePath);
     const hypothesis = hypothesisId ?? store.hypotheses()[0]?.id;
     if (!hypothesis) {
@@ -516,7 +519,7 @@ experiment.command("propose")
     }
     const id = `exp_${Date.now()}_${hypothesis.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
     const adapter = activeCompetition();
-    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision }, adapter.config);
+    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: options.executor }, adapter.config);
     store.saveExperiment({ id, payload: { ...manifest, status: "proposed" } });
     store.close();
     console.log(`Immutable experiment manifest created\n${manifestSummary(manifest)}`);
@@ -534,7 +537,7 @@ experiment.command("run")
     const worktreePath = await ensureWorktree(root, root, id);
     const experimentCwd = join(worktreePath, relative(root, adapter.workspacePath(root)));
     const command = adapter.experimentCommand();
-    const executor = executorFor(manifest.resources.executor);
+    const executor = executorFor(manifest.resources.executor, root);
     let result = await executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name);
     const sameCommand = adapter.config.evaluator.command.length === command.length && adapter.config.evaluator.command.every((part, index) => part === command[index]);
     let evaluator: { stdout: string; stderr: string; exitCode: number } | undefined;
