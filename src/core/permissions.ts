@@ -22,6 +22,27 @@ export function guardCommand(command: string[]): CommandGuard {
   return { allowed: true };
 }
 
+/**
+ * Additional boundary for model-requested shell work in SAFE mode. Explicit
+ * user `!` commands use guardCommand only because they are user-authorized;
+ * autonomous tools must be restricted by executable and arguments.
+ */
+export function guardReadOnlyInspection(command: string[]): CommandGuard {
+  const executable = command[0]?.toLowerCase() ?? "";
+  const readOnly = new Set(["pwd", "ls", "find", "rg", "grep", "head", "tail", "sed", "awk", "wc", "du", "file", "which"]);
+  if (executable === "git") {
+    const allowed = new Set(["status", "rev-parse", "log", "diff", "show", "ls-files", "branch"]);
+    if (!allowed.has(command[1]?.toLowerCase() ?? "")) return { allowed: false, reason: "SAFE mode only permits read-only Git inspection commands." };
+    return { allowed: true };
+  }
+  if (!readOnly.has(executable)) return { allowed: false, reason: `SAFE mode does not permit '${executable}' for autonomous shell work.` };
+  const joined = command.join(" ").toLowerCase();
+  if (executable === "find" && /(^|\s)-(exec|execdir|delete)(\s|$)/.test(joined)) return { allowed: false, reason: "SAFE mode refuses find actions that can execute or delete files." };
+  if (executable === "sed" && command.some((argument) => argument === "-i" || argument.startsWith("-i"))) return { allowed: false, reason: "SAFE mode refuses in-place sed edits." };
+  if (executable === "awk" && /\bsystem\s*\(/.test(joined)) return { allowed: false, reason: "SAFE mode refuses awk system calls." };
+  return { allowed: true };
+}
+
 export function autonomyPolicy(level: AutonomyLevel): {
   canInspect: boolean;
   canRunIsolatedExperiments: boolean;

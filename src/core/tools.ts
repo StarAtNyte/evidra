@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { auditData } from "./data-audit.js";
-import { guardCommand, type AutonomyLevel } from "./permissions.js";
+import { guardCommand, guardReadOnlyInspection, type AutonomyLevel } from "./permissions.js";
 import { runProcess, type ProcessControl } from "./process.js";
 import { renderReport, writeReport, type ReportKind } from "./reports.js";
 import { createValidationPolicy, writeValidationPolicy } from "./validation-policy.js";
@@ -84,8 +84,6 @@ function commandArgs(value: unknown): string[] {
   throw new Error("Tool argument 'command' must be an argv array or non-empty string.");
 }
 
-const safeShellCommands = new Set(["pwd", "ls", "find", "rg", "grep", "git", "head", "tail", "sed", "awk", "wc", "du", "file", "which", "python", "python3"]);
-
 export async function executeResearchTool(call: ResearchToolCall, context: ResearchToolContext): Promise<ResearchToolResult> {
   try {
     const args = call.arguments ?? {};
@@ -120,7 +118,10 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         const command = commandArgs(args.command);
         const guard = guardCommand(command);
         if (!guard.allowed) throw new Error(guard.reason);
-        if (context.autonomy === "safe" && !safeShellCommands.has(command[0])) throw new Error(`SAFE mode only allows read-only inspection commands; '${command[0]}' requires FAST or YOLO.`);
+        if (context.autonomy === "safe") {
+          const inspection = guardReadOnlyInspection(command);
+          if (!inspection.allowed) throw new Error(inspection.reason);
+        }
         const timeout = typeof args.timeoutMs === "number" ? Math.max(1_000, Math.min(args.timeoutMs, 15 * 60_000)) : 120_000;
         context.onProgress?.(`Tool shell.exec · ${command.join(" ")}`);
         const result = await runProcess(command, context.root, timeout, undefined, context.onProcess);
