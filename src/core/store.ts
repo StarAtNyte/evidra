@@ -100,6 +100,26 @@ export class ResearchStore {
         payload_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS agent_lanes (
+        role TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        task TEXT,
+        error TEXT,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS work_queue (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        priority REAL NOT NULL,
+        status TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        available_at TEXT NOT NULL,
+        claimed_at TEXT,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -190,6 +210,61 @@ export class ResearchStore {
   campaign(): unknown | undefined {
     const row = this.db.prepare("SELECT payload_json FROM research_campaigns WHERE id = 1").get() as { payload_json: string } | undefined;
     return row ? JSON.parse(row.payload_json) : undefined;
+  }
+
+  updateAgentLane(lane: { role: string; status: "idle" | "running" | "blocked" | "failed"; provider: string; model: string; task?: string | null; error?: string | null }): void {
+    const updatedAt = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO agent_lanes (role, status, provider, model, task, error, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(role) DO UPDATE SET status = excluded.status, provider = excluded.provider, model = excluded.model, task = excluded.task, error = excluded.error, updated_at = excluded.updated_at
+    `).run(lane.role, lane.status, lane.provider, lane.model, lane.task ?? null, lane.error ?? null, updatedAt);
+  }
+
+  agentLanes(): Array<{ role: string; status: string; provider: string; model: string; task: string | null; error: string | null; updatedAt: string }> {
+    const rows = this.db.prepare("SELECT role, status, provider, model, task, error, updated_at FROM agent_lanes ORDER BY role ASC").all() as Array<{ role: string; status: string; provider: string; model: string; task: string | null; error: string | null; updated_at: string }>;
+    return rows.map((row) => ({ role: row.role, status: row.status, provider: row.provider, model: row.model, task: row.task, error: row.error, updatedAt: row.updated_at }));
+  }
+
+  enqueueTask(task: { id: string; kind: string; priority: number; payload: unknown; availableAt?: string }): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT OR IGNORE INTO work_queue (id, kind, priority, status, payload_json, attempts, available_at, claimed_at, updated_at)
+      VALUES (?, ?, ?, 'queued', ?, 0, ?, NULL, ?)
+    `).run(task.id, task.kind, task.priority, JSON.stringify(task.payload), task.availableAt ?? now, now);
+    this.appendEvent("queue.enqueued", task);
+  }
+
+  queueTasks(status?: "queued" | "running" | "completed" | "failed" | "cancelled"): Array<{ id: string; kind: string; priority: number; status: string; payload: unknown; attempts: number; availableAt: string; claimedAt: string | null; updatedAt: string }> {
+    const rows = (status
+      ? this.db.prepare("SELECT * FROM work_queue WHERE status = ? ORDER BY priority DESC, available_at ASC").all(status)
+      : this.db.prepare("SELECT * FROM work_queue ORDER BY updated_at DESC").all()) as Array<{ id: string; kind: string; priority: number; status: string; payload_json: string; attempts: number; available_at: string; claimed_at: string | null; updated_at: string }>;
+    return rows.map((row) => ({ id: row.id, kind: row.kind, priority: row.priority, status: row.status, payload: JSON.parse(row.payload_json), attempts: row.attempts, availableAt: row.available_at, claimedAt: row.claimed_at, updatedAt: row.updated_at }));
+  }
+
+  claimNextTask(): { id: string; kind: string; priority: number; status: string; payload: unknown; attempts: number; availableAt: string; claimedAt: string | null; updatedAt: string } | undefined {
+    const now = new Date().toISOString();
+    const transaction = this.db.transaction(() => {
+      const row = this.db.prepare("SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ? ORDER BY priority DESC, available_at ASC LIMIT 1").get(now) as { id: string } | undefined;
+      if (!row) return undefined;
+      this.db.prepare("UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, updated_at = ? WHERE id = ? AND status = 'queued'").run(now, now, row.id);
+      return this.queueTasks().find((task) => task.id === row.id);
+    });
+    const task = transaction();
+    if (task) this.appendEvent("queue.claimed", { id: task.id, kind: task.kind, attempts: task.attempts });
+    return task;
+  }
+
+  updateTask(id: string, status: "queued" | "running" | "completed" | "failed" | "cancelled", payload?: unknown): void {
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), updated_at = ? WHERE id = ?").run(status, payload === undefined ? null : JSON.stringify(payload), now, id);
+    this.appendEvent(`queue.${status}`, { id, payload });
+  }
+
+  requeueStaleTasks(maxAgeMs = 15 * 60_000): number {
+    const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+    const result = this.db.prepare("UPDATE work_queue SET status = 'queued', claimed_at = NULL, updated_at = ? WHERE status = 'running' AND updated_at < ?").run(new Date().toISOString(), cutoff);
+    if (result.changes) this.appendEvent("queue.stale_requeued", { count: result.changes, cutoff });
+    return result.changes;
   }
 
   phaseGoals(): Array<{ id: string; phase: string; status: string; payload: unknown; updatedAt: string }> {

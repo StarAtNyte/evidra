@@ -137,6 +137,20 @@ submission.command("prepare").argument("<experiment>").action((experimentId: str
 });
 program.addCommand(submission);
 
+const queue = new Command("queue").description("Inspect the durable research work queue");
+queue.command("status").action(() => {
+  const store = new ResearchStore(statePath);
+  const tasks = store.queueTasks();
+  console.log(tasks.length ? tasks.map((task) => `${task.status} ${task.id} · ${task.kind} · priority ${task.priority} · attempts ${task.attempts}`).join("\n") : "Research queue is empty.");
+  store.close();
+});
+queue.command("recover").action(() => {
+  const store = new ResearchStore(statePath);
+  console.log(`Requeued ${store.requeueStaleTasks()} stale tasks.`);
+  store.close();
+});
+program.addCommand(queue);
+
 program.command("inspect").action(() => {
   const store = new ResearchStore(statePath);
   const project = store.project();

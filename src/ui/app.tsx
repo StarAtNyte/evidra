@@ -48,6 +48,7 @@ const COMMANDS = [
   ["/agents", "Show research-agent lanes and health"],
   ["/compute", "Show execution and compute health"],
   ["/submission", "Prepare and validate a submission bundle"],
+  ["/queue", "Show durable research work queue"],
   ["/doctor", "Diagnose local research dependencies"],
   ["/provider", "Select codex or local provider"],
   ["/model", "Select the active model"],
@@ -66,6 +67,7 @@ const LOGO = [
   "╚══════╝  ╚═══╝  ╚═╝╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝",
 ].join("\n");
 const REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
+const AGENT_ROLES = ["research director", "data detective", "validation scientist", "model researcher", "ensemble scientist", "experiment engineer", "critic", "repair agent"] as const;
 const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/workbench": [["/workbench research", "Enter Research mode"], ["/workbench challenge", "Enter Challenge mode"]],
   "/mode": [["/mode research", "Enter Research mode"], ["/mode challenge", "Enter Challenge mode"]],
@@ -86,6 +88,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"]],
+  "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
 };
 
 function loadConfig(path: string): SessionConfig {
@@ -135,6 +138,7 @@ function help(): string {
     "/compute                    Show execution and budget health",
     "/doctor                     Diagnose local dependencies",
     "/submission [prepare|validate] Build or validate a safe bundle",
+    "/queue [status|recover]      Show or recover durable tasks",
     "/provider [codex|local]      Select ChatGPT Codex or local Ollama",
     "/model [name]                Show or select the model (use default for Codex)",
     "/thinking [level]            Select model thinking effort",
@@ -359,6 +363,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     mkdirSync(join(root, ".sota"), { recursive: true });
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     if (!store.project()) store.createProject({ id: `evidra-${adapter.id}`, name: adapter.config.name, competitionId: adapter.id, config: adapter.config });
+    const knownRoles = new Set(store.agentLanes().map((lane) => lane.role));
+    for (const role of AGENT_ROLES) if (!knownRoles.has(role)) store.updateAgentLane({ role, status: "idle", provider: config.provider, model: config.model, task: null });
     store.close();
   };
 
@@ -425,19 +431,33 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return { id: entry.id, title: payload.title, url: payload.url, excerpt: payload.excerpt, claims: payload.claims?.slice(0, 8) };
     });
     store.close();
-    await checkProvider({ provider: config.provider, model: config.model, cwd: root });
+    const laneStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    laneStore.updateAgentLane({ role: "research director", status: "running", provider: config.provider, model: config.model, task: objective });
+    laneStore.close();
     const adapter = activeAdapter();
-    const decision = await runResearchDirector(objective, {
-      mode: config.mode,
-      project,
-      competition: adapter.config,
-      recentEvents,
-      observation,
-      researchSources,
-      ultimateGoal: objective,
-      phaseGoal: phaseGoal ?? null,
-      constraints: { no_submission: true, no_file_edits: true },
-    }, { provider: config.provider, model: config.model, reasoningEffort: config.reasoningEffort, cwd: root, fallbackLocalModel: "qwen3.6:27b" }, setProgress);
+    let decision: Awaited<ReturnType<typeof runResearchDirector>>;
+    try {
+      await checkProvider({ provider: config.provider, model: config.model, cwd: root });
+      decision = await runResearchDirector(objective, {
+        mode: config.mode,
+        project,
+        competition: adapter.config,
+        recentEvents,
+        observation,
+        researchSources,
+        ultimateGoal: objective,
+        phaseGoal: phaseGoal ?? null,
+        constraints: { no_submission: true, no_file_edits: true },
+      }, { provider: config.provider, model: config.model, reasoningEffort: config.reasoningEffort, cwd: root, fallbackLocalModel: "qwen3.6:27b" }, setProgress);
+      const completedLane = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      completedLane.updateAgentLane({ role: "research director", status: "idle", provider: config.provider, model: config.model, task: null });
+      completedLane.close();
+    } catch (error) {
+      const failedLane = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      failedLane.updateAgentLane({ role: "research director", status: "failed", provider: config.provider, model: config.model, task: objective, error: error instanceof Error ? error.message : String(error) });
+      failedLane.close();
+      throw error;
+    }
     const decisionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     materializeResearchDecision(decisionStore, decision);
     if (phaseGoal) {
@@ -539,8 +559,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     loopBusy.current = true;
     setBusy(true); setProgress("Autonomous loop: choosing the next highest-information decision...");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.requeueStaleTasks();
     store.setSchedulerState({ status: "running", mode: config.mode, currentStep: "research" });
     store.close();
+    let queueTaskId: string | undefined;
     try {
       const campaign = campaignOverride ?? config.campaign;
       if (campaign) {
@@ -556,6 +578,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const objective = campaign
         ? `Work autonomously toward this ultimate research goal: ${campaign.goal}. Stop when this condition is met: ${campaign.stopCondition}. Continue through the active internal phase goal, gathering evidence and running safe local checks as needed.`
         : "Run the next zero-to-hero research cycle: inspect current state, identify the highest-information bottleneck, and propose one falsifiable experiment with explicit validation and replication criteria.";
+      queueTaskId = `task_research_${Date.now()}`;
+      const queueStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      queueStore.enqueueTask({ id: queueTaskId, kind: "research.cycle", priority: campaign ? 10 : 5, payload: { objective, campaign: campaign ?? null } });
+      queueStore.claimNextTask();
+      queueStore.close();
       const cycle = await runResearchCycle(objective);
       const update = new ResearchStore(join(root, ".sota", "database.sqlite"));
       update.setSchedulerState({ status: "running", mode: config.mode, currentStep: "awaiting-next-cycle" });
@@ -563,6 +590,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const proposed = config.mode === "challenge" ? await proposeLatestExperiment() : null;
       append("assistant", cycle.text + (proposed?.text ?? ""));
       if (proposed && config.mode === "challenge" && config.autonomy === "yolo") append("assistant", await executeExperiment(proposed.id));
+      if (queueTaskId) { const queueStore = new ResearchStore(join(root, ".sota", "database.sqlite")); queueStore.updateTask(queueTaskId, "completed", { decision: cycle.decision, goalStatus: cycle.goalStatus }); queueStore.close(); }
       if (campaign && cycle.decision === "stop") {
         campaign.status = "completed";
         persistCampaign(campaign);
@@ -577,6 +605,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", "Autonomous research paused because the current phase is blocked. Resolve the bottleneck, then use /resume.");
       }
     } catch (error) {
+      if (queueTaskId) { const queueStore = new ResearchStore(join(root, ".sota", "database.sqlite")); queueStore.updateTask(queueTaskId, "failed", { error: error instanceof Error ? error.message : String(error) }); queueStore.close(); }
       const update = new ResearchStore(join(root, ".sota", "database.sqlite"));
       update.setSchedulerState({ status: "paused", mode: config.mode, currentStep: "blocked" });
       update.close();
@@ -1118,7 +1147,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const codex = codexLoginStatus();
       let local = "unavailable";
       try { const models = await listLocalModels(); local = models.length ? `${models.length} model(s): ${models.map((model) => model.id).join(", ")}` : "connected, no models"; } catch (error) { local = error instanceof Error ? error.message : String(error); }
-      append("assistant", `Research agents\n  director: ${config.provider}/${config.model}\n  codex: ${codex || "not authenticated"}\n  local: ${local}\n  concurrency: 1 active director lane\n  fallback: local model only on Codex rate/usage limits\n  roles: director, data detective, validation scientist, model researcher, experiment engineer, critic`);
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const lanes = store.agentLanes(); store.close();
+      append("assistant", `Research agents\n  codex: ${codex || "not authenticated"}\n  local: ${local}\n  concurrency: 1 active director lane\n\n${lanes.length ? lanes.map((lane) => `  ${lane.status === "running" ? "●" : lane.status === "failed" ? "✗" : lane.status === "blocked" ? "!" : "○"} ${lane.role} · ${lane.status} · ${lane.provider}/${lane.model}${lane.task ? `\n    ${lane.task.slice(0, 120)}` : ""}`).join("\n") : "  No lanes initialized; start /research to initialize the project."}`);
       return;
     }
     if (request === "/compute" || request === "/compute status" || request === "/compute budget") {
@@ -1168,6 +1199,18 @@ export function App({ root }: { root: string }): React.JSX.Element {
         } catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
         return;
       }
+    }
+    if (request === "/queue" || request === "/queue status" || request === "/queue recover") {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      if (request === "/queue recover") {
+        const count = store.requeueStaleTasks();
+        append("assistant", `Requeued ${count} stale task${count === 1 ? "" : "s"}.`);
+      } else {
+        const tasks = store.queueTasks();
+        append("assistant", tasks.length ? `Research queue\n${tasks.slice(0, 24).map((task) => `${task.status === "running" ? "●" : task.status === "queued" ? "○" : task.status === "completed" ? "✓" : "✗"} ${task.id} · ${task.kind} · priority ${task.priority} · attempts ${task.attempts}`).join("\n")}` : "Research queue is empty.");
+      }
+      store.close();
+      return;
     }
     if (request === "/sources" || request === "/sources list" || request.startsWith("/sources search ") || request.startsWith("/sources show ")) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
