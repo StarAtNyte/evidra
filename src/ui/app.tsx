@@ -150,6 +150,7 @@ function help(): string {
     "/agents                     Show research-agent health",
     "/compute                    Show execution and budget health",
     "/doctor                     Diagnose local dependencies",
+    "!<shell command>            Run a shell command in the project workspace",
     "/submission [prepare|validate] Build or validate a safe bundle",
     "/queue [status|recover]      Show or recover durable tasks",
     "/sessions                   List saved terminal sessions",
@@ -987,6 +988,24 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (request === "/login status") { append("assistant", codexLoginStatus() || "No Codex login status returned."); return; }
+    if (request.startsWith("!")) {
+      const rawCommand = request.slice(1).trim();
+      const command = splitCommandLine(rawCommand);
+      const blocked = new Set(["sudo", "rm", "rmdir", "mkfs", "shutdown", "reboot", "poweroff"]);
+      if (!rawCommand) { append("assistant", "Usage: !ls -la or !rg -n hypothesis src"); return; }
+      if (blocked.has(command[0])) { append("assistant", `Refusing dangerous command '${command[0]}'. Use a reviewed experiment manifest for destructive operations.`); return; }
+      setBusy(true); setProgress(`Running !${rawCommand}...`);
+      try {
+        const result = await runProcess(["sh", "-lc", rawCommand], root, 15 * 60_000, (stream, chunk) => {
+          const line = chunk.replace(/\s+/g, " ").trim();
+          if (line) setProgress(`${stream}: ${line.slice(-140)}`);
+        }, (control) => { activeProcess.current = control; });
+        const output = [result.stdout.trim(), result.stderr.trim() ? `stderr:\n${result.stderr.trim()}` : ""].filter(Boolean).join("\n");
+        append("assistant", `Command exited ${result.exitCode} in ${(result.durationMs / 1000).toFixed(1)}s\n$ ${rawCommand}\n${output || "(no output)"}`);
+      } catch (error) { appendError(error); }
+      finally { activeProcess.current = null; setBusy(false); setProgress(""); }
+      return;
+    }
     if (request === "/project" || request === "/project status" || request === "/project inspect") {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const project = store.project();

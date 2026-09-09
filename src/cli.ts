@@ -227,7 +227,7 @@ program.addCommand(challenge);
 
 const research = new Command("research").description("Ask the embedded research agent for the next research decision");
 research
-  .option("--goal <goal>", "ultimate research goal", "Improve the current competition solution with robust, reproducible evidence")
+  .option("--goal <goal>", "ultimate research goal", "Improve the current workspace or research problem with robust, reproducible evidence")
   .option("--budget <duration>", "autonomous budget, e.g. 90m or 4h")
   .option("--stop <condition>", "campaign stopping condition", "stop when the research director has sufficient evidence for the stated goal")
   .action(async (options: { goal: string; budget?: string; stop: string }) => {
@@ -264,7 +264,7 @@ research
     } while (true);
   });
 research.command("propose")
-  .argument("[objective]", "research objective", "Inspect the current WhestBench baseline and propose three falsifiable estimator hypotheses.")
+  .argument("[objective]", "research objective", "Inspect the current workspace and propose three falsifiable, evidence-driven hypotheses.")
   .action(async (objective: string) => {
     const store = new ResearchStore(statePath);
     const project = store.project();
