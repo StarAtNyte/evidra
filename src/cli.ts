@@ -20,6 +20,7 @@ import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
+import { checkProvider } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -280,10 +281,16 @@ research
   .option("--goal <goal>", "ultimate research goal", "Improve the current workspace or research problem with robust, reproducible evidence")
   .option("--budget <duration>", "autonomous budget, e.g. 90m or 4h", "60m")
   .option("--stop <condition>", "campaign stopping condition", "stop when the research director has sufficient evidence for the stated goal")
-  .action(async (options: { goal: string; budget: string; stop: string }) => {
+  .option("--provider <provider>", "agent provider: codex or local", "codex")
+  .option("--model <model>", "provider model; use default for Codex", "default")
+  .option("--thinking <effort>", "reasoning effort", "high")
+  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string }) => {
+    if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
     const adapter = activeCompetition();
     const objective = `${options.goal}. Stop condition: ${options.stop}`;
     const budget = durationMinutes(options.budget);
+    const selectedModel = options.provider === "local" && options.model === "default" ? "qwen3.6:27b" : options.model;
+    await checkProvider({ provider: options.provider, model: selectedModel, cwd: root });
     const started = Date.now();
     const campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed" } = { goal: options.goal, budgetMinutes: budget, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running" };
     let cycle = 0;
@@ -307,7 +314,7 @@ research
       const projectStore = new ResearchStore(statePath);
       const activeProject = projectStore.project();
       projectStore.close();
-      const decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: options.goal, phaseGoal: phaseGoal ?? null }, { provider: "codex", model: "default", reasoningEffort: "high", fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });
+      const decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: options.goal, phaseGoal: phaseGoal ?? null }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, fallbackLocalModel: options.provider === "codex" ? "qwen3.6:27b" : undefined, cwd: root, executeTool: researchToolExecutor(adapter) });
       const decisionStore = new ResearchStore(statePath);
       materializeResearchDecision(decisionStore, decision);
       if (phaseGoal) {
