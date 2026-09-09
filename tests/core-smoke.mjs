@@ -63,6 +63,8 @@ test("submission approval is durable and cannot approve an invalid bundle", () =
     assert.equal(store.submissions()[0].status, "prepared");
     assert.equal(store.updateSubmissionStatus("sub-1", "approved", { approvedAt: "now" }), true);
     assert.equal(store.submissions()[0].status, "approved");
+    assert.equal(store.updateSubmissionStatus("sub-1", "scored", { publicScore: 0.84 }), true);
+    assert.equal(store.submissions()[0].payload.publicScore, 0.84);
     assert.equal(store.updateSubmissionStatus("missing", "approved"), false);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }

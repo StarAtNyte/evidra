@@ -95,7 +95,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"]],
   "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute budget", "Show campaign usage"]],
-  "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"]],
+  "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission record", "Record an external score"]],
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/resume": [["/resume", "Resume the latest saved session"], ["/resume ", "Resume a selected session"]],
@@ -154,7 +154,7 @@ function help(): string {
     "/compute                    Show execution and budget health",
     "/doctor                     Diagnose local dependencies",
     "!<shell command>            Run a shell command in the project workspace",
-    "/submission [prepare|validate|approve] Build, validate, or approve a safe bundle",
+    "/submission [prepare|validate|approve|record] Manage safe bundles and external scores",
     "/queue [status|recover]      Show or recover durable tasks",
     "/sessions                   List saved terminal sessions",
     "/resume [session-id]        Explicitly resume a saved session",
@@ -1391,7 +1391,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Evidra doctor\n${checks.map((check) => `  ${check}`).join("\n")}`);
       return;
     }
-    if (request === "/submission" || request === "/submission status" || request.startsWith("/submission prepare") || request.startsWith("/submission validate") || request.startsWith("/submission approve")) {
+    if (request === "/submission" || request === "/submission status" || request.startsWith("/submission prepare") || request.startsWith("/submission validate") || request.startsWith("/submission approve") || request.startsWith("/submission record")) {
       const parts = request.split(/\s+/);
       const action = parts[1] ?? "status";
       const submissionsRoot = join(root, ".sota", "submissions");
@@ -1438,6 +1438,24 @@ export function App({ root }: { root: string }): React.JSX.Element {
         store.updateSubmissionStatus(bundleId, "approved", { approvedAt: new Date().toISOString(), externalSubmission: "not configured" });
         store.close();
         append("assistant", `Submission ${bundleId} approved locally. External submission still requires an explicit platform adapter.`);
+        return;
+      }
+      if (action === "record") {
+        const bundleId = parts[2];
+        const score = Number(parts[3]);
+        const platform = parts[4] ?? "manual";
+        if (!bundleId || !Number.isFinite(score)) { append("assistant", "Usage: /submission record <bundle-id> <public-score> [platform]"); return; }
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        const entry = store.submissions().find((candidate) => candidate.id === bundleId);
+        if (!entry) { store.close(); append("assistant", `Submission bundle ${bundleId} is not registered.`); return; }
+        const report = validateSubmissionBundle(entry.path);
+        if (!report.valid) { store.close(); append("assistant", "Bundle is not valid; score was not recorded."); return; }
+        const recordedAt = new Date().toISOString();
+        store.updateSubmissionStatus(bundleId, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: score, platform, recordedAt });
+        store.saveClaim({ id: `claim_external_score_${bundleId}_${Date.now()}`, payload: { statement: `External ${platform} score for ${bundleId}: ${score}`, scope: entry.experimentId, confidence: 1, sourceType: "external_score", sourceId: bundleId, status: "active", score, platform, recordedAt } });
+        store.appendEvent("submission.score.recorded", { id: bundleId, score, platform, recordedAt });
+        store.close();
+        append("assistant", `Recorded ${platform} score ${score} for ${bundleId}.`);
         return;
       }
     }

@@ -160,6 +160,21 @@ submission.command("approve").argument("<bundle>").action((bundle: string) => {
   store.close();
   console.log(`Approved ${bundle}. Evidra still requires an explicit platform adapter to submit externally.`);
 });
+submission.command("record").argument("<bundle>").requiredOption("--public-score <score>", "score returned by the competition platform").option("--platform <name>", "platform or evaluation source", "manual").action((bundle: string, options: { publicScore: string; platform: string }) => {
+  const score = Number(options.publicScore);
+  if (!Number.isFinite(score)) throw new Error("Public score must be a finite number.");
+  const store = new ResearchStore(statePath);
+  const entry = store.submissions().find((candidate) => candidate.id === bundle);
+  if (!entry) { store.close(); throw new Error(`Submission bundle ${bundle} is not registered.`); }
+  const validation = validateSubmissionBundle(entry.path);
+  if (!validation.valid) { store.close(); throw new Error(`Submission bundle is not valid; score was not recorded.`); }
+  const recordedAt = new Date().toISOString();
+  store.updateSubmissionStatus(bundle, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: score, platform: options.platform, recordedAt });
+  store.saveClaim({ id: `claim_external_score_${bundle}_${Date.now()}`, payload: { statement: `External ${options.platform} score for ${bundle}: ${score}`, scope: entry.experimentId, confidence: 1, sourceType: "external_score", sourceId: bundle, status: "active", score, platform: options.platform, recordedAt } });
+  store.appendEvent("submission.score.recorded", { id: bundle, score, platform: options.platform, recordedAt });
+  store.close();
+  console.log(`Recorded ${options.platform} score ${score} for ${bundle}.`);
+});
 program.addCommand(submission);
 
 const queue = new Command("queue").description("Inspect the durable research work queue");

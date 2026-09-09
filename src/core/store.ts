@@ -250,7 +250,7 @@ export class ResearchStore {
     `).run(lane.role, lane.status, lane.provider, lane.model, lane.task ?? null, lane.error ?? null, updatedAt);
   }
 
-  saveSubmission(submission: { id: string; experimentId: string; path: string; status: "prepared" | "approved" | "rejected"; payload?: unknown }): void {
+  saveSubmission(submission: { id: string; experimentId: string; path: string; status: "prepared" | "approved" | "rejected" | "scored"; payload?: unknown }): void {
     const now = new Date().toISOString();
     this.db.prepare(`
       INSERT INTO submissions (id, experiment_id, path, status, payload_json, created_at, updated_at)
@@ -260,7 +260,7 @@ export class ResearchStore {
     this.appendEvent("submission.updated", { id: submission.id, experimentId: submission.experimentId, path: submission.path, status: submission.status });
   }
 
-  updateSubmissionStatus(id: string, status: "prepared" | "approved" | "rejected", payload?: unknown): boolean {
+  updateSubmissionStatus(id: string, status: "prepared" | "approved" | "rejected" | "scored", payload?: unknown): boolean {
     const result = this.db.prepare("UPDATE submissions SET status = ?, payload_json = COALESCE(?, payload_json), updated_at = ? WHERE id = ?")
       .run(status, payload === undefined ? null : JSON.stringify(payload), new Date().toISOString(), id);
     if (result.changes) this.appendEvent("submission.updated", { id, status, payload });
