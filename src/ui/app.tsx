@@ -40,6 +40,17 @@ type LimitPolicy = "wait" | "fallback" | "stop";
 type ExperimentExecutorKind = "local" | "modal";
 type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; limitPolicy: LimitPolicy; fallbackModel: string; experimentExecutor: ExperimentExecutorKind; campaign?: ResearchCampaign };
 
+function candidateExperimentCommand(adapter: ReturnType<typeof loadCompetitionAdapter>, payload: unknown): string[] {
+  const command = adapter.experimentCommand();
+  const proposedChange = (payload as { proposedChange?: unknown } | null)?.proposedChange;
+  if (typeof proposedChange !== "string") return command;
+  const match = proposedChange.match(/(?:^|\s)((?:examples|src|research)\/[A-Za-z0-9_./-]+\.py)\b/);
+  if (!match) return command;
+  const index = command.indexOf("--estimator");
+  if (index >= 0 && command[index + 1]) command[index + 1] = match[1];
+  return command;
+}
+
 const defaultConfig: SessionConfig = { provider: "codex", model: "default", reasoningEffort: "medium", mode: "research", autonomy: "safe", limitPolicy: "fallback", fallbackModel: process.env.EVIDRA_FALLBACK_MODEL ?? "auto", experimentExecutor: "local" };
 const COMMANDS = [
   ["/help", "Show commands"],
@@ -707,7 +718,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }, { provider: config.provider, model: config.model, cwd: worktree, reasoningEffort: config.reasoningEffort, sandbox: "workspace-write", onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, undefined, setProgress, (control) => { activeProcess.current = control; });
       activeSteer.current = null;
     }
-    const command = adapter.experimentCommand();
+    const command = candidateExperimentCommand(adapter, hypothesis?.payload);
+    const candidateEstimator = (manifest.change.configPatch as { estimatorPath?: unknown }).estimatorPath;
+    const isCandidateEvaluation = typeof candidateEstimator === "string" && candidateEstimator !== adapter.config.evaluator.estimatorPath;
     setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
     const executor = executorFor(manifest.resources.executor, root);
     let evaluatorOutput: { stdout: string; stderr: string; exitCode: number } | undefined;
@@ -726,7 +739,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       result = await executor.run(manifest, experimentCwd, command, (control) => { activeProcess.current = control; }, adapter.config.metric.name);
     }
     activeProcess.current = null;
-    const evaluatorCommand = adapter.config.evaluator.command;
+    const evaluatorCommand = isCandidateEvaluation ? command : adapter.config.evaluator.command;
     const sameCommand = evaluatorCommand.length === command.length && evaluatorCommand.every((part, index) => part === command[index]);
     if (result.status === "completed" && !sameCommand) {
       setProgress(`Experiment ${id} · running canonical evaluator...`);

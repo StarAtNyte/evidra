@@ -56,6 +56,22 @@ function durationMinutes(value: string): number {
   return Math.max(1, Math.round(Number(match[1]) * multiplier));
 }
 
+function candidateEstimatorPath(payload: unknown): string | undefined {
+  const value = payload as { proposedChange?: unknown };
+  if (typeof value.proposedChange !== "string") return undefined;
+  const match = value.proposedChange.match(/(?:^|\s)((?:examples|src|research)\/[A-Za-z0-9_./-]+\.py)\b/);
+  return match?.[1];
+}
+
+function experimentCommandFor(adapter: ReturnType<typeof activeCompetition>, hypothesisPayload?: unknown): string[] {
+  const command = adapter.experimentCommand();
+  const estimator = candidateEstimatorPath(hypothesisPayload);
+  if (!estimator) return command;
+  const index = command.indexOf("--estimator");
+  if (index >= 0 && command[index + 1]) command[index + 1] = estimator;
+  return command;
+}
+
 type ControllerDirective = "run" | "pause" | "stop";
 
 function controllerDirective(): ControllerDirective {
@@ -375,7 +391,8 @@ research
   .option("--thinking <effort>", "reasoning effort", "high")
   .option("--lanes <count>", "maximum independent research lanes", "3")
   .option("--limit-policy <policy>", "on provider usage limit: wait, fallback, or stop", "wait")
-  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; limitPolicy: string }) => {
+  .option("--skip-baseline", "reuse the latest recorded baseline observation")
+  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; limitPolicy: string; skipBaseline?: boolean }) => {
     if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
     if (!["wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'wait', 'fallback', or 'stop'.");
     const adapter = activeCompetition();
@@ -410,7 +427,16 @@ research
       console.log(`Research ${cycle} · inspecting workspace and baseline (budget ${budget}m)...`);
       const gitStatus = await runProcess(["git", "status", "--short"], root);
       const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
-      const baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
+      const priorBaseline = store.recentEvents(100).reverse().find((event) => event.type === "baseline.completed");
+      let baseline: { exitCode: number; durationMs: number; stdout: string; stderr: string };
+      if (options.skipBaseline && priorBaseline) {
+        const payload = priorBaseline.payload as { exitCode?: number; durationMs?: number; stdout?: string; stderr?: string };
+        baseline = { exitCode: payload.exitCode ?? 0, durationMs: payload.durationMs ?? 0, stdout: payload.stdout ?? "", stderr: payload.stderr ?? "" };
+        console.log("Research · reusing the latest recorded baseline observation (--skip-baseline).");
+      } else {
+        if (options.skipBaseline) throw new Error("--skip-baseline requested, but no baseline.completed event exists. Run evidra baseline first.");
+        baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
+      }
       const observation = { gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40), repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120), baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout.slice(-4000), stderr: baseline.stderr.slice(-4000) } };
       store.appendEvent("research.observation", observation);
       store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
@@ -560,6 +586,9 @@ program.command("baseline")
       command.push("--baseline", options.name);
     }
     const result = await runProcess(command, adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
+    const store = new ResearchStore(statePath);
+    store.appendEvent("baseline.completed", { command, cwd: adapter.workspacePath(root), exitCode: result.exitCode, durationMs: result.durationMs, stdout: result.stdout, stderr: result.stderr });
+    store.close();
     console.log(result.stdout);
     if (result.stderr) console.error(result.stderr);
     if (result.exitCode !== 0) process.exitCode = result.exitCode;
@@ -584,7 +613,7 @@ experiment.command("propose")
     }
     const id = `exp_${Date.now()}_${hypothesis.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
     const adapter = activeCompetition();
-    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: options.executor }, adapter.config);
+    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: options.executor, configPatch: { estimatorPath: candidateEstimatorPath(store.hypotheses().find((entry) => entry.id === hypothesis)?.payload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
     store.saveExperiment({ id, payload: { ...manifest, status: "proposed" } });
     store.close();
     console.log(`Immutable experiment manifest created\n${manifestSummary(manifest)}`);
@@ -597,17 +626,21 @@ experiment.command("run")
     const entry = store.experiments().find((candidate) => candidate.id === id);
     if (!entry) { store.close(); throw new Error(`Experiment ${id} is not registered. Run: evidra experiment propose`); }
     const manifest = ExperimentManifestSchema.parse(entry.payload);
+    const hypothesis = store.hypotheses().find((candidate) => candidate.id === manifest.hypothesisId);
     store.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "running" } });
     store.close();
     const worktreePath = await ensureWorktree(root, root, id);
     const experimentCwd = join(worktreePath, relative(root, adapter.workspacePath(root)));
-    const command = adapter.experimentCommand();
+    const command = experimentCommandFor(adapter, hypothesis?.payload);
+    const candidateEstimator = (manifest.change.configPatch as { estimatorPath?: unknown }).estimatorPath;
+    const isCandidateEvaluation = typeof candidateEstimator === "string" && candidateEstimator !== adapter.config.evaluator.estimatorPath;
     const executor = executorFor(manifest.resources.executor, root);
     let result = await executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name);
-    const sameCommand = adapter.config.evaluator.command.length === command.length && adapter.config.evaluator.command.every((part, index) => part === command[index]);
+    const evaluatorCommand = isCandidateEvaluation ? command : adapter.config.evaluator.command;
+    const sameCommand = evaluatorCommand.length === command.length && evaluatorCommand.every((part, index) => part === command[index]);
     let evaluator: { stdout: string; stderr: string; exitCode: number } | undefined;
     if (result.status === "completed" && !sameCommand) {
-      const evaluated = await runProcess(adapter.config.evaluator.command, experimentCwd, manifest.resources.timeoutMinutes * 60_000);
+      const evaluated = await runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000);
       evaluator = { stdout: evaluated.stdout, stderr: evaluated.stderr, exitCode: evaluated.exitCode };
       const parsed = parseMetricOutput(evaluated.stdout, adapter.config.metric.name);
       result = { ...result, status: evaluated.exitCode === 0 ? "completed" : "failed", exitCode: evaluated.exitCode, metrics: { ...result.metrics, ...parsed.metrics }, metricsByFold: { ...result.metricsByFold, ...parsed.metricsByFold }, stdout: `${result.stdout ?? ""}\n[EVALUATOR]\n${evaluated.stdout}`, stderr: `${result.stderr ?? ""}\n[EVALUATOR]\n${evaluated.stderr}`, ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
