@@ -1583,6 +1583,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
     </Box>
     <Box flexDirection="column" marginTop={1} paddingX={1}>
       {messages.slice(-16).map((message, index) => {
+        if (message.role === "assistant" && /^Interrupted\b/i.test(message.text)) {
+          const detail = message.text.replace(/^Interrupted\s*[·:-]?\s*/i, "");
+          return <Box key={`${index}-${message.text}`} marginBottom={1} paddingX={1}>
+            <Text color="red" bold>✕ INTERRUPTED</Text><Text color="red">  {detail || "Active work was stopped."}</Text>
+          </Box>;
+        }
         if (message.kind === "tool") {
           const [headline, ...details] = message.text.split("\n");
           return <Box key={`${index}-${message.text}`} flexDirection="column" marginBottom={1} paddingLeft={2}>
