@@ -1,0 +1,223 @@
+# Evidra Workbench command surface
+
+The TUI is the primary interface. Every command is available after typing `/`; commands are discoverable through live filtering and Tab completion. Natural-language input remains available for research questions and is routed according to the active mode.
+
+## Session and mode
+
+```text
+/help                         Show the command catalog
+/workbench                    Show the graph, budgets, agents, and active work
+/workbench research           Enter Research mode
+/workbench challenge          Enter Challenge mode
+/mode                         Show the active mode
+/mode research                Switch to Research mode
+/mode challenge               Switch to Challenge mode
+/pause                        Pause autonomous scheduling
+/resume                       Resume autonomous scheduling
+/autonomy                     Show autonomy policy
+/autonomy safe                Require approval for promotion and paid compute
+/autonomy fast                Auto-run local work after deterministic gates
+/autonomy yolo                Auto-run routine work; retain external-action gates
+/loop status                  Show autonomous loop state
+/loop once                    Run one complete research decision cycle
+/loop start                   Start repeated research cycles in this session
+/loop pause                   Pause the loop and preserve state
+/loop stop                    Stop scheduling; preserve all evidence
+/scheduler start              Start experiment scheduling
+/scheduler pause              Pause new work
+/scheduler drain              Finish running work, start nothing new
+/hero status                  Show zero-to-hero progress
+/hero start                   Initialize, reproduce baseline, and generate first decision
+/hero stop                    Stop the zero-to-hero loop without deleting artifacts
+/exit                         Exit the TUI
+```
+
+Research mode emphasizes sources, claims, ideas, hypotheses, and decisions. Challenge mode emphasizes a competition’s rules, data, validation, experiments, runs, compute, and submissions.
+
+## Project and challenge
+
+```text
+/project init <competition>   Initialize a project
+/project status               Show project and challenge state
+/project inspect              Show the active manifest
+/challenge list                List configured challenges
+/challenge init <id>          Initialize a challenge adapter
+/challenge inspect            Show rules, metric, data, and evaluator
+/challenge baseline           Run or inspect the canonical baseline
+/challenge reset              Rebuild challenge metadata (never delete artifacts)
+```
+
+The initial adapter is `whestbench`. Future adapters include Kaggle, AIcrowd, manual, and local-only challenges.
+
+## Research
+
+```text
+/research                     Ask for the highest-information next decision
+/research next                Same as /research
+/research status              Show active questions and unresolved edges
+/research start               Start autonomous research scheduling
+/research pause               Pause only the research scheduler
+/research stop                Stop scheduling and preserve state
+/research propose <question>  Generate validated hypotheses
+/research explain <id>        Explain why a hypothesis or experiment matters
+/research compare <a> <b>    Compare two research directions
+/research adapt <source>     Convert a source technique into a challenge hypothesis
+```
+
+## Sources and knowledge
+
+```text
+/sources                      List cached research sources
+/sources search <query>       Search approved research sources
+/sources add <url>            Cache a source for later retrieval
+/sources show <id>            Show source metadata and extracted claims
+/sources claims <id>         Show claims extracted from a source
+/sources adapt <id>           Create an adaptation record for this challenge
+/memory search <query>        Search prior claims, decisions, and experiment notes
+/memory recent               Show recent evidence and decisions
+```
+
+Source retrieval records URL, retrieval time, content hash, license, claims, and the difference between the source setting and the current challenge.
+
+## Hypotheses and research graph
+
+```text
+/hypotheses                   List hypotheses by priority/status
+/hypotheses show <id>         Show mechanism, evidence, dependencies, and tests
+/hypotheses rank              Recalculate cost-aware priority
+/hypotheses approve <id>      Approve an implementation
+/hypotheses reject <id>       Reject with a recorded reason
+/hypotheses replicate <id>    Schedule an independent replication
+/graph                        Show the active research graph
+/graph edges <id>             Show supports/contradicts/dependency edges
+```
+
+## Agents
+
+```text
+/agents                       Show agent lanes and health
+/agents list                  List roles and active threads
+/agents logs <role>           Show role activity
+/agents message <role> <msg> Send a directed instruction
+/agents restart <role>       Restart a disposable or stale lane
+/agents limits                Show concurrency and model limits
+/agents cancel <run>         Cancel a running agent task
+```
+
+Roles are director, data detective, validation scientist, model researcher, experiment engineer, ensemble scientist, critic, and repair agent.
+
+## Data and validation
+
+```text
+/data inspect                 Inspect manifests and schema
+/data manifest                Create or refresh a hashed dataset manifest
+/data audit                   Run the data-quality audit
+/data duplicates              Find exact and near duplicates
+/data shift                   Run train/test or domain-shift diagnostics
+/data leakage                 Run the leakage auditor
+/data report                  Show the latest data report
+
+/validation inspect           Show the current split policy
+/validation generate         Generate a versioned split
+/validation compare <a> <b> Compare split strategies
+/validation lock              Lock the primary validation policy
+/validation unlock            Unlock only with an approval record
+/validation reveal-holdout    Reveal the untouched holdout (approval required)
+```
+
+## Experiments and runs
+
+```text
+/experiments                   List experiments by state
+/experiment show <id>         Show manifest, parent, hypothesis, and evidence
+/experiment propose <hyp>     Create an immutable experiment manifest
+/experiment review <id>       Run an independent code/validity review
+/experiment smoke <id>        Run tests and a cheap smoke job
+/experiment run <id>          Schedule or run the experiment
+/experiment replicate <id>   Create a fresh-seed replication
+/experiment compare <a> <b>  Compare results and slices
+/experiment audit <id>       Run evidence and leakage gates
+/experiment promote <id>     Promote only if all gates pass
+/experiment reject <id>      Record a rejection without deleting artifacts
+
+/runs                         List active and recent runs
+/run show <id>                Show logs, metrics, artifacts, and failure class
+/run logs <id>                Stream or inspect worker logs
+/run cancel <id>              Cancel a run safely
+/run retry <id>               Retry according to failure policy
+```
+
+## Compute and autonomy
+
+```text
+/compute status               Show local GPU/CPU and Modal health
+/compute budget               Show GPU-hour, monetary, LLM, and submission budgets
+/compute policy               Show executor and concurrency policy
+/compute local                Select local execution
+/compute modal                Select Modal execution
+/compute cancel <run>         Cancel a remote run
+/queue                        Show scheduler queue and priorities
+/scheduler start              Start scheduling
+/scheduler pause              Pause scheduling
+/scheduler drain              Finish running jobs without starting new ones
+```
+
+## Evidence, metrics, and ensembles
+
+```text
+/evidence                     Show accepted evidence
+/evidence show <id>           Show claim provenance and supporting runs
+/evidence invalidate <id>    Invalidate contaminated or superseded evidence
+/metrics <run>                Show metrics by fold, seed, and subgroup
+/metrics recompute <run>     Recompute metrics independently
+/metrics compare <a> <b>     Show deltas and uncertainty
+
+/ensemble candidates          List OOF prediction artifacts
+/ensemble diversity           Show error and prediction correlations
+/ensemble propose             Propose a diversity-aware blend
+/ensemble evaluate <id>      Evaluate only on OOF predictions
+/ensemble promote <id>       Promote a validated blend
+```
+
+## Submissions and reports
+
+```text
+/submission prepare <exp>    Build a reproducible submission bundle
+/submission validate <id>    Run schema, checksum, and rule checks
+/submission approve <id>     Approve an external submission
+/submission submit <id>      Submit through the configured adapter
+/submission record <id> <s> Record an external score with provenance
+/submission status            Show limits and submitted questions
+
+/report daily                 Generate a daily research report
+/report research              Generate the research graph report
+/report challenge             Generate the challenge progress report
+/report final                 Generate final provenance and model card
+/export                       Export a portable research bundle
+```
+
+## Providers and configuration
+
+```text
+/provider                     Show provider health and fallback policy
+/provider codex               Use authenticated Codex
+/provider local               Use Ollama/local model
+/model                        Open the live model picker
+/thinking                     Open the model-specific thinking picker
+/login codex                  Authenticate Codex by device code
+/login status                 Show authentication status without exposing tokens
+/config                       Show effective configuration
+/config validate              Validate project configuration
+/doctor                      Diagnose Node, Python, uv, Ollama, Codex, and Modal
+```
+
+Provider limits are part of scheduling. When Codex reaches a usage/rate limit, routine eligible work can fall back to the configured local model; the provider switch is recorded on the run and never changes the experiment identity.
+
+## Design rules
+
+1. Read-only inspection commands never invoke an agent.
+2. Research commands may create hypotheses and claims, but never silently edit challenge code.
+3. Challenge execution always produces a manifest, run record, logs, and artifacts.
+4. Promotion, paid compute, credential use, holdout reveal, and external submission are policy-gated.
+5. No command deletes research artifacts; invalidation is a state transition.
+6. Every mutating command appends an event and can be replayed after a crash.

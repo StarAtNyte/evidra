@@ -52,6 +52,54 @@ export const ResearchDecisionSchema = z.object({
 
 export type ResearchDecision = z.infer<typeof ResearchDecisionSchema>;
 
+export const ResearchEdgeSchema = z.object({
+  id: z.string().min(1),
+  fromId: z.string().min(1),
+  toId: z.string().min(1),
+  relation: z.enum(["supports", "contradicts", "depends_on", "replicates", "supersedes", "derived_from", "invalidated_by", "diverse_from"]),
+  confidence: z.number().min(0).max(1).default(0.5),
+  evidenceIds: z.array(z.string()).default([]),
+});
+
+export type ResearchEdge = z.infer<typeof ResearchEdgeSchema>;
+
+export const EvidenceClaimSchema = z.object({
+  id: z.string().min(1),
+  statement: z.string().min(1),
+  scope: z.string().min(1),
+  confidence: z.number().min(0).max(1),
+  sourceType: z.enum(["observation", "run", "review", "literature", "external_score"]),
+  sourceId: z.string().min(1),
+  status: z.enum(["active", "superseded", "invalidated"]).default("active"),
+});
+
+export type EvidenceClaim = z.infer<typeof EvidenceClaimSchema>;
+
+export const ResearchSourceSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  url: z.string().url(),
+  retrievedAt: z.string().datetime(),
+  contentHash: z.string().min(1),
+  license: z.string().optional(),
+  claims: z.array(z.string()).default([]),
+});
+
+export type ResearchSource = z.infer<typeof ResearchSourceSchema>;
+
+export const PriorityInputSchema = z.object({
+  probabilityOfSuccess: z.number().min(0).max(1),
+  expectedDelta: z.number(),
+  informationValue: z.number().nonnegative(),
+  diversityValue: z.number().nonnegative(),
+  gpuCost: z.number().nonnegative(),
+  llmCost: z.number().nonnegative(),
+  engineeringCost: z.number().nonnegative(),
+  risk: z.number().nonnegative(),
+});
+
+export type PriorityInput = z.infer<typeof PriorityInputSchema>;
+
 export const ExperimentSchema = z.object({
   id: z.string(),
   hypothesisId: z.string(),

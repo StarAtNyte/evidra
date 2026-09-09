@@ -54,6 +54,32 @@ export class ResearchStore {
         decision_json TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS evidence_claims (
+        id TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS research_edges (
+        id TEXT PRIMARY KEY,
+        from_id TEXT NOT NULL,
+        to_id TEXT NOT NULL,
+        relation TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        evidence_ids_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS research_sources (
+        id TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS scheduler_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        status TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        current_step TEXT,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -119,14 +145,81 @@ export class ResearchStore {
     this.appendEvent(`run.${run.status}`, { id: run.id, experimentId: run.experimentId, payload: run.payload });
   }
 
-  saveDecision(decision: unknown): void {
-    this.db.prepare(`INSERT INTO decisions (decision_json, created_at) VALUES (?, ?)`)
+  saveDecision(decision: unknown): number {
+    const result = this.db.prepare(`INSERT INTO decisions (decision_json, created_at) VALUES (?, ?)`)
       .run(JSON.stringify(decision), new Date().toISOString());
     this.appendEvent("research.decision", decision);
+    return Number(result.lastInsertRowid);
   }
 
-  counts(): { hypotheses: number; experiments: number; runs: number; artifacts: number; decisions: number } {
+  saveClaim(claim: { id: string; payload: unknown }): void {
+    this.db.prepare(`INSERT OR REPLACE INTO evidence_claims (id, payload_json, created_at) VALUES (?, ?, ?)`)
+      .run(claim.id, JSON.stringify(claim.payload), new Date().toISOString());
+    this.appendEvent("evidence.claim.created", claim.payload);
+  }
+
+  saveEdge(edge: { id: string; fromId: string; toId: string; relation: string; confidence: number; evidenceIds: string[] }): void {
+    this.db.prepare(`INSERT OR REPLACE INTO research_edges (id, from_id, to_id, relation, confidence, evidence_ids_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(edge.id, edge.fromId, edge.toId, edge.relation, edge.confidence, JSON.stringify(edge.evidenceIds), new Date().toISOString());
+    this.appendEvent("research.edge.created", edge);
+  }
+
+  saveSource(source: { id: string; payload: unknown }): void {
+    this.db.prepare(`INSERT OR REPLACE INTO research_sources (id, payload_json, created_at) VALUES (?, ?, ?)`)
+      .run(source.id, JSON.stringify(source.payload), new Date().toISOString());
+    this.appendEvent("research.source.created", source.payload);
+  }
+
+  hypotheses(): Array<{ id: string; payload: unknown; createdAt: string }> {
+    const rows = this.db.prepare("SELECT id, payload_json, created_at FROM hypotheses ORDER BY created_at DESC").all() as Array<{ id: string; payload_json: string; created_at: string }>;
+    return rows.map((row) => ({ id: row.id, payload: JSON.parse(row.payload_json), createdAt: row.created_at }));
+  }
+
+  edges(): Array<{ id: string; fromId: string; toId: string; relation: string; confidence: number; evidenceIds: string[]; createdAt: string }> {
+    const rows = this.db.prepare("SELECT * FROM research_edges ORDER BY created_at DESC").all() as Array<{ id: string; from_id: string; to_id: string; relation: string; confidence: number; evidence_ids_json: string; created_at: string }>;
+    return rows.map((row) => ({ id: row.id, fromId: row.from_id, toId: row.to_id, relation: row.relation, confidence: row.confidence, evidenceIds: JSON.parse(row.evidence_ids_json) as string[], createdAt: row.created_at }));
+  }
+
+  claims(): Array<{ id: string; payload: unknown; createdAt: string }> {
+    const rows = this.db.prepare("SELECT id, payload_json, created_at FROM evidence_claims ORDER BY created_at DESC").all() as Array<{ id: string; payload_json: string; created_at: string }>;
+    return rows.map((row) => ({ id: row.id, payload: JSON.parse(row.payload_json), createdAt: row.created_at }));
+  }
+
+  counts(): { hypotheses: number; experiments: number; runs: number; artifacts: number; decisions: number; claims: number; edges: number; sources: number } {
     const count = (table: string): number => (this.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
-    return { hypotheses: count("hypotheses"), experiments: count("experiments"), runs: count("runs"), artifacts: count("artifacts"), decisions: count("decisions") };
+    return { hypotheses: count("hypotheses"), experiments: count("experiments"), runs: count("runs"), artifacts: count("artifacts"), decisions: count("decisions"), claims: count("evidence_claims"), edges: count("research_edges"), sources: count("research_sources") };
+  }
+
+  experiments(): Array<{ id: string; payload: unknown; createdAt: string }> {
+    const rows = this.db.prepare("SELECT id, payload_json, created_at FROM experiments ORDER BY created_at DESC").all() as Array<{ id: string; payload_json: string; created_at: string }>;
+    return rows.map((row) => ({ id: row.id, payload: JSON.parse(row.payload_json), createdAt: row.created_at }));
+  }
+
+  runs(): Array<{ id: string; experimentId: string; status: string; payload: unknown; updatedAt: string }> {
+    const rows = this.db.prepare("SELECT id, experiment_id, status, payload_json, updated_at FROM runs ORDER BY updated_at DESC").all() as Array<{ id: string; experiment_id: string; status: string; payload_json: string; updated_at: string }>;
+    return rows.map((row) => ({ id: row.id, experimentId: row.experiment_id, status: row.status, payload: JSON.parse(row.payload_json), updatedAt: row.updated_at }));
+  }
+
+  sources(): Array<{ id: string; payload: unknown; createdAt: string }> {
+    const rows = this.db.prepare("SELECT id, payload_json, created_at FROM research_sources ORDER BY created_at DESC").all() as Array<{ id: string; payload_json: string; created_at: string }>;
+    return rows.map((row) => ({ id: row.id, payload: JSON.parse(row.payload_json), createdAt: row.created_at }));
+  }
+
+  schedulerState(): { status: "idle" | "running" | "paused" | "draining"; mode: string; currentStep: string | null; updatedAt: string } {
+    const row = this.db.prepare("SELECT status, mode, current_step, updated_at FROM scheduler_state WHERE id = 1").get() as {
+      status: "idle" | "running" | "paused" | "draining"; mode: string; current_step: string | null; updated_at: string;
+    } | undefined;
+    return row
+      ? { status: row.status, mode: row.mode, currentStep: row.current_step, updatedAt: row.updated_at }
+      : { status: "idle", mode: "research", currentStep: null, updatedAt: new Date(0).toISOString() };
+  }
+
+  setSchedulerState(state: { status: "idle" | "running" | "paused" | "draining"; mode: string; currentStep?: string | null }): void {
+    const updatedAt = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO scheduler_state (id, status, mode, current_step, updated_at) VALUES (1, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET status = excluded.status, mode = excluded.mode, current_step = excluded.current_step, updated_at = excluded.updated_at
+    `).run(state.status, state.mode, state.currentStep ?? null, updatedAt);
+    this.appendEvent(`scheduler.${state.status}`, { ...state, updatedAt });
   }
 }

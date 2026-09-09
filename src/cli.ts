@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { ResearchStore } from "./core/store.js";
+import { materializeResearchDecision } from "./core/research-graph.js";
 import { whestbenchConfig } from "./competitions/whestbench.js";
 import { runProcess } from "./core/process.js";
 import { ensureWorktree } from "./core/worktree.js";
@@ -62,6 +63,38 @@ program.command("inspect").action(() => {
   store.close();
 });
 
+const project = new Command("project").description("Inspect the active Evidra project");
+project.command("status").action(() => {
+  const store = new ResearchStore(statePath);
+  const active = store.project();
+  console.log(active ? `${active.name}\nCompetition: ${active.competitionId}\nEvents: ${store.eventCount()}` : "No Evidra project initialized.");
+  store.close();
+});
+project.command("inspect").action(() => {
+  const store = new ResearchStore(statePath);
+  console.log(JSON.stringify(store.project()?.config ?? null, null, 2));
+  store.close();
+});
+program.addCommand(project);
+
+const challenge = new Command("challenge").description("Manage the active challenge adapter");
+challenge.command("list").action(() => console.log(`* ${whestbenchConfig.id} — ${whestbenchConfig.name}`));
+challenge.command("status").action(() => {
+  const store = new ResearchStore(statePath);
+  const active = store.project();
+  console.log(`Challenge: ${whestbenchConfig.name}\nInitialized: ${active?.competitionId === whestbenchConfig.id ? "yes" : "no"}`);
+  store.close();
+});
+challenge.command("inspect").action(() => console.log(JSON.stringify(whestbenchConfig, null, 2)));
+challenge.command("baseline").description("Run the canonical baseline").action(async () => {
+  const cwd = join(root, "competitions", "whestbench", "starterkit");
+  const result = await runProcess(["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"], cwd);
+  console.log(result.stdout);
+  if (result.stderr) console.error(result.stderr);
+  if (result.exitCode !== 0) process.exitCode = result.exitCode;
+});
+program.addCommand(challenge);
+
 const research = new Command("research").description("Ask the embedded research agent for the next research decision");
 research.command("propose")
   .argument("[objective]", "research objective", "Inspect the current WhestBench baseline and propose three falsifiable estimator hypotheses.")
@@ -77,7 +110,7 @@ research.command("propose")
       recentEvents,
     }, { provider: "codex", model: "default", reasoningEffort: "medium", fallbackLocalModel: "qwen3.6:27b", cwd: root });
     const decisionStore = new ResearchStore(statePath);
-    decisionStore.saveDecision(decision);
+    materializeResearchDecision(decisionStore, decision);
     decisionStore.close();
     console.log(formatResearchDecision(decision));
   });
