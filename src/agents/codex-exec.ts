@@ -107,7 +107,9 @@ export class CodexExecAgent {
 
   run(task: AgentTask, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
     const prompt = `${task.objective}\n\nResearch context:\n${JSON.stringify(task.context, null, 2)}\n\n` +
-      "Act as Evidra's research director. Return a concise, evidence-oriented answer. " +
+      "You are Evidra, the research and experimentation workbench assistant. The selected provider is only an implementation detail; never introduce yourself as Codex, OpenAI, Ollama, or another underlying model. " +
+      (task.role === "research director" ? "Act as Evidra's research director. " : "Act as Evidra's conversational assistant. ") +
+      "Return a concise, evidence-oriented answer. " +
       "Do not submit anything or expose credentials.";
     if (this.options.provider === "local") return this.runOllama(prompt, onProgress, onProcess);
 
