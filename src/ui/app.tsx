@@ -6,11 +6,14 @@ import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
 import { runProcess, splitCommandLine } from "../core/process.js";
+import { executorFor } from "../core/executors.js";
+import { ensureWorktree } from "../core/worktree.js";
 import { createExperimentManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { whestbenchConfig } from "../competitions/whestbench.js";
 import { checkProvider, codexLoginStatus, listCodexModels, listLocalModels, loginCodex, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
+import { ExperimentManifestSchema } from "../core/types.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string };
 type WorkbenchMode = "research" | "challenge";
@@ -244,7 +247,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     return formatResearchDecision(decision);
   };
 
-  const proposeLatestExperiment = async (): Promise<string | null> => {
+  const proposeLatestExperiment = async (): Promise<{ id: string; text: string } | null> => {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const hypothesis = store.hypotheses()[0];
     if (!hypothesis) { store.close(); return null; }
@@ -254,7 +257,28 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const manifest = createExperimentManifest({ id, hypothesisId: hypothesis.id, gitCommit: commit.stdout.trim(), datasetVersion: whestbenchConfig.datasetRevision }, whestbenchConfig);
     store.saveExperiment({ id, payload: { ...manifest, status: "proposed" } });
     store.close();
-    return `\n\nExperiment manifest proposed\n${manifestSummary(manifest)}\nNext: /experiment show ${id}`;
+    return { id, text: `\n\nExperiment manifest proposed\n${manifestSummary(manifest)}\nNext: /experiment show ${id}` };
+  };
+
+  const executeExperiment = async (id: string): Promise<string> => {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const entry = store.experiments().find((experiment) => experiment.id === id);
+    if (!entry) { store.close(); throw new Error(`Experiment not found: ${id}`); }
+    const manifest = ExperimentManifestSchema.parse(entry.payload);
+    const entryPayload = entry.payload as Record<string, unknown>;
+    store.saveExperiment({ id, payload: { ...entryPayload, status: "running" } });
+    store.close();
+    setProgress(`Experiment ${id} · creating isolated worktree...`);
+    const worktree = await ensureWorktree(root, root, id);
+    const experimentCwd = join(worktree, "competitions", "whestbench", "starterkit");
+    const command = ["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"];
+    setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
+    const result = await executorFor(manifest.resources.executor).run(manifest, experimentCwd, command);
+    const resultStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    resultStore.saveRun({ id: result.runId, experimentId: id, status: result.status, payload: result });
+    resultStore.saveExperiment({ id, payload: { ...entryPayload, status: result.status === "completed" ? "completed" : "failed", runId: result.runId, worktreePath: experimentCwd } });
+    resultStore.close();
+    return `\n\nExperiment ${id} ${result.status}\nRun: ${result.runId}\nExit code: ${result.exitCode}\nDuration: ${result.durationSeconds.toFixed(1)}s\nFailure: ${result.failureClass ?? "none"}`;
   };
 
   const runAutonomousCycle = async (): Promise<void> => {
@@ -269,7 +293,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const update = new ResearchStore(join(root, ".sota", "database.sqlite"));
       update.setSchedulerState({ status: "running", mode: config.mode, currentStep: "awaiting-next-cycle" });
       update.close();
-      append("assistant", result + (config.mode === "challenge" ? (await proposeLatestExperiment() ?? "") : ""));
+      const proposed = config.mode === "challenge" ? await proposeLatestExperiment() : null;
+      append("assistant", result + (proposed?.text ?? ""));
+      if (proposed && config.mode === "challenge" && config.autonomy === "yolo") append("assistant", await executeExperiment(proposed.id));
     } catch (error) {
       const update = new ResearchStore(join(root, ".sota", "database.sqlite"));
       update.setSchedulerState({ status: "paused", mode: config.mode, currentStep: "blocked" });
@@ -413,8 +439,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setProgress("Zero-to-hero: generating the first falsifiable research decision...");
         append("assistant", `Baseline ${baseline.exitCode === 0 ? "completed" : "failed"}.\n${baseline.stdout || baseline.stderr}`);
         const decisionText = await runResearchCycle("Starting from the verified baseline, identify the first highest-information experiment for WhestBench. Include a falsification test, leakage risks, compute estimate, and replication plan.");
-        const manifestText = await proposeLatestExperiment();
-        append("assistant", decisionText + (manifestText ?? ""));
+        const proposed = await proposeLatestExperiment();
+        append("assistant", decisionText + (proposed?.text ?? ""));
+        if (proposed && config.autonomy === "yolo") append("assistant", await executeExperiment(proposed.id));
         const done = new ResearchStore(join(root, ".sota", "database.sqlite"));
         done.setSchedulerState({ status: "idle", mode: "challenge", currentStep: null });
         done.close();
@@ -572,6 +599,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const experiment = store.experiments().find((entry) => entry.id === parts[2]);
         store.close();
         append("assistant", experiment ? JSON.stringify(experiment.payload, null, 2) : "Experiment not found.");
+        return;
+      }
+      if (action === "run") {
+        const id = parts[2];
+        store.close();
+        if (!id) { append("assistant", "Usage: /experiment run <id>"); return; }
+        setBusy(true);
+        try { append("assistant", await executeExperiment(id)); }
+        catch (error) { append("assistant", error instanceof Error ? error.message : String(error)); }
+        finally { setBusy(false); setProgress(""); }
         return;
       }
       if (action !== "propose") {
