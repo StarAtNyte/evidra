@@ -16,7 +16,7 @@ import { autonomyPolicy, guardCommand } from "../dist/core/permissions.js";
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, RESEARCH_TOOLS } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
-import { LocalExecutor } from "../dist/core/executors.js";
+import { LocalExecutor, parseMetricOutput } from "../dist/core/executors.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -169,6 +169,12 @@ test("experiment executor parses the declared metric instead of a competition-sp
     assert.deepEqual(result.metricsByFold.macro_f1, [0.8, 0.824]);
     assert.equal(result.metrics.final_layer_mse, undefined);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("metric parser accepts evaluator JSON and keyed log output", () => {
+  const parsed = parseMetricOutput('{"metrics":{"rmse":0.42},"metricsByFold":{"rmse":[0.4,0.44]}}\nrmse: 0.41\n', "rmse");
+  assert.equal(parsed.metrics.rmse, 0.41);
+  assert.deepEqual(parsed.metricsByFold.rmse, [0.4, 0.44]);
 });
 
 test("paired statistics and recovery are deterministic", () => {

@@ -7,7 +7,7 @@ import { ResearchStore } from "../core/store.js";
 import { runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
-import { executorFor } from "../core/executors.js";
+import { executorFor, parseMetricOutput } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
 import { auditExperiment } from "../core/validation.js";
 import { sha256File } from "../core/evidence.js";
@@ -622,6 +622,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const command = adapter.experimentCommand();
     setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
     const executor = executorFor(manifest.resources.executor);
+    let evaluatorOutput: { stdout: string; stderr: string; exitCode: number } | undefined;
     let result = await executor.run(manifest, experimentCwd, command, (control) => { activeProcess.current = control; }, adapter.config.metric.name);
     let attempt = 1;
     while (result.status !== "completed") {
@@ -637,6 +638,25 @@ export function App({ root }: { root: string }): React.JSX.Element {
       result = await executor.run(manifest, experimentCwd, command, (control) => { activeProcess.current = control; }, adapter.config.metric.name);
     }
     activeProcess.current = null;
+    const evaluatorCommand = adapter.config.evaluator.command;
+    const sameCommand = evaluatorCommand.length === command.length && evaluatorCommand.every((part, index) => part === command[index]);
+    if (result.status === "completed" && !sameCommand) {
+      setProgress(`Experiment ${id} · running canonical evaluator...`);
+      const evaluated = await runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, (control) => { activeProcess.current = control; });
+      activeProcess.current = null;
+      evaluatorOutput = { stdout: evaluated.stdout, stderr: evaluated.stderr, exitCode: evaluated.exitCode };
+      const metrics = parseMetricOutput(evaluated.stdout, adapter.config.metric.name);
+      result = {
+        ...result,
+        status: evaluated.exitCode === 0 ? "completed" : "failed",
+        exitCode: evaluated.exitCode,
+        metrics: { ...result.metrics, ...metrics.metrics },
+        metricsByFold: { ...result.metricsByFold, ...metrics.metricsByFold },
+        stdout: `${result.stdout ?? ""}\n[EVALUATOR]\n${evaluated.stdout}`,
+        stderr: `${result.stderr ?? ""}\n[EVALUATOR]\n${evaluated.stderr}`,
+        ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }),
+      };
+    }
     const artifactDir = join(root, ".sota", "artifacts", result.runId);
     mkdirSync(artifactDir, { recursive: true });
     const stdoutPath = join(artifactDir, "stdout.log");
@@ -646,6 +666,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
     writeFileSync(stdoutPath, result.stdout ?? "");
     writeFileSync(stderrPath, result.stderr ?? "");
     writeFileSync(metricsPath, `${JSON.stringify(result.metrics, null, 2)}\n`);
+    const evaluatorStdoutPath = evaluatorOutput ? join(artifactDir, "evaluator.stdout.log") : undefined;
+    const evaluatorStderrPath = evaluatorOutput ? join(artifactDir, "evaluator.stderr.log") : undefined;
+    if (evaluatorOutput && evaluatorStdoutPath && evaluatorStderrPath) {
+      writeFileSync(evaluatorStdoutPath, evaluatorOutput.stdout);
+      writeFileSync(evaluatorStderrPath, evaluatorOutput.stderr);
+    }
     writeFileSync(environmentPath, `${JSON.stringify({
       capturedAt: new Date().toISOString(),
       node: process.version,
@@ -660,7 +686,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const recordedResult = {
       ...result,
       recoveryAttempts: attempt,
-      artifacts: { "stdout.log": stdoutPath, "stderr.log": stderrPath, "metrics.json": metricsPath, "environment.json": environmentPath },
+      artifacts: {
+        "stdout.log": stdoutPath,
+        "stderr.log": stderrPath,
+        "metrics.json": metricsPath,
+        "environment.json": environmentPath,
+        ...(evaluatorStdoutPath && evaluatorStderrPath ? { "evaluator.stdout.log": evaluatorStdoutPath, "evaluator.stderr.log": evaluatorStderrPath } : {}),
+      },
     };
     const resultStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     resultStore.saveRun({ id: result.runId, experimentId: id, status: recordedResult.status, payload: recordedResult });

@@ -18,7 +18,7 @@ function failureClass(result: ProcessResult): RunResult["failureClass"] {
   return "unknown";
 }
 
-function parseMetricOutput(stdout: string, metricName: string): { metrics: Record<string, number>; metricsByFold: Record<string, number[]> } {
+export function parseMetricOutput(stdout: string, metricName: string): { metrics: Record<string, number>; metricsByFold: Record<string, number[]> } {
   const metrics: Record<string, number> = {};
   const metricsByFold: Record<string, number[]> = {};
   const addObject = (value: unknown): void => {
