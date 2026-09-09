@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { Codex } from "@openai/codex-sdk";
 import type { AgentResult, AgentTask } from "../core/types.js";
 import type { ProcessControl } from "../core/process.js";
 
@@ -115,6 +116,15 @@ export async function listLocalModels(): Promise<AvailableModel[]> {
   }).filter((model) => model.id);
 }
 
+/** Pick an installed local fallback without assuming one exact Ollama tag. */
+export async function resolveLocalFallbackModel(preferred = "auto"): Promise<string> {
+  const models = await listLocalModels();
+  if (!models.length) throw new Error("No local Ollama models are installed. Install a Qwen model or set EVIDRA_FALLBACK_MODEL.");
+  if (preferred !== "auto" && models.some((model) => model.id === preferred)) return preferred;
+  if (preferred !== "auto") throw new Error(`Local fallback model '${preferred}' is not installed. Available models: ${models.map((model) => model.id).join(", ")}`);
+  return models.find((model) => /qwen/i.test(model.id))?.id ?? models[0].id;
+}
+
 export async function checkProvider(options: ExecAgentOptions): Promise<void> {
   if (options.provider === "codex") {
     if (!codexIsLoggedIn()) throw new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription.");
@@ -144,86 +154,65 @@ export class CodexExecAgent {
 
     if (!codexIsLoggedIn()) return Promise.reject(new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription."));
 
-    const args = ["exec", "--json", "--sandbox", this.options.sandbox ?? "read-only", "--skip-git-repo-check"];
-    if (this.options.model && this.options.model !== "default") args.push("--model", this.options.model);
-    if (this.options.reasoningEffort) args.push("-c", `model_reasoning_effort=\"${this.options.reasoningEffort}\"`);
-    args.push("-C", this.options.cwd, prompt);
+    return this.runCodexSdk(prompt, onProgress, onProcess);
+  }
 
-    return new Promise((resolve, reject) => {
-      const child = spawn("codex", args, { cwd: this.options.cwd, stdio: ["ignore", "pipe", "pipe"], detached: true });
-      let paused = false;
-      let settled = false;
-      const signalGroup = (signal: NodeJS.Signals): void => {
-        if (!child.pid) return;
-        try { process.kill(-child.pid, signal); } catch { try { child.kill(signal); } catch { /* already exited */ } }
-      };
-      const control: ProcessControl = {
-        pause: () => { if (!settled && !paused) { signalGroup("SIGSTOP"); paused = true; } },
-        resume: () => { if (!settled && paused) { signalGroup("SIGCONT"); paused = false; } },
-        terminate: () => { if (!settled) { if (paused) signalGroup("SIGCONT"); signalGroup("SIGTERM"); } },
-        get paused() { return paused; },
-      };
-      onProcess?.(control);
-      let stdout = "";
-      let stderr = "";
+  private async runCodexSdk(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
+    const abort = new AbortController();
+    let paused = false;
+    let settled = false;
+    const control: ProcessControl = {
+      // The SDK exposes cancellation rather than SIGSTOP. Keep pause state
+      // observable to the TUI; a resumed request can be started explicitly.
+      pause: () => { if (!settled) paused = true; },
+      resume: () => { if (!settled) paused = false; },
+      terminate: () => { if (!settled) abort.abort(); },
+      get paused() { return paused; },
+    };
+    onProcess?.(control);
+
+    try {
+      const codex = new Codex();
+      const thread = codex.startThread({
+        workingDirectory: this.options.cwd,
+        skipGitRepoCheck: true,
+        model: this.options.model !== "default" ? this.options.model : undefined,
+        sandboxMode: this.options.sandbox ?? "read-only",
+        modelReasoningEffort: this.options.reasoningEffort as "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "persistent" | undefined,
+        approvalPolicy: "never",
+      });
+      const stream = await thread.runStreamed(prompt, { signal: abort.signal });
       let finalText = "";
-      const humanOutput: string[] = [];
-
-      const handleLine = (line: string): void => {
-        if (!line.trim()) return;
-        try {
-          const event = JSON.parse(line) as { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string } };
-          if (event.type === "thread.started" && event.thread_id) {
-            this.options.onThread?.(event.thread_id);
-          } else if (event.type === "item.completed" && event.item?.type === "agent_message" && event.item.text) {
-            finalText = event.item.text;
-          } else if (event.type === "item.started" && event.item?.type === "command_execution") {
-            onProgress?.(`Running: ${event.item.command ?? "command"}`);
-          } else if (event.type === "turn.started") {
-            onProgress?.("Thinking...");
-          } else if (event.type === "turn.completed") {
-            onProgress?.("Completed.");
-          } else if (event.type) {
-            // Codex's JSONL transport includes lifecycle notifications such as
-            // thread.started and turn.started. They are protocol, not assistant output.
-          }
-        } catch {
-          // Preserve only genuinely human-readable non-JSON output as a fallback.
-          humanOutput.push(line);
+      let usage: AgentResult["usage"];
+      let threadId: string | undefined;
+      for await (const event of stream.events) {
+        const value = event as unknown as { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string }; usage?: AgentResult["usage"]; message?: string };
+        if (value.type === "thread.started" && value.thread_id) { threadId = value.thread_id; this.options.onThread?.(value.thread_id); }
+        else if (value.type === "turn.started") onProgress?.("Thinking...");
+        else if (value.type === "item.started" && value.item?.type === "command_execution") onProgress?.(`Running: ${value.item.command ?? "command"}`);
+        else if (value.type === "item.completed" && value.item?.type === "agent_message" && value.item.text) finalText = value.item.text;
+        else if (value.type === "turn.completed") {
+          const raw = value.usage as unknown as { input_tokens?: number; output_tokens?: number } | undefined;
+          usage = raw ? { inputTokens: raw.input_tokens, outputTokens: raw.output_tokens } : undefined;
+          onProgress?.("Completed.");
         }
-      };
-
-      child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString();
-        for (const line of chunk.toString().split("\n")) handleLine(line);
-      });
-      child.stderr.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString();
-        const clean = chunk.toString().replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, "");
-        for (const line of clean.split("\n").map((value) => value.trim()).filter(Boolean)) {
-          if (/^(error|warning|codex error)/i.test(line)) onProgress?.(line);
-        }
-      });
-      child.on("error", reject);
-      child.on("close", (code) => {
-        settled = true;
-        if (code !== 0) {
-          const diagnostic = `${stderr}\n${humanOutput.join("\n")}`.replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, "").trim();
-          if (/rate limit|usage limit|quota|too many requests|not enough credits|429/i.test(diagnostic)) {
-            const retryAfterMs = providerRetryAfterMs(new Error(diagnostic));
-            reject(new ProviderUsageLimitError(`Codex usage limit reached. Retrying in ${Math.ceil(retryAfterMs / 60_000)} minute(s).`, retryAfterMs));
-          } else if (/not supported when using Codex with a ChatGPT account/i.test(diagnostic)) {
-            reject(new Error(`The selected model is not available for your ChatGPT Codex account. Use /model default.`));
-          } else if (/stream disconnected|network|timed out|upstream connect error|connection termination/i.test(diagnostic)) {
-            reject(new Error("Codex is unreachable right now. Check your connection, then try again."));
-          } else {
-            reject(new Error(diagnostic || `Codex exec exited with ${code ?? 1}`));
-          }
-          return;
-        }
-        resolve({ provider: this.options.provider, output: finalText || humanOutput.join("\n").trim(), usage: undefined });
-      });
-    });
+        else if (value.type === "turn.failed" || value.type === "error") throw new Error(value.message ?? "Codex turn failed.");
+      }
+      settled = true;
+      if (!finalText) throw new Error("Codex returned no assistant response.");
+      return { provider: this.options.provider, threadId, output: finalText, usage };
+    } catch (error) {
+      settled = true;
+      if (abort.signal.aborted) throw new Error("Codex request interrupted.");
+      const diagnostic = error instanceof Error ? error.message : String(error);
+      if (/rate limit|usage limit|quota|too many requests|not enough credits|429/i.test(diagnostic)) {
+        const retryAfterMs = providerRetryAfterMs(new Error(diagnostic));
+        throw new ProviderUsageLimitError(`Codex usage limit reached. Retrying in ${Math.ceil(retryAfterMs / 60_000)} minute(s).`, retryAfterMs);
+      }
+      if (/not supported when using Codex with a ChatGPT account/i.test(diagnostic)) throw new Error("The selected model is not available for your ChatGPT Codex account. Use /model default.");
+      if (/stream disconnected|network|timed out|upstream connect error|connection termination/i.test(diagnostic)) throw new Error("Codex is unreachable right now. Check your connection, then try again.");
+      throw error;
+    }
   }
 
   private async runOllama(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
@@ -270,8 +259,9 @@ export async function runWithLocalFallback(
     const message = error instanceof Error ? error.message : String(error);
     const limitReached = isProviderUsageLimit(error);
     if (options.provider !== "codex" || !fallbackModel || !limitReached || options.limitPolicy === "wait" || options.limitPolicy === "stop") throw error;
-    onProgress?.(`Codex limit reached; switching to local/${fallbackModel}...`);
-    await checkProvider({ provider: "local", model: fallbackModel, cwd: options.cwd });
-    return new CodexExecAgent({ provider: "local", model: fallbackModel, cwd: options.cwd }).run(task, onProgress, onProcess);
+    const localModel = await resolveLocalFallbackModel(fallbackModel);
+    onProgress?.(`Codex limit reached; switching to local/${localModel}...`);
+    await checkProvider({ provider: "local", model: localModel, cwd: options.cwd });
+    return new CodexExecAgent({ provider: "local", model: localModel, cwd: options.cwd }).run(task, onProgress, onProcess);
   }
 }

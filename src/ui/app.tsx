@@ -35,9 +35,10 @@ type QueuedRequest = { id: string; text: string; dispatched?: boolean };
 type WorkbenchMode = "research" | "challenge";
 type AutonomyLevel = "safe" | "fast" | "yolo";
 type ResearchCampaign = { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; nextAttemptAt?: string; limitMessage?: string };
-type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; campaign?: ResearchCampaign };
+type LimitPolicy = "wait" | "fallback" | "stop";
+type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; limitPolicy: LimitPolicy; fallbackModel: string; campaign?: ResearchCampaign };
 
-const defaultConfig: SessionConfig = { provider: "codex", model: "default", reasoningEffort: "medium", mode: "research", autonomy: "safe" };
+const defaultConfig: SessionConfig = { provider: "codex", model: "default", reasoningEffort: "medium", mode: "research", autonomy: "safe", limitPolicy: "fallback", fallbackModel: process.env.EVIDRA_FALLBACK_MODEL ?? "auto" };
 const COMMANDS = [
   ["/help", "Show commands"],
   ["/mode", "Show or switch active mode"],
@@ -52,6 +53,7 @@ const COMMANDS = [
   ["/data", "Inspect or audit competition data"],
   ["/validation", "Inspect or generate validation policy"],
   ["/agents", "Show research-agent lanes and health"],
+  ["/limits", "Choose what happens when provider usage is exhausted"],
   ["/compute", "Show execution and compute health"],
   ["/submission", "Prepare and validate a submission bundle"],
   ["/queue", "Show durable research work queue"],
@@ -96,6 +98,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"]],
   "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"]],
+  "/limits": [["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Switch to local Qwen automatically"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission record", "Record an external score"]],
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
@@ -114,6 +117,8 @@ function loadConfig(path: string): SessionConfig {
     // Older Evidra sessions used a model name that ChatGPT-account Codex does not accept.
     if (config.provider === "codex" && config.model === "gpt-5.3-codex") config.model = "default";
     if (config.provider === "local" && /^(gpt|codex)/i.test(config.model)) config.model = "unconfigured";
+    if (!["wait", "fallback", "stop"].includes(config.limitPolicy)) config.limitPolicy = defaultConfig.limitPolicy;
+    if (!config.fallbackModel) config.fallbackModel = defaultConfig.fallbackModel;
     if (config.campaign?.status === "running") config.campaign = { ...config.campaign, status: "paused" };
     if (config.mode !== "research" && config.mode !== "challenge") config.mode = defaultConfig.mode;
     if (!["safe", "fast", "yolo"].includes(config.autonomy)) config.autonomy = defaultConfig.autonomy;
@@ -153,6 +158,7 @@ function help(): string {
     "/data audit                 Audit challenge files and duplicates",
     "/validation [inspect|generate] Show validation policy",
     "/agents                     Show research-agent health",
+    "/limits [wait|fallback|stop] Choose provider-limit behavior",
     "/compute                    Show execution and budget health",
     "/doctor                     Diagnose local dependencies",
     "!<shell command>            Run a shell command in the project workspace",
@@ -540,9 +546,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         provider: config.provider,
         model: config.model,
         reasoningEffort: config.reasoningEffort,
-        limitPolicy: (campaign ?? config.campaign) ? "wait" : "fallback",
+        limitPolicy: config.limitPolicy,
         cwd: root,
-        fallbackLocalModel: "qwen3.6:27b",
+        fallbackLocalModel: config.fallbackModel,
         onProcess: (control) => { activeProcess.current = control; },
         onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); },
         executeTool: (call) => executeResearchTool(call, {
@@ -895,6 +901,18 @@ export function App({ root }: { root: string }): React.JSX.Element {
       else { setConfig((current) => ({ ...current, reasoningEffort: level })); append("assistant", `Thinking effort selected: ${level}`); }
       return;
     }
+    if (request === "/limits" || request.startsWith("/limits ")) {
+      const policy = request.split(/\s+/)[1] as LimitPolicy | undefined;
+      if (!policy) {
+        append("assistant", `Provider limit policy: ${config.limitPolicy}\nFallback model: ${config.fallbackModel}\nUse /limits wait, /limits fallback, or /limits stop.`);
+      } else if (!["wait", "fallback", "stop"].includes(policy)) {
+        append("assistant", "Choose wait, fallback, or stop.");
+      } else {
+        setConfig((current) => ({ ...current, limitPolicy: policy }));
+        append("assistant", policy === "fallback" ? `Provider limit policy selected: fallback to local/${config.fallbackModel}.` : `Provider limit policy selected: ${policy}.`);
+      }
+      return;
+    }
     if (request === "/autonomy" || request.startsWith("/autonomy ") || request === "/permissions" || request.startsWith("/permissions ")) {
       const level = request.split(/\s+/)[1] as AutonomyLevel | undefined;
       if (!level) {
@@ -1056,10 +1074,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       else if (provider !== "codex" && provider !== "local") append("assistant", "Choose codex or local.");
       else {
         setConfig((current) => ({
+          ...current,
           provider,
-          reasoningEffort: current.reasoningEffort,
-          mode: current.mode,
-          autonomy: current.autonomy,
           model: provider === "local"
             ? (current.provider === "local" ? current.model : "qwen3.6:27b")
             : (current.provider === "codex" ? current.model : "default"),
@@ -1693,7 +1709,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           mode: config.mode,
           instruction: "This is ordinary conversation, not a research cycle. Answer directly and concisely. Do not inspect files, run commands, edit code, propose experiments, or claim fresh measurements. If the user wants autonomous research, tell them to use /research.",
         },
-      }, { provider: config.provider, model: config.model, cwd: root, reasoningEffort: config.reasoningEffort, sandbox: "read-only", onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, "qwen3.6:27b", setProgress, (control) => { activeProcess.current = control; });
+      }, { provider: config.provider, model: config.model, cwd: root, reasoningEffort: config.reasoningEffort, sandbox: "read-only", limitPolicy: config.limitPolicy, onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, config.fallbackModel, setProgress, (control) => { activeProcess.current = control; });
       append("assistant", String(result.output));
     } catch (error) {
       append("assistant", error instanceof Error ? error.message : String(error));

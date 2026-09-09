@@ -26,6 +26,19 @@ Most coding agents optimize for one conversation and one code change. Evidra is 
 
 Evidra is an active TypeScript foundation, not a claim that every competition-specific worker or cloud adapter already exists. The controller primitives are implemented and tested; competition-specific training, metrics, split strategies, cloud executors, and submission adapters are loaded from the active workspace or added incrementally.
 
+## Research architecture inspired by frontier research systems
+
+Evidra is designed around a bounded version of the workflow described by [OpenAI in its 2026 Navier–Stokes report](https://openai.com/index/navier-stokes-solution/): independent groups explore different formulations, groups communicate useful intermediate results, promising directions are consolidated, and a separate verification stage checks the final claim. Evidra applies the same pattern to empirical research:
+
+```text
+problem variants → independent research lanes → evidence/artifacts
+                 → cross-pollination → critic/replication → promotion
+```
+
+The deterministic controller remains the source of truth. Agents propose hypotheses, write code in isolated worktrees, and explain evidence; evaluators, checksums, split policies, reviewers, and approval gates decide whether a result is valid. This makes the pattern useful for competitions, engineering investigations, scientific experiments, and other challenge repositories without assuming a theorem prover or a particular model family.
+
+Provider exhaustion is an explicit runtime policy. In the TUI use `/limits fallback` to select an installed local Qwen/Ollama model automatically, `/limits wait` to resume after the Codex entitlement resets, or `/limits stop` to halt the active request. The fallback model can be pinned with `EVIDRA_FALLBACK_MODEL`.
+
 Implemented today:
 
 - Ink-based interactive TUI with Codex-style transcript output;

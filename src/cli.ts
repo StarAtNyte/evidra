@@ -21,13 +21,14 @@ import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
-import { checkProvider, isProviderUsageLimit, providerRetryAfterMs } from "./agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, isProviderUsageLimit, listLocalModels, providerRetryAfterMs } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
 import { App } from "./ui/app.js";
+import { findWorkspaceRoot } from "./core/workspace.js";
 
-const root = process.cwd();
+const root = findWorkspaceRoot();
 const statePath = join(root, ".sota", "database.sqlite");
 const program = new Command();
 const activeCompetition = () => {
@@ -85,6 +86,23 @@ program.command("status").action(() => {
     console.log(`Events        ${store.eventCount()}`);
   }
   store.close();
+});
+
+program.command("doctor").description("Check local providers, runtimes, and execution backends").action(async () => {
+  const checks: string[] = [`workspace     ${root}`, `node          ${process.versions.node}`];
+  for (const command of ["git", "uv", "codex", "ollama", "modal"]) {
+    const result = await runProcess(["which", command], root, 5_000);
+    checks.push(`${command.padEnd(13)}${result.exitCode === 0 ? result.stdout.trim() : "not found"}`);
+  }
+  checks.push(`codex auth    ${codexLoginStatus() || "not authenticated"}`);
+  try {
+    const models = await listLocalModels();
+    checks.push(`ollama models ${models.length ? models.map((model) => model.id).join(", ") : "none installed"}`);
+  } catch (error) {
+    checks.push(`ollama API    ${error instanceof Error ? error.message : String(error)}`);
+  }
+  checks.push(`modal auth    ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}`);
+  console.log(checks.join("\n"));
 });
 
 program.command("usage").description("Show research, experiment, and campaign usage").action(() => {

@@ -23,6 +23,7 @@ import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
 import { activePhaseGoal, definePhaseGoals } from "../dist/core/phase-goals.js";
 import { submitApprovedBundle } from "../dist/core/submission-adapters.js";
+import { findWorkspaceRoot } from "../dist/core/workspace.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -42,6 +43,18 @@ test("durable research state and queue survive store reopen", () => {
     assert.equal(reopened.agentLanes()[0].status, "running");
     assert.equal(reopened.queueTasks()[0].status, "completed");
     reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("workspace root discovery keeps nested CLI invocations on the project state", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-root-"));
+  try {
+    mkdirSync(join(root, ".sota"), { recursive: true });
+    const nested = join(root, "competitions", "demo", "starterkit");
+    mkdirSync(nested, { recursive: true });
+    assert.equal(findWorkspaceRoot(nested), root);
+    const uninitialized = mkdtempSync(join(tmpdir(), "evidra-uninitialized-"));
+    try { assert.equal(findWorkspaceRoot(uninitialized), uninitialized); } finally { rmSync(uninitialized, { recursive: true, force: true }); }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
