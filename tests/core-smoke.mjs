@@ -324,7 +324,9 @@ test("environment snapshots preserve reproducibility metadata without secrets", 
   try {
     writeFileSync(join(root, "package-lock.json"), "{\"lockfileVersion\": 3}\n");
     const previous = process.env.EVIDRA_SMOKE_SECRET;
+    const previousUrl = process.env.EVIDRA_SMOKE_URL;
     process.env.EVIDRA_SMOKE_SECRET = "must-not-be-recorded";
+    process.env.EVIDRA_SMOKE_URL = "postgres://user:password@example.invalid/db";
     const snapshot = await captureEnvironment(root, root, ["python", "train.py"], "local", "none");
     if (previous === undefined) delete process.env.EVIDRA_SMOKE_SECRET;
     else process.env.EVIDRA_SMOKE_SECRET = previous;
@@ -332,8 +334,9 @@ test("environment snapshots preserve reproducibility metadata without secrets", 
     assert.equal(snapshot.gpu, "none");
     assert.match(snapshot.lockfiles["package-lock.json"], /^sha256:/);
     assert.equal(snapshot.environment.EVIDRA_SMOKE_SECRET, undefined);
+    assert.equal(snapshot.environment.EVIDRA_SMOKE_URL, "<redacted-url-credentials>");
     assert.ok(snapshot.probes.node);
-  } finally { delete process.env.EVIDRA_SMOKE_SECRET; rmSync(root, { recursive: true, force: true }); }
+  } finally { delete process.env.EVIDRA_SMOKE_SECRET; delete process.env.EVIDRA_SMOKE_URL; rmSync(root, { recursive: true, force: true }); }
 });
 
 test("worktree isolation supports arbitrary repositories", async () => {

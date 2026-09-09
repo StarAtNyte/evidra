@@ -48,8 +48,8 @@ export async function captureEnvironment(
   gpu?: string,
 ): Promise<EnvironmentSnapshot> {
   const [head, diff, nodeProbe, pythonProbe, python3Probe, gpuProbe] = await Promise.all([
-    probe(["git", "rev-parse", "HEAD"], root),
-    runProcess(["git", "diff", "--no-ext-diff", "--binary", "HEAD"], root, 30_000).catch(() => null),
+    probe(["git", "rev-parse", "HEAD"], cwd),
+    runProcess(["git", "diff", "--no-ext-diff", "--binary", "HEAD"], cwd, 30_000).catch(() => null),
     probe(["node", "--version"], cwd),
     probe(["python", "--version"], cwd),
     probe(["python3", "--version"], cwd),
@@ -62,7 +62,14 @@ export async function captureEnvironment(
   }
   const environment = Object.fromEntries(Object.entries(process.env)
     .filter(([key, value]) => Boolean(value) && !SECRET_KEY.test(key))
-    .map(([key, value]) => [key, value as string]));
+    .map(([key, value]) => {
+      const text = value as string;
+      // URL-shaped variables can carry user:password@host even when their key
+      // does not contain AUTH or PASSWORD. Preserve the variable's presence,
+      // but never persist its credential-bearing value.
+      if (/^[a-z][a-z\d+.-]*:\/\/[^/\s]+@/i.test(text)) return [key, "<redacted-url-credentials>"];
+      return [key, text];
+    }));
   return {
     capturedAt: new Date().toISOString(),
     node: process.version,
