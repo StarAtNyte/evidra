@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useApp, useInput } from "ink";
+import { Box, Static, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { join, relative } from "node:path";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -1851,9 +1851,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
   }, [busy]);
 
-  return <Box flexDirection="column" padding={1} minHeight={Math.max(24, process.stdout.rows ?? 24)}>
-    <Box borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1} flexDirection="column">
-      <Text color="cyan" bold>{LOGO}</Text>
+  return <Box flexDirection="column" padding={1}>
+    <Static items={[LOGO]}>
+      {(logo) => <Box key="evidra-logo" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1} flexDirection="column">
+        <Text color="cyan" bold>{logo}</Text>
+      </Box>}
+    </Static>
+    <Box paddingX={2}>
       <Text color="gray"><Text color="cyan" bold>EVIDRA WORKBENCH</Text>  │  MODE: <Text color="yellow" bold>{config.mode.toUpperCase()}</Text>  │  THINKING: {config.reasoningEffort}  │  PERMISSIONS: <Text color="yellow" bold>{config.autonomy.toUpperCase()}</Text></Text>
     </Box>
     <Box flexDirection="column" marginTop={1} paddingX={1}>
