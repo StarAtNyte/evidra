@@ -12,6 +12,7 @@ export interface RetrievedSource extends ResearchSource {
 
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
+export const SOURCE_REQUEST_TIMEOUT_MS = 30_000;
 export const DEFAULT_SOURCE_REFRESH_MS = 6 * 60 * 60 * 1000;
 
 /** Dynamic sources such as discussions and leaderboards should be revisited periodically. */
@@ -105,15 +106,22 @@ export function extractPdfText(bytes: Uint8Array): string {
 export async function retrieveSource(url: string, signal?: AbortSignal): Promise<RetrievedSource> {
   let parsed = new URL(url);
   await assertPublicUrl(parsed);
+  const timeoutSignal = AbortSignal.timeout(SOURCE_REQUEST_TIMEOUT_MS);
+  const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
   let response: Response | undefined;
-  for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
-    response = await fetch(parsed, { redirect: "manual", signal, headers: { "user-agent": "Evidra/0.1 research-workbench" } });
-    if (response.status < 300 || response.status >= 400) break;
-    const location = response.headers.get("location");
-    if (!location) throw new Error(`Source retrieval returned redirect ${response.status} without a location.`);
-    if (redirect === MAX_REDIRECTS) throw new Error(`Source exceeded the ${MAX_REDIRECTS} redirect limit.`);
-    parsed = new URL(location, parsed);
-    await assertPublicUrl(parsed);
+  try {
+    for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
+      response = await fetch(parsed, { redirect: "manual", signal: requestSignal, headers: { "user-agent": "Evidra/0.1 research-workbench" } });
+      if (response.status < 300 || response.status >= 400) break;
+      const location = response.headers.get("location");
+      if (!location) throw new Error(`Source retrieval returned redirect ${response.status} without a location.`);
+      if (redirect === MAX_REDIRECTS) throw new Error(`Source exceeded the ${MAX_REDIRECTS} redirect limit.`);
+      parsed = new URL(location, parsed);
+      await assertPublicUrl(parsed);
+    }
+  } catch (error) {
+    if (timeoutSignal.aborted && !signal?.aborted) throw new Error(`Source retrieval timed out after ${SOURCE_REQUEST_TIMEOUT_MS}ms.`);
+    throw error;
   }
   if (!response) throw new Error("Source retrieval did not return a response.");
   if (!response.ok) throw new Error(`Source retrieval failed (${response.status} ${response.statusText}).`);

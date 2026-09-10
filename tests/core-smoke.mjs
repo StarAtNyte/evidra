@@ -9,7 +9,7 @@ import { compareMetricSeries } from "../dist/core/statistics.js";
 import { recoveryPlan } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
-import { DEFAULT_SOURCE_REFRESH_MS, extractPdfText, retrieveSource, sourceClaims, sourceIsFresh } from "../dist/core/sources.js";
+import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, retrieveSource, sourceClaims, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
@@ -1250,6 +1250,7 @@ test("generic score polling parses JSON and human-readable adapter output", asyn
 
 test("source retrieval refuses loopback hosts before fetching", async () => {
   await assert.rejects(() => retrieveSource("http://127.0.0.1:9/private"), /private or loopback/);
+  assert.equal(SOURCE_REQUEST_TIMEOUT_MS, 30_000);
 });
 
 test("PDF source extraction reads common text operators without binary garbage", () => {
