@@ -49,6 +49,12 @@ export function guardAutonomousCommand(command: string[]): CommandGuard {
   if ((executable === "kaggle" || executable === "aicrowd" || executable === "whest") && /\b(submit|upload|publish|push)\b/.test(joined)) {
     return { allowed: false, reason: "Refusing autonomous competition submission or upload; use the approval-gated submission workflow." };
   }
+  if (["npm", "pnpm", "yarn", "pip", "pip3", "uv", "conda", "apt", "apt-get", "brew"].includes(executable) && /\b(install|add|sync|update|upgrade)\b/.test(joined)) {
+    return { allowed: false, reason: "Refusing autonomous dependency installation; approve it explicitly or bake dependencies into the experiment image." };
+  }
+  if ((executable === "curl" || executable === "wget") && !/(^|\s)(-I|--head|--spider|--method\s+head)(\s|$)/.test(joined)) {
+    return { allowed: false, reason: "Refusing autonomous direct downloads; use the bounded source/data acquisition workflow." };
+  }
   if ((executable === "curl" || executable === "wget") && /(--data(?:-raw|-binary)?|--upload-file|\s-[xt]\s*post\b|\s--method\s+post\b)/.test(joined)) {
     return { allowed: false, reason: "Refusing autonomous HTTP upload or POST; use an approval-gated adapter." };
   }

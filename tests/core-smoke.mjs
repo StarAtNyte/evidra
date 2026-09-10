@@ -654,6 +654,9 @@ test("autonomy policy and shell guard enforce hard safety boundaries", () => {
   assert.equal(guardAutonomousCommand(["git", "push", "origin", "main"]).allowed, false);
   assert.equal(guardAutonomousCommand(["whest", "submit", "--estimator", "estimator.py"]).allowed, false);
   assert.equal(guardAutonomousCommand(["curl", "--data", "secret", "https://example.com"]).allowed, false);
+  assert.equal(guardAutonomousCommand(["pip", "install", "torch"]).allowed, false);
+  assert.equal(guardAutonomousCommand(["curl", "-L", "https://example.com/data.csv"]).allowed, false);
+  assert.equal(guardAutonomousCommand(["curl", "--head", "https://example.com"]).allowed, true);
   assert.equal(guardAutonomousCommand(["git", "status", "--short"]).allowed, true);
   assert.equal(guardReadOnlyInspection(["git", "status", "--short"]).allowed, true);
   assert.equal(guardReadOnlyInspection(["git", "checkout", "main"]).allowed, false);
