@@ -922,11 +922,11 @@ research
       store.appendEvent("research.next_allocation", { allocation, objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}` });
       const searchPolicy = rankSearchArms({
         arms: [
-          ...(["ucb_portfolio", "ablation", "combination", "replication", "audit"] as SearchOperator[]).map((operator, index) => {
+          ...(["ucb_portfolio", "evolutionary", "mcts", "ablation", "combination", "replication", "audit"] as SearchOperator[]).map((operator, index) => {
             const outcomes = store.recentEvents(500).filter((event) => event.type === "research.search.reward" && (event.payload as { operator?: string }).operator === operator);
             const rewards = outcomes.map((event) => Number((event.payload as { reward?: number }).reward)).filter(Number.isFinite);
             const observedCosts = outcomes.map((event) => Number((event.payload as { durationSeconds?: number }).durationSeconds) / 60).filter((minutes) => Number.isFinite(minutes) && minutes > 0);
-            return { id: operator, operator, attempts: rewards.length, successes: rewards.filter((reward) => reward > 0).length, meanReward: rewards.length ? rewards.reduce((sum, reward) => sum + reward, 0) / rewards.length : 0, cost: observedCosts.length ? observedCosts.reduce((sum, minutes) => sum + minutes, 0) / observedCosts.length : [1, 0.5, 1.5, 1, 0.25][index], novelty: [0.8, 0.6, 0.9, 0.2, 0.4][index] };
+            return { id: operator, operator, attempts: rewards.length, successes: rewards.filter((reward) => reward > 0).length, meanReward: rewards.length ? rewards.reduce((sum, reward) => sum + reward, 0) / rewards.length : 0, cost: observedCosts.length ? observedCosts.reduce((sum, minutes) => sum + minutes, 0) / observedCosts.length : [1, 1.5, 2, 0.5, 1.5, 1, 0.25][index], novelty: [0.8, 0.95, 0.9, 0.6, 0.7, 0.2, 0.4][index] };
           }),
         ],
         remainingBudgetMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
@@ -1110,7 +1110,7 @@ research
         // A single director operator describes the cycle; hypotheses still
         // need distinct search families so best-of-k does not collapse into
         // repeated variants of the same move.
-        operator: index === 0 ? decision.searchOperator : (["ablation", "combination", "replication", "audit"] as const)[(index - 1) % 4],
+        operator: index === 0 ? decision.searchOperator : (["evolutionary", "mcts", "ablation", "combination", "replication", "audit"] as const)[(index - 1) % 6],
         expectedValue: hypothesis.expectedMetricDelta.median,
         costMinutes: Math.max(1, hypothesis.computeCostGpuHours * 60),
         novelty: hypothesis.evidence.length === 0 ? 1 : 0.4,

@@ -1492,6 +1492,18 @@ test("search policy explores untried operators and penalizes invalid evidence", 
   assert.equal(searchReward(0.2, true, true), 0.2);
 });
 
+test("search policy exposes bounded evolutionary and MCTS exploration", () => {
+  const ranked = rankSearchArms({
+    arms: [
+      { id: "greedy", operator: "greedy", attempts: 8, successes: 6, meanReward: 0.3, cost: 1, novelty: 0.1 },
+      { id: "evo", operator: "evolutionary", attempts: 2, successes: 1, meanReward: 0.1, cost: 1, novelty: 1 },
+      { id: "tree", operator: "mcts", attempts: 0, successes: 0, meanReward: 0, cost: 2, novelty: 0.9 },
+    ], remainingBudgetMinutes: 30, recentFailures: 0, evidenceConflicts: 0,
+  });
+  assert.equal(ranked[0].operator, "mcts");
+  assert.match(ranked.find((arm) => arm.operator === "evolutionary")?.rationale ?? "", /evolutionary/);
+});
+
 test("portfolio planner is bounded, diverse, and cost aware", () => {
   const plan = planPortfolio([
     { id: "cheap", title: "cheap novel", operator: "ablation", expectedValue: 0.4, costMinutes: 2, novelty: 0.8, family: "features" },

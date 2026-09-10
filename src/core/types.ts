@@ -90,7 +90,7 @@ export const ResearchDecisionSchema = z.object({
   bottleneck: z.string().min(1),
   rationale: z.string().min(1),
   hypotheses: z.array(ResearchHypothesisSchema).max(5),
-  searchOperator: z.enum(["greedy", "ucb_portfolio", "ablation", "combination", "replication", "audit"]).default("ucb_portfolio"),
+  searchOperator: z.enum(["greedy", "ucb_portfolio", "evolutionary", "mcts", "ablation", "combination", "replication", "audit"]).default("ucb_portfolio"),
   selectedHypothesis: z.string().nullable(),
   nextAction: z.string().min(1),
   toolCalls: z.array(z.object({
