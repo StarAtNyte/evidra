@@ -1443,6 +1443,12 @@ experiment.command("run")
       result = await executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name);
       recordAttempt(attempt, result);
     }
+    if (result.status !== "completed") {
+      const route = recoveryPlan(result.failureClass);
+      const routeStore = new ResearchStore(statePath);
+      routeStore.appendEvent("experiment.recovery.route_changed", { experimentId: id, runId: result.runId, failureClass: result.failureClass ?? "unknown", attempts: attempt, route: route.route, nextAction: route.action });
+      routeStore.close();
+    }
     const evaluatorCommand = isCandidateEvaluation ? command : adapter.config.evaluator.command;
     const sameCommand = evaluatorCommand.length === command.length && evaluatorCommand.every((part, index) => part === command[index]);
     let evaluator: { stdout: string; stderr: string; exitCode: number } | undefined;

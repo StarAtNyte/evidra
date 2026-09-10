@@ -1061,6 +1061,9 @@ test("paired statistics and recovery are deterministic", () => {
   assert.equal(comparison.probabilityImproved, 1);
   assert(comparison.confidenceInterval[1] < 0);
   assert.equal(recoveryPlan("dependency").retry, false);
+  assert.equal(recoveryPlan("dependency").route, "repair_code");
+  assert.equal(recoveryPlan("cuda_oom").route, "reduce_resources");
+  assert.equal(recoveryPlan("unknown").route, "change_hypothesis");
   assert.equal(recoveryPlan("transient_cloud").maxAttempts, 3);
 });
 

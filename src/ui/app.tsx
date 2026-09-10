@@ -1156,6 +1156,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
       recordAttemptStarted(attempt);
       result = await executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name);
     }
+    if (result.status !== "completed") {
+      const route = recoveryPlan(result.failureClass);
+      const routeStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      routeStore.appendEvent("experiment.recovery.route_changed", { experimentId: id, runId: result.runId, failureClass: result.failureClass ?? "unknown", attempts: attempt, route: route.route, nextAction: route.action });
+      routeStore.close();
+    }
     activeProcess.current = null;
     const evaluatorCommand = isCandidateEvaluation ? command : adapter.config.evaluator.command;
     const sameCommand = evaluatorCommand.length === command.length && evaluatorCommand.every((part, index) => part === command[index]);
