@@ -4,6 +4,11 @@ import { dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { EvidenceClaimSchema } from "./types.js";
 import { compareClaims } from "./claim-consistency.js";
+import { redactStructured } from "./redaction.js";
+
+function safeJson(value: unknown): string {
+  return JSON.stringify(redactStructured(value));
+}
 
 export type QueueTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export interface QueuedTask {
@@ -220,7 +225,7 @@ export class ResearchStore {
       id: project.id,
       name: project.name,
       competitionId: project.competitionId,
-      configJson: JSON.stringify(project.config),
+      configJson: safeJson(project.config),
       createdAt: new Date().toISOString(),
     });
     this.appendEvent("project.created", project);
@@ -235,9 +240,10 @@ export class ResearchStore {
   }
 
   appendEvent(type: string, payload: unknown): void {
+    const safePayload = redactStructured(payload);
     this.db.prepare(`
       INSERT INTO events (type, payload_json, created_at) VALUES (?, ?, ?)
-    `).run(type, JSON.stringify(payload), new Date().toISOString());
+    `).run(type, JSON.stringify(safePayload), new Date().toISOString());
   }
 
   eventCount(): number {
@@ -252,17 +258,18 @@ export class ResearchStore {
   saveExperiment(experiment: { id: string; payload: unknown }): void {
     const existing = this.db.prepare("SELECT 1 AS present FROM experiments WHERE id = ?").get(experiment.id) as { present: number } | undefined;
     const now = new Date().toISOString();
+    const safePayload = redactStructured(experiment.payload);
     this.db.prepare(`
       INSERT INTO experiments (id, payload_json, created_at)
       VALUES (?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET payload_json = excluded.payload_json
-    `).run(experiment.id, JSON.stringify(experiment.payload), now);
-    this.appendEvent(existing ? "experiment.updated" : "experiment.created", { id: experiment.id, payload: experiment.payload });
+    `).run(experiment.id, JSON.stringify(safePayload), now);
+    this.appendEvent(existing ? "experiment.updated" : "experiment.created", { id: experiment.id, payload: safePayload });
   }
 
   saveHypothesis(hypothesis: { id: string; payload: unknown }): void {
     const createdAt = new Date().toISOString();
-    const payload = JSON.stringify(hypothesis.payload);
+    const payload = safeJson(hypothesis.payload);
     this.db.prepare(`INSERT OR REPLACE INTO hypotheses (id, payload_json, created_at) VALUES (?, ?, ?)`).run(hypothesis.id, payload, createdAt);
     this.indexMemory("hypothesis", hypothesis.id, payload, createdAt);
     this.appendEvent("hypothesis.created", hypothesis.payload);
@@ -271,7 +278,7 @@ export class ResearchStore {
   saveRun(run: { id: string; experimentId: string; status: string; payload: unknown }): void {
     const now = new Date().toISOString();
     this.db.prepare(`INSERT OR REPLACE INTO runs (id, experiment_id, status, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, COALESCE((SELECT created_at FROM runs WHERE id = ?), ?), ?)`)
-      .run(run.id, run.experimentId, run.status, JSON.stringify(run.payload), run.id, now, now);
+      .run(run.id, run.experimentId, run.status, safeJson(run.payload), run.id, now, now);
     this.appendEvent(`run.${run.status}`, { id: run.id, experimentId: run.experimentId, payload: run.payload });
   }
 
@@ -284,7 +291,7 @@ export class ResearchStore {
   savePhaseGoal(goal: { id: string; phase: string; status: string; payload: unknown }): void {
     const now = new Date().toISOString();
     this.db.prepare(`INSERT OR REPLACE INTO phase_goals (id, phase, status, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, COALESCE((SELECT created_at FROM phase_goals WHERE id = ?), ?), ?)`)
-      .run(goal.id, goal.phase, goal.status, JSON.stringify(goal.payload), goal.id, now, now);
+      .run(goal.id, goal.phase, goal.status, safeJson(goal.payload), goal.id, now, now);
     this.appendEvent("phase_goal.updated", goal.payload);
   }
 
@@ -293,7 +300,7 @@ export class ResearchStore {
     this.db.prepare(`
       INSERT INTO research_campaigns (id, payload_json, updated_at) VALUES (1, ?, ?)
       ON CONFLICT(id) DO UPDATE SET payload_json = excluded.payload_json, updated_at = excluded.updated_at
-    `).run(JSON.stringify(campaign), updatedAt);
+    `).run(safeJson(campaign), updatedAt);
     this.appendEvent("research.campaign.updated", campaign);
   }
 
@@ -309,7 +316,7 @@ export class ResearchStore {
       VALUES (?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM trajectories WHERE id = ?), ?), ?)
       ON CONFLICT(id) DO UPDATE SET run_id = excluded.run_id, experiment_id = excluded.experiment_id,
         payload_json = excluded.payload_json, quality_json = excluded.quality_json, updated_at = excluded.updated_at
-    `).run(trajectory.id, trajectory.runId ?? null, trajectory.experimentId ?? null, JSON.stringify(trajectory.payload), JSON.stringify(trajectory.quality), trajectory.id, now, now);
+    `).run(trajectory.id, trajectory.runId ?? null, trajectory.experimentId ?? null, safeJson(trajectory.payload), safeJson(trajectory.quality), trajectory.id, now, now);
     this.appendEvent("trajectory.recorded", { id: trajectory.id, runId: trajectory.runId, experimentId: trajectory.experimentId });
   }
 
@@ -401,13 +408,13 @@ export class ResearchStore {
       INSERT INTO submissions (id, experiment_id, path, status, payload_json, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET path = excluded.path, status = excluded.status, payload_json = excluded.payload_json, updated_at = excluded.updated_at
-    `).run(submission.id, submission.experimentId, submission.path, submission.status, JSON.stringify(submission.payload ?? {}), now, now);
+    `).run(submission.id, submission.experimentId, submission.path, submission.status, safeJson(submission.payload ?? {}), now, now);
     this.appendEvent("submission.updated", { id: submission.id, experimentId: submission.experimentId, path: submission.path, status: submission.status });
   }
 
   updateSubmissionStatus(id: string, status: "prepared" | "approved" | "rejected" | "submitted" | "scored", payload?: unknown): boolean {
     const result = this.db.prepare("UPDATE submissions SET status = ?, payload_json = COALESCE(?, payload_json), updated_at = ? WHERE id = ?")
-      .run(status, payload === undefined ? null : JSON.stringify(payload), new Date().toISOString(), id);
+      .run(status, payload === undefined ? null : safeJson(payload), new Date().toISOString(), id);
     if (result.changes) this.appendEvent("submission.updated", { id, status, payload });
     return result.changes === 1;
   }
@@ -427,7 +434,7 @@ export class ResearchStore {
     this.db.prepare(`
       INSERT OR IGNORE INTO work_queue (id, kind, priority, status, payload_json, attempts, available_at, claimed_at, updated_at)
       VALUES (?, ?, ?, 'queued', ?, 0, ?, NULL, ?)
-    `).run(task.id, task.kind, task.priority, JSON.stringify(task.payload), task.availableAt ?? now, now);
+    `).run(task.id, task.kind, task.priority, safeJson(task.payload), task.availableAt ?? now, now);
     this.appendEvent("queue.enqueued", task);
   }
 
@@ -456,7 +463,7 @@ export class ResearchStore {
 
   updateTask(id: string, status: QueueTaskStatus, payload?: unknown): void {
     const now = new Date().toISOString();
-    this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), updated_at = ? WHERE id = ?").run(status, payload === undefined ? null : JSON.stringify(payload), now, id);
+    this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), updated_at = ? WHERE id = ?").run(status, payload === undefined ? null : safeJson(payload), now, id);
     this.appendEvent(`queue.${status}`, { id, payload });
   }
 
@@ -469,7 +476,7 @@ export class ResearchStore {
 
   retryTask(id: string, payload: unknown, availableAt: string): void {
     const now = new Date().toISOString();
-    this.db.prepare("UPDATE work_queue SET status = 'queued', payload_json = ?, available_at = ?, claimed_at = NULL, updated_at = ? WHERE id = ?").run(JSON.stringify(payload), availableAt, now, id);
+    this.db.prepare("UPDATE work_queue SET status = 'queued', payload_json = ?, available_at = ?, claimed_at = NULL, updated_at = ? WHERE id = ?").run(safeJson(payload), availableAt, now, id);
     this.appendEvent("queue.retry_scheduled", { id, availableAt, payload });
   }
 
@@ -490,13 +497,13 @@ export class ResearchStore {
       } catch { /* an old session may contain a partial payload */ }
     }
     this.db.prepare("UPDATE sessions SET status = 'interrupted', ended_at = ?, updated_at = ? WHERE status = 'active'").run(now, now);
-    this.db.prepare("INSERT OR REPLACE INTO sessions (id, status, payload_json, started_at, ended_at, updated_at) VALUES (?, 'active', ?, ?, NULL, ?)").run(id, JSON.stringify(payload), now, now);
+    this.db.prepare("INSERT OR REPLACE INTO sessions (id, status, payload_json, started_at, ended_at, updated_at) VALUES (?, 'active', ?, ?, NULL, ?)").run(id, safeJson(payload), now, now);
     this.appendEvent("session.started", { id });
   }
 
   saveSession(id: string, payload: unknown): void {
     const now = new Date().toISOString();
-    this.db.prepare("UPDATE sessions SET payload_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(payload), now, id);
+    this.db.prepare("UPDATE sessions SET payload_json = ?, updated_at = ? WHERE id = ?").run(safeJson(payload), now, id);
   }
 
   closeSession(id: string, status: "completed" | "interrupted" = "completed"): void {
@@ -541,7 +548,7 @@ export class ResearchStore {
 
   saveDecision(decision: unknown): number {
     const result = this.db.prepare(`INSERT INTO decisions (decision_json, created_at) VALUES (?, ?)`)
-      .run(JSON.stringify(decision), new Date().toISOString());
+      .run(safeJson(decision), new Date().toISOString());
     this.appendEvent("research.decision", decision);
     return Number(result.lastInsertRowid);
   }
@@ -564,7 +571,8 @@ export class ResearchStore {
       const source = this.db.prepare("SELECT 1 AS present FROM research_sources WHERE id = ?").get(parsed.data.sourceId) as { present: number } | undefined;
       if (!source) throw new Error(`Literature claim ${claim.id} references missing source ${parsed.data.sourceId}.`);
     }
-    const durablePayload = JSON.stringify(candidate);
+    const safeCandidate = redactStructured(candidate);
+    const durablePayload = safeJson(safeCandidate);
     const existing = this.claims().filter((entry) => entry.id !== claim.id).map((entry) => {
       const value = entry.payload as { statement?: unknown; sourceType?: unknown; confidence?: unknown };
       return typeof value.statement === "string" && typeof value.sourceType === "string" && typeof value.confidence === "number"
@@ -585,7 +593,7 @@ export class ResearchStore {
     }
     this.db.prepare(`INSERT OR REPLACE INTO evidence_claims (id, payload_json, created_at) VALUES (?, ?, ?)`).run(claim.id, durablePayload, createdAt);
     this.indexMemory("claim", claim.id, durablePayload, createdAt);
-    this.appendEvent("evidence.claim.created", candidate);
+    this.appendEvent("evidence.claim.created", safeCandidate);
   }
 
   private indexMemory(kind: "claim" | "hypothesis" | "source", id: string, content: string, createdAt: string): void {
@@ -596,13 +604,13 @@ export class ResearchStore {
 
   saveEdge(edge: { id: string; fromId: string; toId: string; relation: string; confidence: number; evidenceIds: string[] }): void {
     this.db.prepare(`INSERT OR REPLACE INTO research_edges (id, from_id, to_id, relation, confidence, evidence_ids_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-      .run(edge.id, edge.fromId, edge.toId, edge.relation, edge.confidence, JSON.stringify(edge.evidenceIds), new Date().toISOString());
+      .run(edge.id, edge.fromId, edge.toId, edge.relation, edge.confidence, safeJson(edge.evidenceIds), new Date().toISOString());
     this.appendEvent("research.edge.created", edge);
   }
 
   saveSource(source: { id: string; payload: unknown }): void {
     const createdAt = new Date().toISOString();
-    const payload = JSON.stringify(source.payload);
+    const payload = safeJson(source.payload);
     this.db.prepare(`INSERT OR REPLACE INTO research_sources (id, payload_json, created_at) VALUES (?, ?, ?)`).run(source.id, payload, createdAt);
     this.indexMemory("source", source.id, payload, createdAt);
     this.appendEvent("research.source.created", source.payload);

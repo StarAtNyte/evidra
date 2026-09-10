@@ -47,7 +47,7 @@ import { applyCriticGate } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment } from "../dist/core/validation.js";
 import { boundLaneToolResult, laneToolCalls, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
-import { isSensitiveWorkspacePath, redactSecrets } from "../dist/core/redaction.js";
+import { isSensitiveWorkspacePath, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -676,6 +676,13 @@ test("research tool boundaries protect sensitive paths and credentials", () => {
   assert.equal(isSensitiveWorkspacePath("src/model.py"), false);
   assert.match(redactSecrets("OPENAI_API_KEY=sk-test_12345678901234567890"), /REDACTED/);
   assert.match(redactSecrets("authorization: Bearer very-secret-value"), /REDACTED/);
+  assert.equal(redactStructured({ nested: "OPENAI_API_KEY=sk-test_12345678901234567890" }).nested.includes("sk-test_"), false);
+  const storeRoot = mkdtempSync(join(tmpdir(), "evidra-redaction-store-"));
+  const store = new ResearchStore(join(storeRoot, ".sota", "database.sqlite"));
+  store.appendEvent("test.secret", { output: "token=sk-test_12345678901234567890" });
+  assert.doesNotMatch(JSON.stringify(store.recentEvents(1)[0].payload), /sk-test_/);
+  store.close();
+  rmSync(storeRoot, { recursive: true, force: true });
 });
 
 test("durable queue worker bounds concurrency and retries failures", async () => {
