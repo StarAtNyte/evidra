@@ -14,6 +14,8 @@ export interface ValidationAcceptanceInput {
   /** Whether a distinct child experiment manifest produced a valid result. */
   independentReplicationObserved?: boolean;
   subgroupDeltas?: number[];
+  requiresSubgroupAnalysis?: boolean;
+  subgroupAnalysisObserved?: boolean;
   probabilityThreshold?: number;
   /** Number of candidate comparisons in the current search family/campaign. */
   comparisonCount?: number;
@@ -74,6 +76,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
     statisticalConfidence: comparison.evidence === "replicated" && (comparison.probabilityImproved ?? 0) >= adjustedProbabilityThreshold,
     replication: !input.requireReplication || input.independentReplicationObserved === true,
     subgroupRegression: !input.subgroupDeltas?.length || input.subgroupDeltas.every((delta) => delta >= -input.maximumRegressionShift),
+    subgroupAnalysis: !input.requiresSubgroupAnalysis || input.subgroupAnalysisObserved === true,
     leakageAudit: input.leakageAuditPassed,
     review: input.reviewerApproved,
   };
@@ -83,6 +86,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   if (!gates.statisticalConfidence) reasons.push(`replicated improvement probability ${(comparison.probabilityImproved ?? 0).toFixed(3)} is below family-wise threshold ${adjustedProbabilityThreshold.toFixed(3)} across ${comparisonCount} comparison(s)`);
   if (!gates.replication) reasons.push("an independently executed child experiment is required");
   if (!gates.subgroupRegression) reasons.push(`worst subgroup delta ${worstSubgroupDelta?.toFixed(6)} exceeds allowed regression ${input.maximumRegressionShift}`);
+  if (!gates.subgroupAnalysis) reasons.push("declared secondary splits have no subgroup evidence");
   if (!gates.leakageAudit) reasons.push("leakage audit has not passed");
   if (!gates.review) reasons.push("independent reviewer approval is missing");
   return { accepted: Object.values(gates).every(Boolean), comparison, gates, reasons, normalizedDelta, worstSubgroupDelta, adjustedProbabilityThreshold };

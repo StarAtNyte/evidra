@@ -776,6 +776,9 @@ test("validation acceptance requires replicated evidence and safety gates", () =
   const subgroupBlocked = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, subgroupDeltas: [0.02, -0.01] });
   assert.equal(subgroupBlocked.gates.subgroupRegression, false);
   assert.equal(subgroupBlocked.accepted, false);
+  const missingSubgroup = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, requiresSubgroupAnalysis: true, subgroupAnalysisObserved: false });
+  assert.equal(missingSubgroup.gates.subgroupAnalysis, false);
+  assert.match(missingSubgroup.reasons.join(" "), /secondary splits/i);
   assert.equal(accepted.adjustedProbabilityThreshold, 0.95);
   const familyWise = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, probabilityThreshold: 0.5, comparisonCount: 2 });
   assert.equal(familyWise.adjustedProbabilityThreshold, 0.75);

@@ -2463,6 +2463,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
             reviewerApproved: false,
             comparisonCount,
             subgroupDeltas: RunResultSchema.parse(candidate.payload).subgroupDeltas,
+            requiresSubgroupAnalysis: (adapter.config.validation?.secondarySplits.length ?? 0) > 0,
+            subgroupAnalysisObserved: RunResultSchema.parse(candidate.payload).subgroupDeltas.length > 0,
           });
           append("assistant", `Run comparison\n  baseline: ${comparison.baselineRunId} · ${comparison.baseline ?? "missing"}\n  candidate: ${comparison.candidateRunId} · ${comparison.candidate ?? "missing"}\n  delta: ${comparison.delta ?? "missing"}\n  result: ${comparison.direction}\n  evidence: ${comparison.evidence}${comparison.probabilityImproved === undefined ? "" : `\n  probability improved: ${(comparison.probabilityImproved * 100).toFixed(1)}%\n  95% CI: [${comparison.confidenceInterval?.[0].toFixed(6)}, ${comparison.confidenceInterval?.[1].toFixed(6)}]`}\n  promotion: ${acceptance.accepted ? "eligible" : "blocked by evidence gates"}\n\n${comparison.note}${acceptance.reasons.length ? `\n\nPromotion gates:\n${acceptance.reasons.map((reason) => `- ${reason}`).join("\n")}` : ""}`);
         } catch (error) { appendError(error); }

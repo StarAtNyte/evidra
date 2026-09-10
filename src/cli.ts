@@ -2582,6 +2582,8 @@ experiment.command("run")
           independentReplicationObserved: typeof entryPayload.replicationOf === "string" || typeof manifest.parent === "string",
           comparisonCount,
           subgroupDeltas: recorded.subgroupDeltas,
+          requiresSubgroupAnalysis: (adapter.config.validation?.secondarySplits.length ?? 0) > 0,
+          subgroupAnalysisObserved: recorded.subgroupDeltas.length > 0,
         });
         resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, comparisonCount, adjustedProbabilityThreshold: acceptance.adjustedProbabilityThreshold, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });
         if (operator) {
