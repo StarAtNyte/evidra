@@ -114,7 +114,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
   "/research": [["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research resume", "Resume the saved campaign"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
   "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
-  "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"]],
+  "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
   "/sources": [["/sources list", "List retrieved sources"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
@@ -1664,6 +1664,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (!experiment) { store.close(); append("assistant", `Experiment not found: ${id ?? "(missing id)"}`); return; }
         const payload = experiment.payload as Record<string, unknown>;
         const run = store.runs().find((candidate) => candidate.id === payload.runId || candidate.experimentId === id);
+        const storedGates = store.experimentGates(id);
         const currentCommit = await runProcess(["git", "rev-parse", "HEAD"], root);
         store.close();
         if (!run) { append("assistant", `No run recorded for ${id}. Run the experiment first.`); return; }
@@ -1671,10 +1672,26 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const manifest = ExperimentManifestSchema.parse(payload);
           const runResult = RunResultSchema.parse(run.payload);
           const adapter = activeAdapter();
-          const audit = auditExperiment(manifest, runResult, { currentCommit: currentCommit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, splitVersion: manifest.splitVersion });
+          const audit = auditExperiment(manifest, runResult, { currentCommit: currentCommit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, splitVersion: manifest.splitVersion, leakageAuditPassed: storedGates.leakageAuditPassed, reviewerApproved: storedGates.reviewerApproved });
           const gateLines = Object.entries(audit.gates).map(([name, passed]) => `  ${passed ? "✓" : "·"} ${name}`).join("\n");
           append("assistant", `Evidence audit · ${id}\nStatus: ${audit.accepted ? "ACCEPTED" : "NOT ACCEPTED"}\n\n${gateLines}${audit.reasons.length ? `\n\nReasons:\n${audit.reasons.map((reason) => `- ${reason}`).join("\n")}` : ""}`);
         } catch (error) { appendError(error); }
+        return;
+      }
+      if (action === "gate") {
+        const id = parts[2];
+        const gate = parts[3];
+        const approved = (parts[4] ?? "approve") === "approve";
+        if (!id || (gate !== "leakage" && gate !== "review") || !["approve", "clear"].includes(parts[4] ?? "approve")) {
+          store.close();
+          append("assistant", "Usage: /experiment gate <id> leakage|review approve|clear");
+          return;
+        }
+        if (!store.experiments().some((entry) => entry.id === id)) { store.close(); append("assistant", `Experiment not found: ${id}`); return; }
+        store.setExperimentGates(id, gate === "leakage" ? { leakageAuditPassed: approved } : { reviewerApproved: approved });
+        const gates = store.experimentGates(id);
+        store.close();
+        append("assistant", `Evidence gate updated · ${id}\n  leakage audit: ${gates.leakageAuditPassed ? "approved" : "pending"}\n  reviewer: ${gates.reviewerApproved ? "approved" : "pending"}`);
         return;
       }
       if (action === "compare") {
