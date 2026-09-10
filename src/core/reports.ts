@@ -19,6 +19,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const experiments = store.experiments();
   const runs = store.runs();
   const artifacts = store.artifacts();
+  const trajectories = store.trajectories(100);
   const events = store.recentEvents(40);
   const title = kind === "research" ? "Research report" : kind === "challenge" ? "Challenge report" : "Final provenance report";
   const sections = [
@@ -42,8 +43,17 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   if (kind !== "challenge") sections.push("", "## Hypotheses", "", hypotheses.length ? hypotheses.map((hypothesis) => `- ${hypothesis.id}: ${line((hypothesis.payload as { title?: string }).title ?? hypothesis.payload)}`).join("\n") : "No hypotheses recorded.");
   sections.push("", "## Decisions", "", decisions.length ? decisions.map((decision) => `- ${decision.id} · ${decision.createdAt}\n  ${line(decision.payload)}`).join("\n") : "No decisions recorded.");
   sections.push("", "## Evidence claims", "", claims.length ? claims.slice(0, 80).map((claim) => `- ${claim.id}: ${line((claim.payload as { statement?: string }).statement ?? claim.payload)}`).join("\n") : "No claims recorded.");
+  sections.push("", "## Trajectory quality", "", trajectories.length ? trajectories.map((trajectory) => {
+    const quality = trajectory.quality as { overall?: string; [key: string]: unknown };
+    const dimensions = Object.entries(quality).filter(([key]) => key !== "overall").map(([key, value]) => `${key}=${(value as { verdict?: string }).verdict ?? "unknown"}`).join(", ");
+    return `- ${trajectory.id} · ${quality.overall ?? "unknown"}${trajectory.experimentId ? ` · experiment ${trajectory.experimentId}` : ""}${trajectory.runId ? ` · run ${trajectory.runId}` : ""}\n  ${dimensions}`;
+  }).join("\n") : "No evaluated trajectories recorded.");
   sections.push("", "## Sources", "", sources.length ? sources.map((source) => `- ${source.id}: ${line((source.payload as { title?: string; url?: string }).title ?? source.payload)} · ${(source.payload as { url?: string }).url ?? ""}`).join("\n") : "No sources recorded.");
-  if (kind !== "research") sections.push("", "## Experiments and runs", "", experiments.length ? experiments.map((experiment) => `- ${experiment.id}: ${line((experiment.payload as { status?: string }).status ?? experiment.payload)}`).join("\n") : "No experiments recorded.", "", runs.length ? runs.map((run) => `- ${run.id} · ${run.status} · experiment ${run.experimentId}`).join("\n") : "No runs recorded.", "", `Artifacts recorded: ${artifacts.length}`);
+  if (kind !== "research") sections.push("", "## Experiments and runs", "", experiments.length ? experiments.map((experiment) => {
+    const payload = experiment.payload as { status?: string; executionPlan?: Array<{ id: string; status: string }> };
+    const plan = payload.executionPlan?.map((stage) => `${stage.id}=${stage.status}`).join(", ");
+    return `- ${experiment.id}: ${line(payload.status ?? experiment.payload)}${plan ? `\n  stages: ${plan}` : ""}`;
+  }).join("\n") : "No experiments recorded.", "", runs.length ? runs.map((run) => `- ${run.id} · ${run.status} · experiment ${run.experimentId}`).join("\n") : "No runs recorded.", "", `Artifacts recorded: ${artifacts.length}`);
   sections.push("", "## Recent event log", "", events.length ? events.map((event) => `- ${event.createdAt} · ${event.type}`).join("\n") : "No events recorded.");
   return `${sections.join("\n")}\n`;
 }
