@@ -144,6 +144,10 @@ Replication gates are tied to the declared child manifest as well: two
 unrelated successful runs cannot satisfy the replication phase. The controller
 must observe a successful run for the recorded replication ID.
 
+Data-audit completion follows the same discipline: clean reports pass directly,
+while reports containing duplicates, distribution shifts, or warnings require an
+explicit recorded acceptance reason before the phase can advance.
+
 ## Evaluator integrity and specification gaming
 
 DeltaML-Bench reports that ordinary modular ML-agent configurations can exhibit

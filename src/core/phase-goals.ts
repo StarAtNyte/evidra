@@ -82,7 +82,17 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
       else if (!Object.keys((baseline as { artifactChecksums?: Record<string, unknown> }).artifactChecksums ?? {}).length) missing.push("checksummed baseline artifacts");
       break;
     }
-    case "data_audit": if (!has("data.audit.completed")) missing.push("data audit report"); break;
+    case "data_audit": {
+      const reports = payloads("data.audit.completed");
+      if (!reports.length) missing.push("data audit report");
+      else {
+        const latest = reports.at(-1) as { duplicateGroups?: unknown[]; distributionShift?: unknown[]; warnings?: unknown[] };
+        const clean = (latest.duplicateGroups?.length ?? 0) === 0 && (latest.distributionShift?.length ?? 0) === 0 && (latest.warnings?.length ?? 0) === 0;
+        const accepted = payloads("data.audit.accepted").some((payload) => (payload as { accepted?: unknown }).accepted === true);
+        if (!clean && !accepted) missing.push("critical audit findings resolved or explicitly accepted");
+      }
+      break;
+    }
     case "validation": if (!has("validation.policy.created")) missing.push("versioned validation policy"); break;
     case "hypothesis": if ((evidence.hypotheses + (evidence.candidateHypotheses ?? 0)) < 1) missing.push("durable hypothesis"); if (evidence.experiments < 1 && !has("experiment.created")) missing.push("experiment manifest"); break;
     case "implementation": if (!has("experiment.stage.smoke.completed") && !has("experiment.stage.full_validation.completed")) missing.push("completed implementation or smoke stage"); break;

@@ -138,7 +138,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
   "/research": [["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research resume", "Resume the saved campaign"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
-  "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
+  "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
   "/sources": [["/sources list", "List retrieved sources"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources discover", "Search scholarly literature"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
@@ -2066,15 +2066,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Active challenge: ${adapter.config.name}\nID: ${adapter.id}\nMetric: ${adapter.config.metric.name} (${adapter.config.metric.direction})\nUse /challenge inspect or /challenge baseline.`);
       return;
     }
-    if (request === "/challenge audit") {
+    const auditAcceptance = request.match(/^\/challenge audit accept\s+(.+)$/);
+    if (request === "/challenge audit" || auditAcceptance) {
       setConfig((current) => ({ ...current, mode: "challenge" }));
       const adapter = activeAdapter();
       const report = auditData(adapter.workspacePath(root));
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       store.appendEvent("data.audit.completed", report);
+      if (auditAcceptance?.[1]?.trim()) store.appendEvent("data.audit.accepted", { accepted: true, reason: auditAcceptance[1].trim(), findings: { duplicateGroups: report.duplicateGroups.length, distributionShift: report.distributionShift.length, warnings: report.warnings.length } });
       store.saveClaim({ id: `claim_data_audit_${Date.now()}`, payload: { statement: `Data audit scanned ${report.scannedFiles} files and found ${report.duplicateGroups.length} exact duplicate group(s).`, scope: adapter.id, confidence: 1, sourceType: "observation", sourceId: `data_audit_${Date.now()}`, status: "active", report } });
       store.close();
-      append("assistant", `Data audit · ${adapter.id}\nScanned: ${report.scannedFiles} files · ${report.totalBytes} bytes\nDuplicate groups: ${report.duplicateGroups.length}\nSkipped: ${report.skippedFiles.length}\n${report.warnings.length ? `Warnings:\n${report.warnings.map((warning) => `- ${warning}`).join("\n")}` : "No exact-duplicate or audit-limit warnings."}`);
+      append("assistant", `Data audit · ${adapter.id}\nScanned: ${report.scannedFiles} files · ${report.totalBytes} bytes\nDuplicate groups: ${report.duplicateGroups.length}\nDistribution shifts: ${report.distributionShift.length}\nSkipped: ${report.skippedFiles.length}\n${report.warnings.length ? `Warnings:\n${report.warnings.map((warning) => `- ${warning}`).join("\n")}` : "No exact-duplicate or audit-limit warnings."}${auditAcceptance ? `\n\nAccepted with reason: ${auditAcceptance[1].trim()}` : ""}`);
       return;
     }
     if (request === "/challenge policy") {

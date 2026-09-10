@@ -968,6 +968,14 @@ test("replication phase requires a successful run for the declared child manifes
   assert.equal(complete.met, true);
 });
 
+test("data-audit phase requires clean findings or explicit acceptance", () => {
+  const goal = definePhaseGoals("test", "challenge").find((entry) => entry.phase === "data_audit");
+  const report = { type: "data.audit.completed", payload: { duplicateGroups: [{ files: ["a", "b"] }], distributionShift: [], warnings: [] } };
+  assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [report.type], eventPayloads: [report], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, false);
+  const accepted = { type: "data.audit.accepted", payload: { accepted: true, reason: "duplicates are intentional source mirrors" } };
+  assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [report.type, accepted.type], eventPayloads: [report, accepted], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, true);
+});
+
 test("project-local competition manifests replace hardcoded adapters", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-competition-"));
   try {

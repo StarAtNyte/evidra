@@ -939,11 +939,12 @@ for (const action of ["pause", "resume", "stop"] as const) {
   });
 }
 challenge.command("inspect").action(() => console.log(JSON.stringify(activeCompetition().config, null, 2)));
-challenge.command("audit").action(() => {
+challenge.command("audit").option("--accept <reason>", "explicitly accept unresolved audit findings with a reason").action((options: { accept?: string }) => {
   const adapter = activeCompetition();
   const report = auditData(adapter.workspacePath(root));
   const store = new ResearchStore(statePath);
   store.appendEvent("data.audit.completed", report);
+  if (options.accept?.trim()) store.appendEvent("data.audit.accepted", { accepted: true, reason: options.accept.trim(), findings: { duplicateGroups: report.duplicateGroups.length, distributionShift: report.distributionShift.length, warnings: report.warnings.length } });
   store.close();
   console.log(JSON.stringify(report, null, 2));
 });
