@@ -58,6 +58,19 @@ export function planHarnessAdaptation(
     if (comparison.coverage < 0.8 || comparison.validPairedArms < comparison.comparableArms) {
       add("reliability", `${comparison.incumbent} paired validity`, `${(comparison.coverage * 100).toFixed(0)}% valid paired coverage against ${comparison.incumbent}.`, "Reducing invalid or missing runs will raise the conservative lower bound without changing the task metric.", "Instrument the failing route, classify the terminal failure, and add a bounded alternate route before retesting.", "At least 80% valid paired coverage with no silently dropped arms.");
     }
+    if (comparison.sliceRegressions.length) {
+      for (const slice of comparison.sliceRegressions.slice(0, 4)) {
+        const lower = comparison.sliceLower95[slice];
+        add(
+          "coverage",
+          `${comparison.incumbent} slice ${slice}`,
+          `Slice '${slice}' has a paired lower 95% bound of ${lower?.toFixed(6) ?? "unknown"}.`,
+          "A slice-targeted route will remove the minority-domain regression without changing the locked metric, budget, or protocol.",
+          `Inspect the failing '${slice}' task family, add one bounded route or verifier targeted to that slice, and retest all slices under the same protocol.`,
+          `The '${slice}' slice lower 95% bound is non-negative and no previously passing slice regresses.`,
+        );
+      }
+    }
     if (comparison.pairedProcessQualityDelta !== null && comparison.pairedProcessQualityDelta < -0.1) {
       add("alignment", `${comparison.incumbent} execution alignment`, `Process-quality delta ${comparison.pairedProcessQualityDelta.toFixed(3)} is below the non-regression gate.`, "Explicit tool-result closure and evidence checks will reduce process regressions.", "Add an independent critic/verifier gate at the failing boundary and retest the same protocol.", "Paired process-quality delta is at least -0.1.");
     }

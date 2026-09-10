@@ -497,6 +497,33 @@ test("harness comparison failures become a locked adaptive retest agenda", () =>
   assert.ok(plan.interventions.some((item) => item.kind === "recovery"));
 });
 
+test("slice regressions become targeted adaptive interventions", () => {
+  const plan = planHarnessAdaptation([], [], [{
+    challenger: "evidra",
+    incumbent: "incumbent",
+    comparableArms: 4,
+    validPairedArms: 4,
+    tasks: 2,
+    coverage: 1,
+    pairedMeanDelta: 0.01,
+    pairedLower95: 0.01,
+    processComparableArms: 4,
+    pairedProcessQualityDelta: 0,
+    timeComparableArms: 4,
+    pairedTimeEfficiencyDelta: 0,
+    sliceMeanDeltas: { majority: 0.2, minority: -0.3 },
+    sliceLower95: { majority: 0.1, minority: -0.2 },
+    sliceRegressions: ["minority"],
+    challengerWins: false,
+    reason: "slice regressions block the claim: minority",
+  }], "evidra");
+  const intervention = plan.interventions.find((item) => item.target === "incumbent slice minority");
+  assert.ok(intervention);
+  assert.equal(intervention.kind, "coverage");
+  assert.equal(intervention.priority, "critical");
+  assert.match(intervention.action, /minority/);
+});
+
 test("claim audit separates measured, literature, unsupported, and conflicted evidence", () => {
   const report = auditClaims({
     claims: [
