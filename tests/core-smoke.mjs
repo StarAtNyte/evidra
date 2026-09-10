@@ -1006,6 +1006,8 @@ test("metric parser accepts evaluator JSON and keyed log output", () => {
   const parsed = parseMetricOutput('{"metrics":{"rmse":0.42},"metricsByFold":{"rmse":[0.4,0.44]}}\nrmse: 0.41\n', "rmse");
   assert.equal(parsed.metrics.rmse, 0.41);
   assert.deepEqual(parsed.metricsByFold.rmse, [0.4, 0.44]);
+  const autoresearch = parseMetricOutput("---\nval_bpb:          1.253616\ntraining_seconds: 45.0\n", "val_bpb");
+  assert.equal(autoresearch.metrics.val_bpb, 1.253616);
 });
 
 test("Modal result parser ignores progress and rejects malformed worker payloads", () => {

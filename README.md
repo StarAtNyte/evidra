@@ -477,6 +477,8 @@ The next research-lab layers are:
 
 These are separate from the core TUI so Evidra remains useful for non-Kaggle research and can be operated entirely from a terminal.
 
+For a reproducible end-to-end harness trial, see [the Karpathy Autoresearch recipe](docs/benchmarks/karpathy-autoresearch.md). It exercises the generic manifest, GPU worker, metric parser, evidence artifacts, and autonomous experiment loop without adding a benchmark-specific agent path.
+
 ## Contribution
 
 Evidra is currently maintained as a private research project. Contributions should preserve the central invariants: deterministic state over conversational state, bounded autonomy, explicit provenance, isolated experiments, and no credential exposure to agents.
