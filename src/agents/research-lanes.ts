@@ -6,6 +6,7 @@ import { isProviderUsageLimit, isRetryableAgentError, resolveLocalFallbackModel,
 import type { ProcessControl } from "../core/process.js";
 import type { AutonomyLevel } from "../core/permissions.js";
 import type { ResearchToolCall, ResearchToolResult } from "../core/tools.js";
+import { boundResearchContext } from "../core/context-budget.js";
 
 export const RESEARCH_LANE_ROLES = [
   "data detective",
@@ -314,7 +315,8 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     for (let attempt = 1; attempt <= 3 && !parsed; attempt += 1) {
       if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
       try {
-        const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective), context: { ...context, laneToolResults: toolResults } }, {
+        const bounded = boundResearchContext({ ...context, laneToolResults: toolResults });
+        const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective), context: bounded.context }, {
           provider,
           model,
           limitPolicy: options.limitPolicy,

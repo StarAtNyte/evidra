@@ -103,6 +103,19 @@ import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseL
 import { assessStopPolicy } from "../dist/core/stop-policy.js";
 import { classifyVerifier, verifierKind } from "../dist/core/formal-verification.js";
 import { detectRouteDrift } from "../dist/core/drift-detection.js";
+import { boundResearchContext } from "../dist/core/context-budget.js";
+
+test("research context packing preserves priority and records truncation", () => {
+  const packed = boundResearchContext({
+    observation: { status: "trusted" },
+    recentEvents: Array.from({ length: 100 }, (_, index) => ({ index, text: "event-data-".repeat(100) })),
+    researchSources: ["source-".repeat(1000)],
+  }, 4_000);
+  assert.equal((packed.context.observation).status, "trusted");
+  assert.ok(packed.report.usedChars <= packed.report.maxChars + 100);
+  assert.ok(packed.report.truncated.length > 0 || packed.report.dropped.length > 0);
+  assert.ok(packed.context.contextBudget);
+});
 
 test("route drift requires adjacent windows before changing policy", () => {
   const report = detectRouteDrift([

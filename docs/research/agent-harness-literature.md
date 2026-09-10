@@ -341,6 +341,13 @@ Recent work makes the missing control loop more explicit. [Adaptive Auto-Harness
 
 This policy is intentionally not allowed to self-award a win. The competitive claim still requires the locked task/model/seed/budget/evaluator protocol and positive task-balanced evidence. The adaptation policy changes the search and verification process; it does not change the yardstick.
 
+Context selection is also a runtime control. Before each director or lane
+provider call, Evidra packs the evidence sections under one aggregate character
+budget, prioritizes observations and active phase evidence, bounds arrays and
+long strings, and records dropped/truncated sections in `contextBudget`. This
+prevents long-lived campaigns from turning accumulated memory into uncontrolled
+prompt growth while preserving provenance about what the model actually saw.
+
 The same principle now applies below the benchmark layer: recent executor
 failure classes are fed directly into the next allocation. An invalid metric or
 corrupt artifact prioritizes verifier repair, a missing-data failure prioritizes
