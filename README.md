@@ -56,7 +56,7 @@ For unattended operation, `modal_controller.py` runs the Node controller headles
 
 ```bash
 EVIDRA_MODAL_WORKSPACE="$PWD" modal run modal_controller.py::run \
-  --goal "maximize robust validation performance" --budget 4h --lanes 3
+  --goal "maximize robust validation performance" --budget 4h --mode challenge --lanes 3
 ```
 
 The headless controller is controllable without attaching a second interactive agent. Its
@@ -255,6 +255,14 @@ Continue a paused or interrupted headless campaign explicitly with `--resume`:
 Headless research acquires a durable controller lease and heartbeats it while running. A
 second controller for the same project is refused instead of competing for SQLite state;
 an interrupted process leaves the campaign resumable and its stale lease recoverable.
+
+The same autonomous loop can run as a challenge campaign:
+
+    evidra challenge start --goal "win the active challenge" --budget 4h --limit-policy fallback
+
+If the process is interrupted, continue it with:
+
+    evidra challenge resume
 
 Use a local model directly when Codex is unavailable:
 

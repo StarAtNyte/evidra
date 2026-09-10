@@ -440,14 +440,15 @@ challenge.command("status").action(() => {
   store.close();
 });
 for (const action of ["pause", "resume", "stop"] as const) {
-  challenge.command(action).description(`${action[0].toUpperCase()}${action.slice(1)} the durable challenge campaign`).action(() => {
+  challenge.command(action).description(`${action[0].toUpperCase()}${action.slice(1)} the durable challenge campaign`).action(async () => {
     const store = new ResearchStore(statePath);
     const campaign = store.campaign() as Record<string, unknown> | undefined;
     if (!campaign) { store.close(); throw new Error("No challenge campaign exists. Start one in the Evidra TUI with /challenge start."); }
+    if (action === "resume" && campaign.status === "completed") { store.close(); throw new Error("The challenge campaign is completed/stopped. Start a new campaign with evidra challenge start."); }
     const lease = store.liveControllerLease();
-    if (lease && action !== "resume") {
+    if (lease) {
       store.requestControllerAction(action);
-      store.setSchedulerState({ status: "draining", mode: "challenge", currentStep: `requested-${action}` });
+      store.setSchedulerState({ status: action === "resume" ? "running" : "draining", mode: "challenge", currentStep: `requested-${action}` });
       store.close();
       console.log(`Challenge ${action} requested; active controller pid ${lease.pid} will apply it at the next safe boundary.`);
       return;
@@ -458,6 +459,14 @@ for (const action of ["pause", "resume", "stop"] as const) {
     store.setSchedulerState({ status: action === "stop" ? "idle" : action === "resume" ? "running" : "paused", mode: "challenge", currentStep: action });
     store.close();
     console.log(`Challenge campaign ${action === "stop" ? "stopped" : `${action}d`}.`);
+    if (action === "resume") {
+      const script = process.argv[1];
+      if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
+      const result = await runProcess([process.execPath, script, "research", "--mode", "challenge", "--resume"], root, 7 * 24 * 60 * 60_000, (stream, chunk) => {
+        (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
+      });
+      if (result.exitCode !== 0) process.exitCode = result.exitCode;
+    }
   });
 }
 challenge.command("inspect").action(() => console.log(JSON.stringify(activeCompetition().config, null, 2)));
@@ -483,10 +492,33 @@ challenge.command("baseline").description("Run the canonical baseline").action(a
   if (result.stderr) console.error(result.stderr);
   if (result.exitCode !== 0) process.exitCode = result.exitCode;
 });
+
+challenge.command("start")
+  .description("Start a fully autonomous headless challenge campaign")
+  .option("--goal <goal>", "ultimate challenge goal", "Win the active challenge with robust, reproducible evidence")
+  .option("--budget <duration>", "autonomous budget, e.g. 90m or 4h", "60m")
+  .option("--stop <condition>", "campaign stopping condition", "stop after a replicated improvement or when evidence is exhausted")
+  .option("--provider <provider>", "agent provider: codex or local", "codex")
+  .option("--model <model>", "provider model; use default for Codex", "default")
+  .option("--thinking <effort>", "reasoning effort", "high")
+  .option("--lanes <count>", "maximum independent research lanes", "3")
+  .option("--limit-policy <policy>", "on provider usage limit: wait, fallback, or stop", "wait")
+  .option("--resume", "resume the saved challenge campaign")
+  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; limitPolicy: string; resume?: boolean }) => {
+    const script = process.argv[1];
+    if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
+    const args = ["research", "--mode", "challenge", "--goal", options.goal, "--budget", options.budget, "--stop", options.stop, "--provider", options.provider, "--model", options.model, "--thinking", options.thinking, "--lanes", options.lanes, "--limit-policy", options.limitPolicy];
+    if (options.resume) args.push("--resume");
+    const result = await runProcess([process.execPath, script, ...args], root, 7 * 24 * 60 * 60_000, (stream, chunk) => {
+      (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
+    });
+    if (result.exitCode !== 0) process.exitCode = result.exitCode;
+  });
 program.addCommand(challenge);
 
 const research = new Command("research").description("Ask the embedded research agent for the next research decision");
 research
+  .option("--mode <mode>", "campaign mode: research or challenge", "research")
   .option("--goal <goal>", "ultimate research goal", "Improve the current workspace or research problem with robust, reproducible evidence")
   .option("--budget <duration>", "autonomous budget, e.g. 90m or 4h", "60m")
   .option("--stop <condition>", "campaign stopping condition", "stop when the research director has sufficient evidence for the stated goal")
@@ -497,16 +529,18 @@ research
   .option("--limit-policy <policy>", "on provider usage limit: wait, fallback, or stop", "wait")
   .option("--resume", "resume the latest durable non-completed research campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; limitPolicy: string; resume?: boolean; skipBaseline?: boolean }) => {
+  .action(async (options: { mode: string; goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; limitPolicy: string; resume?: boolean; skipBaseline?: boolean }) => {
     if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
     if (!["wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'wait', 'fallback', or 'stop'.");
+    if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Mode must be 'research' or 'challenge'.");
+    const mode = options.mode as "research" | "challenge";
     const adapter = activeCompetition();
     await ingestCompetitionSources(adapter);
     const budget = durationMinutes(options.budget);
     const selectedModel = options.provider === "local" && options.model === "default" ? "qwen3.6:27b" : options.model;
     const laneLimit = Math.max(1, Math.min(6, Number.parseInt(options.lanes, 10) || 1));
     await checkProvider({ provider: options.provider, model: selectedModel, cwd: root });
-    const releaseLease = acquireCliControllerLease("research");
+    const releaseLease = acquireCliControllerLease(mode);
     const started = Date.now();
     const savedStore = new ResearchStore(statePath);
     const savedCampaign = savedStore.campaign() as { goal?: string; budgetMinutes?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed" } | undefined;
@@ -532,29 +566,29 @@ research
       const store = new ResearchStore(statePath);
       if (!store.project()) store.createProject({ id: `evidra-${adapter.id}`, name: adapter.config.name, competitionId: adapter.id, config: adapter.config });
       store.saveCampaign(campaign);
-      if (!store.phaseGoals().length) for (const goal of definePhaseGoals(objective, "research")) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
+      if (!store.phaseGoals().length) for (const goal of definePhaseGoals(objective, mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
       const phaseGoal = activePhaseGoal(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)));
       const recentEvents = store.recentEvents(20);
       const researchSources = store.sources().slice(0, 12).map((entry) => entry.payload);
       const researchMemory = researchMemoryContext(store, 30);
-      console.log(`Research ${cycle} · inspecting workspace and baseline (budget ${budget}m)...`);
+      console.log(`${mode === "challenge" ? "Challenge" : "Research"} ${cycle} · inspecting workspace${mode === "challenge" ? " and baseline" : ""} (budget ${campaign.budgetMinutes}m)...`);
       const gitStatus = await runProcess(["git", "status", "--short"], root);
       const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
-      const priorBaseline = store.recentEvents(100).reverse().find((event) => event.type === "baseline.completed");
-      let baseline: { exitCode: number; durationMs: number; stdout: string; stderr: string };
-      if (options.skipBaseline && priorBaseline) {
+      const priorBaseline = mode === "challenge" ? store.recentEvents(100).reverse().find((event) => event.type === "baseline.completed") : undefined;
+      let baseline: { exitCode: number; durationMs: number; stdout: string; stderr: string } | undefined;
+      if (mode === "challenge" && options.skipBaseline && priorBaseline) {
         const payload = priorBaseline.payload as { exitCode?: number; durationMs?: number; stdout?: string; stderr?: string };
         baseline = { exitCode: payload.exitCode ?? 0, durationMs: payload.durationMs ?? 0, stdout: payload.stdout ?? "", stderr: payload.stderr ?? "" };
         console.log("Research · reusing the latest recorded baseline observation (--skip-baseline).");
-      } else {
+      } else if (mode === "challenge") {
         if (options.skipBaseline) throw new Error("--skip-baseline requested, but no baseline.completed event exists. Run evidra baseline first.");
         baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
       }
-      if (!(options.skipBaseline && priorBaseline)) {
+      if (mode === "challenge" && baseline && !(options.skipBaseline && priorBaseline)) {
         const metric = parseMetricOutput(baseline.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
         store.appendEvent(baseline.exitCode === 0 ? "baseline.completed" : "baseline.failed", { command: adapter.baselineCommand(), cwd: adapter.workspacePath(root), exitCode: baseline.exitCode, durationMs: baseline.durationMs, metric, stdout: baseline.stdout, stderr: baseline.stderr });
       }
-      const observation = { gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40), repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120), baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout.slice(-4000), stderr: baseline.stderr.slice(-4000) } };
+      const observation = { gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40), repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120), ...(baseline ? { baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout.slice(-4000), stderr: baseline.stderr.slice(-4000) } } : {}) };
       store.appendEvent("research.observation", observation);
       store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
       store.close();
@@ -614,7 +648,7 @@ research
       if (phaseGoal && decision.goalStatus === "met") {
         const phaseEvents = decisionStore.recentEvents(500);
         const gate = evaluatePhaseGoalEvidence(phaseGoal, {
-          mode: "research",
+          mode,
           eventTypes: phaseEvents.map((event) => event.type),
           eventPayloads: phaseEvents.map((event) => ({ type: event.type, payload: event.payload })),
           ...decisionStore.counts(),

@@ -1334,6 +1334,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
       if (!saved) { store.close(); append("assistant", `No ${lifecycleMode} campaign exists. Use /${lifecycleMode} start.`); return; }
+      if (action === "resume" && saved.status === "completed") {
+        store.close();
+        append("assistant", `${lifecycleMode === "challenge" ? "Challenge" : "Research"} campaign is completed/stopped. Start a new campaign with /${lifecycleMode} start.`);
+        return;
+      }
       if (action === "pause") {
         pauseActiveProcesses();
         if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }

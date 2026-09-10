@@ -76,7 +76,9 @@ def set_control(action: str) -> str:
 
 
 @app.function(image=image, secrets=secrets, volumes={"/state": STATE_VOLUME}, timeout=24 * 60 * 60)
-def execute(goal: str, budget: str, provider: str = "codex", model: str = "default", lanes: int = 3) -> int:
+def execute(goal: str, budget: str, mode: str = "research", provider: str = "codex", model: str = "default", lanes: int = 3) -> int:
+    if mode not in {"research", "challenge"}:
+        raise ValueError("Controller mode must be research or challenge")
     environment = {
         **os.environ,
         "EVIDRA_STATE_DIR": "/state",
@@ -91,6 +93,7 @@ def execute(goal: str, budget: str, provider: str = "codex", model: str = "defau
         return build.returncode
     command = [
         "node", "dist/cli.js", "research",
+        "--mode", mode,
         "--goal", goal,
         "--budget", budget,
         "--provider", provider,
@@ -106,7 +109,7 @@ def execute(goal: str, budget: str, provider: str = "codex", model: str = "defau
 
 
 @app.local_entrypoint()
-def run(action: str = "start", goal: str = "", budget: str = "4h", provider: str = "codex", model: str = "default", lanes: int = 3) -> None:
+def run(action: str = "start", goal: str = "", budget: str = "4h", mode: str = "research", provider: str = "codex", model: str = "default", lanes: int = 3) -> None:
     if action == "status":
         print(json.dumps(inspect_state.remote(), indent=2, default=str))
         return
@@ -115,4 +118,4 @@ def run(action: str = "start", goal: str = "", budget: str = "4h", provider: str
         return
     if action != "start" or not goal:
         raise ValueError("Start requires --goal; actions are start, status, pause, resume, and stop")
-    raise SystemExit(execute.remote(goal, budget, provider, model, lanes))
+    raise SystemExit(execute.remote(goal, budget, mode, provider, model, lanes))
