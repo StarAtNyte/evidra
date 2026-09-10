@@ -23,6 +23,7 @@ export function summarizeTimelineEvent(event: TimelineEvent): string {
     return `experiment ${id} · ${stage}${metric}`.trim();
   }
   if (event.type === "run.retry.scheduled") return `experiment ${text(payload.experimentId, "unknown")} · retry ${String(payload.attempt ?? "?")} · ${text(payload.action, "recovery scheduled")}`;
+  if (event.type === "run.attempt.completed") return `experiment ${text(payload.experimentId, "unknown")} · attempt ${String(payload.attempt ?? "?")} · ${text(payload.status, "unknown")}${payload.metric !== null && payload.metric !== undefined ? ` · metric ${String(payload.metric)}` : ""}`;
   if (event.type === "research.decision") return `research · ${text(payload.phase, "decision")} · ${text(payload.decision, "updated")}`;
   if (event.type === "research.cycle.completed") return `research cycle · ${text(payload.phase, "completed")}`;
   if (event.type.startsWith("controller.")) return `controller · ${event.type.slice("controller.".length).replace(/\./g, " ")}${id ? ` · ${id}` : ""}`;

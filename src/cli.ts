@@ -1051,6 +1051,23 @@ experiment.command("run")
     }
     let result = await executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name);
     let attempt = 1;
+    const recordAttempt = (attemptNumber: number, attemptResult: typeof result): void => {
+      const attemptStore = new ResearchStore(statePath);
+      attemptStore.appendEvent("run.attempt.completed", {
+        experimentId: id,
+        attempt: attemptNumber,
+        runId: attemptResult.runId,
+        status: attemptResult.status,
+        exitCode: attemptResult.exitCode,
+        durationSeconds: attemptResult.durationSeconds,
+        metric: attemptResult.metrics[adapter.config.metric.name] ?? null,
+        failureClass: attemptResult.failureClass ?? null,
+        command: attemptResult.command ?? command,
+        cwd: attemptResult.cwd ?? experimentCwd,
+      });
+      attemptStore.close();
+    };
+    recordAttempt(attempt, result);
     while (result.status !== "completed") {
       const plan = recoveryPlan(result.failureClass);
       if (!plan.retry || attempt >= plan.maxAttempts) break;
@@ -1062,6 +1079,7 @@ experiment.command("run")
       await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, delay * 1000));
       attempt += 1;
       result = await executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name);
+      recordAttempt(attempt, result);
     }
     const evaluatorCommand = isCandidateEvaluation ? command : adapter.config.evaluator.command;
     const sameCommand = evaluatorCommand.length === command.length && evaluatorCommand.every((part, index) => part === command[index]);
