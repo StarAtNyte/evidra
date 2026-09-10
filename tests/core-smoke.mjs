@@ -57,7 +57,7 @@ import { validateCompetitionContract } from "../dist/core/competition-contract.j
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
-import { effectiveCodexSandbox } from "../dist/agents/codex-exec.js";
+import { createIsolatedCodexWorkspace, effectiveCodexSandbox } from "../dist/agents/codex-exec.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -88,6 +88,24 @@ test("Codex sandbox remains safe by default and supports an explicit benchmark o
   assert.equal(effectiveCodexSandbox("read-only"), "danger-full-access");
   if (previous === undefined) delete process.env.EVIDRA_CODEX_SANDBOX;
   else process.env.EVIDRA_CODEX_SANDBOX = previous;
+});
+
+test("full-access research workspaces cannot modify the controller checkout", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-codex-isolation-"));
+  try {
+    writeFileSync(join(root, "controller.txt"), "original\n");
+    mkdirSync(join(root, ".sota"));
+    writeFileSync(join(root, ".sota", "private.txt"), "controller state\n");
+    const isolated = createIsolatedCodexWorkspace(root);
+    try {
+      writeFileSync(join(isolated.path, "controller.txt"), "provider edit\n");
+      assert.equal(readFileSync(join(root, "controller.txt"), "utf8"), "original\n");
+      assert.equal(existsSync(join(isolated.path, ".sota")), false);
+    } finally {
+      isolated.cleanup();
+    }
+    assert.equal(existsSync(isolated.path), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("experiment updates preserve creation provenance", () => {

@@ -1,4 +1,7 @@
+import { cpSync, mkdtempSync, rmSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
+import { basename, join, relative } from "node:path";
+import { tmpdir } from "node:os";
 import { Codex } from "@openai/codex-sdk";
 import type { AgentResult, AgentTask } from "../core/types.js";
 import type { ProcessControl } from "../core/process.js";
@@ -11,6 +14,28 @@ export function effectiveCodexSandbox(requested?: CodexSandboxMode): CodexSandbo
   const override = process.env.EVIDRA_CODEX_SANDBOX;
   if (override === "read-only" || override === "workspace-write" || override === "danger-full-access") return override;
   return requested ?? "read-only";
+}
+
+/**
+ * A full-access provider sandbox must never share Evidra's controller checkout.
+ * This is intentionally a copy, rather than a Git worktree: research agents are
+ * instructed not to edit, but a provider/tool can still violate that instruction.
+ * The copy makes that failure harmless and is removed when the turn ends.
+ */
+export function createIsolatedCodexWorkspace(source: string): { path: string; cleanup: () => void } {
+  const path = mkdtempSync(join(tmpdir(), "evidra-codex-research-"));
+  const excluded = new Set([".git", ".sota", "node_modules"]);
+  cpSync(source, path, {
+    recursive: true,
+    filter: (entry) => {
+      const first = relative(source, entry).split("/")[0] ?? basename(entry);
+      return !excluded.has(first);
+    },
+  });
+  return {
+    path,
+    cleanup: () => rmSync(path, { recursive: true, force: true }),
+  };
 }
 
 export interface ExecAgentOptions {
@@ -190,14 +215,17 @@ export class CodexExecAgent {
       get paused() { return paused; },
     };
     onProcess?.(control);
+    const sandboxMode = effectiveCodexSandbox(this.options.sandbox);
+    const isolatedWorkspace = sandboxMode === "danger-full-access" && this.options.sandbox !== "workspace-write";
+    const isolated = isolatedWorkspace ? createIsolatedCodexWorkspace(this.options.cwd) : undefined;
 
     try {
       const codex = new Codex();
       const thread = codex.startThread({
-        workingDirectory: this.options.cwd,
+        workingDirectory: isolated?.path ?? this.options.cwd,
         skipGitRepoCheck: true,
         model: this.options.model !== "default" ? this.options.model : undefined,
-        sandboxMode: effectiveCodexSandbox(this.options.sandbox),
+        sandboxMode,
         modelReasoningEffort: this.options.reasoningEffort as "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "persistent" | undefined,
         approvalPolicy: "never",
       });
@@ -236,6 +264,7 @@ export class CodexExecAgent {
       clearTimeout(timeout);
       process.removeListener("SIGTERM", signalHandler);
       process.removeListener("SIGINT", signalHandler);
+      isolated?.cleanup();
     }
   }
 
