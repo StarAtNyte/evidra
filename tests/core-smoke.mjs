@@ -338,7 +338,7 @@ test("durable campaign runtime settings are validated before resume", () => {
     thinking: "high",
     lanes: 4,
     autonomy: "fast",
-    limitPolicy: "fallback",
+    limitPolicy: "auto",
     executor: "modal",
   };
   assert.deepEqual(readCampaignRuntime({ runtime: { ...runtime } }), runtime);

@@ -246,7 +246,7 @@ Roles are director, data detective, validation scientist, model researcher, expe
 /doctor                      Diagnose Node, Python, uv, Ollama, Codex, and Modal
 ```
 
-Provider limits are part of scheduling. When Codex reaches a usage/rate limit, routine eligible work can fall back to the configured local model; the provider switch is recorded on the run and never changes the experiment identity.
+Provider limits are part of scheduling. The default `auto` policy uses the configured local model when Codex reaches a usage/rate limit; if no local model is available, it waits durably for the provider reset window. `wait`, `fallback`, and `stop` remain explicit alternatives. Provider switches are recorded on the run and never change the experiment identity.
 
 ## Design rules
 

@@ -63,7 +63,7 @@ type QueuedRequest = { id: string; text: string; dispatched?: boolean };
 type WorkbenchMode = "research" | "challenge";
 type AutonomyLevel = "safe" | "fast" | "yolo";
 type ResearchCampaign = { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean };
-type LimitPolicy = "wait" | "fallback" | "stop";
+type LimitPolicy = "auto" | "wait" | "fallback" | "stop";
 type ExperimentExecutorKind = "local" | "container" | "modal";
 type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; limitPolicy: LimitPolicy; fallbackModel: string; experimentExecutor: ExperimentExecutorKind; campaign?: ResearchCampaign };
 
@@ -81,7 +81,7 @@ function candidateExperimentCommand(adapter: ReturnType<typeof loadCompetitionAd
   return command;
 }
 
-const defaultConfig: SessionConfig = { provider: "codex", model: "default", reasoningEffort: "medium", mode: "research", autonomy: "safe", limitPolicy: "fallback", fallbackModel: process.env.EVIDRA_FALLBACK_MODEL ?? "auto", experimentExecutor: "local" };
+const defaultConfig: SessionConfig = { provider: "codex", model: "default", reasoningEffort: "medium", mode: "research", autonomy: "safe", limitPolicy: "auto", fallbackModel: process.env.EVIDRA_FALLBACK_MODEL ?? "auto", experimentExecutor: "local" };
 const COMMANDS = [
   ["/help", "Show commands"],
   ["/mode", "Show or switch active mode"],
@@ -145,7 +145,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
   "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"]],
-  "/limits": [["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Switch to local Qwen automatically"], ["/limits stop", "Stop when Codex is limited"]],
+  "/limits": [["/limits auto", "Use local fallback, then wait"], ["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Require local fallback"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
@@ -165,7 +165,7 @@ function loadConfig(path: string): SessionConfig {
     // Older Evidra sessions used a model name that ChatGPT-account Codex does not accept.
     if (config.provider === "codex" && config.model === "gpt-5.3-codex") config.model = "default";
     if (config.provider === "local" && /^(gpt|codex)/i.test(config.model)) config.model = "unconfigured";
-    if (!["wait", "fallback", "stop"].includes(config.limitPolicy)) config.limitPolicy = defaultConfig.limitPolicy;
+    if (!["auto", "wait", "fallback", "stop"].includes(config.limitPolicy)) config.limitPolicy = defaultConfig.limitPolicy;
     if (!config.fallbackModel) config.fallbackModel = defaultConfig.fallbackModel;
     if (!["local", "container", "modal"].includes(config.experimentExecutor)) config.experimentExecutor = defaultConfig.experimentExecutor;
     if (config.campaign?.status === "running") config.campaign = pauseCampaign(config.campaign);
@@ -208,7 +208,7 @@ function help(): string {
     "/data audit                 Audit challenge files and duplicates",
     "/validation [inspect|generate] Show validation policy",
     "/agents                     Show research-agent health",
-    "/limits [wait|fallback|stop] Choose provider-limit behavior",
+    "/limits [auto|wait|fallback|stop] Choose provider-limit behavior",
     "/compute [local|container|modal|status] Select the experiment execution target",
     "/doctor                     Diagnose local dependencies",
     "!<shell command>            Run a shell command in the project workspace",
@@ -1689,12 +1689,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (request === "/limits" || request.startsWith("/limits ")) {
       const policy = request.split(/\s+/)[1] as LimitPolicy | undefined;
       if (!policy) {
-        append("assistant", `Provider limit policy: ${config.limitPolicy}\nFallback model: ${config.fallbackModel}\nUse /limits wait, /limits fallback, or /limits stop.`);
-      } else if (!["wait", "fallback", "stop"].includes(policy)) {
-        append("assistant", "Choose wait, fallback, or stop.");
+        append("assistant", `Provider limit policy: ${config.limitPolicy}\nFallback model: ${config.fallbackModel}\nUse /limits auto, /limits wait, /limits fallback, or /limits stop.`);
+      } else if (!["auto", "wait", "fallback", "stop"].includes(policy)) {
+        append("assistant", "Choose auto, wait, fallback, or stop.");
       } else {
         setConfig((current) => ({ ...current, limitPolicy: policy }));
-        append("assistant", policy === "fallback" ? `Provider limit policy selected: fallback to local/${config.fallbackModel}.` : `Provider limit policy selected: ${policy}.`);
+        append("assistant", policy === "auto" ? `Provider limit policy selected: auto (local/${config.fallbackModel}, then wait).` : policy === "fallback" ? `Provider limit policy selected: fallback to local/${config.fallbackModel}.` : `Provider limit policy selected: ${policy}.`);
       }
       return;
     }

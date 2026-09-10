@@ -1058,7 +1058,7 @@ challenge.command("start")
   .option("--thinking <effort>", "reasoning effort", "high")
   .option("--lanes <count>", "maximum independent research lanes", "3")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
-  .option("--limit-policy <policy>", "on provider usage limit: wait, fallback, or stop", "wait")
+  .option("--limit-policy <policy>", "on provider usage limit: auto, wait, fallback, or stop", "auto")
   .option("--executor <executor>", "experiment execution target: local, container, or modal", "local")
   .option("--resume", "resume the saved challenge campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
@@ -1086,7 +1086,7 @@ research
   .option("--thinking <effort>", "reasoning effort", "high")
   .option("--lanes <count>", "maximum independent research lanes", "3")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
-  .option("--limit-policy <policy>", "on provider usage limit: wait, fallback, or stop", "wait")
+  .option("--limit-policy <policy>", "on provider usage limit: auto, wait, fallback, or stop", "auto")
   .option("--executor <executor>", "experiment execution target: local, container, or modal", "local")
   .option("--resume", "resume the latest durable non-completed research campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
@@ -1111,7 +1111,7 @@ research
       options.executor = savedRuntime.executor;
     }
     if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
-    if (!["wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'wait', 'fallback', or 'stop'.");
+    if (!["auto", "wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'auto', 'wait', 'fallback', or 'stop'.");
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Mode must be 'research' or 'challenge'.");
     if (!["safe", "fast", "yolo"].includes(options.autonomy)) throw new Error("Autonomy must be 'safe', 'fast', or 'yolo'.");
     if (!["local", "container", "modal"].includes(options.executor)) throw new Error("Executor must be 'local', 'container', or 'modal'.");
@@ -1356,8 +1356,8 @@ research
             provider: options.provider,
             model: selectedModel,
             modelPool: researchModelPool,
-            fallbackLocalModel: options.limitPolicy === "fallback" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
-            limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop",
+            fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
+            limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop",
             reasoningEffort: options.thinking,
             timeoutMs: agentTimeoutMs,
             cwd: root,
@@ -1395,8 +1395,8 @@ research
                 provider: options.provider,
                 model: selectedModel,
                 modelPool: researchModelPool,
-                fallbackLocalModel: options.limitPolicy === "fallback" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
-                limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop",
+                fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
+                limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop",
                 reasoningEffort: options.thinking,
                 timeoutMs: agentTimeoutMs,
                 cwd: root,
@@ -1423,12 +1423,12 @@ research
           crossPollinationStore.appendEvent("research.cross_pollination.completed", { cycle, board: crossPollination });
           crossPollinationStore.close();
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, openCriticConstraint }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, openCriticConstraint }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
           criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
             provider: options.provider,
             model: selectedModel,
-            fallbackLocalModel: options.limitPolicy === "fallback" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
-            limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop",
+            fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
+            limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop",
             reasoningEffort: options.thinking,
             timeoutMs: agentTimeoutMs,
             cwd: root,
@@ -1439,7 +1439,7 @@ research
           break;
         } catch (error) {
           if (isProviderUsageLimit(error)) {
-            if (options.limitPolicy !== "wait") throw error;
+            if (options.limitPolicy !== "wait" && options.limitPolicy !== "auto") throw error;
             const delay = providerRetryAfterMs(error);
             const remainingMs = budget * 60_000 - (Date.now() - started);
             if (remainingMs <= 0) throw new Error("Research budget expired while waiting for the provider usage limit to reset.");

@@ -38,7 +38,7 @@ problem variants → independent research lanes → evidence/artifacts
 
 The deterministic controller remains the source of truth. Agents propose hypotheses, write code in isolated worktrees, and explain evidence; evaluators, checksums, split policies, reviewers, and approval gates decide whether a result is valid. This makes the pattern useful for competitions, engineering investigations, scientific experiments, and other challenge repositories without assuming a theorem prover or a particular model family.
 
-Provider exhaustion is an explicit runtime policy. In the TUI use `/limits fallback` to select an installed local Qwen/Ollama model automatically, `/limits wait` to resume after the Codex entitlement resets, or `/limits stop` to halt the active request. The fallback model can be pinned with `EVIDRA_FALLBACK_MODEL`.
+Provider exhaustion is autonomous by default. The `auto` policy first selects an installed local Qwen/Ollama model, then waits durably for the Codex entitlement reset if no local model is available. Use `/limits auto`, `/limits fallback`, `/limits wait`, or `/limits stop` in the TUI to choose explicitly. The fallback model can be pinned with `EVIDRA_FALLBACK_MODEL`.
 
 Lane concurrency is adaptive: `safe` runs one independent lane, `fast` permits a small parallel set, and `yolo` uses the largest bounded set supported by the host and provider. Local Ollama concurrency also respects `OLLAMA_NUM_PARALLEL`; the TUI never interprets YOLO as permission to exhaust a laptop, subscription, or external service.
 

@@ -53,7 +53,7 @@ export interface ExecAgentOptions {
   reasoningEffort?: string;
   sandbox?: CodexSandboxMode;
   onThread?: (threadId: string) => void;
-  limitPolicy?: "wait" | "fallback" | "stop";
+  limitPolicy?: "auto" | "wait" | "fallback" | "stop";
   timeoutMs?: number;
 }
 
@@ -329,7 +329,14 @@ export async function runWithLocalFallback(
     const message = error instanceof Error ? error.message : String(error);
     const limitReached = isProviderUsageLimit(error);
     if (options.provider !== "codex" || !fallbackModel || !limitReached || options.limitPolicy === "wait" || options.limitPolicy === "stop") throw error;
-    const localModel = await resolveLocalFallbackModel(fallbackModel);
+    let localModel: string;
+    try {
+      localModel = await resolveLocalFallbackModel(fallbackModel);
+    } catch (fallbackError) {
+      if (options.limitPolicy !== "auto") throw fallbackError;
+      onProgress?.("No local fallback is available; waiting for the Codex usage window to reset...");
+      return runWithUsageLimitWait(task, { ...options, limitPolicy: "wait" }, onProgress, onProcess);
+    }
     onProgress?.(`Codex limit reached; switching to local/${localModel}...`);
     await checkProvider({ provider: "local", model: localModel, cwd: options.cwd });
     return new CodexExecAgent({ provider: "local", model: localModel, cwd: options.cwd }).run(task, onProgress, onProcess);

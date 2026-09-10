@@ -20,7 +20,7 @@ export interface ResearchDirectorOptions {
   timeoutMs?: number;
   cwd: string;
   fallbackLocalModel?: string;
-  limitPolicy?: "wait" | "fallback" | "stop";
+  limitPolicy?: "auto" | "wait" | "fallback" | "stop";
   onProcess?: (control: ProcessControl) => void;
   onThread?: (threadId: string) => void;
   executeTool?: (call: ResearchToolCall) => Promise<ResearchToolResult>;

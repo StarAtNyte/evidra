@@ -18,7 +18,7 @@ export interface CampaignRuntimeConfig {
   thinking: string;
   lanes: number;
   autonomy: "safe" | "fast" | "yolo";
-  limitPolicy: "wait" | "fallback" | "stop";
+  limitPolicy: "auto" | "wait" | "fallback" | "stop";
   executor: "local" | "container" | "modal";
 }
 
@@ -33,7 +33,7 @@ export function readCampaignRuntime(value: unknown): CampaignRuntimeConfig | und
   if (typeof candidate.thinking !== "string" || !candidate.thinking) return undefined;
   if (typeof candidate.lanes !== "number" || !Number.isInteger(candidate.lanes) || candidate.lanes < 1 || candidate.lanes > 6) return undefined;
   if (!( ["safe", "fast", "yolo"] as const).includes(candidate.autonomy as "safe" | "fast" | "yolo")) return undefined;
-  if (!( ["wait", "fallback", "stop"] as const).includes(candidate.limitPolicy as "wait" | "fallback" | "stop")) return undefined;
+  if (!( ["auto", "wait", "fallback", "stop"] as const).includes(candidate.limitPolicy as "auto" | "wait" | "fallback" | "stop")) return undefined;
   if (!( ["local", "container", "modal"] as const).includes(candidate.executor as "local" | "container" | "modal")) return undefined;
   return {
     mode: candidate.mode as CampaignRuntimeConfig["mode"],
