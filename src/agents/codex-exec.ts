@@ -5,12 +5,20 @@ import type { ProcessControl } from "../core/process.js";
 
 export type AgentProvider = "codex" | "local";
 
+export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
+
+export function effectiveCodexSandbox(requested?: CodexSandboxMode): CodexSandboxMode {
+  const override = process.env.EVIDRA_CODEX_SANDBOX;
+  if (override === "read-only" || override === "workspace-write" || override === "danger-full-access") return override;
+  return requested ?? "read-only";
+}
+
 export interface ExecAgentOptions {
   provider: AgentProvider;
   model: string;
   cwd: string;
   reasoningEffort?: string;
-  sandbox?: "read-only" | "workspace-write";
+  sandbox?: CodexSandboxMode;
   onThread?: (threadId: string) => void;
   limitPolicy?: "wait" | "fallback" | "stop";
   timeoutMs?: number;
@@ -189,7 +197,7 @@ export class CodexExecAgent {
         workingDirectory: this.options.cwd,
         skipGitRepoCheck: true,
         model: this.options.model !== "default" ? this.options.model : undefined,
-        sandboxMode: this.options.sandbox ?? "read-only",
+        sandboxMode: effectiveCodexSandbox(this.options.sandbox),
         modelReasoningEffort: this.options.reasoningEffort as "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "persistent" | undefined,
         approvalPolicy: "never",
       });

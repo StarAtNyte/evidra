@@ -57,6 +57,7 @@ import { validateCompetitionContract } from "../dist/core/competition-contract.j
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
+import { effectiveCodexSandbox } from "../dist/agents/codex-exec.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -77,6 +78,16 @@ test("durable research state and queue survive store reopen", () => {
     assert.equal(reopened.queueTasks()[0].status, "completed");
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Codex sandbox remains safe by default and supports an explicit benchmark override", () => {
+  const previous = process.env.EVIDRA_CODEX_SANDBOX;
+  delete process.env.EVIDRA_CODEX_SANDBOX;
+  assert.equal(effectiveCodexSandbox("read-only"), "read-only");
+  process.env.EVIDRA_CODEX_SANDBOX = "danger-full-access";
+  assert.equal(effectiveCodexSandbox("read-only"), "danger-full-access");
+  if (previous === undefined) delete process.env.EVIDRA_CODEX_SANDBOX;
+  else process.env.EVIDRA_CODEX_SANDBOX = previous;
 });
 
 test("experiment updates preserve creation provenance", () => {
@@ -185,6 +196,11 @@ test("critic gate converts terminal and execution decisions into inspection", ()
   assert.equal(gated.decision.decision, "inspect");
   assert.match(gated.decision.nextAction, /critic verdict is revise/i);
   assert.equal(applyCriticGate(decision, { verdict: "proceed" }).blocked, false);
+  const concreteRun = { ...decision, goalStatus: "active", selectedHypothesis: "candidate" };
+  const revisedRun = applyCriticGate(concreteRun, { verdict: "revise" });
+  assert.equal(revisedRun.blocked, false);
+  assert.equal(revisedRun.decision.decision, "run");
+  assert.match(revisedRun.decision.nextAction, /bounded probe/i);
 });
 
 test("active goals cannot be terminated by a premature model stop", () => {
