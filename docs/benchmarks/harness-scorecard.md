@@ -8,6 +8,8 @@ The comparison protocol uses the same task arm for every harness and records:
 - valid-run rate: a candidate must have a durable evaluator run and finite metric;
 - improvement rate: the candidate must beat that arm's baseline in the declared direction;
 - mean metric delta and median time to first valid evidence;
+- time efficiency: the fraction of the declared wall-clock budget remaining
+  after a valid evaluator outcome;
 - recovery rate after a failed tool, worker, or provider route;
 - reproducibility rate across an independent seed or replication;
 - process quality and execution-alignment rates when trajectory evidence is available;
@@ -81,6 +83,10 @@ overwriting one another.
 
 Invalid runs and unverified model claims score zero improvement. This prevents a
 harness from winning by producing persuasive text without a measured artifact.
+Valid runs also receive a bounded time-efficiency contribution when their trial
+declares a budget. This rewards faster valid progress without inventing provider
+tokens, dollar prices, or GPU billing rates; missing cost metadata remains
+visible as unavailable rather than silently estimated.
 When optional trajectory fields are present, process quality and alignment also
 affect the competitive score; older trial files remain readable and fall back to
 their evaluator-backed fields.

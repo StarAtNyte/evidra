@@ -467,8 +467,8 @@ benchmark.command("score")
       return;
     }
     console.log("Harness benchmark · task-balanced evidence score");
-    console.log("Harness                 Tasks  Trials  Score  Lower95  Valid  Improve  Repro  Align");
-    for (const scorecard of scorecards) console.log(`${scorecard.harness.padEnd(23).slice(0, 23)} ${String(scorecard.tasks).padStart(5)} ${String(scorecard.trials).padStart(7)} ${scorecard.competitiveScore.toFixed(1).padStart(6)} ${scorecard.competitiveScoreLower95.toFixed(1).padStart(8)} ${(scorecard.validRunRate * 100).toFixed(0).padStart(5)}% ${(scorecard.improvementRate * 100).toFixed(0).padStart(7)}% ${(scorecard.reproducibilityRate * 100).toFixed(0).padStart(5)}% ${scorecard.executionAlignmentRate === null ? "n/a" : `${(scorecard.executionAlignmentRate * 100).toFixed(0)}%`}`);
+    console.log("Harness                 Tasks  Trials  Score  Lower95  Valid  Improve  Repro  Align  TimeEff");
+    for (const scorecard of scorecards) console.log(`${scorecard.harness.padEnd(23).slice(0, 23)} ${String(scorecard.tasks).padStart(5)} ${String(scorecard.trials).padStart(7)} ${scorecard.competitiveScore.toFixed(1).padStart(6)} ${scorecard.competitiveScoreLower95.toFixed(1).padStart(8)} ${(scorecard.validRunRate * 100).toFixed(0).padStart(5)}% ${(scorecard.improvementRate * 100).toFixed(0).padStart(7)}% ${(scorecard.reproducibilityRate * 100).toFixed(0).padStart(5)}% ${scorecard.executionAlignmentRate === null ? "n/a" : `${(scorecard.executionAlignmentRate * 100).toFixed(0)}%`.padStart(5)} ${scorecard.meanTimeEfficiency === null ? "n/a" : `${(scorecard.meanTimeEfficiency * 100).toFixed(0)}%`.padStart(7)}`);
   });
 benchmark.command("compare")
   .argument("<file>", "JSON file containing a trial array or { trials: [...] }")
