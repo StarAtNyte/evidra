@@ -140,7 +140,8 @@ export class LocalExecutor implements ExperimentExecutor {
 }
 
 export function containerCommand(runtime: "docker" | "podman", image: string, cwd: string, command: string[]): string[] {
-  const args = [runtime, "run", "--rm", "--init", "--network", "none", "--volume", `${cwd}:/workspace:rw`, "--workdir", "/workspace"];
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/@:-]*$/.test(image)) throw new Error("Container image must be a plain image reference, not a runtime option or shell expression.");
+  const args = [runtime, "run", "--rm", "--init", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "512", "--network", "none", "--tmpfs", "/tmp:rw,nosuid,nodev", "--volume", `${cwd}:/workspace:rw`, "--workdir", "/workspace"];
   if (typeof process.getuid === "function" && typeof process.getgid === "function") args.push("--user", `${process.getuid()}:${process.getgid()}`);
   return [...args, image, ...command];
 }
@@ -152,19 +153,25 @@ export class ContainerExecutor implements ExperimentExecutor {
 
   async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse"): Promise<RunResult> {
     const requestedRuntime = process.env.EVIDRA_CONTAINER_RUNTIME;
-    const candidates: Array<"docker" | "podman"> = requestedRuntime === "podman" ? ["podman"] : requestedRuntime === "docker" ? ["docker"] : ["docker", "podman"];
+    const candidates: Array<"docker" | "podman"> = requestedRuntime === "podman" ? ["podman"] : requestedRuntime === "docker" ? ["docker"] : requestedRuntime ? [] : ["docker", "podman"];
     const launchRoot = resolve(this.workspaceRoot ?? cwd);
     let runtime: "docker" | "podman" | undefined;
     for (const candidate of candidates) {
-      const available = await runProcess(["which", candidate], launchRoot, 5_000);
-      if (available.exitCode === 0) { runtime = candidate; break; }
+      try {
+        const available = await runProcess(["which", candidate], launchRoot, 5_000);
+        if (available.exitCode === 0) { runtime = candidate; break; }
+      } catch { /* continue to the next supported runtime */ }
     }
     const image = manifest.resources.image ?? process.env.EVIDRA_CONTAINER_IMAGE ?? "python:3.11-slim";
     if (!runtime) {
       return toRunResult(manifest, { command, cwd, exitCode: 127, durationMs: 0, stdout: "", stderr: "No Docker or Podman runtime was found. Install one or select the local executor." }, metricName);
     }
-    const result = await runProcess(containerCommand(runtime, image, resolve(cwd), command), launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess);
-    return toRunResult(manifest, { ...result, command, cwd }, metricName);
+    try {
+      const result = await runProcess(containerCommand(runtime, image, resolve(cwd), command), launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess);
+      return toRunResult(manifest, { ...result, command, cwd }, metricName);
+    } catch (error) {
+      return toRunResult(manifest, { command, cwd, exitCode: 126, durationMs: 0, stdout: "", stderr: error instanceof Error ? error.message : String(error) }, metricName);
+    }
   }
 }
 

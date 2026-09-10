@@ -846,9 +846,16 @@ test("Modal result parser ignores progress and rejects malformed worker payloads
 
 test("container executor command mounts only the isolated worktree", () => {
   const command = containerCommand("docker", "python:3.11-slim", "/tmp/evidra-worktree", ["python", "run.py"]);
-  assert.deepEqual(command.slice(0, 12), ["docker", "run", "--rm", "--init", "--network", "none", "--volume", "/tmp/evidra-worktree:/workspace:rw", "--workdir", "/workspace", "--user", `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`]);
-  assert.equal(command[12], "python:3.11-slim");
+  assert.deepEqual(command.slice(0, 4), ["docker", "run", "--rm", "--init"]);
+  assert(command.includes("--read-only"));
+  assert(command.includes("--network"));
+  assert(command.includes("none"));
+  assert(command.includes("/tmp/evidra-worktree:/workspace:rw"));
+  const imageIndex = command.indexOf("python:3.11-slim");
+  assert(imageIndex > 0);
+  assert.equal(command[imageIndex + 1], "python");
   assert.deepEqual(command.slice(-2), ["python", "run.py"]);
+  assert.throws(() => containerCommand("docker", "--privileged", "/tmp/evidra-worktree", ["sh"]), /plain image reference/);
 });
 
 test("paired statistics and recovery are deterministic", () => {
