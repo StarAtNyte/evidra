@@ -981,7 +981,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       { id: `research-${Date.now()}-terminal`, kind: "terminal", payload: { status: "completed", goalStatus: decision.goalStatus, goalAttained: decision.goalStatus === "met" || decision.decision === "stop" } },
     ];
     const researchQuality = evaluateTrajectory(researchTrajectoryEvents);
-    const routingOutcome = capabilityOutcome({ objective, mode, route, provider: config.provider, model: config.model, quality: researchQuality, parallelLanes: route.parallelLanes });
+    const routingOutcome = capabilityOutcome({ objective, mode, route, provider: config.provider, model: config.model, quality: researchQuality, parallelLanes: laneReports.length });
     const trajectoryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const trajectoryId = `trajectory_research_${Date.now()}`;
     const trajectoryPayload = { objective, observation, laneReports, criticReview, decision, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: config.provider, model: config.model }, events: researchTrajectoryEvents };

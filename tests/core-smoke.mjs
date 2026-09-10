@@ -227,6 +227,13 @@ test("capability outcomes preserve prediction, serving action, and result", () =
   });
 });
 
+test("capability outcomes preserve actual served lane count", () => {
+  const route = routeCapability({ objective: "research", mode: "research", provider: "local", autonomy: "fast", requestedParallel: 3 });
+  const outcome = capabilityOutcome({ objective: "research", mode: "research", route, provider: "local", model: "qwen", quality: { overall: "PASS" }, parallelLanes: 1 });
+  assert.equal(outcome.served.parallelLanes, 1);
+  assert.equal(outcome.predictedTier, route.tier);
+});
+
 test("experience ledger quarantines malformed traces and selects a curriculum", () => {
   const quality = evaluateTrajectory([
     { id: "call", kind: "tool_call", callId: "c1", payload: { tool: "inspect" } },

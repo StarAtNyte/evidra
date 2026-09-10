@@ -2072,7 +2072,7 @@ research
         { id: `${trajectoryStamp}-terminal`, kind: "terminal", payload: { status: "completed", goalStatus: decision.goalStatus, goalAttained: decision.goalStatus === "met" || decision.decision === "stop" } },
       ];
       const researchQuality = evaluateTrajectory(researchTrajectoryEvents);
-      const routingOutcome = capabilityOutcome({ objective: allocatedObjective, mode, route, provider: options.provider, model: selectedModel, quality: researchQuality, parallelLanes: effectiveLaneLimit });
+      const routingOutcome = capabilityOutcome({ objective: allocatedObjective, mode, route, provider: options.provider, model: selectedModel, quality: researchQuality, parallelLanes: laneReports.length });
       const trajectoryId = `trajectory_research_${Date.now()}`;
       const trajectoryPayload = { objective, observation, laneReports, criticReview, decision, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: options.provider, model: selectedModel }, events: researchTrajectoryEvents };
       decisionStore.saveTrajectory({ id: trajectoryId, payload: trajectoryPayload, quality: researchQuality });
