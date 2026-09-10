@@ -20,6 +20,17 @@ REMOTE_WORKSPACE = Path("/workspace")
 GPU = os.environ.get("EVIDRA_MODAL_GPU") or None
 
 
+def contained_path(root: Path, candidate: Path) -> Path:
+    """Resolve a worker path and require it to remain under the mounted root."""
+    resolved_root = root.resolve()
+    resolved_candidate = candidate.resolve()
+    try:
+        resolved_candidate.relative_to(resolved_root)
+    except ValueError as error:
+        raise ValueError(f"Path escapes the mounted workspace: {candidate}") from error
+    return resolved_candidate
+
+
 def include_workspace_path(path: str) -> bool:
     excluded = {".git", ".sota", "node_modules", ".venv", "__pycache__", ".mypy_cache"}
     return not any(part in excluded for part in Path(path).parts)
@@ -45,7 +56,7 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]") -> dict[str
     relative_cwd = Path(cwd)
     if relative_cwd.is_absolute() or ".." in relative_cwd.parts:
         raise ValueError("Evidra Modal working directory must stay inside the mounted workspace")
-    working_directory = REMOTE_WORKSPACE / relative_cwd
+    working_directory = contained_path(REMOTE_WORKSPACE, REMOTE_WORKSPACE / relative_cwd)
     if not working_directory.is_dir():
         raise FileNotFoundError(f"Modal working directory does not exist: {working_directory}")
     completed = subprocess.run(command, cwd=working_directory, capture_output=True, text=True, check=False)
@@ -54,7 +65,10 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]") -> dict[str
         relative_artifact = Path(artifact)
         if relative_artifact.is_absolute() or ".." in relative_artifact.parts:
             raise ValueError(f"Invalid declared artifact path: {artifact}")
-        artifact_path = working_directory / relative_artifact
+        raw_artifact_path = working_directory / relative_artifact
+        if raw_artifact_path.is_symlink():
+            raise ValueError(f"Declared artifact may not be a symlink: {artifact}")
+        artifact_path = contained_path(working_directory, raw_artifact_path)
         if artifact_path.is_file() and artifact_path.stat().st_size <= 64 * 1024 * 1024:
             artifact_payload[str(relative_artifact)] = base64.b64encode(artifact_path.read_bytes()).decode("ascii")
     return {
