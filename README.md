@@ -256,6 +256,7 @@ Continue a paused or interrupted headless campaign explicitly with `--resume`:
 Headless research acquires a durable controller lease and heartbeats it while running. A
 second controller for the same project is refused instead of competing for SQLite state;
 an interrupted process leaves the campaign resumable and its stale lease recoverable.
+Paused intervals are recorded separately and do not consume the campaign’s active budget.
 
 The same autonomous loop can run as a challenge campaign:
 

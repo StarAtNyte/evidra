@@ -20,6 +20,7 @@ import { renderTimeline } from "./core/timeline.js";
 import { researchMemoryContext } from "./core/research-context.js";
 import { detectStagnation } from "./core/stagnation.js";
 import { recoveryDelay, recoveryPlan } from "./core/recovery.js";
+import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
@@ -548,10 +549,10 @@ research
     const releaseLease = acquireCliControllerLease(mode);
     const started = Date.now();
     const savedStore = new ResearchStore(statePath);
-    const savedCampaign = savedStore.campaign() as { goal?: string; budgetMinutes?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed" } | undefined;
+    const savedCampaign = savedStore.campaign() as { goal?: string; budgetMinutes?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number } | undefined;
     savedStore.close();
-    const campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed" } = options.resume && savedCampaign && savedCampaign.status !== "completed"
-      ? { goal: savedCampaign.goal ?? options.goal, budgetMinutes: savedCampaign.budgetMinutes ?? budget, stopCondition: savedCampaign.stopCondition ?? options.stop, startedAt: savedCampaign.startedAt ?? new Date(started).toISOString(), status: "running" }
+    const campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number } = options.resume && savedCampaign && savedCampaign.status !== "completed"
+      ? { ...resumeCampaign({ goal: savedCampaign.goal ?? options.goal, budgetMinutes: savedCampaign.budgetMinutes ?? budget, stopCondition: savedCampaign.stopCondition ?? options.stop, startedAt: savedCampaign.startedAt ?? new Date(started).toISOString(), status: savedCampaign.status === "paused" ? "paused" : "running", pausedAt: savedCampaign.pausedAt, pausedDurationMinutes: savedCampaign.pausedDurationMinutes }), status: "running" }
       : { goal: options.goal, budgetMinutes: budget, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running" };
     if (options.resume) console.log(savedCampaign && savedCampaign.status !== "completed" ? `Resuming durable research campaign from ${savedCampaign.startedAt ?? "saved state"}.` : "No resumable campaign found; starting a new research campaign.");
     const objective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}`;
@@ -681,10 +682,11 @@ research
           }
         }
       }
-      const elapsedMinutes = (Date.now() - started) / 60_000;
-      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || stagnation.stagnant || elapsedMinutes >= budget;
+      const elapsedMinutes = campaignElapsedMinutes(campaign);
+      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || stagnation.stagnant || elapsedMinutes >= campaign.budgetMinutes;
       if (terminal) {
-        campaign.status = decision.goalStatus === "blocked" || stagnation.stagnant ? "paused" : "completed";
+        if (decision.goalStatus === "blocked" || stagnation.stagnant) Object.assign(campaign, pauseCampaign(campaign));
+        else campaign.status = "completed";
         if (stagnation.stagnant) decisionStore.appendEvent("research.stagnation.detected", { cycles: stagnation.cycles, signature: stagnation.signature, action: "pause_for_review" });
         decisionStore.saveCampaign(campaign);
       }

@@ -40,6 +40,7 @@ import { researchMemoryContext } from "../dist/core/research-context.js";
 import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js";
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
+import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../dist/core/campaign.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -60,6 +61,16 @@ test("durable research state and queue survive store reopen", () => {
     assert.equal(reopened.queueTasks()[0].status, "completed");
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("paused campaign time is excluded from the autonomous budget", () => {
+  const startedAt = "2026-01-01T00:00:00.000Z";
+  const running = { startedAt, status: "running", budgetMinutes: 60 };
+  const paused = pauseCampaign(running, "2026-01-01T00:10:00.000Z");
+  assert.equal(campaignElapsedMinutes(paused, Date.parse("2026-01-01T02:00:00.000Z")), 10);
+  const resumed = resumeCampaign(paused, "2026-01-01T01:00:00.000Z");
+  assert.equal(Math.round(resumed.pausedDurationMinutes), 50);
+  assert.equal(Math.round(campaignElapsedMinutes(resumed, Date.parse("2026-01-01T01:10:00.000Z"))), 20);
 });
 
 test("controller leases prevent duplicate workers and trajectories expose capability gaps", () => {

@@ -14,6 +14,7 @@ import { sha256File } from "../core/evidence.js";
 import { captureEnvironment } from "../core/environment.js";
 import { compareRuns } from "../core/statistics.js";
 import { recoveryDelay, recoveryPlan } from "../core/recovery.js";
+import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../core/campaign.js";
 import { prepareSubmission, validateSubmissionBundle } from "../core/submissions.js";
 import { submitApprovedBundle } from "../core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "../core/submission-policy.js";
@@ -46,7 +47,7 @@ type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "me
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
 type WorkbenchMode = "research" | "challenge";
 type AutonomyLevel = "safe" | "fast" | "yolo";
-type ResearchCampaign = { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean };
+type ResearchCampaign = { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean };
 type LimitPolicy = "wait" | "fallback" | "stop";
 type ExperimentExecutorKind = "local" | "modal";
 type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; limitPolicy: LimitPolicy; fallbackModel: string; experimentExecutor: ExperimentExecutorKind; campaign?: ResearchCampaign };
@@ -150,7 +151,7 @@ function loadConfig(path: string): SessionConfig {
     if (!["wait", "fallback", "stop"].includes(config.limitPolicy)) config.limitPolicy = defaultConfig.limitPolicy;
     if (!config.fallbackModel) config.fallbackModel = defaultConfig.fallbackModel;
     if (config.experimentExecutor !== "local" && config.experimentExecutor !== "modal") config.experimentExecutor = defaultConfig.experimentExecutor;
-    if (config.campaign?.status === "running") config.campaign = { ...config.campaign, status: "paused" };
+    if (config.campaign?.status === "running") config.campaign = pauseCampaign(config.campaign);
     if (config.mode !== "research" && config.mode !== "challenge") config.mode = defaultConfig.mode;
     if (!["safe", "fast", "yolo"].includes(config.autonomy)) config.autonomy = defaultConfig.autonomy;
     return config;
@@ -385,7 +386,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       // Only recover a running campaign when its controller lease is absent or stale.
       // A fresh process must never overwrite a live controller's state.
       const liveController = store.liveControllerLease();
-      const recovered = campaign.status === "running" && !liveController ? { ...campaign, status: "paused" as const } : campaign;
+      const recovered = campaign.status === "running" && !liveController ? pauseCampaign(campaign) : campaign;
       if (campaign.status === "running" && !liveController) {
         store.saveCampaign(recovered);
         store.setSchedulerState({ status: "paused", mode: "research", currentStep: "recovered-after-process-exit" });
@@ -670,7 +671,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     };
     const researchMemory = researchMemoryContext(store, 30);
     const recentFailureCount = store.trajectories(50).filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
-    const campaignRemaining = campaign ? Math.max(0, campaign.budgetMinutes - (Date.now() - Date.parse(campaign.startedAt)) / 60_000) : undefined;
+    const campaignRemaining = campaign ? Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)) : undefined;
     const route = routeCapability({ objective, mode, provider: config.provider, autonomy: config.autonomy, recentFailureCount, budgetRemainingMinutes: campaignRemaining, requestedParallel: 3 });
     store.appendEvent("research.capability_route", { route, objective, recentFailureCount });
     const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts });
@@ -1075,7 +1076,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setConfig((current) => ({ ...current, campaign: { ...campaign } }));
       }
       if (campaign) {
-        const elapsed = (Date.now() - Date.parse(campaign.startedAt)) / 60_000;
+        const elapsed = campaignElapsedMinutes(campaign);
         if (elapsed >= campaign.budgetMinutes) {
           campaign.status = "completed";
           persistCampaign(campaign);
@@ -1150,7 +1151,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       } else if (campaign && cycle.goalStatus === "blocked") {
         campaign.status = "paused";
         persistCampaign(campaign);
-        setConfig((current) => ({ ...current, campaign: { ...campaign, status: "paused" } }));
+        setConfig((current) => ({ ...current, campaign: pauseCampaign(campaign) }));
         if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
         const blocked = new ResearchStore(join(root, ".sota", "database.sqlite"));
         blocked.setSchedulerState({ status: "paused", mode: config.mode, currentStep: "blocked" });
@@ -1343,7 +1344,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (action === "pause") {
         pauseActiveProcesses();
         if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
-        const paused = { ...saved, status: "paused" as const };
+        const paused = pauseCampaign(saved);
         store.saveCampaign(paused); store.setSchedulerState({ status: "paused", mode: lifecycleMode, currentStep: "paused" }); store.close();
         releaseControllerLease();
         setConfig((current) => ({ ...current, mode: lifecycleMode, campaign: paused }));
@@ -1360,7 +1361,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", `${lifecycleMode === "challenge" ? "Challenge" : "Research"} stopped. It remains saved for inspection, but will not resume automatically.`);
         return;
       }
-      const resumed = { ...saved, status: "running" as const, nextAttemptAt: undefined, limitMessage: undefined };
+      const resumed = { ...resumeCampaign(saved), nextAttemptAt: undefined, limitMessage: undefined };
       store.saveCampaign(resumed); store.setSchedulerState({ status: "running", mode: lifecycleMode, currentStep: "resuming" }); store.close();
       setConfig((current) => ({ ...current, mode: lifecycleMode, campaign: resumed }));
       append("assistant", `${lifecycleMode === "challenge" ? "Challenge" : "Research"} resumed. Evidra will continue from the latest durable phase, evidence, and experiment state.`);
@@ -1417,7 +1418,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
         store.setSchedulerState({ status, mode: config.mode, currentStep: null });
         if (config.campaign) {
-          const campaign = { ...config.campaign, status: "paused" as const };
+          const campaign = pauseCampaign(config.campaign);
           store.saveCampaign(campaign);
           setConfig((current) => ({ ...current, campaign }));
         }
@@ -1590,7 +1591,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const counts = store.counts(); const events = store.eventCount(); const state = store.schedulerState(); const campaign = config.campaign;
       store.close();
-      const elapsed = campaign ? Math.max(0, (Date.now() - Date.parse(campaign.startedAt)) / 60_000) : 0;
+      const elapsed = campaign ? campaignElapsedMinutes(campaign) : 0;
       append("assistant", `Usage\n  provider: ${config.provider}\n  model: ${config.model}\n  thinking: ${config.reasoningEffort}\n  scheduler: ${state.status}\n  events: ${events}\n  hypotheses: ${counts.hypotheses} · claims: ${counts.claims} · decisions: ${counts.decisions}\n  experiments: ${counts.experiments} · runs: ${counts.runs} · artifacts: ${counts.artifacts}\n${campaign ? `\nCampaign\n  status: ${campaign.status}\n  elapsed: ${elapsed.toFixed(1)} / ${campaign.budgetMinutes} minutes\n  remaining: ${Math.max(0, campaign.budgetMinutes - elapsed).toFixed(1)} minutes\n  goal: ${campaign.goal}\n  stop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\n  provider retry: ${campaign.nextAttemptAt}` : ""}` : "\nNo autonomous campaign configured. Start one with /research."}`);
       return;
     }
@@ -1907,7 +1908,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
       const campaign = config.campaign;
-      append("assistant", `Executor policy\n  mode: ${config.mode}\n  autonomy: ${config.autonomy}\n  local: available through process workers\n  modal: ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}\n  fallback: local model on Codex usage limits${campaign ? `\n\nCampaign budget\n  elapsed: ${Math.max(0, (Date.now() - Date.parse(campaign.startedAt)) / 60_000).toFixed(1)} / ${campaign.budgetMinutes} minutes\n  status: ${campaign.status}` : ""}`);
+  append("assistant", `Executor policy\n  mode: ${config.mode}\n  autonomy: ${config.autonomy}\n  local: available through process workers\n  modal: ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}\n  fallback: local model on Codex usage limits${campaign ? `\n\nCampaign budget\n  elapsed: ${campaignElapsedMinutes(campaign).toFixed(1)} / ${campaign.budgetMinutes} minutes\n  status: ${campaign.status}` : ""}`);
       return;
     }
     if (request === "/doctor") {
