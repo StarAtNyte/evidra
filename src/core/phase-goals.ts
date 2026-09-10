@@ -14,18 +14,24 @@ const PHASES: Array<{ phase: ResearchPhase; title: string; objective: string; cr
 
 export function definePhaseGoals(ultimateGoal: string, mode: "research" | "challenge"): PhaseGoal[] {
   const now = new Date().toISOString();
-  return PHASES.map((template, index) => PhaseGoalSchema.parse({
+  return PHASES.map((template, index) => {
+    const researchBaseline = mode === "research" && template.phase === "baseline";
+    const phase = researchBaseline
+      ? { ...template, title: "Establish a trusted reference", objective: "Record a durable reference observation for the research workspace before forming conclusions.", criteria: ["reference observation recorded", "workspace state captured"] }
+      : template;
+    return PhaseGoalSchema.parse({
     id: `goal_${mode}_${template.phase}`,
-    phase: template.phase,
-    title: template.title,
-    objective: `${template.objective} Ultimate objective: ${ultimateGoal}`,
-    completionCriteria: template.criteria,
+    phase: phase.phase,
+    title: phase.title,
+    objective: `${phase.objective} Ultimate objective: ${ultimateGoal}`,
+    completionCriteria: phase.criteria,
     status: index === 0 ? "active" : "pending",
     evidenceIds: [],
     attempts: 0,
     createdAt: now,
     updatedAt: now,
-  }));
+    });
+  });
 }
 
 export function activePhaseGoal(goals: PhaseGoal[]): PhaseGoal | undefined {
@@ -35,6 +41,7 @@ export function activePhaseGoal(goals: PhaseGoal[]): PhaseGoal | undefined {
 }
 
 export interface PhaseGoalEvidence {
+  mode?: "research" | "challenge";
   eventTypes: string[];
   eventPayloads: Array<{ type: string; payload: unknown }>;
   hypotheses: number;
@@ -57,6 +64,10 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
   switch (goal.phase) {
     case "orientation": if (!has("research.observation") && !has("project.created")) missing.push("workspace observation"); break;
     case "baseline": {
+      if (evidence.mode === "research") {
+        if (!has("research.observation")) missing.push("reference observation");
+        break;
+      }
       const baseline = payloads("baseline.completed").find((payload) => (payload as { exitCode?: unknown }).exitCode === 0);
       if (!baseline) missing.push("successful baseline");
       else if (typeof (baseline as { metric?: unknown }).metric !== "number" || !Number.isFinite((baseline as { metric?: number }).metric)) missing.push("parsed primary baseline metric");

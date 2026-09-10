@@ -614,6 +614,7 @@ research
       if (phaseGoal && decision.goalStatus === "met") {
         const phaseEvents = decisionStore.recentEvents(500);
         const gate = evaluatePhaseGoalEvidence(phaseGoal, {
+          mode: "research",
           eventTypes: phaseEvents.map((event) => event.type),
           eventPayloads: phaseEvents.map((event) => ({ type: event.type, payload: event.payload })),
           ...decisionStore.counts(),
@@ -697,6 +698,7 @@ research.command("propose")
     if (phaseGoal && decision.goalStatus === "met") {
       const phaseEvents = decisionStore.recentEvents(500);
       const gate = evaluatePhaseGoalEvidence(phaseGoal, {
+        mode: "research",
         eventTypes: phaseEvents.map((event) => event.type),
         eventPayloads: phaseEvents.map((event) => ({ type: event.type, payload: event.payload })),
         ...decisionStore.counts(),

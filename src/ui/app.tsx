@@ -776,6 +776,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const decisionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const phaseEvents = phaseGoal ? decisionStore.recentEvents(500) : [];
     const phaseEvidence = phaseGoal ? {
+      mode,
       eventTypes: phaseEvents.map((event) => event.type),
       eventPayloads: phaseEvents.map((event) => ({ type: event.type, payload: event.payload })),
       ...decisionStore.counts(),
