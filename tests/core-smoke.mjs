@@ -955,6 +955,8 @@ test("ensemble candidates are checksummed and durable across store reopen", () =
     writeFileSync(join(root, "a.json"), JSON.stringify([1, 1, 1]));
     assert.equal(validateBlendCandidate(candidate.path, candidate.checksum).valid, false);
     assert.equal(reopened.updateEnsembleCandidateStatus(candidate.id, "validated"), true);
+    assert.equal(validateBlendCandidate(candidate.path, candidate.checksum).valid, false);
+    writeFileSync(join(root, "a.json"), JSON.stringify([0, 1, 0]));
     assert.equal(reopened.updateEnsembleCandidateStatus(candidate.id, "promoted"), true);
     assert.throws(() => reopened.updateEnsembleCandidateStatus(candidate.id, "rejected"), /Invalid ensemble transition/);
     reopened.close();

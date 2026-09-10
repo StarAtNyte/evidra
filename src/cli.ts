@@ -516,6 +516,10 @@ for (const action of ["validate", "promote", "reject"] as const) {
         console.log(`Validated ensemble ${candidate.id}: ${report.reason}`);
       } else {
         const next = action === "promote" ? "promoted" : "rejected";
+        if (next === "promoted") {
+          const report = validateBlendCandidate(candidate.path, candidate.checksum);
+          if (!report.valid) throw new Error(`Promotion refused: ${report.reason}`);
+        }
         store.updateEnsembleCandidateStatus(candidate.id, next, { ...(candidate.payload as Record<string, unknown>), [`${next}At`]: new Date().toISOString() });
         console.log(`Marked ensemble ${candidate.id} ${next}. External submission remains approval-gated.`);
       }

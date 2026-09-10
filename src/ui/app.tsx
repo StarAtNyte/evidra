@@ -2279,6 +2279,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
         }
         try {
           const next = ensembleAction === "promote" ? "promoted" : "rejected";
+          if (next === "promoted") {
+            const report = validateBlendCandidate(candidate.path, candidate.checksum);
+            if (!report.valid) throw new Error(`Promotion refused: ${report.reason}`);
+          }
           store.updateEnsembleCandidateStatus(candidate.id, next, { ...(candidate.payload as Record<string, unknown>), [`${next}At`]: new Date().toISOString() });
           store.close();
           append("assistant", `Ensemble ${candidate.id} marked ${next}. External submission remains approval-gated.`);
