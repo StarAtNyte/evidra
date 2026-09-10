@@ -99,6 +99,8 @@ Harness benchmarking is closed-loop: `benchmark run` records matched outcomes an
 
 Evaluator integrity is a hard gate: before an experiment engineer runs, Evidra fingerprints protected evaluator/configuration files and rejects any isolated worktree that changes them. This prevents specification-gaming results from entering the research ledger while still allowing the declared candidate implementation to change.
 
+Final reports also run a deterministic claim audit: measured, literature-only, provisional, unsupported, and conflicted claims are separated, and a report is not marked publishable when unsupported or contradictory claims remain.
+
 Before allocating compute, Evidra also structurally scores each hypothesis for a concrete mechanism, grounded evidence, falsifiability, implementation cost, and leakage risk. This score only prioritizes work; it never counts as an empirical improvement.
 
 Research hypotheses are not restricted to ML metrics: they can declare `metric`, `artifact`, `proof`, `behavior`, `system`, or `other` outcomes and describe non-scalar success with `expectedOutcome`. Competition manifests retain the metric path, while scientific and software investigations use the same durable evidence and verifier machinery without fabricated GPU estimates.

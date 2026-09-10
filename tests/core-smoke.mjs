@@ -59,6 +59,7 @@ import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { planHarnessAdaptation } from "../dist/core/harness-adaptation.js";
+import { auditClaims } from "../dist/core/claim-audit.js";
 import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks } from "../dist/core/airs-bench.js";
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
@@ -461,6 +462,24 @@ test("harness comparison failures become a locked adaptive retest agenda", () =>
   assert.equal(plan.retest.noMetricOrBudgetChanges, true);
   assert.ok(plan.interventions.some((item) => item.kind === "search"));
   assert.ok(plan.interventions.some((item) => item.kind === "recovery"));
+});
+
+test("claim audit separates measured, literature, unsupported, and conflicted evidence", () => {
+  const report = auditClaims({
+    claims: [
+      { id: "measured", payload: { statement: "measured score", confidence: 0.9, sourceType: "observation", sourceId: "run-1" } },
+      { id: "paper", payload: { statement: "paper technique", confidence: 0.35, sourceType: "literature", sourceId: "paper-1" } },
+      { id: "missing", payload: { statement: "unsupported claim", confidence: 0.9, sourceType: "observation", sourceId: "missing-source" } },
+      { id: "conflict", payload: { statement: "conflicted score", confidence: 0.9, sourceType: "experiment", sourceId: "run-2" } },
+    ],
+    knownEvidenceIds: new Set(["run-1", "run-2", "paper-1"]),
+    conflictedClaimIds: new Set(["conflict"]),
+  });
+  assert.equal(report.verified, 1);
+  assert.equal(report.literatureOnly, 1);
+  assert.equal(report.unsupported, 1);
+  assert.equal(report.conflicted, 1);
+  assert.equal(report.publishable, false);
 });
 
 test("experiment scheduler ranks expected information per cost", () => {

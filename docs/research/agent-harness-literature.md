@@ -172,6 +172,13 @@ artifacts as persistent weaknesses. Evidra therefore treats the adaptive agenda,
 raw attempts, checksums, route changes, and independent retests as first-class
 benchmark evidence rather than reporting a point score alone.
 
+Final reports now include a deterministic claim-verification matrix. Claims are
+classified as `verified`, `provisional`, `literature_only`, `unsupported`, or
+`conflicted`; literature-derived claims cannot masquerade as measured results,
+and contradiction edges override otherwise positive confidence. A report is
+marked publishable only when every included claim has durable non-literature
+provenance and no unresolved contradiction.
+
 Phase completion is likewise evidence-gated: promotion now requires both the
 leakage/reviewer gates and an accepted validation assessment. A model cannot
 advance the campaign by reporting that a candidate is ready without the durable

@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ResearchStore } from "./store.js";
+import { auditClaims } from "./claim-audit.js";
 
 export type ReportKind = "research" | "challenge" | "final";
 
@@ -28,6 +29,18 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const experienceEvents = events.filter((event) => event.type === "research.experience.recorded");
   const contradictionEdges = store.edges().filter((edge) => edge.relation === "contradicts");
   const duplicateEvents = events.filter((event) => event.type === "evidence.claim.duplicate_detected");
+  const conflictedClaimIds = new Set(contradictionEdges.flatMap((edge) => [edge.fromId, edge.toId]));
+  const claimAudit = auditClaims({
+    claims: claims.map((claim) => ({ id: claim.id, payload: claim.payload })),
+    knownEvidenceIds: new Set([
+      ...sources.map((source) => source.id),
+      ...decisions.map((decision) => `decision_${decision.id}`),
+      ...runs.map((run) => run.id),
+      ...artifacts.map((artifact) => artifact.id),
+      ...claims.map((claim) => claim.id),
+    ]),
+    conflictedClaimIds,
+  });
   const title = kind === "research" ? "Research report" : kind === "challenge" ? "Challenge report" : "Final provenance report";
   const sections = [
     `# ${title}`,
@@ -50,6 +63,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   if (kind !== "challenge") sections.push("", "## Hypotheses", "", hypotheses.length ? hypotheses.map((hypothesis) => `- ${hypothesis.id}: ${line((hypothesis.payload as { title?: string }).title ?? hypothesis.payload)}`).join("\n") : "No hypotheses recorded.");
   sections.push("", "## Decisions", "", decisions.length ? decisions.map((decision) => `- ${decision.id} · ${decision.createdAt}\n  ${line(decision.payload)}`).join("\n") : "No decisions recorded.");
   sections.push("", "## Evidence claims", "", claims.length ? claims.slice(0, 80).map((claim) => `- ${claim.id}: ${line((claim.payload as { statement?: string }).statement ?? claim.payload)}`).join("\n") : "No claims recorded.");
+  sections.push("", "## Claim verification audit", "", `Publishable: ${claimAudit.publishable ? "yes" : "no"}\nVerified: ${claimAudit.verified} · provisional: ${claimAudit.provisional} · literature-only: ${claimAudit.literatureOnly} · unsupported: ${claimAudit.unsupported} · conflicted: ${claimAudit.conflicted}`, claimAudit.entries.length ? claimAudit.entries.slice(0, 80).map((entry) => `- ${entry.status.toUpperCase()} ${entry.id} · ${entry.reasons.join("; ")}`).join("\n") : "No claims available for audit.");
   sections.push("", "## Evidence consistency", "", contradictionEdges.length || duplicateEvents.length
     ? [`Contradiction edges: ${contradictionEdges.length}`, ...contradictionEdges.slice(0, 40).map((edge) => `- ${edge.fromId} contradicts ${edge.toId} · review required`), `Duplicate findings in recent events: ${duplicateEvents.length}`].join("\n")
     : "No recorded duplicate or contradiction findings.");
