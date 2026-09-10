@@ -509,6 +509,16 @@ test("critic approval is downgraded when it has no evidence anchor", () => {
   assert.ok(review.objections.some((item) => /durable evidence/i.test(item)));
 });
 
+test("critic approval rejects evidence anchors absent from durable observations", () => {
+  const review = normalizeResearchReview(
+    { verdict: "proceed", summary: "Looks promising", objections: [], requiredChecks: [], evidence: ["invented-result"], independentReplication: true, confidence: 0.95, status: "completed" },
+    new Set(["run-verified"]),
+  );
+  assert.equal(review.verdict, "revise");
+  assert.deepEqual(review.evidence, []);
+  assert.ok(review.objections.some((item) => /unrecognized evidence/i.test(item)));
+});
+
 test("self-describing lane evidence is shared by interactive and report audits", () => {
   const claims = [{ id: "lane-claim", payload: { statement: "lane observation", scope: "lane", confidence: 0.9, sourceType: "observation", sourceId: "lane-data", findings: ["finding"], evidence: ["workspace.files"] } }];
   assert.deepEqual([...selfDescribingClaimEvidenceIds(claims)], ["lane-data"]);

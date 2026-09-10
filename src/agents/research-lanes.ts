@@ -55,16 +55,24 @@ export type ResearchReview = z.infer<typeof ResearchReviewSchema> & {
 };
 
 /** A review cannot approve a decision while declaring unresolved checks. */
-export function normalizeResearchReview(review: ResearchReview): ResearchReview {
-  const missingEvidence = review.evidence.length === 0;
-  if (review.verdict !== "proceed" || (review.requiredChecks.length === 0 && !missingEvidence)) return review;
+export function normalizeResearchReview(review: ResearchReview, validEvidence?: ReadonlySet<string>): ResearchReview {
+  const groundedEvidence = validEvidence
+    ? review.evidence.filter((evidence) => validEvidence.has(evidence))
+    : review.evidence;
+  const invalidEvidence = validEvidence ? review.evidence.filter((evidence) => !validEvidence.has(evidence)) : [];
+  const missingEvidence = groundedEvidence.length === 0;
+  if (review.verdict !== "proceed" || (review.requiredChecks.length === 0 && !missingEvidence)) {
+    return invalidEvidence.length ? { ...review, evidence: groundedEvidence } : review;
+  }
   const reasons = [
     ...(review.requiredChecks.length ? ["The review declared unresolved required checks while requesting proceed."] : []),
-    ...(missingEvidence ? ["The review cited no durable evidence anchors."] : []),
+    ...(missingEvidence ? [validEvidence ? "The review cited no evidence anchor that matches a durable observation." : "The review cited no durable evidence anchors."] : []),
+    ...(invalidEvidence.length ? [`Unrecognized evidence anchors were discarded: ${invalidEvidence.join(", ")}.`] : []),
   ];
   return {
     ...review,
     verdict: "revise",
+    evidence: groundedEvidence,
     summary: `${review.summary} Approval withheld until the review has durable evidence anchors and no unresolved checks.`,
     objections: [...new Set([...review.objections, ...reasons])].slice(0, 12),
     confidence: Math.min(review.confidence, 0.6),
@@ -233,7 +241,7 @@ export async function runResearchCritic(
   store.updateAgentLane({ role: "critic", status: "running", provider: options.provider, model: options.model, task: objective, error: null });
   store.close();
   options.onProgress?.("Research critic · checking assumptions and disagreement...");
-  const prompt = `${objective}\n\nYou are Evidra's independent critic. Review the proposed decision and independent lane reports below. Look for unsupported claims, leakage, invalid comparisons, missing controls, overconfident conclusions, and cheaper falsification tests. Do not rewrite the decision or invent measurements. Return ONLY JSON: {"verdict":"proceed|revise|reject","summary":"...","objections":["..."],"requiredChecks":["..."],"evidence":["durable lane artifact, source, command, or event supporting the review"],"independentReplication":true,"confidence":0.0}. A proceed verdict is valid only when evidence contains at least one concrete anchor and requiredChecks is empty.\n\nDecision:\n${JSON.stringify(decision)}\n\nLane reports:\n${JSON.stringify(laneReports)}`;
+  const prompt = `${objective}\n\nYou are Evidra's independent critic. Review the proposed decision and independent lane reports below. Look for unsupported claims, leakage, invalid comparisons, missing controls, overconfident conclusions, and cheaper falsification tests. Do not rewrite the decision or invent measurements. Return ONLY JSON: {"verdict":"proceed|revise|reject","summary":"...","objections":["..."],"requiredChecks":["..."],"evidence":["copy an exact evidence anchor from the lane reports or durable observation context"],"independentReplication":true,"confidence":0.0}. A proceed verdict is valid only when evidence contains at least one exact anchor from the supplied reports and requiredChecks is empty.\n\nDecision:\n${JSON.stringify(decision)}\n\nLane reports:\n${JSON.stringify(laneReports)}`;
   try {
     const result = await runWithLocalFallback({ role: "critic", objective: prompt, context: { decision, laneReports } }, {
       provider: options.provider,
@@ -243,7 +251,15 @@ export async function runResearchCritic(
       cwd: options.cwd,
       sandbox: "read-only",
     }, options.provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
-    const review = normalizeResearchReview({ ...ResearchReviewSchema.parse(parseJson(result.output)), status: "completed" });
+    const evidenceStore = new ResearchStore(options.storePath);
+    const evidenceAnchors = new Set<string>([
+      ...laneReports.flatMap((lane) => lane.evidence),
+      ...evidenceStore.sources().map((source) => source.id),
+      ...evidenceStore.runs().map((run) => run.id),
+      ...evidenceStore.artifacts().map((artifact) => artifact.id),
+    ]);
+    evidenceStore.close();
+    const review = normalizeResearchReview({ ...ResearchReviewSchema.parse(parseJson(result.output)), status: "completed" }, evidenceAnchors);
     const completed = new ResearchStore(options.storePath);
     completed.appendEvent("research.critic.completed", { review, objective });
     const claimId = `claim_critic_${Date.now()}`;
