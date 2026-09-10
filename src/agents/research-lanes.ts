@@ -289,16 +289,22 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
         options.onProgress?.(`Research lane · ${role} · ${call.name}...`);
         const callId = options.onToolCall?.(`lane:${role}`, call) ?? `${role}-${call.name}-${toolResults.length + 1}`;
-        try {
-          const result = boundLaneToolResult(await options.executeTool(call));
-          options.onToolResult?.(`lane:${role}`, callId, result);
-          toolResults.push(result);
-        } catch (error) {
-          const result: ResearchToolResult = { name: call.name, ok: false, error: error instanceof Error ? error.message : String(error) };
-          options.onToolResult?.(`lane:${role}`, callId, result);
-          toolResults.push(result);
-          throw error;
+        let result: ResearchToolResult = { name: call.name, ok: false, error: "Tool did not return a result." };
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          try {
+            result = boundLaneToolResult(await options.executeTool(call));
+          } catch (error) {
+            result = { name: call.name, ok: false, error: error instanceof Error ? error.message : String(error) };
+          }
+          options.onToolResult?.(`lane:${role}`, attempt === 1 ? callId : `${callId}:retry`, result);
+          if (result.ok || attempt === 2 || !isRetryableAgentError(new Error(result.error ?? ""))) break;
+          options.onProgress?.(`Research lane · ${role} · ${call.name} failed transiently; retrying once...`);
+          await new Promise<void>((resolve) => setTimeout(resolve, 250));
         }
+        // Preserve the failed observation and let the lane explain the gap or
+        // select a different route; one unavailable tool must not erase an
+        // otherwise independent research perspective.
+        toolResults.push(result);
       }
     }
     let provider = laneRoute.provider;
