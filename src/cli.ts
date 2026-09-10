@@ -951,6 +951,8 @@ research
       const toolTrace = createToolTraceRecorder(`research-${cycle}`);
       let researchAttempt = 0;
       let agentObjective = allocatedObjective;
+      const remainingBudgetMs = Math.max(10_000, campaign.budgetMinutes * 60_000 - (Date.now() - started));
+      const agentTimeoutMs = Math.max(10_000, Math.min(3 * 60_000, remainingBudgetMs));
       while (true) {
         try {
           console.log("Research · independent lanes are investigating the evidence...");
@@ -973,6 +975,7 @@ research
             fallbackLocalModel: options.limitPolicy === "fallback" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
             limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop",
             reasoningEffort: options.thinking,
+            timeoutMs: agentTimeoutMs,
             cwd: root,
             storePath: statePath,
             maxParallel: effectiveLaneLimit,
@@ -982,13 +985,14 @@ research
             onToolResult: toolTrace.onToolResult,
           });
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
           criticReview = await runResearchCritic(agentObjective, decision, laneReports, {
             provider: options.provider,
             model: selectedModel,
             fallbackLocalModel: options.limitPolicy === "fallback" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
             limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop",
             reasoningEffort: options.thinking,
+            timeoutMs: agentTimeoutMs,
             cwd: root,
             storePath: statePath,
             maxParallel: 1,

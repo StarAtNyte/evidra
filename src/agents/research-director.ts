@@ -17,6 +17,7 @@ export interface ResearchDirectorOptions {
   provider: AgentProvider;
   model: string;
   reasoningEffort?: string;
+  timeoutMs?: number;
   cwd: string;
   fallbackLocalModel?: string;
   limitPolicy?: "wait" | "fallback" | "stop";

@@ -61,6 +61,7 @@ export interface ResearchLanesOptions {
   fallbackLocalModel?: string;
   limitPolicy?: ExecAgentOptions["limitPolicy"];
   reasoningEffort?: string;
+  timeoutMs?: number;
   cwd: string;
   storePath: string;
   maxParallel?: number;
@@ -278,6 +279,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
           model,
           limitPolicy: options.limitPolicy,
           reasoningEffort: options.reasoningEffort,
+          timeoutMs: options.timeoutMs,
           cwd: options.cwd,
           sandbox: "read-only",
         }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
