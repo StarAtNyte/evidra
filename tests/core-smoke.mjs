@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
@@ -747,6 +747,12 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.equal(files.output.files.includes("notes.txt"), true);
     const search = await executeResearchTool({ name: "workspace.search", arguments: { query: "hypothesis" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(search.ok, true);
+    const outside = join(tmpdir(), `evidra-outside-${Date.now()}.txt`);
+    writeFileSync(outside, "secret outside workspace\n");
+    symlinkSync(outside, join(root, "linked.txt"));
+    const escaped = await executeResearchTool({ name: "workspace.read", arguments: { path: "linked.txt" } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(escaped.ok, false);
+    rmSync(outside, { force: true });
     const denied = await executeResearchTool({ name: "shell.exec", arguments: { command: ["touch", "blocked.txt"] } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(denied.ok, false);
     assert(RESEARCH_TOOLS.some((tool) => tool.name === "source.retrieve"));

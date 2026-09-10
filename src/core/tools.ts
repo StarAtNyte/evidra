@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { auditData } from "./data-audit.js";
 import { guardCommand, guardReadOnlyInspection, type AutonomyLevel } from "./permissions.js";
@@ -68,10 +68,18 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
 ];
 
 function inside(root: string, requested: string): string {
-  const path = resolve(root, requested);
-  const rel = relative(root, path);
+  const rootPath = realpathSync(root);
+  const path = resolve(rootPath, requested);
+  const rel = relative(rootPath, path);
   if (rel.startsWith("..") || isAbsolute(rel)) throw new Error(`Path escapes the workspace: ${requested}`);
   if (isSensitiveWorkspacePath(rel)) throw new Error(`Refusing to expose sensitive workspace path: ${requested}`);
+  if (existsSync(path)) {
+    const resolvedPath = realpathSync(path);
+    const resolvedRel = relative(rootPath, resolvedPath);
+    if (resolvedRel.startsWith("..") || isAbsolute(resolvedRel)) throw new Error(`Path escapes the workspace through a symlink: ${requested}`);
+    if (isSensitiveWorkspacePath(resolvedRel)) throw new Error(`Refusing to expose sensitive workspace path: ${requested}`);
+    return resolvedPath;
+  }
   return path;
 }
 
