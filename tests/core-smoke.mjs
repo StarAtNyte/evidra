@@ -827,6 +827,20 @@ test("research memory context remains bounded and cumulative", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("research memory ranks relevant claims and hypotheses before merely recent ones", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-research-memory-ranking-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.saveClaim({ id: "recent", payload: { statement: "Recent unrelated optimizer note", scope: "workspace", confidence: 0.8, sourceType: "observation", sourceId: "obs-1", status: "active" } });
+    store.saveClaim({ id: "relevant", payload: { statement: "Grouped validation prevents source leakage", scope: "validation", confidence: 0.8, sourceType: "observation", sourceId: "obs-2", status: "active" } });
+    store.saveHypothesis({ id: "h-relevant", payload: { title: "Grouped validation", mechanism: "Source groups must not cross folds", status: "proposed" } });
+    const context = researchMemoryContext(store, 1, "source leakage validation");
+    assert.equal(context.claims[0].id, "relevant");
+    assert.equal(context.hypotheses[0].id, "h-relevant");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("autonomous loop detects repeated unresolved decisions", () => {
   const decision = { phase: "validation", decision: "inspect", goalStatus: "active", bottleneck: "missing evaluator", selectedHypothesis: null, nextAction: "inspect evaluator" };
   assert.equal(decisionSignature(decision), "validation|inspect|missing evaluator|none|inspect evaluator");

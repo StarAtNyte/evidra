@@ -742,7 +742,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       contradictions: store.edges().filter((edge) => edge.relation === "contradicts").length,
       duplicates: consistencyEvents.filter((event) => event.type === "evidence.claim.duplicate_detected").length,
     };
-    const researchMemory = researchMemoryContext(store, 30);
+    const researchMemory = researchMemoryContext(store, 30, objective);
     const peerLaneBoard = boundedPeerBoard(recentEvents);
     const recentTrajectories = store.trajectories(50);
     const recentFailureCount = recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;

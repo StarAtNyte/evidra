@@ -151,6 +151,13 @@ Source: [DeltaML-Bench](https://arxiv.org/abs/2608.19653).
 
 ## General research outcomes
 
+Long-horizon agents need retrieval, not an ever-growing transcript. Evidra's
+research memory remains bounded, but when a cycle supplies an objective it now
+ranks durable claims and hypotheses by lexical relevance before using recency as
+the tie-breaker. This keeps prior leakage findings, failed directions, and
+source-derived ideas available without flooding the director context or
+silently favoring unrelated recent events.
+
 The decision schema now separates the outcome type from a scalar metric. A
 hypothesis may target a proof, artifact, behavior, system property, or another
 explicitly described outcome, with `expectedOutcome` carrying the success
