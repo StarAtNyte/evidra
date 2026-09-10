@@ -110,6 +110,7 @@ Implemented today:
 - source hashes, extracted claims, research graph edges, evidence reports, statistical comparison helpers, and ensemble utilities;
 - bounded HTML, text, and common PDF research-source extraction with explicit fallback when a PDF encoding cannot be decoded;
 - freshness-aware refresh of dynamic competition sources such as discussions and leaderboards on challenge observation cycles;
+- URL-deduplicated active research context, while retaining every historical source version for auditability;
 - multi-split validation acceptance, durable leakage/reviewer gates, and conservative external-score split-belief modeling;
 - automatic baseline-to-candidate comparison events after successful challenge evaluations;
 - replication scheduling gated on an observed improvement rather than mere process completion;

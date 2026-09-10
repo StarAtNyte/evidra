@@ -17,7 +17,7 @@ import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.
 import { submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
 import { renderTimeline } from "./core/timeline.js";
-import { researchMemoryContext } from "./core/research-context.js";
+import { latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
 import { detectStagnation } from "./core/stagnation.js";
 import { recoveryDelay, recoveryPlan } from "./core/recovery.js";
 import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "./core/campaign.js";
@@ -585,7 +585,7 @@ research
       if (!store.phaseGoals().length) for (const goal of definePhaseGoals(objective, mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
       const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode));
       const recentEvents = store.recentEvents(20);
-      const researchSources = store.sources().slice(0, 12).map((entry) => entry.payload);
+      const researchSources = latestSourcePayloads(store.sources(), 12);
       const researchMemory = researchMemoryContext(store, 30);
       console.log(`${mode === "challenge" ? "Challenge" : "Research"} ${cycle} · inspecting workspace${mode === "challenge" ? " and baseline" : ""} (budget ${campaign.budgetMinutes}m)...`);
       const gitStatus = await runProcess(["git", "status", "--short"], root);

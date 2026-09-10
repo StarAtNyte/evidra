@@ -6,6 +6,26 @@ export interface ResearchMemoryContext {
   contradictions: Array<{ fromId: string; toId: string; confidence: number }>;
 }
 
+/** Return the newest source entry for each URL while preserving source history in storage. */
+export function latestSourceEntries<T extends { id: string; payload: unknown; createdAt: string }>(entries: T[], limit = 12): T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+  for (const entry of entries) {
+    const payload = entry.payload as { url?: unknown };
+    const key = typeof payload.url === "string" && payload.url ? payload.url : entry.id;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(entry);
+    if (result.length >= Math.max(1, Math.min(limit, 100))) break;
+  }
+  return result;
+}
+
+/** Return the newest payload for each URL while preserving source history in storage. */
+export function latestSourcePayloads(entries: Array<{ id: string; payload: unknown; createdAt: string }>, limit = 12): unknown[] {
+  return latestSourceEntries(entries, limit).map((entry) => entry.payload);
+}
+
 /** Build a bounded, structured memory snapshot for autonomous research context. */
 export function researchMemoryContext(store: ResearchStore, limit = 30): ResearchMemoryContext {
   const bounded = Math.max(1, Math.min(limit, 100));

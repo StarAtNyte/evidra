@@ -40,7 +40,7 @@ import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "../core/execution-stages.js";
 import { runReducedValidation } from "../core/stage-executor.js";
 import { renderTimeline } from "../core/timeline.js";
-import { researchMemoryContext } from "../core/research-context.js";
+import { latestSourceEntries, researchMemoryContext } from "../core/research-context.js";
 import { detectStagnation } from "../core/stagnation.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
@@ -686,8 +686,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     store.appendEvent("research.capability_route", { route, objective, recentFailureCount });
     const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts });
     store.appendEvent("research.next_allocation", { allocation, objective });
-    const researchSources = store.sources().slice(0, 12).map((entry) => {
-      const payload = entry.payload as { id?: string; title?: string; url?: string; excerpt?: string; claims?: string[] };
+    const researchSources = latestSourceEntries(store.sources(), 12).map((entry) => {
+      const payload = entry.payload as { title?: string; url?: string; excerpt?: string; claims?: string[] };
       return { id: entry.id, title: payload.title, url: payload.url, excerpt: payload.excerpt, claims: payload.claims?.slice(0, 8) };
     });
     store.close();

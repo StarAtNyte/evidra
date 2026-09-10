@@ -36,7 +36,7 @@ import { allocateNextResearch } from "../dist/core/allocation.js";
 import { rankPriorities } from "../dist/core/scheduler.js";
 import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
-import { researchMemoryContext } from "../dist/core/research-context.js";
+import { latestSourceEntries, latestSourcePayloads, researchMemoryContext } from "../dist/core/research-context.js";
 import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js";
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
@@ -68,6 +68,16 @@ test("dynamic research sources refresh after their freshness window", () => {
   assert.equal(sourceIsFresh({ payload: { retrievedAt: "2026-01-01T10:00:00.000Z" } }, DEFAULT_SOURCE_REFRESH_MS, now), true);
   assert.equal(sourceIsFresh({ payload: { retrievedAt: "2026-01-01T01:00:00.000Z" } }, DEFAULT_SOURCE_REFRESH_MS, now), false);
   assert.equal(sourceIsFresh({ payload: {}, createdAt: "2026-01-01T11:00:00.000Z" }, DEFAULT_SOURCE_REFRESH_MS, now), true);
+});
+
+test("active research context keeps only the newest source version per URL", () => {
+  const sources = [
+    { id: "new", createdAt: "2026-01-02T00:00:00.000Z", payload: { url: "https://example.com/discussion", title: "new" } },
+    { id: "old", createdAt: "2026-01-01T00:00:00.000Z", payload: { url: "https://example.com/discussion", title: "old" } },
+    { id: "other", createdAt: "2025-12-31T00:00:00.000Z", payload: { url: "https://example.com/paper", title: "paper" } },
+  ];
+  assert.deepEqual(latestSourcePayloads(sources, 12).map((source) => source.title), ["new", "paper"]);
+  assert.deepEqual(latestSourceEntries(sources, 12).map((source) => source.id), ["new", "other"]);
 });
 
 test("paused campaign time is excluded from the autonomous budget", () => {
