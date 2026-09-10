@@ -22,6 +22,8 @@ export interface HarnessTrial {
   processQuality?: number;
   /** Whether tool feedback and the next action were aligned. */
   executionAlignment?: boolean;
+  /** Structured failure emitted by the benchmark runner, when the arm failed. */
+  failureClass?: string;
 }
 
 export interface BenchmarkProtocolIssue {
@@ -124,6 +126,7 @@ export interface HarnessScorecard {
   meanProcessQuality: number | null;
   executionAlignmentRate: number | null;
   meanTimeEfficiency: number | null;
+  failureProfile: Record<string, number>;
 }
 
 export interface HarnessComparison {
@@ -320,6 +323,12 @@ export function scoreHarnessTrials(trials: HarnessTrial[]): HarnessScorecard[] {
     const processValues = entries.map((entry) => entry.processQuality).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
     const alignmentValues = entries.filter((entry) => entry.executionAlignment !== undefined).map((entry) => entry.executionAlignment ? 1 : 0);
     const efficiencyValues = entries.map(timeEfficiency).filter((value): value is number => value !== undefined);
+    const failureProfile: Record<string, number> = {};
+    for (const entry of entries) {
+      if (entry.validRun) continue;
+      const failure = entry.failureClass ?? "unknown";
+      failureProfile[failure] = (failureProfile[failure] ?? 0) + 1;
+    }
     // Evidence quality is a first-class part of competitiveness. Aggregate by
     // task first so a harness cannot win by running many trials on one easy
     // task. The lower bound is a conservative guard against lucky portfolios.
@@ -342,6 +351,7 @@ export function scoreHarnessTrials(trials: HarnessTrial[]): HarnessScorecard[] {
       meanProcessQuality: processValues.length ? processValues.reduce((sum, value) => sum + Math.max(0, Math.min(1, value)), 0) / processValues.length : null,
       executionAlignmentRate: alignmentValues.length ? alignmentValues.reduce<number>((sum, value) => sum + value, 0) / alignmentValues.length : null,
       meanTimeEfficiency: efficiencyValues.length ? efficiencyValues.reduce((sum, value) => sum + value, 0) / efficiencyValues.length : null,
+      failureProfile,
     };
   }).sort((a, b) => b.competitiveScore - a.competitiveScore);
 }

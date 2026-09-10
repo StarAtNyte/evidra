@@ -1,6 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { parseMetricOutput } from "./executors.js";
+import { classifyProcessFailure } from "./executors.js";
 import { runProcess } from "./process.js";
 import type { HarnessTrial, ScoreDirection } from "./harness-scorecard.js";
 import type { ProcessResult } from "./types.js";
@@ -31,7 +32,7 @@ export interface BenchmarkRunReport {
   schemaVersion: 1;
   startedAt: string;
   trials: HarnessTrial[];
-  runs: Array<{ harness: string; command: string[]; cwd: string; result: ProcessResult; metric?: number; attempts: number; attemptDetails: BenchmarkAttemptRecord[]; reproducibility?: { command: string[]; result: ProcessResult; metric?: number; tolerance: number; matched: boolean } }>;
+  runs: Array<{ harness: string; command: string[]; cwd: string; result: ProcessResult; metric?: number; attempts: number; attemptDetails: BenchmarkAttemptRecord[]; failureClass?: string; reproducibility?: { command: string[]; result: ProcessResult; metric?: number; tolerance: number; matched: boolean } }>;
 }
 
 export interface BenchmarkAttemptRecord {
@@ -41,6 +42,7 @@ export interface BenchmarkAttemptRecord {
   metric?: number;
   stdoutTail: string;
   stderrTail: string;
+  failureClass?: string;
 }
 
 function benchmarkCwd(root: string, requested: string | undefined, harness: string): string {
@@ -99,6 +101,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
         ...(Number.isFinite(metric) ? { metric } : {}),
         stdoutTail: redactSecrets(result.stdout.slice(-4_000)),
         stderrTail: redactSecrets(result.stderr.slice(-4_000)),
+        ...(result.exitCode !== 0 ? { failureClass: classifyProcessFailure(result) ?? "unknown" } : !Number.isFinite(metric) ? { failureClass: "invalid_metric" } : {}),
       });
       if (validRun || attempt === maxAttempts - 1) break;
       onProgress?.(`Benchmark · ${arm.harness} failed; retrying ${attempt + 1}/${maxAttempts - 1}`);
@@ -117,7 +120,8 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
         reproducibility = { command: arm.reproducibilityCommand, result: checkResult, metric: Number.isFinite(checkMetric) ? checkMetric : undefined, tolerance, matched: reproducible };
       }
     }
-    runs.push({ harness: arm.harness, command: arm.command, cwd, result, metric: Number.isFinite(metric) ? metric : undefined, attempts, attemptDetails, ...(reproducibility ? { reproducibility } : {}) });
+    const finalFailure = attemptDetails.at(-1)?.failureClass;
+    runs.push({ harness: arm.harness, command: arm.command, cwd, result, metric: Number.isFinite(metric) ? metric : undefined, attempts, attemptDetails, ...(finalFailure ? { failureClass: finalFailure } : {}), ...(reproducibility ? { reproducibility } : {}) });
     trials.push({
       harness: arm.harness,
       task: arm.task,
@@ -133,6 +137,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       validRun,
       durationSeconds: totalDurationMs / 1000,
       recovered: validRun && attempts > 1,
+      ...(finalFailure ? { failureClass: finalFailure } : {}),
       reproducible,
     });
   }

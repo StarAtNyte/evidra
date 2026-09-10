@@ -101,6 +101,14 @@ When optional trajectory fields are present, process quality and alignment also
 affect the competitive score; older trial files remain readable and fall back to
 their evaluator-backed fields.
 
+Failed benchmark attempts are also classified from bounded process output using
+the same failure vocabulary as experiment recovery (`cuda_oom`, `timeout`,
+`dependency`, `data_missing`, `auth`, `rate_limit`, `disk`, `invalid_metric`,
+and `unknown`). Attempt details retain the classification, while each harness
+scorecard exposes a `failureProfile` counter. This makes benchmark results useful
+for harness evolution: a lower score is not just a loss, but a concrete route to
+repair and retest.
+
 ## Initial AIRS-Bench trial
 
 On the official AIRS-Bench SICK Accuracy task, Evidra reproduced the majority

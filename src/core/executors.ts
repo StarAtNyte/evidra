@@ -8,7 +8,7 @@ export interface ExperimentExecutor {
   run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName?: string): Promise<RunResult>;
 }
 
-function failureClass(result: ProcessResult, remote = false): RunResult["failureClass"] {
+export function classifyProcessFailure(result: ProcessResult, remote = false): RunResult["failureClass"] {
   const text = `${result.stdout}\n${result.stderr}`.toLowerCase();
   if (/out of memory|cuda oom|cuda.*memory/.test(text)) return "cuda_oom";
   if (/nan|inf loss/.test(text)) return "nan_loss";
@@ -129,7 +129,7 @@ function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metric
     stderr,
     command: result.command,
     cwd: result.cwd,
-    ...(artifactFailure ? { failureClass: "corrupt_artifact" as const } : result.exitCode === 0 ? {} : { failureClass: failureClass(result, remote) }),
+    ...(artifactFailure ? { failureClass: "corrupt_artifact" as const } : result.exitCode === 0 ? {} : { failureClass: classifyProcessFailure(result, remote) }),
   };
 }
 

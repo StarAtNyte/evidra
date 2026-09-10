@@ -1666,6 +1666,7 @@ test("harness scorecard rewards valid reproducible improvements and rejects narr
   assert.equal(scorecards[0].tasks, 2);
   assert.ok(scorecards[0].competitiveScoreLower95 <= scorecards[0].competitiveScore);
   assert.equal(scorecards[1].competitiveScore, 0);
+  assert.equal(scorecards[1].failureProfile.unknown, 1);
 });
 
 test("harness scorecard incorporates optional process and alignment evidence", () => {
@@ -1803,6 +1804,7 @@ test("benchmark runner records bounded recovery after a failed arm attempt", asy
     assert.equal(report.runs[0].attempts, 2);
     assert.equal(report.runs[0].attemptDetails.length, 2);
     assert.equal(report.runs[0].attemptDetails[0].exitCode, 1);
+    assert.equal(report.runs[0].attemptDetails[0].failureClass, "unknown");
     assert.equal(report.runs[0].attemptDetails[1].metric, 0.8);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
