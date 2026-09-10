@@ -8,7 +8,7 @@ import { compareMetricSeries } from "../dist/core/statistics.js";
 import { recoveryPlan } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
-import { retrieveSource, sourceClaims } from "../dist/core/sources.js";
+import { extractPdfText, retrieveSource, sourceClaims } from "../dist/core/sources.js";
 import { diversityReport, greedyBlend } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
@@ -584,6 +584,13 @@ test("configured command submission requires a valid approved bundle and preserv
 
 test("source retrieval refuses loopback hosts before fetching", async () => {
   await assert.rejects(() => retrieveSource("http://127.0.0.1:9/private"), /private or loopback/);
+});
+
+test("PDF source extraction reads common text operators without binary garbage", () => {
+  const pdf = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Length 62 >>\nstream\nBT\n(An experimental method improves accuracy.) Tj\nET\nendstream\nendobj\n%%EOF\n', "latin1");
+  const text = extractPdfText(pdf);
+  assert.match(text, /experimental method improves accuracy/);
+  assert.doesNotMatch(text, /%PDF|endstream/);
 });
 
 test("process interruption terminates the detached worker group", async () => {

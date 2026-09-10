@@ -103,6 +103,7 @@ Implemented today:
 - detached process groups so Escape stops child workers as well as the parent;
 - experiment manifests, isolated worktrees, local/Modal executor boundaries, artifact capture, retries, and failure classification;
 - source hashes, extracted claims, research graph edges, evidence reports, statistical comparison helpers, and ensemble utilities;
+- bounded HTML, text, and common PDF research-source extraction with explicit fallback when a PDF encoding cannot be decoded;
 - multi-split validation acceptance, durable leakage/reviewer gates, and conservative external-score split-belief modeling;
 - shell and autonomy safety guards.
 

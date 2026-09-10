@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { inflateSync } from "node:zlib";
 import { ResearchSourceSchema, type ResearchSource } from "./types.js";
 
 export interface RetrievedSource extends ResearchSource {
@@ -51,6 +52,47 @@ function stripMarkup(input: string): string {
     .trim();
 }
 
+function decodePdfLiteral(value: string): string {
+  let output = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (character !== "\\") { output += character; continue; }
+    const escaped = value[++index] ?? "";
+    const simple: Record<string, string> = { n: "\n", r: "\r", t: "\t", b: "\b", f: "\f", "(": "(", ")": ")", "\\": "\\" };
+    if (simple[escaped] !== undefined) { output += simple[escaped]; continue; }
+    if (/\d/.test(escaped)) {
+      const octal = (escaped + (value[index + 1] ?? "") + (value[index + 2] ?? "")).match(/^\d{1,3}/)?.[0] ?? escaped;
+      output += String.fromCharCode(parseInt(octal, 8));
+      index += octal.length - 1;
+    } else output += escaped;
+  }
+  return output;
+}
+
+/** Extract common PDF text operators without treating binary PDF bytes as prose. */
+export function extractPdfText(bytes: Uint8Array): string {
+  const document = Buffer.from(bytes).toString("latin1");
+  const extracted: string[] = [];
+  const streamPattern = /stream(?:\r\n|\n|\r)([\s\S]*?)(?:\r\n|\n|\r)endstream/g;
+  for (const match of document.matchAll(streamPattern)) {
+    const start = match.index ?? 0;
+    const header = document.slice(Math.max(0, start - 500), start);
+    let content = Buffer.from(match[1], "latin1");
+    if (/\/FlateDecode\b/.test(header)) {
+      try { content = inflateSync(content); } catch { continue; }
+    }
+    const stream = content.toString("latin1");
+    for (const literal of stream.matchAll(/\(((?:\\[\s\S]|[^\\)])*)\)\s*Tj/g)) extracted.push(decodePdfLiteral(literal[1]));
+    for (const array of stream.matchAll(/\[((?:\([^\)]*\)|<[^>]*>|[^\]])*)\]\s*TJ/g)) {
+      for (const literal of array[1].matchAll(/\(((?:\\[\s\S]|[^\\)])*)\)/g)) extracted.push(decodePdfLiteral(literal[1]));
+      for (const hex of array[1].matchAll(/<([0-9a-f]+)>/gi)) {
+        try { extracted.push(Buffer.from(hex[1], "hex").toString("latin1")); } catch { /* malformed literal */ }
+      }
+    }
+  }
+  return extracted.join(" ").replace(/\s+/g, " ").trim().slice(0, MAX_BYTES);
+}
+
 export async function retrieveSource(url: string, signal?: AbortSignal): Promise<RetrievedSource> {
   let parsed = new URL(url);
   await assertPublicUrl(parsed);
@@ -73,7 +115,10 @@ export async function retrieveSource(url: string, signal?: AbortSignal): Promise
   if (bytes.byteLength > MAX_BYTES) throw new Error(`Source is larger than the ${MAX_BYTES} byte retrieval limit.`);
   const contentHash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   const raw = new TextDecoder().decode(bytes);
-  const text = contentType.includes("html") ? stripMarkup(raw) : raw.replace(/\s+/g, " ").trim();
+  const isPdf = contentType.toLowerCase().includes("pdf") || raw.startsWith("%PDF-");
+  const text = isPdf
+    ? (extractPdfText(bytes) || "[PDF text extraction unavailable; inspect the original source manually]")
+    : contentType.includes("html") ? stripMarkup(raw) : raw.replace(/\s+/g, " ").trim();
   const titleMatch = raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   const title = stripMarkup(titleMatch?.[1] ?? parsed.hostname ?? url).slice(0, 300) || url;
   const source = ResearchSourceSchema.parse({
