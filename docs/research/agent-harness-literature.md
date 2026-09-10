@@ -320,6 +320,10 @@ benchmark feedback to the next research-director cycle. A recurring timeout or
 dependency failure is therefore an explicit harness-repair target followed by a
 same-protocol remeasurement, not just a lower leaderboard number.
 
+Recent work makes the missing control loop more explicit. [Adaptive Auto-Harness](https://arxiv.org/abs/2606.01770) describes stateful harness evolution with solve-time routing and human-steering hooks; [HarnessDev](https://arxiv.org/abs/2609.01437) studies agents revising their own harnesses from downstream execution feedback; and [Better Harnesses, Smaller Models](https://arxiv.org/abs/2607.08938) maps failure modes to harness adaptations under cost constraints. Evidra now implements the runtime portion of that idea: each cycle derives a bounded policy from trajectory verdicts, failure classes, evidence conflicts, remaining budget, and benchmark intervention priority. The policy can increase tool evidence rounds, require peer review, change recovery posture, preserve replication, or prefer diverse search, and is recorded as durable evidence for later matched evaluation.
+
+This policy is intentionally not allowed to self-award a win. The competitive claim still requires the locked task/model/seed/budget/evaluator protocol and positive task-balanced evidence. The adaptation policy changes the search and verification process; it does not change the yardstick.
+
 The same principle now applies below the benchmark layer: recent executor
 failure classes are fed directly into the next allocation. An invalid metric or
 corrupt artifact prioritizes verifier repair, a missing-data failure prioritizes
@@ -327,4 +331,4 @@ the data contract, and resource/provider failures select a recovery route rather
 than allowing the director to spend another cycle repeating the same run.
 
 Sources: [AutoResearchBench](https://arxiv.org/abs/2604.25256) and
-[Agentic Harness Engineering](https://arxiv.org/abs/2604.25850).
+[Agentic Harness Engineering](https://arxiv.org/abs/2604.25850), [Adaptive Auto-Harness](https://arxiv.org/abs/2606.01770), [HarnessDev](https://arxiv.org/abs/2609.01437), and [Better Harnesses, Smaller Models](https://arxiv.org/abs/2607.08938).
