@@ -223,6 +223,14 @@ function bootstrapLower95(values: number[], seedText: string): number {
   return samples[Math.floor(samples.length * 0.025)] ?? 0;
 }
 
+/** Average paired diagnostics by task before averaging tasks. */
+function taskBalancedMean(entries: Array<{ task: string; value: number }>): number | null {
+  const byTask = new Map<string, number[]>();
+  for (const entry of entries) byTask.set(entry.task, [...(byTask.get(entry.task) ?? []), entry.value]);
+  const means = [...byTask.values()].map((values) => values.reduce((sum, value) => sum + value, 0) / values.length);
+  return means.length ? means.reduce((sum, value) => sum + value, 0) / means.length : null;
+}
+
 function protocolKey(trial: HarnessTrial): string {
   return [trial.task, trial.arm ?? "", trial.seed ?? "", trial.model ?? "", trial.budgetMinutes ?? ""].join("\u001f");
 }
@@ -262,11 +270,11 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
   const taskDeltas = [...byTask.values()].map((values) => values.reduce((sum, value) => sum + value, 0) / values.length);
   const pairedMeanDelta = taskDeltas.length ? taskDeltas.reduce((sum, value) => sum + value, 0) / taskDeltas.length : null;
   const pairedLower95 = taskDeltas.length ? bootstrapLower95(taskDeltas, `${challenger}::${incumbent}`) : null;
-  const processDeltas = paired.map((entry) => entry.processDelta).filter((value): value is number => value !== undefined);
-  const pairedProcessQualityDelta = processDeltas.length ? processDeltas.reduce((sum, value) => sum + value, 0) / processDeltas.length : null;
+  const processDeltas = paired.flatMap((entry) => entry.processDelta === undefined ? [] : [{ task: entry.task, value: entry.processDelta }]);
+  const pairedProcessQualityDelta = taskBalancedMean(processDeltas);
   const processComparableArms = processDeltas.length;
-  const timeDeltas = paired.map((entry) => entry.timeDelta).filter((value): value is number => value !== undefined);
-  const pairedTimeEfficiencyDelta = timeDeltas.length ? timeDeltas.reduce((sum, value) => sum + value, 0) / timeDeltas.length : null;
+  const timeDeltas = paired.flatMap((entry) => entry.timeDelta === undefined ? [] : [{ task: entry.task, value: entry.timeDelta }]);
+  const pairedTimeEfficiencyDelta = taskBalancedMean(timeDeltas);
   const timeComparableArms = timeDeltas.length;
   const coverage = keys.length ? paired.length / keys.length : 0;
   const minimumTasks = 2;

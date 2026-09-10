@@ -1990,6 +1990,20 @@ test("benchmark comparison blocks a metric win with a material process regressio
   assert.match(comparison.reason, /process-quality/i);
 });
 
+test("benchmark secondary gates remain task-balanced when arm counts differ", () => {
+  const trials = [];
+  for (const [task, arms] of [["easy", 4], ["hard", 1]]) {
+    for (let index = 0; index < arms; index += 1) {
+      const base = { task, arm: `arm-${index}`, seed: 1, model: "codex", budgetMinutes: 10, direction: "maximize", baselineMetric: 0.5, validRun: true, durationSeconds: 1, recovered: false, reproducible: true };
+      trials.push({ harness: "evidra", ...base, candidateMetric: 0.9, processQuality: task === "easy" ? 0 : 1, executionAlignment: task === "easy" ? false : true });
+      trials.push({ harness: "incumbent", ...base, candidateMetric: 0.6, processQuality: task === "easy" ? 1 : 0, executionAlignment: task === "easy" ? true : false });
+    }
+  }
+  const comparison = compareHarnesses(trials, "evidra", "incumbent");
+  assert.equal(comparison.pairedProcessQualityDelta, 0);
+  assert.equal(comparison.challengerWins, true);
+});
+
 test("benchmark runner executes matched arms and records evaluator-backed metrics", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-runner-"));
   try {
