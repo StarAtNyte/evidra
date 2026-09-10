@@ -56,6 +56,7 @@ import { summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
+import { researchFailureRecord } from "../dist/core/research-failure.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -120,6 +121,18 @@ test("trajectory structural gate quarantines ambiguous tool traces", () => {
   assert.ok(structure.issues.some((issue) => issue.includes("duplicate tool call id")));
   assert.ok(structure.issues.some((issue) => issue.includes("no matching call")));
   assert.equal(evaluateTrajectory(malformed).structural.verdict, "FAIL");
+});
+
+test("exhausted research-agent failures close a resumable failed trajectory", () => {
+  const failure = researchFailureRecord(4, new Error("Research director did not return JSON."), [
+    { id: "tool-call", kind: "tool_call", callId: "call-1", payload: { tool: "workspace.files" } },
+    { id: "tool-result", kind: "tool_result", callId: "call-1", payload: { ok: true } },
+  ], [{ role: "model researcher", error: "invalid response" }]);
+  assert.equal(failure.events.at(-1).kind, "terminal");
+  assert.equal(failure.events.at(-1).payload.status, "failed");
+  assert.equal(failure.quality.termination.verdict, "PASS");
+  assert.equal(failure.quality.overall, "WARN");
+  assert.match(failure.error, /did not return JSON/);
 });
 
 test("tool trace recorder preserves causal call/result pairs and redacts secrets", () => {

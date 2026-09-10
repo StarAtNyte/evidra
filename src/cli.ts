@@ -56,6 +56,7 @@ import { evaluateReducedPromotion } from "./core/scheduler.js";
 import { validateCompetitionContract } from "./core/competition-contract.js";
 import { candidateChangePath } from "./core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "./core/execution-heartbeat.js";
+import { researchFailureRecord } from "./core/research-failure.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -1006,7 +1007,21 @@ research
             continue;
           }
           researchAttempt += 1;
-          if (!isRetryableAgentError(error) || researchAttempt >= 3) throw error;
+          if (!isRetryableAgentError(error) || researchAttempt >= 3) {
+            const failure = researchFailureRecord(cycle, error, toolTrace.events, laneReports.filter((lane) => lane.status === "failed"));
+            const failureStore = new ResearchStore(statePath);
+            failureStore.appendEvent("research.agent.failed", { cycle, error: failure.error, attempts: researchAttempt, quality: failure.quality });
+            failureStore.saveTrajectory({ id: `trajectory_${failure.events.at(-1)?.id ?? Date.now()}`, payload: { objective, cycle, status: "failed", error: failure.error, events: failure.events }, quality: failure.quality });
+            const savedCampaign = failureStore.campaign() as { status?: string } | undefined;
+            if (savedCampaign?.status === "running") {
+              const paused = pauseCampaign(savedCampaign as typeof campaign);
+              failureStore.saveCampaign(paused);
+              failureStore.setSchedulerState({ status: "paused", mode, currentStep: "agent-failed" });
+              failureStore.appendEvent("research.campaign.paused", { cycle, reason: "agent route exhausted", resumeWith: "the saved campaign and failure trajectory" });
+            }
+            failureStore.close();
+            throw error;
+          }
           const message = error instanceof Error ? error.message : String(error);
           agentObjective = `${allocatedObjective}\n\nBounded retry ${researchAttempt}: the previous research-agent route failed with '${message}'. Inspect the failure evidence and deliberately choose an alternate route instead of repeating it unchanged.`;
           const retryStore = new ResearchStore(statePath);

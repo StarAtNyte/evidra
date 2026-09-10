@@ -479,6 +479,8 @@ These are separate from the core TUI so Evidra remains useful for non-Kaggle res
 
 For a reproducible end-to-end harness trial, see [the Karpathy Autoresearch recipe](docs/benchmarks/karpathy-autoresearch.md). A standard checkout is detected by `evidra init autoresearch`, so the generic manifest, GPU worker, metric parser, evidence artifacts, and autonomous experiment loop can be exercised without a benchmark-specific agent path.
 
+The first real AIRS-Bench task trial is recorded in [the AIRS-Bench harness report](docs/benchmarks/airs-bench.md). It reproduces a SICK task baseline through Evidra and records structured-agent failure as resumable evidence when a deliberately small local model cannot complete the decision contract.
+
 The separate [Autoresearch Bench](https://www.autoresearch-bench.com/) is an external evaluation: agents work in isolated workspaces, may receive public feedback from a grader, and are scored on held-out private results. Evidra's submission adapters and durable public-score observations are the integration boundary for that benchmark; a local smoke run must never be presented as an official Autoresearch Bench score.
 
 ## Contribution
