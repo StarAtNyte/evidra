@@ -386,6 +386,26 @@ test("controller leases prevent duplicate workers and trajectories expose capabi
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("controller steering is durable and consumed exactly once at a safe boundary", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-steer-"));
+  try {
+    const db = join(root, ".sota", "database.sqlite");
+    const store = new ResearchStore(db);
+    assert.equal(store.acquireControllerLease("campaign-a", process.pid, "research", "cycle-1").acquired, true);
+    const queued = store.enqueueControllerSteer("Prioritize grouped validation and do not spend the next cycle on another baseline.");
+    assert.equal(queued?.id, 1);
+    store.close();
+    const reopened = new ResearchStore(db);
+    const applied = reopened.consumeControllerSteers();
+    assert.equal(applied.length, 1);
+    assert.match(applied[0].message, /grouped validation/);
+    assert.equal(reopened.consumeControllerSteers().length, 0);
+    reopened.releaseControllerLease("campaign-a");
+    assert.equal(reopened.enqueueControllerSteer("after release"), undefined);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("stale running experiments are recovered for retry after controller restart", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-stale-experiment-"));
   try {

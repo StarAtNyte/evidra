@@ -1166,6 +1166,15 @@ challenge.command("start")
 program.addCommand(challenge);
 
 const research = new Command("research").description("Ask the embedded research agent for the next research decision");
+research.command("steer <message>")
+  .description("Deliver guidance to the active campaign at its next safe cycle boundary")
+  .action((message: string) => {
+    const store = new ResearchStore(statePath);
+    const steer = store.enqueueControllerSteer(message);
+    store.close();
+    if (!steer) throw new Error("No live Evidra controller is running; start or resume a campaign first.");
+    console.log(`Steering instruction queued for the next safe boundary (id ${steer.id}).`);
+  });
 research
   .option("--mode <mode>", "campaign mode: research or challenge", "research")
   .option("--goal <goal>", "ultimate research goal", "Improve the current workspace or research problem with robust, reproducible evidence")
@@ -1271,6 +1280,10 @@ research
       const store = new ResearchStore(statePath);
       if (!store.project()) store.createProject({ id: `evidra-${adapter.id}`, name: adapter.config.name, competitionId: adapter.id, config: adapter.config });
       store.saveCampaign(campaign);
+      const steering = store.consumeControllerSteers();
+      const steeringGuidance = steering.length
+        ? `\n\nOperator steering received at the cycle boundary. Incorporate these instructions into this cycle while preserving the evidence, reproducibility, and permission gates:\n${steering.map((item) => `- ${item.message}`).join("\n")}`
+        : "";
       if (!store.phaseGoals().length) for (const goal of definePhaseGoals(objective, mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
       const staleExperiment = store.experiments().find((entry) => {
         const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { status?: unknown; stale?: unknown; recoveryAttempted?: unknown } : {};
@@ -1421,7 +1434,7 @@ research
       const rubricGuidance = priorRubricGaps.length
         ? `\n\nPrior decision-rubric gaps to repair before spending compute:\n${[...new Set(priorRubricGaps)].join("\n")}`
         : "";
-      const cycleObjective = allocatedObjective + rubricGuidance;
+      const cycleObjective = allocatedObjective + rubricGuidance + steeringGuidance;
       const researchSources = latestSourcePayloads(store.sources(), 12, cycleObjective);
       const researchMemory = researchMemoryContext(store, 30, cycleObjective);
       const peerLaneBoard = boundedPeerBoard(recentEvents);

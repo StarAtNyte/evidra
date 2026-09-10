@@ -24,6 +24,12 @@ export interface QueuedTask {
 }
 
 export type ControllerAction = "pause" | "resume" | "stop";
+export interface ControllerSteer {
+  id: number;
+  message: string;
+  createdAt: string;
+  appliedAt: string | null;
+}
 export interface ControllerLease {
   controllerId: string;
   pid: number;
@@ -192,6 +198,12 @@ export class ResearchStore {
         started_at TEXT NOT NULL,
         heartbeat_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS controller_steers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        applied_at TEXT
       );
       CREATE TABLE IF NOT EXISTS trajectories (
         id TEXT PRIMARY KEY,
@@ -418,6 +430,35 @@ export class ResearchStore {
     const lease = this.readControllerLease();
     if (lease?.status === "running") this.appendEvent("controller.action.requested", { action, controllerId: lease.controllerId, pid: lease.pid });
     return lease;
+  }
+
+  enqueueControllerSteer(message: string): ControllerSteer | undefined {
+    const normalized = message.trim();
+    if (!normalized) return undefined;
+    const lease = this.liveControllerLease();
+    if (!lease) return undefined;
+    const createdAt = new Date().toISOString();
+    const result = this.db.prepare("INSERT INTO controller_steers (message, created_at) VALUES (?, ?)").run(normalized, createdAt);
+    this.appendEvent("controller.steer.queued", { id: Number(result.lastInsertRowid), controllerId: lease.controllerId, message: normalized });
+    return { id: Number(result.lastInsertRowid), message: normalized, createdAt, appliedAt: null };
+  }
+
+  consumeControllerSteers(limit = 8): ControllerSteer[] {
+    const now = new Date().toISOString();
+    const transaction = this.db.transaction(() => {
+      const rows = this.db.prepare("SELECT id, message, created_at, applied_at FROM controller_steers WHERE applied_at IS NULL ORDER BY id ASC LIMIT ?").all(Math.max(1, Math.min(32, limit))) as Array<{ id: number; message: string; created_at: string; applied_at: string | null }>;
+      if (!rows.length) return [];
+      const mark = this.db.prepare("UPDATE controller_steers SET applied_at = ? WHERE id = ? AND applied_at IS NULL");
+      const consumed: ControllerSteer[] = [];
+      for (const row of rows) {
+        if (mark.run(now, row.id).changes !== 1) continue;
+        consumed.push({ id: row.id, message: row.message, createdAt: row.created_at, appliedAt: now });
+      }
+      return consumed;
+    });
+    const consumed = transaction() as ControllerSteer[];
+    if (consumed.length) this.appendEvent("controller.steer.applied", { ids: consumed.map((item) => item.id), messages: consumed.map((item) => item.message) });
+    return consumed;
   }
 
   releaseControllerLease(controllerId: string, status: "released" | "stale" = "released"): boolean {

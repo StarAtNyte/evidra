@@ -114,6 +114,7 @@ const COMMANDS = [
   ["/challenge", "Run the active challenge workflow"],
   ["/experiment", "Create or run a reproducible experiment"],
   ["/loop", "Run the autonomous research loop"],
+  ["/steer", "Guide the active campaign at its next safe boundary"],
   ["/status", "Show complete workbench state"],
   ["/experience", "Show reusable trajectory experience and curriculum"],
   ["/usage", "Show budget, activity, and campaign usage"],
@@ -159,12 +160,13 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/autonomy": [["/autonomy safe", "Approval-gated"], ["/autonomy fast", "Run local work automatically"], ["/autonomy yolo", "Run routine work automatically"]],
   "/permissions": [["/permissions safe", "Approval-gated"], ["/permissions fast", "Run local work automatically"], ["/permissions yolo", "Run routine work automatically"]],
   "/loop": [["/loop status", "Show loop state"], ["/loop once", "Run one research cycle"], ["/loop start", "Start autonomous loop"], ["/loop pause", "Pause loop"], ["/loop stop", "Stop loop"]],
+  "/steer": [["/steer ", "Guide the active campaign at the next safe boundary"]],
   "/scheduler": [["/scheduler start", "Start scheduling"], ["/scheduler pause", "Pause scheduling"], ["/scheduler drain", "Finish active work only"]],
   "/thinking": REASONING_LEVELS.map((level) => [`/thinking ${level}`, `Thinking effort: ${level}`] as const),
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
-  "/research": [["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research resume", "Resume the saved campaign"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
-  "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
+  "/research": [["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research steer ", "Guide the active campaign at the next safe boundary"], ["/research resume", "Resume the saved campaign"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
+  "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge steer ", "Guide the active campaign at the next safe boundary"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
   "/sources": [["/sources list", "List retrieved sources"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources discover", "Search scholarly literature"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
   "/evidence": [["/evidence audit", "Audit claim provenance and completion blockers"], ["/evidence analyze", "Analyze prediction errors and worst groups"]],
@@ -1887,6 +1889,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setConfig((current) => ({ ...current, campaign: activeCampaign }));
         setTimeout(() => { void runAutonomousCycle(activeCampaign, true); }, 0);
       }
+      return;
+    }
+    const steerMatch = request.match(/^\/(?:research|challenge|steer)\s+steer\s+(.+)$/) ?? request.match(/^\/steer\s+(.+)$/);
+    if (steerMatch) {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const queued = store.enqueueControllerSteer(steerMatch[1]);
+      store.close();
+      append("assistant", queued ? `Steering instruction queued · will be applied at the next safe cycle boundary (id ${queued.id}).` : "No live campaign controller is running. Start or resume a campaign before steering it.");
       return;
     }
     if (["/challenge pause", "/challenge resume", "/challenge stop", "/challenge status", "/research pause", "/research resume", "/research stop", "/research status"].includes(request)) {

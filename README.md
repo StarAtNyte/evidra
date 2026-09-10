@@ -260,6 +260,7 @@ Run evidra with no arguments. The interface is designed for long-running termina
 - interruption appears as a red ✕ INTERRUPTED event;
 - prompts added while a request is active stay in a bottom queue rail;
 - Codex prompts are steered through its persisted thread queue at the next supported boundary;
+- running autonomous campaigns accept steering without starting a second controller: use `/steer <instruction>`, `/research steer <instruction>`, or `/challenge steer <instruction>`; the instruction is durably recorded and applied at the next safe cycle boundary;
 - opaque local requests are processed FIFO after the active request completes;
 - Ctrl+C clears non-empty input and exits only when input is empty;
 - Tab, arrows, and Enter operate command/model/provider selectors.
@@ -275,6 +276,7 @@ Useful commands:
     /research pause       Pause workers and preserve the campaign
     /research resume      Resume the saved research campaign
     /research stop        Stop the campaign without deleting evidence
+    /research steer ...   Guide the next safe research cycle
     /loop                 Run or control the autonomous loop
     /workbench            Select Research or Challenge mode
     /provider             Select Codex or local provider
@@ -299,6 +301,7 @@ Useful commands:
     /challenge pause      Pause challenge workers
     /challenge resume     Resume the saved challenge campaign
     /challenge stop       Stop the challenge campaign safely
+    /challenge steer ...  Guide the next safe challenge cycle
     /agents               Show agent lanes and health
     /compute              Show executor and budget health
     /queue                Show durable tasks and recover stale work
