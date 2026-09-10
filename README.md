@@ -103,6 +103,7 @@ Implemented today:
 - detached process groups so Escape stops child workers as well as the parent;
 - experiment manifests, isolated worktrees, local/Modal executor boundaries, artifact capture, retries, and failure classification;
 - source hashes, extracted claims, research graph edges, evidence reports, statistical comparison helpers, and ensemble utilities;
+- multi-split validation acceptance, durable leakage/reviewer gates, and conservative external-score split-belief modeling;
 - shell and autonomy safety guards.
 
 ## Quick start
@@ -189,6 +190,7 @@ Useful commands:
     /data                 Audit workspace data
     /validation           Inspect or generate validation policy
     /experiment           Create or run reproducible experiments
+    /experiment gate      Record leakage or reviewer approval
     /challenge start      Start a fully autonomous challenge campaign
     /challenge pause      Pause challenge workers
     /challenge resume     Resume the saved challenge campaign
@@ -197,6 +199,7 @@ Useful commands:
     /compute              Show executor and budget health
     /queue                Show durable tasks and recover stale work
     /submission           Prepare, validate, approve, or submit a bundle
+    /submission distribution  Estimate which local split tracks external scores
     /report               Generate a portable report
     /sessions             List saved sessions
     /resume               Resume a saved session explicitly
