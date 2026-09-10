@@ -57,6 +57,7 @@ import { validateCompetitionContract } from "../dist/core/competition-contract.j
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { scoreHarnessTrials } from "../dist/core/harness-scorecard.js";
+import { rankSearchArms, searchReward } from "../dist/core/search-policy.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
 
@@ -1454,4 +1455,19 @@ test("harness scorecard rewards valid reproducible improvements and rejects narr
   assert.equal(scorecards[0].validRunRate, 1);
   assert.equal(scorecards[0].improvementRate, 0.5);
   assert.equal(scorecards[1].competitiveScore, 0);
+});
+
+test("search policy explores untried operators and penalizes invalid evidence", () => {
+  const ranked = rankSearchArms({
+    arms: [
+      { id: "known", operator: "greedy", attempts: 4, successes: 2, meanReward: 0.2, cost: 1, novelty: 0.1 },
+      { id: "new", operator: "combination", attempts: 0, successes: 0, meanReward: 0, cost: 2, novelty: 0.8 },
+    ],
+    remainingBudgetMinutes: 30,
+    recentFailures: 0,
+    evidenceConflicts: 0,
+  });
+  assert.equal(ranked[0].id, "new");
+  assert.equal(searchReward(undefined, false, false), -1);
+  assert.equal(searchReward(0.2, true, true), 0.2);
 });

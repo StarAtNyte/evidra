@@ -57,6 +57,7 @@ import { validateCompetitionContract } from "./core/competition-contract.js";
 import { candidateChangePath } from "./core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "./core/execution-heartbeat.js";
 import { researchFailureRecord } from "./core/research-failure.js";
+import { rankSearchArms } from "./core/search-policy.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -916,10 +917,23 @@ research
       };
       const allocation = allocateNextResearch({ trajectories: recentTrajectories, phase: phaseGoal?.phase, evidenceConflicts });
       store.appendEvent("research.next_allocation", { allocation, objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}` });
+      const searchPolicy = rankSearchArms({
+        arms: [
+          { id: "new-method", operator: "ucb_portfolio", attempts: 0, successes: 0, meanReward: 0, cost: 1, novelty: 0.8 },
+          { id: "ablation", operator: "ablation", attempts: 0, successes: 0, meanReward: 0, cost: 0.5, novelty: 0.6 },
+          { id: "combination", operator: "combination", attempts: 0, successes: 0, meanReward: 0, cost: 1.5, novelty: 0.9 },
+          { id: "replication", operator: "replication", attempts: recentTrajectories.length, successes: 0, meanReward: 0, cost: 1, novelty: 0.2 },
+          { id: "audit", operator: "audit", attempts: evidenceConflicts.contradictions + evidenceConflicts.duplicates, successes: 0, meanReward: 0, cost: 0.25, novelty: 0.4 },
+        ],
+        remainingBudgetMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
+        recentFailures: recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length,
+        evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
+      });
+      store.appendEvent("research.search_policy.selected", { selected: searchPolicy[0], portfolio: searchPolicy.slice(0, 4) });
       const experienceRecords = recentTrajectories.map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
       const experienceMix = selectCurriculum(experienceRecords);
       const curriculumGuidance = experienceMix.map((stage) => `stage ${stage.stage}: ${stage.trajectoryIds.join(", ") || "none"} (${stage.rationale})`).join("; ");
-      const allocatedObjective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}`;
+      const allocatedObjective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra search policy:\nPrioritize the '${searchPolicy[0]?.operator ?? "ucb_portfolio"}' operator (${searchPolicy[0]?.rationale ?? "portfolio default"}) while preserving at least one diverse alternative.\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}`;
       const researchSources = latestSourcePayloads(store.sources(), 12);
       const researchMemory = researchMemoryContext(store, 30);
       const peerLaneBoard = boundedPeerBoard(recentEvents);
