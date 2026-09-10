@@ -1212,6 +1212,10 @@ challenge.command("baseline").description("Run the canonical baseline").action(a
   const adapter = activeCompetition();
   requireCompetitionContract(adapter);
   const result = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000, streamProcessOutput);
+  const store = new ResearchStore(statePath);
+  const metric = parseMetricOutput(result.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
+  recordBaselineEvidence(store, root, result, metric);
+  store.close();
   if (result.exitCode !== 0) process.exitCode = result.exitCode;
 });
 
