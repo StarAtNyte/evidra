@@ -642,6 +642,20 @@ experiment.command("propose")
     store.close();
     console.log(`Immutable experiment manifest created\n${manifestSummary(manifest)}`);
   });
+experiment.command("gate")
+  .argument("<experiment>", "experiment identifier")
+  .argument("<gate>", "leakage or review")
+  .argument("[action]", "approve or clear", "approve")
+  .action((experimentId: string, gate: string, action: string) => {
+    if (!["leakage", "review"].includes(gate) || !["approve", "clear"].includes(action)) throw new Error("Usage: evidra experiment gate <id> leakage|review approve|clear");
+    const store = new ResearchStore(statePath);
+    if (!store.experiments().some((entry) => entry.id === experimentId)) { store.close(); throw new Error(`Experiment not found: ${experimentId}`); }
+    const approved = action === "approve";
+    store.setExperimentGates(experimentId, gate === "leakage" ? { leakageAuditPassed: approved } : { reviewerApproved: approved });
+    const gates = store.experimentGates(experimentId);
+    store.close();
+    console.log(`Experiment ${experimentId} gates\n  leakage audit: ${gates.leakageAuditPassed ? "approved" : "pending"}\n  reviewer: ${gates.reviewerApproved ? "approved" : "pending"}`);
+  });
 experiment.command("run")
   .argument("<id>", "experiment identifier")
   .action(async (id: string) => {
