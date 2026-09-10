@@ -22,6 +22,7 @@ export interface PortfolioPlan {
   rejected: Array<{ candidate: PortfolioCandidate; reason: string }>;
   reservedMinutes: number;
   parallelism: number;
+  halving: SuccessiveHalvingPlan;
 }
 
 /**
@@ -71,7 +72,8 @@ export function planPortfolio(candidates: PortfolioCandidate[], options: Portfol
     families.add(family);
     reservedMinutes += cost;
   }
-  return { selected, rejected, reservedMinutes, parallelism };
+  const halving = planSuccessiveHalving(selected.map((candidate) => ({ id: candidate.id, costMinutes: Math.max(0.1, candidate.costMinutes), family: candidate.family })), available);
+  return { selected, rejected, reservedMinutes, parallelism, halving };
 }
 
 function score(candidate: PortfolioCandidate): number {
@@ -81,3 +83,4 @@ function score(candidate: PortfolioCandidate): number {
   const quality = Math.max(0.25, Math.min(1, candidate.quality ?? 1));
   return (candidate.expectedValue * quality + novelty * 0.2 - risk * 0.1) / cost;
 }
+import { planSuccessiveHalving, type SuccessiveHalvingPlan } from "./successive-halving.js";

@@ -60,6 +60,7 @@ import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol } from 
 import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { rankSearchArms, searchReward } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
+import { planSuccessiveHalving, promoteHalvingStage } from "../dist/core/successive-halving.js";
 import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "../dist/core/promotion-learning.js";
 import { captureProtectedFiles, changedProtectedFiles } from "../dist/core/integrity.js";
@@ -1669,6 +1670,29 @@ test("portfolio planner is bounded, diverse, and cost aware", () => {
   const overBudget = planPortfolio([{ id: "too-large", title: "too large", operator: "audit", expectedValue: 1, costMinutes: 11 }], { maxCandidates: 1, maxParallel: 1, budgetMinutes: 10 });
   assert.equal(overBudget.selected.length, 0);
   assert.match(overBudget.rejected[0]?.reason ?? "", /budget/);
+});
+
+test("successive halving budgets cheap screens and promotes only measured survivors", () => {
+  const plan = planSuccessiveHalving([
+    { id: "a", costMinutes: 10 },
+    { id: "b", costMinutes: 10 },
+    { id: "c", costMinutes: 10 },
+    { id: "d", costMinutes: 10 },
+  ], 25, { rounds: 3, reductionFactor: 2, initialFraction: 0.1 });
+  assert.equal(plan.feasible, true);
+  assert.equal(plan.stages.length, 3);
+  assert.equal(plan.stages[0].candidateIds.length, 4);
+  assert.equal(plan.stages[0].retainCount, 2);
+  assert.equal(plan.stages.at(-1)?.fraction, 1);
+  const promoted = promoteHalvingStage(plan.stages[0], [
+    { id: "a", metric: 0.4, valid: true },
+    { id: "b", metric: 0.9, valid: true },
+    { id: "c", metric: undefined, valid: false },
+    { id: "d", metric: 0.7, valid: true },
+  ], "maximize");
+  assert.deepEqual(promoted, ["b", "d"]);
+  const impossible = planSuccessiveHalving([{ id: "expensive", costMinutes: 100 }], 1);
+  assert.equal(impossible.feasible, false);
 });
 
 test("harness comparison requires paired coverage and task-balanced evidence", () => {
