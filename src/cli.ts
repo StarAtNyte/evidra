@@ -1198,13 +1198,16 @@ research
       let laneReports: Awaited<ReturnType<typeof runResearchLanes>> = [];
       const toolTrace = createToolTraceRecorder(`research-${cycle}`);
       let researchAttempt = 0;
-      let agentObjective = allocatedObjective;
+      // Keep the complete cycle guidance on the first attempt. Retries replace
+      // this objective with an explicit alternate-route instruction so a
+      // provider/tool failure cannot silently replay the same route.
+      let agentObjective = cycleObjective;
       const remainingBudgetMs = Math.max(10_000, campaign.budgetMinutes * 60_000 - (Date.now() - started));
       const agentTimeoutMs = Math.max(10_000, Math.min(3 * 60_000, remainingBudgetMs));
       while (true) {
         try {
           console.log("Research · independent lanes are investigating the evidence...");
-          laneReports = await runResearchLanes(cycleObjective, {
+          laneReports = await runResearchLanes(agentObjective, {
             project: activeProject,
             competition: adapter.config,
             observation,
@@ -1237,7 +1240,7 @@ research
           crossPollinationStore.appendEvent("research.cross_pollination.completed", { cycle, board: crossPollination });
           crossPollinationStore.close();
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(cycleObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
           criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
             provider: options.provider,
             model: selectedModel,
@@ -1284,7 +1287,7 @@ research
             throw error;
           }
           const message = error instanceof Error ? error.message : String(error);
-          agentObjective = `${allocatedObjective}\n\nBounded retry ${researchAttempt}: the previous research-agent route failed with '${message}'. Inspect the failure evidence and deliberately choose an alternate route instead of repeating it unchanged.`;
+          agentObjective = `${cycleObjective}\n\nBounded retry ${researchAttempt}: the previous research-agent route failed with '${message}'. Inspect the failure evidence and deliberately choose an alternate route instead of repeating it unchanged.`;
           const retryStore = new ResearchStore(statePath);
           retryStore.appendEvent("research.agent.retrying", { attempt: researchAttempt + 1, previousError: message, strategy: "alternate-route" });
           retryStore.close();
