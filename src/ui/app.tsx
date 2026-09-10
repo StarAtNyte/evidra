@@ -83,6 +83,7 @@ const COMMANDS = [
   ["/experiment", "Create or run a reproducible experiment"],
   ["/loop", "Run the autonomous research loop"],
   ["/status", "Show complete workbench state"],
+  ["/experience", "Show reusable trajectory experience and curriculum"],
   ["/usage", "Show budget, activity, and campaign usage"],
   ["/sources", "Retrieve and search research sources"],
   ["/memory", "Search durable evidence and research memory"],
@@ -120,6 +121,7 @@ const AGENT_ROLES = ["research director", "domain researcher", "method researche
 const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/workbench": [["/workbench research", "Enter Research mode"], ["/workbench challenge", "Enter Challenge mode"]],
   "/mode": [["/mode research", "Enter Research mode"], ["/mode challenge", "Enter Challenge mode"]],
+  "/experience": [["/experience", "Show capability profile and curriculum"]],
   "/autonomy": [["/autonomy safe", "Approval-gated"], ["/autonomy fast", "Run local work automatically"], ["/autonomy yolo", "Run routine work automatically"]],
   "/permissions": [["/permissions safe", "Approval-gated"], ["/permissions fast", "Run local work automatically"], ["/permissions yolo", "Run routine work automatically"]],
   "/loop": [["/loop status", "Show loop state"], ["/loop once", "Run one research cycle"], ["/loop start", "Start autonomous loop"], ["/loop pause", "Pause loop"], ["/loop stop", "Stop loop"]],
@@ -191,6 +193,7 @@ function help(): string {
     "/experiment [propose|run]    Create or run a reproducible experiment",
     "/loop [once|start|pause]     Run the autonomous research loop",
     "/status                      Show complete workbench state",
+    "/experience                 Show trajectory experience and next curriculum",
     "/usage                       Show budgets and research activity",
     "/sources [add|search|show]   Retrieve or search research sources",
     "/memory [recent|search]      Search durable evidence memory",
@@ -1493,6 +1496,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const recent = store.recentEvents(5).map((event) => `${event.type} · ${event.createdAt}`).join("\n") || "No events yet.";
       store.close();
       append("assistant", `Evidra Workbench\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\n\nActive phase goal\n  ${activeGoal?.phase ?? "not initialized"}: ${activeGoal?.title ?? "Run /research to define goals"}\n  status: ${activeGoal?.status ?? "pending"}\n  attempts: ${activeGoal?.attempts ?? 0}\n\nResearch graph\n  hypotheses  ${counts.hypotheses}\n  claims      ${counts.claims}\n  edges       ${counts.edges}\n  sources     ${counts.sources}\n  decisions   ${counts.decisions}\n\nChallenge execution\n  experiments ${counts.experiments}\n  runs        ${counts.runs}\n  artifacts   ${counts.artifacts}\n\nRecent events\n${recent}\n\nUse /mode to switch modes or /permissions to change automation permissions.`);
+      return;
+    }
+    if (request === "/experience") {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const records = store.trajectories(100).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
+      const profile = capabilityProfile(records);
+      const curriculum = selectCurriculum(records);
+      store.close();
+      append("assistant", `Experience ledger\n  total: ${profile.total}\n  eligible: ${profile.eligible}\n  replay-only: ${records.filter((item) => item.admission === "replay-only").length}\n  quarantined: ${profile.quarantined}\n\nCapability demand\n  C0 ${profile.byTier.C0} · C1 ${profile.byTier.C1} · C2 ${profile.byTier.C2} · C3 ${profile.byTier.C3}\n\nOutcomes\n  success ${profile.byOutcome.success} · partial ${profile.byOutcome.partial} · failure ${profile.byOutcome.failure}\n\nNext curriculum\n${curriculum.map((stage) => `  Stage ${stage.stage}: ${stage.trajectoryIds.join(", ") || "none"}\n    ${stage.rationale}`).join("\n") || "  No experiences recorded yet."}`);
       return;
     }
     if (request === "/thinking" || request.startsWith("/thinking ")) {
