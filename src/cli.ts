@@ -1399,6 +1399,7 @@ research
         reservedMinutes: portfolioPlan.reservedMinutes,
         parallelism: portfolioPlan.parallelism,
         successiveHalving: portfolioPlan.halving,
+        costEstimates: portfolioPlan.costEstimates,
         policy: "bounded-best-of-k",
       });
       // A director may return several hypotheses without selecting one. In an

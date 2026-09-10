@@ -1829,6 +1829,22 @@ test("cost model uses observed upper runtimes and inflates failure risk", () => 
   assert.equal(estimateCost("new", 4, []).upperMinutes, 4);
 });
 
+test("portfolio plans retain explainable conservative cost estimates", () => {
+  const plan = planPortfolio([
+    { id: "mcts-1", title: "MCTS", operator: "mcts", expectedValue: 0.8, costMinutes: 10, family: "search" },
+  ], {
+    maxCandidates: 1,
+    maxParallel: 1,
+    budgetMinutes: 30,
+    costHistory: [
+      { operator: "mcts", actualMinutes: 8, status: "completed" },
+      { operator: "mcts", actualMinutes: 12, status: "timeout" },
+    ],
+  });
+  assert.equal(plan.costEstimates["mcts-1"].upperMinutes, 15);
+  assert.match(plan.costEstimates["mcts-1"].rationale, /failure inflation/);
+});
+
 test("harness comparison requires paired coverage and task-balanced evidence", () => {
   const trials = ["task-a", "task-b"].flatMap((task) => [
     { harness: "evidra", task, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: 0.8, validRun: true, durationSeconds: 1, recovered: true, reproducible: true },
