@@ -69,7 +69,7 @@ import { promoteHalvingStage } from "./core/successive-halving.js";
 import type { CostObservation } from "./core/cost-model.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
-import { compareHarnesses, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
+import { compareHarnesses, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
 import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.js";
 import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
@@ -485,6 +485,11 @@ benchmark.command("run")
     const matched = validateBenchmarkProtocol(report.trials);
     if (!matched.valid) throw new Error(`Benchmark results are not matched:\n${matched.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
     const scorecards = scoreHarnessTrials(report.trials);
+    const policyNames = [...new Set(report.trials.map((trial) => trial.policy).filter((policy): policy is string => typeof policy === "string" && policy.trim().length > 0))].sort();
+    const policyScorecards = policyNames.length >= 2 ? scoreSearchPolicies(report.trials) : undefined;
+    const policyComparisons = policyNames.length >= 2
+      ? policyNames.flatMap((challenger, index) => policyNames.slice(index + 1).map((incumbent) => compareSearchPolicies(report.trials, challenger, incumbent)))
+      : undefined;
     const pareto = harnessParetoFrontier(scorecards);
     const harnesses = [...new Set(report.trials.map((trial) => trial.harness))];
     const incumbents = options.incumbent ? [options.incumbent] : harnesses.filter((harness) => harness !== options.challenger);
@@ -516,7 +521,7 @@ benchmark.command("run")
       const maximumRegression = Number(options.retentionRegression);
       retention = evaluateHarnessRetention(priorTrials, report.trials, options.challenger, maximumRegression);
     }
-    const output = { ...report, scorecards, pareto, protocol: matched, challenger: options.challenger, comparisons, adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
+    const output = { ...report, scorecards, ...(policyScorecards ? { policyScorecards, policyComparisons } : {}), pareto, protocol: matched, challenger: options.challenger, comparisons, adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
     if (options.out) writeFileSync(resolve(options.out), `${JSON.stringify(output, null, 2)}\n`);
     const benchmarkStore = new ResearchStore(statePath);
     benchmarkStore.appendEvent("harness.benchmark.completed", {
@@ -526,6 +531,7 @@ benchmark.command("run")
       challenger: options.challenger,
       incumbents,
       scorecards: scorecards.map((scorecard) => ({ harness: scorecard.harness, competitiveScore: scorecard.competitiveScore, lower95: scorecard.competitiveScoreLower95, sliceBalancedScore: scorecard.sliceBalancedScore, sliceScores: scorecard.sliceScores, validRunRate: scorecard.validRunRate, failureProfile: scorecard.failureProfile })),
+      ...(policyScorecards ? { policyScorecards, policyComparisons: policyComparisons?.map((comparison) => ({ challenger: comparison.challenger, incumbent: comparison.incumbent, challengerWins: comparison.challengerWins, reason: comparison.reason, pairedLower95: comparison.pairedLower95 })) } : {}),
       pareto,
       comparisons: comparisons.map((comparison) => ({ incumbent: comparison.incumbent, challengerWins: comparison.challengerWins, reason: comparison.reason, pairedLower95: comparison.pairedLower95, sliceRegressions: comparison.sliceRegressions, sliceLower95: comparison.sliceLower95 })),
       adaptation,
@@ -536,6 +542,7 @@ benchmark.command("run")
     });
     benchmarkStore.close();
     console.log(`Harness benchmark run complete\n${scorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})${Object.keys(scorecard.failureProfile).length ? ` · failures ${JSON.stringify(scorecard.failureProfile)}` : ""}`).join("\n")}`);
+    if (policyScorecards) console.log(`\nSearch-policy scorecards\n${policyScorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})`).join("\n")}`);
     console.log(`\nPareto frontier · ${pareto.filter((point) => point.onFrontier).map((point) => `${point.harness}${point.medianTimeToEvidenceSeconds === null ? "" : ` (${point.medianTimeToEvidenceSeconds.toFixed(1)}s)`}`).join(", ") || "none"}`);
     if (comparisons.length) {
       console.log(`\nCompetitive gate · challenger ${options.challenger}`);

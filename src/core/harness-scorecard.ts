@@ -209,6 +209,23 @@ export interface HarnessComponentAblationReport {
   reason: string;
 }
 
+function policyTrials(trials: HarnessTrial[]): HarnessTrial[] {
+  return trials
+    .filter((trial) => typeof trial.policy === "string" && trial.policy.trim().length > 0)
+    .map((trial) => ({ ...trial, harness: `policy:${trial.policy}` }));
+}
+
+/** Score explicitly labelled search policies without conflating them with harness identity. */
+export function scoreSearchPolicies(trials: HarnessTrial[]): HarnessScorecard[] {
+  return scoreHarnessTrials(policyTrials(trials)).map((scorecard) => ({ ...scorecard, harness: scorecard.harness.replace(/^policy:/, "") }));
+}
+
+/** Compare two labelled search policies with the normal paired task-balanced gates. */
+export function compareSearchPolicies(trials: HarnessTrial[], challenger: string, incumbent: string): HarnessComparison {
+  const comparison = compareHarnesses(policyTrials(trials), `policy:${challenger}`, `policy:${incumbent}`);
+  return { ...comparison, challenger, incumbent };
+}
+
 function delta(trial: HarnessTrial): number | undefined {
   if (!trial.validRun || trial.candidateMetric === undefined || !Number.isFinite(trial.candidateMetric) || !Number.isFinite(trial.baselineMetric)) return undefined;
   return trial.direction === "maximize" ? trial.candidateMetric - trial.baselineMetric : trial.baselineMetric - trial.candidateMetric;

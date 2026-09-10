@@ -57,7 +57,16 @@ import { summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
-import { compareHarnesses, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
+import { compareHarnesses, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
+
+test("search policies receive independent matched scorecards and comparisons", () => {
+  const trial = (policy, task, candidateMetric) => ({ harness: `evidra-${policy}`, policy, task, arm: "default", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: false, reproducible: true });
+  const trials = [trial("ucb_portfolio", "task-a", 0.8), trial("ucb_portfolio", "task-b", 0.8), trial("greedy", "task-a", 0.6), trial("greedy", "task-b", 0.6)];
+  assert.deepEqual(scoreSearchPolicies(trials).map((scorecard) => scorecard.harness), ["ucb_portfolio", "greedy"]);
+  const comparison = compareSearchPolicies(trials, "ucb_portfolio", "greedy");
+  assert.equal(comparison.challenger, "ucb_portfolio");
+  assert.equal(comparison.challengerWins, true);
+});
 
 test("component ablations require one declared removal and preserve the paired gate", () => {
   const trial = (harness, componentIds, candidateMetric, task = "task-a") => ({ harness, componentIds, task, arm: "arm", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: true, reproducible: true });

@@ -61,6 +61,9 @@ An arm may optionally declare `policy` (for example `greedy`, `ucb_portfolio`,
 `evolutionary`, or `mcts`). The label is copied into the durable trial without
 changing harness identity or fairness keys, allowing policy comparisons to be
 reported explicitly while retaining the same task/seed/model/budget gates.
+When at least two policy labels are present, `benchmark run` also emits policy
+scorecards and all pairwise policy comparisons using the same conservative
+task-balanced gates.
 
 Parallel arms are serialized automatically when their resolved working
 directories overlap. Parallel execution is retained only for genuinely
