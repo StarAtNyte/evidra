@@ -353,9 +353,23 @@ challenge.command("status").action(() => {
   const store = new ResearchStore(statePath);
   const active = store.project();
   const adapter = activeCompetition();
-  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}`);
+  const campaign = store.campaign() as { status?: string; goal?: string; budgetMinutes?: number; autoExecuteExperiments?: boolean } | undefined;
+  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}${campaign ? `\nCampaign: ${campaign.status ?? "unknown"}\nGoal: ${campaign.goal ?? "(none)"}\nBudget: ${campaign.budgetMinutes ?? "?"} minutes\nAutonomous experiments: ${campaign.autoExecuteExperiments ? "enabled" : "approval-gated"}` : "\nCampaign: none"}`);
   store.close();
 });
+for (const action of ["pause", "resume", "stop"] as const) {
+  challenge.command(action).description(`${action[0].toUpperCase()}${action.slice(1)} the durable challenge campaign`).action(() => {
+    const store = new ResearchStore(statePath);
+    const campaign = store.campaign() as Record<string, unknown> | undefined;
+    if (!campaign) { store.close(); throw new Error("No challenge campaign exists. Start one in the Evidra TUI with /challenge start."); }
+    const status = action === "resume" ? "running" : action === "pause" ? "paused" : "completed";
+    const updated = { ...campaign, status };
+    store.saveCampaign(updated);
+    store.setSchedulerState({ status: action === "stop" ? "idle" : action === "resume" ? "running" : "paused", mode: "challenge", currentStep: action });
+    store.close();
+    console.log(`Challenge campaign ${action === "stop" ? "stopped" : `${action}d`}.`);
+  });
+}
 challenge.command("inspect").action(() => console.log(JSON.stringify(activeCompetition().config, null, 2)));
 challenge.command("audit").action(() => {
   const adapter = activeCompetition();

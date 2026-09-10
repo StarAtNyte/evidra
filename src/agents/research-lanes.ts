@@ -55,6 +55,7 @@ export interface ResearchLanesOptions {
   autonomy?: AutonomyLevel;
   onProgress?: (message: string) => void;
   onProcess?: (control: ProcessControl) => void;
+  isCancelled?: () => boolean;
 }
 
 /**
@@ -167,6 +168,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     let parsed: z.infer<typeof ResearchLaneReportSchema> | undefined;
     let lastError: unknown;
     for (let attempt = 1; attempt <= 3 && !parsed; attempt += 1) {
+      if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
       try {
         const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective), context }, {
           provider,
@@ -179,6 +181,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         parsed = ResearchLaneReportSchema.parse(parseJson(result.output));
       } catch (error) {
         lastError = error;
+        if (options.isCancelled?.()) throw error;
         if (!isRetryableAgentError(error) || attempt === 3 || (isProviderUsageLimit(error) && options.limitPolicy === "wait")) throw error;
         if (attempt === 1 && provider === "codex" && options.fallbackLocalModel && options.limitPolicy === "fallback" && !isProviderUsageLimit(error)) {
           model = await resolveLocalFallbackModel(options.fallbackLocalModel);
