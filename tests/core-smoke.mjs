@@ -35,6 +35,7 @@ import { routeCapability } from "../dist/core/capability-router.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
 import { rankPriorities } from "../dist/core/scheduler.js";
 import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
+import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
 
 test("durable research state and queue survive store reopen", () => {
@@ -164,6 +165,17 @@ test("reduced validation runs with a cheap artifact contract", async () => {
     assert.equal(result.metrics.macro_f1, 0.42);
     assert.deepEqual(result.artifacts, {});
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("timeline renders durable events without provider protocol noise", () => {
+  const events = [
+    { type: "experiment.stage.reduced_validation.completed", payload: { experimentId: "exp-1", metric: 0.42 }, createdAt: "2026-09-10T12:34:56.000Z" },
+    { type: "run.retry.scheduled", payload: { experimentId: "exp-1", attempt: 1, action: "retry transient worker" }, createdAt: "2026-09-10T12:35:01.000Z" },
+  ];
+  assert.equal(summarizeTimelineEvent(events[0]), "experiment exp-1 · reduced_validation completed · metric 0.42");
+  assert.match(renderTimeline(events, 10), /12:34:56  experiment exp-1/);
+  assert.match(renderTimeline(events, 10), /retry 1/);
+  assert.doesNotMatch(renderTimeline(events, 10), /thread\.started|thread_id/);
 });
 
 test("data audit reports bounded tabular duplicate and missingness diagnostics", () => {

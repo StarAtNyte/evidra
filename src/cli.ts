@@ -16,6 +16,7 @@ import { retrieveSource, sourceClaims, sourceSearchText } from "./core/sources.j
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
 import { submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
+import { renderTimeline } from "./core/timeline.js";
 import { recoveryDelay, recoveryPlan } from "./core/recovery.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
@@ -338,6 +339,16 @@ queue.command("recover").action(() => {
   store.close();
 });
 program.addCommand(queue);
+
+program.command("timeline")
+  .option("--limit <count>", "number of recent events", "30")
+  .action((options: { limit: string }) => {
+    const limit = Math.max(1, Math.min(200, Number(options.limit) || 30));
+    const store = new ResearchStore(statePath);
+    const events = store.recentEvents(limit);
+    store.close();
+    console.log(renderTimeline(events, limit));
+  });
 
 program.command("report")
   .argument("[kind]", "research, challenge, or final", "research")

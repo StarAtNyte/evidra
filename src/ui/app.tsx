@@ -38,6 +38,7 @@ import { rankPriorities } from "../core/scheduler.js";
 import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "../core/execution-stages.js";
 import { runReducedValidation } from "../core/stage-executor.js";
+import { renderTimeline } from "../core/timeline.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -86,6 +87,7 @@ const COMMANDS = [
   ["/resume", "Resume a saved session explicitly"],
   ["/ensemble", "Analyze prediction diversity and blends"],
   ["/report", "Generate portable research reports"],
+  ["/timeline", "Show readable autonomous progress"],
   ["/doctor", "Diagnose local research dependencies"],
   ["/provider", "Select codex or local provider"],
   ["/model", "Select the active model"],
@@ -131,6 +133,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/resume": [["/resume", "Resume the latest saved session"], ["/resume ", "Resume a selected session"]],
   "/ensemble": [["/ensemble candidates", "List prediction artifacts"], ["/ensemble diversity", "Compare prediction diversity"], ["/ensemble propose", "Create an OOF blend candidate"]],
   "/report": [["/report research", "Write a research report"], ["/report challenge", "Write a challenge report"], ["/report final", "Write a provenance report"]],
+  "/timeline": [["/timeline", "Show recent autonomous progress"]],
 };
 
 function loadConfig(path: string): SessionConfig {
@@ -194,6 +197,7 @@ function help(): string {
     "/resume [session-id]        Explicitly resume a saved session",
     "/ensemble [candidates|diversity|propose] Analyze prediction artifacts",
     "/report [research|challenge|final] Generate a portable report",
+    "/timeline [limit]            Show recent autonomous progress",
     "/provider [codex|local]      Select ChatGPT Codex or local Ollama",
     "/model [name]                Show or select the model (use default for Codex)",
     "/thinking [level]            Select model thinking effort",
@@ -2038,6 +2042,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const path = writeReport(root, kind, content);
       store.appendEvent("report.generated", { kind, path }); store.close();
       append("assistant", `Report generated\n  type: ${kind}\n  path: ${path}\n  sections: phase goals, evidence, sources, decisions, events${kind === "research" ? "" : ", experiments, runs, artifacts"}`);
+      return;
+    }
+    if (request === "/timeline" || request.startsWith("/timeline ")) {
+      const parsedLimit = Number(request.split(/\s+/)[1] ?? "30");
+      const limit = Math.max(1, Math.min(200, Number.isFinite(parsedLimit) ? parsedLimit : 30));
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const timeline = renderTimeline(store.recentEvents(limit), limit);
+      store.close();
+      append("assistant", `Autonomous timeline\n${timeline}`);
       return;
     }
     if (request === "/sources" || request === "/sources list" || request.startsWith("/sources search ") || request.startsWith("/sources show ")) {

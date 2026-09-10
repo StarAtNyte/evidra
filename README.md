@@ -173,6 +173,7 @@ Useful commands:
 
     /help                 Show commands and shortcuts
     /status               Show project, graph, queue, and execution state
+    /timeline             Show a readable autonomous execution timeline
     /usage                Show durable activity and counts
     /research             Start or run an evidence-gathering cycle
     /research start       Start a fully autonomous research campaign
@@ -253,6 +254,10 @@ Use a local model directly when Codex is unavailable:
       --model qwen3.6:27b \
       --thinking high \
       --budget 90m
+
+Inspect a long-running campaign without reading raw event payloads:
+
+    evidra timeline --limit 40
 
 The command checks the selected provider before starting repository inspection or baseline execution. The default Codex path can fall back to the configured local model only for recognized usage-limit failures; authentication and configuration errors are reported instead of silently starting an unconfigured run.
 
