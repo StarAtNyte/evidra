@@ -33,6 +33,7 @@ import { compareRuns } from "./core/statistics.js";
 import { evaluateTrajectory, type TrajectoryEvent } from "./core/trajectories.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "./core/experiment-patches.js";
 import { applyCriticGate } from "./core/critic-gate.js";
+import { recordBaselineEvidence } from "./core/baseline.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
@@ -661,10 +662,10 @@ research
       const gitStatus = await runProcess(["git", "status", "--short"], root);
       const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
       const priorBaseline = mode === "challenge" ? store.recentEvents(100).reverse().find((event) => event.type === "baseline.completed") : undefined;
-      let baseline: { exitCode: number; durationMs: number; stdout: string; stderr: string } | undefined;
+      let baseline: { command: string[]; cwd: string; exitCode: number; durationMs: number; stdout: string; stderr: string } | undefined;
       if (mode === "challenge" && options.skipBaseline && priorBaseline) {
-        const payload = priorBaseline.payload as { exitCode?: number; durationMs?: number; stdout?: string; stderr?: string };
-        baseline = { exitCode: payload.exitCode ?? 0, durationMs: payload.durationMs ?? 0, stdout: payload.stdout ?? "", stderr: payload.stderr ?? "" };
+        const payload = priorBaseline.payload as { command?: string[]; cwd?: string; exitCode?: number; durationMs?: number; stdout?: string; stderr?: string };
+        baseline = { command: payload.command ?? adapter.baselineCommand(), cwd: payload.cwd ?? adapter.workspacePath(root), exitCode: payload.exitCode ?? 0, durationMs: payload.durationMs ?? 0, stdout: payload.stdout ?? "", stderr: payload.stderr ?? "" };
         console.log("Research · reusing the latest recorded baseline observation (--skip-baseline).");
       } else if (mode === "challenge") {
         if (options.skipBaseline) throw new Error("--skip-baseline requested, but no baseline.completed event exists. Run evidra baseline first.");
@@ -672,7 +673,7 @@ research
       }
       if (mode === "challenge" && baseline && !(options.skipBaseline && priorBaseline)) {
         const metric = parseMetricOutput(baseline.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
-        store.appendEvent(baseline.exitCode === 0 ? "baseline.completed" : "baseline.failed", { command: adapter.baselineCommand(), cwd: adapter.workspacePath(root), exitCode: baseline.exitCode, durationMs: baseline.durationMs, metric, stdout: baseline.stdout, stderr: baseline.stderr });
+        recordBaselineEvidence(store, root, baseline, metric);
       }
       const observation = { gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40), repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120), ...(baseline ? { baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout.slice(-4000), stderr: baseline.stderr.slice(-4000) } } : {}) };
       store.appendEvent("research.observation", observation);
@@ -878,7 +879,7 @@ research.command("propose")
       baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout.slice(-4000), stderr: baseline.stderr.slice(-4000) },
     };
     const metric = parseMetricOutput(baseline.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
-    store.appendEvent(baseline.exitCode === 0 ? "baseline.completed" : "baseline.failed", { command: adapter.baselineCommand(), cwd: adapter.workspacePath(root), exitCode: baseline.exitCode, durationMs: baseline.durationMs, metric, stdout: baseline.stdout, stderr: baseline.stderr });
+    recordBaselineEvidence(store, root, baseline, metric);
     store.appendEvent("research.observation", observation);
     store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
     const recentEvents = store.recentEvents(20);
@@ -942,7 +943,8 @@ program.command("baseline")
     }
     const result = await runProcess(command, adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
     const store = new ResearchStore(statePath);
-    store.appendEvent("baseline.completed", { command, cwd: adapter.workspacePath(root), exitCode: result.exitCode, durationMs: result.durationMs, stdout: result.stdout, stderr: result.stderr });
+    const metric = parseMetricOutput(result.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
+    recordBaselineEvidence(store, root, result, metric);
     store.close();
     console.log(result.stdout);
     if (result.stderr) console.error(result.stderr);

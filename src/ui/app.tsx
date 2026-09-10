@@ -44,6 +44,7 @@ import { latestSourceEntries, researchMemoryContext } from "../core/research-con
 import { detectStagnation } from "../core/stagnation.js";
 import { applyCriticGate } from "../core/critic-gate.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "../core/experiment-patches.js";
+import { recordBaselineEvidence } from "../core/baseline.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -615,10 +616,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const state = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const priorBaseline = state.recentEvents(1000).reverse().find((event) => event.type === "baseline.completed");
       state.close();
-      let baseline: { exitCode: number; durationMs: number; stdout: string; stderr: string };
+      let baseline: { command: string[]; cwd: string; exitCode: number; durationMs: number; stdout: string; stderr: string };
       if (priorBaseline) {
-        const payload = priorBaseline.payload as { exitCode?: number; durationMs?: number; stdout?: string; stderr?: string };
-        baseline = { exitCode: payload.exitCode ?? 0, durationMs: payload.durationMs ?? 0, stdout: payload.stdout ?? "", stderr: payload.stderr ?? "" };
+        const payload = priorBaseline.payload as { command?: string[]; cwd?: string; exitCode?: number; durationMs?: number; stdout?: string; stderr?: string };
+        baseline = { command: payload.command ?? adapter.baselineCommand(), cwd: payload.cwd ?? adapter.workspacePath(root), exitCode: payload.exitCode ?? 0, durationMs: payload.durationMs ?? 0, stdout: payload.stdout ?? "", stderr: payload.stderr ?? "" };
         setProgress("Research 2/3 · reusing the latest verified baseline...");
       } else {
         setProgress("Research 2/3 · running the canonical baseline evaluator...");
@@ -635,7 +636,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         activeProcess.current = null;
         const baselineStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
         const metric = parseMetricOutput(baseline.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
-        baselineStore.appendEvent(baseline.exitCode === 0 ? "baseline.completed" : "baseline.failed", { command: adapter.baselineCommand(), cwd: adapter.workspacePath(root), exitCode: baseline.exitCode, durationMs: baseline.durationMs, metric, stdout: baseline.stdout, stderr: baseline.stderr });
+        recordBaselineEvidence(baselineStore, root, baseline, metric);
         baselineStore.close();
       }
       if (priorBaseline && typeof (priorBaseline.payload as { metric?: unknown }).metric !== "number") {
@@ -1561,7 +1562,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setConfig((current) => ({ ...current, mode: "challenge" }));
         const baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
         const baselineStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        baselineStore.appendEvent("baseline.completed", { exitCode: baseline.exitCode, stdout: baseline.stdout, stderr: baseline.stderr });
+        const metric = parseMetricOutput(baseline.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
+        recordBaselineEvidence(baselineStore, root, baseline, metric);
         baselineStore.setSchedulerState({ status: "running", mode: "challenge", currentStep: "research" });
         baselineStore.close();
         setProgress("Zero-to-hero: generating the first falsifiable research decision...");
@@ -1790,7 +1792,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       try {
         const result = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
         const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        store.appendEvent("baseline.completed", { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr });
+        const metric = parseMetricOutput(result.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
+        recordBaselineEvidence(store, root, result, metric);
         store.close();
         appendTool(`Baseline ${result.exitCode === 0 ? "completed" : "failed"}.\n${result.stdout || result.stderr}`);
       } catch (error) { appendError(error); }

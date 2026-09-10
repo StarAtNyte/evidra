@@ -43,6 +43,7 @@ import { compareClaims } from "../dist/core/claim-consistency.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
 import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../dist/core/campaign.js";
 import { applyCriticGate } from "../dist/core/critic-gate.js";
+import { recordBaselineEvidence } from "../dist/core/baseline.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -485,12 +486,25 @@ test("phase completion requires durable evidence instead of model status alone",
   assert.deepEqual(missing.missing, ["successful baseline"]);
   const incomplete = evaluatePhaseGoalEvidence(goal, { eventTypes: ["baseline.completed"], eventPayloads: [{ type: "baseline.completed", payload: { exitCode: 0 } }], hypotheses: 0, experiments: 0, runs: 0, artifacts: 2 });
   assert.deepEqual(incomplete.missing, ["parsed primary baseline metric"]);
-  const complete = evaluatePhaseGoalEvidence(goal, { eventTypes: ["baseline.completed"], eventPayloads: [{ type: "baseline.completed", payload: { exitCode: 0, metric: 0.42 } }], hypotheses: 0, experiments: 0, runs: 0, artifacts: 2 });
+  const complete = evaluatePhaseGoalEvidence(goal, { eventTypes: ["baseline.completed"], eventPayloads: [{ type: "baseline.completed", payload: { exitCode: 0, metric: 0.42, artifactChecksums: { "stdout.log": "sha256:test" } } }], hypotheses: 0, experiments: 0, runs: 0, artifacts: 2 });
   assert.equal(complete.met, true);
   const researchGoal = definePhaseGoals("investigate a general research question", "research").find((entry) => entry.phase === "baseline");
   assert.equal(researchGoal.title, "Establish a trusted reference");
   assert.equal(evaluatePhaseGoalEvidence(researchGoal, { mode: "research", eventTypes: ["research.observation"], eventPayloads: [], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, true);
   assert.equal(evaluatePhaseGoalEvidence(researchGoal, { mode: "research", eventTypes: [], eventPayloads: [], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, false);
+});
+
+test("baseline evidence is persisted as checksummed artifacts", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-baseline-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const evidence = recordBaselineEvidence(store, root, { command: ["python", "baseline.py"], cwd: root, exitCode: 0, durationMs: 12, stdout: "metric: 0.42\n", stderr: "" }, 0.42);
+    assert.equal(Object.keys(evidence.artifactChecksums).length, 4);
+    assert.equal(store.recentEvents(20).some((event) => event.type === "artifact.created"), true);
+    const baseline = store.recentEvents(20).find((event) => event.type === "baseline.completed");
+    assert.equal(Object.keys(baseline.payload.artifactChecksums).length, 4);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("research and challenge phase machines remain isolated in one durable project", () => {

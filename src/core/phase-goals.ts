@@ -77,6 +77,7 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
       const baseline = payloads("baseline.completed").find((payload) => (payload as { exitCode?: unknown }).exitCode === 0);
       if (!baseline) missing.push("successful baseline");
       else if (typeof (baseline as { metric?: unknown }).metric !== "number" || !Number.isFinite((baseline as { metric?: number }).metric)) missing.push("parsed primary baseline metric");
+      else if (!Object.keys((baseline as { artifactChecksums?: Record<string, unknown> }).artifactChecksums ?? {}).length) missing.push("checksummed baseline artifacts");
       break;
     }
     case "data_audit": if (!has("data.audit.completed")) missing.push("data audit report"); break;
