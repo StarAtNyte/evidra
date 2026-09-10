@@ -14,6 +14,8 @@ export interface AdaptiveHarnessInput {
   evidenceConflicts?: number;
   budgetRemainingMinutes?: number;
   benchmarkInterventions?: Array<{ kind?: string; priority?: string }>;
+  /** The latest matched harness comparison found Evidra behind an incumbent. */
+  benchmarkRegression?: boolean;
 }
 
 export type AdaptiveHarnessProfile = "exploration" | "evidence" | "recovery" | "budget";
@@ -55,6 +57,7 @@ export function deriveAdaptiveHarnessPolicy(input: AdaptiveHarnessInput): Adapti
   const hasVerificationFailure = failures.some((failure) => ["verification", "verifier_failure"].includes(failure));
   const lowBudget = Number.isFinite(input.budgetRemainingMinutes) && (input.budgetRemainingMinutes ?? Infinity) < 5;
   const benchmarkPriority = input.benchmarkInterventions?.some((item) => item.priority === "critical" || item.priority === "high") ?? false;
+  const benchmarkRegression = input.benchmarkRegression === true;
 
   let maxToolRounds = 6;
   let maxToolAttempts = 3;
@@ -100,6 +103,17 @@ export function deriveAdaptiveHarnessPolicy(input: AdaptiveHarnessInput): Adapti
     requireReplication = true;
     maxToolRounds = Math.max(maxToolRounds, 8);
     reasons.push("verification failure: repair incomplete or failed verifiers before exploring a new hypothesis");
+  }
+  if (benchmarkRegression) {
+    profile = "evidence";
+    peerReview = true;
+    independentCritic = true;
+    requireReplication = true;
+    preferDiverseSearch = false;
+    recoveryRoute = recoveryRoute === "repair_first" ? recoveryRoute : "alternate_route";
+    maxToolRounds = Math.max(maxToolRounds, 8);
+    maxToolAttempts = Math.max(maxToolAttempts, 3);
+    reasons.push("benchmark regression: lock targeted repair, alternate-route retest, and replication before exploration");
   }
   if (terminationGaps > 0) {
     requireReplication = true;

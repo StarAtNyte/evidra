@@ -1359,6 +1359,9 @@ research
         .slice(-3)
         .map((event) => event.payload)
         .slice(-3);
+      const latestHarnessBenchmark = harnessBenchmarkEvidence.at(-1) as { comparisons?: unknown } | undefined;
+      const benchmarkRegression = Array.isArray(latestHarnessBenchmark?.comparisons)
+        && latestHarnessBenchmark.comparisons.some((comparison) => comparison && typeof comparison === "object" && (comparison as { challengerWins?: unknown }).challengerWins === false);
       const harnessAdaptationAgenda = harnessBenchmarkEvidence
         .map((payload) => (payload as { adaptation?: unknown }).adaptation)
         .filter((adaptation): adaptation is Record<string, unknown> => Boolean(adaptation && typeof adaptation === "object"))
@@ -1414,6 +1417,7 @@ research
         failureClasses,
         evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
         budgetRemainingMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
+        benchmarkRegression,
         benchmarkInterventions: [
           ...harnessEvolutionPlan.map((item) => ({ kind: item.failureClass, priority: item.priority >= 8 ? "critical" : item.priority >= 5 ? "high" : "normal" })),
           ...(Array.isArray(harnessAdaptationAgenda?.interventions)
