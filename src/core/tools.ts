@@ -9,6 +9,7 @@ import { createValidationPolicy, writeValidationPolicy } from "./validation-poli
 import { retrieveSource, sourceClaims } from "./sources.js";
 import { ResearchStore } from "./store.js";
 import type { CompetitionConfig } from "./types.js";
+import { isSensitiveWorkspacePath, redactSecrets } from "./redaction.js";
 
 export interface ResearchToolContext {
   root: string;
@@ -41,7 +42,7 @@ export interface ResearchToolSpec {
 function recordToolEvent(context: ResearchToolContext, result: ResearchToolResult): void {
   try {
     const store = new ResearchStore(context.storePath);
-    const output = result.output === undefined ? undefined : JSON.stringify(result.output).slice(0, 8_000);
+    const output = result.output === undefined ? undefined : redactSecrets(JSON.stringify(result.output).slice(0, 8_000));
     store.appendEvent(result.ok ? "research.tool.completed" : "research.tool.failed", {
       name: result.name,
       ok: result.ok,
@@ -70,6 +71,7 @@ function inside(root: string, requested: string): string {
   const path = resolve(root, requested);
   const rel = relative(root, path);
   if (rel.startsWith("..") || isAbsolute(rel)) throw new Error(`Path escapes the workspace: ${requested}`);
+  if (isSensitiveWorkspacePath(rel)) throw new Error(`Refusing to expose sensitive workspace path: ${requested}`);
   return path;
 }
 
@@ -106,7 +108,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         const path = inside(context.root, stringArg(args, "path"));
         if (!existsSync(path)) throw new Error(`File does not exist: ${args.path}`);
         const maxBytes = typeof args.maxBytes === "number" ? Math.max(1, Math.min(args.maxBytes, 2_000_000)) : 200_000;
-        output = { path: relative(context.root, path), truncated: readFileSync(path).byteLength > maxBytes, text: readFileSync(path, "utf8").slice(0, maxBytes) };
+        output = { path: relative(context.root, path), truncated: readFileSync(path).byteLength > maxBytes, text: redactSecrets(readFileSync(path, "utf8").slice(0, maxBytes)) };
         break;
       }
       case "git.status": {
@@ -126,7 +128,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         const timeout = typeof args.timeoutMs === "number" ? Math.max(1_000, Math.min(args.timeoutMs, 15 * 60_000)) : 120_000;
         context.onProgress?.(`Tool shell.exec · ${command.join(" ")}`);
         const result = await runProcess(command, context.root, timeout, undefined, context.onProcess);
-        output = { exitCode: result.exitCode, stdout: result.stdout.slice(-50_000), stderr: result.stderr.slice(-10_000), durationMs: result.durationMs };
+        output = { exitCode: result.exitCode, stdout: redactSecrets(result.stdout.slice(-50_000)), stderr: redactSecrets(result.stderr.slice(-10_000)), durationMs: result.durationMs };
         break;
       }
       case "source.retrieve": {

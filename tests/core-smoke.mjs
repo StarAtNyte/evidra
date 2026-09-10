@@ -47,6 +47,7 @@ import { applyCriticGate } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment } from "../dist/core/validation.js";
 import { boundLaneToolResult, laneToolCalls, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
+import { isSensitiveWorkspacePath, redactSecrets } from "../dist/core/redaction.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -666,6 +667,14 @@ test("research lanes use bounded role-specific workspace observations", () => {
   const bounded = boundLaneToolResult({ name: "workspace.search", ok: true, output: "x".repeat(20_000) });
   assert.match(String(bounded.output), /lane observation truncated/);
   assert.ok(Buffer.byteLength(String(bounded.output)) <= 12_100);
+});
+
+test("research tool boundaries protect sensitive paths and credentials", () => {
+  assert.equal(isSensitiveWorkspacePath(".env"), true);
+  assert.equal(isSensitiveWorkspacePath("config/credentials.json"), true);
+  assert.equal(isSensitiveWorkspacePath("src/model.py"), false);
+  assert.match(redactSecrets("OPENAI_API_KEY=sk-test_12345678901234567890"), /REDACTED/);
+  assert.match(redactSecrets("authorization: Bearer very-secret-value"), /REDACTED/);
 });
 
 test("durable queue worker bounds concurrency and retries failures", async () => {
