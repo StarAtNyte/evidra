@@ -1067,7 +1067,7 @@ research
           }
         }
         decisionStore.appendEvent("experiment.autonomous.approval_required", { experimentId: proposalId, decision: decision.decision, selectedHypothesis: decision.selectedHypothesis, autonomy, nextAction: proposalId ? `Run evidra experiment run ${proposalId} after approval.` : "Create an explicit experiment proposal before execution." });
-        console.log(`Autonomous experiment paused by ${autonomy.toUpperCase()} permissions${proposalId ? `; proposal ${proposalId} is ready for explicit approval.` : "."}`);
+        console.log(`Autonomous experiment held by ${autonomy.toUpperCase()} permissions${proposalId ? `; proposal ${proposalId} is ready for explicit approval. Continuing research on other directions.` : ". Continuing evidence gathering."}`);
       }
       if (!criticBlocks && !policyBlocksExecution && decision.decision === "run" && decision.selectedHypothesis) {
         const selectedIndex = decision.hypotheses.findIndex((hypothesis) => hypothesis.title === decision.selectedHypothesis);
@@ -1168,9 +1168,13 @@ research
         }
       }
       const elapsedMinutes = campaignElapsedMinutes(campaign);
-      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || stagnation.stagnant || elapsedMinutes >= campaign.budgetMinutes || policyBlocksExecution;
+      // Approval-gated experiments must not freeze the research program. The
+      // pending proposal is durable and visible; subsequent cycles can gather
+      // evidence or select an unrelated hypothesis until the budget/stop
+      // condition is reached.
+      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || stagnation.stagnant || elapsedMinutes >= campaign.budgetMinutes;
       if (terminal) {
-        if (decision.goalStatus === "blocked" || stagnation.stagnant || policyBlocksExecution) Object.assign(campaign, pauseCampaign(campaign));
+        if (decision.goalStatus === "blocked" || stagnation.stagnant) Object.assign(campaign, pauseCampaign(campaign));
         else campaign.status = "completed";
         if (stagnation.stagnant) decisionStore.appendEvent("research.stagnation.detected", { cycles: stagnation.cycles, signature: stagnation.signature, action: "pause_for_review" });
         decisionStore.saveCampaign(campaign);

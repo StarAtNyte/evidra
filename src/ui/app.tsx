@@ -1441,15 +1441,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         }
       }
       if (approvalRequired && campaign) {
-        const paused = pauseCampaign(campaign);
-        persistCampaign(paused);
-        setConfig((current) => ({ ...current, campaign: paused }));
-        if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
         const approvalStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        approvalStore.setSchedulerState({ status: "paused", mode, currentStep: "approval-required" });
-        approvalStore.appendEvent("research.autonomy.approval_required", { experimentId: proposed?.id, reason: "safe permission mode", next: `/experiment run ${proposed?.id}` });
+        approvalStore.setSchedulerState({ status: "running", mode, currentStep: "approval-pending-research-continues" });
+        approvalStore.appendEvent("research.autonomy.approval_required", { experimentId: proposed?.id, reason: "safe permission mode", next: `/experiment run ${proposed?.id}`, researchContinues: true });
         approvalStore.close();
-        append("assistant", `Campaign paused for approval. Run /experiment run ${proposed?.id ?? "<proposal>"}, then /${mode} resume.`);
+        append("assistant", `Approval pending for ${proposed?.id ?? "the proposed experiment"}. Run /experiment run ${proposed?.id ?? "<proposal>"} when ready; research continues on other directions.`);
       }
       if (campaign && !approvalRequired && cycle.decision === "stop") {
         campaign.status = "completed";
