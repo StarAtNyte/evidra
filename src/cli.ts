@@ -60,6 +60,7 @@ import { withExecutionHeartbeat } from "./core/execution-heartbeat.js";
 import { researchFailureRecord } from "./core/research-failure.js";
 import { rankSearchArms, searchReward, type SearchOperator } from "./core/search-policy.js";
 import { planPortfolio } from "./core/portfolio.js";
+import { promoteHalvingStage } from "./core/successive-halving.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
 import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
@@ -116,10 +117,10 @@ function experimentCommandFor(adapter: ReturnType<typeof activeCompetition>, hyp
   return command;
 }
 
-async function runCampaignExperiment(rootPath: string, experimentId: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+async function runCampaignExperiment(rootPath: string, experimentId: string, stage: "all" | "reduced" | "full-after-screen" = "all"): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const script = process.argv[1];
   if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint for autonomous experiment execution.");
-  return runProcess([process.execPath, script, "experiment", "run", experimentId], rootPath, 7 * 24 * 60 * 60_000, (stream, chunk) => {
+  return runProcess([process.execPath, script, "experiment", "run", experimentId, ...(stage === "reduced" ? ["--reduced-only"] : stage === "full-after-screen" ? ["--skip-reduced"] : [])], rootPath, 7 * 24 * 60 * 60_000, (stream, chunk) => {
     (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
   });
 }
@@ -1399,6 +1400,30 @@ research
       const executionCandidates = !criticBlocks && !policyBlocksExecution && decision.decision === "run" && decision.selectedHypothesis && autonomyPolicy(autonomy).canRunIsolatedExperiments
         ? (portfolioPlan.selected.length ? portfolioPlan.selected : selectedDecisionCandidate ? [selectedDecisionCandidate] : [])
         : [];
+      const halvingEnabled = executionCandidates.length > 1 && portfolioPlan.halving.feasible && portfolioPlan.halving.stages.length > 1;
+      const screenedCandidates: Array<{ experimentId: string; metric?: number; valid: boolean }> = [];
+      const finalizeAutonomousRun = async (experimentId: string, run: { exitCode: number; stdout: string; stderr: string }): Promise<void> => {
+        const completionStore = new ResearchStore(statePath);
+        completionStore.appendEvent(run.exitCode === 0 ? "experiment.autonomous.completed" : "experiment.autonomous.failed", { experimentId, exitCode: run.exitCode, stdout: run.stdout.slice(-4000), stderr: run.stderr.slice(-4000) });
+        const comparisonEvent = completionStore.recentEvents(500).reverse().find((event) => event.type === "experiment.comparison.completed" && (event.payload as { experimentId?: unknown }).experimentId === experimentId);
+        const comparison = comparisonEvent?.payload as { comparison?: { direction?: string } } | undefined;
+        const parent = completionStore.experiments().find((entry) => entry.id === experimentId);
+        const parentManifest = parent ? ExperimentManifestSchema.safeParse(parent.payload) : undefined;
+        if (run.exitCode === 0 && comparison?.comparison?.direction === "improved" && parentManifest?.success && parentManifest.data.acceptance.requireReplication) {
+          const replication = createReplicationManifest(parentManifest.data, adapter.config);
+          completionStore.saveExperiment({ id: replication.id, payload: { ...replication, status: "proposed", replicationOf: experimentId, automatic: true, executionPlan: createExecutionPlan(replication) } });
+          completionStore.appendEvent("replication.manifest.created", { parentId: experimentId, replicationId: replication.id, automatic: true });
+          console.log(`Independent replication scheduled: ${replication.id}\n${manifestSummary(replication)}`);
+          completionStore.close();
+          const replicationRun = await runCampaignExperiment(root, replication.id);
+          const replicationStore = new ResearchStore(statePath);
+          replicationStore.appendEvent(replicationRun.exitCode === 0 ? "experiment.autonomous.replication.completed" : "experiment.autonomous.replication.failed", { parentId: experimentId, replicationId: replication.id, exitCode: replicationRun.exitCode, stdout: replicationRun.stdout.slice(-4000), stderr: replicationRun.stderr.slice(-4000) });
+          replicationStore.close();
+        } else {
+          completionStore.close();
+        }
+        decisionStore = new ResearchStore(statePath);
+      };
       for (const portfolioCandidate of executionCandidates) {
         const selectedIndex = materialized.hypothesisIds.indexOf(portfolioCandidate.id);
         const selectedHypothesisId = selectedIndex >= 0 ? materialized.hypothesisIds[selectedIndex] : undefined;
@@ -1431,6 +1456,18 @@ research
             let run: { exitCode: number; stdout: string; stderr: string };
             try {
               await implementCampaignHypothesis(root, experimentId, selectedHypothesis, manifest, { provider: options.provider as "codex" | "local", model: selectedModel, thinking: options.thinking, protectedCommands: [adapter.config.evaluator.command] });
+              if (halvingEnabled) {
+                run = await runCampaignExperiment(root, experimentId, "reduced");
+                const screenStore = new ResearchStore(statePath);
+                const screenEvent = screenStore.recentEvents(500).reverse().find((event) => event.type === "experiment.screening.completed" && (event.payload as { experimentId?: unknown }).experimentId === experimentId);
+                const screenPayload = screenEvent?.payload as { metric?: unknown } | undefined;
+                const metric = typeof screenPayload?.metric === "number" && Number.isFinite(screenPayload.metric) ? screenPayload.metric : undefined;
+                screenedCandidates.push({ experimentId, metric, valid: run.exitCode === 0 && metric !== undefined });
+                screenStore.appendEvent(run.exitCode === 0 ? "experiment.autonomous.screened" : "experiment.autonomous.screening_failed", { experimentId, metric: metric ?? null, exitCode: run.exitCode });
+                screenStore.close();
+                decisionStore = new ResearchStore(statePath);
+                continue;
+              }
               run = await runCampaignExperiment(root, experimentId);
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
@@ -1441,27 +1478,19 @@ research
               failedImplementationStore.close();
               run = { exitCode: 1, stdout: "", stderr: message };
             }
-            const completionStore = new ResearchStore(statePath);
-            completionStore.appendEvent(run.exitCode === 0 ? "experiment.autonomous.completed" : "experiment.autonomous.failed", { experimentId, exitCode: run.exitCode, stdout: run.stdout.slice(-4000), stderr: run.stderr.slice(-4000) });
-            const comparisonEvent = completionStore.recentEvents(500).reverse().find((event) => event.type === "experiment.comparison.completed" && (event.payload as { experimentId?: unknown }).experimentId === experimentId);
-            const comparison = comparisonEvent?.payload as { comparison?: { direction?: string } } | undefined;
-            const parent = completionStore.experiments().find((entry) => entry.id === experimentId);
-            const parentManifest = parent ? ExperimentManifestSchema.safeParse(parent.payload) : undefined;
-            if (run.exitCode === 0 && comparison?.comparison?.direction === "improved" && parentManifest?.success && parentManifest.data.acceptance.requireReplication) {
-              const replication = createReplicationManifest(parentManifest.data, adapter.config);
-              completionStore.saveExperiment({ id: replication.id, payload: { ...replication, status: "proposed", replicationOf: experimentId, automatic: true, executionPlan: createExecutionPlan(replication) } });
-              completionStore.appendEvent("replication.manifest.created", { parentId: experimentId, replicationId: replication.id, automatic: true });
-              console.log(`Independent replication scheduled: ${replication.id}\n${manifestSummary(replication)}`);
-              completionStore.close();
-              const replicationRun = await runCampaignExperiment(root, replication.id);
-              const replicationStore = new ResearchStore(statePath);
-              replicationStore.appendEvent(replicationRun.exitCode === 0 ? "experiment.autonomous.replication.completed" : "experiment.autonomous.replication.failed", { parentId: experimentId, replicationId: replication.id, exitCode: replicationRun.exitCode, stdout: replicationRun.stdout.slice(-4000), stderr: replicationRun.stderr.slice(-4000) });
-              replicationStore.close();
-            } else {
-              completionStore.close();
-            }
-            decisionStore = new ResearchStore(statePath);
+            await finalizeAutonomousRun(experimentId, run);
           }
+        }
+      }
+      if (halvingEnabled) {
+        const screeningStage = portfolioPlan.halving.stages[0];
+        const promoted = promoteHalvingStage(screeningStage, screenedCandidates.map((candidate) => ({ id: candidate.experimentId, metric: candidate.metric, valid: candidate.valid })), adapter.config.metric.direction);
+        const promotionStore = new ResearchStore(statePath);
+        promotionStore.appendEvent("research.portfolio.screening_promoted", { cycle, stage: screeningStage.index, candidates: screenedCandidates, promoted, retainCount: screeningStage.retainCount, direction: adapter.config.metric.direction });
+        promotionStore.close();
+        for (const candidate of screenedCandidates.filter((entry) => promoted.includes(entry.experimentId))) {
+          const fullRun = await runCampaignExperiment(root, candidate.experimentId, "full-after-screen");
+          await finalizeAutonomousRun(candidate.experimentId, fullRun);
         }
       }
       const trajectoryStamp = `research-${Date.now()}`;
@@ -1692,11 +1721,19 @@ experiment.command("gate")
   });
 experiment.command("run")
   .argument("<id>", "experiment identifier")
-  .action(async (id: string) => {
+  .option("--reduced-only", "stop after the reduced validation gate and persist its metric")
+  .option("--skip-reduced", "reuse a previously completed reduced screening stage")
+  .action(async (id: string, options: { reducedOnly?: boolean; skipReduced?: boolean }) => {
+    if (options.reducedOnly && options.skipReduced) throw new Error("Choose either --reduced-only or --skip-reduced, not both.");
     const adapter = activeCompetition();
     const store = new ResearchStore(statePath);
     const entry = store.experiments().find((candidate) => candidate.id === id);
     if (!entry) { store.close(); throw new Error(`Experiment ${id} is not registered. Run: evidra experiment propose`); }
+    const entryPayload = entry.payload as Record<string, unknown>;
+    if (options.skipReduced && (entryPayload.status !== "screened" || typeof entryPayload.reducedRunId !== "string")) {
+      store.close();
+      throw new Error("--skip-reduced requires a durable completed reduced screening for this experiment.");
+    }
     const manifest = ExperimentManifestSchema.parse(entry.payload);
     const validationPathsForRun = validationPaths();
     if (readValidationPolicyLock(validationPathsForRun.lock)?.locked) {
@@ -1764,7 +1801,12 @@ experiment.command("run")
       stageStore.close();
     }
     const reducedCommand = adapter.config.execution?.reducedValidationCommand;
-    if (reducedCommand) {
+    if (options.skipReduced) {
+      executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", "completed");
+      const reusedStore = new ResearchStore(statePath);
+      reusedStore.appendEvent("experiment.stage.reduced_validation.reused", { experimentId: id, reason: "previous reduced-only screening was completed" });
+      reusedStore.close();
+    } else if (reducedCommand) {
       const reducedManifest = { ...manifest, evaluation: { ...manifest.evaluation, requiredArtifacts: [] } };
       const reducedContract = validateExecutionContract(reducedManifest, experimentCwd, reducedCommand);
       if (!reducedContract.valid) {
@@ -1802,7 +1844,23 @@ experiment.command("run")
         }
         promotionStore.close();
       }
+      if (options.reducedOnly) {
+        const screenedStore = new ResearchStore(statePath);
+        screenedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "screened", reducedRunId: reduced.runId, reducedMetric: reduced.metrics[adapter.config.metric.name] ?? null, executionPlan } });
+        screenedStore.appendEvent("experiment.screening.completed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[adapter.config.metric.name] ?? null, command: reducedCommand });
+        screenedStore.close();
+        console.log(`Experiment ${id}: reduced screening completed`);
+        console.log(`Run: ${reduced.runId}`);
+        console.log(`Metric (${adapter.config.metric.name}): ${reduced.metrics[adapter.config.metric.name] ?? "not parsed"}`);
+        return;
+      }
     } else {
+      if (options.reducedOnly) {
+        const failedStore = new ResearchStore(statePath);
+        failedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "failed", executionPlan } });
+        failedStore.close();
+        throw new Error("Reduced-only execution requires execution.reducedValidationCommand in the competition manifest.");
+      }
       executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", "skipped");
       const skippedStore = new ResearchStore(statePath);
       skippedStore.appendEvent("experiment.stage.reduced_validation.skipped", { experimentId: id, reason: "manifest has no generic reduced-data contract" });
