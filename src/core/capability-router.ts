@@ -22,6 +22,17 @@ export interface CapabilityRoute {
   rationale: string[];
 }
 
+export interface CapabilityOutcome {
+  schemaVersion: 1;
+  objective: string;
+  mode: "research" | "challenge";
+  predictedTier: CapabilityTier;
+  served: { provider: string; model: string; parallelLanes: number };
+  outcome: "success" | "partial" | "failure";
+  quality: string;
+  gaps: string[];
+}
+
 /** Convert a stored trajectory quality object into routing feedback without treating missing instrumentation as failure. */
 export function qualityFeedback(quality: unknown): { overall?: string; gaps: string[] } {
   const record = quality && typeof quality === "object" ? quality as Record<string, unknown> : {};
@@ -33,6 +44,30 @@ export function qualityFeedback(quality: unknown): { overall?: string; gaps: str
     })
     .map(([key]) => key);
   return { overall: typeof record.overall === "string" ? record.overall : undefined, gaps };
+}
+
+/** Normalize routing prediction, serving action, and observed outcome. */
+export function capabilityOutcome(input: {
+  objective: string;
+  mode: "research" | "challenge";
+  route: CapabilityRoute;
+  provider: string;
+  model: string;
+  quality: unknown;
+  parallelLanes: number;
+}): CapabilityOutcome {
+  const feedback = qualityFeedback(input.quality);
+  const quality = feedback.overall ?? "NOT_EVALUATED";
+  return {
+    schemaVersion: 1,
+    objective: input.objective,
+    mode: input.mode,
+    predictedTier: input.route.tier,
+    served: { provider: input.provider, model: input.model, parallelLanes: input.parallelLanes },
+    outcome: quality === "PASS" ? "success" : quality === "FAIL" ? "failure" : "partial",
+    quality,
+    gaps: feedback.gaps,
+  };
 }
 
 /**

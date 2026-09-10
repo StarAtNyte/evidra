@@ -32,7 +32,7 @@ import { auditData } from "../dist/core/data-audit.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { runReducedValidation } from "../dist/core/stage-executor.js";
 import { evaluateTrajectory, capabilityGaps, validateTrajectoryStructure } from "../dist/core/trajectories.js";
-import { qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
+import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
 import { experimentNovelty, rankExperimentCandidates, rankPriorities } from "../dist/core/scheduler.js";
 import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
@@ -116,6 +116,20 @@ test("trajectory structural gate quarantines ambiguous tool traces", () => {
   assert.ok(structure.issues.some((issue) => issue.includes("duplicate tool call id")));
   assert.ok(structure.issues.some((issue) => issue.includes("no matching call")));
   assert.equal(evaluateTrajectory(malformed).structural.verdict, "FAIL");
+});
+
+test("capability outcomes preserve prediction, serving action, and result", () => {
+  const route = routeCapability({ objective: "run and replicate an experiment", mode: "challenge", provider: "codex", autonomy: "fast", requestedParallel: 2 });
+  assert.deepEqual(capabilityOutcome({ objective: "run and replicate an experiment", mode: "challenge", route, provider: "codex", model: "gpt-test", quality: { overall: "FAIL", toolUse: { verdict: "FAIL", coverage: "observed" } }, parallelLanes: 2 }), {
+    schemaVersion: 1,
+    objective: "run and replicate an experiment",
+    mode: "challenge",
+    predictedTier: route.tier,
+    served: { provider: "codex", model: "gpt-test", parallelLanes: 2 },
+    outcome: "failure",
+    quality: "FAIL",
+    gaps: ["toolUse"],
+  });
 });
 
 test("critic gate converts terminal and execution decisions into inspection", () => {
