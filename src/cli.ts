@@ -1172,7 +1172,7 @@ research
         ? `\n\nPrior decision-rubric gaps to repair before spending compute:\n${[...new Set(priorRubricGaps)].join("\n")}`
         : "";
       const cycleObjective = allocatedObjective + rubricGuidance;
-      const researchSources = latestSourcePayloads(store.sources(), 12);
+      const researchSources = latestSourcePayloads(store.sources(), 12, cycleObjective);
       const researchMemory = researchMemoryContext(store, 30, cycleObjective);
       const peerLaneBoard = boundedPeerBoard(recentEvents);
       console.log(`${mode === "challenge" ? "Challenge" : "Research"} ${cycle} · inspecting workspace${mode === "challenge" ? " and baseline" : ""} (budget ${campaign.budgetMinutes}m)...`);

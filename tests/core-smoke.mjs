@@ -278,6 +278,15 @@ test("dynamic research sources refresh after their freshness window", () => {
   assert.equal(sourceIsFresh({ payload: {}, createdAt: "2026-01-01T11:00:00.000Z" }, DEFAULT_SOURCE_REFRESH_MS, now), true);
 });
 
+test("research sources can be ranked by the active objective", () => {
+  const sources = [
+    { id: "recent", createdAt: "2026-01-03", payload: { title: "Recent optimizer paper", url: "https://example.com/optimizer" } },
+    { id: "relevant", createdAt: "2026-01-02", payload: { title: "Grouped validation under source leakage", url: "https://example.com/leakage" } },
+  ];
+  assert.equal(latestSourceEntries(sources, 1, "source leakage validation")[0].id, "relevant");
+  assert.equal(latestSourcePayloads(sources, 1, "source leakage validation")[0].title, "Grouped validation under source leakage");
+});
+
 test("active research context keeps only the newest source version per URL", () => {
   const sources = [
     { id: "new", createdAt: "2026-01-02T00:00:00.000Z", payload: { url: "https://example.com/discussion", title: "new" } },

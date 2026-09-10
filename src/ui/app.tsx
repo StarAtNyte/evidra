@@ -755,7 +755,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const experienceRecords = recentTrajectories.map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
     const experienceMix = selectCurriculum(experienceRecords);
     const curriculumGuidance = experienceMix.map((stage) => `stage ${stage.stage}: ${stage.trajectoryIds.join(", ") || "none"} (${stage.rationale})`).join("; ");
-    const researchSources = latestSourceEntries(store.sources(), 12).map((entry) => {
+    const researchSources = latestSourceEntries(store.sources(), 12, objective).map((entry) => {
       const payload = entry.payload as { title?: string; url?: string; excerpt?: string; claims?: string[] };
       return { id: entry.id, title: payload.title, url: payload.url, excerpt: payload.excerpt, claims: payload.claims?.slice(0, 8) };
     });
