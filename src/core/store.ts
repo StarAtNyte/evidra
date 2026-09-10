@@ -1,7 +1,9 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { createHash } from "node:crypto";
 import { EvidenceClaimSchema } from "./types.js";
+import { compareClaims } from "./claim-consistency.js";
 
 export type QueueTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export interface QueuedTask {
@@ -559,6 +561,24 @@ export class ResearchStore {
       if (!source) throw new Error(`Literature claim ${claim.id} references missing source ${parsed.data.sourceId}.`);
     }
     const durablePayload = JSON.stringify(candidate);
+    const existing = this.claims().filter((entry) => entry.id !== claim.id).map((entry) => {
+      const value = entry.payload as { statement?: unknown; sourceType?: unknown; confidence?: unknown };
+      return typeof value.statement === "string" && typeof value.sourceType === "string" && typeof value.confidence === "number"
+        ? { id: entry.id, statement: value.statement, sourceType: value.sourceType, confidence: value.confidence }
+        : undefined;
+    }).filter((entry): entry is { id: string; statement: string; sourceType: string; confidence: number } => Boolean(entry));
+    for (const prior of existing) {
+      const relation = compareClaims({ id: claim.id, statement: parsed.data.statement, sourceType: parsed.data.sourceType, confidence: parsed.data.confidence }, prior);
+      if (!relation) continue;
+      if (relation.relation === "duplicate") {
+        this.appendEvent("evidence.claim.duplicate_detected", { claimId: claim.id, duplicateOf: prior.id, confidence: relation.confidence, reviewRequired: true });
+        continue;
+      }
+      const [fromId, toId] = [claim.id, prior.id].sort();
+      const edgeId = `edge_claim_contradiction_${createHash("sha256").update(`${fromId}:${toId}`).digest("hex").slice(0, 20)}`;
+      this.saveEdge({ id: edgeId, fromId, toId, relation: "contradicts", confidence: relation.confidence, evidenceIds: [claim.id, prior.id] });
+      this.appendEvent("evidence.claim.contradiction_detected", { claimId: claim.id, contradicts: prior.id, confidence: relation.confidence, reviewRequired: true });
+    }
     this.db.prepare(`INSERT OR REPLACE INTO evidence_claims (id, payload_json, created_at) VALUES (?, ?, ?)`).run(claim.id, durablePayload, createdAt);
     this.indexMemory("claim", claim.id, durablePayload, createdAt);
     this.appendEvent("evidence.claim.created", candidate);

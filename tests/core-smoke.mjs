@@ -36,6 +36,7 @@ import { allocateNextResearch } from "../dist/core/allocation.js";
 import { rankPriorities } from "../dist/core/scheduler.js";
 import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
+import { compareClaims } from "../dist/core/claim-consistency.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
 
 test("durable research state and queue survive store reopen", () => {
@@ -323,11 +324,20 @@ test("evidence claims require provenance and grounded literature sources", () =>
     assert.throws(() => store.saveClaim({ id: "bad", payload: { statement: "unscoped", sourceType: "observation" } }), /Invalid evidence claim/);
     assert.throws(() => store.saveClaim({ id: "orphan", payload: { statement: "paper claim", scope: "paper", confidence: 0.5, sourceType: "literature", sourceId: "missing-source", status: "active" } }), /missing source/);
     store.saveSource({ id: "paper-1", payload: { title: "Paper", url: "https://example.com/paper", claims: [] } });
-    store.saveClaim({ id: "grounded", payload: { statement: "paper claim", scope: "paper", confidence: 0.5, sourceType: "literature", sourceId: "paper-1", status: "active", excerpt: "quoted context" } });
+    store.saveClaim({ id: "grounded", payload: { statement: "paper claim is valid", scope: "paper", confidence: 0.5, sourceType: "literature", sourceId: "paper-1", status: "active", excerpt: "quoted context" } });
     assert.equal(store.claims()[0].id, "grounded");
     assert.equal(store.claims()[0].payload.excerpt, "quoted context");
+    store.saveClaim({ id: "contrary", payload: { statement: "paper claim is not valid", scope: "paper", confidence: 0.5, sourceType: "literature", sourceId: "paper-1", status: "active" } });
+    assert.ok(store.edges().some((edge) => edge.relation === "contradicts" && edge.evidenceIds.includes("grounded") && edge.evidenceIds.includes("contrary")));
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("claim consistency surfaces duplicates and only explicit contradictions", () => {
+  const base = { id: "a", sourceType: "observation", confidence: 0.8 };
+  assert.equal(compareClaims({ ...base, statement: "Group holdout reduces leakage risk" }, { ...base, id: "b", statement: "Group holdout reduces leakage risk" }).relation, "duplicate");
+  assert.equal(compareClaims({ ...base, statement: "Group holdout is valid" }, { ...base, id: "b", statement: "Group holdout is not valid" }).relation, "contradicts");
+  assert.equal(compareClaims({ ...base, statement: "Group holdout reduces leakage risk" }, { ...base, id: "b", statement: "Temporal validation improves robustness" }), undefined);
 });
 
 test("project-local competition manifests replace hardcoded adapters", () => {
