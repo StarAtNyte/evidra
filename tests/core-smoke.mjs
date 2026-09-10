@@ -1666,6 +1666,8 @@ test("portfolio planner is bounded, diverse, and cost aware", () => {
   assert.deepEqual(plan.selected.map((candidate) => candidate.id), ["cheap", "expensive"]);
   assert.equal(plan.parallelism, 2);
   assert.equal(plan.reservedMinutes, 8);
+  assert.equal(plan.halving.stages.length, 2);
+  assert.equal(plan.halving.stages.at(-1)?.fraction, 1);
   assert.match(plan.rejected.find((entry) => entry.candidate.id === "duplicate")?.reason ?? "", /family/);
   const overBudget = planPortfolio([{ id: "too-large", title: "too large", operator: "audit", expectedValue: 1, costMinutes: 11 }], { maxCandidates: 1, maxParallel: 1, budgetMinutes: 10 });
   assert.equal(overBudget.selected.length, 0);

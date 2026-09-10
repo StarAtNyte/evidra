@@ -72,7 +72,11 @@ export function planPortfolio(candidates: PortfolioCandidate[], options: Portfol
     families.add(family);
     reservedMinutes += cost;
   }
-  const halving = planSuccessiveHalving(selected.map((candidate) => ({ id: candidate.id, costMinutes: Math.max(0.1, candidate.costMinutes), family: candidate.family })), available);
+  // The autonomous portfolio controller currently owns two concrete worker
+  // stages: reduced screen, then full validation. Deeper generic schedules
+  // remain available through planSuccessiveHalving for adapters that expose
+  // more intermediate worker contracts.
+  const halving = planSuccessiveHalving(selected.map((candidate) => ({ id: candidate.id, costMinutes: Math.max(0.1, candidate.costMinutes), family: candidate.family })), available, { rounds: 2 });
   return { selected, rejected, reservedMinutes, parallelism, halving };
 }
 
