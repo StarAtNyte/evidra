@@ -58,6 +58,7 @@ import { validateCompetitionContract } from "../dist/core/competition-contract.j
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
+import { planHarnessAdaptation } from "../dist/core/harness-adaptation.js";
 import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks } from "../dist/core/airs-bench.js";
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
@@ -446,6 +447,20 @@ test("executor failures change the next research allocation into a specific repa
   assert.equal(allocation.priority, "critical");
   assert.match(allocation.strategy, /artifact|metric|verifier/i);
   assert.match(allocation.reasons[0], /2 recent run/);
+});
+
+test("harness comparison failures become a locked adaptive retest agenda", () => {
+  const trials = [
+    { harness: "evidra", task: "a", arm: "x", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 500, recovered: true, reproducible: false, failureClass: "timeout" },
+    { harness: "incumbent", task: "a", arm: "x", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.7, validRun: true, durationSeconds: 100, recovered: false, reproducible: true },
+  ];
+  const scorecards = scoreHarnessTrials(trials);
+  const comparison = compareHarnesses(trials, "evidra", "incumbent");
+  const plan = planHarnessAdaptation(trials, scorecards, [comparison], "evidra");
+  assert.equal(plan.claimStatus, "not_proven");
+  assert.equal(plan.retest.noMetricOrBudgetChanges, true);
+  assert.ok(plan.interventions.some((item) => item.kind === "search"));
+  assert.ok(plan.interventions.some((item) => item.kind === "recovery"));
 });
 
 test("experiment scheduler ranks expected information per cost", () => {

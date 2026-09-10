@@ -72,6 +72,7 @@ import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock,
 import { runBenchmarkArms, type BenchmarkArmSpec } from "./core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, type AirsBenchFamily, type AirsBenchDiscovery, type AirsHarnessTemplate } from "./core/airs-bench.js";
 import { inventoryHarnessComponents, planHarnessInterventions } from "./core/harness-evolution.js";
+import { planHarnessAdaptation } from "./core/harness-adaptation.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -419,7 +420,8 @@ benchmark.command("run")
     const harnesses = [...new Set(report.trials.map((trial) => trial.harness))];
     const incumbents = options.incumbent ? [options.incumbent] : harnesses.filter((harness) => harness !== options.challenger);
     const comparisons = incumbents.map((incumbent) => compareHarnesses(report.trials, options.challenger, incumbent));
-    const output = { ...report, scorecards, protocol: matched, challenger: options.challenger, comparisons };
+    const adaptation = planHarnessAdaptation(report.trials, scorecards, comparisons, options.challenger);
+    const output = { ...report, scorecards, protocol: matched, challenger: options.challenger, comparisons, adaptation };
     if (options.out) writeFileSync(resolve(options.out), `${JSON.stringify(output, null, 2)}\n`);
     const benchmarkStore = new ResearchStore(statePath);
     benchmarkStore.appendEvent("harness.benchmark.completed", {
@@ -430,6 +432,7 @@ benchmark.command("run")
       incumbents,
       scorecards: scorecards.map((scorecard) => ({ harness: scorecard.harness, competitiveScore: scorecard.competitiveScore, lower95: scorecard.competitiveScoreLower95, validRunRate: scorecard.validRunRate, failureProfile: scorecard.failureProfile })),
       comparisons: comparisons.map((comparison) => ({ incumbent: comparison.incumbent, challengerWins: comparison.challengerWins, reason: comparison.reason, pairedLower95: comparison.pairedLower95 })),
+      adaptation,
     });
     benchmarkStore.close();
     console.log(`Harness benchmark run complete\n${scorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})${Object.keys(scorecard.failureProfile).length ? ` · failures ${JSON.stringify(scorecard.failureProfile)}` : ""}`).join("\n")}`);
@@ -438,6 +441,8 @@ benchmark.command("run")
       for (const comparison of comparisons) {
         console.log(`vs ${comparison.incumbent}: ${comparison.challengerWins ? "WIN PROVEN" : "NOT PROVEN"} · ${comparison.reason}`);
       }
+      console.log(`\nNext harness agenda · ${adaptation.interventions.length} intervention(s)`);
+      for (const intervention of adaptation.interventions.slice(0, 5)) console.log(`- [${intervention.priority}] ${intervention.target}: ${intervention.action}`);
       if (comparisons.some((comparison) => !comparison.challengerWins)) process.exitCode = 2;
     } else {
       console.log(`\nCompetitive gate · no incumbent arm found; result is scored evidence, not a win claim.`);

@@ -156,6 +156,22 @@ task-level bootstrap bounds and refuses to call a harness better when coverage
 or task diversity is insufficient. This turns the remaining benchmark work into
 an empirical comparison rather than a scorecard convention.
 
+Benchmark outcomes now also produce a durable adaptive retest agenda. A failed
+comparison is decomposed into reliability, recovery, execution-alignment,
+efficiency, search, or coverage interventions, each with a prediction and
+acceptance test. The agenda locks task identities, seeds, model, evaluator,
+metric direction, and per-arm budget for the next retest; an implementation may
+change the harness, but it cannot move the goalposts. This closes the loop
+between harness evaluation and harness improvement while preserving the
+matched-protocol discipline emphasized by AIRS-Bench and Harness-Bench.
+
+The latest research-agent evaluations also point beyond static leaderboard
+scores: dynamic environments test adaptation under changing information, and
+research-agent surveys identify claim verification and released execution
+artifacts as persistent weaknesses. Evidra therefore treats the adaptive agenda,
+raw attempts, checksums, route changes, and independent retests as first-class
+benchmark evidence rather than reporting a point score alone.
+
 Phase completion is likewise evidence-gated: promotion now requires both the
 leakage/reviewer gates and an accepted validation assessment. A model cannot
 advance the campaign by reporting that a candidate is ready without the durable
