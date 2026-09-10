@@ -62,6 +62,7 @@ import { deriveAdaptiveHarnessPolicy } from "../core/adaptive-harness.js";
 import { synthesizeLaneReports } from "../core/cross-pollination.js";
 import { analyzePredictionRows, parsePredictionRows } from "../core/error-analysis.js";
 import { createTransferableMethod } from "../core/method-transfer.js";
+import { createAblationPlan } from "../core/ablation.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -1047,7 +1048,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const commit = await runProcess(["git", "rev-parse", "HEAD"], root);
     if (commit.exitCode !== 0) { store.close(); throw new Error(`Cannot create manifest: ${commit.stderr || commit.stdout}`); }
     const id = `exp_${Date.now()}_${hypothesis.id.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
-    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis.id, outcomeType: (hypothesis.payload as { outcomeType?: "metric" | "artifact" | "proof" | "behavior" | "system" | "other" }).outcomeType, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: config.experimentExecutor, configPatch: { estimatorPath: candidateEstimatorPath(hypothesis.payload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
+    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis.id, outcomeType: (hypothesis.payload as { outcomeType?: "metric" | "artifact" | "proof" | "behavior" | "system" | "other" }).outcomeType, searchOperator: typeof (hypothesis.payload as { searchOperator?: unknown }).searchOperator === "string" ? (hypothesis.payload as { searchOperator: string }).searchOperator : undefined, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: config.experimentExecutor, configPatch: { estimatorPath: candidateEstimatorPath(hypothesis.payload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
     store.saveExperiment({ id, payload: { ...manifest, status: "proposed", executionPlan: createExecutionPlan(manifest) } });
     store.appendEvent("experiment.priority.selected", { experimentId: id, hypothesisId: hypothesis.id, priority: ranked[0].priority, novelty: ranked[0].novelty, score: ranked[0] });
     store.close();
@@ -1065,6 +1066,57 @@ export function App({ root }: { root: string }): React.JSX.Element {
     store.appendEvent("replication.manifest.created", { parentId, replicationId: manifest.id, automatic: true });
     store.close();
     return { id: manifest.id, text: `\n\nIndependent replication ${manifest.id} prepared for ${parentId}.\n${manifestSummary(manifest)}` };
+  };
+
+  const prepareAutomaticAblations = (parentId: string): { ids: string[]; text: string } | null => {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const parent = store.experiments().find((candidate) => candidate.id === parentId);
+    if (!parent) { store.close(); return null; }
+    const parentManifest = ExperimentManifestSchema.safeParse(parent.payload);
+    if (!parentManifest.success) { store.close(); return null; }
+    const hypothesisId = parentManifest.data.hypothesisId;
+    const hypothesis = store.hypotheses().find((candidate) => candidate.id === hypothesisId);
+    const payload = hypothesis?.payload && typeof hypothesis.payload === "object" ? hypothesis.payload as { ablationFactors?: unknown } : undefined;
+    if (parentManifest.data.searchOperator !== "ablation" || !Array.isArray(payload?.ablationFactors) || payload.ablationFactors.length === 0) {
+      store.close();
+      return null;
+    }
+    const plan = createAblationPlan({ hypothesisId, factors: payload.ablationFactors as Parameters<typeof createAblationPlan>[0]["factors"] });
+    const ids: string[] = [];
+    for (const variant of plan.variants.filter((candidate) => !candidate.control).slice(0, 4)) {
+      const id = `abl_${parentId}_${variant.factorId}`.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 96);
+      if (!store.experiments().some((candidate) => candidate.id === id)) {
+        const manifest = createExperimentManifest({
+          id,
+          parent: parentId,
+          hypothesisId,
+          outcomeType: parentManifest.data.outcomeType,
+          gitCommit: parentManifest.data.gitCommit,
+          datasetVersion: parentManifest.data.datasetVersion,
+          splitVersion: parentManifest.data.splitVersion,
+          executor: parentManifest.data.resources.executor,
+          image: parentManifest.data.resources.image,
+          gpu: parentManifest.data.resources.gpu,
+          timeoutMinutes: parentManifest.data.resources.timeoutMinutes,
+          folds: parentManifest.data.evaluation.folds,
+          seeds: parentManifest.data.evaluation.seeds,
+          requiredArtifacts: parentManifest.data.evaluation.requiredArtifacts,
+          verificationCommand: parentManifest.data.evaluation.verificationCommand,
+          verificationCommands: parentManifest.data.evaluation.verificationCommands,
+          minimumPrimaryDelta: parentManifest.data.acceptance.minimumPrimaryDelta,
+          maximumRegressionShift: parentManifest.data.acceptance.maximumRegressionShift,
+          requireReplication: false,
+          searchOperator: "ablation",
+          configPatch: { ...parentManifest.data.change.configPatch, ...variant.configPatch },
+        }, activeAdapter().config);
+        store.saveExperiment({ id, payload: { ...manifest, status: "proposed", ablationOf: parentId, ablationFactorId: variant.factorId, ablationLabel: variant.label, executionPlan: createExecutionPlan(manifest) } });
+        store.appendEvent("research.ablation.variant.scheduled", { parentId, experimentId: id, factorId: variant.factorId, label: variant.label, plan });
+      }
+      ids.push(id);
+    }
+    store.appendEvent("research.ablation.plan", plan);
+    store.close();
+    return { ids, text: `\n\nAblation plan prepared for ${parentId}: ${ids.join(", ")}` };
   };
 
   const latestExperimentComparison = (experimentId: string): { direction?: string; evidence?: string; note?: string } | undefined => {
@@ -1598,6 +1650,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
           if (/Experiment .* completed/i.test(experimentText)) {
             const comparison = latestExperimentComparison(proposed.id);
             if (comparison?.direction === "improved") {
+              const ablations = prepareAutomaticAblations(proposed.id);
+              if (ablations) {
+                const ablationText = [ablations.text];
+                if (permissionAllowsExecution) {
+                  for (const ablationId of ablations.ids) ablationText.push(await executeExperiment(ablationId));
+                } else {
+                  ablationText.push(`Approval required: run /experiment run ${ablations.ids.join(" or ")}`);
+                }
+                append("assistant", ablationText.join("\n"));
+              }
               const replication = prepareAutomaticReplication(proposed.id);
               if (replication) {
                 if (!permissionAllowsExecution) append("assistant", `${replication.text}\nApproval required: run /experiment run ${replication.id}`);
