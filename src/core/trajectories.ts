@@ -60,6 +60,7 @@ export interface TrajectoryQuality {
   goalAttainment: QualityDimension;
   instructionAdherence: QualityDimension;
   toolUse: QualityDimension;
+  executionAlignment: QualityDimension;
   evidenceConsistency: QualityDimension;
   errorRecovery: QualityDimension;
   termination: QualityDimension;
@@ -133,6 +134,8 @@ export function evaluateTrajectory(events: TrajectoryEvent[]): TrajectoryQuality
   const goalMet = events.some((event) => event.payload.goalAttained === true || event.payload.goalStatus === "met");
   const instructionFailure = events.some((event) => event.payload.instructionAdherence === false);
   const evidenceFailure = events.some((event) => event.payload.evidenceConsistent === false);
+  const alignmentFailure = events.some((event) => event.payload.executionAlignment === false);
+  const alignmentObserved = events.some((event) => event.payload.executionAlignment === true);
 
   const structural = structure.status === "quarantined"
     ? dimension("FAIL", "observed", ...structure.issues)
@@ -152,6 +155,13 @@ export function evaluateTrajectory(events: TrajectoryEvent[]): TrajectoryQuality
     : unresolved.length
       ? dimension("FAIL", "observed", "at least one tool call was not closed")
       : dimension("PASS", "observed", `${calls.length} tool call(s) closed with results`);
+  const executionAlignment = calls.length === 0
+    ? dimension("PASS", "observed", "no tool-feedback boundary was required")
+    : alignmentFailure
+    ? dimension("FAIL", "observed", "the trajectory records a decision that was not aligned with available tool feedback")
+    : alignmentObserved
+      ? dimension("PASS", "observed", "the controller recorded alignment between tool feedback and the next action")
+      : dimension("NOT_EVALUATED", "missing", "no explicit tool-feedback alignment verdict recorded");
   const evidenceConsistency = evidenceFailure
     ? dimension("FAIL", "observed", "trajectory records inconsistent evidence")
     : evaluatorEvents.length
@@ -168,13 +178,13 @@ export function evaluateTrajectory(events: TrajectoryEvent[]): TrajectoryQuality
       ? dimension("FAIL", "observed", "trajectory has multiple terminal events")
       : dimension("PASS", "observed", "trajectory has one terminal event");
 
-  const dimensions = [structural, goalAttainment, instructionAdherence, toolUse, evidenceConsistency, errorRecovery, termination];
+  const dimensions = [structural, goalAttainment, instructionAdherence, toolUse, executionAlignment, evidenceConsistency, errorRecovery, termination];
   const overall: QualityVerdict = dimensions.some((item) => item.verdict === "FAIL")
     ? "FAIL"
     : dimensions.some((item) => item.verdict === "WARN" || item.verdict === "NOT_EVALUATED")
       ? "WARN"
       : "PASS";
-  return { structural, goalAttainment, instructionAdherence, toolUse, evidenceConsistency, errorRecovery, termination, overall };
+  return { structural, goalAttainment, instructionAdherence, toolUse, executionAlignment, evidenceConsistency, errorRecovery, termination, overall };
 }
 
 export function capabilityGaps(quality: TrajectoryQuality): string[] {

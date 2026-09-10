@@ -1548,7 +1548,15 @@ research
         { id: `${trajectoryStamp}-observation`, kind: "process", payload: { status: "completed", observationKeys: Object.keys(observation) } },
         ...toolTrace.events,
         ...laneReports.filter((lane) => lane.status === "failed").map((lane, index) => ({ id: `${trajectoryStamp}-lane-${index}`, kind: "process" as const, payload: { status: "failed", error: lane.error ?? `${lane.role} failed` } })),
-        { id: `${trajectoryStamp}-evaluator`, kind: "evaluator", payload: { evidenceConsistent: criticReview?.verdict === "proceed", criticVerdict: criticReview?.verdict ?? "missing" } },
+        { id: `${trajectoryStamp}-evaluator`, kind: "evaluator", payload: {
+          evidenceConsistent: criticReview?.verdict === "proceed",
+          criticVerdict: criticReview?.verdict ?? "missing",
+          // A failed inspection route must not be silently converted into an
+          // execution decision. Record this explicitly for harness scoring.
+          executionAlignment: toolTrace.events.some((event) => event.kind === "tool_result")
+            ? toolTrace.events.some((event) => event.kind === "tool_result" && event.payload.ok === true)
+            : undefined,
+        } },
         { id: `${trajectoryStamp}-terminal`, kind: "terminal", payload: { status: "completed", goalStatus: decision.goalStatus, goalAttained: decision.goalStatus === "met" || decision.decision === "stop" } },
       ];
       const researchQuality = evaluateTrajectory(researchTrajectoryEvents);

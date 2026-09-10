@@ -149,6 +149,18 @@ test("critic revision is not recorded as evidence-consistent", () => {
   assert.equal(quality.overall, "FAIL");
 });
 
+test("trajectory quality records execution alignment separately from tool closure", () => {
+  const quality = evaluateTrajectory([
+    { id: "call", kind: "tool_call", callId: "c1", payload: { tool: "workspace.read" } },
+    { id: "result", kind: "tool_result", callId: "c1", payload: { ok: false, error: "permission denied" } },
+    { id: "evaluator", kind: "evaluator", payload: { executionAlignment: false, evidenceConsistent: false } },
+    { id: "terminal", kind: "terminal", payload: { status: "completed", goalAttained: false } },
+  ]);
+  assert.equal(quality.toolUse.verdict, "PASS");
+  assert.equal(quality.executionAlignment.verdict, "FAIL");
+  assert.equal(quality.overall, "FAIL");
+});
+
 test("trajectory structural gate quarantines ambiguous tool traces", () => {
   const valid = [
     { id: "call", kind: "tool_call", callId: "c1", payload: { tool: "inspect" } },

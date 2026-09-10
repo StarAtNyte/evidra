@@ -57,6 +57,30 @@ task protocol with comparable seeds and budgets.
 
 Source: [AIRS-Bench](https://github.com/facebookresearch/airs-bench).
 
+## Measure execution alignment, not only completion
+
+Harness-Bench reports that the model and harness must be evaluated as a single
+configuration under shared tasks, budgets, timeouts, and validators. Its most
+useful diagnostic is execution alignment: plausible reasoning can become
+decoupled from tool feedback, workspace state, evidence, or a verifiable output
+contract. Evidra therefore treats tool traces, evaluator results, recovery
+events, terminal state, and evidence provenance as first-class trajectory data;
+the final metric cannot erase a broken or unclosed process trace.
+
+Source: [Harness-Bench](https://arxiv.org/abs/2605.27922).
+
+## Diligence is a research capability
+
+AARRI-Bench finds that current agents often miss subtle details that human
+researchers catch, including methodological and ethical requirements. This
+supports Evidra's separation between a model's narrative and deterministic
+gates: source claims remain low-confidence literature evidence, evaluator output
+must be reproducible, conflicts trigger audit/validation, and a campaign cannot
+terminate merely because a plausible answer was produced.
+
+Source: [Act As a Real Researcher: A Suite of Benchmarks Evaluating Frontier
+LLMs and Agentic Harnesses in Research Lifecycle](https://arxiv.org/abs/2606.07462).
+
 ## Cross-pollination must preserve disagreement
 
 Independent lanes now return through a bounded cross-pollination board before the
@@ -72,7 +96,8 @@ portfolio planner can spend a cycle across genuinely different approaches.
 
 The next high-value upgrades are:
 
-1. run equal-budget AIRS-Bench arms across Evidra, AIRA-dojo, and MLGym;
+1. run equal-budget AIRS-Bench and Harness-Bench-compatible arms across Evidra,
+   AIRA-dojo, MLGym, and comparable harnesses;
 2. report paired confidence intervals and task-balanced scores over repeated seeds;
 3. add formal-verification adapters for non-ML research artifacts;
 4. run equal-budget comparisons of greedy, UCB, evolutionary, and MCTS policies
