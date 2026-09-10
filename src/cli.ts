@@ -37,6 +37,7 @@ import { applyCriticGate } from "./core/critic-gate.js";
 import { recordBaselineEvidence } from "./core/baseline.js";
 import { redactSecrets } from "./core/redaction.js";
 import { enforceGoalTermination } from "./core/termination.js";
+import { summarizeUsage } from "./core/usage.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
@@ -312,6 +313,7 @@ program.command("usage").description("Show research, experiment, and campaign us
   const store = new ResearchStore(statePath);
   const counts = store.counts();
   const project = store.project();
+  const usage = summarizeUsage(store.runs(), store.experiments());
   console.log(`Project       ${project?.name ?? "not initialized"}`);
   console.log(`Events        ${store.eventCount()}`);
   console.log(`Hypotheses    ${counts.hypotheses}`);
@@ -321,6 +323,9 @@ program.command("usage").description("Show research, experiment, and campaign us
   console.log(`Runs          ${counts.runs}`);
   console.log(`Artifacts     ${counts.artifacts}`);
   console.log(`Trajectories  ${counts.trajectories}`);
+  console.log(`Wall time     ${usage.wallMinutes.toFixed(1)} minutes`);
+  console.log(`GPU-tagged    ${usage.gpuWallHours.toFixed(3)} hours`);
+  for (const [executor, bucket] of Object.entries(usage.byExecutor)) console.log(`  ${executor.padEnd(11)} ${bucket.runs} runs · ${bucket.wallMinutes.toFixed(1)}m · ${bucket.gpuWallHours.toFixed(3)} GPU-h`);
   store.close();
 });
 

@@ -49,6 +49,7 @@ import { auditExperiment } from "../dist/core/validation.js";
 import { boundLaneToolResult, laneToolCalls, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceGoalTermination } from "../dist/core/termination.js";
+import { summarizeUsage } from "../dist/core/usage.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -1021,4 +1022,20 @@ test("blocked phase goals remain the next resumable goal", () => {
   const blocked = { ...goals[0], status: "blocked" };
   const pending = { ...goals[1], status: "pending" };
   assert.equal(activePhaseGoal([blocked, pending])?.id, blocked.id);
+});
+
+test("usage summary aggregates durable run provenance by executor", () => {
+  const summary = summarizeUsage([
+    { experimentId: "local-exp", status: "completed", payload: { durationSeconds: 120 } },
+    { experimentId: "gpu-exp", status: "failed", payload: { durationSeconds: 1800 } },
+  ], [
+    { id: "local-exp", payload: { resources: { executor: "local" } } },
+    { id: "gpu-exp", payload: { resources: { executor: "modal", gpu: "A100" } } },
+  ]);
+  assert.equal(summary.runs, 2);
+  assert.equal(summary.completedRuns, 1);
+  assert.equal(summary.failedRuns, 1);
+  assert.equal(summary.wallMinutes, 32);
+  assert.equal(summary.gpuWallHours, 0.5);
+  assert.equal(summary.byExecutor.modal.runs, 1);
 });
