@@ -1533,6 +1533,7 @@ experiment.command("run")
     const evaluatorCommand = isCandidateEvaluation ? command : adapter.config.evaluator.command;
     const sameCommand = evaluatorCommand.length === command.length && evaluatorCommand.every((part, index) => part === command[index]);
     let evaluator: { stdout: string; stderr: string; exitCode: number } | undefined;
+    let verification: { stdout: string; stderr: string; exitCode: number } | undefined;
     if (result.status === "completed" && !sameCommand) {
       const evaluated = await withExecutionHeartbeat(
         () => runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000),
@@ -1541,6 +1542,18 @@ experiment.command("run")
       evaluator = { stdout: evaluated.stdout, stderr: evaluated.stderr, exitCode: evaluated.exitCode };
       const parsed = parseMetricOutput(evaluated.stdout, adapter.config.metric.name);
       result = { ...result, status: evaluated.exitCode === 0 ? "completed" : "failed", exitCode: evaluated.exitCode, metrics: { ...result.metrics, ...parsed.metrics }, metricsByFold: { ...result.metricsByFold, ...parsed.metricsByFold }, stdout: `${result.stdout ?? ""}\n[EVALUATOR]\n${evaluated.stdout}`, stderr: `${result.stderr ?? ""}\n[EVALUATOR]\n${evaluated.stderr}`, ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
+    }
+    const verificationCommand = manifest.evaluation.verificationCommand;
+    if (result.status === "completed" && verificationCommand) {
+      const checked = await withExecutionHeartbeat(
+        () => runProcess(verificationCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000),
+        { storePath: statePath, experimentId: id, attempt, stage: "verification", executor: manifest.resources.executor },
+      );
+      verification = { stdout: checked.stdout, stderr: checked.stderr, exitCode: checked.exitCode };
+      const verificationStore = new ResearchStore(statePath);
+      verificationStore.appendEvent(checked.exitCode === 0 ? "experiment.verification.completed" : "experiment.verification.failed", { experimentId: id, runId: result.runId, command: verificationCommand, exitCode: checked.exitCode, stdout: checked.stdout.slice(-4000), stderr: checked.stderr.slice(-4000) });
+      verificationStore.close();
+      result = { ...result, status: checked.exitCode === 0 ? "completed" : "failed", exitCode: checked.exitCode, stdout: `${result.stdout ?? ""}\n[VERIFICATION]\n${checked.stdout}`, stderr: `${result.stderr ?? ""}\n[VERIFICATION]\n${checked.stderr}`, ...(checked.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
     }
     result = validateRunMetric(result, adapter.config.metric.name);
     executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
@@ -1551,7 +1564,7 @@ experiment.command("run")
     mkdirSync(artifactDir, { recursive: true });
     const artifactPaths: Record<string, string> = {};
     const environment = await captureEnvironment(root, result.cwd ?? experimentCwd, result.command ?? command, manifest.resources.executor, manifest.resources.gpu);
-    for (const [name, content] of Object.entries({ "stdout.log": result.stdout ?? "", "stderr.log": result.stderr ?? "", "metrics.json": `${JSON.stringify(result.metrics, null, 2)}\n`, "environment.json": `${JSON.stringify(environment, null, 2)}\n`, ...(evaluator ? { "evaluator.stdout.log": evaluator.stdout, "evaluator.stderr.log": evaluator.stderr } : {}) })) {
+    for (const [name, content] of Object.entries({ "stdout.log": result.stdout ?? "", "stderr.log": result.stderr ?? "", "metrics.json": `${JSON.stringify(result.metrics, null, 2)}\n`, "environment.json": `${JSON.stringify(environment, null, 2)}\n`, ...(evaluator ? { "evaluator.stdout.log": evaluator.stdout, "evaluator.stderr.log": evaluator.stderr } : {}), ...(verification ? { "verification.stdout.log": verification.stdout, "verification.stderr.log": verification.stderr } : {}) })) {
       const path = join(artifactDir, name);
       writeFileSync(path, content);
       artifactPaths[name] = path;

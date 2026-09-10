@@ -14,6 +14,7 @@ export interface ManifestInput {
   folds?: number[];
   seeds?: number[];
   requiredArtifacts?: string[];
+  verificationCommand?: string[];
   minimumPrimaryDelta?: number;
   maximumRegressionShift?: number;
   requireReplication?: boolean;
@@ -41,6 +42,7 @@ export function createExperimentManifest(input: ManifestInput, competition: Comp
       folds: input.folds ?? [0],
       seeds: input.seeds ?? [0],
       requiredArtifacts: input.requiredArtifacts ?? competition.execution?.requiredArtifacts ?? [],
+      ...(input.verificationCommand ?? competition.execution?.verificationCommand ? { verificationCommand: input.verificationCommand ?? competition.execution?.verificationCommand } : {}),
     },
     acceptance: {
       minimumPrimaryDelta: input.minimumPrimaryDelta ?? 0,
@@ -79,6 +81,7 @@ export function createReplicationManifest(parent: ExperimentManifest, competitio
     folds: parent.evaluation.folds,
     seeds: [...parent.evaluation.seeds, Date.now() % 100000],
     requiredArtifacts: parent.evaluation.requiredArtifacts,
+    verificationCommand: parent.evaluation.verificationCommand,
     minimumPrimaryDelta: parent.acceptance.minimumPrimaryDelta,
     maximumRegressionShift: parent.acceptance.maximumRegressionShift,
     requireReplication: false,

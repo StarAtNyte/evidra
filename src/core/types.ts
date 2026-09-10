@@ -45,6 +45,7 @@ export const CompetitionConfigSchema = z.object({
       minimumDelta: z.number().default(0),
       tolerance: z.number().nonnegative().default(0),
     }).optional(),
+    verificationCommand: z.array(z.string()).min(1).optional(),
     requiredArtifacts: z.array(z.string()).default([]),
   }).optional(),
   validation: z.object({
@@ -185,7 +186,7 @@ export const ExperimentManifestSchema = z.object({
   splitVersion: z.string().min(1),
   change: z.object({ configPatch: z.record(z.string(), z.unknown()) }),
   resources: z.object({ executor: z.enum(["local", "container", "modal"]), image: z.string().min(1).optional(), gpu: z.string().optional(), timeoutMinutes: z.number().positive() }),
-  evaluation: z.object({ folds: z.array(z.number().int().nonnegative()), seeds: z.array(z.number().int()), requiredArtifacts: z.array(z.string()) }),
+  evaluation: z.object({ folds: z.array(z.number().int().nonnegative()), seeds: z.array(z.number().int()), requiredArtifacts: z.array(z.string()), verificationCommand: z.array(z.string()).min(1).optional() }),
   acceptance: z.object({ minimumPrimaryDelta: z.number(), maximumRegressionShift: z.number(), requireReplication: z.boolean() }),
   searchOperator: z.string().min(1).default("ucb_portfolio"),
   createdAt: z.string().datetime(),

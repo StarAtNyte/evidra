@@ -648,9 +648,10 @@ test("generic experiment manifests do not assume ML-specific artifacts", () => {
   const configured = createExperimentManifest({ id: "configured", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "data" }, {
     id: "configured", name: "Configured", taskType: "regression", datasetRevision: "data",
     metric: { name: "rmse", direction: "minimize" }, evaluator: { command: ["true"], estimatorPath: "" },
-    execution: { requiredArtifacts: ["metrics.json"] },
+    execution: { requiredArtifacts: ["metrics.json"], verificationCommand: ["python", "verify.py"] },
   });
   assert.deepEqual(configured.evaluation.requiredArtifacts, ["metrics.json"]);
+  assert.deepEqual(configured.evaluation.verificationCommand, ["python", "verify.py"]);
 });
 
 test("terminal sessions are fresh by default and explicitly resumable", () => {
