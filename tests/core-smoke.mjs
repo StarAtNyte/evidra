@@ -232,6 +232,12 @@ test("routing feedback ignores unobserved quality dimensions", () => {
   assert.deepEqual(qualityFeedback({ overall: "WARN", instructionAdherence: { verdict: "NOT_EVALUATED", coverage: "missing" }, toolUse: { verdict: "WARN", coverage: "partial" } }), { overall: "WARN", gaps: ["toolUse"] });
 });
 
+test("agent results preserve the model actually served", () => {
+  const result = { provider: "local", model: "qwen3.5:4b", output: "ok" };
+  assert.equal(result.provider, "local");
+  assert.equal(result.model, "qwen3.5:4b");
+});
+
 test("trajectory deficiencies allocate the next research focus", () => {
   const allocation = allocateNextResearch({ trajectories: [
     { quality: { overall: "FAIL", evidenceConsistency: { verdict: "FAIL" }, errorRecovery: { verdict: "PASS" } } },

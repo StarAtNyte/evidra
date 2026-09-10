@@ -212,7 +212,7 @@ export class CodexExecAgent {
       }
       settled = true;
       if (!finalText) throw new Error("Codex returned no assistant response.");
-      return { provider: this.options.provider, threadId, output: finalText, usage };
+      return { provider: this.options.provider, model: this.options.model, threadId, output: finalText, usage };
     } catch (error) {
       settled = true;
       if (abort.signal.aborted) throw new Error(timedOut ? "Codex request timed out." : "Codex request interrupted.");
@@ -258,7 +258,7 @@ export class CodexExecAgent {
     const text = payload.message?.content;
     if (!text) throw new Error("Ollama returned no message content.");
     onProgress?.("Completed.");
-    return { provider: "local", output: text };
+    return { provider: "local", model: this.options.model, output: text };
   }
 }
 

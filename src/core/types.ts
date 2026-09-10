@@ -225,6 +225,7 @@ export interface AgentTask {
 
 export interface AgentResult {
   provider: string;
+  model?: string;
   threadId?: string;
   output: unknown;
   usage?: { inputTokens?: number; outputTokens?: number };

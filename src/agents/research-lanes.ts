@@ -23,6 +23,8 @@ export type ResearchLaneRole = typeof RESEARCH_LANE_ROLES[number] | typeof GENER
 
 export const ResearchLaneReportSchema = z.object({
   role: z.string().min(1),
+  provider: z.string().optional(),
+  model: z.string().optional(),
   summary: z.string().min(1),
   findings: z.array(z.string()).max(12),
   recommendations: z.array(z.string()).max(8),
@@ -235,7 +237,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
           cwd: options.cwd,
           sandbox: "read-only",
         }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
-        parsed = ResearchLaneReportSchema.parse(parseJson(result.output));
+        parsed = { ...ResearchLaneReportSchema.parse(parseJson(result.output)), provider: result.provider, model: result.model ?? model };
       } catch (error) {
         lastError = error;
         if (options.isCancelled?.()) throw error;
@@ -255,7 +257,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     const report: ResearchLaneReport = { ...parsed, role, status: "completed", ...(options.executeTool ? { toolResults } : {}) };
     saveLaneEvent(options.storePath, role, report);
     const completed = new ResearchStore(options.storePath);
-    completed.updateAgentLane({ role, status: "idle", provider: options.provider, model: options.model, task: null, error: null });
+    completed.updateAgentLane({ role, status: "idle", provider: report.provider ?? options.provider, model: report.model ?? options.model, task: null, error: null });
     completed.close();
     return report;
   } catch (error) {
