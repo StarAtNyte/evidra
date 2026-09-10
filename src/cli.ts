@@ -37,6 +37,7 @@ import { render } from "ink";
 import React from "react";
 import { App } from "./ui/app.js";
 import { findWorkspaceRoot } from "./core/workspace.js";
+import type { AutonomyLevel } from "./core/permissions.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -49,10 +50,10 @@ const activeCompetition = () => {
   return loadCompetitionAdapter(root, project?.competitionId ?? "local-research");
 };
 
-const researchToolExecutor = (competition: ReturnType<typeof activeCompetition>) => (call: Parameters<typeof executeResearchTool>[0]) => executeResearchTool(call, {
+const researchToolExecutor = (competition: ReturnType<typeof activeCompetition>, autonomy: AutonomyLevel = "safe") => (call: Parameters<typeof executeResearchTool>[0]) => executeResearchTool(call, {
   root,
   storePath: statePath,
-  autonomy: "safe",
+  autonomy,
   competition: competition.config,
   onProgress: (message) => console.log(`· ${message}`),
 });
@@ -502,12 +503,13 @@ challenge.command("start")
   .option("--model <model>", "provider model; use default for Codex", "default")
   .option("--thinking <effort>", "reasoning effort", "high")
   .option("--lanes <count>", "maximum independent research lanes", "3")
+  .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: wait, fallback, or stop", "wait")
   .option("--resume", "resume the saved challenge campaign")
-  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; limitPolicy: string; resume?: boolean }) => {
+  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; resume?: boolean }) => {
     const script = process.argv[1];
     if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
-    const args = ["research", "--mode", "challenge", "--goal", options.goal, "--budget", options.budget, "--stop", options.stop, "--provider", options.provider, "--model", options.model, "--thinking", options.thinking, "--lanes", options.lanes, "--limit-policy", options.limitPolicy];
+    const args = ["research", "--mode", "challenge", "--goal", options.goal, "--budget", options.budget, "--stop", options.stop, "--provider", options.provider, "--model", options.model, "--thinking", options.thinking, "--lanes", options.lanes, "--autonomy", options.autonomy, "--limit-policy", options.limitPolicy];
     if (options.resume) args.push("--resume");
     const result = await runProcess([process.execPath, script, ...args], root, 7 * 24 * 60 * 60_000, (stream, chunk) => {
       (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
@@ -526,14 +528,17 @@ research
   .option("--model <model>", "provider model; use default for Codex", "default")
   .option("--thinking <effort>", "reasoning effort", "high")
   .option("--lanes <count>", "maximum independent research lanes", "3")
+  .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: wait, fallback, or stop", "wait")
   .option("--resume", "resume the latest durable non-completed research campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { mode: string; goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; limitPolicy: string; resume?: boolean; skipBaseline?: boolean }) => {
+  .action(async (options: { mode: string; goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; resume?: boolean; skipBaseline?: boolean }) => {
     if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
     if (!["wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'wait', 'fallback', or 'stop'.");
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Mode must be 'research' or 'challenge'.");
+    if (!["safe", "fast", "yolo"].includes(options.autonomy)) throw new Error("Autonomy must be 'safe', 'fast', or 'yolo'.");
     const mode = options.mode as "research" | "challenge";
+    const autonomy = options.autonomy as AutonomyLevel;
     const adapter = activeCompetition();
     await ingestCompetitionSources(adapter);
     const budget = durationMinutes(options.budget);
@@ -618,10 +623,10 @@ research
             cwd: root,
             storePath: statePath,
             maxParallel: laneLimit,
-            autonomy: "fast",
+            autonomy,
           });
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: options.goal, phaseGoal: phaseGoal ?? null, laneReports, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter) });
+          decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, laneReports, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy) });
           criticReview = await runResearchCritic(objective, decision, laneReports, {
             provider: options.provider,
             model: selectedModel,
@@ -631,7 +636,7 @@ research
             cwd: root,
             storePath: statePath,
             maxParallel: 1,
-            autonomy: "fast",
+            autonomy,
           });
           break;
         } catch (error) {

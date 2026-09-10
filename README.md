@@ -56,7 +56,7 @@ For unattended operation, `modal_controller.py` runs the Node controller headles
 
 ```bash
 EVIDRA_MODAL_WORKSPACE="$PWD" modal run modal_controller.py::run \
-  --goal "maximize robust validation performance" --budget 4h --mode challenge --lanes 3
+  --goal "maximize robust validation performance" --budget 4h --mode challenge --autonomy fast --lanes 3
 ```
 
 The headless controller is controllable without attaching a second interactive agent. Its
