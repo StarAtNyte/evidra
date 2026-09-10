@@ -92,6 +92,13 @@ declare a formulation family (`representation`, `data`, `validation`,
 `objective`, `model`, `inference`, `ensemble`, `repair`, or `other`) so the
 portfolio planner can spend a cycle across genuinely different approaches.
 
+When the board reports contested evidence or insufficient independent support,
+fast and yolo campaigns trigger one bounded peer-review round. The lanes receive
+the first board and prior findings, challenge them without repeating workspace
+tool calls, and return a second board to the director. The round is persisted as
+`research.peer_review.completed`; it is not an unbounded recursive debate and it
+does not run in safe mode by default.
+
 ## Current implementation gaps
 
 The next high-value upgrades are:

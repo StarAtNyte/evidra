@@ -1266,7 +1266,57 @@ research
             onToolCall: toolTrace.onToolCall,
             onToolResult: toolTrace.onToolResult,
           });
-          const crossPollination = synthesizeLaneReports(laneReports);
+          let crossPollination = synthesizeLaneReports(laneReports);
+          // Independent groups should be able to challenge one another before
+          // the director commits to an experiment. Keep this bounded: the
+          // second pass is only activated for a genuinely uncertain board and
+          // only when the selected autonomy level can afford parallel review.
+          if (crossPollination.needsAdversarialReview && laneReports.filter((lane) => lane.status === "completed").length > 1 && autonomy !== "safe") {
+            console.log("Research · evidence is contested; independent lanes are peer-reviewing the board...");
+            const peerReports = await runResearchLanes(
+              `${agentObjective}\n\nPeer-review the supplied lane board. Challenge unsupported agreements, resolve tensions where primary evidence permits, and identify the cheapest discriminating test. Do not repeat workspace inspection unless the board exposes a specific evidence gap.`,
+              {
+                project: activeProject,
+                competition: adapter.config,
+                observation,
+                recentEvents,
+                researchSources,
+                ultimateGoal: options.goal,
+                phaseGoal: phaseGoal ?? null,
+                allocation,
+                evidenceConflicts,
+                researchMemory,
+                peerLaneBoard: crossPollination,
+                priorLaneReports: laneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
+              },
+              {
+                provider: options.provider,
+                model: selectedModel,
+                modelPool: researchModelPool,
+                fallbackLocalModel: options.limitPolicy === "fallback" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
+                limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop",
+                reasoningEffort: options.thinking,
+                timeoutMs: agentTimeoutMs,
+                cwd: root,
+                storePath: statePath,
+                maxParallel: effectiveLaneLimit,
+                autonomy,
+                // The first pass already collected bounded workspace evidence;
+                // the peer pass reasons over that evidence rather than
+                // multiplying shell calls.
+                onToolCall: toolTrace.onToolCall,
+                onToolResult: toolTrace.onToolResult,
+              },
+            );
+            laneReports = [
+              ...laneReports,
+              ...peerReports.map((lane) => ({ ...lane, role: `${lane.role} peer-review` })),
+            ];
+            crossPollination = synthesizeLaneReports(laneReports);
+            const peerStore = new ResearchStore(statePath);
+            peerStore.appendEvent("research.peer_review.completed", { cycle, initialBoard: synthesizeLaneReports(laneReports.slice(0, -peerReports.length)), board: crossPollination, reviewers: peerReports.map((lane) => lane.role) });
+            peerStore.close();
+          }
           const crossPollinationStore = new ResearchStore(statePath);
           crossPollinationStore.appendEvent("research.cross_pollination.completed", { cycle, board: crossPollination });
           crossPollinationStore.close();
