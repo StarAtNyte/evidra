@@ -63,7 +63,7 @@ import { auditClaims, selfDescribingClaimEvidenceIds } from "../dist/core/claim-
 import { deriveAdaptiveHarnessPolicy } from "../dist/core/adaptive-harness.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "../dist/core/error-analysis.js";
 import { createTransferableMethod, transferableMethodsFromEvents } from "../dist/core/method-transfer.js";
-import { createAblationPlan, ablationPlansFromEvents } from "../dist/core/ablation.js";
+import { createAblationPlan, ablationPlansFromEvents, evaluateAblationEvidence } from "../dist/core/ablation.js";
 import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks } from "../dist/core/airs-bench.js";
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
@@ -711,6 +711,20 @@ test("ablation planner creates reproducible leave-one-factor-out controls", () =
     { type: "research.ablation.plan", payload: { ...plan, hypothesisId: "malformed", variants: [] } },
   ]).map((entry) => entry.hypothesisId), ["hyp-composite"]);
   assert.throws(() => createAblationPlan({ hypothesisId: "bad", factors: [{ id: "x", key: "../unsafe", label: "unsafe", disabledValue: false }] }), /invalid/i);
+});
+
+test("ablation evidence blocks transfer until every factor is tested", () => {
+  const plan = createAblationPlan({ hypothesisId: "h-ablate", factors: [
+    { id: "a", key: "a", label: "A", disabledValue: false },
+    { id: "b", key: "b", label: "B", disabledValue: false },
+  ] });
+  const partial = evaluateAblationEvidence(plan, [{ id: "h-ablate:without:a", exitCode: 0 }]);
+  assert.equal(partial.complete, false);
+  assert.deepEqual(partial.missing, ["h-ablate:without:b"]);
+  const failed = evaluateAblationEvidence(plan, [{ id: "h-ablate:without:a", exitCode: 1 }, { id: "h-ablate:without:b", exitCode: 0 }]);
+  assert.deepEqual(failed.failed, ["h-ablate:without:a"]);
+  assert.equal(failed.complete, false);
+  assert.equal(evaluateAblationEvidence(plan, [{ id: "h-ablate:without:a", exitCode: 0 }, { id: "h-ablate:without:b", exitCode: 0 }]).complete, true);
 });
 
 test("experiment scheduler ranks expected information per cost", () => {

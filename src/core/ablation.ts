@@ -26,6 +26,12 @@ export const AblationPlanSchema = z.object({
 export type AblationFactor = z.infer<typeof AblationFactorSchema>;
 export type AblationPlan = z.infer<typeof AblationPlanSchema>;
 
+export interface AblationEvidenceResult {
+  complete: boolean;
+  missing: string[];
+  failed: string[];
+}
+
 /** Build a deterministic control plus leave-one-factor-out variants. */
 export function createAblationPlan(input: { hypothesisId: string; factors: AblationFactor[] }): AblationPlan {
   const factors = input.factors.slice(0, 8).map((factor) => AblationFactorSchema.parse(factor));
@@ -46,6 +52,15 @@ export function createAblationPlan(input: { hypothesisId: string; factors: Ablat
     })),
   ];
   return AblationPlanSchema.parse({ schemaVersion: 1, hypothesisId: input.hypothesisId, factors, variants, design: "leave-one-factor-out" });
+}
+
+/** Require every declared leave-one-factor-out variant to finish before a composite method transfers. */
+export function evaluateAblationEvidence(plan: AblationPlan, results: Array<{ id: string; exitCode: number }>): AblationEvidenceResult {
+  const observed = new Map(results.map((result) => [result.id, result.exitCode]));
+  const required = plan.variants.filter((variant) => !variant.control);
+  const missing = required.filter((variant) => !observed.has(variant.id)).map((variant) => variant.id);
+  const failed = required.filter((variant) => observed.get(variant.id) !== undefined && observed.get(variant.id) !== 0).map((variant) => variant.id);
+  return { complete: missing.length === 0 && failed.length === 0, missing, failed };
 }
 
 /** Read valid plans from durable events and keep the newest plan per hypothesis. */

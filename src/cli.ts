@@ -78,7 +78,7 @@ import { inventoryHarnessComponents, planHarnessInterventions } from "./core/har
 import { planHarnessAdaptation } from "./core/harness-adaptation.js";
 import { deriveAdaptiveHarnessPolicy } from "./core/adaptive-harness.js";
 import { createTransferableMethod } from "./core/method-transfer.js";
-import { createAblationPlan } from "./core/ablation.js";
+import { createAblationPlan, evaluateAblationEvidence } from "./core/ablation.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -1849,20 +1849,25 @@ research
         const comparison = comparisonEvent?.payload as { comparison?: { direction?: string } } | undefined;
         const parent = completionStore.experiments().find((entry) => entry.id === experimentId);
         const parentManifest = parent ? ExperimentManifestSchema.safeParse(parent.payload) : undefined;
+        let ablationEvidence = { complete: true, missing: [] as string[], failed: [] as string[] };
         if (run.exitCode === 0 && comparison?.comparison?.direction === "improved" && parentManifest?.success && parentManifest.data.acceptance.requireReplication) {
           const hypothesisPayload = parentManifest.data.hypothesisId
             ? completionStore.hypotheses().find((entry) => entry.id === parentManifest.data.hypothesisId)?.payload as { ablationFactors?: unknown } | undefined
             : undefined;
           const ablationFactors = Array.isArray(hypothesisPayload?.ablationFactors) ? hypothesisPayload.ablationFactors : [];
-          const ablationPlan = decision.searchOperator === "ablation" && ablationFactors.length
+          const ablationPlan = ablationFactors.length
             ? createAblationPlan({ hypothesisId: parentManifest.data.hypothesisId, factors: ablationFactors as Parameters<typeof createAblationPlan>[0]["factors"] })
             : undefined;
           if (ablationPlan) {
             const ablationIds: string[] = [];
-            for (const variant of ablationPlan.variants.filter((candidate) => !candidate.control).slice(0, 4)) {
+            const ablationResults: Array<{ id: string; exitCode: number }> = [];
+            for (const variant of ablationPlan.variants.filter((candidate) => !candidate.control)) {
               const ablationId = `abl_${experimentId}_${variant.factorId}`.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 96);
               const existing = completionStore.experiments().find((entry) => entry.id === ablationId);
-              if (existing) { ablationIds.push(ablationId); continue; }
+              if (existing) {
+                ablationResults.push({ id: variant.id, exitCode: (existing.payload as { status?: unknown }).status === "completed" ? 0 : 1 });
+                continue;
+              }
               const ablationManifest = createExperimentManifest({
                 id: ablationId,
                 parent: experimentId,
@@ -1897,10 +1902,16 @@ research
             completionStore.close();
             for (const ablationId of ablationIds) {
               const ablationRun = await runCampaignExperiment(root, ablationId);
+              const variantId = ablationPlan.variants.find((variant) => ablationId.includes(`_${variant.factorId}`))?.id;
+              if (variantId) ablationResults.push({ id: variantId, exitCode: ablationRun.exitCode });
               const ablationStore = new ResearchStore(statePath);
               ablationStore.appendEvent(ablationRun.exitCode === 0 ? "research.ablation.variant.completed" : "research.ablation.variant.failed", { parentId: experimentId, experimentId: ablationId, exitCode: ablationRun.exitCode, stdout: ablationRun.stdout.slice(-4000), stderr: ablationRun.stderr.slice(-4000) });
               ablationStore.close();
             }
+            ablationEvidence = evaluateAblationEvidence(ablationPlan, ablationResults);
+            const evidenceStore = new ResearchStore(statePath);
+            evidenceStore.appendEvent("research.ablation.evidence", { parentId: experimentId, ...ablationEvidence });
+            evidenceStore.close();
           } else {
             completionStore.close();
           }
@@ -1918,7 +1929,7 @@ research
           const replicationHypothesisPayload = parentManifest.data.hypothesisId
             ? replicationStore.hypotheses().find((entry) => entry.id === parentManifest.data.hypothesisId)?.payload as { title?: unknown; formulationFamily?: unknown; mechanism?: unknown; proposedChange?: unknown } | undefined
             : undefined;
-          if (replicationRun.exitCode === 0 && replicationComparison?.comparison?.direction === "improved" && replicationHypothesisPayload) {
+          if (replicationRun.exitCode === 0 && replicationComparison?.comparison?.direction === "improved" && replicationHypothesisPayload && ablationEvidence.complete) {
             replicationStore.appendEvent("research.method.transferable", createTransferableMethod({
               id: `method_${experimentId}`,
               sourceCompetition: adapter.id,
