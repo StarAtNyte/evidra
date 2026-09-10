@@ -51,7 +51,8 @@ single-task, incomplete, invalid, or unreplicated result a win. Use
 Each arm declares the same protocol metadata plus a bounded command, working
 directory, metric name, and baseline. Evidra executes the commands with their
 declared time budgets, parses the declared metric, and writes raw process
-evidence alongside the scorecards. The runner does not claim reproducibility;
+evidence—including bounded, redacted stdout/stderr and metric data for every
+attempt—alongside the scorecards. The runner does not claim reproducibility;
 independent repeats must be declared as separate matched arms.
 
 An arm may declare `retries` from 0 to 3. Retries share the arm's total time

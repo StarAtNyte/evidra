@@ -4,6 +4,7 @@ import { parseMetricOutput } from "./executors.js";
 import { runProcess } from "./process.js";
 import type { HarnessTrial, ScoreDirection } from "./harness-scorecard.js";
 import type { ProcessResult } from "./types.js";
+import { redactSecrets } from "./redaction.js";
 
 export interface BenchmarkArmSpec {
   harness: string;
@@ -27,7 +28,16 @@ export interface BenchmarkRunReport {
   schemaVersion: 1;
   startedAt: string;
   trials: HarnessTrial[];
-  runs: Array<{ harness: string; command: string[]; cwd: string; result: ProcessResult; metric?: number; attempts: number }>;
+  runs: Array<{ harness: string; command: string[]; cwd: string; result: ProcessResult; metric?: number; attempts: number; attemptDetails: BenchmarkAttemptRecord[] }>;
+}
+
+export interface BenchmarkAttemptRecord {
+  attempt: number;
+  exitCode: number;
+  durationMs: number;
+  metric?: number;
+  stdoutTail: string;
+  stderrTail: string;
 }
 
 function benchmarkCwd(root: string, requested: string | undefined, harness: string): string {
@@ -66,6 +76,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     let validRun = false;
     let attempts = 0;
     let totalDurationMs = 0;
+    const attemptDetails: BenchmarkAttemptRecord[] = [];
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const remainingMs = deadline - Date.now();
       if (remainingMs < 1_000) break;
@@ -75,11 +86,19 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       const parsed = parseMetricOutput(result.stdout, arm.metric);
       metric = parsed.metrics[arm.metric];
       validRun = result.exitCode === 0 && Number.isFinite(metric);
+      attemptDetails.push({
+        attempt: attempt + 1,
+        exitCode: result.exitCode,
+        durationMs: result.durationMs,
+        ...(Number.isFinite(metric) ? { metric } : {}),
+        stdoutTail: redactSecrets(result.stdout.slice(-4_000)),
+        stderrTail: redactSecrets(result.stderr.slice(-4_000)),
+      });
       if (validRun || attempt === maxAttempts - 1) break;
       onProgress?.(`Benchmark · ${arm.harness} failed; retrying ${attempt + 1}/${maxAttempts - 1}`);
     }
     if (!result) throw new Error(`Benchmark arm '${arm.harness}' exhausted its time budget before the first attempt.`);
-    runs.push({ harness: arm.harness, command: arm.command, cwd, result, metric: Number.isFinite(metric) ? metric : undefined, attempts });
+    runs.push({ harness: arm.harness, command: arm.command, cwd, result, metric: Number.isFinite(metric) ? metric : undefined, attempts, attemptDetails });
     trials.push({
       harness: arm.harness,
       task: arm.task,

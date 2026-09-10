@@ -1786,6 +1786,8 @@ test("benchmark runner executes matched arms and records evaluator-backed metric
     assert.equal(report.trials[0].candidateMetric, 0.6);
     assert.ok(Math.abs(report.trials[1].candidateMetric - 0.55) < 1e-12);
     assert.equal(report.runs.every((run) => run.result.exitCode === 0), true);
+    assert.equal(report.runs.every((run) => run.attemptDetails.length === 1), true);
+    assert.equal(report.runs[0].attemptDetails[0].metric, 0.6);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -1798,6 +1800,9 @@ test("benchmark runner records bounded recovery after a failed arm attempt", asy
     assert.equal(report.trials[0].validRun, true);
     assert.equal(report.trials[0].recovered, true);
     assert.equal(report.runs[0].attempts, 2);
+    assert.equal(report.runs[0].attemptDetails.length, 2);
+    assert.equal(report.runs[0].attemptDetails[0].exitCode, 1);
+    assert.equal(report.runs[0].attemptDetails[1].metric, 0.8);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
