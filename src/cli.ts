@@ -12,7 +12,7 @@ import { auditData } from "./core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "./core/validation-policy.js";
 import { estimateDistributionBeliefs, type ExternalValidationObservation } from "./core/distribution-beliefs.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "./core/execution-stages.js";
-import { retrieveSource, sourceClaims, sourceSearchText, sourceIsFresh } from "./core/sources.js";
+import { retrieveSource, searchResearchSources, sourceClaims, sourceSearchText, sourceIsFresh } from "./core/sources.js";
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
 import { pollSubmissionScore, submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
@@ -491,6 +491,10 @@ sources.command("search").argument("<query>").action((query: string) => {
   const entries = store.sources().filter((entry) => sourceSearchText(entry).includes(query.toLowerCase()));
   console.log(entries.length ? entries.map((entry) => `${entry.id} · ${String((entry.payload as { title?: string }).title ?? "Untitled")}`).join("\n") : "No matching research sources.");
   store.close();
+});
+sources.command("discover").argument("<query>").option("--limit <count>", "maximum scholarly candidates", "8").description("Search scholarly sources without automatically trusting or storing them").action(async (query: string, options: { limit: string }) => {
+  const results = await searchResearchSources(query, Number.parseInt(options.limit, 10) || 8);
+  console.log(results.length ? results.map((result, index) => `${index + 1}. ${result.title}\n   ${result.url}${result.venue ? ` · ${result.venue}` : ""}${result.publicationDate ? ` · ${result.publicationDate}` : ""}${result.authors.length ? `\n   authors: ${result.authors.join(", ")}` : ""}`).join("\n") : "No scholarly sources found.");
 });
 sources.command("add").argument("<url>").action(async (url: string) => {
   const retrieved = await retrieveSource(url);

@@ -91,6 +91,7 @@ The initial adapter is `whestbench`. Future adapters include Kaggle, AIcrowd, ma
 /sources                      List cached research sources
 /benchmark score <file>       Score comparable harness trials from JSON
 /benchmark export             Export durable Evidra runs as benchmark JSON
+/sources discover <query>     Search scholarly literature for candidates
 /sources search <query>       Search approved research sources
 /sources add <url>            Cache a source for later retrieval
 /sources show <id>            Show source metadata and extracted claims

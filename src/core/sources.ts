@@ -10,10 +10,62 @@ export interface RetrievedSource extends ResearchSource {
   excerpt: string;
 }
 
+export interface SourceSearchResult {
+  title: string;
+  url: string;
+  doi?: string;
+  venue?: string;
+  publicationDate?: string;
+  authors: string[];
+  abstract?: string;
+}
+
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
 export const SOURCE_REQUEST_TIMEOUT_MS = 30_000;
 export const DEFAULT_SOURCE_REFRESH_MS = 6 * 60 * 60 * 1000;
+
+function reconstructAbstract(invertedIndex: unknown): string | undefined {
+  if (!invertedIndex || typeof invertedIndex !== "object") return undefined;
+  const words: Array<{ index: number; word: string }> = [];
+  for (const [word, positions] of Object.entries(invertedIndex as Record<string, unknown>)) {
+    if (!Array.isArray(positions)) continue;
+    for (const position of positions) if (typeof position === "number" && Number.isInteger(position)) words.push({ index: position, word });
+  }
+  if (!words.length) return undefined;
+  return words.sort((left, right) => left.index - right.index).map((entry) => entry.word).join(" ").slice(0, 2_000);
+}
+
+/** Parse OpenAlex search output without coupling the research loop to the API. */
+export function parseSourceSearchResults(value: unknown, limit = 8): SourceSearchResult[] {
+  if (!value || typeof value !== "object" || !Array.isArray((value as { results?: unknown }).results)) return [];
+  return ((value as { results: unknown[] }).results).flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry as { title?: unknown; doi?: unknown; publication_date?: unknown; primary_location?: { landing_page_url?: unknown; source?: { display_name?: unknown } }; authorships?: unknown; abstract_inverted_index?: unknown };
+    const title = typeof item.title === "string" ? item.title.trim() : "";
+    const url = typeof item.primary_location?.landing_page_url === "string" ? item.primary_location.landing_page_url : typeof item.doi === "string" ? item.doi : "";
+    if (!title || !/^https?:\/\//i.test(url)) return [];
+    const authors = Array.isArray(item.authorships) ? item.authorships.flatMap((author) => {
+      const name = author && typeof author === "object" && (author as { author?: { display_name?: unknown } }).author?.display_name;
+      return typeof name === "string" ? [name] : [];
+    }).slice(0, 8) : [];
+    return [{ title, url, doi: typeof item.doi === "string" ? item.doi : undefined, venue: typeof item.primary_location?.source?.display_name === "string" ? item.primary_location.source.display_name : undefined, publicationDate: typeof item.publication_date === "string" ? item.publication_date : undefined, authors, abstract: reconstructAbstract(item.abstract_inverted_index) }];
+  }).slice(0, Math.max(1, Math.min(limit, 20)));
+}
+
+/** Search scholarly works; retrieval and claim extraction remain a separate step. */
+export async function searchResearchSources(query: string, limit = 8, signal?: AbortSignal): Promise<SourceSearchResult[]> {
+  if (!query.trim()) throw new Error("Source search query must not be empty.");
+  const endpoint = new URL("https://api.openalex.org/works");
+  endpoint.searchParams.set("search", query.trim().slice(0, 300));
+  endpoint.searchParams.set("per-page", String(Math.max(1, Math.min(limit, 20))));
+  await assertPublicUrl(endpoint);
+  const timeoutSignal = AbortSignal.timeout(SOURCE_REQUEST_TIMEOUT_MS);
+  const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  const response = await fetch(endpoint, { signal: requestSignal, headers: { "user-agent": "Evidra/0.1 research-workbench" } });
+  if (!response.ok) throw new Error(`Source search failed (${response.status} ${response.statusText}).`);
+  return parseSourceSearchResults(await response.json(), limit);
+}
 
 /** Dynamic sources such as discussions and leaderboards should be revisited periodically. */
 export function sourceIsFresh(entry: { payload: unknown; createdAt?: string }, maxAgeMs = DEFAULT_SOURCE_REFRESH_MS, now = Date.now()): boolean {

@@ -23,7 +23,7 @@ import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
 import { auditData } from "../core/data-audit.js";
 import { executeResearchTool } from "../core/tools.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
-import { retrieveSource, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
+import { retrieveSource, searchResearchSources, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
 import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalsForMode } from "../core/phase-goals.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
@@ -139,7 +139,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/research": [["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research resume", "Resume the saved campaign"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
   "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
-  "/sources": [["/sources list", "List retrieved sources"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
+  "/sources": [["/sources list", "List retrieved sources"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources discover", "Search scholarly literature"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
@@ -202,7 +202,7 @@ function help(): string {
     "/status                      Show complete workbench state",
     "/experience [export]       Show or export trajectory experience",
     "/usage                       Show budgets and research activity",
-    "/sources [add|search|show]   Retrieve or search research sources",
+    "/sources [add|discover|search|show] Retrieve or search research sources",
     "/memory [recent|search]      Search durable evidence memory",
     "/data audit                 Audit challenge files and duplicates",
     "/validation [inspect|generate] Show validation policy",
@@ -2605,6 +2605,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const timeline = renderTimeline(store.recentEvents(limit), limit);
       store.close();
       append("assistant", `Autonomous timeline\n${timeline}`);
+      return;
+    }
+    if (request === "/sources discover" || request.startsWith("/sources discover ")) {
+      const query = request.slice("/sources discover".length).trim();
+      if (!query) { append("assistant", "Usage: /sources discover <research question>\nResults are candidates only; retrieve a source with /sources add before it influences the director."); return; }
+      setBusy(true); setProgress("Searching scholarly literature...");
+      try {
+        const results = await searchResearchSources(query, 8);
+        append("assistant", results.length ? `Scholarly candidates for: ${query}\n\n${results.map((result, index) => `${index + 1}. ${result.title}\n   ${result.url}${result.venue ? ` · ${result.venue}` : ""}${result.publicationDate ? ` · ${result.publicationDate}` : ""}${result.authors.length ? `\n   authors: ${result.authors.join(", ")}` : ""}${result.abstract ? `\n   ${result.abstract.slice(0, 320)}${result.abstract.length > 320 ? "…" : ""}` : ""}`).join("\n\n")}\n\nRetrieve a candidate with /sources add <url>.` : "No scholarly sources found.");
+      } catch (error) { appendError(error); }
+      finally { setBusy(false); setProgress(""); }
       return;
     }
     if (request === "/sources" || request === "/sources list" || request.startsWith("/sources search ") || request.startsWith("/sources show ")) {

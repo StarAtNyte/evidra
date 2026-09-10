@@ -144,6 +144,7 @@ Implemented today:
 - deterministic hierarchical research-decision rubrics for action closure, falsifiability, evidence, verification, diversity, and risk, with gaps fed into the next cycle;
 - matched benchmark-arm validation requiring task, seed, model, and budget parity before a competitive claim.
 - checksum-locked validation policies with auditable unlock reasons and pre-experiment mutation checks.
+- bounded scholarly-source discovery that returns candidates separately from trusted, hashed source retrieval.
 
 ### Experience-driven improvement
 

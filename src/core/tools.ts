@@ -6,7 +6,7 @@ import { runProcess, type ProcessControl } from "./process.js";
 import { splitCommandLine } from "./process.js";
 import { renderReport, writeReport, type ReportKind } from "./reports.js";
 import { createValidationPolicy, writeValidationPolicy } from "./validation-policy.js";
-import { retrieveSource, sourceClaims } from "./sources.js";
+import { retrieveSource, searchResearchSources, sourceClaims } from "./sources.js";
 import { ResearchStore } from "./store.js";
 import type { CompetitionConfig } from "./types.js";
 import { isSensitiveWorkspacePath, redactSecrets } from "./redaction.js";
@@ -62,6 +62,7 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   { name: "git.status", description: "Read the current Git status and HEAD commit.", input: {}, readOnly: true },
   { name: "shell.exec", description: "Run an allowlisted shell command with captured output.", input: { command: "argv array or shell string", timeoutMs: "optional timeout" }, readOnly: true },
   { name: "source.retrieve", description: "Retrieve, hash, excerpt, and store a research source with extracted claims.", input: { url: "HTTP(S) URL" }, readOnly: false },
+  { name: "source.search", description: "Search scholarly works and return ranked candidates for later retrieval.", input: { query: "research question or keywords", limit: "optional result count" }, readOnly: true },
   { name: "data.audit", description: "Audit workspace files for size, duplicates, and suspicious data issues.", input: { path: "optional relative path" }, readOnly: true },
   { name: "validation.generate", description: "Create a versioned validation policy for the active workspace.", input: {}, readOnly: false },
   { name: "report.generate", description: "Write a durable research, challenge, or final report.", input: { kind: "research|challenge|final" }, readOnly: false },
@@ -154,6 +155,12 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         store.appendEvent("research.source.retrieved", { id: retrieved.id, url: retrieved.url, claimCount: claims.length });
         store.close();
         output = { id: retrieved.id, title: retrieved.title, url: retrieved.url, claims, excerpt: retrieved.excerpt };
+        break;
+      }
+      case "source.search": {
+        const query = stringArg(args, "query");
+        const limit = typeof args.limit === "number" ? Math.max(1, Math.min(20, Math.floor(args.limit))) : 8;
+        output = { query, results: await searchResearchSources(query, limit) };
         break;
       }
       case "data.audit": {

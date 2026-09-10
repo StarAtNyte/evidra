@@ -9,7 +9,7 @@ import { compareMetricSeries } from "../dist/core/statistics.js";
 import { recoveryPlan } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
-import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, retrieveSource, sourceClaims, sourceIsFresh } from "../dist/core/sources.js";
+import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseSourceSearchResults, retrieveSource, sourceClaims, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
@@ -1072,6 +1072,17 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert(events.includes("research.tool.completed"));
     assert(events.includes("research.tool.failed"));
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("scholarly source discovery returns candidates without trusting them", () => {
+  const parsed = parseSourceSearchResults({ results: [
+    { title: "Adaptive research agents", doi: "https://doi.org/10.1234/example", publication_date: "2026-01-01", primary_location: { landing_page_url: "https://example.org/paper", source: { display_name: "Example Journal" } }, authorships: [{ author: { display_name: "A. Researcher" } }], abstract_inverted_index: { Adaptive: [0], agents: [1], improve: [2] } },
+    { title: "No usable URL" },
+  ] }, 8);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].title, "Adaptive research agents");
+  assert.equal(parsed[0].abstract, "Adaptive agents improve");
+  assert.equal(parsed[0].authors[0], "A. Researcher");
 });
 
 test("research director executes typed tools and reasons over returned evidence", async () => {
