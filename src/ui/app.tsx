@@ -609,6 +609,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     };
     if (mode === "challenge") {
       const adapter = activeAdapter();
+      await ingestCompetitionSources(adapter);
       const state = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const priorBaseline = state.recentEvents(1000).reverse().find((event) => event.type === "baseline.completed");
       state.close();

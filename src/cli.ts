@@ -578,6 +578,7 @@ research
         break;
       }
       cycle += 1;
+      await ingestCompetitionSources(adapter);
       const store = new ResearchStore(statePath);
       if (!store.project()) store.createProject({ id: `evidra-${adapter.id}`, name: adapter.config.name, competitionId: adapter.id, config: adapter.config });
       store.saveCampaign(campaign);
