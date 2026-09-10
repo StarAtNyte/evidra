@@ -40,6 +40,7 @@ import { rankExperimentCandidates } from "../core/scheduler.js";
 import { evaluateReducedPromotion } from "../core/scheduler.js";
 import { validateCompetitionContract } from "../core/competition-contract.js";
 import { learnPromotionPolicy, promotionObservations } from "../core/promotion-learning.js";
+import { captureProtectedFiles, changedProtectedFiles } from "../core/integrity.js";
 import { candidateChangePath } from "../core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../core/execution-heartbeat.js";
 import { evaluateValidationAcceptance } from "../core/validation-engine.js";
@@ -1056,6 +1057,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const smokeStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
       smokeStore.appendEvent("experiment.stage.smoke.completed", { experimentId: id, implementation: "local-unified-diff" });
       smokeStore.close();
+    }
+    const protectedReference = captureProtectedFiles(adapter.workspacePath(root), [adapter.config.evaluator.command]);
+    const changedProtected = changedProtectedFiles(protectedReference, experimentCwd);
+    if (changedProtected.length) {
+      const integrityStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      integrityStore.appendEvent("experiment.integrity.failed", { experimentId: id, protectedFiles: changedProtected, reason: "evaluator or configuration changed inside the isolated worktree" });
+      integrityStore.saveExperiment({ id, payload: { ...entryPayload, status: "invalid", integrityFailure: changedProtected } });
+      integrityStore.close();
+      throw new Error(`Experiment ${id} rejected: protected evaluator files changed: ${changedProtected.join(", ")}`);
     }
     const command = candidateExperimentCommand(adapter, hypothesis?.payload);
     const candidateEstimator = (manifest.change.configPatch as { estimatorPath?: unknown }).estimatorPath;
