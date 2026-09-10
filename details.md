@@ -1473,6 +1473,7 @@ Add:
 * algorithm invention;
 * mathematical/gradient verification;
 * automated ablations;
+  Each composite hypothesis should declare explicit factors so Evidra can run leave-one-factor-out controls and preserve factor-level evidence.
 * active experiment design;
 * multimodal diagnostics;
 * learned experiment-cost prediction;

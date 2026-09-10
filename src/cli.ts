@@ -77,6 +77,7 @@ import { inventoryHarnessComponents, planHarnessInterventions } from "./core/har
 import { planHarnessAdaptation } from "./core/harness-adaptation.js";
 import { deriveAdaptiveHarnessPolicy } from "./core/adaptive-harness.js";
 import { createTransferableMethod } from "./core/method-transfer.js";
+import { createAblationPlan } from "./core/ablation.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -1765,30 +1766,83 @@ research
         const parent = completionStore.experiments().find((entry) => entry.id === experimentId);
         const parentManifest = parent ? ExperimentManifestSchema.safeParse(parent.payload) : undefined;
         if (run.exitCode === 0 && comparison?.comparison?.direction === "improved" && parentManifest?.success && parentManifest.data.acceptance.requireReplication) {
+          const hypothesisPayload = parentManifest.data.hypothesisId
+            ? completionStore.hypotheses().find((entry) => entry.id === parentManifest.data.hypothesisId)?.payload as { ablationFactors?: unknown } | undefined
+            : undefined;
+          const ablationFactors = Array.isArray(hypothesisPayload?.ablationFactors) ? hypothesisPayload.ablationFactors : [];
+          const ablationPlan = decision.searchOperator === "ablation" && ablationFactors.length
+            ? createAblationPlan({ hypothesisId: parentManifest.data.hypothesisId, factors: ablationFactors as Parameters<typeof createAblationPlan>[0]["factors"] })
+            : undefined;
+          if (ablationPlan) {
+            const ablationIds: string[] = [];
+            for (const variant of ablationPlan.variants.filter((candidate) => !candidate.control).slice(0, 4)) {
+              const ablationId = `abl_${experimentId}_${variant.factorId}`.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 96);
+              const existing = completionStore.experiments().find((entry) => entry.id === ablationId);
+              if (existing) { ablationIds.push(ablationId); continue; }
+              const ablationManifest = createExperimentManifest({
+                id: ablationId,
+                parent: experimentId,
+                hypothesisId: parentManifest.data.hypothesisId,
+                outcomeType: parentManifest.data.outcomeType,
+                gitCommit: parentManifest.data.gitCommit,
+                datasetVersion: parentManifest.data.datasetVersion,
+                splitVersion: parentManifest.data.splitVersion,
+                executor: parentManifest.data.resources.executor,
+                image: parentManifest.data.resources.image,
+                gpu: parentManifest.data.resources.gpu,
+                timeoutMinutes: parentManifest.data.resources.timeoutMinutes,
+                folds: parentManifest.data.evaluation.folds,
+                seeds: parentManifest.data.evaluation.seeds,
+                requiredArtifacts: parentManifest.data.evaluation.requiredArtifacts,
+                verificationCommand: parentManifest.data.evaluation.verificationCommand,
+                verificationCommands: parentManifest.data.evaluation.verificationCommands,
+                minimumPrimaryDelta: parentManifest.data.acceptance.minimumPrimaryDelta,
+                maximumRegressionShift: parentManifest.data.acceptance.maximumRegressionShift,
+                requireReplication: false,
+                searchOperator: "ablation",
+                configPatch: { ...parentManifest.data.change.configPatch, ...variant.configPatch },
+              }, adapter.config);
+              completionStore.saveExperiment({ id: ablationId, payload: { ...ablationManifest, status: "proposed", ablationOf: experimentId, ablationFactorId: variant.factorId, ablationLabel: variant.label, executionPlan: createExecutionPlan(ablationManifest) } });
+              completionStore.appendEvent("research.ablation.variant.scheduled", { parentId: experimentId, experimentId: ablationId, factorId: variant.factorId, label: variant.label, plan: ablationPlan });
+              ablationIds.push(ablationId);
+            }
+            completionStore.appendEvent("research.ablation.plan", ablationPlan);
+            console.log(`Ablation plan scheduled: ${ablationIds.join(", ")}`);
+            completionStore.close();
+            for (const ablationId of ablationIds) {
+              const ablationRun = await runCampaignExperiment(root, ablationId);
+              const ablationStore = new ResearchStore(statePath);
+              ablationStore.appendEvent(ablationRun.exitCode === 0 ? "research.ablation.variant.completed" : "research.ablation.variant.failed", { parentId: experimentId, experimentId: ablationId, exitCode: ablationRun.exitCode, stdout: ablationRun.stdout.slice(-4000), stderr: ablationRun.stderr.slice(-4000) });
+              ablationStore.close();
+            }
+          } else {
+            completionStore.close();
+          }
           const replication = createReplicationManifest(parentManifest.data, adapter.config);
-          completionStore.saveExperiment({ id: replication.id, payload: { ...replication, status: "proposed", replicationOf: experimentId, automatic: true, executionPlan: createExecutionPlan(replication) } });
-          completionStore.appendEvent("replication.manifest.created", { parentId: experimentId, replicationId: replication.id, automatic: true });
+          const replicationSetupStore = new ResearchStore(statePath);
+          replicationSetupStore.saveExperiment({ id: replication.id, payload: { ...replication, status: "proposed", replicationOf: experimentId, automatic: true, executionPlan: createExecutionPlan(replication) } });
+          replicationSetupStore.appendEvent("replication.manifest.created", { parentId: experimentId, replicationId: replication.id, automatic: true });
           console.log(`Independent replication scheduled: ${replication.id}\n${manifestSummary(replication)}`);
-          completionStore.close();
+          replicationSetupStore.close();
           const replicationRun = await runCampaignExperiment(root, replication.id);
           const replicationStore = new ResearchStore(statePath);
           replicationStore.appendEvent(replicationRun.exitCode === 0 ? "experiment.autonomous.replication.completed" : "experiment.autonomous.replication.failed", { parentId: experimentId, replicationId: replication.id, exitCode: replicationRun.exitCode, stdout: replicationRun.stdout.slice(-4000), stderr: replicationRun.stderr.slice(-4000) });
           const replicationComparisonEvent = replicationStore.recentEvents(500).reverse().find((event) => event.type === "experiment.comparison.completed" && (event.payload as { experimentId?: unknown }).experimentId === replication.id);
           const replicationComparison = replicationComparisonEvent?.payload as { comparison?: { direction?: unknown } } | undefined;
-          const hypothesisPayload = parentManifest.data.hypothesisId
+          const replicationHypothesisPayload = parentManifest.data.hypothesisId
             ? replicationStore.hypotheses().find((entry) => entry.id === parentManifest.data.hypothesisId)?.payload as { title?: unknown; formulationFamily?: unknown; mechanism?: unknown; proposedChange?: unknown } | undefined
             : undefined;
-          if (replicationRun.exitCode === 0 && replicationComparison?.comparison?.direction === "improved" && hypothesisPayload) {
+          if (replicationRun.exitCode === 0 && replicationComparison?.comparison?.direction === "improved" && replicationHypothesisPayload) {
             replicationStore.appendEvent("research.method.transferable", createTransferableMethod({
               id: `method_${experimentId}`,
               sourceCompetition: adapter.id,
               sourceTaskType: adapter.config.taskType,
-              title: typeof hypothesisPayload.title === "string" ? hypothesisPayload.title : parentManifest.data.hypothesisId,
-              formulationFamily: typeof hypothesisPayload.formulationFamily === "string" ? hypothesisPayload.formulationFamily : "other",
-              mechanism: typeof hypothesisPayload.mechanism === "string" ? hypothesisPayload.mechanism : "",
-              proposedChange: typeof hypothesisPayload.proposedChange === "string" ? hypothesisPayload.proposedChange : "",
+              title: typeof replicationHypothesisPayload.title === "string" ? replicationHypothesisPayload.title : parentManifest.data.hypothesisId,
+              formulationFamily: typeof replicationHypothesisPayload.formulationFamily === "string" ? replicationHypothesisPayload.formulationFamily : "other",
+              mechanism: typeof replicationHypothesisPayload.mechanism === "string" ? replicationHypothesisPayload.mechanism : "",
+              proposedChange: typeof replicationHypothesisPayload.proposedChange === "string" ? replicationHypothesisPayload.proposedChange : "",
               evidenceIds: [experimentId, replication.id],
-              tags: [adapter.config.taskType, typeof hypothesisPayload.formulationFamily === "string" ? hypothesisPayload.formulationFamily : "other"],
+              tags: [adapter.config.taskType, typeof replicationHypothesisPayload.formulationFamily === "string" ? replicationHypothesisPayload.formulationFamily : "other"],
             }));
           }
           replicationStore.close();

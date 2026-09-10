@@ -63,6 +63,7 @@ import { auditClaims } from "../dist/core/claim-audit.js";
 import { deriveAdaptiveHarnessPolicy } from "../dist/core/adaptive-harness.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "../dist/core/error-analysis.js";
 import { createTransferableMethod, transferableMethodsFromEvents } from "../dist/core/method-transfer.js";
+import { createAblationPlan, ablationPlansFromEvents } from "../dist/core/ablation.js";
 import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks } from "../dist/core/airs-bench.js";
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
@@ -544,6 +545,24 @@ test("only independently replicated method events enter transfer memory", () => 
   assert.deepEqual(methods.map((entry) => entry.id), ["method-1"]);
 });
 
+test("ablation planner creates reproducible leave-one-factor-out controls", () => {
+  const plan = createAblationPlan({
+    hypothesisId: "hyp-composite",
+    factors: [
+      { id: "augmentation", key: "augmentation.enabled", label: "augmentation", disabledValue: false },
+      { id: "calibration", key: "calibration.enabled", label: "calibration", disabledValue: false },
+    ],
+  });
+  assert.equal(plan.design, "leave-one-factor-out");
+  assert.deepEqual(plan.variants.map((variant) => variant.id), ["hyp-composite:control", "hyp-composite:without:augmentation", "hyp-composite:without:calibration"]);
+  assert.deepEqual(plan.variants[1].configPatch, { "augmentation.enabled": false });
+  assert.deepEqual(ablationPlansFromEvents([
+    { type: "research.ablation.plan", payload: plan },
+    { type: "research.ablation.plan", payload: { ...plan, hypothesisId: "malformed", variants: [] } },
+  ]).map((entry) => entry.hypothesisId), ["hyp-composite"]);
+  assert.throws(() => createAblationPlan({ hypothesisId: "bad", factors: [{ id: "x", key: "../unsafe", label: "unsafe", disabledValue: false }] }), /invalid/i);
+});
+
 test("experiment scheduler ranks expected information per cost", () => {
   const ranked = rankPriorities([
     { id: "cheap", probabilityOfSuccess: 0.8, expectedDelta: 0.01, informationValue: 0.5, diversityValue: 0, gpuCost: 1, llmCost: 1, engineeringCost: 0.1, risk: 0.1 },
@@ -920,7 +939,7 @@ test("source adaptation preserves literature provenance through the research gra
       decision: "propose",
       bottleneck: "Need a test",
       rationale: "The paper suggests a falsifiable improvement.",
-      hypotheses: [{ title: "Paper-derived test", mechanism: "The technique changes the target behavior.", evidence: ["The paper reports a relevant effect."], proposedChange: "Implement the smallest controlled test.", falsificationTest: "The controlled test does not reproduce the effect.", expectedMetricDelta: { low: 0, median: 0, high: 0 }, computeCostGpuHours: 0, implementationRisk: "low", leakageRisk: "low", dependencies: [] }],
+      hypotheses: [{ title: "Paper-derived test", mechanism: "The technique changes the target behavior.", evidence: ["The paper reports a relevant effect."], proposedChange: "Implement the smallest controlled test.", falsificationTest: "The controlled test does not reproduce the effect.", expectedMetricDelta: { low: 0, median: 0, high: 0 }, computeCostGpuHours: 0, implementationRisk: "low", leakageRisk: "low", dependencies: [], ablationFactors: [{ id: "technique", key: "technique.enabled", label: "the technique", disabledValue: false }] }],
       searchOperator: "ablation",
       selectedHypothesis: "Paper-derived test",
       nextAction: "Run the controlled test",
@@ -930,6 +949,7 @@ test("source adaptation preserves literature provenance through the research gra
     assert.equal(claim?.payload.sourceType, "literature");
     assert.equal(claim?.payload.sourceId, "paper-adapt");
     assert.ok(store.edges().some((edge) => edge.fromId === materialized.claimIds[0] && edge.toId === "paper-adapt" && edge.relation === "derived_from"));
+    assert.equal(ablationPlansFromEvents(store.recentEvents(50)).length, 1);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

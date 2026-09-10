@@ -1,5 +1,6 @@
 import { ResearchDecisionSchema, type ResearchDecision } from "./types.js";
 import { ResearchStore } from "./store.js";
+import { createAblationPlan } from "./ablation.js";
 
 export interface MaterializedDecision {
   decisionId: number;
@@ -23,6 +24,9 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
     const hypothesisId = `hyp_${stamp}_${String(index + 1).padStart(2, "0")}_${slug(hypothesis.title)}`;
     hypothesisIds.push(hypothesisId);
     store.saveHypothesis({ id: hypothesisId, payload: { id: hypothesisId, ...hypothesis, searchOperator: decision.searchOperator, status: "proposed", decisionId } });
+    if (hypothesis.ablationFactors.length > 0) {
+      store.appendEvent("research.ablation.plan", createAblationPlan({ hypothesisId, factors: hypothesis.ablationFactors }));
+    }
     hypothesis.evidence.forEach((statement, evidenceIndex) => {
       const claimId = `claim_${stamp}_${String(index + 1).padStart(2, "0")}_${evidenceIndex + 1}`;
       claimIds.push(claimId);

@@ -68,7 +68,8 @@ export async function runResearchDirector(
     "computeCostGpuHours": 0,
     "implementationRisk": "low|medium|high",
     "leakageRisk": "low|medium|high",
-    "dependencies": ["baseline or experiment ids"]
+    "dependencies": ["baseline or experiment ids"],
+    "ablationFactors": [{"id":"factor-id","key":"config.key","label":"component to remove","disabledValue":false}]
   }],
   "selectedHypothesis": "hypothesis title or null",
   "searchOperator": "greedy|ucb_portfolio|evolutionary|mcts|ablation|combination|replication|audit",
@@ -77,6 +78,7 @@ export async function runResearchDirector(
 }
 
   Rules: propose no more than five hypotheses; assign each a distinct formulationFamily when possible; choose outcomeType according to the research problem; use expectedOutcome for non-scalar success criteria; never invent measurements; distinguish observations from assumptions; prioritize information gain per compute-hour; every hypothesis must be falsifiable. Before returning JSON, inspect the workspace and run the relevant read-only commands, tests, audits, or baseline evaluator needed to answer the objective. Treat command output and retrieved research sources as observations and cite the command, source URL, or artifact in evidence. Separate literature claims from evidence measured in this workspace. Treat cross-pollination agreements as search leads, never as proof: require primary artifacts or an independent check, and honor needsAdversarialReview before promoting a consensus. Transferable methods in research memory are validated cross-cycle leads, not proof for the current workspace; adapt them only through a fresh falsifiable experiment. Prefer the host-observation object supplied in context when your own sandbox cannot execute; never claim that a repository or evaluator is missing when the supplied observation proves it exists. Research agents must not edit challenge files or submit externally. When evidence supports an experiment, choose decision run and a concrete selectedHypothesis: the Evidra controller, not this research turn, will create the durable experiment, apply the change in an isolated worktree, and run the declared evaluator under the selected permission policy. Never claim that controller execution happened unless the context contains an Evidra experiment/run record. If the ultimate stopping condition is not yet evidenced, keep goalStatus active even when an internal phase is met; use decision stop only when the campaign-level condition is satisfied. If tools are available, request them with toolCalls instead of pretending to have inspected the workspace. Request only the smallest useful set and use returned toolResults as observations. Return an empty toolCalls array when you have enough evidence.`;
+  const contractGuidance = "For composite interventions, declare explicit ablationFactors so Evidra can materialize leave-one-factor-out controls; do not invent factors that are not represented in the proposed change. Transferable methods and ablation plans are leads requiring fresh evaluator-backed tests, never proof.";
   let workingContext: Record<string, unknown> = {
     ...context,
     availableTools: options.executeTool ? RESEARCH_TOOLS : [],
@@ -89,7 +91,7 @@ export async function runResearchDirector(
         const result: AgentResult = await runWithLocalFallback({
           ...task,
           context: workingContext,
-          objective: `${objective}\n\n${contract}`,
+          objective: `${objective}\n\n${contract}\n\n${contractGuidance}`,
         }, options, options.fallbackLocalModel, onProgress, options.onProcess);
         parsed = ResearchDecisionSchema.safeParse(extractJson(result.output));
         if (parsed.success) break;

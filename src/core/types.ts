@@ -84,6 +84,12 @@ export const ResearchHypothesisSchema = z.object({
   implementationRisk: z.enum(["low", "medium", "high"]).default("medium"),
   leakageRisk: z.enum(["low", "medium", "high"]).default("low"),
   dependencies: z.array(z.string()).default([]),
+  ablationFactors: z.array(z.object({
+    id: z.string().min(1).max(80),
+    key: z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]{0,80}$/),
+    label: z.string().min(1).max(160),
+    disabledValue: z.unknown(),
+  })).max(8).default([]),
 });
 
 export const ResearchDecisionSchema = z.object({
