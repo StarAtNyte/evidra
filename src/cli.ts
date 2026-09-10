@@ -45,7 +45,7 @@ import { render } from "ink";
 import React from "react";
 import { App } from "./ui/app.js";
 import { findWorkspaceRoot } from "./core/workspace.js";
-import type { AutonomyLevel } from "./core/permissions.js";
+import { autonomyPolicy, type AutonomyLevel } from "./core/permissions.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -765,7 +765,12 @@ research
         }
       }
       const materialized = materializeResearchDecision(decisionStore, decision);
-      if (!criticBlocks && decision.decision === "run" && decision.selectedHypothesis) {
+      const policyBlocksExecution = !autonomyPolicy(autonomy).canRunIsolatedExperiments && decision.decision === "run" && Boolean(decision.selectedHypothesis);
+      if (policyBlocksExecution) {
+        decisionStore.appendEvent("experiment.autonomous.approval_required", { decision: decision.decision, selectedHypothesis: decision.selectedHypothesis, autonomy, nextAction: "Approve or run the proposed experiment explicitly." });
+        console.log(`Autonomous experiment paused by ${autonomy.toUpperCase()} permissions; approve the proposed work explicitly before execution.`);
+      }
+      if (!criticBlocks && !policyBlocksExecution && decision.decision === "run" && decision.selectedHypothesis) {
         const selectedIndex = decision.hypotheses.findIndex((hypothesis) => hypothesis.title === decision.selectedHypothesis);
         const selectedHypothesisId = selectedIndex >= 0 ? materialized.hypothesisIds[selectedIndex] : undefined;
         const selectedHypothesis = selectedIndex >= 0 ? decision.hypotheses[selectedIndex] : undefined;
@@ -855,9 +860,9 @@ research
         }
       }
       const elapsedMinutes = campaignElapsedMinutes(campaign);
-      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || stagnation.stagnant || elapsedMinutes >= campaign.budgetMinutes;
+      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || stagnation.stagnant || elapsedMinutes >= campaign.budgetMinutes || policyBlocksExecution;
       if (terminal) {
-        if (decision.goalStatus === "blocked" || stagnation.stagnant) Object.assign(campaign, pauseCampaign(campaign));
+        if (decision.goalStatus === "blocked" || stagnation.stagnant || policyBlocksExecution) Object.assign(campaign, pauseCampaign(campaign));
         else campaign.status = "completed";
         if (stagnation.stagnant) decisionStore.appendEvent("research.stagnation.detected", { cycles: stagnation.cycles, signature: stagnation.signature, action: "pause_for_review" });
         decisionStore.saveCampaign(campaign);
