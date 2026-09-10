@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { compareMetricSeries } from "../dist/core/statistics.js";
+import { compareMetricSeries, compareRuns } from "../dist/core/statistics.js";
 import { recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
@@ -545,6 +545,18 @@ test("prediction diagnostics expose metadata slices and calibration gaps", () =>
   assert.equal(rareSlice?.errors, 2);
   assert.equal(report.calibration?.length, 3);
   assert.ok((report.calibration?.find((bin) => bin.bin === 8)?.gap ?? 0) > 0);
+});
+
+test("paired statistics reject mismatched fold or seed cardinality", () => {
+  assert.throws(() => compareMetricSeries([1, 2], [1], true, 200), /matching fold\/seed cardinality/);
+  const comparison = compareRuns(
+    { runId: "base-mismatch", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 0.5 }, metricsByFold: { score: [0.5, 0.6] }, artifacts: {} },
+    { runId: "candidate-mismatch", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 0.6 }, metricsByFold: { score: [0.6] }, artifacts: {} },
+    "score",
+    false,
+  );
+  assert.equal(comparison.direction, "insufficient_data");
+  assert.equal(comparison.delta, null);
 });
 
 test("only independently replicated method events enter transfer memory", () => {

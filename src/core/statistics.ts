@@ -26,8 +26,9 @@ function quantile(values: number[], probability: number): number {
 
 /** Paired bootstrap over fold/seed metrics. A fixed PRNG keeps reports reproducible. */
 export function compareMetricSeries(baseline: number[], candidate: number[], lowerIsBetter = true, resamples = 2000): { delta: number; probabilityImproved: number; confidenceInterval: [number, number]; samples: number } {
-  const length = Math.min(baseline.length, candidate.length);
-  if (length === 0) throw new Error("Metric series are empty.");
+  if (baseline.length === 0 || candidate.length === 0) throw new Error("Metric series are empty.");
+  if (baseline.length !== candidate.length) throw new Error("Metric series must have matching fold/seed cardinality before paired comparison.");
+  const length = baseline.length;
   const differences = Array.from({ length }, (_, index) => candidate[index] - baseline[index]);
   const observed = differences.reduce((sum, value) => sum + value, 0) / length;
   let state = 0x9e3779b9;
@@ -55,6 +56,9 @@ export function compareRuns(baseline: RunResult, candidate: RunResult, metric = 
   }
   const baselineSeries = baseline.metricsByFold?.[metric] ?? [];
   const candidateSeries = candidate.metricsByFold?.[metric] ?? [];
+  if (baselineSeries.length !== candidateSeries.length || (baselineSeries.length > 0 && baselineSeries.length < 2)) {
+    return { baselineRunId: baseline.runId, candidateRunId: candidate.runId, metric, baseline: base, candidate: next, delta: null, direction: "insufficient_data", evidence: "insufficient_data", note: "Fold/seed metric series must have matching cardinality and at least two paired values." };
+  }
   if (baselineSeries.length > 1 && candidateSeries.length > 1) {
     const series = compareMetricSeries(baselineSeries, candidateSeries, lowerIsBetter);
     const improved = lowerIsBetter ? series.delta < 0 : series.delta > 0;
@@ -69,7 +73,7 @@ export function compareRuns(baseline: RunResult, candidate: RunResult, metric = 
       evidence: "replicated",
       probabilityImproved: series.probabilityImproved,
       confidenceInterval: series.confidenceInterval,
-      note: `Paired bootstrap over ${Math.min(baselineSeries.length, candidateSeries.length)} fold/seed values (${series.samples} resamples).`,
+      note: `Paired bootstrap over ${baselineSeries.length} fold/seed values (${series.samples} resamples).`,
     };
   }
   const delta = next - base;
