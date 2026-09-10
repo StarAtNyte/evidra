@@ -26,7 +26,7 @@ export interface HarnessTrial {
 
 export interface BenchmarkProtocolIssue {
   key: string;
-  field: "task" | "arm" | "seed" | "model" | "budgetMinutes" | "direction";
+  field: "task" | "arm" | "seed" | "model" | "budgetMinutes" | "direction" | "taskWorstMetric" | "taskBestMetric";
   values: string[];
   message: string;
 }
@@ -49,6 +49,12 @@ export function validateBenchmarkProtocol(trials: HarnessTrial[]): BenchmarkProt
   const harnesses = [...new Set(trials.map((trial) => trial.harness))].sort();
   const groups = new Map<string, HarnessTrial[]>();
   for (const trial of trials) {
+    if (trial.taskWorstMetric !== undefined && (!Number.isFinite(trial.taskWorstMetric) || (trial.taskBestMetric !== undefined && trial.taskWorstMetric === trial.taskBestMetric))) {
+      issues.push({ key: `${trial.task}:${trial.arm ?? ""}`, field: "taskWorstMetric", values: [String(trial.taskWorstMetric)], message: "Task normalization bounds must be finite and differ." });
+    }
+    if (trial.taskBestMetric !== undefined && !Number.isFinite(trial.taskBestMetric)) {
+      issues.push({ key: `${trial.task}:${trial.arm ?? ""}`, field: "taskBestMetric", values: [String(trial.taskBestMetric)], message: "Task normalization bounds must be finite numbers." });
+    }
     const key = [trial.task, trial.arm ?? "", trial.seed ?? "", trial.model ?? "", trial.budgetMinutes ?? ""].join("\u001f");
     groups.set(key, [...(groups.get(key) ?? []), trial]);
   }
@@ -81,6 +87,8 @@ export function validateBenchmarkProtocol(trials: HarnessTrial[]): BenchmarkProt
       ["model", (trial) => trial.model ?? "<missing>"],
       ["budgetMinutes", (trial) => trial.budgetMinutes === undefined ? "<missing>" : String(trial.budgetMinutes)],
       ["direction", (trial) => trial.direction],
+      ["taskWorstMetric", (trial) => trial.taskWorstMetric === undefined ? "<missing>" : String(trial.taskWorstMetric)],
+      ["taskBestMetric", (trial) => trial.taskBestMetric === undefined ? "<missing>" : String(trial.taskBestMetric)],
     ];
     for (const [field, read] of fields) {
       const values = [...new Set(entries.map(read))];

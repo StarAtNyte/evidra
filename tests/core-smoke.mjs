@@ -1633,6 +1633,23 @@ test("benchmark protocol rejects unmatched arms before a competitive claim", () 
   assert.equal(incomplete.valid, false);
 });
 
+test("benchmark protocol prevents per-harness normalization-bound gaming", () => {
+  const base = {
+    task: "bounded-task", arm: "arm-a", seed: 1, model: "codex", budgetMinutes: 10,
+    direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.7,
+    taskWorstMetric: 0.4, taskBestMetric: 1, validRun: true, durationSeconds: 1, recovered: false, reproducible: false,
+  };
+  const mismatched = validateBenchmarkProtocol([
+    { harness: "evidra", ...base },
+    { harness: "other", ...base, taskBestMetric: 0.8 },
+  ]);
+  assert.equal(mismatched.valid, false);
+  assert.ok(mismatched.issues.some((issue) => issue.field === "taskBestMetric"));
+  const invalid = validateBenchmarkProtocol([{ harness: "evidra", ...base, taskWorstMetric: Number.NaN }]);
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.issues.some((issue) => /finite/.test(issue.message)));
+});
+
 test("benchmark runner executes matched arms and records evaluator-backed metrics", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-runner-"));
   try {
