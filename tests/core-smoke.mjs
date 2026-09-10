@@ -80,7 +80,7 @@ import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock,
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
 import { evaluateHarnessChange, inventoryHarnessComponents, planHarnessInterventions } from "../dist/core/harness-evolution.js";
-import { assessEarlyStopping, EarlyStoppingMonitor } from "../dist/core/early-stopping.js";
+import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -2512,6 +2512,11 @@ test("early stopping requires persistent underperformance against a reference cu
   monitor.observe('{"step":2,"metrics":{"accuracy":0.76}}\n');
   const decision = monitor.observe('{"step":3,"accuracy":0.84}\n');
   assert.equal(decision.stop, true);
+  assert.deepEqual(parseLearningCurve('{"step":1,"accuracy":0.7}\n{"step":2,"metrics":{"accuracy":0.8}}\n', "accuracy"), [{ step: 1, metric: 0.7 }, { step: 2, metric: 0.8 }]);
+  assert.deepEqual(deriveReferenceCurve([
+    [{ step: 1, metric: 0.7 }, { step: 2, metric: 0.8 }],
+    [{ step: 1, metric: 0.72 }, { step: 2, metric: 0.78 }],
+  ]), [{ step: 1, metric: 0.7 }, { step: 2, metric: 0.78 }]);
 });
 
 test("successive halving budgets cheap screens and promotes only measured survivors", () => {

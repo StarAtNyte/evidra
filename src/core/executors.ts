@@ -1,4 +1,5 @@
 import { runProcess, type ProcessControl } from "./process.js";
+import { parseLearningCurve } from "./early-stopping.js";
 import { existsSync, lstatSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { ExperimentManifest, ProcessResult, RunResult } from "./types.js";
@@ -108,6 +109,7 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
 
 function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metricName: string, remote = false): RunResult {
   const parsed = parseMetricOutput(result.stdout, metricName);
+  const learningCurve = parseLearningCurve(result.stdout, metricName);
   const artifacts: Record<string, string> = {};
   const missing: string[] = [];
   for (const name of manifest.evaluation?.requiredArtifacts ?? []) {
@@ -128,6 +130,7 @@ function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metric
     durationSeconds: result.durationMs / 1000,
     metrics: parsed.metrics,
     metricsByFold: parsed.metricsByFold,
+    learningCurve,
     subgroupDeltas: parsed.subgroupDeltas,
     artifacts,
     stdout: result.stdout,

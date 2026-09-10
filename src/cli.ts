@@ -79,6 +79,7 @@ import { planHarnessAdaptation } from "./core/harness-adaptation.js";
 import { deriveAdaptiveHarnessPolicy } from "./core/adaptive-harness.js";
 import { createTransferableMethod } from "./core/method-transfer.js";
 import { createAblationPlan, evaluateAblationEvidence } from "./core/ablation.js";
+import { deriveReferenceCurve, type LearningPoint } from "./core/early-stopping.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -112,6 +113,33 @@ function auditCurrentClaims(store: ResearchStore): ClaimAuditReport {
     ]),
     conflictedClaimIds: new Set(contradictionEdges.flatMap((edge) => [edge.fromId, edge.toId])),
   });
+}
+
+/**
+ * Reuse only curves from completed, same-dataset, same-executor runs. The
+ * exact-step reference builder is deliberately conservative; two comparable
+ * historical curves are required before autonomous stopping is enabled.
+ */
+function automaticEarlyStoppingPolicy(
+  store: ResearchStore,
+  datasetRevision: string,
+  executor: "local" | "container" | "modal",
+  metric: string,
+  direction: "maximize" | "minimize",
+): { enabled: boolean; metric: string; direction: "maximize" | "minimize"; warmupSteps: number; patience: number; minimumImprovement: number; reference: LearningPoint[] } | undefined {
+  const curves: LearningPoint[][] = [];
+  for (const run of store.runs()) {
+    if (run.status !== "completed") continue;
+    const experiment = store.experiments().find((entry) => entry.id === run.experimentId);
+    const experimentPayload = experiment?.payload as { datasetVersion?: unknown; resources?: { executor?: unknown } } | undefined;
+    const payload = run.payload as { learningCurve?: unknown };
+    if (experimentPayload?.datasetVersion !== datasetRevision || experimentPayload.resources?.executor !== executor || !Array.isArray(payload.learningCurve)) continue;
+    const curve = payload.learningCurve.filter((point): point is LearningPoint => Boolean(point && typeof point === "object" && typeof (point as LearningPoint).step === "number" && Number.isFinite((point as LearningPoint).step) && typeof (point as LearningPoint).metric === "number" && Number.isFinite((point as LearningPoint).metric)));
+    if (curve.length >= 2) curves.push(curve);
+  }
+  const reference = deriveReferenceCurve(curves, 2);
+  if (reference.length < 2) return undefined;
+  return { enabled: true, metric, direction, warmupSteps: Math.max(0, reference[0].step), patience: 2, minimumImprovement: 0, reference };
 }
 
 function requireCompetitionContract(adapter: ReturnType<typeof activeCompetition>): void {
@@ -1824,6 +1852,7 @@ research
               datasetVersion: adapter.config.datasetRevision,
               executor: options.executor as "local" | "container" | "modal",
               searchOperator: decision.searchOperator,
+              earlyStopping: automaticEarlyStoppingPolicy(decisionStore, adapter.config.datasetRevision, options.executor as "local" | "container" | "modal", adapter.config.metric.name, adapter.config.metric.direction),
               configPatch: { estimatorPath: candidateEstimatorPath(selectedHypothesis) ?? adapter.config.evaluator.estimatorPath },
             }, adapter.config);
             decisionStore.saveExperiment({ id: proposalId, payload: { ...proposal, status: "proposed", runtimeContext: { provider: options.provider, model: selectedModel, phase: phaseGoal?.phase ?? "unknown" }, executionPlan: createExecutionPlan(proposal) } });
@@ -1976,6 +2005,7 @@ research
               datasetVersion: adapter.config.datasetRevision,
               executor: options.executor as "local" | "container" | "modal",
               searchOperator: decision.searchOperator,
+              earlyStopping: automaticEarlyStoppingPolicy(decisionStore, adapter.config.datasetRevision, options.executor as "local" | "container" | "modal", adapter.config.metric.name, adapter.config.metric.direction),
               configPatch: { estimatorPath: candidateEstimatorPath(selectedHypothesis) ?? adapter.config.evaluator.estimatorPath },
             }, adapter.config);
             decisionStore.saveExperiment({ id: experimentId, payload: { ...manifest, status: "proposed", runtimeContext: { provider: options.provider, model: selectedModel, phase: phaseGoal?.phase ?? "unknown" }, executionPlan: createExecutionPlan(manifest) } });
@@ -2253,7 +2283,7 @@ experiment.command("propose")
     const id = `exp_${Date.now()}_${hypothesis.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
     const adapter = activeCompetition();
     const hypothesisPayload = store.hypotheses().find((entry) => entry.id === hypothesis)?.payload as { outcomeType?: "metric" | "artifact" | "proof" | "behavior" | "system" | "other" } | undefined;
-    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis, outcomeType: hypothesisPayload?.outcomeType, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: options.executor as "local" | "container" | "modal", configPatch: { estimatorPath: candidateEstimatorPath(hypothesisPayload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
+    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis, outcomeType: hypothesisPayload?.outcomeType, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: options.executor as "local" | "container" | "modal", earlyStopping: automaticEarlyStoppingPolicy(store, adapter.config.datasetRevision, options.executor as "local" | "container" | "modal", adapter.config.metric.name, adapter.config.metric.direction), configPatch: { estimatorPath: candidateEstimatorPath(hypothesisPayload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
     store.saveExperiment({ id, payload: { ...manifest, status: "proposed", executionPlan: createExecutionPlan(manifest) } });
     store.close();
     console.log(`Immutable experiment manifest created\n${manifestSummary(manifest)}`);

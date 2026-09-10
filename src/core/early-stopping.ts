@@ -96,6 +96,41 @@ function progressPoint(line: string, metricName: string): LearningPoint | undefi
   return { step: Number(stepMatch[1]), metric: Number(metricMatch[1]) };
 }
 
+/** Extract a deterministic learning curve from a worker's captured output. */
+export function parseLearningCurve(output: string, metricName: string): LearningPoint[] {
+  const points = new Map<number, LearningPoint>();
+  for (const line of output.split("\n")) {
+    const point = progressPoint(line.trim(), metricName);
+    if (point) points.set(point.step, point);
+  }
+  return [...points.values()].sort((left, right) => left.step - right.step);
+}
+
+/**
+ * Build a conservative reference curve from comparable historical curves.
+ * Exact step matches are intentional: interpolation could manufacture a
+ * stopping signal for a schedule that was never actually observed.
+ */
+export function deriveReferenceCurve(curves: LearningPoint[][], minimumCurves = 2): LearningPoint[] {
+  const required = Math.max(2, Math.floor(minimumCurves));
+  const byStep = new Map<number, number[]>();
+  for (const curve of curves) {
+    const seen = new Set<number>();
+    for (const point of curve) {
+      if (seen.has(point.step) || !Number.isFinite(point.step) || !Number.isFinite(point.metric)) continue;
+      seen.add(point.step);
+      byStep.set(point.step, [...(byStep.get(point.step) ?? []), point.metric]);
+    }
+  }
+  return [...byStep.entries()]
+    .filter(([, metrics]) => metrics.length >= required)
+    .sort(([left], [right]) => left - right)
+    .map(([step, metrics]) => {
+      const sorted = [...metrics].sort((left, right) => left - right);
+      return { step, metric: sorted[Math.floor((sorted.length - 1) / 2)] };
+    });
+}
+
 export class EarlyStoppingMonitor {
   private readonly observed: LearningPoint[] = [];
   private remainder = "";
