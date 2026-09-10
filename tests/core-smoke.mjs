@@ -74,7 +74,7 @@ import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "../dist/core/promotion-learning.js";
 import { captureProtectedFiles, changedProtectedFiles } from "../dist/core/integrity.js";
 import { assessHypothesisQuality } from "../dist/core/hypothesis-quality.js";
-import { ResearchDecisionSchema } from "../dist/core/types.js";
+import { ResearchDecisionSchema, RunResultSchema } from "../dist/core/types.js";
 import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../dist/core/validation-lock.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
@@ -2631,6 +2631,12 @@ test("experiment manifests preserve multiple independent verifiers", () => {
   const manifest = createExperimentManifest({ id: "multi-verify", hypothesisId: "hyp-1", gitCommit: "abc123", datasetVersion: "data", verificationCommands: [["python", "check_unit.py"], ["python", "check_reference.py"]] }, { id: "test", name: "Test", taskType: "general", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["python", "eval.py"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["python", "baseline.py"], experimentCommand: ["python", "run.py"] });
   assert.deepEqual(manifest.evaluation.verificationCommands, [["python", "check_unit.py"], ["python", "check_reference.py"]]);
   assert.throws(() => createExperimentManifest({ id: "duplicate-verify", hypothesisId: "hyp-1", gitCommit: "abc123", datasetVersion: "data", verificationCommand: ["python", "check_unit.py"], verificationCommands: [["python", "check_unit.py"]] }, { id: "test", name: "Test", taskType: "general", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["python", "eval.py"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["python", "baseline.py"], experimentCommand: ["python", "run.py"] }), /duplicate commands are not independent evidence/);
+});
+
+test("run evidence carries a structured verifier summary", () => {
+  const parsed = RunResultSchema.parse({ runId: "run-verifiers", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 1 }, verification: { declared: 2, executed: 2, passed: 2, failed: 0, independent: true } });
+  assert.deepEqual(parsed.verification, { declared: 2, executed: 2, passed: 2, failed: 0, independent: true });
+  assert.throws(() => RunResultSchema.parse({ runId: "run-invalid-verifiers", status: "completed", exitCode: 0, durationSeconds: 1, verification: { declared: 2, executed: 1, passed: 2, failed: 0, independent: true } }), /verification/);
 });
 
 test("hypothesis quality rewards falsifiable grounded proposals", () => {

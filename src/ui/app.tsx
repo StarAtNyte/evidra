@@ -1424,6 +1424,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const recordedResult = {
       ...result,
       recoveryAttempts: attempt,
+      verification: {
+        declared: verificationCommands.length,
+        executed: verificationOutputs.length,
+        passed: verificationOutputs.filter((verification) => verification.exitCode === 0).length,
+        failed: verificationOutputs.filter((verification) => verification.exitCode !== 0).length,
+        independent: verificationCommands.length >= 2 && verificationCommands.length === new Set(verificationCommands.map((candidate) => JSON.stringify(candidate))).size,
+      },
       artifacts: {
         ...result.artifacts,
         "stdout.log": stdoutPath,
