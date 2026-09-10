@@ -60,7 +60,9 @@ outcome when scoring instead of treating every positive delta as equally good;
 this makes results across heterogeneous tasks more meaningful. If bounds are
 absent, the legacy evaluator-backed improvement rule is retained. Bounds are
 part of the matched task arm: validation rejects files where harnesses disagree
-or provide non-finite/equal bounds.
+or provide non-finite/equal bounds. Duplicate trials for the same harness and
+task/arm/seed/model/budget identity are also rejected rather than silently
+overwriting one another.
 
 Invalid runs and unverified model claims score zero improvement. This prevents a
 harness from winning by producing persuasive text without a measured artifact.

@@ -1650,6 +1650,14 @@ test("benchmark protocol prevents per-harness normalization-bound gaming", () =>
   assert.ok(invalid.issues.some((issue) => /finite/.test(issue.message)));
 });
 
+test("benchmark protocol rejects duplicate harness trials on one matched arm", () => {
+  const trial = { harness: "evidra", task: "task", arm: "arm", seed: 1, model: "codex", budgetMinutes: 10, direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 1, recovered: false, reproducible: false };
+  const report = validateBenchmarkProtocol([trial, { ...trial }]);
+  assert.equal(report.valid, false);
+  assert.ok(report.issues.some((issue) => /duplicate trials/i.test(issue.message)));
+  assert.throws(() => compareHarnesses([trial, { ...trial }], "evidra", "other"), /Duplicate benchmark trial identity/);
+});
+
 test("benchmark runner executes matched arms and records evaluator-backed metrics", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-runner-"));
   try {

@@ -61,6 +61,7 @@ export function validateBenchmarkProtocol(trials: HarnessTrial[]): BenchmarkProt
 
   const required: Array<BenchmarkProtocolIssue["field"]> = ["arm", "seed", "model", "budgetMinutes"];
   const complete = trials.length > 0 && trials.every((trial) =>
+    typeof trial.harness === "string" && trial.harness.trim().length > 0 &&
     trial.arm !== undefined && trial.arm.length > 0 && !trial.arm.includes("unknown") &&
     trial.seed !== undefined && String(trial.seed).length > 0 && !String(trial.seed).includes("unknown") &&
     typeof trial.model === "string" && trial.model.length > 0 && trial.model !== "unknown-model" &&
@@ -95,6 +96,10 @@ export function validateBenchmarkProtocol(trials: HarnessTrial[]): BenchmarkProt
       if (values.length > 1) issues.push({ key, field, values, message: `${field} differs within a matched task arm.` });
     }
     const observedHarnesses = new Set(entries.map((entry) => entry.harness));
+    for (const harness of observedHarnesses) {
+      const count = entries.filter((entry) => entry.harness === harness).length;
+      if (count > 1) issues.push({ key, field: "arm", values: [harness], message: `Harness '${harness}' has duplicate trials for the same task, arm, seed, model, and budget.` });
+    }
     if (observedHarnesses.size !== harnesses.length) {
       issues.push({ key, field: "arm", values: [...observedHarnesses].sort(), message: "Not every harness was run on this task arm." });
     }
@@ -202,6 +207,12 @@ function protocolKey(trial: HarnessTrial): string {
  */
 export function compareHarnesses(trials: HarnessTrial[], challenger: string, incumbent: string): HarnessComparison {
   if (challenger === incumbent) throw new Error("Challenger and incumbent must be different harnesses.");
+  const identities = new Set<string>();
+  for (const trial of trials) {
+    const identity = `${trial.harness}\u001f${protocolKey(trial)}`;
+    if (identities.has(identity)) throw new Error(`Duplicate benchmark trial identity for harness '${trial.harness}' and arm '${protocolKey(trial)}'.`);
+    identities.add(identity);
+  }
   const challengerArms = new Map(trials.filter((trial) => trial.harness === challenger).map((trial) => [protocolKey(trial), trial]));
   const incumbentArms = new Map(trials.filter((trial) => trial.harness === incumbent).map((trial) => [protocolKey(trial), trial]));
   const keys = [...challengerArms.keys()].filter((key) => incumbentArms.has(key));
