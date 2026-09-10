@@ -35,6 +35,7 @@ import { routeCapability } from "../core/capability-router.js";
 import { allocateNextResearch } from "../core/allocation.js";
 import { rankPriorities } from "../core/scheduler.js";
 import { evaluateValidationAcceptance } from "../core/validation-engine.js";
+import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "../core/execution-stages.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -814,7 +815,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (commit.exitCode !== 0) { store.close(); throw new Error(`Cannot create manifest: ${commit.stderr || commit.stdout}`); }
     const id = `exp_${Date.now()}_${hypothesis.id.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
     const manifest = createExperimentManifest({ id, hypothesisId: hypothesis.id, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: config.experimentExecutor, configPatch: { estimatorPath: candidateEstimatorPath(hypothesis.payload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
-    store.saveExperiment({ id, payload: { ...manifest, status: "proposed" } });
+    store.saveExperiment({ id, payload: { ...manifest, status: "proposed", executionPlan: createExecutionPlan(manifest) } });
     store.appendEvent("experiment.priority.selected", { experimentId: id, hypothesisId: hypothesis.id, priority: ranked[0].priority, score: ranked[0] });
     store.close();
     return { id, text: `\n\nExperiment manifest proposed\nPriority: ${ranked[0].priority.toFixed(4)} (${ranked[0].numerator.toFixed(4)} value / ${ranked[0].denominator.toFixed(4)} cost)\n${manifestSummary(manifest)}\nNext: /experiment show ${id}` };
@@ -838,10 +839,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const entry = store.experiments().find((experiment) => experiment.id === id);
     if (!entry) { store.close(); throw new Error(`Experiment not found: ${id}`); }
     const manifest = ExperimentManifestSchema.parse(entry.payload);
+    let executionPlan: ExecutionStage[] = Array.isArray((entry.payload as { executionPlan?: unknown }).executionPlan)
+      ? (entry.payload as { executionPlan: ExecutionStage[] }).executionPlan
+      : createExecutionPlan(manifest);
     const adapter = activeAdapter();
     const hypothesis = store.hypotheses().find((candidate) => candidate.id === manifest.hypothesisId);
     const entryPayload = entry.payload as Record<string, unknown>;
-    store.saveExperiment({ id, payload: { ...entryPayload, status: "running" } });
+    store.saveExperiment({ id, payload: { ...entryPayload, status: "running", executionPlan } });
     store.close();
     setProgress(`Experiment ${id} · creating isolated worktree...`);
     const worktree = await ensureWorktree(root, root, id);
@@ -855,10 +859,25 @@ export function App({ root }: { root: string }): React.JSX.Element {
         context: { manifest, hypothesis: hypothesis?.payload ?? null, worktree: experimentCwd },
       }, { provider: config.provider, model: config.model, cwd: worktree, reasoningEffort: config.reasoningEffort, sandbox: "workspace-write", onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, undefined, setProgress, registerProcess);
       activeSteer.current = null;
+      executionPlan = advanceExecutionStage(executionPlan, "smoke", "completed");
+      const smokeStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      smokeStore.appendEvent("experiment.stage.smoke.completed", { experimentId: id });
+      smokeStore.close();
     }
     const command = candidateExperimentCommand(adapter, hypothesis?.payload);
     const candidateEstimator = (manifest.change.configPatch as { estimatorPath?: unknown }).estimatorPath;
     const isCandidateEvaluation = typeof candidateEstimator === "string" && candidateEstimator !== adapter.config.evaluator.estimatorPath;
+    const contract = validateExecutionContract(manifest, experimentCwd, command);
+    const contractStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    contractStore.appendEvent(contract.valid ? "experiment.stage.feasibility.completed" : "experiment.stage.feasibility.failed", { experimentId: id, reasons: contract.reasons, command, cwd: experimentCwd });
+    contractStore.close();
+    executionPlan = advanceExecutionStage(executionPlan, "feasibility", contract.valid ? "completed" : "failed");
+    if (!contract.valid) throw new Error(`Experiment feasibility check failed:\n${contract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
+    if (config.provider !== "codex") executionPlan = advanceExecutionStage(executionPlan, "smoke", "skipped");
+    // Generic competition commands do not expose a safe reduced-data contract
+    // yet; record that honestly instead of pretending the full command was a
+    // successive-halving stage.
+    executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", "skipped");
     setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
     const executor = executorFor(manifest.resources.executor, root);
     let evaluatorOutput: { stdout: string; stderr: string; exitCode: number } | undefined;
@@ -878,6 +897,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       attempt += 1;
       result = await executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name);
     }
+    executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
     activeProcess.current = null;
     const evaluatorCommand = isCandidateEvaluation ? command : adapter.config.evaluator.command;
     const sameCommand = evaluatorCommand.length === command.length && evaluatorCommand.every((part, index) => part === command[index]);
@@ -932,7 +952,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     for (const [name, path] of Object.entries(recordedResult.artifacts)) {
       resultStore.saveArtifact({ id: `${result.runId}-${name}`, runId: result.runId, name, path, checksum: sha256File(path) });
     }
-    resultStore.saveExperiment({ id, payload: { ...entryPayload, status: recordedResult.status === "completed" ? "completed" : "failed", runId: result.runId, worktreePath: experimentCwd } });
+    resultStore.saveExperiment({ id, payload: { ...entryPayload, status: recordedResult.status === "completed" ? "completed" : "failed", runId: result.runId, worktreePath: experimentCwd, executionPlan } });
     const trajectoryEvents: TrajectoryEvent[] = [
       { id: `${result.runId}-process`, kind: "process", payload: { status: recordedResult.status, exitCode: recordedResult.exitCode, failureClass: recordedResult.failureClass ?? null } },
       ...recoveryEvents,

@@ -27,6 +27,7 @@ import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
 import { createExperimentManifest, createReplicationManifest } from "../dist/core/experiment-manifest.js";
 import { estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.js";
+import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { evaluateTrajectory, capabilityGaps } from "../dist/core/trajectories.js";
 import { routeCapability } from "../dist/core/capability-router.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
@@ -139,6 +140,16 @@ test("external scores produce conservative validation split beliefs", () => {
   assert.equal(report.recommendedSplit, "group");
   assert.ok(report.splits.find((entry) => entry.split === "group").shrunkCorrelation < 1);
   assert.match(report.warning, /few external/i);
+});
+
+test("execution stages reject invalid contracts before expensive work", () => {
+  const manifest = { acceptance: { requireReplication: true }, resources: { timeoutMinutes: 10 }, evaluation: { requiredArtifacts: ["metrics.json", "predictions.json"] } };
+  const plan = createExecutionPlan(manifest);
+  assert.equal(nextExecutionStage(plan).id, "feasibility");
+  assert.equal(validateExecutionContract(manifest, "/tmp/evidra-worktree", ["python", "run.py"]).valid, true);
+  assert.equal(validateExecutionContract({ ...manifest, evaluation: { requiredArtifacts: ["../secret.txt"] } }, "/tmp/evidra-worktree", ["python", "run.py"]).valid, false);
+  const progressed = advanceExecutionStage(plan, "feasibility", "completed");
+  assert.equal(nextExecutionStage(progressed).id, "smoke");
 });
 
 test("workspace root discovery keeps nested CLI invocations on the project state", () => {
