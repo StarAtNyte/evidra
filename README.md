@@ -337,7 +337,7 @@ Long campaigns also receive a bounded durable-memory snapshot on every cycle. It
 
 Autonomous campaigns include a stagnation guard: three identical unresolved active decisions pause the campaign for review and persist the decision signature. A new hypothesis, execution, replication, phase transition, or explicit resume can continue the work; Evidra does not silently spend the remaining budget repeating the same blocked action.
 
-Phase advancement is evidence-gated. A model cannot advance orientation, baseline, auditing, validation, implementation, evaluation, replication, or promotion by returning `goalStatus: met` alone; the controller checks the corresponding durable events and gates. Challenge mode requires a parsed primary evaluator baseline, while general research mode requires a durable reference observation. Otherwise Evidra records `research.phase_gate.rejected` and keeps the phase active.
+Phase advancement is evidence-gated. A model cannot advance orientation, baseline, auditing, validation, implementation, evaluation, replication, or promotion by returning `goalStatus: met` alone; the controller checks the corresponding durable events and gates. Challenge mode requires a parsed primary evaluator baseline, general research mode requires a durable reference observation, and evaluation requires a finite primary experiment metric. Otherwise Evidra records `research.phase_gate.rejected` and keeps the phase active.
 
 ## Experiments and permissions
 

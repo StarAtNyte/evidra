@@ -83,7 +83,15 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
     case "validation": if (!has("validation.policy.created")) missing.push("versioned validation policy"); break;
     case "hypothesis": if ((evidence.hypotheses + (evidence.candidateHypotheses ?? 0)) < 1) missing.push("durable hypothesis"); if (evidence.experiments < 1 && !has("experiment.created")) missing.push("experiment manifest"); break;
     case "implementation": if (!has("experiment.stage.smoke.completed") && !has("experiment.stage.full_validation.completed")) missing.push("completed implementation or smoke stage"); break;
-    case "evaluation": if (!has("experiment.stage.full_validation.completed") || !has("run.completed")) missing.push("completed evaluated run"); break;
+    case "evaluation": {
+      const validated = payloads("experiment.stage.full_validation.completed").some((payload) => {
+        const value = payload as { exitCode?: unknown; metric?: unknown };
+        return (value.exitCode === undefined || value.exitCode === 0) && typeof value.metric === "number" && Number.isFinite(value.metric);
+      });
+      if (!validated) missing.push("completed evaluated run with primary metric");
+      else if (!has("run.completed")) missing.push("completed evaluated run");
+      break;
+    }
     case "replication": if (!has("replication.manifest.created") || evidence.runs < 2) missing.push("independent replication run"); break;
     case "promotion": if (!payloads("experiment.gates.updated").some((payload) => { const value = payload as { leakageAuditPassed?: unknown; reviewerApproved?: unknown }; return value.leakageAuditPassed === true && value.reviewerApproved === true; })) missing.push("approved leakage and reviewer gates"); break;
   }

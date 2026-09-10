@@ -407,6 +407,22 @@ test("research and challenge phase machines remain isolated in one durable proje
   assert.equal(activePhaseGoal([...completedResearch, ...challenge], "challenge")?.id, challenge[0].id);
 });
 
+test("evaluation phase requires a measured primary metric", () => {
+  const goal = definePhaseGoals("test", "challenge").find((entry) => entry.phase === "evaluation");
+  const missing = evaluatePhaseGoalEvidence(goal, {
+    eventTypes: ["experiment.stage.full_validation.completed", "run.completed"],
+    eventPayloads: [{ type: "experiment.stage.full_validation.completed", payload: { exitCode: 0, metric: null } }, { type: "run.completed", payload: {} }],
+    hypotheses: 1, experiments: 1, runs: 1, artifacts: 1,
+  });
+  assert.deepEqual(missing.missing, ["completed evaluated run with primary metric"]);
+  const complete = evaluatePhaseGoalEvidence(goal, {
+    eventTypes: ["experiment.stage.full_validation.completed", "run.completed"],
+    eventPayloads: [{ type: "experiment.stage.full_validation.completed", payload: { exitCode: 0, metric: 0.81 } }, { type: "run.completed", payload: {} }],
+    hypotheses: 1, experiments: 1, runs: 1, artifacts: 1,
+  });
+  assert.equal(complete.met, true);
+});
+
 test("project-local competition manifests replace hardcoded adapters", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-competition-"));
   try {
