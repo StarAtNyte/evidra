@@ -97,6 +97,11 @@ function commandArgs(value: unknown): string[] {
 
 export async function executeResearchTool(call: ResearchToolCall, context: ResearchToolContext): Promise<ResearchToolResult> {
   try {
+    const spec = RESEARCH_TOOLS.find((tool) => tool.name === call.name);
+    if (!spec) throw new Error(`Unknown research tool: ${call.name}`);
+    if (context.autonomy === "safe" && !spec.readOnly) {
+      throw new Error(`SAFE mode permits inspection tools only; '${call.name}' requires fast or yolo autonomy.`);
+    }
     const args = call.arguments ?? {};
     let output: unknown;
     switch (call.name) {

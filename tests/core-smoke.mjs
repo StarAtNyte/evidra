@@ -937,6 +937,11 @@ test("research tool registry exposes safe workspace tools", async () => {
     rmSync(outside, { force: true });
     const denied = await executeResearchTool({ name: "shell.exec", arguments: { command: ["touch", "blocked.txt"] } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(denied.ok, false);
+    assert.match(denied.error, /SAFE mode/);
+    const reportDenied = await executeResearchTool({ name: "report.generate", arguments: { kind: "research" } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(reportDenied.ok, false);
+    assert.match(reportDenied.error, /inspection tools only/);
+    assert.equal(existsSync(join(root, "reports")), false);
     assert(RESEARCH_TOOLS.some((tool) => tool.name === "source.retrieve"));
     const eventStore = new ResearchStore(db);
     const events = eventStore.recentEvents(10).map((event) => event.type);
