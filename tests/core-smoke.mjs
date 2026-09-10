@@ -64,6 +64,15 @@ test("durable research state and queue survive store reopen", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("critic revision is not recorded as evidence-consistent", () => {
+  const quality = evaluateTrajectory([
+    { id: "evaluator", kind: "evaluator", payload: { evidenceConsistent: false, criticVerdict: "revise" } },
+    { id: "terminal", kind: "terminal", payload: { status: "completed", goalAttained: false } },
+  ]);
+  assert.equal(quality.evidenceConsistency.verdict, "FAIL");
+  assert.equal(quality.overall, "FAIL");
+});
+
 test("dynamic research sources refresh after their freshness window", () => {
   const now = Date.parse("2026-01-01T12:00:00.000Z");
   assert.equal(sourceIsFresh({ payload: { retrievedAt: "2026-01-01T10:00:00.000Z" } }, DEFAULT_SOURCE_REFRESH_MS, now), true);

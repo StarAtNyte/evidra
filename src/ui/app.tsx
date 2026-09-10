@@ -833,7 +833,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const researchTrajectoryEvents: TrajectoryEvent[] = [
       { id: `research-${Date.now()}-observation`, kind: "process", payload: { status: "completed", observationKeys: Object.keys(observation) } },
       ...laneReports.filter((lane) => lane.status === "failed").map((lane, index) => ({ id: `research-${Date.now()}-lane-${index}`, kind: "process" as const, payload: { status: "failed", error: lane.error ?? `${lane.role} failed` } })),
-      { id: `research-${Date.now()}-evaluator`, kind: "evaluator", payload: { evidenceConsistent: Boolean(criticReview && criticReview.verdict !== "reject"), criticVerdict: criticReview?.verdict ?? "missing" } },
+      { id: `research-${Date.now()}-evaluator`, kind: "evaluator", payload: { evidenceConsistent: criticReview?.verdict === "proceed", criticVerdict: criticReview?.verdict ?? "missing" } },
       { id: `research-${Date.now()}-terminal`, kind: "terminal", payload: { status: "completed", goalStatus: decision.goalStatus, goalAttained: decision.goalStatus === "met" || decision.decision === "stop" } },
     ];
     const researchQuality = evaluateTrajectory(researchTrajectoryEvents);
