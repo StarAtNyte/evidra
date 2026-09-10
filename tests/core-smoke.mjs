@@ -63,6 +63,7 @@ import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "../dist/core/promotion-learning.js";
 import { captureProtectedFiles, changedProtectedFiles } from "../dist/core/integrity.js";
 import { assessHypothesisQuality } from "../dist/core/hypothesis-quality.js";
+import { ResearchDecisionSchema } from "../dist/core/types.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
 
@@ -1579,4 +1580,18 @@ test("validation acceptance keeps headless promotion gates explicit", () => {
   assert.equal(acceptance.gates.statisticalConfidence, true);
   assert.equal(acceptance.gates.leakageAudit, false);
   assert.equal(acceptance.accepted, false);
+});
+
+test("research decisions support non-metric outcomes without fabricated GPU estimates", () => {
+  const decision = ResearchDecisionSchema.parse({
+    decision: "propose",
+    bottleneck: "proof validation",
+    rationale: "The proof needs a checker.",
+    hypotheses: [{ title: "formalize invariant", outcomeType: "proof", expectedOutcome: "Lean checker accepts the invariant", mechanism: "A machine-checked invariant closes the gap.", proposedChange: "Add a Lean lemma and compile it.", falsificationTest: "The checker rejects the lemma or a counterexample is found." }],
+    selectedHypothesis: null,
+    nextAction: "Run the proof checker.",
+  });
+  assert.equal(decision.hypotheses[0].outcomeType, "proof");
+  assert.equal(decision.hypotheses[0].computeCostGpuHours, 0);
+  assert.equal(decision.hypotheses[0].expectedMetricDelta.median, 0);
 });

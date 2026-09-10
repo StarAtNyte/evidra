@@ -73,15 +73,17 @@ export type Hypothesis = z.infer<typeof HypothesisSchema>;
 export const ResearchHypothesisSchema = z.object({
   title: z.string().min(1),
   formulationFamily: z.string().min(1).max(80).default("unspecified"),
+  outcomeType: z.enum(["metric", "artifact", "proof", "behavior", "system", "other"]).default("metric"),
+  expectedOutcome: z.string().min(1).optional(),
   mechanism: z.string().min(1),
-  evidence: z.array(z.string()),
+  evidence: z.array(z.string()).default([]),
   proposedChange: z.string().min(1),
   falsificationTest: z.string().min(1),
-  expectedMetricDelta: z.object({ low: z.number(), median: z.number(), high: z.number() }),
-  computeCostGpuHours: z.number().nonnegative(),
-  implementationRisk: z.enum(["low", "medium", "high"]),
-  leakageRisk: z.enum(["low", "medium", "high"]),
-  dependencies: z.array(z.string()),
+  expectedMetricDelta: z.object({ low: z.number(), median: z.number(), high: z.number() }).default({ low: 0, median: 0, high: 0 }),
+  computeCostGpuHours: z.number().nonnegative().default(0),
+  implementationRisk: z.enum(["low", "medium", "high"]).default("medium"),
+  leakageRisk: z.enum(["low", "medium", "high"]).default("low"),
+  dependencies: z.array(z.string()).default([]),
 });
 
 export const ResearchDecisionSchema = z.object({

@@ -103,6 +103,16 @@ was altered.
 
 Source: [DeltaML-Bench](https://arxiv.org/abs/2608.19653).
 
+## General research outcomes
+
+The decision schema now separates the outcome type from a scalar metric. A
+hypothesis may target a proof, artifact, behavior, system property, or another
+explicitly described outcome, with `expectedOutcome` carrying the success
+criterion. Numeric metric fields remain available and default safely for legacy
+competition manifests. This keeps the same researcher/engineer/verifier loop
+usable for formal mathematics, scientific computing, and repository
+investigations rather than forcing every task into leaderboard terminology.
+
 ## Research taste before compute
 
 Research-level benchmarks emphasize that useful agents must make judgment calls
