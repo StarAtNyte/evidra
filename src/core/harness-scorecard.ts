@@ -26,7 +26,7 @@ export interface HarnessTrial {
 
 export interface BenchmarkProtocolIssue {
   key: string;
-  field: "task" | "arm" | "seed" | "model" | "budgetMinutes" | "direction" | "taskWorstMetric" | "taskBestMetric";
+  field: "task" | "arm" | "seed" | "model" | "budgetMinutes" | "direction" | "baselineMetric" | "taskWorstMetric" | "taskBestMetric";
   values: string[];
   message: string;
 }
@@ -88,6 +88,7 @@ export function validateBenchmarkProtocol(trials: HarnessTrial[]): BenchmarkProt
       ["model", (trial) => trial.model ?? "<missing>"],
       ["budgetMinutes", (trial) => trial.budgetMinutes === undefined ? "<missing>" : String(trial.budgetMinutes)],
       ["direction", (trial) => trial.direction],
+      ["baselineMetric", (trial) => Number.isFinite(trial.baselineMetric) ? String(trial.baselineMetric) : "<invalid>"],
       ["taskWorstMetric", (trial) => trial.taskWorstMetric === undefined ? "<missing>" : String(trial.taskWorstMetric)],
       ["taskBestMetric", (trial) => trial.taskBestMetric === undefined ? "<missing>" : String(trial.taskBestMetric)],
     ];

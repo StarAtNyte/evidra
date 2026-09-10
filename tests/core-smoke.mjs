@@ -1685,6 +1685,13 @@ test("benchmark protocol rejects unmatched arms before a competitive claim", () 
   assert.equal(mismatched.valid, false);
   assert.ok(mismatched.issues.some((issue) => issue.field === "model"));
 
+  const differentBaseline = validateBenchmarkProtocol([
+    { harness: "evidra", ...base },
+    { harness: "other", ...base, baselineMetric: 0.45 },
+  ]);
+  assert.equal(differentBaseline.valid, false);
+  assert.ok(differentBaseline.issues.some((issue) => issue.field === "baselineMetric"));
+
   const incomplete = validateBenchmarkProtocol([{ harness: "evidra", ...base, model: undefined }]);
   assert.equal(incomplete.complete, false);
   assert.equal(incomplete.valid, false);

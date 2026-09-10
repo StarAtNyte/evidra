@@ -34,7 +34,8 @@ evidra benchmark export --out evidra-trials.json
 
 `benchmark validate` is the required preflight for a competitive claim. Each
 trial must declare a task arm, seed, model, and budget; every harness must be
-present on every matched arm, with the same metric direction. Historical trial
+present on every matched arm, with the same metric direction and baseline
+metric. Historical trial
 exports can still be scored for diagnostics, but incomplete or mismatched files
 are explicitly marked rather than treated as evidence that Evidra won.
 
