@@ -122,7 +122,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"]],
   "/limits": [["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Switch to local Qwen automatically"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute modal", "Run experiments on Modal"], ["/compute budget", "Show campaign usage"]],
-  "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission record", "Record an external score"]],
+  "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/resume": [["/resume", "Resume the latest saved session"], ["/resume ", "Resume a selected session"]],
@@ -1812,7 +1812,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Evidra doctor\n${checks.map((check) => `  ${check}`).join("\n")}`);
       return;
     }
-    if (request === "/submission" || request === "/submission status" || request.startsWith("/submission prepare") || request.startsWith("/submission validate") || request.startsWith("/submission approve") || request.startsWith("/submission submit") || request.startsWith("/submission record")) {
+    if (request === "/submission" || request === "/submission status" || request === "/submission distribution" || request.startsWith("/submission prepare") || request.startsWith("/submission validate") || request.startsWith("/submission approve") || request.startsWith("/submission submit") || request.startsWith("/submission record")) {
       const parts = request.split(/\s+/);
       const action = parts[1] ?? "status";
       const submissionsRoot = join(root, ".sota", "submissions");
@@ -1882,18 +1882,36 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const bundleId = parts[2];
         const score = Number(parts[3]);
         const platform = parts[4] ?? "manual";
-        if (!bundleId || !Number.isFinite(score)) { append("assistant", "Usage: /submission record <bundle-id> <public-score> [platform]"); return; }
+        let validationScores: Record<string, number> = {};
+        if (parts[5]) {
+          try {
+            const parsed = JSON.parse(parts[5]) as Record<string, unknown>;
+            validationScores = Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value === "number" && Number.isFinite(value)) as Array<[string, number]>);
+          } catch { append("assistant", "Validation scores must be compact JSON, e.g. {\"group\":0.81,\"temporal\":0.79}"); return; }
+        }
+        if (!bundleId || !Number.isFinite(score)) { append("assistant", "Usage: /submission record <bundle-id> <public-score> [platform] [split-json]"); return; }
         const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
         const entry = store.submissions().find((candidate) => candidate.id === bundleId);
         if (!entry) { store.close(); append("assistant", `Submission bundle ${bundleId} is not registered.`); return; }
         const report = validateSubmissionBundle(entry.path);
         if (!report.valid) { store.close(); append("assistant", "Bundle is not valid; score was not recorded."); return; }
         const recordedAt = new Date().toISOString();
-        store.updateSubmissionStatus(bundleId, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: score, platform, recordedAt });
+        store.updateSubmissionStatus(bundleId, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: score, validationScores, platform, recordedAt });
         store.saveClaim({ id: `claim_external_score_${bundleId}_${Date.now()}`, payload: { statement: `External ${platform} score for ${bundleId}: ${score}`, scope: entry.experimentId, confidence: 1, sourceType: "external_score", sourceId: bundleId, status: "active", score, platform, recordedAt } });
         store.appendEvent("submission.score.recorded", { id: bundleId, score, platform, recordedAt });
         store.close();
         append("assistant", `Recorded ${platform} score ${score} for ${bundleId}.`);
+        return;
+      }
+      if (action === "distribution") {
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        const observations = store.submissions()
+          .map((entry) => entry.payload as { publicScore?: unknown; validationScores?: unknown })
+          .filter((payload) => typeof payload.publicScore === "number" && payload.validationScores && typeof payload.validationScores === "object")
+          .map((payload, index) => ({ id: `submission-${index}`, externalScore: payload.publicScore as number, validationScores: payload.validationScores as Record<string, number> }));
+        store.close();
+        const { estimateDistributionBeliefs } = await import("../core/distribution-beliefs.js");
+        append("assistant", JSON.stringify(estimateDistributionBeliefs(observations), null, 2));
         return;
       }
     }

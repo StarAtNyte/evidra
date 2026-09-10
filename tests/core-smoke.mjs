@@ -26,6 +26,7 @@ import { submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
 import { createExperimentManifest, createReplicationManifest } from "../dist/core/experiment-manifest.js";
+import { estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.js";
 import { evaluateTrajectory, capabilityGaps } from "../dist/core/trajectories.js";
 import { routeCapability } from "../dist/core/capability-router.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
@@ -130,6 +131,14 @@ test("multi-split validation rejects a regression hidden by the aggregate", () =
   assert.equal(result.accepted, false);
   assert.equal(result.worstNormalizedDelta, -0.010000000000000009);
   assert.match(result.reasons[0], /temporal/);
+});
+
+test("external scores produce conservative validation split beliefs", () => {
+  const observations = [0, 1, 2, 3].map((index) => ({ id: String(index), externalScore: index, validationScores: { group: index, temporal: 3 - index } }));
+  const report = estimateDistributionBeliefs(observations);
+  assert.equal(report.recommendedSplit, "group");
+  assert.ok(report.splits.find((entry) => entry.split === "group").shrunkCorrelation < 1);
+  assert.match(report.warning, /few external/i);
 });
 
 test("workspace root discovery keeps nested CLI invocations on the project state", () => {

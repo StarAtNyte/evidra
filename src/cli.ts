@@ -10,6 +10,7 @@ import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "./co
 import { loadCompetitionAdapter } from "./competitions/adapters.js";
 import { auditData } from "./core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "./core/validation-policy.js";
+import { estimateDistributionBeliefs, type ExternalValidationObservation } from "./core/distribution-beliefs.js";
 import { retrieveSource, sourceClaims, sourceSearchText } from "./core/sources.js";
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
 import { submitApprovedBundle } from "./core/submission-adapters.js";
@@ -277,7 +278,7 @@ submission.command("submit").argument("<bundle>").option("--message <message>", 
     console.log(`Submitted ${bundle} via ${attempt.receipt.platform}\n${attempt.receipt.stdout.trim()}`);
   } finally { store.close(); }
 });
-submission.command("record").argument("<bundle>").requiredOption("--public-score <score>", "score returned by the competition platform").option("--platform <name>", "platform or evaluation source", "manual").action((bundle: string, options: { publicScore: string; platform: string }) => {
+submission.command("record").argument("<bundle>").requiredOption("--public-score <score>", "score returned by the competition platform").option("--platform <name>", "platform or evaluation source", "manual").option("--validation <json>", "local split scores as JSON").action((bundle: string, options: { publicScore: string; platform: string; validation?: string }) => {
   const score = Number(options.publicScore);
   if (!Number.isFinite(score)) throw new Error("Public score must be a finite number.");
   const store = new ResearchStore(statePath);
@@ -286,11 +287,25 @@ submission.command("record").argument("<bundle>").requiredOption("--public-score
   const validation = validateSubmissionBundle(entry.path);
   if (!validation.valid) { store.close(); throw new Error(`Submission bundle is not valid; score was not recorded.`); }
   const recordedAt = new Date().toISOString();
-  store.updateSubmissionStatus(bundle, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: score, platform: options.platform, recordedAt });
+  let validationScores: Record<string, number> = {};
+  if (options.validation) {
+    const parsed = JSON.parse(options.validation) as Record<string, unknown>;
+    validationScores = Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value === "number" && Number.isFinite(value)) as Array<[string, number]>);
+  }
+  store.updateSubmissionStatus(bundle, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: score, validationScores, platform: options.platform, recordedAt });
   store.saveClaim({ id: `claim_external_score_${bundle}_${Date.now()}`, payload: { statement: `External ${options.platform} score for ${bundle}: ${score}`, scope: entry.experimentId, confidence: 1, sourceType: "external_score", sourceId: bundle, status: "active", score, platform: options.platform, recordedAt } });
   store.appendEvent("submission.score.recorded", { id: bundle, score, platform: options.platform, recordedAt });
   store.close();
   console.log(`Recorded ${options.platform} score ${score} for ${bundle}.`);
+});
+submission.command("distribution").description("Estimate which local validation split tracks external scores").action(() => {
+  const store = new ResearchStore(statePath);
+  const observations: ExternalValidationObservation[] = store.submissions()
+    .map((entry) => entry.payload as { publicScore?: unknown; validationScores?: unknown })
+    .filter((payload) => typeof payload.publicScore === "number" && payload.validationScores && typeof payload.validationScores === "object")
+    .map((payload, index) => ({ id: `submission-${index}`, externalScore: payload.publicScore as number, validationScores: payload.validationScores as Record<string, number> }));
+  store.close();
+  console.log(JSON.stringify(estimateDistributionBeliefs(observations), null, 2));
 });
 program.addCommand(submission);
 
