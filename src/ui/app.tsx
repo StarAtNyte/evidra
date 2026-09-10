@@ -691,10 +691,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
       duplicates: consistencyEvents.filter((event) => event.type === "evidence.claim.duplicate_detected").length,
     };
     const researchMemory = researchMemoryContext(store, 30);
-    const recentFailureCount = store.trajectories(50).filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
+    const recentTrajectories = store.trajectories(50);
+    const recentFailureCount = recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
+    const recentQuality = recentTrajectories.slice(0, 20).map((entry) => {
+      const quality = entry.quality as { overall?: unknown; [key: string]: unknown };
+      const gaps = Object.entries(quality).filter(([key, value]) => key !== "overall" && value && typeof value === "object" && (value as { verdict?: unknown }).verdict && (value as { verdict?: unknown }).verdict !== "PASS").map(([key]) => key);
+      return { overall: typeof quality.overall === "string" ? quality.overall : undefined, gaps };
+    });
     const campaignRemaining = campaign ? Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)) : undefined;
-    const route = routeCapability({ objective, mode, provider: config.provider, autonomy: config.autonomy, recentFailureCount, budgetRemainingMinutes: campaignRemaining, requestedParallel: 3 });
-    store.appendEvent("research.capability_route", { route, objective, recentFailureCount });
+    const route = routeCapability({ objective, mode, provider: config.provider, autonomy: config.autonomy, recentFailureCount, recentQuality, budgetRemainingMinutes: campaignRemaining, requestedParallel: 3 });
+    store.appendEvent("research.capability_route", { route, objective, recentFailureCount, recentQuality, predictedTier: route.tier, servedProvider: config.provider, servedModel: config.model });
     const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts });
     store.appendEvent("research.next_allocation", { allocation, objective });
     const researchSources = latestSourceEntries(store.sources(), 12).map((entry) => {
@@ -855,6 +861,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const researchQuality = evaluateTrajectory(researchTrajectoryEvents);
     const trajectoryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     trajectoryStore.saveTrajectory({ id: `trajectory_research_${Date.now()}`, payload: { objective, observation, laneReports, criticReview, decision }, quality: researchQuality });
+    const researchGaps = Object.entries(researchQuality).filter(([key, value]) => key !== "overall" && (value as { verdict: string }).verdict !== "PASS").map(([key]) => key);
+    trajectoryStore.appendEvent("research.capability_outcome", { objective, predictedTier: route.tier, servedProvider: config.provider, servedModel: config.model, quality: researchQuality.overall, gaps: researchGaps, laneCount: laneReports.length });
     if (researchQuality.overall !== "PASS") trajectoryStore.appendEvent("trajectory.capability_gaps", { trajectoryType: "research", quality: researchQuality, objective });
     trajectoryStore.close();
     const reviewText = criticReview ? `\n\nCritic: ${criticReview.verdict} · confidence ${criticReview.confidence.toFixed(2)}\n${criticReview.summary}${criticReview.objections.length ? `\nObjections:\n${criticReview.objections.map((item) => `- ${item}`).join("\n")}` : ""}${criticReview.requiredChecks.length ? `\nRequired checks:\n${criticReview.requiredChecks.map((item) => `- ${item}`).join("\n")}` : ""}` : "";

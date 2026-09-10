@@ -216,6 +216,18 @@ test("capability routing increases verification pressure after failures", () => 
   assert.equal(difficult.reasoningEffort, "high");
 });
 
+test("capability routing learns from trajectory quality feedback", () => {
+  const baseline = routeCapability({ objective: "inspect a workspace", mode: "research", provider: "local", autonomy: "fast", requestedParallel: 3 });
+  const feedback = routeCapability({ objective: "inspect a workspace", mode: "research", provider: "local", autonomy: "fast", recentQuality: [
+    { overall: "FAIL", gaps: ["toolUse", "errorRecovery"] },
+    { overall: "WARN", gaps: ["toolUse"] },
+  ], requestedParallel: 3 });
+  assert.equal(baseline.tier, "C0");
+  assert.equal(feedback.tier, "C1");
+  assert.ok(feedback.demandScore > baseline.demandScore);
+  assert.ok(feedback.rationale.some((reason) => /trajectory failure/.test(reason)));
+});
+
 test("trajectory deficiencies allocate the next research focus", () => {
   const allocation = allocateNextResearch({ trajectories: [
     { quality: { overall: "FAIL", evidenceConsistency: { verdict: "FAIL" }, errorRecovery: { verdict: "PASS" } } },

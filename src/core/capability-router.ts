@@ -8,6 +8,8 @@ export interface CapabilityRouteInput {
   provider: "codex" | "local";
   autonomy: AutonomyLevel;
   recentFailureCount?: number;
+  /** Quality feedback from prior trajectories; this is the harness feedback signal. */
+  recentQuality?: Array<{ overall?: string; gaps?: string[] }>;
   budgetRemainingMinutes?: number;
   requestedParallel?: number;
 }
@@ -35,6 +37,13 @@ export function routeCapability(input: CapabilityRouteInput): CapabilityRoute {
   if (/(research|investigat|compare|novel|hypothes|theorem|proof|generaliz)/.test(text)) { score += 1; rationale.push("objective requires open-ended investigation"); }
   if (input.objective.length > 500) { score += 1; rationale.push("long objective has multiple constraints"); }
   if ((input.recentFailureCount ?? 0) > 0) { score += Math.min(2, input.recentFailureCount ?? 0); rationale.push(`${input.recentFailureCount} recent failure(s) require recovery-aware routing`); }
+  const quality = input.recentQuality ?? [];
+  const failedQuality = quality.filter((item) => item.overall === "FAIL").length;
+  const warnedQuality = quality.filter((item) => item.overall === "WARN").length;
+  if (failedQuality > 0) { score += Math.min(3, failedQuality); rationale.push(`${failedQuality} prior trajectory failure(s) increase capability demand`); }
+  if (warnedQuality > 0) { score += Math.min(2, warnedQuality); rationale.push(`${warnedQuality} prior trajectory warning(s) require stronger verification`); }
+  const recurringGaps = new Set(quality.flatMap((item) => item.gaps ?? [])).size;
+  if (recurringGaps >= 2) { score += 1; rationale.push(`${recurringGaps} distinct capability gaps were observed in prior trajectories`); }
   if (input.budgetRemainingMinutes !== undefined && input.budgetRemainingMinutes < 10) { score += 1; rationale.push("budget pressure increases the cost of another failed attempt"); }
   if (input.provider === "local") rationale.push("local provider capacity is conservatively bounded");
   const tier: CapabilityTier = score >= 6 ? "C3" : score >= 4 ? "C2" : score >= 2 ? "C1" : "C0";
