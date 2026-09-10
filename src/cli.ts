@@ -74,6 +74,7 @@ import { runBenchmarkArms, type BenchmarkArmSpec } from "./core/benchmark-runner
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, type AirsBenchFamily, type AirsBenchDiscovery, type AirsHarnessTemplate } from "./core/airs-bench.js";
 import { inventoryHarnessComponents, planHarnessInterventions } from "./core/harness-evolution.js";
 import { planHarnessAdaptation } from "./core/harness-adaptation.js";
+import { deriveAdaptiveHarnessPolicy } from "./core/adaptive-harness.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -1331,6 +1332,14 @@ research
       };
       const allocation = allocateNextResearch({ trajectories: recentTrajectories, phase: phaseGoal?.phase, evidenceConflicts, failureClasses });
       store.appendEvent("research.next_allocation", { allocation, objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}` });
+      const adaptiveHarness = deriveAdaptiveHarnessPolicy({
+        quality: recentQuality as Array<{ overall?: string; toolUse?: { verdict?: string }; evidenceConsistency?: { verdict?: string }; errorRecovery?: { verdict?: string }; termination?: { verdict?: string } }>,
+        failureClasses,
+        evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
+        budgetRemainingMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
+        benchmarkInterventions: harnessEvolutionPlan.map((item) => ({ priority: item.priority >= 8 ? "critical" : item.priority >= 5 ? "high" : "normal" })),
+      });
+      store.appendEvent("research.adaptive_harness.policy", { cycle, policy: adaptiveHarness });
       const searchPolicy = rankSearchArms({
         arms: [
           ...DEFAULT_SEARCH_OPERATORS.map((operator, index) => {
@@ -1469,7 +1478,7 @@ research
           // the director commits to an experiment. Keep this bounded: the
           // second pass is only activated for a genuinely uncertain board and
           // only when the selected autonomy level can afford parallel review.
-          if (crossPollination.needsAdversarialReview && laneReports.filter((lane) => lane.status === "completed").length > 1 && autonomy !== "safe") {
+          if ((crossPollination.needsAdversarialReview || adaptiveHarness.peerReview) && laneReports.filter((lane) => lane.status === "completed").length > 1 && autonomy !== "safe") {
             console.log("Research · evidence is contested; independent lanes are peer-reviewing the board...");
             const peerReports = await runResearchLanes(
               `${agentObjective}\n\nPeer-review the supplied lane board. Challenge unsupported agreements, resolve tensions where primary evidence permits, and identify the cheapest discriminating test. Do not repeat workspace inspection unless the board exposes a specific evidence gap.`,
@@ -1520,7 +1529,7 @@ research
           crossPollinationStore.appendEvent("research.cross_pollination.completed", { cycle, board: crossPollination });
           crossPollinationStore.close();
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
           criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
             provider: options.provider,
             model: selectedModel,

@@ -97,6 +97,8 @@ Autonomous fast/yolo campaigns also use a bounded best-of-k portfolio. Hypothese
 
 Harness benchmarking is closed-loop: `benchmark run` records matched outcomes and emits a durable adaptive retest agenda. Losses are classified into reliability, recovery, alignment, efficiency, search, or coverage interventions with falsifiable predictions and acceptance criteria. The next retest preserves task, model, seed, evaluator, metric, and budget, so Evidra is optimized to beat incumbents by improving the harness rather than by changing the comparison.
 
+The controller also derives an adaptive runtime policy from recent trajectory quality and failure classes. Tool-round limits, retry posture, peer review, critic pressure, replication requirements, and search diversity change within bounded limits when the evidence warrants it; they are persisted as `research.adaptive_harness.policy` events. This makes harness evolution operational rather than a prose recommendation.
+
 Evaluator integrity is a hard gate: before an experiment engineer runs, Evidra fingerprints protected evaluator/configuration files and rejects any isolated worktree that changes them. This prevents specification-gaming results from entering the research ledger while still allowing the declared candidate implementation to change.
 
 Final reports also run a deterministic claim audit: measured, literature-only, provisional, unsupported, and conflicted claims are separated, and a report is not marked publishable when unsupported or contradictory claims remain.

@@ -60,6 +60,7 @@ import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { planHarnessAdaptation } from "../dist/core/harness-adaptation.js";
 import { auditClaims } from "../dist/core/claim-audit.js";
+import { deriveAdaptiveHarnessPolicy } from "../dist/core/adaptive-harness.js";
 import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks } from "../dist/core/airs-bench.js";
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
@@ -489,6 +490,26 @@ test("claim audit separates measured, literature, unsupported, and conflicted ev
   assert.equal(report.unsupported, 1);
   assert.equal(report.conflicted, 1);
   assert.equal(report.publishable, false);
+});
+
+test("adaptive harness policy changes routing from measured failure pressure", () => {
+  const clean = deriveAdaptiveHarnessPolicy({ quality: [], budgetRemainingMinutes: 60 });
+  assert.equal(clean.preferDiverseSearch, true);
+  assert.equal(clean.peerReview, false);
+  const pressured = deriveAdaptiveHarnessPolicy({
+    quality: [
+      { overall: "FAIL", toolUse: { verdict: "FAIL" }, evidenceConsistency: { verdict: "WARN" }, errorRecovery: { verdict: "FAIL" }, termination: { verdict: "WARN" } },
+    ],
+    failureClasses: ["invalid_metric", "timeout"],
+    evidenceConflicts: 1,
+    budgetRemainingMinutes: 30,
+    benchmarkInterventions: [{ priority: "critical" }],
+  });
+  assert.equal(pressured.maxToolRounds, 8);
+  assert.equal(pressured.peerReview, true);
+  assert.equal(pressured.recoveryRoute, "repair_first");
+  assert.equal(pressured.requireReplication, true);
+  assert.ok(pressured.reasons.length >= 3);
 });
 
 test("experiment scheduler ranks expected information per cost", () => {

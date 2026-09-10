@@ -58,6 +58,8 @@ import { auditClaims } from "../core/claim-audit.js";
 import { summarizeUsage } from "../core/usage.js";
 import { assessResearchDecisionRubric } from "../core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../core/validation-lock.js";
+import { deriveAdaptiveHarnessPolicy } from "../core/adaptive-harness.js";
+import { synthesizeLaneReports } from "../core/cross-pollination.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -778,6 +780,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
     store.appendEvent("research.capability_route", { route, objective, recentFailureCount, recentQuality, predictedTier: route.tier, servedProvider: config.provider, servedModel: config.model });
     const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts });
     store.appendEvent("research.next_allocation", { allocation, objective });
+    const adaptiveHarness = deriveAdaptiveHarnessPolicy({
+      quality: recentQuality as Array<{ overall?: string; toolUse?: { verdict?: string }; evidenceConsistency?: { verdict?: string }; errorRecovery?: { verdict?: string }; termination?: { verdict?: string } }>,
+      failureClasses: store.runs().slice(0, 20).map((entry) => (entry.payload as { failureClass?: unknown }).failureClass).filter((value): value is string => typeof value === "string"),
+      evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
+      budgetRemainingMinutes: campaignRemaining,
+    });
+    store.appendEvent("research.adaptive_harness.policy", { policy: adaptiveHarness, objective });
     const experienceRecords = recentTrajectories.map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
     const experienceMix = selectCurriculum(experienceRecords);
     const curriculumGuidance = experienceMix.map((stage) => `stage ${stage.stage}: ${stage.trajectoryIds.join(", ") || "none"} (${stage.rationale})`).join("; ");
@@ -837,6 +846,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       });
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
       setProgress("Research 4/4 · director is cross-pollinating lane findings...");
+      const crossPollination = synthesizeLaneReports(laneReports);
       decision = await runResearchDirector(allocatedObjective, {
         mode,
         project,
@@ -850,6 +860,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         evidenceConflicts,
         researchMemory,
         laneReports,
+        crossPollination,
+        adaptiveHarnessPolicy: adaptiveHarness,
         constraints: { no_submission: true, no_file_edits: true },
       }, {
         provider: config.provider,
@@ -858,6 +870,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         limitPolicy: config.limitPolicy,
         cwd: root,
         fallbackLocalModel: config.fallbackModel,
+        maxToolRounds: adaptiveHarness.maxToolRounds,
+        maxToolAttempts: adaptiveHarness.maxToolAttempts,
         onProcess: registerProcess,
         onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); },
         executeTool: (call) => executeResearchTool(call, {
