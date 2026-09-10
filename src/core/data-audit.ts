@@ -14,6 +14,11 @@ export interface DataAuditReport {
   generatedAt: string;
 }
 
+/** Stable identity for the findings in an audit, excluding its generation time. */
+export function dataAuditFingerprint(report: DataAuditReport): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify({ duplicateGroups: report.duplicateGroups, tabularDiagnostics: report.tabularDiagnostics, distributionShift: report.distributionShift, skippedFiles: report.skippedFiles, warnings: report.warnings })).digest("hex")}`;
+}
+
 const IGNORED = new Set([".git", ".venv", "node_modules", ".sota", "__pycache__"]);
 const TABULAR_EXTENSIONS = new Set([".csv", ".tsv", ".jsonl"]);
 

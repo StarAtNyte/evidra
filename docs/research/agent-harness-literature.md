@@ -146,7 +146,9 @@ must observe a successful run for the recorded replication ID.
 
 Data-audit completion follows the same discipline: clean reports pass directly,
 while reports containing duplicates, distribution shifts, or warnings require an
-explicit recorded acceptance reason before the phase can advance.
+explicit recorded acceptance reason before the phase can advance. Acceptance is
+bound to a stable fingerprint of the exact findings, so a later audit cannot
+inherit approval from an older report.
 
 ## Evaluator integrity and specification gaming
 

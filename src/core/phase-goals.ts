@@ -86,9 +86,12 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
       const reports = payloads("data.audit.completed");
       if (!reports.length) missing.push("data audit report");
       else {
-        const latest = reports.at(-1) as { duplicateGroups?: unknown[]; distributionShift?: unknown[]; warnings?: unknown[] };
+        const latest = reports.at(-1) as { fingerprint?: unknown; duplicateGroups?: unknown[]; distributionShift?: unknown[]; warnings?: unknown[] };
         const clean = (latest.duplicateGroups?.length ?? 0) === 0 && (latest.distributionShift?.length ?? 0) === 0 && (latest.warnings?.length ?? 0) === 0;
-        const accepted = payloads("data.audit.accepted").some((payload) => (payload as { accepted?: unknown }).accepted === true);
+        const accepted = payloads("data.audit.accepted").some((payload) => {
+          const value = payload as { accepted?: unknown; fingerprint?: unknown };
+          return value.accepted === true && typeof latest.fingerprint === "string" && value.fingerprint === latest.fingerprint;
+        });
         if (!clean && !accepted) missing.push("critical audit findings resolved or explicitly accepted");
       }
       break;

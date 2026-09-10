@@ -28,7 +28,7 @@ import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
 import { createExperimentManifest, createReplicationManifest } from "../dist/core/experiment-manifest.js";
 import { estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.js";
-import { auditData } from "../dist/core/data-audit.js";
+import { auditData, dataAuditFingerprint } from "../dist/core/data-audit.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { runReducedValidation } from "../dist/core/stage-executor.js";
 import { createToolTraceRecorder, evaluateTrajectory, capabilityGaps, validateTrajectoryStructure } from "../dist/core/trajectories.js";
@@ -970,10 +970,17 @@ test("replication phase requires a successful run for the declared child manifes
 
 test("data-audit phase requires clean findings or explicit acceptance", () => {
   const goal = definePhaseGoals("test", "challenge").find((entry) => entry.phase === "data_audit");
-  const report = { type: "data.audit.completed", payload: { duplicateGroups: [{ files: ["a", "b"] }], distributionShift: [], warnings: [] } };
+  const report = { type: "data.audit.completed", payload: { fingerprint: "fp-1", duplicateGroups: [{ files: ["a", "b"] }], distributionShift: [], warnings: [] } };
   assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [report.type], eventPayloads: [report], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, false);
-  const accepted = { type: "data.audit.accepted", payload: { accepted: true, reason: "duplicates are intentional source mirrors" } };
+  const accepted = { type: "data.audit.accepted", payload: { accepted: true, fingerprint: "fp-1", reason: "duplicates are intentional source mirrors" } };
   assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [report.type, accepted.type], eventPayloads: [report, accepted], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, true);
+  const stale = { ...accepted, payload: { ...accepted.payload, fingerprint: "old-report" } };
+  assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [report.type, stale.type], eventPayloads: [report, stale], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, false);
+});
+
+test("data audit fingerprints are stable across generation timestamps", () => {
+  const base = { root: ".", scannedFiles: 1, totalBytes: 2, duplicateGroups: [], tabularDiagnostics: [], distributionShift: [], skippedFiles: [], warnings: [], generatedAt: "one" };
+  assert.equal(dataAuditFingerprint(base), dataAuditFingerprint({ ...base, generatedAt: "two" }));
 });
 
 test("project-local competition manifests replace hardcoded adapters", () => {

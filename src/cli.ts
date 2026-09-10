@@ -8,7 +8,7 @@ import { createExperimentManifest, createReplicationManifest, manifestSummary } 
 import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalsForMode } from "./core/phase-goals.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "./core/types.js";
 import { loadCompetitionAdapter } from "./competitions/adapters.js";
-import { auditData } from "./core/data-audit.js";
+import { auditData, dataAuditFingerprint } from "./core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "./core/validation-policy.js";
 import { estimateDistributionBeliefs, type ExternalValidationObservation } from "./core/distribution-beliefs.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "./core/execution-stages.js";
@@ -942,9 +942,10 @@ challenge.command("inspect").action(() => console.log(JSON.stringify(activeCompe
 challenge.command("audit").option("--accept <reason>", "explicitly accept unresolved audit findings with a reason").action((options: { accept?: string }) => {
   const adapter = activeCompetition();
   const report = auditData(adapter.workspacePath(root));
+  const fingerprint = dataAuditFingerprint(report);
   const store = new ResearchStore(statePath);
-  store.appendEvent("data.audit.completed", report);
-  if (options.accept?.trim()) store.appendEvent("data.audit.accepted", { accepted: true, reason: options.accept.trim(), findings: { duplicateGroups: report.duplicateGroups.length, distributionShift: report.distributionShift.length, warnings: report.warnings.length } });
+  store.appendEvent("data.audit.completed", { ...report, fingerprint });
+  if (options.accept?.trim()) store.appendEvent("data.audit.accepted", { accepted: true, fingerprint, reason: options.accept.trim(), findings: { duplicateGroups: report.duplicateGroups.length, distributionShift: report.distributionShift.length, warnings: report.warnings.length } });
   store.close();
   console.log(JSON.stringify(report, null, 2));
 });

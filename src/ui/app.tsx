@@ -20,7 +20,7 @@ import { pollSubmissionScore, submitApprovedBundle } from "../core/submission-ad
 import { evaluateSubmissionPolicy } from "../core/submission-policy.js";
 import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "../core/ensemble.js";
 import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
-import { auditData } from "../core/data-audit.js";
+import { auditData, dataAuditFingerprint } from "../core/data-audit.js";
 import { executeResearchTool } from "../core/tools.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { retrieveSource, searchResearchSources, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
@@ -2071,9 +2071,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
       setConfig((current) => ({ ...current, mode: "challenge" }));
       const adapter = activeAdapter();
       const report = auditData(adapter.workspacePath(root));
+      const fingerprint = dataAuditFingerprint(report);
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      store.appendEvent("data.audit.completed", report);
-      if (auditAcceptance?.[1]?.trim()) store.appendEvent("data.audit.accepted", { accepted: true, reason: auditAcceptance[1].trim(), findings: { duplicateGroups: report.duplicateGroups.length, distributionShift: report.distributionShift.length, warnings: report.warnings.length } });
+      store.appendEvent("data.audit.completed", { ...report, fingerprint });
+      if (auditAcceptance?.[1]?.trim()) store.appendEvent("data.audit.accepted", { accepted: true, fingerprint, reason: auditAcceptance[1].trim(), findings: { duplicateGroups: report.duplicateGroups.length, distributionShift: report.distributionShift.length, warnings: report.warnings.length } });
       store.saveClaim({ id: `claim_data_audit_${Date.now()}`, payload: { statement: `Data audit scanned ${report.scannedFiles} files and found ${report.duplicateGroups.length} exact duplicate group(s).`, scope: adapter.id, confidence: 1, sourceType: "observation", sourceId: `data_audit_${Date.now()}`, status: "active", report } });
       store.close();
       append("assistant", `Data audit · ${adapter.id}\nScanned: ${report.scannedFiles} files · ${report.totalBytes} bytes\nDuplicate groups: ${report.duplicateGroups.length}\nDistribution shifts: ${report.distributionShift.length}\nSkipped: ${report.skippedFiles.length}\n${report.warnings.length ? `Warnings:\n${report.warnings.map((warning) => `- ${warning}`).join("\n")}` : "No exact-duplicate or audit-limit warnings."}${auditAcceptance ? `\n\nAccepted with reason: ${auditAcceptance[1].trim()}` : ""}`);
@@ -2095,8 +2096,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (request === "/data audit") {
       const adapter = activeAdapter();
       const report = auditData(adapter.workspacePath(root));
+      const fingerprint = dataAuditFingerprint(report);
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      store.appendEvent("data.audit.completed", report);
+      store.appendEvent("data.audit.completed", { ...report, fingerprint });
       store.saveClaim({ id: `claim_data_audit_${Date.now()}`, payload: { id: `claim_data_audit_${Date.now()}`, statement: `Data audit scanned ${report.scannedFiles} files and found ${report.duplicateGroups.length} exact duplicate group(s).`, scope: adapter.id, confidence: 1, sourceType: "observation", sourceId: `data_audit_${Date.now()}`, status: "active", report } });
       store.close();
       append("assistant", `Data audit · ${adapter.id}\nScanned: ${report.scannedFiles} files · ${report.totalBytes} bytes\nDuplicate groups: ${report.duplicateGroups.length}\nSkipped: ${report.skippedFiles.length}\n${report.warnings.length ? report.warnings.map((warning) => `- ${warning}`).join("\n") : "No audit warnings."}`);
