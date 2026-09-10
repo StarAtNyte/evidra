@@ -1068,10 +1068,31 @@ experiment.command("run")
     const candidateEstimator = (manifest.change.configPatch as { estimatorPath?: unknown }).estimatorPath;
     const isCandidateEvaluation = typeof candidateEstimator === "string" && candidateEstimator !== adapter.config.evaluator.estimatorPath;
     const executor = executorFor(manifest.resources.executor, root);
-    executionPlan = advanceExecutionStage(executionPlan, "smoke", "skipped");
-    const stageStore = new ResearchStore(statePath);
-    stageStore.appendEvent("experiment.stage.smoke.skipped", { experimentId: id, reason: "manifest has no configured smoke command" });
-    stageStore.close();
+    const smokeCommand = adapter.config.execution?.smokeCommand;
+    if (smokeCommand) {
+      const smokeManifest = { ...manifest, evaluation: { ...manifest.evaluation, requiredArtifacts: [] } };
+      const smokeContract = validateExecutionContract(smokeManifest, experimentCwd, smokeCommand);
+      if (!smokeContract.valid) {
+        executionPlan = advanceExecutionStage(executionPlan, "smoke", "failed");
+        const failedStore = new ResearchStore(statePath);
+        failedStore.appendEvent("experiment.stage.smoke.failed", { experimentId: id, reasons: smokeContract.reasons, command: smokeCommand });
+        failedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "failed", executionPlan } });
+        failedStore.close();
+        throw new Error(`Smoke feasibility check failed:\n${smokeContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
+      }
+      const smoke = await runReducedValidation(executor, manifest, experimentCwd, smokeCommand, adapter.config.metric.name);
+      executionPlan = advanceExecutionStage(executionPlan, "smoke", smoke.status === "completed" ? "completed" : "failed");
+      const smokeStore = new ResearchStore(statePath);
+      smokeStore.appendEvent(smoke.status === "completed" ? "experiment.stage.smoke.completed" : "experiment.stage.smoke.failed", { experimentId: id, runId: smoke.runId, metric: smoke.metrics[adapter.config.metric.name] ?? null, exitCode: smoke.exitCode, command: smokeCommand });
+      if (smoke.status !== "completed") smokeStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "failed", executionPlan } });
+      smokeStore.close();
+      if (smoke.status !== "completed") throw new Error(`Smoke validation failed (${smoke.exitCode}): ${smoke.stderr || smoke.stdout}`);
+    } else {
+      executionPlan = advanceExecutionStage(executionPlan, "smoke", "skipped");
+      const stageStore = new ResearchStore(statePath);
+      stageStore.appendEvent("experiment.stage.smoke.skipped", { experimentId: id, reason: "manifest has no configured smoke command" });
+      stageStore.close();
+    }
     const reducedCommand = adapter.config.execution?.reducedValidationCommand;
     if (reducedCommand) {
       const reducedManifest = { ...manifest, evaluation: { ...manifest.evaluation, requiredArtifacts: [] } };

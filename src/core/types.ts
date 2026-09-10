@@ -37,6 +37,7 @@ export const CompetitionConfigSchema = z.object({
     dailyLimit: z.number().int().positive().optional(),
   }).optional(),
   execution: z.object({
+    smokeCommand: z.array(z.string()).min(1).optional(),
     reducedValidationCommand: z.array(z.string()).min(1).optional(),
     requiredArtifacts: z.array(z.string()).default([]),
   }).optional(),

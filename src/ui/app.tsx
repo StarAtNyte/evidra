@@ -984,7 +984,28 @@ export function App({ root }: { root: string }): React.JSX.Element {
     executionPlan = advanceExecutionStage(executionPlan, "feasibility", contract.valid ? "completed" : "failed");
     if (!contract.valid) throw new Error(`Experiment feasibility check failed:\n${contract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
     const executor = executorFor(manifest.resources.executor, root);
-    if (config.provider !== "codex") executionPlan = advanceExecutionStage(executionPlan, "smoke", "skipped");
+    const smokeCommand = adapter.config.execution?.smokeCommand;
+    if (smokeCommand) {
+      setProgress(`Experiment ${id} · running smoke gate...`);
+      const smokeManifest = { ...manifest, evaluation: { ...manifest.evaluation, requiredArtifacts: [] } };
+      const smokeContract = validateExecutionContract(smokeManifest, experimentCwd, smokeCommand);
+      if (!smokeContract.valid) {
+        executionPlan = advanceExecutionStage(executionPlan, "smoke", "failed");
+        const failedStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        failedStore.appendEvent("experiment.stage.smoke.failed", { experimentId: id, reasons: smokeContract.reasons, command: smokeCommand });
+        failedStore.saveExperiment({ id, payload: { ...entryPayload, status: "failed", executionPlan } });
+        failedStore.close();
+        throw new Error(`Smoke feasibility check failed:\n${smokeContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
+      }
+      const smoke = await runReducedValidation(executor, manifest, experimentCwd, smokeCommand, adapter.config.metric.name, registerProcess);
+      activeProcess.current = null;
+      executionPlan = advanceExecutionStage(executionPlan, "smoke", smoke.status === "completed" ? "completed" : "failed");
+      const smokeStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      smokeStore.appendEvent(smoke.status === "completed" ? "experiment.stage.smoke.completed" : "experiment.stage.smoke.failed", { experimentId: id, runId: smoke.runId, metric: smoke.metrics[adapter.config.metric.name] ?? null, exitCode: smoke.exitCode, command: smokeCommand });
+      if (smoke.status !== "completed") smokeStore.saveExperiment({ id, payload: { ...entryPayload, status: "failed", executionPlan } });
+      smokeStore.close();
+      if (smoke.status !== "completed") throw new Error(`Smoke validation failed (${smoke.exitCode}): ${smoke.stderr || smoke.stdout}`);
+    } else if (config.provider !== "codex") executionPlan = advanceExecutionStage(executionPlan, "smoke", "skipped");
     const reducedCommand = adapter.config.execution?.reducedValidationCommand;
     if (reducedCommand) {
       setProgress(`Experiment ${id} · running reduced validation gate...`);
