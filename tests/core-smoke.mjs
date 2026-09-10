@@ -1882,11 +1882,11 @@ test("AIRS protocol generation creates matched task arms with safe template expa
     invalidTasks: 0,
   };
   const protocol = createAirsBenchmarkProtocol(discovery, {
-    templates: [{ harness: "evidra", command: ["./run.sh", "{taskId}", "{taskPath}", "{family}", "{repo}"] }, { harness: "mlgym", command: ["python", "run.py", "{taskId}"] }],
+    templates: [{ harness: "evidra", command: ["./run.sh", "{taskId}", "{taskPath}", "{family}", "{repo}", "{model}", "{seed}", "{budget}"] }, { harness: "mlgym", command: ["python", "run.py", "{taskId}"] }],
     model: "test-model", seed: 7, budgetMinutes: 5, baselineMetric: 0.2,
   });
   assert.equal(protocol.arms.length, 2);
-  assert.deepEqual(protocol.arms[0].command, ["./run.sh", "TaskA", "airsbench/tasks/rad/TaskA", "rad", "/bench/airs"]);
+  assert.deepEqual(protocol.arms[0].command, ["./run.sh", "TaskA", "airsbench/tasks/rad/TaskA", "rad", "/bench/airs", "test-model", "7", "5"]);
   assert.equal(protocol.arms[1].harness, "mlgym");
   assert.equal(protocol.arms[0].taskBestMetric, 1);
   assert.equal(protocol.arms[0].task, "airsbench:rad/TaskA");

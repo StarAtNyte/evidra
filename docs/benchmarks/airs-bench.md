@@ -67,7 +67,8 @@ inventory is the input for a later matched protocol whose agent commands,
 model, seed, and budget are explicitly declared.
 
 Generate that matched protocol with explicit command templates. Templates may
-use `{taskId}`, `{taskPath}`, `{family}`, and `{repo}`:
+use `{taskId}`, `{taskPath}`, `{family}`, `{repo}`, `{model}`, `{seed}`, and
+`{budget}`:
 
 ```bash
 evidra benchmark airs protocol airs-inventory.json \

@@ -113,12 +113,15 @@ function metricFromTaskId(id: string): string | undefined {
   return match?.[1];
 }
 
-function expandTemplate(part: string, task: AirsBenchTask, repository: string): string {
+function expandTemplate(part: string, task: AirsBenchTask, repository: string, options: AirsProtocolOptions): string {
   return part
     .replaceAll("{taskId}", task.id)
     .replaceAll("{taskPath}", task.path)
     .replaceAll("{family}", task.family)
-    .replaceAll("{repo}", repository);
+    .replaceAll("{repo}", repository)
+    .replaceAll("{model}", options.model)
+    .replaceAll("{seed}", String(options.seed))
+    .replaceAll("{budget}", String(options.budgetMinutes));
 }
 
 /**
@@ -147,8 +150,8 @@ export function createAirsBenchmarkProtocol(discovery: AirsBenchDiscovery, optio
         ...(task.estimatedWorstScore !== undefined ? { taskWorstMetric: task.estimatedWorstScore } : {}),
         ...(task.optimalScore !== undefined ? { taskBestMetric: task.optimalScore } : {}),
         metric: task.metric,
-        command: template.command.map((part) => expandTemplate(part, task, discovery.repository)),
-        ...(template.cwd ? { cwd: expandTemplate(template.cwd, task, discovery.repository) } : {}),
+        command: template.command.map((part) => expandTemplate(part, task, discovery.repository, options)),
+        ...(template.cwd ? { cwd: expandTemplate(template.cwd, task, discovery.repository, options) } : {}),
       });
     }
   }
