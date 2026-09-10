@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { compareMetricSeries, compareRuns } from "../dist/core/statistics.js";
+import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../dist/core/statistics.js";
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
@@ -781,6 +781,9 @@ test("validation acceptance requires replicated evidence and safety gates", () =
   assert.equal(blocked.accepted, false);
   const accepted = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
   assert.equal(accepted.accepted, true);
+  const permutationBlocked = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, requirePermutationTest: true });
+  assert.equal(permutationBlocked.gates.permutationConfidence, false);
+  assert.equal(permutationBlocked.accepted, false);
   const subgroupBlocked = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, subgroupDeltas: [0.02, -0.01] });
   assert.equal(subgroupBlocked.gates.subgroupRegression, false);
   assert.equal(subgroupBlocked.accepted, false);
@@ -1725,6 +1728,8 @@ test("paired statistics and recovery are deterministic", () => {
   const comparison = compareMetricSeries([1, 2, 3], [0.8, 1.9, 2.7], true, 500);
   assert.equal(comparison.probabilityImproved, 1);
   assert(comparison.confidenceInterval[1] < 0);
+  assert.equal(pairedPermutationPValue([1, 2, 3], [0.8, 1.9, 2.7], true), 2 / 9);
+  assert(pairedPermutationPValue([1, 2, 3, 4, 5, 6, 7, 8], [0.8, 1.8, 2.8, 3.8, 4.8, 5.8, 6.8, 7.8], true) < 0.05);
   assert.equal(recoveryPlan("dependency").retry, false);
   assert.equal(recoveryPlan("dependency").route, "repair_code");
   assert.equal(recoveryPlan("cuda_oom").route, "reduce_resources");

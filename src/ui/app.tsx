@@ -2462,6 +2462,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
             leakageAuditPassed: false,
             reviewerApproved: false,
             comparisonCount,
+            requirePermutationTest: true,
             subgroupDeltas: RunResultSchema.parse(candidate.payload).subgroupDeltas,
             requiresSubgroupAnalysis: (adapter.config.validation?.secondarySplits.length ?? 0) > 0,
             subgroupAnalysisObserved: RunResultSchema.parse(candidate.payload).subgroupDeltas.length > 0,

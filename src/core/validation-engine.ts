@@ -19,6 +19,8 @@ export interface ValidationAcceptanceInput {
   probabilityThreshold?: number;
   /** Number of candidate comparisons in the current search family/campaign. */
   comparisonCount?: number;
+  /** Production paths can require a paired randomization test in addition to bootstrap evidence. */
+  requirePermutationTest?: boolean;
 }
 
 export interface ValidationAcceptance {
@@ -27,6 +29,7 @@ export interface ValidationAcceptance {
   gates: {
     minimumDelta: boolean;
     statisticalConfidence: boolean;
+    permutationConfidence: boolean;
     replication: boolean;
     subgroupRegression: boolean;
     leakageAudit: boolean;
@@ -74,6 +77,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   const gates = {
     minimumDelta: normalizedDelta !== null && normalizedDelta >= input.minimumDelta,
     statisticalConfidence: comparison.evidence === "replicated" && (comparison.probabilityImproved ?? 0) >= adjustedProbabilityThreshold,
+    permutationConfidence: !input.requirePermutationTest || (comparison.permutationPValue !== undefined && comparison.permutationPValue <= (1 - adjustedProbabilityThreshold)),
     replication: !input.requireReplication || input.independentReplicationObserved === true,
     subgroupRegression: !input.subgroupDeltas?.length || input.subgroupDeltas.every((delta) => delta >= -input.maximumRegressionShift),
     subgroupAnalysis: !input.requiresSubgroupAnalysis || input.subgroupAnalysisObserved === true,
@@ -84,6 +88,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   const reasons: string[] = [];
   if (!gates.minimumDelta) reasons.push(`normalized delta ${normalizedDelta ?? "missing"} is below required ${input.minimumDelta}`);
   if (!gates.statisticalConfidence) reasons.push(`replicated improvement probability ${(comparison.probabilityImproved ?? 0).toFixed(3)} is below family-wise threshold ${adjustedProbabilityThreshold.toFixed(3)} across ${comparisonCount} comparison(s)`);
+  if (!gates.permutationConfidence) reasons.push(`paired sign-permutation p-value ${(comparison.permutationPValue ?? 1).toFixed(4)} exceeds family-wise alpha ${(1 - adjustedProbabilityThreshold).toFixed(4)}`);
   if (!gates.replication) reasons.push("an independently executed child experiment is required");
   if (!gates.subgroupRegression) reasons.push(`worst subgroup delta ${worstSubgroupDelta?.toFixed(6)} exceeds allowed regression ${input.maximumRegressionShift}`);
   if (!gates.subgroupAnalysis) reasons.push("declared secondary splits have no subgroup evidence");

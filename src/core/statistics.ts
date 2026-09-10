@@ -10,6 +10,7 @@ export interface RunComparison {
   direction: "improved" | "regressed" | "unchanged" | "insufficient_data";
   evidence: "scalar_only" | "replicated" | "insufficient_data";
   probabilityImproved?: number;
+  permutationPValue?: number;
   confidenceInterval?: [number, number];
   note: string;
 }
@@ -48,6 +49,32 @@ export function compareMetricSeries(baseline: number[], candidate: number[], low
   return { delta: observed, probabilityImproved: improved / bootstrap.length, confidenceInterval: [quantile(bootstrap, 0.025), quantile(bootstrap, 0.975)], samples: bootstrap.length };
 }
 
+/** Deterministic paired sign-permutation p-value for the one-sided improvement hypothesis. */
+export function pairedPermutationPValue(baseline: number[], candidate: number[], lowerIsBetter = true, samples = 10_000): number {
+  if (baseline.length === 0 || candidate.length === 0 || baseline.length !== candidate.length) throw new Error("Permutation inputs must have matching non-empty cardinality.");
+  const improvements = baseline.map((value, index) => lowerIsBetter ? value - candidate[index] : candidate[index] - value);
+  const observed = improvements.reduce((sum, value) => sum + value, 0) / improvements.length;
+  let favorable = 0;
+  let total = 0;
+  const exact = improvements.length <= 16;
+  const iterations = exact ? 2 ** improvements.length : Math.max(1_000, samples);
+  let state = 0x243f6a88;
+  const random = (): number => {
+    state = (Math.imul(state ^ (state >>> 15), 0x2c1b3c6d) + 0x297a2d39) | 0;
+    return (state >>> 0) / 0x100000000;
+  };
+  for (let mask = 0; mask < iterations; mask += 1) {
+    let mean = 0;
+    for (let index = 0; index < improvements.length; index += 1) {
+      const positive = exact ? (mask & (1 << index)) !== 0 : random() >= 0.5;
+      mean += positive ? improvements[index] : -improvements[index];
+    }
+    if (mean / improvements.length >= observed - 1e-12) favorable += 1;
+    total += 1;
+  }
+  return (favorable + 1) / (total + 1);
+}
+
 export function compareRuns(baseline: RunResult, candidate: RunResult, metric = "final_layer_mse", lowerIsBetter = true): RunComparison {
   const base = baseline.metrics[metric] ?? null;
   const next = candidate.metrics[metric] ?? null;
@@ -61,6 +88,7 @@ export function compareRuns(baseline: RunResult, candidate: RunResult, metric = 
   }
   if (baselineSeries.length > 1 && candidateSeries.length > 1) {
     const series = compareMetricSeries(baselineSeries, candidateSeries, lowerIsBetter);
+    const permutationPValue = pairedPermutationPValue(baselineSeries, candidateSeries, lowerIsBetter);
     const improved = lowerIsBetter ? series.delta < 0 : series.delta > 0;
     return {
       baselineRunId: baseline.runId,
@@ -72,8 +100,9 @@ export function compareRuns(baseline: RunResult, candidate: RunResult, metric = 
       direction: series.delta === 0 ? "unchanged" : improved ? "improved" : "regressed",
       evidence: "replicated",
       probabilityImproved: series.probabilityImproved,
+      permutationPValue,
       confidenceInterval: series.confidenceInterval,
-      note: `Paired bootstrap over ${baselineSeries.length} fold/seed values (${series.samples} resamples).`,
+      note: `Paired bootstrap plus sign-permutation test over ${baselineSeries.length} fold/seed values (${series.samples} bootstrap resamples; p=${permutationPValue.toFixed(4)}).`,
     };
   }
   const delta = next - base;

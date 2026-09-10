@@ -2616,6 +2616,7 @@ experiment.command("run")
           reviewerApproved: gates.reviewerApproved,
           independentReplicationObserved: typeof entryPayload.replicationOf === "string" || typeof manifest.parent === "string",
           comparisonCount,
+          requirePermutationTest: true,
           subgroupDeltas: recorded.subgroupDeltas,
           requiresSubgroupAnalysis: (adapter.config.validation?.secondarySplits.length ?? 0) > 0,
           subgroupAnalysisObserved: recorded.subgroupDeltas.length > 0,
