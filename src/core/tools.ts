@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, realpathSync, lstatSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { auditData } from "./data-audit.js";
 import { guardAutonomousCommand, guardReadOnlyInspection, type AutonomyLevel } from "./permissions.js";
@@ -11,6 +11,7 @@ import { ResearchStore } from "./store.js";
 import type { CompetitionConfig } from "./types.js";
 import { isSensitiveWorkspacePath, redactSecrets } from "./redaction.js";
 import { readValidationPolicyLock } from "./validation-lock.js";
+import { sha256File } from "./evidence.js";
 
 export interface ResearchToolContext {
   root: string;
@@ -67,6 +68,7 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   { name: "source.retrieve", description: "Retrieve, hash, excerpt, and store a research source with extracted claims.", input: { url: "HTTP(S) URL" }, readOnly: true },
   { name: "source.search", description: "Search scholarly works and return ranked candidates for later retrieval.", input: { query: "research question or keywords", limit: "optional result count" }, readOnly: true },
   { name: "data.audit", description: "Audit workspace files for size, duplicates, and suspicious data issues.", input: { path: "optional relative path" }, readOnly: true },
+  { name: "artifact.audit", description: "Audit bounded research artifacts for safe containment, regular-file integrity, size, checksum, and optional JSON validity.", input: { paths: "relative artifact paths array", maxBytes: "optional per-file size limit" }, readOnly: true },
   { name: "validation.generate", description: "Create a versioned validation policy for the active workspace.", input: {}, readOnly: false },
   { name: "report.generate", description: "Write a durable research, challenge, or final report.", input: { kind: "research|challenge|final" }, readOnly: false },
 ];
@@ -178,6 +180,28 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       case "data.audit": {
         const target = typeof args.path === "string" ? inside(context.root, args.path) : context.root;
         output = auditData(target);
+        break;
+      }
+      case "artifact.audit": {
+        const rawPaths = Array.isArray(args.paths) ? args.paths.filter((value): value is string => typeof value === "string" && value.trim().length > 0) : [];
+        if (!rawPaths.length || rawPaths.length > 64) throw new Error("Tool argument 'paths' must contain 1 to 64 relative paths.");
+        const maxBytes = typeof args.maxBytes === "number" ? Math.max(1, Math.min(Math.floor(args.maxBytes), 50_000_000)) : 10_000_000;
+        const artifacts = rawPaths.map((requested) => {
+          const lexicalPath = resolve(realpathSync(context.root), requested);
+          if (existsSync(lexicalPath) && lstatSync(lexicalPath).isSymbolicLink()) return { path: requested, valid: false, reason: "symlink is not an admissible artifact" };
+          const path = inside(context.root, requested);
+          if (!existsSync(path)) return { path: requested, valid: false, reason: "missing" };
+          if (!statSync(path).isFile()) return { path: requested, valid: false, reason: "not a regular file" };
+          const bytes = statSync(path).size;
+          if (bytes > maxBytes) return { path: requested, valid: false, bytes, reason: `exceeds ${maxBytes} byte limit` };
+          const entry: { path: string; valid: boolean; bytes: number; checksum: string; jsonValid?: boolean; reason?: string } = { path: requested, valid: true, bytes, checksum: sha256File(path) };
+          if (/\.json$/i.test(path)) {
+            try { JSON.parse(readFileSync(path, "utf8")); entry.jsonValid = true; }
+            catch { entry.jsonValid = false; entry.valid = false; entry.reason = "invalid JSON"; }
+          }
+          return entry;
+        });
+        output = { valid: artifacts.every((artifact) => artifact.valid), artifacts };
         break;
       }
       case "validation.generate": {

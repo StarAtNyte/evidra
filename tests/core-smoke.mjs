@@ -1172,11 +1172,19 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.equal(files.output.files.includes("notes.txt"), true);
     const search = await executeResearchTool({ name: "workspace.search", arguments: { query: "hypothesis" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(search.ok, true);
+    writeFileSync(join(root, "result.json"), JSON.stringify({ score: 0.9 }));
+    const audited = await executeResearchTool({ name: "artifact.audit", arguments: { paths: ["result.json", "notes.txt"] } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(audited.ok, true);
+    assert.equal(audited.output.valid, true);
+    assert.equal(audited.output.artifacts[0].jsonValid, true);
     const outside = join(tmpdir(), `evidra-outside-${Date.now()}.txt`);
     writeFileSync(outside, "secret outside workspace\n");
     symlinkSync(outside, join(root, "linked.txt"));
     const escaped = await executeResearchTool({ name: "workspace.read", arguments: { path: "linked.txt" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(escaped.ok, false);
+    const symlinkArtifact = await executeResearchTool({ name: "artifact.audit", arguments: { paths: ["linked.txt"] } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(symlinkArtifact.ok, true);
+    assert.equal(symlinkArtifact.output.valid, false);
     rmSync(outside, { force: true });
     const denied = await executeResearchTool({ name: "shell.exec", arguments: { command: ["touch", "blocked.txt"] } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(denied.ok, false);
@@ -1191,6 +1199,7 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.equal(existsSync(join(root, "reports")), false);
     assert(RESEARCH_TOOLS.some((tool) => tool.name === "source.retrieve" && tool.readOnly));
     assert(RESEARCH_TOOLS.some((tool) => tool.name === "source.search" && tool.readOnly));
+    assert(RESEARCH_TOOLS.some((tool) => tool.name === "artifact.audit" && tool.readOnly));
     const eventStore = new ResearchStore(db);
     const events = eventStore.recentEvents(10).map((event) => event.type);
     eventStore.close();

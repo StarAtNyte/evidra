@@ -55,6 +55,12 @@ These commands never authorize external submission. A stopped or interrupted cam
 
 Plain text is ordinary conversation and is handled by the selected provider without repository inspection or experiment execution. Use `/research` or an autonomous loop when you want Evidra to inspect evidence and act.
 
+Research agents also have a bounded `artifact.audit` tool. It accepts up to 64
+workspace-relative paths, rejects symlinks and non-regular files, checks file
+size and SHA-256 integrity, and parses JSON artifacts when applicable. A valid
+audit is an observation; it does not replace an evaluator or independent
+replication.
+
 ## Project and challenge
 
 ```text
