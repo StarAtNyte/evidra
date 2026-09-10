@@ -14,7 +14,8 @@ function failureClass(result: ProcessResult, remote = false): RunResult["failure
   if (/nan|inf loss/.test(text)) return "nan_loss";
   if (/timed out|timeout/.test(text)) return "timeout";
   if (/no such file|file not found|missing data/.test(text)) return "data_missing";
-  if (/modul enotfound|cannot import|dependency/.test(text)) return "dependency";
+  if (/module not found|modul enotfound|cannot import|no module named|dependency/.test(text)) return "dependency";
+  if (/no space left on device|disk quota|enospc|out of disk space/.test(text)) return "disk";
   if (/rate limit|429|usage limit/.test(text)) return "rate_limit";
   if (/auth|unauthorized|forbidden/.test(text)) return "auth";
   if (remote && /modal|connection reset|connection refused|failed to connect|temporarily unavailable|gateway timeout|\b502\b|\b503\b|container.*(failed|crashed)|worker.*(failed|crashed)/.test(text)) return "transient_cloud";
@@ -128,6 +129,20 @@ function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metric
     command: result.command,
     cwd: result.cwd,
     ...(artifactFailure ? { failureClass: "corrupt_artifact" as const } : result.exitCode === 0 ? {} : { failureClass: failureClass(result, remote) }),
+  };
+}
+
+/** Require the declared primary metric after the worker and optional evaluator have both run. */
+export function validateRunMetric(result: RunResult, metricName: string): RunResult {
+  if (result.status !== "completed") return result;
+  const metric = result.metrics[metricName];
+  if (typeof metric === "number" && Number.isFinite(metric)) return result;
+  return {
+    ...result,
+    status: "failed",
+    exitCode: result.exitCode === 0 ? 65 : result.exitCode,
+    failureClass: "invalid_metric",
+    stderr: `${result.stderr ?? ""}${result.stderr ? "\n" : ""}Missing finite declared metric: ${metricName}`,
   };
 }
 

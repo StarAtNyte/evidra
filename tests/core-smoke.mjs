@@ -18,7 +18,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, RESEARCH_TOOLS } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
-import { LocalExecutor, containerCommand, parseMetricOutput, parseModalWorkerResult } from "../dist/core/executors.js";
+import { LocalExecutor, containerCommand, parseMetricOutput, parseModalWorkerResult, validateRunMetric } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
@@ -1005,6 +1005,19 @@ test("experiment executor rejects successful processes with missing declared art
     assert.equal(result.status, "failed");
     assert.equal(result.failureClass, "corrupt_artifact");
     assert.match(result.stderr, /Missing required artifacts: predictions\.json/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("completed workers without a finite declared metric become invalid metric failures", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-invalid-metric-"));
+  try {
+    const manifest = { id: "exp", resources: { executor: "local", timeoutMinutes: 1 } };
+    const result = await new LocalExecutor().run(manifest, root, [process.execPath, "-e", "console.log('training completed')"], undefined, "val_bpb");
+    assert.equal(result.status, "completed");
+    const validated = validateRunMetric(result, "val_bpb");
+    assert.equal(validated.status, "failed");
+    assert.equal(validated.failureClass, "invalid_metric");
+    assert.match(validated.stderr, /Missing finite declared metric: val_bpb/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

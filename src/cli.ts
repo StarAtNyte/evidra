@@ -26,7 +26,7 @@ import { auditExperiment } from "./core/validation.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
-import { executorFor, parseMetricOutput } from "./core/executors.js";
+import { executorFor, parseMetricOutput, validateRunMetric } from "./core/executors.js";
 import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
@@ -1458,6 +1458,7 @@ experiment.command("run")
       const parsed = parseMetricOutput(evaluated.stdout, adapter.config.metric.name);
       result = { ...result, status: evaluated.exitCode === 0 ? "completed" : "failed", exitCode: evaluated.exitCode, metrics: { ...result.metrics, ...parsed.metrics }, metricsByFold: { ...result.metricsByFold, ...parsed.metricsByFold }, stdout: `${result.stdout ?? ""}\n[EVALUATOR]\n${evaluated.stdout}`, stderr: `${result.stderr ?? ""}\n[EVALUATOR]\n${evaluated.stderr}`, ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
     }
+    result = validateRunMetric(result, adapter.config.metric.name);
     executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
     const fullStageStore = new ResearchStore(statePath);
     fullStageStore.appendEvent(result.status === "completed" ? "experiment.stage.full_validation.completed" : "experiment.stage.full_validation.failed", { experimentId: id, runId: result.runId, metric: result.metrics[adapter.config.metric.name] ?? null, exitCode: result.exitCode, attempts: attempt });
