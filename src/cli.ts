@@ -30,6 +30,7 @@ import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { compareRuns } from "./core/statistics.js";
+import { evaluateTrajectory, type TrajectoryEvent } from "./core/trajectories.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
@@ -647,10 +648,11 @@ research
       projectStore.close();
       let decision: Awaited<ReturnType<typeof runResearchDirector>>;
       let criticReview: Awaited<ReturnType<typeof runResearchCritic>> | undefined;
+      let laneReports: Awaited<ReturnType<typeof runResearchLanes>> = [];
       while (true) {
         try {
           console.log("Research · independent lanes are investigating the evidence...");
-          const laneReports = await runResearchLanes(objective, {
+          laneReports = await runResearchLanes(objective, {
             project: activeProject,
             competition: adapter.config,
             observation,
@@ -773,6 +775,16 @@ research
           }
         }
       }
+      const trajectoryStamp = `research-${Date.now()}`;
+      const researchTrajectoryEvents: TrajectoryEvent[] = [
+        { id: `${trajectoryStamp}-observation`, kind: "process", payload: { status: "completed", observationKeys: Object.keys(observation) } },
+        ...laneReports.filter((lane) => lane.status === "failed").map((lane, index) => ({ id: `${trajectoryStamp}-lane-${index}`, kind: "process" as const, payload: { status: "failed", error: lane.error ?? `${lane.role} failed` } })),
+        { id: `${trajectoryStamp}-evaluator`, kind: "evaluator", payload: { evidenceConsistent: Boolean(criticReview && criticReview.verdict !== "reject"), criticVerdict: criticReview?.verdict ?? "missing" } },
+        { id: `${trajectoryStamp}-terminal`, kind: "terminal", payload: { status: "completed", goalStatus: decision.goalStatus, goalAttained: decision.goalStatus === "met" || decision.decision === "stop" } },
+      ];
+      const researchQuality = evaluateTrajectory(researchTrajectoryEvents);
+      decisionStore.saveTrajectory({ id: `trajectory_research_${Date.now()}`, payload: { objective, observation, laneReports, criticReview, decision }, quality: researchQuality });
+      if (researchQuality.overall !== "PASS") decisionStore.appendEvent("trajectory.capability_gaps", { trajectoryType: "research", quality: researchQuality, objective });
       const recentDecisions = decisionStore.decisions().map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3);
       const stagnation = detectStagnation(recentDecisions);
       if (phaseGoal) {
