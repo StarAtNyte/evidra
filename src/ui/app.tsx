@@ -760,6 +760,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
     }
     decisionStore.close();
+    const researchTrajectoryEvents: TrajectoryEvent[] = [
+      { id: `research-${Date.now()}-observation`, kind: "process", payload: { status: "completed", observationKeys: Object.keys(observation) } },
+      ...laneReports.filter((lane) => lane.status === "failed").map((lane, index) => ({ id: `research-${Date.now()}-lane-${index}`, kind: "process" as const, payload: { status: "failed", error: lane.error ?? `${lane.role} failed` } })),
+      { id: `research-${Date.now()}-evaluator`, kind: "evaluator", payload: { evidenceConsistent: Boolean(criticReview && criticReview.verdict !== "reject"), criticVerdict: criticReview?.verdict ?? "missing" } },
+      { id: `research-${Date.now()}-terminal`, kind: "terminal", payload: { status: "completed", goalStatus: decision.goalStatus, goalAttained: decision.goalStatus === "met" || decision.decision === "stop" } },
+    ];
+    const researchQuality = evaluateTrajectory(researchTrajectoryEvents);
+    const trajectoryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    trajectoryStore.saveTrajectory({ id: `trajectory_research_${Date.now()}`, payload: { objective, observation, laneReports, criticReview, decision }, quality: researchQuality });
+    if (researchQuality.overall !== "PASS") trajectoryStore.appendEvent("trajectory.capability_gaps", { trajectoryType: "research", quality: researchQuality, objective });
+    trajectoryStore.close();
     const reviewText = criticReview ? `\n\nCritic: ${criticReview.verdict} · confidence ${criticReview.confidence.toFixed(2)}\n${criticReview.summary}${criticReview.objections.length ? `\nObjections:\n${criticReview.objections.map((item) => `- ${item}`).join("\n")}` : ""}${criticReview.requiredChecks.length ? `\nRequired checks:\n${criticReview.requiredChecks.map((item) => `- ${item}`).join("\n")}` : ""}` : "";
     return { text: formatResearchDecision(decision) + reviewText, goalStatus: decision.goalStatus, decision: decision.decision };
   };
