@@ -42,6 +42,7 @@ import { runReducedValidation } from "../core/stage-executor.js";
 import { renderTimeline } from "../core/timeline.js";
 import { latestSourceEntries, researchMemoryContext } from "../core/research-context.js";
 import { detectStagnation } from "../core/stagnation.js";
+import { applyCriticGate } from "../core/critic-gate.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -785,17 +786,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
       failedLane.close();
       throw error;
     }
-    const criticBlocks = criticReview !== undefined && criticReview.verdict !== "proceed";
+    const criticGate = applyCriticGate(decision, criticReview);
+    const criticBlocks = criticGate.blocked;
     if (criticBlocks) {
-      decision = {
-        ...decision,
-        goalStatus: decision.goalStatus === "blocked" ? "blocked" : "active",
-        decision: ["stop", "run", "replicate"].includes(decision.decision) ? "inspect" : decision.decision,
-        nextAction: `${decision.nextAction} Critic verdict is ${criticReview?.verdict}; resolve its objections before execution or stopping.`,
-      };
-      const criticGate = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      criticGate.appendEvent("research.critic.gate", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks });
-      criticGate.close();
+      decision = criticGate.decision;
+      const criticGateStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      criticGateStore.appendEvent("research.critic.gate", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks });
+      criticGateStore.close();
     }
     const decisionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const phaseEvents = phaseGoal ? decisionStore.recentEvents(500) : [];

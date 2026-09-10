@@ -42,6 +42,7 @@ import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js"
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
 import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../dist/core/campaign.js";
+import { applyCriticGate } from "../dist/core/critic-gate.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -71,6 +72,16 @@ test("critic revision is not recorded as evidence-consistent", () => {
   ]);
   assert.equal(quality.evidenceConsistency.verdict, "FAIL");
   assert.equal(quality.overall, "FAIL");
+});
+
+test("critic gate converts terminal and execution decisions into inspection", () => {
+  const decision = { phase: "evaluation", goalStatus: "met", decision: "run", bottleneck: "b", rationale: "r", hypotheses: [], selectedHypothesis: null, nextAction: "run it", toolCalls: [] };
+  const gated = applyCriticGate(decision, { verdict: "revise" });
+  assert.equal(gated.blocked, true);
+  assert.equal(gated.decision.goalStatus, "active");
+  assert.equal(gated.decision.decision, "inspect");
+  assert.match(gated.decision.nextAction, /critic verdict is revise/i);
+  assert.equal(applyCriticGate(decision, { verdict: "proceed" }).blocked, false);
 });
 
 test("dynamic research sources refresh after their freshness window", () => {

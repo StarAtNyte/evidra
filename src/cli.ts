@@ -32,6 +32,7 @@ import { ensureWorktree } from "./core/worktree.js";
 import { compareRuns } from "./core/statistics.js";
 import { evaluateTrajectory, type TrajectoryEvent } from "./core/trajectories.js";
 import { extractUnifiedDiff } from "./core/experiment-patches.js";
+import { applyCriticGate } from "./core/critic-gate.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
@@ -739,17 +740,11 @@ research
         }
       }
       let decisionStore = new ResearchStore(statePath);
-      const criticBlocks = criticReview !== undefined && criticReview.verdict !== "proceed";
+      const criticGate = applyCriticGate(decision, criticReview);
+      const criticBlocks = criticGate.blocked;
       if (criticBlocks) {
         decisionStore.appendEvent("research.critic.gate", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks });
-        if (decision.goalStatus !== "blocked") {
-          decision = {
-            ...decision,
-            goalStatus: "active",
-            decision: ["stop", "run", "replicate"].includes(decision.decision) ? "inspect" : decision.decision,
-            nextAction: `${decision.nextAction} Critic verdict is ${criticReview?.verdict}; resolve its objections before execution or stopping.`,
-          };
-        }
+        decision = criticGate.decision;
       }
       if (phaseGoal && decision.goalStatus === "met") {
         const phaseEvents = decisionStore.recentEvents(500);
