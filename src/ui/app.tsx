@@ -2247,6 +2247,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
 
   useEffect(() => {
     if (busy || !pendingRequests.current.length) return;
+    const steered = pendingRequests.current.filter((request) => request.dispatched);
+    if (steered.length) {
+      setMessages((current) => [...current, ...steered.map((request) => ({ role: "user" as const, text: request.text }))]);
+    }
     const nextPending = pendingRequests.current.filter((request) => !request.dispatched);
     const next = nextPending.shift();
     pendingRequests.current = nextPending;
@@ -2294,7 +2298,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     </Box>
     {queuedRequests.length > 0 && <Box flexDirection="column" paddingX={1} marginTop={1}>
       <Text color="yellow" bold>• QUEUED · {queuedRequests.length} waiting</Text>
-      {queuedRequests.map((queued) => <Text key={queued.id} color="yellow">  ↳ {queued.text}</Text>)}
+      {queuedRequests.map((queued) => <Text key={queued.id} color="yellow">  ↳ {queued.dispatched ? "steering next boundary · " : "waiting · "}{queued.text}</Text>)}
     </Box>}
     {busy && <Box paddingX={1} marginTop={1}>
       <Text color="magenta" bold>{["⠋", "⠙", "⠹", "⠸"][busyFrame]}  {progress || "Working..."}</Text><Text color="gray">  (esc to interrupt)</Text>
