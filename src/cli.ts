@@ -67,6 +67,7 @@ import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.j
 import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "./core/validation-lock.js";
+import { runBenchmarkArms, type BenchmarkArmSpec } from "./core/benchmark-runner.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -380,6 +381,30 @@ program.command("usage").description("Show research, experiment, and campaign us
 });
 
 const benchmark = new Command("benchmark").description("Compare research harnesses under a common task/budget protocol");
+benchmark.command("run")
+  .argument("<file>", "JSON file containing { arms: [...] }")
+  .option("--out <file>", "write the run report and scorecards to a JSON file")
+  .description("Execute declared matched harness arms, then score their evidence")
+  .action(async (file: string, options: { out?: string }) => {
+    const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
+    const raw = parsed && typeof parsed === "object" && Array.isArray((parsed as { arms?: unknown }).arms) ? (parsed as { arms: unknown[] }).arms : undefined;
+    if (!raw?.length) throw new Error("Benchmark protocol must contain a non-empty arms array.");
+    const arms = raw.map((value, index) => {
+      if (!value || typeof value !== "object") throw new Error(`Benchmark arm ${index + 1} is not an object.`);
+      const arm = value as Partial<BenchmarkArmSpec>;
+      if (typeof arm.harness !== "string" || typeof arm.task !== "string" || typeof arm.arm !== "string" || arm.seed === undefined || typeof arm.model !== "string" || typeof arm.budgetMinutes !== "number" || (arm.direction !== "maximize" && arm.direction !== "minimize") || typeof arm.baselineMetric !== "number" || typeof arm.metric !== "string" || !Array.isArray(arm.command) || !arm.command.every((part) => typeof part === "string")) throw new Error(`Benchmark arm ${index + 1} is missing a required field.`);
+      return arm as BenchmarkArmSpec;
+    });
+    const protocol = validateBenchmarkProtocol(arms.map((arm) => ({ ...arm, validRun: false, durationSeconds: 0, recovered: false, reproducible: false })));
+    if (!protocol.valid) throw new Error(`Benchmark protocol is not matched:\n${protocol.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
+    const report = await runBenchmarkArms(arms, root, (message) => console.log(`· ${message}`));
+    const matched = validateBenchmarkProtocol(report.trials);
+    if (!matched.valid) throw new Error(`Benchmark results are not matched:\n${matched.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
+    const scorecards = scoreHarnessTrials(report.trials);
+    const output = { ...report, scorecards, protocol: matched };
+    if (options.out) writeFileSync(resolve(options.out), `${JSON.stringify(output, null, 2)}\n`);
+    console.log(`Harness benchmark run complete\n${scorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})`).join("\n")}`);
+  });
 benchmark.command("validate")
   .argument("<file>", "JSON file containing a trial array or { trials: [...] }")
   .option("--json", "emit machine-readable validation")

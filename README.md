@@ -143,6 +143,7 @@ Implemented today:
 - empirical-Bernstein search allocation with variance-aware uncertainty and hard remaining-budget checks;
 - deterministic hierarchical research-decision rubrics for action closure, falsifiability, evidence, verification, diversity, and risk, with gaps fed into the next cycle;
 - matched benchmark-arm validation requiring task, seed, model, and budget parity before a competitive claim.
+- executable matched-arm benchmark protocols that capture raw process evidence before scoring harnesses.
 - checksum-locked validation policies with auditable unlock reasons and pre-experiment mutation checks.
 - bounded scholarly-source discovery that returns candidates separately from trusted, hashed source retrieval.
 - SAFE research can retrieve and hash read-only literature evidence; workspace edits, policy changes, reports, and external actions remain permission-gated.

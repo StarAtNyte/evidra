@@ -21,6 +21,7 @@ claims should use that conservative bound when comparing close systems.
 The same protocol is available from the CLI:
 
 ```bash
+evidra benchmark run protocol.json --out benchmark-run.json
 evidra benchmark validate trials.json
 evidra benchmark score trials.json
 evidra benchmark score trials.json --json
@@ -32,6 +33,13 @@ trial must declare a task arm, seed, model, and budget; every harness must be
 present on every matched arm, with the same metric direction. Historical trial
 exports can still be scored for diagnostics, but incomplete or mismatched files
 are explicitly marked rather than treated as evidence that Evidra won.
+
+`benchmark run` accepts `{ "arms": [...] }` with one command per harness arm.
+Each arm declares the same protocol metadata plus a bounded command, working
+directory, metric name, and baseline. Evidra executes the commands with their
+declared time budgets, parses the declared metric, and writes raw process
+evidence alongside the scorecards. The runner does not claim reproducibility;
+independent repeats must be declared as separate matched arms.
 
 The input is either a JSON array or `{ "trials": [...] }`, with one record per
 fixed task/seed arm and fields for baseline, candidate metric, validity,

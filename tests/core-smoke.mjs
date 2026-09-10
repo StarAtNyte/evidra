@@ -57,6 +57,7 @@ import { validateCompetitionContract } from "../dist/core/competition-contract.j
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
+import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { rankSearchArms, searchReward } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
 import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
@@ -1576,6 +1577,23 @@ test("benchmark protocol rejects unmatched arms before a competitive claim", () 
   const incomplete = validateBenchmarkProtocol([{ harness: "evidra", ...base, model: undefined }]);
   assert.equal(incomplete.complete, false);
   assert.equal(incomplete.valid, false);
+});
+
+test("benchmark runner executes matched arms and records evaluator-backed metrics", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-runner-"));
+  try {
+    const arms = ["evidra", "other"].map((harness, index) => ({
+      harness, task: "task-a", arm: "default", seed: 1, model: "test-model", budgetMinutes: 1,
+      direction: "maximize", baselineMetric: 0.5, metric: "score", cwd: ".",
+      command: [process.execPath, "-e", `console.log(JSON.stringify({score:${0.6 - index * 0.05}}))`],
+    }));
+    const report = await runBenchmarkArms(arms, root);
+    assert.equal(report.trials.length, 2);
+    assert.equal(report.trials.every((trial) => trial.validRun), true);
+    assert.equal(report.trials[0].candidateMetric, 0.6);
+    assert.ok(Math.abs(report.trials[1].candidateMetric - 0.55) < 1e-12);
+    assert.equal(report.runs.every((run) => run.result.exitCode === 0), true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("search policy explores untried operators and penalizes invalid evidence", () => {
