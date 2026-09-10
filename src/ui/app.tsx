@@ -1005,8 +1005,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
     let evaluatorOutput: { stdout: string; stderr: string; exitCode: number } | undefined;
-    let result = await executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name);
+    const recordAttemptStarted = (attemptNumber: number): void => {
+      const attemptStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      attemptStore.appendEvent("run.attempt.started", { experimentId: id, attempt: attemptNumber, command, cwd: experimentCwd, executor: manifest.resources.executor });
+      attemptStore.close();
+    };
     let attempt = 1;
+    recordAttemptStarted(attempt);
+    let result = await executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name);
     const recoveryEvents: TrajectoryEvent[] = [];
     while (result.status !== "completed") {
       const plan = recoveryPlan(result.failureClass);
@@ -1019,6 +1025,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       setProgress(`Experiment ${id} · retry ${attempt + 1}/${plan.maxAttempts} after ${plan.action}...`);
       await new Promise<void>((resolve) => setTimeout(resolve, delay * 1000));
       attempt += 1;
+      recordAttemptStarted(attempt);
       result = await executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name);
     }
     activeProcess.current = null;

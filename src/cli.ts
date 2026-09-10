@@ -1059,8 +1059,12 @@ experiment.command("run")
       skippedStore.appendEvent("experiment.stage.reduced_validation.skipped", { experimentId: id, reason: "manifest has no generic reduced-data contract" });
       skippedStore.close();
     }
-    let result = await executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name);
     let attempt = 1;
+    const recordAttemptStarted = (attemptNumber: number): void => {
+      const attemptStore = new ResearchStore(statePath);
+      attemptStore.appendEvent("run.attempt.started", { experimentId: id, attempt: attemptNumber, command, cwd: experimentCwd, executor: manifest.resources.executor });
+      attemptStore.close();
+    };
     const recordAttempt = (attemptNumber: number, attemptResult: typeof result): void => {
       const attemptStore = new ResearchStore(statePath);
       attemptStore.appendEvent("run.attempt.completed", {
@@ -1077,6 +1081,8 @@ experiment.command("run")
       });
       attemptStore.close();
     };
+    recordAttemptStarted(attempt);
+    let result = await executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name);
     recordAttempt(attempt, result);
     while (result.status !== "completed") {
       const plan = recoveryPlan(result.failureClass);
@@ -1088,6 +1094,7 @@ experiment.command("run")
       console.log(`Retrying experiment ${id} (${attempt + 1}/${plan.maxAttempts}) after ${plan.action}; waiting ${delay}s...`);
       await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, delay * 1000));
       attempt += 1;
+      recordAttemptStarted(attempt);
       result = await executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name);
       recordAttempt(attempt, result);
     }

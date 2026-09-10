@@ -271,11 +271,13 @@ test("timeline renders durable events without provider protocol noise", () => {
   const events = [
     { type: "experiment.stage.reduced_validation.completed", payload: { experimentId: "exp-1", metric: 0.42 }, createdAt: "2026-09-10T12:34:56.000Z" },
     { type: "run.retry.scheduled", payload: { experimentId: "exp-1", attempt: 1, action: "retry transient worker" }, createdAt: "2026-09-10T12:35:01.000Z" },
+    { type: "run.attempt.started", payload: { experimentId: "exp-1", attempt: 2, executor: "modal" }, createdAt: "2026-09-10T12:35:05.000Z" },
     { type: "run.attempt.completed", payload: { experimentId: "exp-1", attempt: 2, status: "completed", metric: 0.43 }, createdAt: "2026-09-10T12:35:10.000Z" },
   ];
   assert.equal(summarizeTimelineEvent(events[0]), "experiment exp-1 · reduced_validation completed · metric 0.42");
   assert.match(renderTimeline(events, 10), /12:34:56  experiment exp-1/);
   assert.match(renderTimeline(events, 10), /retry 1/);
+  assert.match(renderTimeline(events, 10), /attempt 2 · started · modal/);
   assert.match(renderTimeline(events, 10), /attempt 2 · completed · metric 0.43/);
   assert.doesNotMatch(renderTimeline(events, 10), /thread\.started|thread_id/);
 });
