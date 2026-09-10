@@ -1383,7 +1383,16 @@ research
         : `No matched harness benchmark evidence is recorded yet; preserve failure telemetry for the first comparison. The harness action space is inventory-backed; use these candidate intervention contracts when a failure is observed: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}`;
       const recentTrajectories = store.trajectories(20);
       const recentQuality = recentTrajectories.map((entry) => qualityFeedback(entry.quality));
-      const failureClasses = store.runs().slice(0, 20).map((entry) => (entry.payload as { failureClass?: unknown }).failureClass).filter((failureClass): failureClass is string => typeof failureClass === "string" && failureClass.length > 0);
+      const recentRuns = store.runs().slice(0, 20);
+      const verificationPressure = recentRuns.some((entry) => {
+        const verification = (entry.payload as { verification?: { declared?: unknown; executed?: unknown; passed?: unknown; failed?: unknown; independent?: unknown } }).verification;
+        if (!verification || typeof verification.declared !== "number" || verification.declared <= 0) return false;
+        return verification.failed !== 0 || verification.executed !== verification.declared || verification.passed !== verification.executed || (verification.declared >= 2 && verification.independent !== true);
+      });
+      const failureClasses = [
+        ...recentRuns.map((entry) => (entry.payload as { failureClass?: unknown }).failureClass).filter((failureClass): failureClass is string => typeof failureClass === "string" && failureClass.length > 0),
+        ...(verificationPressure ? ["verification"] : []),
+      ];
       const recoveryRoutes = durableEvents
         .filter((event) => event.type === "experiment.recovery.route_changed")
         .slice(-5)

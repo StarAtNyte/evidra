@@ -624,6 +624,12 @@ test("adaptive harness policy changes routing from measured failure pressure", (
   assert.equal(pressured.requireReplication, true);
   assert.equal(pressured.profile, "recovery");
   assert.ok(pressured.reasons.length >= 3);
+  const verifierPressure = deriveAdaptiveHarnessPolicy({ quality: [], failureClasses: ["verification"], budgetRemainingMinutes: 30 });
+  assert.equal(verifierPressure.recoveryRoute, "repair_first");
+  assert.equal(verifierPressure.profile, "evidence");
+  assert.equal(verifierPressure.peerReview, true);
+  assert.equal(verifierPressure.requireReplication, true);
+  assert.match(verifierPressure.reasons.join(" "), /verification failure/i);
 });
 
 test("prediction error analysis turns aggregate outcomes into actionable failures", () => {

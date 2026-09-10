@@ -52,6 +52,7 @@ export function deriveAdaptiveHarnessPolicy(input: AdaptiveHarnessInput): Adapti
   const terminationGaps = countVerdict(quality, "termination", ["FAIL", "WARN"]);
   const hasTransientFailure = failures.some((failure) => ["timeout", "transient_cloud", "rate_limit", "network"].includes(failure));
   const hasContractFailure = failures.some((failure) => ["invalid_metric", "corrupt_artifact", "data_missing", "dependency", "auth"].includes(failure));
+  const hasVerificationFailure = failures.some((failure) => ["verification", "verifier_failure"].includes(failure));
   const lowBudget = Number.isFinite(input.budgetRemainingMinutes) && (input.budgetRemainingMinutes ?? Infinity) < 5;
   const benchmarkPriority = input.benchmarkInterventions?.some((item) => item.priority === "critical" || item.priority === "high") ?? false;
 
@@ -90,6 +91,15 @@ export function deriveAdaptiveHarnessPolicy(input: AdaptiveHarnessInput): Adapti
     recoveryRoute = "repair_first";
     profile = "recovery";
     reasons.push("contract failure: repair the execution/evidence contract before retrying");
+  }
+  if (hasVerificationFailure) {
+    recoveryRoute = "repair_first";
+    profile = "evidence";
+    peerReview = true;
+    independentCritic = true;
+    requireReplication = true;
+    maxToolRounds = Math.max(maxToolRounds, 8);
+    reasons.push("verification failure: repair incomplete or failed verifiers before exploring a new hypothesis");
   }
   if (terminationGaps > 0) {
     requireReplication = true;
