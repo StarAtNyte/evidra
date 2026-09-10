@@ -36,6 +36,7 @@ export function runProcess(
     const child = spawn(command[0], command.slice(1), { cwd, shell: false, detached: true, env: environment });
     let paused = false;
     let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const signalGroup = (signal: NodeJS.Signals): void => {
       if (!child.pid) return;
       try { process.kill(-child.pid, signal); } catch { try { child.kill(signal); } catch { /* already exited */ } }
@@ -53,13 +54,20 @@ export function runProcess(
     const finish = (result: ProcessResult): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       resolve(result);
+    };
+
+    const fail = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      reject(error);
     };
 
     child.stdout.on("data", (chunk: Buffer) => { const text = chunk.toString(); stdout = appendCapture(stdout, text); onOutput?.("stdout", text); });
     child.stderr.on("data", (chunk: Buffer) => { const text = chunk.toString(); stderr = appendCapture(stderr, text); onOutput?.("stderr", text); });
-    child.on("error", reject);
+    child.on("error", fail);
     child.on("close", (exitCode) => finish({
       command,
       cwd,
@@ -69,7 +77,7 @@ export function runProcess(
       stderr,
     }));
 
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       signalGroup("SIGTERM");
       finish({ command, cwd, exitCode: 124, durationMs: Date.now() - started, stdout, stderr: `${stderr}\nTimed out.` });
     }, timeoutMs);

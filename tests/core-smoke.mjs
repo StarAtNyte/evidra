@@ -976,6 +976,12 @@ test("process interruption terminates the detached worker group", async () => {
   assert.notEqual(result.exitCode, 0);
 });
 
+test("missing process executables reject without retaining the timeout", async () => {
+  const started = Date.now();
+  await assert.rejects(() => runProcess(["evidra-command-that-does-not-exist"], process.cwd(), 30_000));
+  assert(Date.now() - started < 2_000);
+});
+
 test("process output capture is bounded while retaining the tail", async () => {
   const result = await runProcess([process.execPath, "-e", "process.stdout.write('x'.repeat(17 * 1024 * 1024)); process.stdout.write('FINAL_METRIC=0.123')"], process.cwd(), 35_000);
   assert.ok(Buffer.byteLength(result.stdout) <= 16 * 1024 * 1024 + 200);
