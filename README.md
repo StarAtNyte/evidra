@@ -159,7 +159,9 @@ history. A structurally complete trajectory becomes a candidate experience; reco
 remain replay-only; ambiguous or malformed traces are quarantined. The workbench aggregates these
 records into a capability profile and recommends a curriculum that starts with bounded examples,
 expands across observed tasks and outcomes, and then introduces higher-demand or recovery-heavy
-trajectories. This is inspired by routing-harness research such as NeoHorse-1, but remains
+trajectories. Each selected trajectory is now materialized into a bounded replay lesson containing
+its objective, acceptance condition, outcome, evidence, and capability gaps; opaque trajectory IDs
+are never presented as if they were usable experience. This is inspired by routing-harness research such as NeoHorse-1, but remains
 model- and domain-agnostic: it works for scientific research, software experiments, and challenge
 workflows without requiring model fine-tuning.
 

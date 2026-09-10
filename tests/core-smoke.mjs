@@ -33,7 +33,7 @@ import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validat
 import { runReducedValidation } from "../dist/core/stage-executor.js";
 import { createToolTraceRecorder, evaluateTrajectory, capabilityGaps, validateTrajectoryStructure } from "../dist/core/trajectories.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
-import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurriculum } from "../dist/core/experience.js";
+import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, selectCurriculum } from "../dist/core/experience.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
 import { evaluateReducedPromotion, experimentNovelty, rankExperimentCandidates, rankPriorities } from "../dist/core/scheduler.js";
 import { comparisonFamilySize, evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
@@ -230,6 +230,11 @@ test("experience ledger quarantines malformed traces and selects a curriculum", 
   const persistedRouting = buildExperienceRecord({ trajectoryId: "t2", payload: { routing: { predictedTier: "C3", tierScores: { C0: 0.01, C1: 0.04, C2: 0.2, C3: 0.75 } }, events: record.events }, quality });
   assert.equal(persistedRouting.routing?.predictedTier, "C3");
   assert.equal(selectCurriculum([record], 3).reduce((sum, stage) => sum + stage.trajectoryIds.length, 0), 1);
+  const curriculum = selectCurriculum([record], 3);
+  const replay = curriculumReplay([record], curriculum);
+  assert.equal(replay[0].trajectoryId, "t1");
+  assert.equal(replay[0].outcome, "partial");
+  assert.match(replay[0].objective, /inspect data/);
   const malformed = buildExperienceRecord({ trajectoryId: "bad", payload: { events: [{ id: "orphan", kind: "tool_result", callId: "missing", payload: {} }] }, quality: evaluateTrajectory([{ id: "orphan", kind: "tool_result", callId: "missing", payload: {} }]) });
   assert.equal(malformed.admission, "quarantined");
   assert.equal(experienceJsonl([record, malformed]).trim().split("\n").length, 1);

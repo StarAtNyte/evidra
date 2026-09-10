@@ -32,6 +32,16 @@ export interface CurriculumSelection {
   rationale: string;
 }
 
+export interface CurriculumReplay {
+  trajectoryId: string;
+  objective: string;
+  acceptance: string;
+  outcome: ExperienceRecord["outcome"]["status"];
+  evidence: string[];
+  gaps: string[];
+  quality: TrajectoryQuality["overall"];
+}
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }
@@ -133,6 +143,27 @@ export function selectCurriculum(records: ExperienceRecord[], limit = 12): Curri
     { stage: 2, trajectoryIds: second.map((item) => item.trajectoryId), rationale: "expand across observed tasks and outcomes" },
     { stage: 3, trajectoryIds: third.map((item) => item.trajectoryId), rationale: "introduce higher-demand and replay-worthy experiences" },
   ];
+}
+
+/**
+ * Materialize the selected curriculum into a small prompt-safe replay. IDs
+ * alone are not useful to an agent; replay must carry the lesson while
+ * remaining bounded and explicitly tied to the original trajectory.
+ */
+export function curriculumReplay(records: ExperienceRecord[], selection: CurriculumSelection[], limit = 6): CurriculumReplay[] {
+  const selected = new Set(selection.flatMap((stage) => stage.trajectoryIds));
+  return records
+    .filter((record) => selected.has(record.trajectoryId) && record.admission !== "quarantined")
+    .slice(0, Math.max(0, limit))
+    .map((record) => ({
+      trajectoryId: record.trajectoryId,
+      objective: record.goal.objective.slice(0, 500),
+      acceptance: record.goal.acceptance.slice(0, 300),
+      outcome: record.outcome.status,
+      evidence: record.outcome.evidence.slice(0, 4),
+      gaps: record.gaps.slice(0, 8),
+      quality: record.quality.overall,
+    }));
 }
 
 /** Serialize only admissible experience for replay, analysis, or later post-training. */
