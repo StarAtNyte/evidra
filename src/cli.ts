@@ -31,7 +31,7 @@ import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { compareRuns } from "./core/statistics.js";
-import { evaluateTrajectory, type TrajectoryEvent } from "./core/trajectories.js";
+import { createToolTraceRecorder, evaluateTrajectory, type TrajectoryEvent } from "./core/trajectories.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "./core/experiment-patches.js";
 import { applyCriticGate } from "./core/critic-gate.js";
 import { recordBaselineEvidence } from "./core/baseline.js";
@@ -917,6 +917,7 @@ research
       let decision: Awaited<ReturnType<typeof runResearchDirector>>;
       let criticReview: Awaited<ReturnType<typeof runResearchCritic>> | undefined;
       let laneReports: Awaited<ReturnType<typeof runResearchLanes>> = [];
+      const toolTrace = createToolTraceRecorder(`research-${cycle}`);
       let researchAttempt = 0;
       let agentObjective = allocatedObjective;
       while (true) {
@@ -946,9 +947,11 @@ research
             maxParallel: effectiveLaneLimit,
             autonomy,
             executeTool: researchToolExecutor(adapter, autonomy),
+            onToolCall: toolTrace.onToolCall,
+            onToolResult: toolTrace.onToolResult,
           });
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy) });
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
           criticReview = await runResearchCritic(agentObjective, decision, laneReports, {
             provider: options.provider,
             model: selectedModel,
@@ -1103,6 +1106,7 @@ research
       const trajectoryStamp = `research-${Date.now()}`;
       const researchTrajectoryEvents: TrajectoryEvent[] = [
         { id: `${trajectoryStamp}-observation`, kind: "process", payload: { status: "completed", observationKeys: Object.keys(observation) } },
+        ...toolTrace.events,
         ...laneReports.filter((lane) => lane.status === "failed").map((lane, index) => ({ id: `${trajectoryStamp}-lane-${index}`, kind: "process" as const, payload: { status: "failed", error: lane.error ?? `${lane.role} failed` } })),
         { id: `${trajectoryStamp}-evaluator`, kind: "evaluator", payload: { evidenceConsistent: criticReview?.verdict === "proceed", criticVerdict: criticReview?.verdict ?? "missing" } },
         { id: `${trajectoryStamp}-terminal`, kind: "terminal", payload: { status: "completed", goalStatus: decision.goalStatus, goalAttained: decision.goalStatus === "met" || decision.decision === "stop" } },

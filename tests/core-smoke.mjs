@@ -31,7 +31,7 @@ import { estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.j
 import { auditData } from "../dist/core/data-audit.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { runReducedValidation } from "../dist/core/stage-executor.js";
-import { evaluateTrajectory, capabilityGaps, validateTrajectoryStructure } from "../dist/core/trajectories.js";
+import { createToolTraceRecorder, evaluateTrajectory, capabilityGaps, validateTrajectoryStructure } from "../dist/core/trajectories.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
 import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurriculum } from "../dist/core/experience.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
@@ -117,6 +117,15 @@ test("trajectory structural gate quarantines ambiguous tool traces", () => {
   assert.ok(structure.issues.some((issue) => issue.includes("duplicate tool call id")));
   assert.ok(structure.issues.some((issue) => issue.includes("no matching call")));
   assert.equal(evaluateTrajectory(malformed).structural.verdict, "FAIL");
+});
+
+test("tool trace recorder preserves causal call/result pairs and redacts secrets", () => {
+  const trace = createToolTraceRecorder("smoke");
+  const callId = trace.onToolCall("director", { name: "workspace.search", arguments: { token: "sk-test_12345678901234567890" } });
+  trace.onToolResult("director", callId, { name: "workspace.search", ok: true, output: { value: "token=sk-test_12345678901234567890" } });
+  trace.events.push({ id: "terminal", kind: "terminal", payload: { status: "completed" } });
+  assert.equal(validateTrajectoryStructure(trace.events).status, "complete");
+  assert.equal(trace.events[1].payload.output.value, "token=[REDACTED]");
 });
 
 test("capability outcomes preserve prediction, serving action, and result", () => {

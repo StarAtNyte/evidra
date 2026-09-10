@@ -32,7 +32,7 @@ import { checkProvider, codexLoginStatus, isProviderUsageLimit, listCodexModels,
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { boundedPeerBoard, runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
-import { evaluateTrajectory, type TrajectoryEvent } from "../core/trajectories.js";
+import { createToolTraceRecorder, evaluateTrajectory, type TrajectoryEvent } from "../core/trajectories.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../core/capability-router.js";
 import { allocateNextResearch } from "../core/allocation.js";
 import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurriculum } from "../core/experience.js";
@@ -719,6 +719,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     let decision: Awaited<ReturnType<typeof runResearchDirector>>;
     let laneReports: ResearchLaneReport[] = [];
     let criticReview: ResearchReview | undefined;
+    const toolTrace = createToolTraceRecorder(`research-${Date.now()}`);
     try {
       activeSteer.current = null;
       await checkProvider({ provider: config.provider, model: config.model, cwd: root });
@@ -757,6 +758,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
           onProgress: setProgress,
           onProcess: registerProcess,
         }),
+        onToolCall: toolTrace.onToolCall,
+        onToolResult: toolTrace.onToolResult,
       });
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
       setProgress("Research 4/4 · director is cross-pollinating lane findings...");
@@ -789,8 +792,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
           autonomy: config.autonomy,
           competition: adapter.config,
           onProgress: setProgress,
-        onProcess: registerProcess,
+          onProcess: registerProcess,
         }),
+        onToolCall: toolTrace.onToolCall,
+        onToolResult: toolTrace.onToolResult,
       }, setProgress);
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
       criticReview = await runResearchCritic(objective, decision, laneReports, {
@@ -860,6 +865,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     decisionStore.close();
     const researchTrajectoryEvents: TrajectoryEvent[] = [
       { id: `research-${Date.now()}-observation`, kind: "process", payload: { status: "completed", observationKeys: Object.keys(observation) } },
+      ...toolTrace.events,
       ...laneReports.filter((lane) => lane.status === "failed").map((lane, index) => ({ id: `research-${Date.now()}-lane-${index}`, kind: "process" as const, payload: { status: "failed", error: lane.error ?? `${lane.role} failed` } })),
       { id: `research-${Date.now()}-evaluator`, kind: "evaluator", payload: { evidenceConsistent: criticReview?.verdict === "proceed", criticVerdict: criticReview?.verdict ?? "missing" } },
       { id: `research-${Date.now()}-terminal`, kind: "terminal", payload: { status: "completed", goalStatus: decision.goalStatus, goalAttained: decision.goalStatus === "met" || decision.decision === "stop" } },

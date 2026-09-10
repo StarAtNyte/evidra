@@ -69,6 +69,8 @@ export interface ResearchLanesOptions {
   onProcess?: (control: ProcessControl) => void;
   isCancelled?: () => boolean;
   executeTool?: (call: ResearchToolCall) => Promise<ResearchToolResult>;
+  onToolCall?: (source: string, call: ResearchToolCall) => string;
+  onToolResult?: (source: string, callId: string, result: ResearchToolResult) => void;
 }
 
 export interface ResearchLaneRoute {
@@ -251,7 +253,17 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
       for (const call of laneToolCalls(role)) {
         if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
         options.onProgress?.(`Research lane · ${role} · ${call.name}...`);
-        toolResults.push(boundLaneToolResult(await options.executeTool(call)));
+        const callId = options.onToolCall?.(`lane:${role}`, call) ?? `${role}-${call.name}-${toolResults.length + 1}`;
+        try {
+          const result = boundLaneToolResult(await options.executeTool(call));
+          options.onToolResult?.(`lane:${role}`, callId, result);
+          toolResults.push(result);
+        } catch (error) {
+          const result: ResearchToolResult = { name: call.name, ok: false, error: error instanceof Error ? error.message : String(error) };
+          options.onToolResult?.(`lane:${role}`, callId, result);
+          toolResults.push(result);
+          throw error;
+        }
       }
     }
     let provider = laneRoute.provider;

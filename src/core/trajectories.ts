@@ -1,3 +1,6 @@
+import type { ResearchToolCall, ResearchToolResult } from "./tools.js";
+import { redactStructured } from "./redaction.js";
+
 export type TrajectoryEventKind =
   | "user"
   | "assistant"
@@ -16,6 +19,29 @@ export interface TrajectoryEvent {
   at?: string;
   payload: Record<string, unknown>;
   callId?: string;
+}
+
+export interface ToolTraceRecorder {
+  events: TrajectoryEvent[];
+  onToolCall: (source: string, call: ResearchToolCall) => string;
+  onToolResult: (source: string, callId: string, result: ResearchToolResult) => void;
+}
+
+/** Capture interleaved tool activity without retaining provider protocol noise or credentials. */
+export function createToolTraceRecorder(prefix = "research"): ToolTraceRecorder {
+  const events: TrajectoryEvent[] = [];
+  let sequence = 0;
+  return {
+    events,
+    onToolCall: (source, call) => {
+      const callId = `${prefix}-tool-${++sequence}`;
+      events.push({ id: `${callId}-call`, kind: "tool_call", callId, at: new Date().toISOString(), payload: redactStructured({ tool: call.name, arguments: call.arguments ?? {}, source }) });
+      return callId;
+    },
+    onToolResult: (source, callId, result) => {
+      events.push({ id: `${callId}-result`, kind: "tool_result", callId, at: new Date().toISOString(), payload: redactStructured({ tool: result.name, ok: result.ok, output: result.output, error: result.error, source }) });
+    },
+  };
 }
 
 export interface TrajectoryStructure {

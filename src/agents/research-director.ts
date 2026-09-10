@@ -23,6 +23,8 @@ export interface ResearchDirectorOptions {
   onProcess?: (control: ProcessControl) => void;
   onThread?: (threadId: string) => void;
   executeTool?: (call: ResearchToolCall) => Promise<ResearchToolResult>;
+  onToolCall?: (source: string, call: ResearchToolCall) => string;
+  onToolResult?: (source: string, callId: string, result: ResearchToolResult) => void;
   maxToolRounds?: number;
   maxToolAttempts?: number;
 }
@@ -102,6 +104,7 @@ Rules: propose no more than five hypotheses; never invent measurements; distingu
     const results: ResearchToolResult[] = [];
     for (const call of decision.toolCalls) {
       onProgress?.(`Research tool · ${call.name}`);
+      const callId = options.onToolCall?.("director", call) ?? `director-${call.name}-${results.length + 1}`;
       let result: ResearchToolResult | undefined;
       for (let attempt = 1; attempt <= maxToolAttempts; attempt += 1) {
         try {
@@ -119,6 +122,7 @@ Rules: propose no more than five hypotheses; never invent measurements; distingu
         await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
       }
       if (!result) throw new Error(`Research tool ${call.name} returned no result.`);
+      options.onToolResult?.("director", callId, result);
       if (!result.ok) onProgress?.(`Tool ${call.name} failed; the director will replan from this evidence.`);
       results.push(result);
     }
