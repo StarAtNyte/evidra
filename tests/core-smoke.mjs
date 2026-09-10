@@ -82,6 +82,15 @@ import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel 
 import { evaluateHarnessChange, inventoryHarnessComponents, planHarnessInterventions } from "../dist/core/harness-evolution.js";
 import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
 import { assessStopPolicy } from "../dist/core/stop-policy.js";
+import { classifyVerifier, verifierKind } from "../dist/core/formal-verification.js";
+
+test("formal verification adapters classify proof and solver evidence", () => {
+  assert.equal(verifierKind(["lake", "env", "lean", "Proof.lean"]), "lean");
+  assert.equal(verifierKind(["z3", "proof.smt2"]), "smt");
+  assert.deepEqual(classifyVerifier(["z3", "proof.smt2"], 0, "unsat\n", ""), { kind: "smt", evidence: "passed", semanticMarker: "unsat", summary: "smt verifier passed with semantic marker 'unsat'" });
+  assert.equal(classifyVerifier(["coqc", "Proof.v"], 1, "", "Error" ).evidence, "failed");
+  assert.equal(classifyVerifier(["lean", "Proof.lean"], 0, "", "").evidence, "passed_without_semantic_marker");
+});
 
 test("stop policy only converges after enough low-gain evidence", () => {
   const rewards = Array.from({ length: 5 }, () => ({ reward: 0.001, durationSeconds: 60, valid: true }));

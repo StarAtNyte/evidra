@@ -228,7 +228,7 @@ export const RunResultSchema = z.object({
   learningCurve: z.array(z.object({ step: z.number().finite(), metric: z.number().finite() })).optional(),
   subgroupDeltas: z.array(z.number().finite()).default([]),
   artifacts: z.record(z.string(), z.string()).default({}),
-  verification: z.object({ declared: z.number().int().nonnegative(), executed: z.number().int().nonnegative(), passed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), independent: z.boolean() }).superRefine((verification, context) => {
+  verification: z.object({ declared: z.number().int().nonnegative(), executed: z.number().int().nonnegative(), passed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), independent: z.boolean(), formalDeclared: z.number().int().nonnegative().optional(), formalPassed: z.number().int().nonnegative().optional(), details: z.array(z.object({ kind: z.string(), evidence: z.string(), summary: z.string(), semanticMarker: z.string().optional() })).optional() }).superRefine((verification, context) => {
     if (verification.executed > verification.declared) context.addIssue({ code: z.ZodIssueCode.custom, path: ["executed"], message: "executed verifiers cannot exceed declared verifiers" });
     if (verification.passed + verification.failed !== verification.executed) context.addIssue({ code: z.ZodIssueCode.custom, path: ["passed"], message: "passed plus failed verifiers must equal executed verifiers" });
     if (verification.declared < 2 && verification.independent) context.addIssue({ code: z.ZodIssueCode.custom, path: ["independent"], message: "independent verification requires at least two declared verifiers" });

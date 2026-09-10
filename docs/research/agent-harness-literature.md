@@ -47,6 +47,14 @@ reported mathematical result is independently accepted.
 
 Source: [On the Navier–Stokes Millennium Prize Problem](https://openai.com/index/navier-stokes-solution/).
 
+Formal verification is now represented as structured run evidence rather than a
+bare successful exit code. Common Lean/Lake, Coq/Rocq, Isabelle, Dafny, Agda,
+and SMT solver commands are classified automatically; semantic markers such as
+`proved`, `no goals`, or `unsat` are retained, while successful commands with no
+recognizable marker remain explicitly provisional. This makes proof-oriented
+and solver-oriented research artifacts auditable without making the harness
+specific to machine learning.
+
 ## Benchmark the harness, not just the model
 
 AIRS-Bench provides task specifications for multiple research-agent frameworks

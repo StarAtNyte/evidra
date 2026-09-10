@@ -20,6 +20,7 @@ import { renderTimeline } from "./core/timeline.js";
 import { latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
 import { detectStagnation } from "./core/stagnation.js";
 import { assessStopPolicy } from "./core/stop-policy.js";
+import { classifyVerifier } from "./core/formal-verification.js";
 import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
 import { campaignElapsedMinutes, campaignRemainingMs, pauseCampaign, readCampaignRuntime, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
@@ -2521,7 +2522,7 @@ experiment.command("run")
     const evaluatorCommand = isCandidateEvaluation ? command : adapter.config.evaluator.command;
     const sameCommand = evaluatorCommand.length === command.length && evaluatorCommand.every((part, index) => part === command[index]);
     let evaluator: { stdout: string; stderr: string; exitCode: number } | undefined;
-    const verifications: Array<{ command: string[]; stdout: string; stderr: string; exitCode: number }> = [];
+    const verifications: Array<{ command: string[]; stdout: string; stderr: string; exitCode: number; formal: ReturnType<typeof classifyVerifier> }> = [];
     if (result.status === "completed" && !sameCommand) {
       const evaluated = await withExecutionHeartbeat(
         () => runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000),
@@ -2538,9 +2539,10 @@ experiment.command("run")
           () => runProcess(verificationCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000),
           { storePath: statePath, experimentId: id, attempt, stage: "verification", executor: manifest.resources.executor },
         );
-        verifications.push({ command: verificationCommand, stdout: checked.stdout, stderr: checked.stderr, exitCode: checked.exitCode });
+        const formal = classifyVerifier(verificationCommand, checked.exitCode, checked.stdout, checked.stderr);
+        verifications.push({ command: verificationCommand, stdout: checked.stdout, stderr: checked.stderr, exitCode: checked.exitCode, formal });
         const verificationStore = new ResearchStore(statePath);
-        verificationStore.appendEvent(checked.exitCode === 0 ? "experiment.verification.completed" : "experiment.verification.failed", { experimentId: id, runId: result.runId, verifierIndex: verifications.length, command: verificationCommand, exitCode: checked.exitCode, stdout: checked.stdout.slice(-4000), stderr: checked.stderr.slice(-4000) });
+        verificationStore.appendEvent(checked.exitCode === 0 ? "experiment.verification.completed" : "experiment.verification.failed", { experimentId: id, runId: result.runId, verifierIndex: verifications.length, command: verificationCommand, exitCode: checked.exitCode, kind: formal.kind, evidence: formal.evidence, semanticMarker: formal.semanticMarker ?? null, summary: formal.summary, stdout: checked.stdout.slice(-4000), stderr: checked.stderr.slice(-4000) });
         verificationStore.close();
         result = { ...result, status: checked.exitCode === 0 ? "completed" : "failed", exitCode: checked.exitCode, stdout: `${result.stdout ?? ""}\n[VERIFICATION ${verifications.length}]\n${checked.stdout}`, stderr: `${result.stderr ?? ""}\n[VERIFICATION ${verifications.length}]\n${checked.stderr}`, ...(checked.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
         if (checked.exitCode !== 0) break;
@@ -2570,6 +2572,9 @@ experiment.command("run")
         passed: verifications.filter((verification) => verification.exitCode === 0).length,
         failed: verifications.filter((verification) => verification.exitCode !== 0).length,
         independent: verificationCommands.length >= 2 && verificationCommands.length === new Set(verificationCommands.map((command) => JSON.stringify(command))).size,
+        formalDeclared: verifications.filter((verification) => verification.formal.kind !== "generic").length,
+        formalPassed: verifications.filter((verification) => verification.formal.kind !== "generic" && verification.exitCode === 0).length,
+        details: verifications.map((verification) => ({ kind: verification.formal.kind, evidence: verification.formal.evidence, summary: verification.formal.summary, ...(verification.formal.semanticMarker ? { semanticMarker: verification.formal.semanticMarker } : {}) })),
       },
       artifacts: { ...result.artifacts, ...artifactPaths },
     };
