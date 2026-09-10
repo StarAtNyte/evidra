@@ -16,6 +16,8 @@ export interface AdaptiveHarnessInput {
   benchmarkInterventions?: Array<{ kind?: string; priority?: string }>;
   /** The latest matched harness comparison found Evidra behind an incumbent. */
   benchmarkRegression?: boolean;
+  /** Recent route quality fell across adjacent windows and needs re-verification. */
+  environmentDrift?: boolean;
 }
 
 export type AdaptiveHarnessProfile = "exploration" | "evidence" | "recovery" | "budget";
@@ -114,6 +116,15 @@ export function deriveAdaptiveHarnessPolicy(input: AdaptiveHarnessInput): Adapti
     maxToolRounds = Math.max(maxToolRounds, 8);
     maxToolAttempts = Math.max(maxToolAttempts, 3);
     reasons.push("benchmark regression: lock targeted repair, alternate-route retest, and replication before exploration");
+  }
+  if (input.environmentDrift) {
+    profile = "recovery";
+    peerReview = true;
+    independentCritic = true;
+    requireReplication = true;
+    recoveryRoute = "alternate_route";
+    maxToolRounds = Math.max(maxToolRounds, 7);
+    reasons.push("environment drift: re-verify the route and use an alternate provider/model path before trusting prior results");
   }
   if (terminationGaps > 0) {
     requireReplication = true;

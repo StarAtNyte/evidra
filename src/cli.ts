@@ -21,6 +21,7 @@ import { latestSourcePayloads, researchMemoryContext } from "./core/research-con
 import { detectStagnation } from "./core/stagnation.js";
 import { assessStopPolicy } from "./core/stop-policy.js";
 import { classifyVerifier } from "./core/formal-verification.js";
+import { detectRouteDrift } from "./core/drift-detection.js";
 import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
 import { campaignElapsedMinutes, campaignRemainingMs, pauseCampaign, readCampaignRuntime, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
@@ -1441,6 +1442,15 @@ research
         const payload = event.payload as { mode?: unknown; servedProvider?: unknown; servedModel?: unknown; outcome?: unknown; quality?: unknown };
         return { mode: typeof payload.mode === "string" ? payload.mode : undefined, provider: typeof payload.servedProvider === "string" ? payload.servedProvider : undefined, model: typeof payload.servedModel === "string" ? payload.servedModel : undefined, outcome: typeof payload.outcome === "string" ? payload.outcome : undefined, quality: typeof payload.quality === "string" ? payload.quality : undefined };
       }), budgetRemainingMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)), requestedParallel: laneLimit });
+      const routeOutcomes = durableEvents.filter((event) => event.type === "research.capability_outcome").slice(-24).map((event) => {
+        const payload = event.payload as { mode?: unknown; servedProvider?: unknown; servedModel?: unknown; outcome?: unknown; quality?: unknown };
+        const provider = typeof payload.servedProvider === "string" ? payload.servedProvider : "unknown";
+        const model = typeof payload.servedModel === "string" ? payload.servedModel : "unknown";
+        const outcome = payload.outcome === "success" || payload.outcome === "partial" || payload.outcome === "failure" ? payload.outcome : "partial";
+        return { route: `${provider}/${model}`, outcome, quality: typeof payload.quality === "string" ? payload.quality : undefined } as const;
+      });
+      const environmentDrift = detectRouteDrift(routeOutcomes).drifted;
+      if (environmentDrift) store.appendEvent("research.environment_drift.detected", { cycle, report: detectRouteDrift(routeOutcomes) });
       const effectiveLaneLimit = route.parallelLanes;
       store.appendEvent("research.capability_route", { route, predictedTier: route.tier, servedProvider: options.provider, servedModel: selectedModel, recentQuality });
       const evidenceConflicts = {
@@ -1456,6 +1466,7 @@ research
         evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
         budgetRemainingMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
         benchmarkRegression,
+        environmentDrift,
         benchmarkInterventions: [
           ...harnessEvolutionPlan.map((item) => ({ kind: item.failureClass, priority: item.priority >= 8 ? "critical" : item.priority >= 5 ? "high" : "normal" })),
           ...(Array.isArray(harnessAdaptationAgenda?.interventions)

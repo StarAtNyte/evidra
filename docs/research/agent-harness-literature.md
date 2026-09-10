@@ -330,6 +330,13 @@ benchmark feedback to the next research-director cycle. A recurring timeout or
 dependency failure is therefore an explicit harness-repair target followed by a
 same-protocol remeasurement, not just a lower leaderboard number.
 
+The runtime also treats route quality as potentially non-stationary. Adjacent
+provider/model outcome windows are compared only after a complete sample window;
+a material drop creates a durable environment-drift event and switches the next
+cycle to alternate-route verification, peer review, and replication. This
+prevents stale success history from masking provider, model, or execution-host
+degradation.
+
 Recent work makes the missing control loop more explicit. [Adaptive Auto-Harness](https://arxiv.org/abs/2606.01770) describes stateful harness evolution with solve-time routing and human-steering hooks; [HarnessDev](https://arxiv.org/abs/2609.01437) studies agents revising their own harnesses from downstream execution feedback; and [Better Harnesses, Smaller Models](https://arxiv.org/abs/2607.08938) maps failure modes to harness adaptations under cost constraints. Evidra now implements the runtime portion of that idea: each cycle derives a bounded policy from trajectory verdicts, failure classes, evidence conflicts, remaining budget, and benchmark intervention priority. The policy can increase tool evidence rounds, require peer review, change recovery posture, preserve replication, or prefer diverse search, and is recorded as durable evidence for later matched evaluation.
 
 This policy is intentionally not allowed to self-award a win. The competitive claim still requires the locked task/model/seed/budget/evaluator protocol and positive task-balanced evidence. The adaptation policy changes the search and verification process; it does not change the yardstick.

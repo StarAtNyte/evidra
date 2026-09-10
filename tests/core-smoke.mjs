@@ -102,6 +102,18 @@ import { evaluateHarnessChange, inventoryHarnessComponents, planHarnessIntervent
 import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
 import { assessStopPolicy } from "../dist/core/stop-policy.js";
 import { classifyVerifier, verifierKind } from "../dist/core/formal-verification.js";
+import { detectRouteDrift } from "../dist/core/drift-detection.js";
+
+test("route drift requires adjacent windows before changing policy", () => {
+  const report = detectRouteDrift([
+    { route: "codex/model", outcome: "success" }, { route: "codex/model", outcome: "success" }, { route: "codex/model", outcome: "success" },
+    { route: "codex/model", outcome: "failure" }, { route: "codex/model", outcome: "failure" }, { route: "codex/model", outcome: "partial" },
+  ], { window: 3 });
+  assert.equal(report.drifted, true);
+  assert.equal(report.routes[0].baselineScore, 1);
+  assert.equal(report.routes[0].recentScore, 1 / 6);
+  assert.equal(detectRouteDrift([{ route: "codex/model", outcome: "failure" }], { window: 3 }).drifted, false);
+});
 
 test("formal verification adapters classify proof and solver evidence", () => {
   assert.equal(verifierKind(["lake", "env", "lean", "Proof.lean"]), "lean");
@@ -717,6 +729,11 @@ test("adaptive harness policy changes routing from measured failure pressure", (
   assert.equal(benchmarkRegression.requireReplication, true);
   assert.equal(benchmarkRegression.preferDiverseSearch, false);
   assert.match(benchmarkRegression.reasons.join(" "), /benchmark regression/i);
+  const drift = deriveAdaptiveHarnessPolicy({ quality: [], environmentDrift: true, budgetRemainingMinutes: 30 });
+  assert.equal(drift.profile, "recovery");
+  assert.equal(drift.recoveryRoute, "alternate_route");
+  assert.equal(drift.requireReplication, true);
+  assert.match(drift.reasons.join(" "), /environment drift/i);
 });
 
 test("prediction error analysis turns aggregate outcomes into actionable failures", () => {
