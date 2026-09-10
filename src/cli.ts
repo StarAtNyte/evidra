@@ -5,7 +5,7 @@ import { join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
 import { createExperimentManifest, manifestSummary } from "./core/experiment-manifest.js";
-import { activePhaseGoal, definePhaseGoals } from "./core/phase-goals.js";
+import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence } from "./core/phase-goals.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "./core/types.js";
 import { loadCompetitionAdapter } from "./competitions/adapters.js";
 import { auditData } from "./core/data-audit.js";
@@ -563,6 +563,19 @@ research
         }
       }
       const decisionStore = new ResearchStore(statePath);
+      if (phaseGoal && decision.goalStatus === "met") {
+        const phaseEvents = decisionStore.recentEvents(500);
+        const gate = evaluatePhaseGoalEvidence(phaseGoal, {
+          eventTypes: phaseEvents.map((event) => event.type),
+          eventPayloads: phaseEvents.map((event) => ({ type: event.type, payload: event.payload })),
+          ...decisionStore.counts(),
+          candidateHypotheses: decision.hypotheses.length,
+        });
+        if (!gate.met) {
+          decision = { ...decision, goalStatus: "active", nextAction: decision.nextAction + " (phase gate missing: " + gate.missing.join(", ") + ")" };
+          decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal.phase, missing: gate.missing });
+        }
+      }
       materializeResearchDecision(decisionStore, decision);
       const recentDecisions = decisionStore.decisions().map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3);
       const stagnation = detectStagnation(recentDecisions);
@@ -620,7 +633,7 @@ research.command("propose")
     const researchMemory = researchMemoryContext(store, 30);
     store.close();
     console.log("Research 3/3 · analyzing observed evidence...");
-    const decision = await runResearchDirector(objective, {
+    let decision = await runResearchDirector(objective, {
       project,
       competition: adapter.config,
       constraints: { no_submission: true, no_file_edits: true },
@@ -631,6 +644,19 @@ research.command("propose")
       researchMemory,
     }, { provider: "codex", model: "default", reasoningEffort: "medium", fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });
     const decisionStore = new ResearchStore(statePath);
+    if (phaseGoal && decision.goalStatus === "met") {
+      const phaseEvents = decisionStore.recentEvents(500);
+      const gate = evaluatePhaseGoalEvidence(phaseGoal, {
+        eventTypes: phaseEvents.map((event) => event.type),
+        eventPayloads: phaseEvents.map((event) => ({ type: event.type, payload: event.payload })),
+        ...decisionStore.counts(),
+        candidateHypotheses: decision.hypotheses.length,
+      });
+      if (!gate.met) {
+        decision = { ...decision, goalStatus: "active", nextAction: decision.nextAction + " (phase gate missing: " + gate.missing.join(", ") + ")" };
+        decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal.phase, missing: gate.missing });
+      }
+    }
     materializeResearchDecision(decisionStore, decision);
     if (phaseGoal) {
       const now = new Date().toISOString();

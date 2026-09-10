@@ -21,7 +21,7 @@ import { LocalExecutor, parseMetricOutput } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
-import { activePhaseGoal, definePhaseGoals } from "../dist/core/phase-goals.js";
+import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence } from "../dist/core/phase-goals.js";
 import { submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
@@ -369,6 +369,15 @@ test("autonomous loop detects repeated unresolved decisions", () => {
   assert.equal(detectStagnation([decision, decision, decision]).stagnant, true);
   assert.equal(detectStagnation([{ ...decision, decision: "run" }, decision, decision]).stagnant, false);
   assert.equal(detectStagnation([decision, { ...decision, nextAction: "inspect data" }, decision]).stagnant, false);
+});
+
+test("phase completion requires durable evidence instead of model status alone", () => {
+  const goal = definePhaseGoals("test", "research").find((entry) => entry.phase === "baseline");
+  const missing = evaluatePhaseGoalEvidence(goal, { eventTypes: [], eventPayloads: [], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
+  assert.equal(missing.met, false);
+  assert.deepEqual(missing.missing, ["successful baseline"]);
+  const complete = evaluatePhaseGoalEvidence(goal, { eventTypes: ["baseline.completed"], eventPayloads: [{ type: "baseline.completed", payload: { exitCode: 0 } }], hypotheses: 0, experiments: 0, runs: 0, artifacts: 2 });
+  assert.equal(complete.met, true);
 });
 
 test("project-local competition manifests replace hardcoded adapters", () => {

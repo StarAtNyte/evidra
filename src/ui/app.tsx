@@ -23,7 +23,7 @@ import { auditData } from "../core/data-audit.js";
 import { executeResearchTool } from "../core/tools.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { retrieveSource, sourceClaims, sourceSearchText } from "../core/sources.js";
-import { activePhaseGoal, definePhaseGoals } from "../core/phase-goals.js";
+import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence } from "../core/phase-goals.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
@@ -767,13 +767,27 @@ export function App({ root }: { root: string }): React.JSX.Element {
       throw error;
     }
     const decisionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    materializeResearchDecision(decisionStore, decision);
+    const phaseEvents = phaseGoal ? decisionStore.recentEvents(500) : [];
+    const phaseEvidence = phaseGoal ? {
+      eventTypes: phaseEvents.map((event) => event.type),
+      eventPayloads: phaseEvents.map((event) => ({ type: event.type, payload: event.payload })),
+      ...decisionStore.counts(),
+      candidateHypotheses: decision.hypotheses.length,
+    } : undefined;
+    const phaseGate = phaseGoal && decision.goalStatus === "met" && phaseEvidence
+      ? evaluatePhaseGoalEvidence(phaseGoal, phaseEvidence)
+      : { met: decision.goalStatus === "met", missing: [] };
+    const effectiveDecision = decision.goalStatus === "met" && !phaseGate.met
+      ? { ...decision, goalStatus: "active" as const, nextAction: decision.nextAction + " (phase gate missing: " + phaseGate.missing.join(", ") + ")" }
+      : decision;
+    if (decision.goalStatus === "met" && !phaseGate.met) decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal?.phase, missing: phaseGate.missing });
+    materializeResearchDecision(decisionStore, effectiveDecision);
     if (phaseGoal) {
       const now = new Date().toISOString();
-      const nextStatus = decision.goalStatus === "met" ? "met" : decision.goalStatus === "blocked" ? "blocked" : "active";
+      const nextStatus = effectiveDecision.goalStatus === "met" ? "met" : effectiveDecision.goalStatus === "blocked" ? "blocked" : "active";
       decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: nextStatus, payload: { ...phaseGoal, status: nextStatus, attempts: phaseGoal.attempts + 1, updatedAt: now } });
     }
-    if (phaseGoal && decision.goalStatus === "met") {
+    if (phaseGoal && effectiveDecision.goalStatus === "met") {
       const goals = decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));
       const index = goals.findIndex((goal) => goal.id === phaseGoal.id);
       const now = new Date().toISOString();
@@ -796,7 +810,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (researchQuality.overall !== "PASS") trajectoryStore.appendEvent("trajectory.capability_gaps", { trajectoryType: "research", quality: researchQuality, objective });
     trajectoryStore.close();
     const reviewText = criticReview ? `\n\nCritic: ${criticReview.verdict} · confidence ${criticReview.confidence.toFixed(2)}\n${criticReview.summary}${criticReview.objections.length ? `\nObjections:\n${criticReview.objections.map((item) => `- ${item}`).join("\n")}` : ""}${criticReview.requiredChecks.length ? `\nRequired checks:\n${criticReview.requiredChecks.map((item) => `- ${item}`).join("\n")}` : ""}` : "";
-    return { text: formatResearchDecision(decision) + reviewText, goalStatus: decision.goalStatus, decision: decision.decision };
+    return { text: formatResearchDecision(effectiveDecision) + reviewText, goalStatus: effectiveDecision.goalStatus, decision: effectiveDecision.decision };
   };
 
   const proposeLatestExperiment = async (): Promise<{ id: string; text: string } | null> => {

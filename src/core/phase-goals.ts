@@ -33,3 +33,37 @@ export function activePhaseGoal(goals: PhaseGoal[]): PhaseGoal | undefined {
   // bottleneck; never silently advance past it to a later pending phase.
   return goals.find((goal) => goal.status === "active") ?? goals.find((goal) => goal.status === "blocked") ?? goals.find((goal) => goal.status === "pending");
 }
+
+export interface PhaseGoalEvidence {
+  eventTypes: string[];
+  eventPayloads: Array<{ type: string; payload: unknown }>;
+  hypotheses: number;
+  experiments: number;
+  runs: number;
+  artifacts: number;
+  candidateHypotheses?: number;
+}
+
+export interface PhaseGoalGate {
+  met: boolean;
+  missing: string[];
+}
+
+/** Deterministically check whether a model-reported phase completion has evidence. */
+export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, evidence: PhaseGoalEvidence): PhaseGoalGate {
+  const has = (type: string): boolean => evidence.eventTypes.includes(type);
+  const payloads = (type: string): unknown[] => evidence.eventPayloads.filter((event) => event.type === type).map((event) => event.payload);
+  const missing: string[] = [];
+  switch (goal.phase) {
+    case "orientation": if (!has("research.observation") && !has("project.created")) missing.push("workspace observation"); break;
+    case "baseline": if (!payloads("baseline.completed").some((payload) => (payload as { exitCode?: unknown }).exitCode === 0)) missing.push("successful baseline"); break;
+    case "data_audit": if (!has("data.audit.completed")) missing.push("data audit report"); break;
+    case "validation": if (!has("validation.policy.created")) missing.push("versioned validation policy"); break;
+    case "hypothesis": if ((evidence.hypotheses + (evidence.candidateHypotheses ?? 0)) < 1) missing.push("durable hypothesis"); if (evidence.experiments < 1 && !has("experiment.created")) missing.push("experiment manifest"); break;
+    case "implementation": if (!has("experiment.stage.smoke.completed") && !has("experiment.stage.full_validation.completed")) missing.push("completed implementation or smoke stage"); break;
+    case "evaluation": if (!has("experiment.stage.full_validation.completed") || !has("run.completed")) missing.push("completed evaluated run"); break;
+    case "replication": if (!has("replication.manifest.created") || evidence.runs < 2) missing.push("independent replication run"); break;
+    case "promotion": if (!payloads("experiment.gates.updated").some((payload) => { const value = payload as { leakageAuditPassed?: unknown; reviewerApproved?: unknown }; return value.leakageAuditPassed === true && value.reviewerApproved === true; })) missing.push("approved leakage and reviewer gates"); break;
+  }
+  return { met: missing.length === 0, missing };
+}
