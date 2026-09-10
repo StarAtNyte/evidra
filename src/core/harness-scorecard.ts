@@ -102,6 +102,19 @@ export interface HarnessScorecard {
   competitiveScoreLower95: number;
 }
 
+export interface HarnessComparison {
+  challenger: string;
+  incumbent: string;
+  comparableArms: number;
+  validPairedArms: number;
+  tasks: number;
+  coverage: number;
+  pairedMeanDelta: number | null;
+  pairedLower95: number | null;
+  challengerWins: boolean;
+  reason: string;
+}
+
 function delta(trial: HarnessTrial): number | undefined {
   if (!trial.validRun || trial.candidateMetric === undefined || !Number.isFinite(trial.candidateMetric) || !Number.isFinite(trial.baselineMetric)) return undefined;
   return trial.direction === "maximize" ? trial.candidateMetric - trial.baselineMetric : trial.baselineMetric - trial.candidateMetric;
@@ -142,6 +155,61 @@ function bootstrapLower95(values: number[], seedText: string): number {
   }
   samples.sort((left, right) => left - right);
   return samples[Math.floor(samples.length * 0.025)] ?? 0;
+}
+
+function protocolKey(trial: HarnessTrial): string {
+  return [trial.task, trial.arm ?? "", trial.seed ?? "", trial.model ?? "", trial.budgetMinutes ?? ""].join("\u001f");
+}
+
+/**
+ * Make a conservative head-to-head claim from the same task arms. The unit of
+ * resampling is the task, not the trial, so repeated seeds on one easy task
+ * cannot manufacture confidence. Missing or invalid paired runs reduce
+ * coverage and prevent a win claim.
+ */
+export function compareHarnesses(trials: HarnessTrial[], challenger: string, incumbent: string): HarnessComparison {
+  if (challenger === incumbent) throw new Error("Challenger and incumbent must be different harnesses.");
+  const challengerArms = new Map(trials.filter((trial) => trial.harness === challenger).map((trial) => [protocolKey(trial), trial]));
+  const incumbentArms = new Map(trials.filter((trial) => trial.harness === incumbent).map((trial) => [protocolKey(trial), trial]));
+  const keys = [...challengerArms.keys()].filter((key) => incumbentArms.has(key));
+  const paired = keys.flatMap((key) => {
+    const left = challengerArms.get(key)!;
+    const right = incumbentArms.get(key)!;
+    if (!left.validRun || !right.validRun || !Number.isFinite(left.candidateMetric) || !Number.isFinite(right.candidateMetric)) return [];
+    const direction = left.direction;
+    if (direction !== right.direction) return [];
+    const delta = direction === "maximize" ? left.candidateMetric! - right.candidateMetric! : right.candidateMetric! - left.candidateMetric!;
+    return [{ task: left.task, delta }];
+  });
+  const byTask = new Map<string, number[]>();
+  for (const entry of paired) byTask.set(entry.task, [...(byTask.get(entry.task) ?? []), entry.delta]);
+  const taskDeltas = [...byTask.values()].map((values) => values.reduce((sum, value) => sum + value, 0) / values.length);
+  const pairedMeanDelta = taskDeltas.length ? taskDeltas.reduce((sum, value) => sum + value, 0) / taskDeltas.length : null;
+  const pairedLower95 = taskDeltas.length ? bootstrapLower95(taskDeltas, `${challenger}::${incumbent}`) : null;
+  const coverage = keys.length ? paired.length / keys.length : 0;
+  const minimumTasks = 2;
+  const challengerWins = pairedLower95 !== null && pairedLower95 > 0 && coverage >= 0.8 && taskDeltas.length >= minimumTasks;
+  const reason = challengerWins
+    ? `paired lower 95% bound ${pairedLower95.toFixed(6)} is positive across ${taskDeltas.length} tasks with ${(coverage * 100).toFixed(0)}% valid paired coverage`
+    : pairedLower95 === null
+      ? "no valid paired evaluator outcomes are available"
+      : taskDeltas.length < minimumTasks
+        ? `need at least ${minimumTasks} tasks for a task-balanced win claim`
+        : coverage < 0.8
+          ? `valid paired coverage ${(coverage * 100).toFixed(0)}% is below the 80% claim threshold`
+          : `paired lower 95% bound ${pairedLower95.toFixed(6)} is not positive`;
+  return {
+    challenger,
+    incumbent,
+    comparableArms: keys.length,
+    validPairedArms: paired.length,
+    tasks: taskDeltas.length,
+    coverage,
+    pairedMeanDelta,
+    pairedLower95,
+    challengerWins,
+    reason,
+  };
 }
 
 /**

@@ -62,7 +62,7 @@ import { rankSearchArms, searchReward, type SearchOperator } from "./core/search
 import { planPortfolio } from "./core/portfolio.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
-import { scoreHarnessTrials, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
+import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
 import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.js";
 import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
@@ -453,6 +453,39 @@ benchmark.command("score")
     console.log("Harness benchmark · task-balanced evidence score");
     console.log("Harness                 Tasks  Trials  Score  Lower95  Valid  Improve  Repro");
     for (const scorecard of scorecards) console.log(`${scorecard.harness.padEnd(23).slice(0, 23)} ${String(scorecard.tasks).padStart(5)} ${String(scorecard.trials).padStart(7)} ${scorecard.competitiveScore.toFixed(1).padStart(6)} ${scorecard.competitiveScoreLower95.toFixed(1).padStart(8)} ${(scorecard.validRunRate * 100).toFixed(0).padStart(5)}% ${(scorecard.improvementRate * 100).toFixed(0).padStart(7)}% ${(scorecard.reproducibilityRate * 100).toFixed(0).padStart(5)}%`);
+  });
+benchmark.command("compare")
+  .argument("<file>", "JSON file containing a trial array or { trials: [...] }")
+  .argument("<challenger>", "harness claiming the win")
+  .argument("<incumbent>", "harness being challenged")
+  .option("--json", "emit machine-readable comparison")
+  .description("Make a conservative paired, task-balanced win claim")
+  .action((file: string, challenger: string, incumbent: string, options: { json?: boolean }) => {
+    const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
+    const raw = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray((parsed as { trials?: unknown }).trials) ? (parsed as { trials: unknown[] }).trials : undefined;
+    if (!raw?.length) throw new Error("Benchmark input must contain a non-empty JSON trial array.");
+    const trials = raw.map((value, index) => {
+      if (!value || typeof value !== "object") throw new Error(`Benchmark trial ${index + 1} is not an object.`);
+      const trial = value as Partial<HarnessTrial>;
+      if (typeof trial.harness !== "string" || typeof trial.task !== "string" || (trial.direction !== "maximize" && trial.direction !== "minimize") || typeof trial.baselineMetric !== "number" || typeof trial.validRun !== "boolean" || typeof trial.durationSeconds !== "number" || typeof trial.recovered !== "boolean" || typeof trial.reproducible !== "boolean") throw new Error(`Benchmark trial ${index + 1} is missing a required field.`);
+      return trial as HarnessTrial;
+    });
+    const protocol = validateBenchmarkProtocol(trials);
+    if (!protocol.valid) throw new Error(`Benchmark protocol is not matched:\n${protocol.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
+    const comparison = compareHarnesses(trials, challenger, incumbent);
+    if (options.json) {
+      console.log(JSON.stringify(comparison, null, 2));
+      if (!comparison.challengerWins) process.exitCode = 2;
+      return;
+    }
+    console.log(`Harness comparison · ${challenger} vs ${incumbent}`);
+    console.log(`Result       ${comparison.challengerWins ? "WIN PROVEN" : "NOT PROVEN"}`);
+    console.log(`Paired arms  ${comparison.validPairedArms}/${comparison.comparableArms} (${(comparison.coverage * 100).toFixed(0)}%)`);
+    console.log(`Tasks        ${comparison.tasks}`);
+    console.log(`Mean delta   ${comparison.pairedMeanDelta?.toFixed(6) ?? "n/a"}`);
+    console.log(`Lower 95%    ${comparison.pairedLower95?.toFixed(6) ?? "n/a"}`);
+    console.log(`Reason       ${comparison.reason}`);
+    if (!comparison.challengerWins) process.exitCode = 2;
   });
 benchmark.command("export")
   .option("--out <file>", "write JSON to a file instead of stdout")

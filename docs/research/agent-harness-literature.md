@@ -73,7 +73,7 @@ portfolio planner can spend a cycle across genuinely different approaches.
 The next high-value upgrades are:
 
 1. run equal-budget AIRS-Bench arms across Evidra, AIRA-dojo, and MLGym;
-2. report confidence intervals and task-balanced scores over repeated seeds;
+2. report paired confidence intervals and task-balanced scores over repeated seeds;
 3. add formal-verification adapters for non-ML research artifacts;
 4. run equal-budget comparisons of greedy, UCB, evolutionary, and MCTS policies
    under the same task and compute budgets.
@@ -88,6 +88,11 @@ The search-policy item is also partially implemented: `greedy`, `ucb_portfolio`,
 `evolutionary`, and `mcts` are explicit bounded operators. They share the same
 experiment manifests and reward ledger; the remaining work is a controlled
 benchmark, not an assumption that a named policy is automatically better.
+
+The competitive claim gate is now implemented: `benchmark compare` uses paired
+task-level bootstrap bounds and refuses to call a harness better when coverage
+or task diversity is insufficient. This turns the remaining benchmark work into
+an empirical comparison rather than a scorecard convention.
 
 ## Evaluator integrity and specification gaming
 

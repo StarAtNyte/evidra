@@ -25,6 +25,7 @@ evidra benchmark run protocol.json --out benchmark-run.json
 evidra benchmark validate trials.json
 evidra benchmark score trials.json
 evidra benchmark score trials.json --json
+evidra benchmark compare trials.json evidra incumbent
 evidra benchmark export --out evidra-trials.json
 ```
 
@@ -40,6 +41,13 @@ directory, metric name, and baseline. Evidra executes the commands with their
 declared time budgets, parses the declared metric, and writes raw process
 evidence alongside the scorecards. The runner does not claim reproducibility;
 independent repeats must be declared as separate matched arms.
+
+`benchmark compare` is the claim gate. It pairs the challenger and incumbent on
+the exact task, arm, seed, model, and budget, drops invalid evaluator outcomes,
+aggregates paired deltas by task, and computes a deterministic bootstrap lower
+95% bound. A win is reported only with at least two tasks, positive lower bound,
+and at least 80% valid paired coverage. Otherwise the result is explicitly
+`NOT PROVEN`; a higher point score alone is not sufficient.
 
 The input is either a JSON array or `{ "trials": [...] }`, with one record per
 fixed task/seed arm and fields for baseline, candidate metric, validity,

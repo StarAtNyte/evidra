@@ -56,7 +56,7 @@ import { summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
-import { scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
+import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { rankSearchArms, searchReward } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
@@ -1669,6 +1669,22 @@ test("portfolio planner is bounded, diverse, and cost aware", () => {
   const overBudget = planPortfolio([{ id: "too-large", title: "too large", operator: "audit", expectedValue: 1, costMinutes: 11 }], { maxCandidates: 1, maxParallel: 1, budgetMinutes: 10 });
   assert.equal(overBudget.selected.length, 0);
   assert.match(overBudget.rejected[0]?.reason ?? "", /budget/);
+});
+
+test("harness comparison requires paired coverage and task-balanced evidence", () => {
+  const trials = ["task-a", "task-b"].flatMap((task) => [
+    { harness: "evidra", task, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: 0.8, validRun: true, durationSeconds: 1, recovered: true, reproducible: true },
+    { harness: "incumbent", task, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: 0.7, validRun: true, durationSeconds: 1, recovered: true, reproducible: true },
+  ]);
+  const win = compareHarnesses(trials, "evidra", "incumbent");
+  assert.equal(win.challengerWins, true);
+  assert.equal(win.tasks, 2);
+  assert.equal(win.coverage, 1);
+  assert.ok(win.pairedLower95 > 0);
+
+  const singleTask = compareHarnesses(trials.filter((trial) => trial.task === "task-a"), "evidra", "incumbent");
+  assert.equal(singleTask.challengerWins, false);
+  assert.match(singleTask.reason, /at least 2 tasks/);
 });
 
 test("cross-pollination preserves agreement, tension, and evidence provenance", () => {
