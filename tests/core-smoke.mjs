@@ -490,6 +490,8 @@ test("external scores produce conservative validation split beliefs", () => {
   const report = estimateDistributionBeliefs(observations);
   assert.equal(report.recommendedSplit, "group");
   assert.ok(report.splits.find((entry) => entry.split === "group").shrunkCorrelation < 1);
+  assert.ok(report.splits.find((entry) => entry.split === "group").confidenceInterval[0] < 1);
+  assert.ok(report.splits.find((entry) => entry.split === "group").uncertainty > 0);
   assert.match(report.warning, /few external/i);
 });
 

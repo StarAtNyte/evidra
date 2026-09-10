@@ -154,3 +154,9 @@ but a candidate cannot pass promotion merely because it won one uncorrected
 comparison. This complements reduced-validation promotion, independent
 replication, subgroup checks, and evaluator integrity rather than replacing
 them.
+
+The hidden-distribution estimator now reports Fisher-transformed confidence
+intervals for split/external-score correlation and ranks splits by a
+shrinkage-adjusted lower predictive bound. This makes sparse leaderboard data
+useful for prioritization without allowing an extreme correlation from a few
+submissions to replace broad validation.
