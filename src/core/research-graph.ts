@@ -12,7 +12,7 @@ function slug(value: string): string {
 }
 
 /** Turn a validated director decision into durable graph entities. */
-export function materializeResearchDecision(store: ResearchStore, value: ResearchDecision): MaterializedDecision {
+export function materializeResearchDecision(store: ResearchStore, value: ResearchDecision, options: { evidenceSourceId?: string; evidenceScope?: string } = {}): MaterializedDecision {
   const decision = ResearchDecisionSchema.parse(value);
   const decisionId = store.saveDecision(decision);
   const stamp = `${Date.now()}_${decisionId}`;
@@ -26,8 +26,12 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
     hypothesis.evidence.forEach((statement, evidenceIndex) => {
       const claimId = `claim_${stamp}_${String(index + 1).padStart(2, "0")}_${evidenceIndex + 1}`;
       claimIds.push(claimId);
-      store.saveClaim({ id: claimId, payload: { id: claimId, statement, scope: "director decision context", confidence: 0.5, sourceType: "observation", sourceId: decisionId.toString(), status: "active" } });
-      store.saveEdge({ id: `edge_${claimId}_${hypothesisId}`, fromId: claimId, toId: hypothesisId, relation: "supports", confidence: 0.5, evidenceIds: [claimId] });
+      const literature = Boolean(options.evidenceSourceId);
+      store.saveClaim({ id: claimId, payload: { id: claimId, statement, scope: options.evidenceScope ?? "director decision context", confidence: literature ? 0.35 : 0.5, sourceType: literature ? "literature" : "observation", sourceId: options.evidenceSourceId ?? decisionId.toString(), status: "active" } });
+      store.saveEdge({ id: `edge_${claimId}_${hypothesisId}`, fromId: claimId, toId: hypothesisId, relation: "supports", confidence: literature ? 0.35 : 0.5, evidenceIds: [claimId] });
+      if (options.evidenceSourceId) {
+        store.saveEdge({ id: `edge_${claimId}_${options.evidenceSourceId}`, fromId: claimId, toId: options.evidenceSourceId, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
+      }
     });
   });
 

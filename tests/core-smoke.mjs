@@ -43,6 +43,7 @@ import { latestSourceEntries, latestSourcePayloads, researchMemoryContext } from
 import { applyUnifiedDiff, extractUnifiedDiff } from "../dist/core/experiment-patches.js";
 import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js";
 import { compareClaims } from "../dist/core/claim-consistency.js";
+import { materializeResearchDecision } from "../dist/core/research-graph.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
 import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../dist/core/campaign.js";
 import { readCampaignRuntime } from "../dist/core/campaign.js";
@@ -757,6 +758,31 @@ test("evidence claims require provenance and grounded literature sources", () =>
     assert.equal(store.claims()[0].payload.excerpt, "quoted context");
     store.saveClaim({ id: "contrary", payload: { statement: "paper claim is not valid", scope: "paper", confidence: 0.5, sourceType: "literature", sourceId: "paper-1", status: "active" } });
     assert.ok(store.edges().some((edge) => edge.relation === "contradicts" && edge.evidenceIds.includes("grounded") && edge.evidenceIds.includes("contrary")));
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("source adaptation preserves literature provenance through the research graph", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-source-adaptation-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.saveSource({ id: "paper-adapt", payload: { title: "Paper", url: "https://example.com/paper", claims: ["test claim"] } });
+    const materialized = materializeResearchDecision(store, {
+      phase: "hypothesis",
+      goalStatus: "active",
+      decision: "propose",
+      bottleneck: "Need a test",
+      rationale: "The paper suggests a falsifiable improvement.",
+      hypotheses: [{ title: "Paper-derived test", mechanism: "The technique changes the target behavior.", evidence: ["The paper reports a relevant effect."], proposedChange: "Implement the smallest controlled test.", falsificationTest: "The controlled test does not reproduce the effect.", expectedMetricDelta: { low: 0, median: 0, high: 0 }, computeCostGpuHours: 0, implementationRisk: "low", leakageRisk: "low", dependencies: [] }],
+      searchOperator: "ablation",
+      selectedHypothesis: "Paper-derived test",
+      nextAction: "Run the controlled test",
+      toolCalls: [],
+    }, { evidenceSourceId: "paper-adapt", evidenceScope: "paper" });
+    const claim = store.claims().find((entry) => entry.id === materialized.claimIds[0]);
+    assert.equal(claim?.payload.sourceType, "literature");
+    assert.equal(claim?.payload.sourceId, "paper-adapt");
+    assert.ok(store.edges().some((edge) => edge.fromId === materialized.claimIds[0] && edge.toId === "paper-adapt" && edge.relation === "derived_from"));
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

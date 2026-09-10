@@ -570,6 +570,45 @@ sources.command("add").argument("<url>").action(async (url: string) => {
   store.close();
   console.log(`${retrieved.id}\n${retrieved.title}\n${retrieved.url}\nclaims: ${claims.length}\nhash: ${retrieved.contentHash}`);
 });
+sources.command("adapt")
+  .argument("<id>", "cached source identifier")
+  .argument("[objective]", "what the technique should improve in the active workspace")
+  .description("Adapt a cached source into grounded, falsifiable workspace hypotheses")
+  .action(async (id: string, objective?: string) => {
+    const store = new ResearchStore(statePath);
+    const sourceEntry = store.sources().find((entry) => entry.id === id);
+    if (!sourceEntry) { store.close(); throw new Error(`Research source ${id} is not cached. Run: evidra sources add <url>`); }
+    const project = store.project();
+    const adapter = activeCompetition();
+    const source = sourceEntry.payload as { title?: unknown; url?: unknown; claims?: unknown; excerpt?: unknown; contentHash?: unknown };
+    const adaptationObjective = objective?.trim() || `Adapt the technique from '${typeof source.title === "string" ? source.title : id}' into testable improvements for the active workspace.`;
+    const recentEvents = store.recentEvents(20);
+    const researchMemory = researchMemoryContext(store, 20);
+    const sourceContext = {
+      id,
+      title: typeof source.title === "string" ? source.title : "untitled",
+      url: typeof source.url === "string" ? source.url : "",
+      contentHash: typeof source.contentHash === "string" ? source.contentHash : "",
+      claims: Array.isArray(source.claims) ? source.claims.slice(0, 24) : [],
+      excerpt: typeof source.excerpt === "string" ? source.excerpt.slice(0, 8_000) : "",
+    };
+    store.appendEvent("research.source.adaptation.started", { sourceId: id, objective: adaptationObjective });
+    store.close();
+    const decision = await runResearchDirector(adaptationObjective, {
+      project,
+      competition: adapter.config,
+      source: sourceContext,
+      constraints: { source_claims_are_literature_not_workspace_measurements: true, no_submission: true, no_file_edits: true },
+      recentEvents,
+      researchMemory,
+      ultimateGoal: adaptationObjective,
+    }, { provider: "codex", model: "default", reasoningEffort: "high", fallbackLocalModel: process.env.EVIDRA_FALLBACK_MODEL ?? "auto", cwd: root, executeTool: researchToolExecutor(adapter) });
+    const adapted = new ResearchStore(statePath);
+    materializeResearchDecision(adapted, decision, { evidenceSourceId: id, evidenceScope: typeof source.url === "string" ? source.url : id });
+    adapted.appendEvent("research.source.adapted", { sourceId: id, objective: adaptationObjective, decision });
+    adapted.close();
+    console.log(formatResearchDecision(decision));
+  });
 program.addCommand(sources);
 
 const memory = new Command("memory").description("Search durable research claims, hypotheses, and sources");

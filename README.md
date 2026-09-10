@@ -15,6 +15,7 @@ The workbench is general-purpose. It can be used for ML competitions, data scien
 Most coding agents optimize for one conversation and one code change. Evidra is designed for research programs that continue after the first answer:
 
 - **Evidence before conclusions.** The director can inspect files, search the workspace, read sources, audit data, inspect Git, run safe commands, retrieve literature, and receive results in its next reasoning turn.
+- **Literature becomes testable work.** Cached sources can be adapted into bounded, falsifiable hypotheses with explicit low-confidence literature provenance and source-to-claim graph edges.
 - **Falsifiable research.** Decisions contain phases, goals, hypotheses, expected effects, costs, risks, dependencies, and explicit falsification tests.
 - **Durable state.** SQLite and an append-only event log preserve projects, claims, sources, hypotheses, decisions, experiments, runs, artifacts, phase goals, agent lanes, sessions, and queue tasks.
 - **Bounded autonomy.** A campaign has an ultimate goal, internal phase goals, a budget, and a stopping condition. It pauses when genuinely blocked and can resume later.

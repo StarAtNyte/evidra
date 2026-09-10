@@ -78,6 +78,14 @@ The next high-value upgrades are:
 4. run equal-budget comparisons of greedy, UCB, evolutionary, and MCTS policies
    under the same task and compute budgets.
 
+Source adaptation is now implemented: `evidra sources adapt <source-id> [objective]`
+passes bounded claims and excerpts from a cached source to the director, while
+persisting resulting claims as low-confidence literature evidence and linking them
+to the source with `derived_from` edges. This keeps paper-derived ideas useful for
+search without confusing them with measurements from the active workspace. The
+remaining work is to benchmark which adaptation prompts and verification gates
+produce the highest rate of successfully replicated ideas.
+
 The early-promotion item is now implemented conservatively: after eight paired
 reduced/full outcomes, Evidra learns a threshold from successful full runs;
 before that, and whenever evidence is one-sided, it uses the manifest's static
