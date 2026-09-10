@@ -57,7 +57,7 @@ import { summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
-import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
+import { compareHarnesses, evaluateHarnessRetention, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { planHarnessAdaptation } from "../dist/core/harness-adaptation.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "../dist/core/claim-audit.js";
 import { deriveAdaptiveHarnessPolicy } from "../dist/core/adaptive-harness.js";
@@ -2410,6 +2410,15 @@ test("benchmark wins require matched successful reproducibility checks", () => {
   assert.equal(failedCheck.challengerWins, false);
   const unchecked = compareHarnesses(trials.map((trial) => ({ ...trial, reproducible: false, reproducibilityChecked: false })), "evidra", "incumbent");
   assert.equal(unchecked.challengerWins, true);
+});
+
+test("harness retention gate detects regression on previously solved tasks", () => {
+  const before = ["task-a", "task-b"].map((task) => ({ harness: "evidra", task, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: 0.8, validRun: true, durationSeconds: 1, recovered: false, reproducible: false }));
+  const retained = evaluateHarnessRetention(before, before.map((trial) => ({ ...trial, candidateMetric: 0.81 })), "evidra");
+  assert.equal(retained.retained, true);
+  const regressed = evaluateHarnessRetention(before, before.map((trial, index) => ({ ...trial, candidateMetric: index === 0 ? 0.5 : 0.8 })), "evidra");
+  assert.equal(regressed.retained, false);
+  assert.deepEqual(regressed.regressedTasks, ["task-a"]);
 });
 
 test("cross-pollination preserves agreement, tension, and evidence provenance", () => {

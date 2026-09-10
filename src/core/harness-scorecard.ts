@@ -153,6 +153,19 @@ export interface HarnessComparison {
   reason: string;
 }
 
+export interface HarnessRetentionReport {
+  harness: string;
+  comparableArms: number;
+  validPairedArms: number;
+  tasks: number;
+  coverage: number;
+  pairedMeanDelta: number | null;
+  pairedLower95: number | null;
+  regressedTasks: string[];
+  retained: boolean;
+  reason: string;
+}
+
 function delta(trial: HarnessTrial): number | undefined {
   if (!trial.validRun || trial.candidateMetric === undefined || !Number.isFinite(trial.candidateMetric) || !Number.isFinite(trial.baselineMetric)) return undefined;
   return trial.direction === "maximize" ? trial.candidateMetric - trial.baselineMetric : trial.baselineMetric - trial.candidateMetric;
@@ -330,6 +343,41 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
     challengerWins,
     reason,
   };
+}
+
+/** Detect harness-induced forgetting against a previous matched benchmark. */
+export function evaluateHarnessRetention(before: HarnessTrial[], after: HarnessTrial[], harness: string, maximumRegression = 0): HarnessRetentionReport {
+  if (!Number.isFinite(maximumRegression) || maximumRegression < 0) throw new Error("Maximum harness regression must be finite and non-negative.");
+  const beforeArms = new Map(before.filter((trial) => trial.harness === harness).map((trial) => [protocolKey(trial), trial]));
+  const afterArms = new Map(after.filter((trial) => trial.harness === harness).map((trial) => [protocolKey(trial), trial]));
+  const allKeys = [...new Set([...beforeArms.keys(), ...afterArms.keys()])];
+  const paired = allKeys.flatMap((key) => {
+    const left = beforeArms.get(key);
+    const right = afterArms.get(key);
+    if (!left || !right || !left.validRun || !right.validRun || !Number.isFinite(left.candidateMetric) || !Number.isFinite(right.candidateMetric) || !fairPair(left, right)) return [];
+    if ((left.reproducibilityChecked === true && !left.reproducible) || (right.reproducibilityChecked === true && !right.reproducible)) return [];
+    const delta = left.direction === "maximize" ? right.candidateMetric! - left.candidateMetric! : left.candidateMetric! - right.candidateMetric!;
+    return [{ task: left.task, delta }];
+  });
+  const byTask = new Map<string, number[]>();
+  for (const entry of paired) byTask.set(entry.task, [...(byTask.get(entry.task) ?? []), entry.delta]);
+  const taskMeansByName = [...byTask.entries()].map(([task, values]) => ({ task, delta: values.reduce((sum, value) => sum + value, 0) / values.length }));
+  const taskDeltas = taskMeansByName.map((entry) => entry.delta);
+  const pairedMeanDelta = taskDeltas.length ? taskDeltas.reduce((sum, value) => sum + value, 0) / taskDeltas.length : null;
+  const pairedLower95 = taskDeltas.length ? bootstrapLower95(taskDeltas, `${harness}:retention`) : null;
+  const regressedTasks = taskMeansByName.filter((entry) => entry.delta < -maximumRegression).map((entry) => entry.task).sort();
+  const coverage = allKeys.length ? paired.length / allKeys.length : 0;
+  const retained = pairedLower95 !== null && pairedLower95 >= -maximumRegression && coverage >= 0.8 && taskDeltas.length >= 2;
+  const reason = retained
+    ? `retained prior performance across ${taskDeltas.length} tasks with ${(coverage * 100).toFixed(0)}% valid paired coverage`
+    : pairedLower95 === null
+      ? "no valid paired retention evidence is available"
+      : taskDeltas.length < 2
+        ? "need at least 2 tasks for a retention claim"
+        : coverage < 0.8
+          ? `retention coverage ${(coverage * 100).toFixed(0)}% is below the 80% threshold`
+          : `lower 95% retention bound ${pairedLower95.toFixed(6)} is below the allowed regression`;
+  return { harness, comparableArms: allKeys.length, validPairedArms: paired.length, tasks: taskDeltas.length, coverage, pairedMeanDelta, pairedLower95, regressedTasks, retained, reason };
 }
 
 /**

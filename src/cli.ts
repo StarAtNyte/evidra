@@ -66,7 +66,7 @@ import { promoteHalvingStage } from "./core/successive-halving.js";
 import type { CostObservation } from "./core/cost-model.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
-import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
+import { compareHarnesses, evaluateHarnessRetention, scoreHarnessTrials, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
 import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.js";
 import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
@@ -424,8 +424,10 @@ benchmark.command("run")
   .option("--parallel <count>", "maximum independent benchmark arms to run concurrently", "1")
   .option("--challenger <harness>", "harness that must beat the incumbents", "evidra")
   .option("--incumbent <harness>", "compare only against this incumbent; by default compare against every other harness")
+  .option("--retention <file>", "previous benchmark report whose challenger performance must be retained")
+  .option("--retention-regression <delta>", "maximum allowed task-level regression for retention", "0")
   .description("Execute matched arms, score the evidence, and verify the challenger beats incumbents")
-  .action(async (file: string, options: { out?: string; workspace?: string; challenger: string; incumbent?: string; parallel: string }) => {
+  .action(async (file: string, options: { out?: string; workspace?: string; challenger: string; incumbent?: string; parallel: string; retention?: string; retentionRegression: string }) => {
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
     const raw = parsed && typeof parsed === "object" && Array.isArray((parsed as { arms?: unknown }).arms) ? (parsed as { arms: unknown[] }).arms : undefined;
     if (!raw?.length) throw new Error("Benchmark protocol must contain a non-empty arms array.");
@@ -449,7 +451,18 @@ benchmark.command("run")
     const incumbents = options.incumbent ? [options.incumbent] : harnesses.filter((harness) => harness !== options.challenger);
     const comparisons = incumbents.map((incumbent) => compareHarnesses(report.trials, options.challenger, incumbent));
     const adaptation = planHarnessAdaptation(report.trials, scorecards, comparisons, options.challenger);
-    const output = { ...report, scorecards, protocol: matched, challenger: options.challenger, comparisons, adaptation };
+    let retention: ReturnType<typeof evaluateHarnessRetention> | undefined;
+    if (options.retention) {
+      const priorParsed: unknown = JSON.parse(readFileSync(resolve(options.retention), "utf8"));
+      const priorRaw = Array.isArray(priorParsed) ? priorParsed : priorParsed && typeof priorParsed === "object" && Array.isArray((priorParsed as { trials?: unknown }).trials) ? (priorParsed as { trials: unknown[] }).trials : undefined;
+      if (!priorRaw?.length) throw new Error("Retention report must contain a non-empty trials array.");
+      const priorTrials = priorRaw as HarnessTrial[];
+      const priorProtocol = validateBenchmarkProtocol(priorTrials);
+      if (!priorProtocol.valid) throw new Error(`Retention report is not matched:\n${priorProtocol.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
+      const maximumRegression = Number(options.retentionRegression);
+      retention = evaluateHarnessRetention(priorTrials, report.trials, options.challenger, maximumRegression);
+    }
+    const output = { ...report, scorecards, protocol: matched, challenger: options.challenger, comparisons, adaptation, ...(retention ? { retention } : {}) };
     if (options.out) writeFileSync(resolve(options.out), `${JSON.stringify(output, null, 2)}\n`);
     const benchmarkStore = new ResearchStore(statePath);
     benchmarkStore.appendEvent("harness.benchmark.completed", {
@@ -461,6 +474,7 @@ benchmark.command("run")
       scorecards: scorecards.map((scorecard) => ({ harness: scorecard.harness, competitiveScore: scorecard.competitiveScore, lower95: scorecard.competitiveScoreLower95, validRunRate: scorecard.validRunRate, failureProfile: scorecard.failureProfile })),
       comparisons: comparisons.map((comparison) => ({ incumbent: comparison.incumbent, challengerWins: comparison.challengerWins, reason: comparison.reason, pairedLower95: comparison.pairedLower95 })),
       adaptation,
+      ...(retention ? { retention } : {}),
     });
     benchmarkStore.close();
     console.log(`Harness benchmark run complete\n${scorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})${Object.keys(scorecard.failureProfile).length ? ` · failures ${JSON.stringify(scorecard.failureProfile)}` : ""}`).join("\n")}`);
@@ -475,6 +489,8 @@ benchmark.command("run")
     } else {
       console.log(`\nCompetitive gate · no incumbent arm found; result is scored evidence, not a win claim.`);
     }
+    if (retention) console.log(`\nRetention gate · ${retention.retained ? "RETAINED" : "REGRESSION DETECTED"} · ${retention.reason}`);
+    if (retention && !retention.retained) process.exitCode = 2;
   });
 benchmark.command("validate")
   .argument("<file>", "JSON file containing a trial array or { trials: [...] }")
