@@ -1104,6 +1104,8 @@ test("metric parser accepts evaluator JSON and keyed log output", () => {
   assert.deepEqual(parsed.metricsByFold.rmse, [0.4, 0.44]);
   const autoresearch = parseMetricOutput("---\nval_bpb:          1.253616\ntraining_seconds: 45.0\n", "val_bpb");
   assert.equal(autoresearch.metrics.val_bpb, 1.253616);
+  const pretty = parseMetricOutput('--- EVALUATION RESULT ---\n{\n  "Accuracy": 0.5260905014268243\n}\n', "Accuracy");
+  assert.equal(pretty.metrics.Accuracy, 0.5260905014268243);
 });
 
 test("competition contract validates generic autoresearch-style workspaces", () => {

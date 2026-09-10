@@ -87,7 +87,8 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
   try { addObject(JSON.parse(stdout)); } catch { /* output may be a log stream */ }
   for (const line of stdout.split("\n")) {
     try { addObject(JSON.parse(line)); } catch { /* non-JSON log line */ }
-    const keyed = line.match(new RegExp(`(?:^|\\s)${metricName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\s*[:=]\\s*(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`, "i"));
+    const escapedMetric = metricName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");
+    const keyed = line.match(new RegExp(`(?:^|\\s)[\\\"']?${escapedMetric}[\\\"']?\\s*[:=]\\s*(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`, "i"));
     if (keyed) {
       const value = Number(keyed[1]);
       if (Number.isFinite(value)) metrics[metricName] = value;
