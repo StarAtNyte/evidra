@@ -46,6 +46,7 @@ import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../dist/c
 import { applyCriticGate } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment } from "../dist/core/validation.js";
+import { laneToolCalls } from "../dist/agents/research-lanes.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -634,6 +635,16 @@ test("shell parsing and safety guard handle quoted and wrapped commands", () => 
   assert.equal(guardCommand(["busybox", "rm", "tmp"]).allowed, false);
   assert.equal(guardCommand(["python3", "-c", "import os; os.remove('x')"]).allowed, false);
   assert.equal(guardCommand(["rg", "-n", "hello world", "src"]).allowed, true);
+});
+
+test("research lanes use bounded role-specific workspace observations", () => {
+  const dataCalls = laneToolCalls("data detective");
+  const validationCalls = laneToolCalls("validation scientist");
+  const modelCalls = laneToolCalls("model researcher");
+  assert.deepEqual(dataCalls.map((call) => call.name), ["workspace.files", "workspace.search"]);
+  assert.match(String(dataCalls[1].arguments.query), /leak|duplicate/i);
+  assert.match(String(validationCalls[1].arguments.query), /split|metric/i);
+  assert.match(String(modelCalls[1].arguments.query), /model|estimator/i);
 });
 
 test("durable queue worker bounds concurrency and retries failures", async () => {

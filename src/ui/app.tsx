@@ -729,6 +729,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
         onProgress: setProgress,
         onProcess: registerProcess,
         isCancelled: () => interruptedProcess.current,
+        executeTool: (call) => executeResearchTool(call, {
+          root,
+          storePath: join(root, ".sota", "database.sqlite"),
+          autonomy: config.autonomy,
+          competition: adapter.config,
+          onProgress: setProgress,
+          onProcess: registerProcess,
+        }),
       });
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
       setProgress("Research 4/4 · director is cross-pollinating lane findings...");

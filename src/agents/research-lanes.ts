@@ -5,6 +5,7 @@ import type { AgentProvider, ExecAgentOptions } from "./codex-exec.js";
 import { isProviderUsageLimit, isRetryableAgentError, resolveLocalFallbackModel, runWithLocalFallback } from "./codex-exec.js";
 import type { ProcessControl } from "../core/process.js";
 import type { AutonomyLevel } from "../core/permissions.js";
+import type { ResearchToolCall, ResearchToolResult } from "../core/tools.js";
 
 export const RESEARCH_LANE_ROLES = [
   "data detective",
@@ -27,6 +28,7 @@ export const ResearchLaneReportSchema = z.object({
 export type ResearchLaneReport = z.infer<typeof ResearchLaneReportSchema> & {
   status: "completed" | "failed";
   error?: string;
+  toolResults?: ResearchToolResult[];
 };
 
 export const ResearchReviewSchema = z.object({
@@ -56,6 +58,20 @@ export interface ResearchLanesOptions {
   onProgress?: (message: string) => void;
   onProcess?: (control: ProcessControl) => void;
   isCancelled?: () => boolean;
+  executeTool?: (call: ResearchToolCall) => Promise<ResearchToolResult>;
+}
+
+/** Keep lane observations bounded and role-specific before model synthesis. */
+export function laneToolCalls(role: ResearchLaneRole): ResearchToolCall[] {
+  const focus = role === "data detective"
+    ? "duplicate|leak|missing|shift|group|target|label"
+    : role === "validation scientist"
+      ? "split|fold|valid|metric|evaluator|seed|test"
+      : "train|model|estimator|baseline|experiment|config";
+  return [
+    { name: "workspace.files", arguments: {} },
+    { name: "workspace.search", arguments: { query: focus } },
+  ];
 }
 
 /**
@@ -163,6 +179,14 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
   store.close();
   options.onProgress?.(`Research lane · ${role} · investigating...`);
   try {
+    const toolResults: ResearchToolResult[] = [];
+    if (options.executeTool) {
+      for (const call of laneToolCalls(role)) {
+        if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
+        options.onProgress?.(`Research lane · ${role} · ${call.name}...`);
+        toolResults.push(await options.executeTool(call));
+      }
+    }
     let provider = options.provider;
     let model = options.model;
     let parsed: z.infer<typeof ResearchLaneReportSchema> | undefined;
@@ -170,7 +194,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     for (let attempt = 1; attempt <= 3 && !parsed; attempt += 1) {
       if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
       try {
-        const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective), context }, {
+        const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective), context: { ...context, laneToolResults: toolResults } }, {
           provider,
           model,
           limitPolicy: options.limitPolicy,
@@ -195,7 +219,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
       }
     }
     if (!parsed) throw lastError instanceof Error ? lastError : new Error("Lane did not produce a validated report.");
-    const report: ResearchLaneReport = { ...parsed, role, status: "completed" };
+    const report: ResearchLaneReport = { ...parsed, role, status: "completed", ...(options.executeTool ? { toolResults } : {}) };
     saveLaneEvent(options.storePath, role, report);
     const completed = new ResearchStore(options.storePath);
     completed.updateAgentLane({ role, status: "idle", provider: options.provider, model: options.model, task: null, error: null });
