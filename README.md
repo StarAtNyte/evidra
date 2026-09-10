@@ -145,6 +145,7 @@ Implemented today:
 - matched benchmark-arm validation requiring task, seed, model, and budget parity before a competitive claim.
 - checksum-locked validation policies with auditable unlock reasons and pre-experiment mutation checks.
 - bounded scholarly-source discovery that returns candidates separately from trusted, hashed source retrieval.
+- SAFE research can retrieve and hash read-only literature evidence; workspace edits, policy changes, reports, and external actions remain permission-gated.
 
 ### Experience-driven improvement
 

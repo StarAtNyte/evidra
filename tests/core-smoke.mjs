@@ -1064,8 +1064,12 @@ test("research tool registry exposes safe workspace tools", async () => {
     const reportDenied = await executeResearchTool({ name: "report.generate", arguments: { kind: "research" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(reportDenied.ok, false);
     assert.match(reportDenied.error, /inspection tools only/);
+    const sourceBoundary = await executeResearchTool({ name: "source.retrieve", arguments: { url: "http://127.0.0.1:9/private" } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(sourceBoundary.ok, false);
+    assert.doesNotMatch(sourceBoundary.error, /inspection tools only/);
+    assert.match(sourceBoundary.error, /private or loopback/);
     assert.equal(existsSync(join(root, "reports")), false);
-    assert(RESEARCH_TOOLS.some((tool) => tool.name === "source.retrieve"));
+    assert(RESEARCH_TOOLS.some((tool) => tool.name === "source.retrieve" && tool.readOnly));
     assert(RESEARCH_TOOLS.some((tool) => tool.name === "source.search" && tool.readOnly));
     const eventStore = new ResearchStore(db);
     const events = eventStore.recentEvents(10).map((event) => event.type);

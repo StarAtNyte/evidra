@@ -62,7 +62,9 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   { name: "workspace.read", description: "Read a bounded text file inside the workspace.", input: { path: "relative file path", maxBytes: "optional byte limit" }, readOnly: true },
   { name: "git.status", description: "Read the current Git status and HEAD commit.", input: {}, readOnly: true },
   { name: "shell.exec", description: "Run an allowlisted shell command with captured output.", input: { command: "argv array or shell string", timeoutMs: "optional timeout" }, readOnly: true },
-  { name: "source.retrieve", description: "Retrieve, hash, excerpt, and store a research source with extracted claims.", input: { url: "HTTP(S) URL" }, readOnly: false },
+  // Retrieval writes only durable local evidence; it does not mutate the
+  // workspace or perform an external action, so safe research may use it.
+  { name: "source.retrieve", description: "Retrieve, hash, excerpt, and store a research source with extracted claims.", input: { url: "HTTP(S) URL" }, readOnly: true },
   { name: "source.search", description: "Search scholarly works and return ranked candidates for later retrieval.", input: { query: "research question or keywords", limit: "optional result count" }, readOnly: true },
   { name: "data.audit", description: "Audit workspace files for size, duplicates, and suspicious data issues.", input: { path: "optional relative path" }, readOnly: true },
   { name: "validation.generate", description: "Create a versioned validation policy for the active workspace.", input: {}, readOnly: false },
