@@ -119,10 +119,13 @@ The next high-value upgrades are:
 
 1. run equal-budget AIRS-Bench and Harness-Bench-compatible arms across Evidra,
    AIRA-dojo, MLGym, and comparable harnesses;
-2. report paired confidence intervals and task-balanced scores over repeated seeds;
-3. add formal-verification adapters for non-ML research artifacts;
-4. run equal-budget comparisons of greedy, UCB, evolutionary, and MCTS policies
+2. run equal-budget comparisons of greedy, UCB, evolutionary, and MCTS policies
    under the same task and compute budgets.
+
+Paired confidence intervals and task-balanced scores are implemented in the
+scorecard, and formal-verification adapters are implemented in run evidence;
+their remaining gap is external matched measurement, not a missing runtime
+primitive.
 
 Source adaptation is now implemented: `evidra sources adapt <source-id> [objective]`
 passes bounded claims and excerpts from a cached source to the director, while
@@ -133,8 +136,8 @@ Bench task discovery is now implemented with `evidra benchmark airs discover`; i
 validates all 40 public `rad` and `mlgym` task contracts in the current checkout
 and emits a normalized inventory. Execution adapters and matched harness commands
 remain explicit because the benchmark fixes model, seed, task, and budget. The
-remaining work is to benchmark which adaptation prompts and verification gates
-produce the highest rate of successfully replicated ideas.
+remaining empirical work is to benchmark which adaptation prompts and
+verification gates produce the highest rate of successfully replicated ideas.
 
 The early-promotion item is now implemented conservatively: after eight paired
 reduced/full outcomes, Evidra learns a threshold from successful full runs;
@@ -145,8 +148,9 @@ never allowed to lower the configured minimum.
 The search-policy item is implemented as a stable default portfolio:
 `greedy`, `ucb_portfolio`, `evolutionary`, `mcts`, `ablation`, `combination`,
 `replication`, and `audit` are explicit bounded operators. They share the same
-experiment manifests and reward ledger; the remaining work is a controlled
-benchmark, not an assumption that a named policy is automatically better.
+experiment manifests and reward ledger. The remaining work is a controlled
+equal-budget comparison, not an assumption that a named policy is automatically
+better.
 Every cycle now persists the complete bounded ranking and the budget, failure,
 and evidence-conflict context that produced it, so policy evolution can be
 audited rather than inferred from the selected operator alone.
