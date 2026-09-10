@@ -33,7 +33,7 @@ import { formatResearchDecision, runResearchDirector } from "../agents/research-
 import { runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
 import { evaluateTrajectory, type TrajectoryEvent } from "../core/trajectories.js";
-import { routeCapability } from "../core/capability-router.js";
+import { qualityFeedback, routeCapability } from "../core/capability-router.js";
 import { allocateNextResearch } from "../core/allocation.js";
 import { rankPriorities } from "../core/scheduler.js";
 import { evaluateValidationAcceptance } from "../core/validation-engine.js";
@@ -693,11 +693,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const researchMemory = researchMemoryContext(store, 30);
     const recentTrajectories = store.trajectories(50);
     const recentFailureCount = recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
-    const recentQuality = recentTrajectories.slice(0, 20).map((entry) => {
-      const quality = entry.quality as { overall?: unknown; [key: string]: unknown };
-      const gaps = Object.entries(quality).filter(([key, value]) => key !== "overall" && value && typeof value === "object" && (value as { verdict?: unknown }).verdict && (value as { verdict?: unknown }).verdict !== "PASS").map(([key]) => key);
-      return { overall: typeof quality.overall === "string" ? quality.overall : undefined, gaps };
-    });
+    const recentQuality = recentTrajectories.slice(0, 20).map((entry) => qualityFeedback(entry.quality));
     const campaignRemaining = campaign ? Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)) : undefined;
     const route = routeCapability({ objective, mode, provider: config.provider, autonomy: config.autonomy, recentFailureCount, recentQuality, budgetRemainingMinutes: campaignRemaining, requestedParallel: 3 });
     store.appendEvent("research.capability_route", { route, objective, recentFailureCount, recentQuality, predictedTier: route.tier, servedProvider: config.provider, servedModel: config.model });

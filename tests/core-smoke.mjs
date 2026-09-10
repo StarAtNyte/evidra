@@ -32,7 +32,7 @@ import { auditData } from "../dist/core/data-audit.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { runReducedValidation } from "../dist/core/stage-executor.js";
 import { evaluateTrajectory, capabilityGaps } from "../dist/core/trajectories.js";
-import { routeCapability } from "../dist/core/capability-router.js";
+import { qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
 import { rankPriorities } from "../dist/core/scheduler.js";
 import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
@@ -226,6 +226,10 @@ test("capability routing learns from trajectory quality feedback", () => {
   assert.equal(feedback.tier, "C1");
   assert.ok(feedback.demandScore > baseline.demandScore);
   assert.ok(feedback.rationale.some((reason) => /trajectory failure/.test(reason)));
+});
+
+test("routing feedback ignores unobserved quality dimensions", () => {
+  assert.deepEqual(qualityFeedback({ overall: "WARN", instructionAdherence: { verdict: "NOT_EVALUATED", coverage: "missing" }, toolUse: { verdict: "WARN", coverage: "partial" } }), { overall: "WARN", gaps: ["toolUse"] });
 });
 
 test("trajectory deficiencies allocate the next research focus", () => {

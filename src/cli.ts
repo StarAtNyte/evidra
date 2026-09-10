@@ -48,7 +48,7 @@ import React from "react";
 import { App } from "./ui/app.js";
 import { findWorkspaceRoot } from "./core/workspace.js";
 import { autonomyPolicy, type AutonomyLevel } from "./core/permissions.js";
-import { routeCapability } from "./core/capability-router.js";
+import { qualityFeedback, routeCapability } from "./core/capability-router.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -689,11 +689,7 @@ research
       const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode));
       const recentEvents = store.recentEvents(20);
       const recentTrajectories = store.trajectories(20);
-      const recentQuality = recentTrajectories.map((entry) => {
-        const quality = entry.quality as { overall?: unknown; [key: string]: unknown };
-        const gaps = Object.entries(quality).filter(([key, value]) => key !== "overall" && value && typeof value === "object" && (value as { verdict?: unknown }).verdict && (value as { verdict?: unknown }).verdict !== "PASS").map(([key]) => key);
-        return { overall: typeof quality.overall === "string" ? quality.overall : undefined, gaps };
-      });
+      const recentQuality = recentTrajectories.map((entry) => qualityFeedback(entry.quality));
       const route = routeCapability({ objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}`, mode, provider: options.provider as "codex" | "local", autonomy, recentFailureCount: recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length, recentQuality, budgetRemainingMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)), requestedParallel: laneLimit });
       const effectiveLaneLimit = route.parallelLanes;
       store.appendEvent("research.capability_route", { route, predictedTier: route.tier, servedProvider: options.provider, servedModel: selectedModel, recentQuality });

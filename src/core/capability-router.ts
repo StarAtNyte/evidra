@@ -22,6 +22,19 @@ export interface CapabilityRoute {
   rationale: string[];
 }
 
+/** Convert a stored trajectory quality object into routing feedback without treating missing instrumentation as failure. */
+export function qualityFeedback(quality: unknown): { overall?: string; gaps: string[] } {
+  const record = quality && typeof quality === "object" ? quality as Record<string, unknown> : {};
+  const gaps = Object.entries(record)
+    .filter(([key, value]) => key !== "overall" && value && typeof value === "object")
+    .filter(([, value]) => {
+      const dimension = value as { verdict?: unknown; coverage?: unknown };
+      return (dimension.verdict === "FAIL" || dimension.verdict === "WARN") && dimension.coverage !== "missing";
+    })
+    .map(([key]) => key);
+  return { overall: typeof record.overall === "string" ? record.overall : undefined, gaps };
+}
+
 /**
  * Route by observed capability demand, not model identity. The route is a
  * policy recommendation: provider/model selection remains user-controlled,
