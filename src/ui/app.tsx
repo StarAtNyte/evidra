@@ -40,6 +40,7 @@ import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, 
 import { runReducedValidation } from "../core/stage-executor.js";
 import { renderTimeline } from "../core/timeline.js";
 import { researchMemoryContext } from "../core/research-context.js";
+import { detectStagnation } from "../core/stagnation.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -1082,6 +1083,19 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (!cycle) throw new Error(`Research queue task ${queueTaskId} did not produce a cycle (${queuedResult?.status ?? "missing"}).`);
       const update = new ResearchStore(join(root, ".sota", "database.sqlite"));
       update.setSchedulerState({ status: "running", mode, currentStep: "awaiting-next-cycle" });
+      const recentDecisions = update.decisions().map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3);
+      const stagnation = detectStagnation(recentDecisions);
+      if (stagnation.stagnant && campaign) {
+        campaign.status = "paused";
+        persistCampaign(campaign);
+        update.appendEvent("research.stagnation.detected", { cycles: stagnation.cycles, signature: stagnation.signature, action: "pause_for_review" });
+        update.setSchedulerState({ status: "paused", mode, currentStep: "stagnation-review" });
+        setConfig((current) => ({ ...current, campaign: { ...campaign } }));
+        if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
+        update.close();
+        append("assistant", `Autonomous research paused after ${stagnation.cycles} unchanged active decisions. Review the bottleneck, then use /research resume.`);
+        return;
+      }
       update.close();
       const proposed = mode === "challenge" || campaign?.autoExecuteExperiments === true ? await proposeLatestExperiment() : null;
       append("assistant", cycle.text + (proposed?.text ?? ""));

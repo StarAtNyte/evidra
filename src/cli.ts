@@ -18,6 +18,7 @@ import { submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
 import { renderTimeline } from "./core/timeline.js";
 import { researchMemoryContext } from "./core/research-context.js";
+import { detectStagnation } from "./core/stagnation.js";
 import { recoveryDelay, recoveryPlan } from "./core/recovery.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
@@ -563,6 +564,8 @@ research
       }
       const decisionStore = new ResearchStore(statePath);
       materializeResearchDecision(decisionStore, decision);
+      const recentDecisions = decisionStore.decisions().map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3);
+      const stagnation = detectStagnation(recentDecisions);
       if (phaseGoal) {
         const now = new Date().toISOString();
         const goals = decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));
@@ -578,13 +581,15 @@ research
         }
       }
       const elapsedMinutes = (Date.now() - started) / 60_000;
-      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || elapsedMinutes >= budget;
+      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || stagnation.stagnant || elapsedMinutes >= budget;
       if (terminal) {
-        campaign.status = decision.goalStatus === "blocked" ? "paused" : "completed";
+        campaign.status = decision.goalStatus === "blocked" || stagnation.stagnant ? "paused" : "completed";
+        if (stagnation.stagnant) decisionStore.appendEvent("research.stagnation.detected", { cycles: stagnation.cycles, signature: stagnation.signature, action: "pause_for_review" });
         decisionStore.saveCampaign(campaign);
       }
       decisionStore.close();
       console.log(formatResearchDecision(decision));
+      if (stagnation.stagnant) console.log(`\nCampaign paused after ${stagnation.cycles} unchanged active decisions; review the bottleneck before resuming.`);
       if (criticReview) console.log(`\nCritic: ${criticReview.verdict} · confidence ${criticReview.confidence.toFixed(2)}\n${criticReview.summary}${criticReview.objections.length ? `\nObjections:\n${criticReview.objections.map((item) => `- ${item}`).join("\n")}` : ""}`);
       if (terminal) break;
     } while (true);

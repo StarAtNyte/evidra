@@ -37,6 +37,7 @@ import { rankPriorities } from "../dist/core/scheduler.js";
 import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
 import { researchMemoryContext } from "../dist/core/research-context.js";
+import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js";
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
 
@@ -360,6 +361,14 @@ test("research memory context remains bounded and cumulative", () => {
     assert.deepEqual(context.contradictions, []);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("autonomous loop detects repeated unresolved decisions", () => {
+  const decision = { phase: "validation", decision: "inspect", goalStatus: "active", bottleneck: "missing evaluator", selectedHypothesis: null, nextAction: "inspect evaluator" };
+  assert.equal(decisionSignature(decision), "validation|inspect|missing evaluator|none|inspect evaluator");
+  assert.equal(detectStagnation([decision, decision, decision]).stagnant, true);
+  assert.equal(detectStagnation([{ ...decision, decision: "run" }, decision, decision]).stagnant, false);
+  assert.equal(detectStagnation([decision, { ...decision, nextAction: "inspect data" }, decision]).stagnant, false);
 });
 
 test("project-local competition manifests replace hardcoded adapters", () => {
