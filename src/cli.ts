@@ -70,6 +70,7 @@ import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "./core/validation-lock.js";
 import { runBenchmarkArms, type BenchmarkArmSpec } from "./core/benchmark-runner.js";
+import { discoverAirsBenchTasks, type AirsBenchFamily } from "./core/airs-bench.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -559,6 +560,20 @@ benchmark.command("export")
     const output = `${JSON.stringify({ schemaVersion: 1, generatedAt: new Date().toISOString(), metric: adapter.config.metric, trials }, null, 2)}\n`;
     if (options.out) writeFileSync(resolve(options.out), output);
     else process.stdout.write(output);
+  });
+const airsBenchmark = benchmark.command("airs").description("Discover and import AIRS-Bench task contracts");
+airsBenchmark.command("discover")
+  .argument("<repository>", "AIRS-Bench repository checkout")
+  .option("--family <family>", "task family: rad, mlgym, or all", "all")
+  .option("--out <file>", "write the normalized task inventory to JSON")
+  .description("Validate public AIRS-Bench task specifications and emit a normalized inventory")
+  .action((repository: string, options: { family: string; out?: string }) => {
+    if (!["rad", "mlgym", "all"].includes(options.family)) throw new Error("AIRS-Bench family must be rad, mlgym, or all.");
+    const report = discoverAirsBenchTasks(repository, options.family as AirsBenchFamily);
+    const output = `${JSON.stringify(report, null, 2)}\n`;
+    if (options.out) writeFileSync(resolve(options.out), output);
+    else process.stdout.write(output);
+    if (report.invalidTasks > 0) process.exitCode = 2;
   });
 program.addCommand(benchmark);
 

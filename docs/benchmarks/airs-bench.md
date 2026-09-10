@@ -52,6 +52,20 @@ benchmark/task failure and remains resumable with a stronger provider or model.
 
 ## Reproduction outline
 
+Evidra can ingest the official checkout directly and normalize both the
+research-agent (`rad`) and MLGym-converted (`mlgym`) task contracts:
+
+```bash
+evidra benchmark airs discover /path/to/airs-bench --family all \
+  --out airs-inventory.json
+```
+
+The importer validates the public task files, extracts metric direction and
+task-level normalization bounds where available, and reports invalid contracts
+with a non-zero exit code. It does not execute or modify the benchmark; the
+inventory is the input for a later matched protocol whose agent commands,
+model, seed, and budget are explicitly declared.
+
 ```bash
 git clone https://github.com/facebookresearch/airs-bench.git
 cd airs-bench
@@ -62,8 +76,7 @@ evidra validate
 evidra baseline
 ```
 
-Full AIRS-Bench scoring requires running the agent-facing task workflow for
-each task and aggregating its normalized score, valid-submission rate, and
-Elo-style statistics. The next benchmark increment is an AIRS task importer
-that materializes these task-local preparation/evaluation commands instead of
-requiring a hand-written manifest.
+Full AIRS-Bench scoring still requires running the agent-facing task workflow
+for each task and aggregating its normalized score, valid-submission rate, and
+Elo-style statistics. The inventory removes hand-written task discovery; the
+next step is an explicit adapter for each agent harness command surface.

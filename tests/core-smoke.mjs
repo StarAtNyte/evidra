@@ -59,6 +59,7 @@ import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
+import { discoverAirsBenchTasks } from "../dist/core/airs-bench.js";
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
 import { planSuccessiveHalving, promoteHalvingStage } from "../dist/core/successive-halving.js";
@@ -1845,6 +1846,29 @@ test("benchmark runner rejects arms that escape the benchmark workspace before e
       ], root),
       /escapes benchmark root/,
     );
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("AIRS-Bench discovery normalizes task metadata and flags incomplete contracts", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-airs-"));
+  try {
+    const valid = join(root, "airsbench", "tasks", "rad", "TaskA");
+    const invalid = join(root, "airsbench", "tasks", "mlgym", "TaskB");
+    mkdirSync(valid, { recursive: true });
+    mkdirSync(invalid, { recursive: true });
+    writeFileSync(join(valid, "metadata.yaml"), "metric_lower_is_better: false\nlogging_info:\n  metric: Accuracy\n  dataset: demo/data\n  research_problem: Classification\n  category: NLP\n  estimated_worst_score: 0\n  optimal_score: 1\n  sota:\n    - sota_score: 0.8\n      sota_paper_url: https://example.test/paper\n");
+    for (const file of ["project_description.md", "prepare.py", "evaluate.py", "evaluate_prepare.py"]) writeFileSync(join(valid, file), "");
+    writeFileSync(join(invalid, "metadata.yaml"), "metric_lower_is_better: true\n");
+    const report = discoverAirsBenchTasks(root);
+    assert.equal(report.tasks.length, 2);
+    assert.equal(report.validTasks, 1);
+    assert.equal(report.invalidTasks, 1);
+    const task = report.tasks.find((entry) => entry.id === "TaskA");
+    assert.equal(task?.direction, "maximize");
+    assert.equal(task?.metric, "Accuracy");
+    assert.equal(task?.dataset, "demo/data");
+    assert.ok(task?.missingFiles.length === 0);
+    assert.ok(report.tasks.find((entry) => entry.id === "TaskB")?.missingFiles.includes("evaluatePath"));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

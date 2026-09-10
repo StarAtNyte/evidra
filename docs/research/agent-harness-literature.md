@@ -120,7 +120,11 @@ Source adaptation is now implemented: `evidra sources adapt <source-id> [objecti
 passes bounded claims and excerpts from a cached source to the director, while
 persisting resulting claims as low-confidence literature evidence and linking them
 to the source with `derived_from` edges. This keeps paper-derived ideas useful for
-search without confusing them with measurements from the active workspace. The
+search without confusing them with measurements from the active workspace. AIRS-
+Bench task discovery is now implemented with `evidra benchmark airs discover`; it
+validates all 40 public `rad` and `mlgym` task contracts in the current checkout
+and emits a normalized inventory. Execution adapters and matched harness commands
+remain explicit because the benchmark fixes model, seed, task, and budget. The
 remaining work is to benchmark which adaptation prompts and verification gates
 produce the highest rate of successfully replicated ideas.
 
