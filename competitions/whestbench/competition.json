@@ -3,6 +3,7 @@
   "name": "ARC White-Box Estimation Challenge 2026",
   "taskType": "white_box_estimation",
   "datasetRevision": "v2-phase2",
+  "workspacePath": "competitions/whestbench/starterkit",
   "metric": {
     "name": "final_layer_mse",
     "direction": "minimize"
@@ -21,5 +22,21 @@
       "subprocess"
     ],
     "estimatorPath": "estimator.py"
+  },
+  "baselineCommand": ["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"],
+  "experimentCommand": ["uv", "run", "python", "estimator.py"],
+  "researchSources": [
+    "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026",
+    "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026/discussion",
+    "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026/leaderboards",
+    "https://github.com/AIcrowd/whest-starterkit",
+    "https://github.com/AIcrowd/whestbench"
+  ],
+  "evaluatorTimeoutMinutes": 60,
+  "submission": {
+    "platform": "command",
+    "source": "workspace",
+    "workingDirectory": "competitions/whestbench/starterkit",
+    "submitCommand": ["uv", "run", "whest", "submit", "--estimator", "estimator.py", "--watch"]
   }
 }

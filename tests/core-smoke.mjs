@@ -523,6 +523,13 @@ test("project-local competition manifests replace hardcoded adapters", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("included WhestBench manifest resolves its starter-kit workspace", () => {
+  const adapter = loadCompetitionAdapter(process.cwd(), "whestbench");
+  assert.equal(adapter.workspacePath(process.cwd()), join(process.cwd(), "competitions/whestbench/starterkit"));
+  assert.deepEqual(adapter.baselineCommand(), ["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"]);
+  assert.deepEqual(adapter.experimentCommand(), ["uv", "run", "python", "estimator.py"]);
+});
+
 test("validation policy is manifest-driven and split strategies are discoverable", () => {
   const policy = createValidationPolicy({
     id: "toy", name: "Toy", taskType: "classification", datasetRevision: "data-v2",
