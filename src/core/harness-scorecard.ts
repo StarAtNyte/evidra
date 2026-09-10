@@ -15,6 +15,7 @@ export interface HarnessTrial {
 export interface HarnessScorecard {
   harness: string;
   trials: number;
+  tasks: number;
   validRunRate: number;
   improvementRate: number;
   meanDelta: number | null;
@@ -22,6 +23,8 @@ export interface HarnessScorecard {
   recoveryRate: number;
   reproducibilityRate: number;
   competitiveScore: number;
+  taskBalancedScore: number;
+  competitiveScoreLower95: number;
 }
 
 function delta(trial: HarnessTrial): number | undefined {
@@ -34,6 +37,36 @@ function median(values: number[]): number | null {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function trialQuality(trial: HarnessTrial): number {
+  const measuredDelta = delta(trial);
+  const improvement = measuredDelta !== undefined && measuredDelta > 0 ? 1 : 0;
+  return 100 * (0.45 * improvement + 0.25 * (trial.validRun ? 1 : 0) + 0.15 * (trial.validRun && trial.reproducible ? 1 : 0) + 0.15 * (trial.recovered ? 1 : 0));
+}
+
+function taskMeans(entries: HarnessTrial[]): number[] {
+  const byTask = new Map<string, HarnessTrial[]>();
+  for (const entry of entries) byTask.set(entry.task, [...(byTask.get(entry.task) ?? []), entry]);
+  return [...byTask.values()].map((taskEntries) => taskEntries.reduce((sum, entry) => sum + trialQuality(entry), 0) / taskEntries.length);
+}
+
+/** Deterministic bootstrap lower bound over task means, avoiding a lucky task. */
+function bootstrapLower95(values: number[], seedText: string): number {
+  if (!values.length) return 0;
+  if (values.length === 1) return values[0];
+  let seed = [...seedText].reduce((sum, character) => (sum * 31 + character.charCodeAt(0)) >>> 0, 2166136261);
+  const samples: number[] = [];
+  for (let sample = 0; sample < 1000; sample += 1) {
+    let sum = 0;
+    for (let draw = 0; draw < values.length; draw += 1) {
+      seed = (1664525 * seed + 1013904223) >>> 0;
+      sum += values[seed % values.length];
+    }
+    samples.push(sum / values.length);
+  }
+  samples.sort((left, right) => left - right);
+  return samples[Math.floor(samples.length * 0.025)] ?? 0;
 }
 
 /**
@@ -54,12 +87,16 @@ export function scoreHarnessTrials(trials: HarnessTrial[]): HarnessScorecard[] {
     const improvementRate = improvements / entries.length;
     const recoveryRate = recovery / entries.length;
     const reproducibilityRate = reproducible / entries.length;
-    // Evidence quality is a first-class part of competitiveness. The score is
-    // deliberately bounded and comparable across task metrics.
-    const competitiveScore = 100 * (0.45 * improvementRate + 0.25 * validRate + 0.15 * reproducibilityRate + 0.15 * recoveryRate);
+    // Evidence quality is a first-class part of competitiveness. Aggregate by
+    // task first so a harness cannot win by running many trials on one easy
+    // task. The lower bound is a conservative guard against lucky portfolios.
+    const means = taskMeans(entries);
+    const taskBalancedScore = means.length ? means.reduce((sum, value) => sum + value, 0) / means.length : 0;
+    const competitiveScore = taskBalancedScore;
     return {
       harness,
       trials: entries.length,
+      tasks: means.length,
       validRunRate: validRate,
       improvementRate,
       meanDelta: deltas.length ? deltas.reduce((sum, value) => sum + value, 0) / deltas.length : null,
@@ -67,6 +104,8 @@ export function scoreHarnessTrials(trials: HarnessTrial[]): HarnessScorecard[] {
       recoveryRate,
       reproducibilityRate,
       competitiveScore,
+      taskBalancedScore,
+      competitiveScoreLower95: bootstrapLower95(means, harness),
     };
   }).sort((a, b) => b.competitiveScore - a.competitiveScore);
 }

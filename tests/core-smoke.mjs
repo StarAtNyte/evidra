@@ -1457,7 +1457,23 @@ test("harness scorecard rewards valid reproducible improvements and rejects narr
   assert.equal(scorecards[0].harness, "evidra");
   assert.equal(scorecards[0].validRunRate, 1);
   assert.equal(scorecards[0].improvementRate, 0.5);
+  assert.equal(scorecards[0].tasks, 2);
+  assert.ok(scorecards[0].competitiveScoreLower95 <= scorecards[0].competitiveScore);
   assert.equal(scorecards[1].competitiveScore, 0);
+});
+
+test("harness scorecard balances tasks instead of rewarding repeated easy arms", () => {
+  const scorecards = scoreHarnessTrials([
+    ...Array.from({ length: 9 }, () => ({ harness: "repeater", task: "easy", direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 1, recovered: true, reproducible: true })),
+    { harness: "repeater", task: "hard", direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.4, validRun: true, durationSeconds: 1, recovered: false, reproducible: false },
+    { harness: "balanced", task: "easy", direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 1, recovered: true, reproducible: true },
+    { harness: "balanced", task: "hard", direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.4, validRun: true, durationSeconds: 1, recovered: false, reproducible: false },
+  ]);
+  const repeater = scorecards.find((scorecard) => scorecard.harness === "repeater");
+  const balanced = scorecards.find((scorecard) => scorecard.harness === "balanced");
+  assert.equal(repeater?.tasks, 2);
+  assert.equal(balanced?.tasks, 2);
+  assert.equal(repeater?.competitiveScore, balanced?.competitiveScore);
 });
 
 test("search policy explores untried operators and penalizes invalid evidence", () => {
