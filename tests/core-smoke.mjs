@@ -1280,6 +1280,18 @@ test("promotion phase requires accepted validation in addition to human gates", 
   assert.deepEqual(withoutValidation.missing, ["accepted validation assessment"]);
   const complete = evaluatePhaseGoalEvidence(goal, { eventTypes: [gates.type, "experiment.validation.assessed"], eventPayloads: [gates, { type: "experiment.validation.assessed", payload: { acceptance: { accepted: true } } }], hypotheses: 1, experiments: 1, runs: 2, artifacts: 2 });
   assert.equal(complete.met, true);
+  const blockedByAblation = evaluatePhaseGoalEvidence(goal, {
+    eventTypes: [gates.type, "experiment.validation.assessed", "research.ablation.plan"],
+    eventPayloads: [gates, { type: "experiment.validation.assessed", payload: { acceptance: { accepted: true } } }, { type: "research.ablation.plan", payload: { hypothesisId: "h", variants: [] } }],
+    hypotheses: 1, experiments: 1, runs: 2, artifacts: 2,
+  });
+  assert.deepEqual(blockedByAblation.missing, ["complete ablation evidence"]);
+  const ablationComplete = evaluatePhaseGoalEvidence(goal, {
+    eventTypes: [gates.type, "experiment.validation.assessed", "research.ablation.plan", "research.ablation.evidence"],
+    eventPayloads: [gates, { type: "experiment.validation.assessed", payload: { acceptance: { accepted: true } } }, { type: "research.ablation.plan", payload: { hypothesisId: "h", variants: [] } }, { type: "research.ablation.evidence", payload: { complete: true } }],
+    hypotheses: 1, experiments: 1, runs: 2, artifacts: 2,
+  });
+  assert.equal(ablationComplete.met, true);
 });
 
 test("replication phase requires a successful run for the declared child manifest", () => {
