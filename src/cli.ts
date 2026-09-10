@@ -58,6 +58,7 @@ import { candidateChangePath } from "./core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "./core/execution-heartbeat.js";
 import { researchFailureRecord } from "./core/research-failure.js";
 import { rankSearchArms, searchReward, type SearchOperator } from "./core/search-policy.js";
+import { planPortfolio } from "./core/portfolio.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -1096,6 +1097,43 @@ research
         }
       }
       const materialized = materializeResearchDecision(decisionStore, decision);
+      const portfolioBudget = Math.max(1, campaign.budgetMinutes - campaignElapsedMinutes(campaign));
+      const portfolioPlan = planPortfolio(decision.hypotheses.map((hypothesis, index) => ({
+        id: materialized.hypothesisIds[index] ?? `hypothesis-${index}`,
+        title: hypothesis.title,
+        // A single director operator describes the cycle; hypotheses still
+        // need distinct search families so best-of-k does not collapse into
+        // repeated variants of the same move.
+        operator: index === 0 ? decision.searchOperator : (["ablation", "combination", "replication", "audit"] as const)[(index - 1) % 4],
+        expectedValue: hypothesis.expectedMetricDelta.median,
+        costMinutes: Math.max(1, hypothesis.computeCostGpuHours * 60),
+        novelty: hypothesis.evidence.length === 0 ? 1 : 0.4,
+        risk: hypothesis.implementationRisk === "high" ? 1 : hypothesis.implementationRisk === "medium" ? 0.5 : 0.1,
+        family: hypothesis.proposedChange.slice(0, 80),
+      })), {
+        maxCandidates: autonomy === "yolo" ? 3 : autonomy === "fast" ? 2 : 1,
+        maxParallel: effectiveLaneLimit,
+        budgetMinutes: portfolioBudget,
+        reserveMinutes: Math.min(5, portfolioBudget * 0.1),
+      });
+      decisionStore.appendEvent("research.portfolio.planned", {
+        cycle,
+        selected: portfolioPlan.selected,
+        rejected: portfolioPlan.rejected,
+        reservedMinutes: portfolioPlan.reservedMinutes,
+        parallelism: portfolioPlan.parallelism,
+        policy: "bounded-best-of-k",
+      });
+      // A director may return several hypotheses without selecting one. In an
+      // autonomous campaign, promote the portfolio's highest value-per-minute
+      // candidate; safe mode keeps the normal approval gate.
+      if (autonomyPolicy(autonomy).canRunIsolatedExperiments && criticReview?.verdict !== "reject" && !decision.selectedHypothesis && portfolioPlan.selected[0]) {
+        const promoted = decision.hypotheses[materialized.hypothesisIds.indexOf(portfolioPlan.selected[0].id)];
+        if (promoted) {
+          decision = { ...decision, decision: "run", selectedHypothesis: promoted.title, nextAction: `Execute the highest-ranked bounded portfolio candidate: ${promoted.title}.` };
+          decisionStore.appendEvent("research.autonomous.execution_promoted", { reason: "bounded portfolio ranking", hypothesis: promoted.title, portfolioSize: portfolioPlan.selected.length, autonomy });
+        }
+      }
       const policyBlocksExecution = !autonomyPolicy(autonomy).canRunIsolatedExperiments && decision.decision === "run" && Boolean(decision.selectedHypothesis);
       if (policyBlocksExecution) {
         const selectedIndex = decision.hypotheses.findIndex((hypothesis) => hypothesis.title === decision.selectedHypothesis);
@@ -1127,8 +1165,20 @@ research
         decisionStore.appendEvent("experiment.autonomous.approval_required", { experimentId: proposalId, decision: decision.decision, selectedHypothesis: decision.selectedHypothesis, autonomy, nextAction: proposalId ? `Run evidra experiment run ${proposalId} after approval.` : "Create an explicit experiment proposal before execution." });
         console.log(`Autonomous experiment held by ${autonomy.toUpperCase()} permissions${proposalId ? `; proposal ${proposalId} is ready for explicit approval. Continuing research on other directions.` : ". Continuing evidence gathering."}`);
       }
-      if (!criticBlocks && !policyBlocksExecution && decision.decision === "run" && decision.selectedHypothesis) {
-        const selectedIndex = decision.hypotheses.findIndex((hypothesis) => hypothesis.title === decision.selectedHypothesis);
+      const selectedDecisionIndex = decision.hypotheses.findIndex((hypothesis) => hypothesis.title === decision.selectedHypothesis);
+      const selectedDecisionCandidate = selectedDecisionIndex >= 0 ? portfolioPlan.selected.find((candidate) => candidate.id === materialized.hypothesisIds[selectedDecisionIndex]) ?? {
+        id: materialized.hypothesisIds[selectedDecisionIndex],
+        title: decision.hypotheses[selectedDecisionIndex].title,
+        operator: decision.searchOperator,
+        expectedValue: decision.hypotheses[selectedDecisionIndex].expectedMetricDelta.median,
+        costMinutes: Math.max(1, decision.hypotheses[selectedDecisionIndex].computeCostGpuHours * 60),
+        family: decision.hypotheses[selectedDecisionIndex].proposedChange.slice(0, 80),
+      } : undefined;
+      const executionCandidates = !criticBlocks && !policyBlocksExecution && decision.decision === "run" && decision.selectedHypothesis && autonomyPolicy(autonomy).canRunIsolatedExperiments
+        ? (portfolioPlan.selected.length ? portfolioPlan.selected : selectedDecisionCandidate ? [selectedDecisionCandidate] : [])
+        : [];
+      for (const portfolioCandidate of executionCandidates) {
+        const selectedIndex = materialized.hypothesisIds.indexOf(portfolioCandidate.id);
         const selectedHypothesisId = selectedIndex >= 0 ? materialized.hypothesisIds[selectedIndex] : undefined;
         const selectedHypothesis = selectedIndex >= 0 ? decision.hypotheses[selectedIndex] : undefined;
         const hypothesisAlreadyScheduled = selectedHypothesis

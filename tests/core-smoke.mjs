@@ -58,6 +58,7 @@ import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { scoreHarnessTrials } from "../dist/core/harness-scorecard.js";
 import { rankSearchArms, searchReward } from "../dist/core/search-policy.js";
+import { planPortfolio } from "../dist/core/portfolio.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
 
@@ -1471,4 +1472,16 @@ test("search policy explores untried operators and penalizes invalid evidence", 
   assert.equal(ranked[0].id, "new");
   assert.equal(searchReward(undefined, false, false), -1);
   assert.equal(searchReward(0.2, true, true), 0.2);
+});
+
+test("portfolio planner is bounded, diverse, and cost aware", () => {
+  const plan = planPortfolio([
+    { id: "cheap", title: "cheap novel", operator: "ablation", expectedValue: 0.4, costMinutes: 2, novelty: 0.8, family: "features" },
+    { id: "expensive", title: "expensive", operator: "combination", expectedValue: 0.5, costMinutes: 6, novelty: 0.9, family: "ensemble" },
+    { id: "duplicate", title: "same family", operator: "replication", expectedValue: 0.3, costMinutes: 2, novelty: 0.1, family: "features" },
+  ], { maxCandidates: 2, maxParallel: 2, budgetMinutes: 10 });
+  assert.deepEqual(plan.selected.map((candidate) => candidate.id), ["cheap", "expensive"]);
+  assert.equal(plan.parallelism, 2);
+  assert.equal(plan.reservedMinutes, 8);
+  assert.match(plan.rejected.find((entry) => entry.candidate.id === "duplicate")?.reason ?? "", /family/);
 });
