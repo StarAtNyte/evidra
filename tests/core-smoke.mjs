@@ -69,6 +69,20 @@ test("durable research state and queue survive store reopen", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("experiment updates preserve creation provenance", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-experiment-state-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.saveExperiment({ id: "exp-1", payload: { status: "proposed", manifest: true } });
+    const createdAt = store.experiments()[0].createdAt;
+    store.saveExperiment({ id: "exp-1", payload: { status: "completed", manifest: true } });
+    assert.equal(store.experiments()[0].createdAt, createdAt);
+    const types = store.recentEvents(10).map((event) => event.type);
+    assert.deepEqual(types.slice(-2), ["experiment.created", "experiment.updated"]);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("critic revision is not recorded as evidence-consistent", () => {
   const quality = evaluateTrajectory([
     { id: "evaluator", kind: "evaluator", payload: { evidenceConsistent: false, criticVerdict: "revise" } },

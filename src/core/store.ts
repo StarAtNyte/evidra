@@ -250,11 +250,14 @@ export class ResearchStore {
   }
 
   saveExperiment(experiment: { id: string; payload: unknown }): void {
+    const existing = this.db.prepare("SELECT 1 AS present FROM experiments WHERE id = ?").get(experiment.id) as { present: number } | undefined;
+    const now = new Date().toISOString();
     this.db.prepare(`
-      INSERT OR REPLACE INTO experiments (id, payload_json, created_at)
+      INSERT INTO experiments (id, payload_json, created_at)
       VALUES (?, ?, ?)
-    `).run(experiment.id, JSON.stringify(experiment.payload), new Date().toISOString());
-    this.appendEvent("experiment.created", experiment.payload);
+      ON CONFLICT(id) DO UPDATE SET payload_json = excluded.payload_json
+    `).run(experiment.id, JSON.stringify(experiment.payload), now);
+    this.appendEvent(existing ? "experiment.updated" : "experiment.created", { id: experiment.id, payload: experiment.payload });
   }
 
   saveHypothesis(hypothesis: { id: string; payload: unknown }): void {
