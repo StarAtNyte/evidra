@@ -1293,8 +1293,21 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return cycle;
       }, { concurrency: 1, maxAttempts: 3, kinds: ["research.cycle"] });
       await worker.runOnce();
+      let queuedResult = queueStore.queueTasks().find((task) => task.id === queueTaskId);
+      // runOnce intentionally does not block on delayed jobs. Drain this
+      // bounded research task here so configured retries actually happen
+      // before the controller declares the cycle blocked.
+      while (!cycle && queuedResult?.status === "queued") {
+        const retryAt = Date.parse(queuedResult.availableAt);
+        const waitMs = Number.isFinite(retryAt) ? Math.max(0, retryAt - Date.now()) : 0;
+        if (waitMs > 0) {
+          setProgress(`Research retry ${queuedResult.attempts}/3 scheduled...`);
+          await new Promise<void>((resolve) => setTimeout(resolve, Math.min(waitMs, 60_000)));
+        }
+        await worker.runOnce();
+        queuedResult = queueStore.queueTasks().find((task) => task.id === queueTaskId);
+      }
       await worker.stop();
-      const queuedResult = queueStore.queueTasks().find((task) => task.id === queueTaskId);
       queueStore.close();
       if (!cycle) throw new Error(`Research queue task ${queueTaskId} did not produce a cycle (${queuedResult?.status ?? "missing"}).`);
       const update = new ResearchStore(join(root, ".sota", "database.sqlite"));
