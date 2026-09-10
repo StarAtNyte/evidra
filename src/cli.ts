@@ -486,6 +486,7 @@ benchmark.command("compare")
     console.log(`Tasks        ${comparison.tasks}`);
     console.log(`Mean delta   ${comparison.pairedMeanDelta?.toFixed(6) ?? "n/a"}`);
     console.log(`Lower 95%    ${comparison.pairedLower95?.toFixed(6) ?? "n/a"}`);
+    console.log(`Process Δ    ${comparison.pairedProcessQualityDelta?.toFixed(3) ?? "n/a"}`);
     console.log(`Reason       ${comparison.reason}`);
     if (!comparison.challengerWins) process.exitCode = 2;
   });

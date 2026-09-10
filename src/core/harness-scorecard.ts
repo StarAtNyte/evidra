@@ -133,6 +133,8 @@ export interface HarnessComparison {
   coverage: number;
   pairedMeanDelta: number | null;
   pairedLower95: number | null;
+  processComparableArms: number;
+  pairedProcessQualityDelta: number | null;
   challengerWins: boolean;
   reason: string;
 }
@@ -169,6 +171,13 @@ function trialQuality(trial: HarnessTrial): number {
     : trial.validRun ? 1 : 0;
   const alignment = trial.executionAlignment === undefined ? (trial.validRun ? 1 : 0) : trial.executionAlignment ? 1 : 0;
   return 100 * (0.35 * improvement + 0.2 * (trial.validRun ? 1 : 0) + 0.15 * (trial.validRun && trial.reproducible ? 1 : 0) + 0.1 * (trial.recovered ? 1 : 0) + 0.1 * process + 0.1 * alignment);
+}
+
+function processReliability(trial: HarnessTrial): number | undefined {
+  const values: number[] = [];
+  if (typeof trial.processQuality === "number" && Number.isFinite(trial.processQuality)) values.push(Math.max(0, Math.min(1, trial.processQuality)));
+  if (trial.executionAlignment !== undefined) values.push(trial.executionAlignment ? 1 : 0);
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : undefined;
 }
 
 function taskMeans(entries: HarnessTrial[]): number[] {
@@ -223,19 +232,27 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
     const direction = left.direction;
     if (direction !== right.direction) return [];
     const delta = direction === "maximize" ? left.candidateMetric! - right.candidateMetric! : right.candidateMetric! - left.candidateMetric!;
-    return [{ task: left.task, delta }];
+    const leftProcess = processReliability(left);
+    const rightProcess = processReliability(right);
+    return [{ task: left.task, delta, processDelta: leftProcess !== undefined && rightProcess !== undefined ? leftProcess - rightProcess : undefined }];
   });
   const byTask = new Map<string, number[]>();
   for (const entry of paired) byTask.set(entry.task, [...(byTask.get(entry.task) ?? []), entry.delta]);
   const taskDeltas = [...byTask.values()].map((values) => values.reduce((sum, value) => sum + value, 0) / values.length);
   const pairedMeanDelta = taskDeltas.length ? taskDeltas.reduce((sum, value) => sum + value, 0) / taskDeltas.length : null;
   const pairedLower95 = taskDeltas.length ? bootstrapLower95(taskDeltas, `${challenger}::${incumbent}`) : null;
+  const processDeltas = paired.map((entry) => entry.processDelta).filter((value): value is number => value !== undefined);
+  const pairedProcessQualityDelta = processDeltas.length ? processDeltas.reduce((sum, value) => sum + value, 0) / processDeltas.length : null;
+  const processComparableArms = processDeltas.length;
   const coverage = keys.length ? paired.length / keys.length : 0;
   const minimumTasks = 2;
-  const challengerWins = pairedLower95 !== null && pairedLower95 > 0 && coverage >= 0.8 && taskDeltas.length >= minimumTasks;
+  const processGate = pairedProcessQualityDelta === null || pairedProcessQualityDelta >= -0.1;
+  const challengerWins = pairedLower95 !== null && pairedLower95 > 0 && coverage >= 0.8 && taskDeltas.length >= minimumTasks && processGate;
   const reason = challengerWins
     ? `paired lower 95% bound ${pairedLower95.toFixed(6)} is positive across ${taskDeltas.length} tasks with ${(coverage * 100).toFixed(0)}% valid paired coverage`
-    : pairedLower95 === null
+    : !processGate
+      ? `paired process-quality delta ${pairedProcessQualityDelta?.toFixed(3)} is below the -0.1 non-regression threshold`
+      : pairedLower95 === null
       ? "no valid paired evaluator outcomes are available"
       : taskDeltas.length < minimumTasks
         ? `need at least ${minimumTasks} tasks for a task-balanced win claim`
@@ -251,6 +268,8 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
     coverage,
     pairedMeanDelta,
     pairedLower95,
+    processComparableArms,
+    pairedProcessQualityDelta,
     challengerWins,
     reason,
   };

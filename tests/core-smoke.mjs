@@ -1658,6 +1658,19 @@ test("benchmark protocol rejects duplicate harness trials on one matched arm", (
   assert.throws(() => compareHarnesses([trial, { ...trial }], "evidra", "other"), /Duplicate benchmark trial identity/);
 });
 
+test("benchmark comparison blocks a metric win with a material process regression", () => {
+  const trials = [];
+  for (const task of ["task-a", "task-b"]) {
+    const base = { task, arm: "arm", seed: 1, model: "codex", budgetMinutes: 10, direction: "maximize", baselineMetric: 0.5, validRun: true, durationSeconds: 1, recovered: true, reproducible: true };
+    trials.push({ harness: "evidra", ...base, candidateMetric: 0.9, processQuality: 0, executionAlignment: false });
+    trials.push({ harness: "incumbent", ...base, candidateMetric: 0.6, processQuality: 1, executionAlignment: true });
+  }
+  const comparison = compareHarnesses(trials, "evidra", "incumbent");
+  assert.equal(comparison.challengerWins, false);
+  assert.ok((comparison.pairedProcessQualityDelta ?? 0) < -0.1);
+  assert.match(comparison.reason, /process-quality/i);
+});
+
 test("benchmark runner executes matched arms and records evaluator-backed metrics", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-runner-"));
   try {

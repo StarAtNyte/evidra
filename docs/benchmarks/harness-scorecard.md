@@ -47,8 +47,9 @@ independent repeats must be declared as separate matched arms.
 the exact task, arm, seed, model, and budget, drops invalid evaluator outcomes,
 aggregates paired deltas by task, and computes a deterministic bootstrap lower
 95% bound. A win is reported only with at least two tasks, positive lower bound,
-and at least 80% valid paired coverage. Otherwise the result is explicitly
-`NOT PROVEN`; a higher point score alone is not sufficient.
+at least 80% valid paired coverage, and no material paired process-quality
+regression when trajectory fields are available. Otherwise the result is
+explicitly `NOT PROVEN`; a higher point score alone is not sufficient.
 
 The input is either a JSON array or `{ "trials": [...] }`, with one record per
 fixed task/seed arm and fields for baseline, candidate metric, validity,
