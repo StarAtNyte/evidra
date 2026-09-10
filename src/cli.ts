@@ -58,7 +58,7 @@ import { validateCompetitionContract } from "./core/competition-contract.js";
 import { candidateChangePath } from "./core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "./core/execution-heartbeat.js";
 import { researchFailureRecord } from "./core/research-failure.js";
-import { rankSearchArms, searchReward, type SearchOperator } from "./core/search-policy.js";
+import { DEFAULT_SEARCH_OPERATORS, DEFAULT_SEARCH_OPERATOR_COSTS, DEFAULT_SEARCH_OPERATOR_NOVELTY, rankSearchArms, searchReward } from "./core/search-policy.js";
 import { planPortfolio } from "./core/portfolio.js";
 import { promoteHalvingStage } from "./core/successive-halving.js";
 import type { CostObservation } from "./core/cost-model.js";
@@ -1177,7 +1177,7 @@ research
       store.appendEvent("research.next_allocation", { allocation, objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}` });
       const searchPolicy = rankSearchArms({
         arms: [
-          ...(["ucb_portfolio", "evolutionary", "mcts", "ablation", "combination", "replication", "audit"] as SearchOperator[]).map((operator, index) => {
+          ...DEFAULT_SEARCH_OPERATORS.map((operator, index) => {
             const activeCompetitionId = store.project()?.competitionId;
             const outcomes = store.recentEvents(500).filter((event) => {
               if (event.type !== "research.search.reward") return false;
@@ -1192,7 +1192,7 @@ research
             const observedCosts = outcomes.map((event) => Number((event.payload as { durationSeconds?: number }).durationSeconds) / 60).filter((minutes) => Number.isFinite(minutes) && minutes > 0);
             const meanReward = rewards.length ? rewards.reduce((sum, reward) => sum + reward, 0) / rewards.length : 0;
             const rewardVariance = rewards.length > 1 ? rewards.reduce((sum, reward) => sum + (reward - meanReward) ** 2, 0) / rewards.length : undefined;
-            return { id: operator, operator, attempts: rewards.length, successes: rewards.filter((reward) => reward > 0).length, meanReward, rewardVariance, cost: observedCosts.length ? observedCosts.reduce((sum, minutes) => sum + minutes, 0) / observedCosts.length : [1, 1.5, 2, 0.5, 1.5, 1, 0.25][index], novelty: [0.8, 0.95, 0.9, 0.6, 0.7, 0.2, 0.4][index] };
+            return { id: operator, operator, attempts: rewards.length, successes: rewards.filter((reward) => reward > 0).length, meanReward, rewardVariance, cost: observedCosts.length ? observedCosts.reduce((sum, minutes) => sum + minutes, 0) / observedCosts.length : DEFAULT_SEARCH_OPERATOR_COSTS[index], novelty: DEFAULT_SEARCH_OPERATOR_NOVELTY[index] };
           }),
         ],
         remainingBudgetMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),

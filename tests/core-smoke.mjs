@@ -59,7 +59,7 @@ import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
-import { rankSearchArms, searchReward } from "../dist/core/search-policy.js";
+import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
 import { planSuccessiveHalving, promoteHalvingStage } from "../dist/core/successive-halving.js";
 import { estimateCost } from "../dist/core/cost-model.js";
@@ -1861,6 +1861,10 @@ test("search policy explores untried operators and penalizes invalid evidence", 
   assert.equal(ranked[0].id, "new");
   assert.equal(searchReward(undefined, false, false), -1);
   assert.equal(searchReward(0.2, true, true), 0.2);
+});
+
+test("default autonomous search portfolio exposes every documented operator", () => {
+  assert.deepEqual(DEFAULT_SEARCH_OPERATORS, ["greedy", "ucb_portfolio", "evolutionary", "mcts", "ablation", "combination", "replication", "audit"]);
 });
 
 test("search policy exposes bounded evolutionary and MCTS exploration", () => {

@@ -1,5 +1,10 @@
 export type SearchOperator = "greedy" | "ucb_portfolio" | "evolutionary" | "mcts" | "ablation" | "combination" | "replication" | "audit";
 
+/** Operators exposed by the autonomous controller in stable ranking order. */
+export const DEFAULT_SEARCH_OPERATORS: SearchOperator[] = ["greedy", "ucb_portfolio", "evolutionary", "mcts", "ablation", "combination", "replication", "audit"];
+export const DEFAULT_SEARCH_OPERATOR_COSTS = [0.75, 1, 1.5, 2, 0.5, 0.7, 1, 0.25] as const;
+export const DEFAULT_SEARCH_OPERATOR_NOVELTY = [0.55, 0.8, 0.95, 0.9, 0.6, 0.7, 0.2, 0.4] as const;
+
 export interface SearchArm {
   id: string;
   operator: SearchOperator;

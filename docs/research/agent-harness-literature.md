@@ -130,8 +130,9 @@ before that, and whenever evidence is one-sided, it uses the manifest's static
 threshold. The learned rule is recorded with each promotion decision and is
 never allowed to lower the configured minimum.
 
-The search-policy item is also partially implemented: `greedy`, `ucb_portfolio`,
-`evolutionary`, and `mcts` are explicit bounded operators. They share the same
+The search-policy item is implemented as a stable default portfolio:
+`greedy`, `ucb_portfolio`, `evolutionary`, `mcts`, `ablation`, `combination`,
+`replication`, and `audit` are explicit bounded operators. They share the same
 experiment manifests and reward ledger; the remaining work is a controlled
 benchmark, not an assumption that a named policy is automatically better.
 
