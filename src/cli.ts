@@ -1086,6 +1086,15 @@ experiment.command("run")
     const resultStore = new ResearchStore(statePath);
     resultStore.saveRun({ id: result.runId, experimentId: id, status: recorded.status, payload: recorded });
     for (const [name, path] of Object.entries(artifactPaths)) resultStore.saveArtifact({ id: `${result.runId}-${name}`, runId: result.runId, name, path, checksum: sha256File(path) });
+    const experimentTrajectoryEvents: TrajectoryEvent[] = [
+      { id: `${result.runId}-process`, kind: "process", payload: { status: recorded.status, exitCode: recorded.exitCode, failureClass: recorded.failureClass ?? null } },
+      ...Array.from({ length: Math.max(0, attempt - 1) }, (_, index) => ({ id: `${result.runId}-recovery-${index + 1}`, kind: "recovery" as const, payload: { attempt: index + 1, status: "completed" } })),
+      { id: `${result.runId}-evaluator`, kind: "evaluator", payload: { metric: recorded.metrics[adapter.config.metric.name] ?? null, evidenceConsistent: recorded.status === "completed" } },
+      { id: `${result.runId}-terminal`, kind: "terminal", payload: { status: recorded.status, goalAttained: recorded.status === "completed" && recorded.metrics[adapter.config.metric.name] !== undefined } },
+    ];
+    const experimentQuality = evaluateTrajectory(experimentTrajectoryEvents);
+    resultStore.saveTrajectory({ id: `trajectory_${result.runId}`, runId: result.runId, experimentId: id, payload: { manifest, hypothesis: hypothesis?.payload ?? null, events: experimentTrajectoryEvents }, quality: experimentQuality });
+    if (experimentQuality.overall !== "PASS") resultStore.appendEvent("trajectory.capability_gaps", { trajectoryId: `trajectory_${result.runId}`, gaps: Object.entries(experimentQuality).filter(([key, value]) => key !== "overall" && (value as { verdict: string }).verdict !== "PASS").map(([key, value]) => ({ dimension: key, verdict: (value as { verdict: string }).verdict, evidence: (value as { evidence: string[] }).evidence })) });
     if (recorded.status === "completed") {
       const baselineEvent = resultStore.recentEvents(500).reverse().find((event) => event.type === "baseline.completed");
       const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string; stderr?: string; durationMs?: number; command?: string[]; cwd?: string } | undefined;
