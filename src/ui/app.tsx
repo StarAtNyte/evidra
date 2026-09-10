@@ -1219,7 +1219,41 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Controller request applied: ${requestedAction}.`);
       return;
     }
-    store.close();
+    const staleExperiment = store.experiments().find((entry) => {
+      const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { status?: unknown; stale?: unknown; recoveryAttempted?: unknown } : {};
+      return payload.status === "failed" && payload.stale === true && payload.recoveryAttempted !== true;
+    });
+    if (staleExperiment) {
+      const stalePayload = staleExperiment.payload && typeof staleExperiment.payload === "object" ? staleExperiment.payload as Record<string, unknown> : {};
+      store.saveExperiment({ id: staleExperiment.id, payload: { ...stalePayload, status: "scheduled", recoveryAttempted: true, recoveryAttemptedAt: new Date().toISOString() } });
+      store.appendEvent("experiment.recovery.scheduled", { experimentId: staleExperiment.id, reason: "controller restart", attempt: Number(stalePayload.recoveryAttempts ?? 0) + 1, policy: "one bounded retry of the immutable manifest" });
+      store.close();
+      setProgress(`Recovering stale experiment ${staleExperiment.id} (one bounded retry)...`);
+      try {
+        await executeExperiment(staleExperiment.id);
+        const recoveryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        const recoveredEntry = recoveryStore.experiments().find((entry) => entry.id === staleExperiment.id);
+        const recoveredStatus = recoveredEntry?.payload && typeof recoveredEntry.payload === "object" ? (recoveredEntry.payload as { status?: unknown }).status : undefined;
+        recoveryStore.appendEvent(recoveredStatus === "completed" ? "experiment.recovery.completed" : "experiment.recovery.failed", { experimentId: staleExperiment.id, status: recoveredStatus ?? "unknown" });
+        if (recoveredStatus !== "completed" && recoveredEntry) {
+          const recoveredPayload = recoveredEntry.payload && typeof recoveredEntry.payload === "object" ? recoveredEntry.payload as Record<string, unknown> : {};
+          recoveryStore.saveExperiment({ id: staleExperiment.id, payload: { ...recoveredPayload, status: "failed", stale: false, recoveryAttempted: true } });
+        }
+        recoveryStore.close();
+      } catch (error) {
+        const recoveryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        const recoveredEntry = recoveryStore.experiments().find((entry) => entry.id === staleExperiment.id);
+        if (recoveredEntry) {
+          const recoveredPayload = recoveredEntry.payload && typeof recoveredEntry.payload === "object" ? recoveredEntry.payload as Record<string, unknown> : {};
+          recoveryStore.saveExperiment({ id: staleExperiment.id, payload: { ...recoveredPayload, status: "failed", stale: false, recoveryAttempted: true, recoveryError: error instanceof Error ? error.message : String(error) } });
+        }
+        recoveryStore.appendEvent("experiment.recovery.failed", { experimentId: staleExperiment.id, error: error instanceof Error ? error.message : String(error) });
+        recoveryStore.close();
+        append("assistant", `Recovery of stale experiment ${staleExperiment.id} failed; Evidra will replan from the recorded failure.`);
+      }
+    } else {
+      store.close();
+    }
     let queueTaskId: string | undefined;
     try {
       const campaign = campaignOverride ?? config.campaign;
