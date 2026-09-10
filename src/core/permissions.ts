@@ -34,6 +34,31 @@ export function guardCommand(command: string[]): CommandGuard {
 }
 
 /**
+ * Additional hard boundary for model-requested shell work in any autonomy
+ * mode. External state changes must go through Evidra's approval-gated
+ * submission and controller paths, never through an arbitrary shell command.
+ */
+export function guardAutonomousCommand(command: string[]): CommandGuard {
+  const base = guardCommand(command);
+  if (!base.allowed) return base;
+  const executable = basename(command[0] ?? "").toLowerCase();
+  const joined = command.join(" ").toLowerCase();
+  if (/\bgit\s+push\b/.test(joined) || /\bgh\s+(pr|issue)\s+(create|edit)\b/.test(joined)) {
+    return { allowed: false, reason: "Refusing autonomous external GitHub or repository changes; use an explicit operator command." };
+  }
+  if ((executable === "kaggle" || executable === "aicrowd" || executable === "whest") && /\b(submit|upload|publish|push)\b/.test(joined)) {
+    return { allowed: false, reason: "Refusing autonomous competition submission or upload; use the approval-gated submission workflow." };
+  }
+  if ((executable === "curl" || executable === "wget") && /(--data(?:-raw|-binary)?|--upload-file|\s-[xt]\s*post\b|\s--method\s+post\b)/.test(joined)) {
+    return { allowed: false, reason: "Refusing autonomous HTTP upload or POST; use an approval-gated adapter." };
+  }
+  if (executable === "modal" && /\b(deploy|serve|run)\b/.test(joined)) {
+    return { allowed: false, reason: "Refusing autonomous Modal deployment or job launch; use the configured executor boundary." };
+  }
+  return { allowed: true };
+}
+
+/**
  * Additional boundary for model-requested shell work in SAFE mode. Explicit
  * user `!` commands use guardCommand only because they are user-authorized;
  * autonomous tools must be restricted by executable and arguments.

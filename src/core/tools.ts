@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { auditData } from "./data-audit.js";
-import { guardCommand, guardReadOnlyInspection, type AutonomyLevel } from "./permissions.js";
+import { guardAutonomousCommand, guardReadOnlyInspection, type AutonomyLevel } from "./permissions.js";
 import { runProcess, type ProcessControl } from "./process.js";
 import { splitCommandLine } from "./process.js";
 import { renderReport, writeReport, type ReportKind } from "./reports.js";
@@ -127,7 +127,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       }
       case "shell.exec": {
         const command = commandArgs(args.command);
-        const guard = guardCommand(command);
+        const guard = guardAutonomousCommand(command);
         if (!guard.allowed) throw new Error(guard.reason);
         if (context.autonomy === "safe") {
           const inspection = guardReadOnlyInspection(command);
