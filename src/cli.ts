@@ -270,6 +270,8 @@ submission.command("submit").argument("<bundle>").option("--message <message>", 
   const entry = store.submissions().find((candidate) => candidate.id === bundle);
   if (!entry) { store.close(); throw new Error(`Submission bundle ${bundle} is not registered.`); }
   if (entry.status !== "approved") { store.close(); throw new Error(`Submission ${bundle} is '${entry.status}'. Run submission approve first.`); }
+  const gates = store.experimentGates(entry.experimentId);
+  if (!gates.leakageAuditPassed) { store.close(); throw new Error(`Submission ${bundle} is blocked: leakage audit approval is required. Run evidra experiment gate ${entry.experimentId} leakage approve.`); }
   const adapter = activeCompetition();
   try {
     const attempt = await submitApprovedBundle(root, entry.path, adapter.config, options.message);

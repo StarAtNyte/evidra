@@ -1888,6 +1888,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const entry = store.submissions().find((candidate) => candidate.id === bundleId);
         if (!entry) { store.close(); append("assistant", `Submission bundle ${bundleId} is not registered.`); return; }
         if (entry.status !== "approved") { store.close(); append("assistant", `Submission ${bundleId} is '${entry.status}'. Run /submission approve first.`); return; }
+        const gates = store.experimentGates(entry.experimentId);
+        if (!gates.leakageAuditPassed) { store.close(); append("assistant", `Submission blocked: leakage audit approval is required. Use /experiment gate ${entry.experimentId} leakage approve.`); return; }
         setBusy(true); setProgress(`Submitting ${bundleId} through the configured adapter...`);
         try {
           const attempt = await submitApprovedBundle(root, entry.path, activeAdapter().config, "Evidra research submission", registerProcess);
