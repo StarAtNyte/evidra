@@ -27,6 +27,7 @@ import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
 import { createExperimentManifest, createReplicationManifest } from "../dist/core/experiment-manifest.js";
 import { estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.js";
+import { auditData } from "../dist/core/data-audit.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { evaluateTrajectory, capabilityGaps } from "../dist/core/trajectories.js";
 import { routeCapability } from "../dist/core/capability-router.js";
@@ -150,6 +151,18 @@ test("execution stages reject invalid contracts before expensive work", () => {
   assert.equal(validateExecutionContract({ ...manifest, evaluation: { requiredArtifacts: ["../secret.txt"] } }, "/tmp/evidra-worktree", ["python", "run.py"]).valid, false);
   const progressed = advanceExecutionStage(plan, "feasibility", "completed");
   assert.equal(nextExecutionStage(progressed).id, "smoke");
+});
+
+test("data audit reports bounded tabular duplicate and missingness diagnostics", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-data-audit-"));
+  try {
+    writeFileSync(join(root, "samples.csv"), "id,value,constant\n1,a,x\n2,,x\n2,,x\n");
+    const report = auditData(root);
+    assert.equal(report.tabularDiagnostics.length, 1);
+    assert.equal(report.tabularDiagnostics[0].duplicateRows, 1);
+    assert.deepEqual(report.tabularDiagnostics[0].constantColumns, ["constant"]);
+    assert.ok(report.warnings.some((warning) => /duplicate rows/i.test(warning)));
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("workspace root discovery keeps nested CLI invocations on the project state", () => {
