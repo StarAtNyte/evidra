@@ -13,7 +13,13 @@ export const RESEARCH_LANE_ROLES = [
   "model researcher",
 ] as const;
 
-export type ResearchLaneRole = typeof RESEARCH_LANE_ROLES[number];
+export const GENERAL_RESEARCH_LANE_ROLES = [
+  "domain researcher",
+  "validation scientist",
+  "method researcher",
+] as const;
+
+export type ResearchLaneRole = typeof RESEARCH_LANE_ROLES[number] | typeof GENERAL_RESEARCH_LANE_ROLES[number];
 
 export const ResearchLaneReportSchema = z.object({
   role: z.string().min(1),
@@ -67,11 +73,22 @@ export function laneToolCalls(role: ResearchLaneRole): ResearchToolCall[] {
     ? "duplicate|leak|missing|shift|group|target|label"
     : role === "validation scientist"
       ? "split|fold|valid|metric|evaluator|seed|test"
-      : "train|model|estimator|baseline|experiment|config";
+      : role === "model researcher"
+        ? "train|model|estimator|baseline|experiment|config"
+        : role === "domain researcher"
+          ? "theorem|definition|assumption|proof|method|result|literature|paper"
+          : "algorithm|method|approach|experiment|procedure|implementation|benchmark";
   return [
     { name: "workspace.files", arguments: {} },
     { name: "workspace.search", arguments: { query: focus } },
   ];
+}
+
+/** Choose an appropriate research team without assuming every task is ML. */
+export function selectResearchLaneRoles(objective: string, requested: number): ResearchLaneRole[] {
+  const mlOrCompetition = /\b(dataset|training|train|model|estimator|competition|leaderboard|metric|fold|gpu|prediction|baseline)\b/i.test(objective);
+  const pool = mlOrCompetition ? RESEARCH_LANE_ROLES : GENERAL_RESEARCH_LANE_ROLES;
+  return pool.slice(0, Math.max(1, Math.min(requested, pool.length)));
 }
 
 const MAX_LANE_TOOL_RESULT_BYTES = 12_000;
@@ -116,7 +133,11 @@ function lanePrompt(role: ResearchLaneRole, objective: string): string {
     ? "Inspect data provenance, duplicates, leakage, distributions, hidden groups, and train/test shift."
     : role === "validation scientist"
       ? "Inspect evaluation design, split validity, metric reliability, uncertainty, and replication requirements."
-      : "Inspect the implementation and research space, identify promising general methods, and propose falsifiable experiments.";
+      : role === "model researcher"
+        ? "Inspect the implementation and research space, identify promising general methods, and propose falsifiable experiments."
+        : role === "domain researcher"
+          ? "Investigate the domain, definitions, assumptions, relevant literature, competing explanations, and unresolved questions."
+          : "Investigate alternative methods, mechanisms, procedures, and implementation paths; propose falsifiable comparisons.";
   return `${focus}\n\nObjective: ${objective}\n\n` +
     "You are an independent Evidra research lane. Use the supplied workspace and evidence context; run only read-only inspection when tools are available. Do not edit files, submit anything, or claim measurements you did not observe. Return ONLY JSON with this shape: " +
     '{"role":"...","summary":"...","findings":["..."],"recommendations":["..."],"uncertainties":["..."],"evidence":["command, artifact, or source supporting each important statement"],"confidence":0.0}. ' +
@@ -251,7 +272,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
 /** Run independent research lanes with an explicit concurrency bound. */
 export async function runResearchLanes(objective: string, context: Record<string, unknown>, options: ResearchLanesOptions): Promise<ResearchLaneReport[]> {
   const concurrency = researchLaneConcurrency({ autonomy: options.autonomy, provider: options.provider, requested: options.maxParallel });
-  const roles = RESEARCH_LANE_ROLES.slice(0, Math.max(1, Math.min(concurrency, RESEARCH_LANE_ROLES.length)));
+  const roles = selectResearchLaneRoles(objective, concurrency);
   const reports: ResearchLaneReport[] = [];
   let next = 0;
   const worker = async (): Promise<void> => {

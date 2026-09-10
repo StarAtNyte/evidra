@@ -46,7 +46,7 @@ import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../dist/c
 import { applyCriticGate } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment } from "../dist/core/validation.js";
-import { boundLaneToolResult, laneToolCalls } from "../dist/agents/research-lanes.js";
+import { boundLaneToolResult, laneToolCalls, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -647,6 +647,8 @@ test("research lanes use bounded role-specific workspace observations", () => {
   assert.match(String(dataCalls[1].arguments.query), /leak|duplicate/i);
   assert.match(String(validationCalls[1].arguments.query), /split|metric/i);
   assert.match(String(modelCalls[1].arguments.query), /model|estimator/i);
+  assert.deepEqual(selectResearchLaneRoles("prove a new theorem about fluid dynamics", 3), ["domain researcher", "validation scientist", "method researcher"]);
+  assert.deepEqual(selectResearchLaneRoles("win a dataset competition with a robust model", 3), ["data detective", "validation scientist", "model researcher"]);
   const bounded = boundLaneToolResult({ name: "workspace.search", ok: true, output: "x".repeat(20_000) });
   assert.match(String(bounded.output), /lane observation truncated/);
   assert.ok(Buffer.byteLength(String(bounded.output)) <= 12_100);
