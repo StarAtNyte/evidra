@@ -36,6 +36,23 @@ Permission level is session-scoped and resets to `safe` when a new terminal sess
 
 Research mode emphasizes sources, claims, ideas, hypotheses, and decisions. Challenge mode emphasizes a competition’s rules, data, validation, experiments, runs, compute, and submissions.
 
+An explicit autonomous campaign owns the full local loop: research lanes, implementation in an isolated worktree, evaluation, retries, and replication. It can be controlled or recovered without losing durable state:
+
+```text
+/research start               Start autonomous research setup
+/research pause               Pause active research workers
+/research resume              Resume the saved research campaign
+/research stop                Stop the research campaign safely
+/research status              Show research campaign state
+/challenge start              Start autonomous challenge work
+/challenge pause              Pause active challenge workers
+/challenge resume             Resume the saved challenge campaign
+/challenge stop               Stop the challenge campaign safely
+/challenge status             Show challenge campaign state
+```
+
+These commands never authorize external submission. A stopped or interrupted campaign is saved and must be explicitly resumed.
+
 Plain text is ordinary conversation and is handled by the selected provider without repository inspection or experiment execution. Use `/research` or an autonomous loop when you want Evidra to inspect evidence and act.
 
 ## Project and challenge

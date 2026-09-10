@@ -84,7 +84,7 @@ This headless mode has no interactive TUI or implicit approval channel. Inspect 
 
 Provider and lane failures are recoverable. Transient network, timeout, stream, malformed-response, and service errors receive bounded retries with backoff; configured Codex-to-local fallback changes route when appropriate; every exhausted lane is recorded as failed evidence so the director can choose a different path instead of silently treating it as success. SDK subprocesses are cancelled on timeout and terminal interruption.
 
-Every research cycle now has an adversarial critic stage. The critic reviews lane disagreement and the director decision, records objections and required checks, and returns `proceed`, `revise`, or `reject`. Challenge experiments whose manifest requires replication automatically receive an independent child manifest and run in `fast`/`yolo` modes; `safe` mode prepares the child and waits for approval.
+Every research cycle now has an adversarial critic stage. The critic reviews lane disagreement and the director decision, records objections and required checks, and returns `proceed`, `revise`, or `reject`. An explicitly started autonomous research or challenge campaign can implement and run isolated experiments automatically; external submissions remain approval-gated in every mode.
 
 Implemented today:
 
@@ -172,6 +172,10 @@ Useful commands:
     /status               Show project, graph, queue, and execution state
     /usage                Show durable activity and counts
     /research             Start or run an evidence-gathering cycle
+    /research start       Start a fully autonomous research campaign
+    /research pause       Pause workers and preserve the campaign
+    /research resume      Resume the saved research campaign
+    /research stop        Stop the campaign without deleting evidence
     /loop                 Run or control the autonomous loop
     /workbench            Select Research or Challenge mode
     /provider             Select Codex or local provider
@@ -183,6 +187,10 @@ Useful commands:
     /data                 Audit workspace data
     /validation           Inspect or generate validation policy
     /experiment           Create or run reproducible experiments
+    /challenge start      Start a fully autonomous challenge campaign
+    /challenge pause      Pause challenge workers
+    /challenge resume     Resume the saved challenge campaign
+    /challenge stop       Stop the challenge campaign safely
     /agents               Show agent lanes and health
     /compute              Show executor and budget health
     /queue                Show durable tasks and recover stale work
@@ -218,8 +226,11 @@ Evidra creates internal phase goals such as orientation, baseline, data audit, v
 5. executes those tools through the permission boundary;
 6. feeds bounded tool results into the next reasoning turn;
 7. materializes the decision, hypotheses, claims, and graph edges;
-8. proposes or runs the next isolated experiment according to the selected permission level;
-9. pauses on a blocker, stops on the campaign condition, or continues until budget exhaustion.
+8. asks an experiment engineer to implement the selected change in an isolated worktree;
+9. runs, evaluates, retries, records artifacts, and independently replicates promising results;
+10. pauses on a blocker, stops on the campaign condition, or continues until budget exhaustion.
+
+`/research start` and `/challenge start` explicitly authorize this complete local loop. They resume from durable evidence after a terminal restart. Use `/research pause|resume|stop` or `/challenge pause|resume|stop` to control it. External submission is never performed automatically.
 
 The director is limited to a bounded number of tool rounds per cycle. Every tool success and failure is recorded as a bounded event. The controller, not an LLM message, is the source of truth for campaign state, queue status, process ownership, and stopping behavior.
 
