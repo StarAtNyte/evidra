@@ -481,6 +481,8 @@ For a reproducible end-to-end harness trial, see [the Karpathy Autoresearch reci
 
 The first real AIRS-Bench task trial is recorded in [the AIRS-Bench harness report](docs/benchmarks/airs-bench.md). It reproduces a SICK task baseline through Evidra and records structured-agent failure as resumable evidence when a deliberately small local model cannot complete the decision contract.
 
+Evidra's competitiveness target and equal-budget comparison protocol are documented in [Harness competitiveness](docs/benchmarks/harness-scorecard.md). A harness is not considered better because it produces more narrative output: it must produce valid, reproducible evaluator-backed improvements and recover from failures.
+
 The separate [Autoresearch Bench](https://www.autoresearch-bench.com/) is an external evaluation: agents work in isolated workspaces, may receive public feedback from a grader, and are scored on held-out private results. Evidra's submission adapters and durable public-score observations are the integration boundary for that benchmark; a local smoke run must never be presented as an official Autoresearch Bench score.
 
 ## Contribution

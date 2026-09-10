@@ -1,0 +1,49 @@
+# Harness competitiveness protocol
+
+Evidra's default objective is to beat the incumbent under the same task, model,
+time, and compute budget. Compatibility with another harness is not a win.
+
+The comparison protocol uses the same task arm for every harness and records:
+
+- valid-run rate: a candidate must have a durable evaluator run and finite metric;
+- improvement rate: the candidate must beat that arm's baseline in the declared direction;
+- mean metric delta and median time to first valid evidence;
+- recovery rate after a failed tool, worker, or provider route;
+- reproducibility rate across an independent seed or replication;
+- a bounded competitive score that weights improvement most heavily, then valid
+  evidence, reproducibility, and recovery.
+
+Invalid runs and unverified model claims score zero improvement. This prevents a
+harness from winning by producing persuasive text without a measured artifact.
+
+## Initial AIRS-Bench trial
+
+On the official AIRS-Bench SICK Accuracy task, Evidra reproduced the majority
+baseline at `0.5686913983`. Its first fully durable train-only candidate run
+scored `0.5260905014`, a valid regression of `-0.0426008969`. The result is
+retained as failure evidence; it is not presented as a win.
+
+AIRS-Bench publishes comparable results for One-Shot, Greedy, MLGym, and
+AIRA-dojo arms. Evidra should be entered as another arm with the same model,
+seed count, task files, and budget before making a leaderboard claim.
+
+## What Evidra must beat
+
+The competitive target is not only final task score. Existing research-agent
+harnesses demonstrate useful capabilities that Evidra must match and improve:
+
+- AIRA-dojo: scalable parallel solver runs, search policies, isolated execution,
+  and large-run analysis;
+- MLGym: standardized research environments, multiple agents, configurable
+  budgets, and trajectory inspection;
+- AIRS-Bench's published harness arms: a common task suite and public score
+  comparison.
+
+Evidra's intended advantage is the closed evidence loop: durable hypotheses,
+typed tools, isolated mutations, evaluator-backed metrics, failure-aware route
+changes, replication gates, and resumable campaigns. Those features count only
+when they improve the equal-budget scorecard.
+
+References: [AIRS-Bench](https://github.com/facebookresearch/airs-bench),
+[AIRA-dojo](https://github.com/facebookresearch/aira-dojo), and
+[MLGym](https://github.com/facebookresearch/MLGym).

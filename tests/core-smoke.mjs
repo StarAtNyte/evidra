@@ -56,6 +56,7 @@ import { summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
+import { scoreHarnessTrials } from "../dist/core/harness-scorecard.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
 
@@ -1441,4 +1442,16 @@ test("usage summary aggregates durable run provenance by executor", () => {
   assert.equal(summary.wallMinutes, 32);
   assert.equal(summary.gpuWallHours, 0.5);
   assert.equal(summary.byExecutor.modal.runs, 1);
+});
+
+test("harness scorecard rewards valid reproducible improvements and rejects narratives", () => {
+  const scorecards = scoreHarnessTrials([
+    { harness: "evidra", task: "sick", direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 10, recovered: true, reproducible: true },
+    { harness: "evidra", task: "sick-2", direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.4, validRun: true, durationSeconds: 20, recovered: false, reproducible: true },
+    { harness: "narrative-only", task: "sick", direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.9, validRun: false, durationSeconds: 1, recovered: false, reproducible: false },
+  ]);
+  assert.equal(scorecards[0].harness, "evidra");
+  assert.equal(scorecards[0].validRunRate, 1);
+  assert.equal(scorecards[0].improvementRate, 0.5);
+  assert.equal(scorecards[1].competitiveScore, 0);
 });
