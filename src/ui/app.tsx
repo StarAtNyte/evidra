@@ -2064,14 +2064,23 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
       const campaign = config.campaign;
-  append("assistant", `Executor policy\n  mode: ${config.mode}\n  autonomy: ${config.autonomy}\n  selected: ${config.experimentExecutor}\n  local: available through process workers\n  container: Docker/Podman auto-detected at run time\n  modal: ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}\n  fallback: local model on Codex usage limits${campaign ? `\n\nCampaign budget\n  elapsed: ${campaignElapsedMinutes(campaign).toFixed(1)} / ${campaign.budgetMinutes} minutes\n  status: ${campaign.status}` : ""}`);
+      const containerRuntimes = await Promise.all(["docker", "podman"].map(async (runtime) => {
+        try {
+          const result = await runProcess(["which", runtime], root, 5_000);
+          return result.exitCode === 0 ? runtime : undefined;
+        } catch { return undefined; }
+      }));
+      const availableContainers = containerRuntimes.filter(Boolean).join(", ") || "none found";
+      append("assistant", `Executor policy\n  mode: ${config.mode}\n  autonomy: ${config.autonomy}\n  selected: ${config.experimentExecutor}\n  local: available through process workers\n  container: ${availableContainers}\n  modal: ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}\n  fallback: local model on Codex usage limits${campaign ? `\n\nCampaign budget\n  elapsed: ${campaignElapsedMinutes(campaign).toFixed(1)} / ${campaign.budgetMinutes} minutes\n  status: ${campaign.status}` : ""}`);
       return;
     }
     if (request === "/doctor") {
       const checks: string[] = [`node ${process.versions.node}`, `cwd ${root}`];
-      for (const command of ["git", "uv", "codex"]) {
-        const result = await runProcess(["sh", "-lc", `command -v ${command}`], root, 5_000);
-        checks.push(`${command}: ${result.exitCode === 0 ? result.stdout.trim() : "not found"}`);
+      for (const command of ["git", "uv", "codex", "docker", "podman"]) {
+        try {
+          const result = await runProcess(["which", command], root, 5_000);
+          checks.push(`${command}: ${result.exitCode === 0 ? result.stdout.trim() : "not found"}`);
+        } catch { checks.push(`${command}: unavailable`); }
       }
       try { await listLocalModels(); checks.push("ollama: reachable"); } catch { checks.push("ollama: unavailable"); }
       checks.push(`modal: ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}`);
