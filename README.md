@@ -124,6 +124,7 @@ Implemented today:
 - unattended experiment runs also record the same quality-scored process/evaluator/recovery trajectory used by the interactive workbench;
 - local-model experiment implementation through bounded unified-diff proposals, checked and applied only inside the experiment worktree;
 - Modal execution mounts the exact isolated experiment worktree and accepts either Modal CLI profiles or environment credentials;
+- Codex-backed experiment engineers honor entitlement reset windows with bounded retry/wait behavior instead of silently abandoning an authorized campaign;
 - shell and autonomy safety guards.
 
 ## Quick start

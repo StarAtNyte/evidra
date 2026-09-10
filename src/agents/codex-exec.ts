@@ -281,3 +281,26 @@ export async function runWithLocalFallback(
     return new CodexExecAgent({ provider: "local", model: localModel, cwd: options.cwd }).run(task, onProgress, onProcess);
   }
 }
+
+/** Run a tool-capable engineer while honoring Codex entitlement reset windows. */
+export async function runWithUsageLimitWait(
+  task: AgentTask,
+  options: ExecAgentOptions,
+  onProgress?: (message: string) => void,
+  onProcess?: (control: ProcessControl) => void,
+  maxWaitMs = 6 * 60 * 60_000,
+): Promise<AgentResult> {
+  const started = Date.now();
+  while (true) {
+    try {
+      return await new CodexExecAgent(options).run(task, onProgress, onProcess);
+    } catch (error) {
+      if (!isProviderUsageLimit(error) || options.limitPolicy !== "wait") throw error;
+      const remaining = maxWaitMs - (Date.now() - started);
+      if (remaining <= 0) throw new Error("Provider usage limit did not reset within the engineer wait budget.");
+      const delay = Math.min(providerRetryAfterMs(error), remaining);
+      onProgress?.(`Codex usage limit reached; waiting ${Math.ceil(delay / 60_000)} minute(s) before retrying the experiment engineer.`);
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}

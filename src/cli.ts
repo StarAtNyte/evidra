@@ -36,7 +36,7 @@ import { applyCriticGate } from "./core/critic-gate.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
-import { checkProvider, codexLoginStatus, isProviderUsageLimit, listLocalModels, providerRetryAfterMs, runWithLocalFallback } from "./agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, isProviderUsageLimit, listLocalModels, providerRetryAfterMs, runWithUsageLimitWait, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -119,13 +119,14 @@ async function implementCampaignHypothesis(
     },
   } as const;
   if (options.provider === "codex") {
-    await runWithLocalFallback(task, {
+    await runWithUsageLimitWait(task, {
       provider: options.provider,
       model: options.model,
       cwd: worktree,
       reasoningEffort: options.thinking,
       sandbox: "workspace-write",
-    }, undefined, (message) => console.log(`Experiment ${experimentId} · ${message}`));
+      limitPolicy: "wait",
+    }, (message) => console.log(`Experiment ${experimentId} · ${message}`));
     return;
   }
   const result = await runWithLocalFallback({

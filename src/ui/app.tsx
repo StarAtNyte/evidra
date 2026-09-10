@@ -28,7 +28,7 @@ import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoal
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
-import { checkProvider, codexLoginStatus, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, runWithLocalFallback, runWithUsageLimitWait, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
@@ -925,11 +925,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (config.provider === "codex") {
       setProgress(`Experiment ${id} · experiment engineer implementing the hypothesis...`);
       activeSteer.current = null;
-      await runWithLocalFallback({
+      await runWithUsageLimitWait({
         role: "experiment engineer",
         objective: "Implement the selected hypothesis in this isolated worktree. Inspect the existing estimator, make the smallest reproducible change, run relevant tests or smoke checks, and leave the worktree ready for evaluation. Do not touch files outside this worktree and do not submit anything.",
         context: { manifest, hypothesis: hypothesis?.payload ?? null, worktree: experimentCwd },
-      }, { provider: config.provider, model: config.model, cwd: worktree, reasoningEffort: config.reasoningEffort, sandbox: "workspace-write", onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, undefined, setProgress, registerProcess);
+      }, { provider: config.provider, model: config.model, cwd: worktree, reasoningEffort: config.reasoningEffort, sandbox: "workspace-write", limitPolicy: "wait", onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, setProgress, registerProcess);
       activeSteer.current = null;
       executionPlan = advanceExecutionStage(executionPlan, "smoke", "completed");
       const smokeStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
