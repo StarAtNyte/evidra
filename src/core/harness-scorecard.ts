@@ -21,6 +21,8 @@ export interface HarnessTrial {
   durationSeconds: number;
   recovered: boolean;
   reproducible: boolean;
+  /** Whether an independent reproducibility command was actually requested. */
+  reproducibilityChecked?: boolean;
   /** Optional trajectory-derived process quality in [0, 1]. */
   processQuality?: number;
   /** Whether tool feedback and the next action were aligned. */
@@ -241,7 +243,8 @@ function fairPair(left: HarnessTrial, right: HarnessTrial): boolean {
     left.dataRevision === right.dataRevision &&
     left.runtimeFingerprint === right.runtimeFingerprint &&
     left.taskWorstMetric === right.taskWorstMetric &&
-    left.taskBestMetric === right.taskBestMetric;
+    left.taskBestMetric === right.taskBestMetric &&
+    left.reproducibilityChecked === right.reproducibilityChecked;
 }
 
 /**
@@ -267,6 +270,7 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
     const right = incumbentArms.get(key)!;
     if (!left.validRun || !right.validRun || !Number.isFinite(left.candidateMetric) || !Number.isFinite(right.candidateMetric)) return [];
     if (!fairPair(left, right)) return [];
+    if ((left.reproducibilityChecked === true && !left.reproducible) || (right.reproducibilityChecked === true && !right.reproducible)) return [];
     const direction = left.direction;
     const delta = direction === "maximize" ? left.candidateMetric! - right.candidateMetric! : right.candidateMetric! - left.candidateMetric!;
     const leftProcess = processReliability(left);

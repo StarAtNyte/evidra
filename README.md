@@ -176,6 +176,7 @@ Implemented today:
 - paired, task-balanced benchmark comparisons that refuse a win claim without positive lower-bound evidence and sufficient coverage.
 - benchmark coverage counts the full union of declared arms, so unmatched task/seed/model/budget arms cannot be hidden by scoring only the intersection;
 - direct scorecard comparisons independently recheck data revision, runtime fingerprint, baseline, direction, and normalization-bound parity before pairing outcomes;
+- an arm with an explicitly requested reproducibility check must pass that check, and both harnesses must expose the same check status before their metrics can support a win;
 - domain-agnostic successive-halving schedules that allocate cheap screens before expensive validation.
 - autonomous portfolio execution that screens candidates in a first pass and promotes survivors into full validation and replication.
 - explicit leave-one-factor-out ablation plans for composite hypotheses, with bounded autonomous variant execution and independent evidence per factor;

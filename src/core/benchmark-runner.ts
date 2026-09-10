@@ -144,6 +144,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       validRun,
       durationSeconds: totalDurationMs / 1000,
       recovered: validRun && attempts > 1,
+      reproducibilityChecked: Boolean(arm.reproducibilityCommand),
       ...(finalFailure ? { failureClass: finalFailure } : {}),
       reproducible,
     };

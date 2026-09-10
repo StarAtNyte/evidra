@@ -2400,6 +2400,18 @@ test("direct harness comparison refuses hidden protocol mismatches", () => {
   assert.equal(comparison.challengerWins, false);
 });
 
+test("benchmark wins require matched successful reproducibility checks", () => {
+  const trials = ["task-a", "task-b"].flatMap((task) => [
+    { harness: "evidra", task, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: 0.8, validRun: true, durationSeconds: 1, recovered: false, reproducible: false, reproducibilityChecked: true },
+    { harness: "incumbent", task, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: 0.7, validRun: true, durationSeconds: 1, recovered: false, reproducible: true, reproducibilityChecked: true },
+  ]);
+  const failedCheck = compareHarnesses(trials, "evidra", "incumbent");
+  assert.equal(failedCheck.validPairedArms, 0);
+  assert.equal(failedCheck.challengerWins, false);
+  const unchecked = compareHarnesses(trials.map((trial) => ({ ...trial, reproducible: false, reproducibilityChecked: false })), "evidra", "incumbent");
+  assert.equal(unchecked.challengerWins, true);
+});
+
 test("cross-pollination preserves agreement, tension, and evidence provenance", () => {
   const board = synthesizeLaneReports([
     { role: "data", status: "completed", findings: ["group leakage affects validation"], recommendations: ["lock grouped folds"], uncertainties: ["site shift is unknown"], evidence: ["audit.csv"] },
