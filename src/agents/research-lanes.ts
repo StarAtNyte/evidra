@@ -74,6 +74,18 @@ export function laneToolCalls(role: ResearchLaneRole): ResearchToolCall[] {
   ];
 }
 
+const MAX_LANE_TOOL_RESULT_BYTES = 12_000;
+
+export function boundLaneToolResult(result: ResearchToolResult): ResearchToolResult {
+  if (result.output === undefined) return result;
+  const serialized = typeof result.output === "string" ? result.output : JSON.stringify(result.output);
+  if (Buffer.byteLength(serialized, "utf8") <= MAX_LANE_TOOL_RESULT_BYTES) return result;
+  return {
+    ...result,
+    output: `${serialized.slice(0, MAX_LANE_TOOL_RESULT_BYTES)}\n...[lane observation truncated by Evidra]...`,
+  };
+}
+
 /**
  * Select a conservative lane count from user intent and host/provider
  * capacity. This is deliberately bounded: more agents are not automatically
@@ -184,7 +196,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
       for (const call of laneToolCalls(role)) {
         if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
         options.onProgress?.(`Research lane · ${role} · ${call.name}...`);
-        toolResults.push(await options.executeTool(call));
+        toolResults.push(boundLaneToolResult(await options.executeTool(call)));
       }
     }
     let provider = options.provider;
