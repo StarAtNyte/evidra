@@ -20,7 +20,7 @@ import { renderTimeline } from "./core/timeline.js";
 import { latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
 import { detectStagnation } from "./core/stagnation.js";
 import { recoveryDelay, recoveryPlan } from "./core/recovery.js";
-import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "./core/campaign.js";
+import { campaignElapsedMinutes, pauseCampaign, readCampaignRuntime, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { auditExperiment } from "./core/validation.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
@@ -700,6 +700,25 @@ research
   .option("--resume", "resume the latest durable non-completed research campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
   .action(async (options: { mode: string; goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
+    const savedStore = new ResearchStore(statePath);
+    const savedCampaign = savedStore.campaign() as { goal?: string; budgetMinutes?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime?: unknown } | undefined;
+    savedStore.close();
+    // A resume is a continuation of the durable campaign, not a new run with
+    // whichever defaults the current terminal happens to have. Legacy
+    // campaigns without runtime metadata retain the explicit CLI settings.
+    const savedRuntime = options.resume && savedCampaign && savedCampaign.status !== "completed"
+      ? readCampaignRuntime(savedCampaign)
+      : undefined;
+    if (savedRuntime) {
+      options.mode = savedRuntime.mode;
+      options.provider = savedRuntime.provider;
+      options.model = savedRuntime.model;
+      options.thinking = savedRuntime.thinking;
+      options.lanes = String(savedRuntime.lanes);
+      options.autonomy = savedRuntime.autonomy;
+      options.limitPolicy = savedRuntime.limitPolicy;
+      options.executor = savedRuntime.executor;
+    }
     if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
     if (!["wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'wait', 'fallback', or 'stop'.");
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Mode must be 'research' or 'challenge'.");
@@ -724,12 +743,10 @@ research
     await checkProvider({ provider: options.provider, model: selectedModel, cwd: root });
     const releaseLease = acquireCliControllerLease(mode);
     const started = Date.now();
-    const savedStore = new ResearchStore(statePath);
-    const savedCampaign = savedStore.campaign() as { goal?: string; budgetMinutes?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number } | undefined;
-    savedStore.close();
-    const campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number } = options.resume && savedCampaign && savedCampaign.status !== "completed"
-      ? { ...resumeCampaign({ goal: savedCampaign.goal ?? options.goal, budgetMinutes: savedCampaign.budgetMinutes ?? budget, stopCondition: savedCampaign.stopCondition ?? options.stop, startedAt: savedCampaign.startedAt ?? new Date(started).toISOString(), status: savedCampaign.status === "paused" ? "paused" : "running", pausedAt: savedCampaign.pausedAt, pausedDurationMinutes: savedCampaign.pausedDurationMinutes }), status: "running" }
-      : { goal: options.goal, budgetMinutes: budget, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running" };
+    const runtime: CampaignRuntimeConfig = { mode, provider: options.provider as CampaignRuntimeConfig["provider"], model: selectedModel, thinking: options.thinking, lanes: laneLimit, autonomy, limitPolicy: options.limitPolicy as CampaignRuntimeConfig["limitPolicy"], executor: options.executor as CampaignRuntimeConfig["executor"] };
+    const campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime: CampaignRuntimeConfig } = options.resume && savedCampaign && savedCampaign.status !== "completed"
+      ? { ...resumeCampaign({ goal: savedCampaign.goal ?? options.goal, budgetMinutes: savedCampaign.budgetMinutes ?? budget, stopCondition: savedCampaign.stopCondition ?? options.stop, startedAt: savedCampaign.startedAt ?? new Date(started).toISOString(), status: savedCampaign.status === "paused" ? "paused" : "running", pausedAt: savedCampaign.pausedAt, pausedDurationMinutes: savedCampaign.pausedDurationMinutes, runtime: savedRuntime ?? runtime }), status: "running", runtime }
+      : { goal: options.goal, budgetMinutes: budget, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running", runtime };
     if (options.resume) console.log(savedCampaign && savedCampaign.status !== "completed" ? `Resuming durable research campaign from ${savedCampaign.startedAt ?? "saved state"}.` : "No resumable campaign found; starting a new research campaign.");
     const objective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}`;
     let cycle = 0;

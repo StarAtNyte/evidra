@@ -44,6 +44,7 @@ import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js"
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
 import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../dist/core/campaign.js";
+import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment } from "../dist/core/validation.js";
@@ -156,6 +157,23 @@ test("paused campaign time is excluded from the autonomous budget", () => {
   const resumed = resumeCampaign(paused, "2026-01-01T01:00:00.000Z");
   assert.equal(Math.round(resumed.pausedDurationMinutes), 50);
   assert.equal(Math.round(campaignElapsedMinutes(resumed, Date.parse("2026-01-01T01:10:00.000Z"))), 20);
+});
+
+test("durable campaign runtime settings are validated before resume", () => {
+  const runtime = {
+    mode: "challenge",
+    provider: "local",
+    model: "qwen3.6:27b",
+    thinking: "high",
+    lanes: 4,
+    autonomy: "fast",
+    limitPolicy: "fallback",
+    executor: "modal",
+  };
+  assert.deepEqual(readCampaignRuntime({ runtime: { ...runtime } }), runtime);
+  assert.equal(readCampaignRuntime({ runtime: { ...runtime, lanes: 0 } }), undefined);
+  assert.equal(readCampaignRuntime({ runtime: { ...runtime, provider: "unknown" } }), undefined);
+  assert.equal(readCampaignRuntime({ goal: "legacy campaign" }), undefined);
 });
 
 test("controller leases prevent duplicate workers and trajectories expose capability gaps", () => {
