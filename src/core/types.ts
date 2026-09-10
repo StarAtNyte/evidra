@@ -197,7 +197,20 @@ export const ExperimentManifestSchema = z.object({
   splitVersion: z.string().min(1),
   change: z.object({ configPatch: z.record(z.string(), z.unknown()) }),
   resources: z.object({ executor: z.enum(["local", "container", "modal"]), image: z.string().min(1).optional(), gpu: z.string().optional(), timeoutMinutes: z.number().positive() }),
-  evaluation: z.object({ folds: z.array(z.number().int().nonnegative()), seeds: z.array(z.number().int()), requiredArtifacts: z.array(z.string()), verificationCommand: z.array(z.string()).min(1).optional(), verificationCommands: z.array(z.array(z.string()).min(1)).min(1).optional() }),
+  evaluation: z.object({ folds: z.array(z.number().int().nonnegative()), seeds: z.array(z.number().int()), requiredArtifacts: z.array(z.string()), verificationCommand: z.array(z.string()).min(1).optional(), verificationCommands: z.array(z.array(z.string()).min(1)).min(1).optional() }).superRefine((evaluation, context) => {
+    const commands = [
+      ...(evaluation.verificationCommand ? [evaluation.verificationCommand] : []),
+      ...(evaluation.verificationCommands ?? []),
+    ];
+    const seen = new Set<string>();
+    for (const command of commands) {
+      const key = JSON.stringify(command);
+      if (seen.has(key)) {
+        context.addIssue({ code: z.ZodIssueCode.custom, path: ["verificationCommands"], message: "verification commands must be exact-unique; duplicate commands are not independent evidence" });
+      }
+      seen.add(key);
+    }
+  }),
   acceptance: z.object({ minimumPrimaryDelta: z.number(), maximumRegressionShift: z.number(), requireReplication: z.boolean() }),
   searchOperator: z.string().min(1).default("ucb_portfolio"),
   createdAt: z.string().datetime(),

@@ -2630,6 +2630,7 @@ test("specification-gaming guard detects evaluator mutations", () => {
 test("experiment manifests preserve multiple independent verifiers", () => {
   const manifest = createExperimentManifest({ id: "multi-verify", hypothesisId: "hyp-1", gitCommit: "abc123", datasetVersion: "data", verificationCommands: [["python", "check_unit.py"], ["python", "check_reference.py"]] }, { id: "test", name: "Test", taskType: "general", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["python", "eval.py"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["python", "baseline.py"], experimentCommand: ["python", "run.py"] });
   assert.deepEqual(manifest.evaluation.verificationCommands, [["python", "check_unit.py"], ["python", "check_reference.py"]]);
+  assert.throws(() => createExperimentManifest({ id: "duplicate-verify", hypothesisId: "hyp-1", gitCommit: "abc123", datasetVersion: "data", verificationCommand: ["python", "check_unit.py"], verificationCommands: [["python", "check_unit.py"]] }, { id: "test", name: "Test", taskType: "general", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["python", "eval.py"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["python", "baseline.py"], experimentCommand: ["python", "run.py"] }), /duplicate commands are not independent evidence/);
 });
 
 test("hypothesis quality rewards falsifiable grounded proposals", () => {
