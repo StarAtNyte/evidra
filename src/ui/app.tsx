@@ -53,7 +53,7 @@ import { applyCriticGate } from "../core/critic-gate.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "../core/experiment-patches.js";
 import { recordBaselineEvidence } from "../core/baseline.js";
 import { redactSecrets } from "../core/redaction.js";
-import { enforceGoalTermination } from "../core/termination.js";
+import { enforceClaimTermination, enforceGoalTermination } from "../core/termination.js";
 import { auditClaims } from "../core/claim-audit.js";
 import { summarizeUsage } from "../core/usage.js";
 import { assessResearchDecisionRubric } from "../core/research-rubric.js";
@@ -919,6 +919,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     decision = enforceGoalTermination(decision);
     const decisionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const claimAudit = auditEvidenceStore(decisionStore);
+    const claimGateBefore = decision;
+    decision = enforceClaimTermination(decision, claimAudit);
+    if (decision !== claimGateBefore) decisionStore.appendEvent("research.claim_gate.rejected", { ...claimAudit, source: "tui", phase: phaseGoal?.phase ?? null });
     const decisionRubric = assessResearchDecisionRubric(decision, {
       baselineAvailable: Boolean((observation as { baseline?: { exitCode?: unknown } }).baseline?.exitCode === 0),
       sourceCount: researchSources.length,
