@@ -32,6 +32,7 @@ import { runResearchCritic, runResearchLanes, type ResearchLaneReport, type Rese
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
 import { evaluateTrajectory, type TrajectoryEvent } from "../core/trajectories.js";
 import { routeCapability } from "../core/capability-router.js";
+import { allocateNextResearch } from "../core/allocation.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -644,6 +645,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const campaignRemaining = campaign ? Math.max(0, campaign.budgetMinutes - (Date.now() - Date.parse(campaign.startedAt)) / 60_000) : undefined;
     const route = routeCapability({ objective, mode, provider: config.provider, autonomy: config.autonomy, recentFailureCount, budgetRemainingMinutes: campaignRemaining, requestedParallel: 3 });
     store.appendEvent("research.capability_route", { route, objective, recentFailureCount });
+    const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase });
+    store.appendEvent("research.next_allocation", { allocation, objective });
     const researchSources = store.sources().slice(0, 12).map((entry) => {
       const payload = entry.payload as { id?: string; title?: string; url?: string; excerpt?: string; claims?: string[] };
       return { id: entry.id, title: payload.title, url: payload.url, excerpt: payload.excerpt, claims: payload.claims?.slice(0, 8) };
@@ -660,13 +663,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
       activeSteer.current = null;
       await checkProvider({ provider: config.provider, model: config.model, cwd: root });
       setProgress(`Research 3/4 · route ${route.tier} · ${route.reasoningEffort} reasoning · investigating...`);
-      laneReports = await runResearchLanes(objective, {
+      const allocatedObjective = `${objective}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}`;
+      laneReports = await runResearchLanes(allocatedObjective, {
         mode,
         project,
         observation,
         recentEvents,
         researchSources,
         ultimateGoal: objective,
+        allocation,
       }, {
         provider: config.provider,
         model: config.model,
@@ -683,7 +688,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       });
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
       setProgress("Research 4/4 · director is cross-pollinating lane findings...");
-      decision = await runResearchDirector(objective, {
+      decision = await runResearchDirector(allocatedObjective, {
         mode,
         project,
         competition: adapter.config,
@@ -692,6 +697,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         researchSources,
         ultimateGoal: objective,
         phaseGoal: phaseGoal ?? null,
+        allocation,
         laneReports,
         constraints: { no_submission: true, no_file_edits: true },
       }, {
@@ -816,6 +822,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     let evaluatorOutput: { stdout: string; stderr: string; exitCode: number } | undefined;
     let result = await executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name);
     let attempt = 1;
+    const recoveryEvents: TrajectoryEvent[] = [];
     while (result.status !== "completed") {
       const plan = recoveryPlan(result.failureClass);
       if (!plan.retry || attempt >= plan.maxAttempts) break;
@@ -823,6 +830,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const retryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
       retryStore.appendEvent("run.retry.scheduled", { experimentId: id, runId: result.runId, attempt, delaySeconds: delay, failureClass: result.failureClass, action: plan.action });
       retryStore.close();
+      recoveryEvents.push({ id: `${result.runId}-recovery-${attempt}`, kind: "recovery", payload: { attempt, failureClass: result.failureClass ?? null, action: plan.action, delaySeconds: delay } });
       setProgress(`Experiment ${id} · retry ${attempt + 1}/${plan.maxAttempts} after ${plan.action}...`);
       await new Promise<void>((resolve) => setTimeout(resolve, delay * 1000));
       attempt += 1;
@@ -885,6 +893,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     resultStore.saveExperiment({ id, payload: { ...entryPayload, status: recordedResult.status === "completed" ? "completed" : "failed", runId: result.runId, worktreePath: experimentCwd } });
     const trajectoryEvents: TrajectoryEvent[] = [
       { id: `${result.runId}-process`, kind: "process", payload: { status: recordedResult.status, exitCode: recordedResult.exitCode, failureClass: recordedResult.failureClass ?? null } },
+      ...recoveryEvents,
       { id: `${result.runId}-evaluator`, kind: "evaluator", payload: { metric: recordedResult.metrics[activeAdapter().config.metric.name] ?? null, evidenceConsistent: recordedResult.status === "completed" } },
       { id: `${result.runId}-terminal`, kind: "terminal", payload: { status: recordedResult.status, goalAttained: recordedResult.status === "completed" && recordedResult.metrics[activeAdapter().config.metric.name] !== undefined } },
     ];

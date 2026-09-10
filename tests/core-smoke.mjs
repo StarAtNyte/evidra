@@ -28,6 +28,7 @@ import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
 import { createExperimentManifest, createReplicationManifest } from "../dist/core/experiment-manifest.js";
 import { evaluateTrajectory, capabilityGaps } from "../dist/core/trajectories.js";
 import { routeCapability } from "../dist/core/capability-router.js";
+import { allocateNextResearch } from "../dist/core/allocation.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -80,6 +81,16 @@ test("capability routing increases verification pressure after failures", () => 
   assert.equal(difficult.tier, "C3");
   assert.equal(difficult.parallelLanes, 1);
   assert.equal(difficult.reasoningEffort, "high");
+});
+
+test("trajectory deficiencies allocate the next research focus", () => {
+  const allocation = allocateNextResearch({ trajectories: [
+    { quality: { overall: "FAIL", evidenceConsistency: { verdict: "FAIL" }, errorRecovery: { verdict: "PASS" } } },
+    { quality: { overall: "WARN", evidenceConsistency: { verdict: "WARN" }, errorRecovery: { verdict: "PASS" } } },
+  ], phase: "validation" });
+  assert.equal(allocation.focus, "evidence-validation");
+  assert.equal(allocation.priority, "critical");
+  assert.match(allocation.strategy, /provenance|leakage/i);
 });
 
 test("workspace root discovery keeps nested CLI invocations on the project state", () => {
