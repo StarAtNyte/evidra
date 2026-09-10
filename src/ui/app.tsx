@@ -600,6 +600,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
     return loadCompetitionAdapter(root, project?.competitionId ?? "local-research");
   };
 
+  const requireActiveContract = (): void => {
+    const adapter = activeAdapter();
+    const report = validateCompetitionContract(adapter.config, adapter.workspacePath(root));
+    if (!report.valid) throw new Error(`Invalid ${adapter.config.name} contract. Run /contract for details.\n${report.checks.filter((check) => !check.passed).map((check) => `- ${check.name}: ${check.detail}`).join("\n")}`);
+  };
+
   const ensureActiveProject = (): void => {
     const adapter = activeAdapter();
     mkdirSync(join(root, ".sota"), { recursive: true });
@@ -660,6 +666,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     };
     if (mode === "challenge") {
       const adapter = activeAdapter();
+      requireActiveContract();
       await ingestCompetitionSources(adapter);
       const state = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const priorBaseline = state.recentEvents(1000).reverse().find((event) => event.type === "baseline.completed");
@@ -1003,8 +1010,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     return event?.payload && typeof event.payload === "object" ? (event.payload as { comparison?: { direction?: string; evidence?: string; note?: string } }).comparison : undefined;
   };
 
-  const executeExperiment = async (id: string): Promise<string> => {
-    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const executeExperiment = async (id: string): Promise<string> => {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const entry = store.experiments().find((experiment) => experiment.id === id);
     if (!entry) { store.close(); throw new Error(`Experiment not found: ${id}`); }
     const manifest = ExperimentManifestSchema.parse(entry.payload);
@@ -1012,6 +1019,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       ? (entry.payload as { executionPlan: ExecutionStage[] }).executionPlan
       : createExecutionPlan(manifest);
     const adapter = activeAdapter();
+    requireActiveContract();
     const hypothesis = store.hypotheses().find((candidate) => candidate.id === manifest.hypothesisId);
     const entryPayload = entry.payload as Record<string, unknown>;
     store.saveExperiment({ id, payload: { ...entryPayload, status: "running", executionPlan } });
@@ -1788,6 +1796,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       setBusy(true); setProgress("Zero-to-hero: initializing the active workspace...");
       try {
         const adapter = activeAdapter();
+        requireActiveContract();
         const projectDir = join(root, "competitions", adapter.id);
         mkdirSync(join(projectDir, "experiments"), { recursive: true });
         mkdirSync(join(projectDir, "reports"), { recursive: true });
@@ -2034,6 +2043,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (request === "/challenge baseline") {
       setConfig((current) => ({ ...current, mode: "challenge" }));
       const adapter = activeAdapter();
+      requireActiveContract();
       setBusy(true); setProgress(`Running the canonical ${adapter.config.name} baseline...`);
       try {
         const result = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);

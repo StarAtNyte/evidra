@@ -66,6 +66,13 @@ const activeCompetition = () => {
   return loadCompetitionAdapter(root, project?.competitionId ?? "local-research");
 };
 
+function requireCompetitionContract(adapter: ReturnType<typeof activeCompetition>): void {
+  const report = validateCompetitionContract(adapter.config, adapter.workspacePath(root));
+  if (!report.valid) {
+    throw new Error(`Invalid ${adapter.config.name} contract. Run 'evidra validate' for details.\n${report.checks.filter((check) => !check.passed).map((check) => `- ${check.name}: ${check.detail}`).join("\n")}`);
+  }
+}
+
 const researchToolExecutor = (competition: ReturnType<typeof activeCompetition>, autonomy: AutonomyLevel = "safe") => (call: Parameters<typeof executeResearchTool>[0]) => executeResearchTool(call, {
   root,
   storePath: statePath,
@@ -722,6 +729,7 @@ challenge.command("policy").action(() => {
 });
 challenge.command("baseline").description("Run the canonical baseline").action(async () => {
   const adapter = activeCompetition();
+  requireCompetitionContract(adapter);
   const result = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
   console.log(result.stdout);
   if (result.stderr) console.error(result.stderr);
@@ -798,6 +806,7 @@ research
     const mode = options.mode as "research" | "challenge";
     const autonomy = options.autonomy as AutonomyLevel;
     const adapter = activeCompetition();
+    requireCompetitionContract(adapter);
     await ingestCompetitionSources(adapter);
     const budget = durationMinutes(options.budget);
     const selectedModel = options.provider === "local" && options.model === "default"
@@ -1179,6 +1188,7 @@ research.command("propose")
     const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
     console.log("Research 2/3 · running canonical baseline...");
     const adapter = activeCompetition();
+    requireCompetitionContract(adapter);
     const baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
     const observation = {
       gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40),
@@ -1244,6 +1254,7 @@ program.command("baseline")
   .option("--name <name>", "starter-kit baseline", "mean_propagation")
   .action(async (options: { name: string }) => {
     const adapter = activeCompetition();
+    requireCompetitionContract(adapter);
     const command = adapter.baselineCommand();
     if (options.name !== "mean_propagation" && adapter.id === "arc-whestbench-2026") {
       command.push("--baseline", options.name);
