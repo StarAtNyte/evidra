@@ -1669,7 +1669,7 @@ research
         if (event.type !== "research.search.reward") return [];
         const payload = event.payload as { operator?: unknown; durationSeconds?: unknown; valid?: unknown };
         if (typeof payload.operator !== "string" || typeof payload.durationSeconds !== "number" || !Number.isFinite(payload.durationSeconds) || payload.durationSeconds <= 0) return [];
-        return [{ operator: payload.operator, actualMinutes: payload.durationSeconds / 60, status: payload.valid === true ? "completed" : "failed" }];
+        return [{ operator: payload.operator, actualMinutes: payload.durationSeconds / 60, status: payload.valid === true ? "completed" : "failed", context: { executor: typeof (payload as { executor?: unknown }).executor === "string" ? (payload as { executor: string }).executor : undefined, gpu: typeof (payload as { gpu?: unknown }).gpu === "string" ? (payload as { gpu: string }).gpu : undefined, provider: typeof (payload as { provider?: unknown }).provider === "string" ? (payload as { provider: string }).provider : undefined, model: typeof (payload as { model?: unknown }).model === "string" ? (payload as { model: string }).model : undefined } }];
       });
       const portfolioPlan = planPortfolio(decision.hypotheses.map((hypothesis, index) => ({
         id: materialized.hypothesisIds[index] ?? `hypothesis-${index}`,
@@ -1690,6 +1690,7 @@ research
         budgetMinutes: portfolioBudget,
         reserveMinutes: Math.min(5, portfolioBudget * 0.1),
         costHistory,
+        executionContext: { executor: options.executor },
       });
       decisionStore.appendEvent("research.portfolio.planned", {
         cycle,
@@ -2473,7 +2474,7 @@ experiment.command("run")
         resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, comparisonCount, adjustedProbabilityThreshold: acceptance.adjustedProbabilityThreshold, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });
         if (operator) {
           const improvementDelta = comparison.delta === null ? undefined : adapter.config.metric.direction === "minimize" ? -comparison.delta : comparison.delta;
-          resultStore.appendEvent("research.search.reward", { experimentId: id, competitionId: adapter.id, datasetRevision: manifest.datasetVersion, operator, reward: searchReward(improvementDelta, recorded.status === "completed", comparison.evidence === "replicated"), valid: recorded.status === "completed", reproducible: comparison.evidence === "replicated", delta: improvementDelta, durationSeconds: recorded.durationSeconds });
+          resultStore.appendEvent("research.search.reward", { experimentId: id, competitionId: adapter.id, datasetRevision: manifest.datasetVersion, operator, reward: searchReward(improvementDelta, recorded.status === "completed", comparison.evidence === "replicated"), valid: recorded.status === "completed", reproducible: comparison.evidence === "replicated", delta: improvementDelta, durationSeconds: recorded.durationSeconds, executor: manifest.resources.executor, gpu: manifest.resources.gpu ?? undefined });
         }
       } else {
         resultStore.appendEvent("experiment.comparison.insufficient_data", { experimentId: id, reason: "No finite baseline metric was available." });

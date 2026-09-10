@@ -1,7 +1,15 @@
+export interface CostContext {
+  executor?: string;
+  gpu?: string;
+  provider?: string;
+  model?: string;
+}
+
 export interface CostObservation {
   operator: string;
   actualMinutes: number;
   status?: "completed" | "failed" | "timeout" | "rejected";
+  context?: CostContext;
 }
 
 export interface CostEstimate {
@@ -24,9 +32,13 @@ function percentile(values: number[], probability: number): number {
 }
 
 /** Estimate runtime conservatively from prior observed operator durations. */
-export function estimateCost(operator: string, declaredMinutes: number, observations: CostObservation[]): CostEstimate {
+export function estimateCost(operator: string, declaredMinutes: number, observations: CostObservation[], context?: CostContext): CostEstimate {
   const fallback = Math.max(0.1, declaredMinutes);
-  const usable = observations.filter((observation) => observation.operator === operator && Number.isFinite(observation.actualMinutes) && observation.actualMinutes > 0);
+  const operatorObservations = observations.filter((observation) => observation.operator === operator && Number.isFinite(observation.actualMinutes) && observation.actualMinutes > 0);
+  const matching = context
+    ? operatorObservations.filter((observation) => Object.entries(context).every(([key, value]) => value === undefined || observation.context?.[key as keyof CostContext] === value))
+    : [];
+  const usable = matching.length >= 2 ? matching : operatorObservations;
   if (!usable.length) return { predictedMinutes: fallback, upperMinutes: fallback, sampleCount: 0, uncertainty: 1, rationale: "no prior runtime observations; using the declared estimate" };
   const durations = usable.map((observation) => observation.actualMinutes);
   const predictedMinutes = median(durations);
@@ -41,6 +53,6 @@ export function estimateCost(operator: string, declaredMinutes: number, observat
     upperMinutes,
     sampleCount: usable.length,
     uncertainty: 1 / Math.sqrt(usable.length),
-    rationale: `${usable.length} observed '${operator}' runtime(s); budgeted against the conservative upper estimate${failureInflation > 1 ? " with failure inflation" : ""}`,
+    rationale: `${usable.length} observed '${operator}' runtime(s)${matching.length >= 2 ? " in the matching execution context" : " across available contexts"}; budgeted against the conservative upper estimate${failureInflation > 1 ? " with failure inflation" : ""}`,
   };
 }

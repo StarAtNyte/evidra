@@ -16,6 +16,7 @@ export interface PortfolioPlanOptions {
   budgetMinutes: number;
   reserveMinutes?: number;
   costHistory?: CostObservation[];
+  executionContext?: CostContext;
 }
 
 export interface PortfolioPlan {
@@ -45,14 +46,14 @@ export function planPortfolio(candidates: PortfolioCandidate[], options: Portfol
   let reservedMinutes = 0;
   const costEstimates: Record<string, CostEstimate> = {};
   const estimatedCost = (candidate: PortfolioCandidate): number => {
-    const estimate = estimateCost(candidate.operator, candidate.costMinutes, options.costHistory ?? []);
+    const estimate = estimateCost(candidate.operator, candidate.costMinutes, options.costHistory ?? [], options.executionContext);
     costEstimates[candidate.id] = estimate;
     return Math.max(0.1, estimate.upperMinutes);
   };
 
   const ranked = [...candidates]
     .filter((candidate) => candidate.id && Number.isFinite(candidate.expectedValue) && Number.isFinite(candidate.costMinutes))
-    .sort((left, right) => score(right, options.costHistory) - score(left, options.costHistory));
+    .sort((left, right) => score(right, options.costHistory, options.executionContext) - score(left, options.costHistory, options.executionContext));
   for (const candidate of ranked) {
     if (selected.length >= maxCandidates) {
       rejected.push({ candidate, reason: "portfolio capacity reached" });
@@ -88,12 +89,12 @@ export function planPortfolio(candidates: PortfolioCandidate[], options: Portfol
   return { selected, rejected, reservedMinutes, parallelism, halving, costEstimates };
 }
 
-function score(candidate: PortfolioCandidate, history?: CostObservation[]): number {
-  const cost = estimateCost(candidate.operator, candidate.costMinutes, history ?? []).upperMinutes;
+function score(candidate: PortfolioCandidate, history?: CostObservation[], context?: CostContext): number {
+  const cost = estimateCost(candidate.operator, candidate.costMinutes, history ?? [], context).upperMinutes;
   const novelty = Math.max(0, Math.min(1, candidate.novelty ?? 0));
   const risk = Math.max(0, Math.min(1, candidate.risk ?? 0));
   const quality = Math.max(0.25, Math.min(1, candidate.quality ?? 1));
   return (candidate.expectedValue * quality + novelty * 0.2 - risk * 0.1) / cost;
 }
-import { estimateCost, type CostEstimate, type CostObservation } from "./cost-model.js";
+import { estimateCost, type CostContext, type CostEstimate, type CostObservation } from "./cost-model.js";
 import { planSuccessiveHalving, type SuccessiveHalvingPlan } from "./successive-halving.js";

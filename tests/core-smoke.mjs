@@ -2239,6 +2239,14 @@ test("cost model uses observed upper runtimes and inflates failure risk", () => 
   assert.equal(estimate.upperMinutes, 15);
   assert.match(estimate.rationale, /failure inflation/);
   assert.equal(estimateCost("new", 4, []).upperMinutes, 4);
+  const localEstimate = estimateCost("mcts", 10, [
+    { operator: "mcts", actualMinutes: 8, status: "completed", context: { executor: "local", provider: "codex" } },
+    { operator: "mcts", actualMinutes: 12, status: "completed", context: { executor: "local", provider: "codex" } },
+    { operator: "mcts", actualMinutes: 100, status: "completed", context: { executor: "modal", provider: "codex" } },
+  ], { executor: "local", provider: "codex" });
+  assert.equal(localEstimate.sampleCount, 2);
+  assert.equal(localEstimate.upperMinutes, 12);
+  assert.match(localEstimate.rationale, /matching execution context/);
 });
 
 test("portfolio plans retain explainable conservative cost estimates", () => {
