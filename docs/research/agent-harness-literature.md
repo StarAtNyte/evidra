@@ -135,6 +135,11 @@ task-level bootstrap bounds and refuses to call a harness better when coverage
 or task diversity is insufficient. This turns the remaining benchmark work into
 an empirical comparison rather than a scorecard convention.
 
+Phase completion is likewise evidence-gated: promotion now requires both the
+leakage/reviewer gates and an accepted validation assessment. A model cannot
+advance the campaign by reporting that a candidate is ready without the durable
+validation event.
+
 ## Evaluator integrity and specification gaming
 
 DeltaML-Bench reports that ordinary modular ML-agent configurations can exhibit

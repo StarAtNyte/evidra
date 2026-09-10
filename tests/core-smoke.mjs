@@ -949,6 +949,15 @@ test("evaluation phase requires a measured primary metric", () => {
   assert.equal(challengeComplete.met, true);
 });
 
+test("promotion phase requires accepted validation in addition to human gates", () => {
+  const goal = definePhaseGoals("test", "challenge").find((entry) => entry.phase === "promotion");
+  const gates = { type: "experiment.gates.updated", payload: { leakageAuditPassed: true, reviewerApproved: true } };
+  const withoutValidation = evaluatePhaseGoalEvidence(goal, { eventTypes: [gates.type], eventPayloads: [gates], hypotheses: 1, experiments: 1, runs: 2, artifacts: 2 });
+  assert.deepEqual(withoutValidation.missing, ["accepted validation assessment"]);
+  const complete = evaluatePhaseGoalEvidence(goal, { eventTypes: [gates.type, "experiment.validation.assessed"], eventPayloads: [gates, { type: "experiment.validation.assessed", payload: { acceptance: { accepted: true } } }], hypotheses: 1, experiments: 1, runs: 2, artifacts: 2 });
+  assert.equal(complete.met, true);
+});
+
 test("project-local competition manifests replace hardcoded adapters", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-competition-"));
   try {

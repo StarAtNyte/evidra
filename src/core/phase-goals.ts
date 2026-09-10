@@ -97,7 +97,11 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
       break;
     }
     case "replication": if (!has("replication.manifest.created") || evidence.runs < 2) missing.push("independent replication run"); break;
-    case "promotion": if (!payloads("experiment.gates.updated").some((payload) => { const value = payload as { leakageAuditPassed?: unknown; reviewerApproved?: unknown }; return value.leakageAuditPassed === true && value.reviewerApproved === true; })) missing.push("approved leakage and reviewer gates"); break;
+    case "promotion": {
+      if (!payloads("experiment.gates.updated").some((payload) => { const value = payload as { leakageAuditPassed?: unknown; reviewerApproved?: unknown }; return value.leakageAuditPassed === true && value.reviewerApproved === true; })) missing.push("approved leakage and reviewer gates");
+      if (!payloads("experiment.validation.assessed").some((payload) => { const value = payload as { acceptance?: { accepted?: unknown } }; return value.acceptance?.accepted === true; })) missing.push("accepted validation assessment");
+      break;
+    }
   }
   return { met: missing.length === 0, missing };
 }
