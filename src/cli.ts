@@ -152,6 +152,10 @@ function requireCompetitionContract(adapter: ReturnType<typeof activeCompetition
   }
 }
 
+function streamProcessOutput(stream: "stdout" | "stderr", chunk: string): void {
+  (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
+}
+
 const researchToolExecutor = (competition: ReturnType<typeof activeCompetition>, autonomy: AutonomyLevel = "safe") => (call: Parameters<typeof executeResearchTool>[0]) => executeResearchTool(call, {
   root,
   storePath: statePath,
@@ -1207,9 +1211,7 @@ challenge.command("policy").action(() => {
 challenge.command("baseline").description("Run the canonical baseline").action(async () => {
   const adapter = activeCompetition();
   requireCompetitionContract(adapter);
-  const result = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
-  console.log(result.stdout);
-  if (result.stderr) console.error(result.stderr);
+  const result = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000, streamProcessOutput);
   if (result.exitCode !== 0) process.exitCode = result.exitCode;
 });
 
@@ -2274,13 +2276,11 @@ program.command("baseline")
     if (options.name !== "mean_propagation" && adapter.id === "arc-whestbench-2026") {
       command.push("--baseline", options.name);
     }
-    const result = await runProcess(command, adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
+    const result = await runProcess(command, adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000, streamProcessOutput);
     const store = new ResearchStore(statePath);
     const metric = parseMetricOutput(result.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
     recordBaselineEvidence(store, root, result, metric);
     store.close();
-    console.log(result.stdout);
-    if (result.stderr) console.error(result.stderr);
     if (result.exitCode !== 0) process.exitCode = result.exitCode;
   });
 
