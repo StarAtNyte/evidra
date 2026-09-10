@@ -60,6 +60,12 @@ budget, and a later successful attempt is recorded as `recovered: true`; total
 elapsed time includes failed attempts. This makes recovery behavior measurable
 without allowing retries to quietly expand the declared budget.
 
+An arm may also declare `reproducibilityCommand` and an optional
+`reproducibilityTolerance`. The command receives the remaining arm budget and
+must independently emit the same metric within tolerance; only then does the
+runner set `reproducible: true`. Without that explicit check, reproducibility
+remains unclaimed.
+
 `benchmark compare` is the claim gate. It pairs the challenger and incumbent on
 the exact task, arm, seed, model, and budget, drops invalid evaluator outcomes,
 aggregates paired deltas by task, and computes a deterministic bootstrap lower

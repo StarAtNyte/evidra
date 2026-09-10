@@ -1806,6 +1806,17 @@ test("benchmark runner records bounded recovery after a failed arm attempt", asy
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("benchmark runner measures an explicit independent reproducibility command", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-reproducibility-"));
+  try {
+    const command = [process.execPath, "-e", "console.log(JSON.stringify({score:0.8}))"];
+    const report = await runBenchmarkArms([{ harness: "reproducible", task: "task-a", arm: "default", seed: 1, model: "test-model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, metric: "score", command, reproducibilityCommand: command, reproducibilityTolerance: 0 }], root);
+    assert.equal(report.trials[0].reproducible, true);
+    assert.equal(report.runs[0].reproducibility?.matched, true);
+    assert.equal(report.runs[0].reproducibility?.metric, 0.8);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("benchmark runner rejects arms that escape the benchmark workspace before execution", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-boundary-"));
   try {

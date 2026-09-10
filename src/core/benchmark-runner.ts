@@ -19,6 +19,9 @@ export interface BenchmarkArmSpec {
   taskBestMetric?: number;
   /** Maximum bounded retries within the arm's total time budget. */
   retries?: number;
+  /** Optional independent command used to verify metric reproducibility. */
+  reproducibilityCommand?: string[];
+  reproducibilityTolerance?: number;
   metric: string;
   command: string[];
   cwd?: string;
@@ -28,7 +31,7 @@ export interface BenchmarkRunReport {
   schemaVersion: 1;
   startedAt: string;
   trials: HarnessTrial[];
-  runs: Array<{ harness: string; command: string[]; cwd: string; result: ProcessResult; metric?: number; attempts: number; attemptDetails: BenchmarkAttemptRecord[] }>;
+  runs: Array<{ harness: string; command: string[]; cwd: string; result: ProcessResult; metric?: number; attempts: number; attemptDetails: BenchmarkAttemptRecord[]; reproducibility?: { command: string[]; result: ProcessResult; metric?: number; tolerance: number; matched: boolean } }>;
 }
 
 export interface BenchmarkAttemptRecord {
@@ -62,6 +65,8 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     if (!arm.command.length || arm.command.some((part) => !part.trim())) throw new Error(`Benchmark arm '${arm.harness}' has an empty command.`);
     if (!Number.isFinite(arm.budgetMinutes) || arm.budgetMinutes <= 0) throw new Error(`Benchmark arm '${arm.harness}' must have a positive budget.`);
     if (arm.retries !== undefined && (!Number.isInteger(arm.retries) || arm.retries < 0 || arm.retries > 3)) throw new Error(`Benchmark arm '${arm.harness}' retries must be an integer from 0 to 3.`);
+    if (arm.reproducibilityCommand !== undefined && (!arm.reproducibilityCommand.length || arm.reproducibilityCommand.some((part) => !part.trim()))) throw new Error(`Benchmark arm '${arm.harness}' has an empty reproducibility command.`);
+    if (arm.reproducibilityTolerance !== undefined && (!Number.isFinite(arm.reproducibilityTolerance) || arm.reproducibilityTolerance < 0)) throw new Error(`Benchmark arm '${arm.harness}' reproducibility tolerance must be finite and non-negative.`);
     return { arm, cwd: benchmarkCwd(root, arm.cwd, arm.harness) };
   });
   const startedAt = new Date().toISOString();
@@ -77,6 +82,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     let attempts = 0;
     let totalDurationMs = 0;
     const attemptDetails: BenchmarkAttemptRecord[] = [];
+    let reproducibility: BenchmarkRunReport["runs"][number]["reproducibility"];
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const remainingMs = deadline - Date.now();
       if (remainingMs < 1_000) break;
@@ -98,7 +104,20 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       onProgress?.(`Benchmark · ${arm.harness} failed; retrying ${attempt + 1}/${maxAttempts - 1}`);
     }
     if (!result) throw new Error(`Benchmark arm '${arm.harness}' exhausted its time budget before the first attempt.`);
-    runs.push({ harness: arm.harness, command: arm.command, cwd, result, metric: Number.isFinite(metric) ? metric : undefined, attempts, attemptDetails });
+    let reproducible = false;
+    if (validRun && arm.reproducibilityCommand) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs >= 1_000) {
+        onProgress?.(`Benchmark · ${arm.harness} · independent reproducibility check`);
+        const checkResult = await runProcess(arm.reproducibilityCommand, cwd, remainingMs);
+        totalDurationMs += checkResult.durationMs;
+        const checkMetric = parseMetricOutput(checkResult.stdout, arm.metric).metrics[arm.metric];
+        const tolerance = arm.reproducibilityTolerance ?? 0;
+        reproducible = checkResult.exitCode === 0 && Number.isFinite(checkMetric) && Math.abs(checkMetric - metric!) <= tolerance;
+        reproducibility = { command: arm.reproducibilityCommand, result: checkResult, metric: Number.isFinite(checkMetric) ? checkMetric : undefined, tolerance, matched: reproducible };
+      }
+    }
+    runs.push({ harness: arm.harness, command: arm.command, cwd, result, metric: Number.isFinite(metric) ? metric : undefined, attempts, attemptDetails, ...(reproducibility ? { reproducibility } : {}) });
     trials.push({
       harness: arm.harness,
       task: arm.task,
@@ -114,7 +133,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       validRun,
       durationSeconds: totalDurationMs / 1000,
       recovered: validRun && attempts > 1,
-      reproducible: false,
+      reproducible,
     });
   }
   return { schemaVersion: 1, startedAt, trials, runs };
