@@ -57,7 +57,26 @@ import { summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
-import { compareHarnesses, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
+import { compareHarnesses, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
+
+test("component ablations require one declared removal and preserve the paired gate", () => {
+  const trial = (harness, componentIds, candidateMetric, task = "task-a") => ({ harness, componentIds, task, arm: "arm", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: true, reproducible: true });
+  const report = evaluateHarnessComponentAblations([
+    trial("full", ["routing", "verification"], 0.8),
+    trial("full", ["routing", "verification"], 0.8, "task-b"),
+    trial("without-verification", ["routing"], 0.7),
+    trial("without-verification", ["routing"], 0.7, "task-b"),
+  ], "full");
+  assert.equal(report[0].removedComponents[0], "verification");
+  assert.equal(report[0].valid, true);
+  assert.equal(report[0].comparison.challengerWins, true);
+  const invalid = evaluateHarnessComponentAblations([
+    trial("full", ["routing", "verification"], 0.8),
+    trial("variant", ["routing", "other"], 0.7),
+  ], "full");
+  assert.equal(invalid[0].valid, false);
+  assert.match(invalid[0].reason, /exactly the full harness component set/);
+});
 import { planHarnessAdaptation } from "../dist/core/harness-adaptation.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "../dist/core/claim-audit.js";
 import { deriveAdaptiveHarnessPolicy } from "../dist/core/adaptive-harness.js";

@@ -2,6 +2,8 @@ export type ScoreDirection = "maximize" | "minimize";
 
 export interface HarnessTrial {
   harness: string;
+  /** Optional immutable component manifest used for layered harness ablations. */
+  componentIds?: string[];
   task: string;
   /** Optional task slice/family used for slice-balanced diagnostics. */
   slice?: string;
@@ -193,6 +195,16 @@ export interface HarnessParetoPoint {
   medianTimeToEvidenceSeconds: number | null;
   onFrontier: boolean;
   dominatedBy: string[];
+}
+
+export interface HarnessComponentAblationReport {
+  fullHarness: string;
+  variant: string;
+  removedComponents: string[];
+  addedComponents: string[];
+  comparison: HarnessComparison;
+  valid: boolean;
+  reason: string;
 }
 
 function delta(trial: HarnessTrial): number | undefined {
@@ -427,6 +439,42 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
     challengerWins,
     reason,
   };
+}
+
+/**
+ * Attribute a harness change to one removed component at a time. This is a
+ * diagnostic, not a loophole around the normal paired comparison: every
+ * variant still needs the same task/seed/model/budget protocol and its own
+ * conservative win gate.
+ */
+export function evaluateHarnessComponentAblations(trials: HarnessTrial[], fullHarness: string): HarnessComponentAblationReport[] {
+  const fullTrials = trials.filter((trial) => trial.harness === fullHarness);
+  const fullSets = [...new Set(fullTrials.map((trial) => JSON.stringify([...(trial.componentIds ?? [])].sort())))];
+  if (fullSets.length !== 1 || !fullSets[0]) throw new Error(`Full harness '${fullHarness}' must declare one consistent component manifest.`);
+  const fullComponents = JSON.parse(fullSets[0]) as string[];
+  const variants = [...new Set(trials.map((trial) => trial.harness).filter((harness) => harness !== fullHarness))].sort();
+  return variants.map((variant) => {
+    const variantTrials = trials.filter((trial) => trial.harness === variant);
+    const sets = [...new Set(variantTrials.map((trial) => JSON.stringify([...(trial.componentIds ?? [])].sort())))];
+    const variantComponents = sets.length === 1 && sets[0] ? JSON.parse(sets[0]) as string[] : [];
+    const removedComponents = fullComponents.filter((component) => !variantComponents.includes(component));
+    const addedComponents = variantComponents.filter((component) => !fullComponents.includes(component));
+    const valid = sets.length === 1 && removedComponents.length === 1 && addedComponents.length === 0;
+    const comparison = compareHarnesses(trials, fullHarness, variant);
+    return {
+      fullHarness,
+      variant,
+      removedComponents,
+      addedComponents,
+      comparison,
+      valid,
+      reason: !valid
+        ? "variant must declare exactly the full harness component set minus one component"
+        : comparison.challengerWins
+          ? `full harness retains a proven win after removing '${removedComponents[0]}'`
+          : `removing '${removedComponents[0]}' is not proven harmless: ${comparison.reason}`,
+    };
+  });
 }
 
 /** Detect harness-induced forgetting against a previous matched benchmark. */

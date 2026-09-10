@@ -68,7 +68,7 @@ import { promoteHalvingStage } from "./core/successive-halving.js";
 import type { CostObservation } from "./core/cost-model.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
-import { compareHarnesses, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
+import { compareHarnesses, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
 import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.js";
 import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
@@ -489,6 +489,10 @@ benchmark.command("run")
     const incumbents = options.incumbent ? [options.incumbent] : harnesses.filter((harness) => harness !== options.challenger);
     const comparisons = incumbents.map((incumbent) => compareHarnesses(report.trials, options.challenger, incumbent));
     const adaptation = planHarnessAdaptation(report.trials, scorecards, comparisons, options.challenger);
+    const challengerTrials = report.trials.filter((trial) => trial.harness === options.challenger);
+    const componentAblations = challengerTrials.length > 0 && challengerTrials.every((trial) => Array.isArray(trial.componentIds))
+      ? evaluateHarnessComponentAblations(report.trials, options.challenger)
+      : undefined;
     const changeOutcomes = change
       ? comparisons.map((comparison) => ({ incumbent: comparison.incumbent, outcome: evaluateHarnessChange({ ...change, id: change.id!, componentIds: change.componentIds!, predictedDelta: change.predictedDelta!, prediction: change.prediction!, falsification: change.falsification!, acceptance: change.acceptance! }, { baselineScore: change.baselineScore, candidateScore: comparison.pairedMeanDelta === null ? undefined : (change.baselineScore ?? 0) + comparison.pairedMeanDelta, valid: comparison.validPairedArms > 0 && comparison.pairedLower95 !== null }) }))
       : undefined;
@@ -511,7 +515,7 @@ benchmark.command("run")
       const maximumRegression = Number(options.retentionRegression);
       retention = evaluateHarnessRetention(priorTrials, report.trials, options.challenger, maximumRegression);
     }
-    const output = { ...report, scorecards, pareto, protocol: matched, challenger: options.challenger, comparisons, adaptation, ...(change ? { change, changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
+    const output = { ...report, scorecards, pareto, protocol: matched, challenger: options.challenger, comparisons, adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
     if (options.out) writeFileSync(resolve(options.out), `${JSON.stringify(output, null, 2)}\n`);
     const benchmarkStore = new ResearchStore(statePath);
     benchmarkStore.appendEvent("harness.benchmark.completed", {
@@ -524,6 +528,7 @@ benchmark.command("run")
       pareto,
       comparisons: comparisons.map((comparison) => ({ incumbent: comparison.incumbent, challengerWins: comparison.challengerWins, reason: comparison.reason, pairedLower95: comparison.pairedLower95, sliceRegressions: comparison.sliceRegressions, sliceLower95: comparison.sliceLower95 })),
       adaptation,
+      ...(componentAblations ? { componentAblations: componentAblations.map((item) => ({ variant: item.variant, removedComponents: item.removedComponents, valid: item.valid, challengerWins: item.comparison.challengerWins, reason: item.reason })) } : {}),
       ...(change ? { change, changeOutcomes } : {}),
       ...(generalization ? { generalization: generalization.map((report) => ({ incumbent: report.incumbent, generalizes: report.generalizes, reason: report.reason })) } : {}),
       ...(retention ? { retention } : {}),

@@ -92,6 +92,13 @@ The input is either a JSON array or `{ "trials": [...] }`, with one record per
 fixed task/seed arm and fields for baseline, candidate metric, validity,
 duration, recovery, and reproducibility.
 
+Trials may also include a sorted `componentIds` array. When every challenger
+trial declares the same manifest, `benchmark run` emits layered component
+ablations: each variant must remove exactly one component from the full
+challenger manifest, and its result is evaluated with the same paired protocol
+and win gates. This attributes a measured change to a harness component
+without replacing the main competitive comparison.
+
 For suites with task-level reference bounds, a trial may also declare
 `taskWorstMetric` and `taskBestMetric`. Evidra then uses the bounded normalized
 outcome when scoring instead of treating every positive delta as equally good;
