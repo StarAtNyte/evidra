@@ -71,6 +71,7 @@ export type Hypothesis = z.infer<typeof HypothesisSchema>;
 
 export const ResearchHypothesisSchema = z.object({
   title: z.string().min(1),
+  formulationFamily: z.string().min(1).max(80).default("unspecified"),
   mechanism: z.string().min(1),
   evidence: z.array(z.string()),
   proposedChange: z.string().min(1),

@@ -59,6 +59,7 @@ import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { scoreHarnessTrials } from "../dist/core/harness-scorecard.js";
 import { rankSearchArms, searchReward } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
+import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
 
@@ -1484,4 +1485,19 @@ test("portfolio planner is bounded, diverse, and cost aware", () => {
   assert.equal(plan.parallelism, 2);
   assert.equal(plan.reservedMinutes, 8);
   assert.match(plan.rejected.find((entry) => entry.candidate.id === "duplicate")?.reason ?? "", /family/);
+  const overBudget = planPortfolio([{ id: "too-large", title: "too large", operator: "audit", expectedValue: 1, costMinutes: 11 }], { maxCandidates: 1, maxParallel: 1, budgetMinutes: 10 });
+  assert.equal(overBudget.selected.length, 0);
+  assert.match(overBudget.rejected[0]?.reason ?? "", /budget/);
+});
+
+test("cross-pollination preserves agreement, tension, and evidence provenance", () => {
+  const board = synthesizeLaneReports([
+    { role: "data", status: "completed", findings: ["group leakage affects validation"], recommendations: ["lock grouped folds"], uncertainties: ["site shift is unknown"], evidence: ["audit.csv"] },
+    { role: "validation", status: "completed", findings: ["validation leakage affects score"], recommendations: ["lock grouped folds"], uncertainties: ["seed stability is unknown"], evidence: ["fold-report.json"] },
+  ]);
+  assert.equal(board.completedCount, 2);
+  assert.ok(board.agreements.length >= 1);
+  assert.equal(board.complementaryRecommendations.length, 1);
+  assert.deepEqual(board.evidence, ["audit.csv", "fold-report.json"]);
+  assert.ok(board.tensions.some((value) => value.includes("site shift")));
 });

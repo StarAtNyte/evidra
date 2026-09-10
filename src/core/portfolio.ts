@@ -52,10 +52,7 @@ export function planPortfolio(candidates: PortfolioCandidate[], options: Portfol
     const family = candidate.family ?? candidate.title;
     const duplicateOperator = operators.has(candidate.operator);
     const duplicateFamily = families.has(family);
-    const wouldExceed = reservedMinutes + cost > available && selected.length > 0;
-    // The first candidate is allowed when the estimate itself exceeds the
-    // remaining budget: otherwise a campaign with a tiny residual budget
-    // silently does nothing. Subsequent candidates must fit.
+    const wouldExceed = reservedMinutes + cost > available;
     if (wouldExceed) {
       rejected.push({ candidate, reason: "estimated cost exceeds remaining portfolio budget" });
       continue;

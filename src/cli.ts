@@ -59,6 +59,7 @@ import { withExecutionHeartbeat } from "./core/execution-heartbeat.js";
 import { researchFailureRecord } from "./core/research-failure.js";
 import { rankSearchArms, searchReward, type SearchOperator } from "./core/search-policy.js";
 import { planPortfolio } from "./core/portfolio.js";
+import { synthesizeLaneReports } from "./core/cross-pollination.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -1002,8 +1003,12 @@ research
             onToolCall: toolTrace.onToolCall,
             onToolResult: toolTrace.onToolResult,
           });
+          const crossPollination = synthesizeLaneReports(laneReports);
+          const crossPollinationStore = new ResearchStore(statePath);
+          crossPollinationStore.appendEvent("research.cross_pollination.completed", { cycle, board: crossPollination });
+          crossPollinationStore.close();
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
           criticReview = await runResearchCritic(agentObjective, decision, laneReports, {
             provider: options.provider,
             model: selectedModel,
@@ -1109,7 +1114,7 @@ research
         costMinutes: Math.max(1, hypothesis.computeCostGpuHours * 60),
         novelty: hypothesis.evidence.length === 0 ? 1 : 0.4,
         risk: hypothesis.implementationRisk === "high" ? 1 : hypothesis.implementationRisk === "medium" ? 0.5 : 0.1,
-        family: hypothesis.proposedChange.slice(0, 80),
+        family: hypothesis.formulationFamily,
       })), {
         maxCandidates: autonomy === "yolo" ? 3 : autonomy === "fast" ? 2 : 1,
         maxParallel: effectiveLaneLimit,
@@ -1172,7 +1177,7 @@ research
         operator: decision.searchOperator,
         expectedValue: decision.hypotheses[selectedDecisionIndex].expectedMetricDelta.median,
         costMinutes: Math.max(1, decision.hypotheses[selectedDecisionIndex].computeCostGpuHours * 60),
-        family: decision.hypotheses[selectedDecisionIndex].proposedChange.slice(0, 80),
+        family: decision.hypotheses[selectedDecisionIndex].formulationFamily,
       } : undefined;
       const executionCandidates = !criticBlocks && !policyBlocksExecution && decision.decision === "run" && decision.selectedHypothesis && autonomyPolicy(autonomy).canRunIsolatedExperiments
         ? (portfolioPlan.selected.length ? portfolioPlan.selected : selectedDecisionCandidate ? [selectedDecisionCandidate] : [])
