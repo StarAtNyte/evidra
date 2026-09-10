@@ -496,11 +496,17 @@ test("claim audit separates measured, literature, unsupported, and conflicted ev
 });
 
 test("critic approval is downgraded when required checks remain", () => {
-  const review = normalizeResearchReview({ verdict: "proceed", summary: "Looks promising", objections: [], requiredChecks: ["verify held-out split"], independentReplication: true, confidence: 0.95, status: "completed" });
+  const review = normalizeResearchReview({ verdict: "proceed", summary: "Looks promising", objections: [], requiredChecks: ["verify held-out split"], evidence: ["run-1"], independentReplication: true, confidence: 0.95, status: "completed" });
   assert.equal(review.verdict, "revise");
   assert.equal(review.confidence, 0.6);
   assert.match(review.summary, /Approval withheld/);
   assert.ok(review.objections.length > 0);
+});
+
+test("critic approval is downgraded when it has no evidence anchor", () => {
+  const review = normalizeResearchReview({ verdict: "proceed", summary: "Looks promising", objections: [], requiredChecks: [], evidence: [], independentReplication: true, confidence: 0.95, status: "completed" });
+  assert.equal(review.verdict, "revise");
+  assert.ok(review.objections.some((item) => /durable evidence/i.test(item)));
 });
 
 test("self-describing lane evidence is shared by interactive and report audits", () => {

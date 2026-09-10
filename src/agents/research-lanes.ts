@@ -44,6 +44,7 @@ export const ResearchReviewSchema = z.object({
   summary: z.string().min(1),
   objections: z.array(z.string()).max(12),
   requiredChecks: z.array(z.string()).max(12),
+  evidence: z.array(z.string()).max(12).default([]),
   independentReplication: z.boolean(),
   confidence: z.number().min(0).max(1),
 });
@@ -55,12 +56,17 @@ export type ResearchReview = z.infer<typeof ResearchReviewSchema> & {
 
 /** A review cannot approve a decision while declaring unresolved checks. */
 export function normalizeResearchReview(review: ResearchReview): ResearchReview {
-  if (review.verdict !== "proceed" || review.requiredChecks.length === 0) return review;
+  const missingEvidence = review.evidence.length === 0;
+  if (review.verdict !== "proceed" || (review.requiredChecks.length === 0 && !missingEvidence)) return review;
+  const reasons = [
+    ...(review.requiredChecks.length ? ["The review declared unresolved required checks while requesting proceed."] : []),
+    ...(missingEvidence ? ["The review cited no durable evidence anchors."] : []),
+  ];
   return {
     ...review,
     verdict: "revise",
-    summary: `${review.summary} Approval withheld until the declared checks are completed.`,
-    objections: [...new Set([...review.objections, "The review declared unresolved required checks while requesting proceed."])].slice(0, 12),
+    summary: `${review.summary} Approval withheld until the review has durable evidence anchors and no unresolved checks.`,
+    objections: [...new Set([...review.objections, ...reasons])].slice(0, 12),
     confidence: Math.min(review.confidence, 0.6),
   };
 }
@@ -227,7 +233,7 @@ export async function runResearchCritic(
   store.updateAgentLane({ role: "critic", status: "running", provider: options.provider, model: options.model, task: objective, error: null });
   store.close();
   options.onProgress?.("Research critic · checking assumptions and disagreement...");
-  const prompt = `${objective}\n\nYou are Evidra's independent critic. Review the proposed decision and independent lane reports below. Look for unsupported claims, leakage, invalid comparisons, missing controls, overconfident conclusions, and cheaper falsification tests. Do not rewrite the decision or invent measurements. Return ONLY JSON: {"verdict":"proceed|revise|reject","summary":"...","objections":["..."],"requiredChecks":["..."],"independentReplication":true,"confidence":0.0}.\n\nDecision:\n${JSON.stringify(decision)}\n\nLane reports:\n${JSON.stringify(laneReports)}`;
+  const prompt = `${objective}\n\nYou are Evidra's independent critic. Review the proposed decision and independent lane reports below. Look for unsupported claims, leakage, invalid comparisons, missing controls, overconfident conclusions, and cheaper falsification tests. Do not rewrite the decision or invent measurements. Return ONLY JSON: {"verdict":"proceed|revise|reject","summary":"...","objections":["..."],"requiredChecks":["..."],"evidence":["durable lane artifact, source, command, or event supporting the review"],"independentReplication":true,"confidence":0.0}. A proceed verdict is valid only when evidence contains at least one concrete anchor and requiredChecks is empty.\n\nDecision:\n${JSON.stringify(decision)}\n\nLane reports:\n${JSON.stringify(laneReports)}`;
   try {
     const result = await runWithLocalFallback({ role: "critic", objective: prompt, context: { decision, laneReports } }, {
       provider: options.provider,
@@ -241,7 +247,7 @@ export async function runResearchCritic(
     const completed = new ResearchStore(options.storePath);
     completed.appendEvent("research.critic.completed", { review, objective });
     const claimId = `claim_critic_${Date.now()}`;
-    completed.saveClaim({ id: claimId, payload: { id: claimId, statement: `[critic:${review.verdict}] ${review.summary}`, scope: "research decision review", confidence: review.confidence, sourceType: "review", sourceId: claimId, status: "active", objections: review.objections, requiredChecks: review.requiredChecks } });
+    completed.saveClaim({ id: claimId, payload: { id: claimId, statement: `[critic:${review.verdict}] ${review.summary}`, scope: "research decision review", confidence: review.confidence, sourceType: "review", sourceId: claimId, status: "active", objections: review.objections, requiredChecks: review.requiredChecks, evidence: review.evidence } });
     completed.updateAgentLane({ role: "critic", status: "idle", provider: options.provider, model: options.model, task: null, error: null });
     completed.close();
     return review;
@@ -251,7 +257,7 @@ export async function runResearchCritic(
     failed.appendEvent("research.critic.failed", { objective, error: message });
     failed.updateAgentLane({ role: "critic", status: "failed", provider: options.provider, model: options.model, task: objective, error: message });
     failed.close();
-    return { verdict: "revise", summary: "Independent critic did not complete; do not promote this direction without manual review.", objections: [message], requiredChecks: ["rerun the independent critic"], independentReplication: true, confidence: 0, status: "failed", error: message };
+    return { verdict: "revise", summary: "Independent critic did not complete; do not promote this direction without manual review.", objections: [message], requiredChecks: ["rerun the independent critic"], evidence: [], independentReplication: true, confidence: 0, status: "failed", error: message };
   }
 }
 
