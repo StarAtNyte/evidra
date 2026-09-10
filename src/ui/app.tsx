@@ -879,6 +879,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
     return { id: manifest.id, text: `\n\nIndependent replication ${manifest.id} prepared for ${parentId}.\n${manifestSummary(manifest)}` };
   };
 
+  const latestExperimentComparison = (experimentId: string): { direction?: string; evidence?: string; note?: string } | undefined => {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const event = store.recentEvents(500).reverse().find((candidate) => candidate.type === "experiment.comparison.completed" && (candidate.payload as { experimentId?: unknown }).experimentId === experimentId);
+    store.close();
+    return event?.payload && typeof event.payload === "object" ? (event.payload as { comparison?: { direction?: string; evidence?: string; note?: string } }).comparison : undefined;
+  };
+
   const executeExperiment = async (id: string): Promise<string> => {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const entry = store.experiments().find((experiment) => experiment.id === id);
@@ -1174,10 +1181,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const experimentText = await executeExperiment(proposed.id);
           append("assistant", experimentText);
           if (/Experiment .* completed/i.test(experimentText)) {
-            const replication = prepareAutomaticReplication(proposed.id);
-            if (replication) {
-              if (!campaignMayExecute && config.autonomy === "safe") append("assistant", `${replication.text}\nApproval required: run /experiment run ${replication.id}`);
-              else append("assistant", `${replication.text}\n\n${await executeExperiment(replication.id)}`);
+            const comparison = latestExperimentComparison(proposed.id);
+            if (comparison?.direction === "improved") {
+              const replication = prepareAutomaticReplication(proposed.id);
+              if (replication) {
+                if (!campaignMayExecute && config.autonomy === "safe") append("assistant", `${replication.text}\nApproval required: run /experiment run ${replication.id}`);
+                else append("assistant", `${replication.text}\n\n${await executeExperiment(replication.id)}`);
+              }
+            } else {
+              append("assistant", `Replication skipped for ${proposed.id}: ${comparison?.direction ?? "no measured comparison"}${comparison?.note ? ` · ${comparison.note}` : ""}.`);
             }
           }
         }

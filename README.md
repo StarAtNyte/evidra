@@ -108,6 +108,7 @@ Implemented today:
 - bounded HTML, text, and common PDF research-source extraction with explicit fallback when a PDF encoding cannot be decoded;
 - multi-split validation acceptance, durable leakage/reviewer gates, and conservative external-score split-belief modeling;
 - automatic baseline-to-candidate comparison events after successful challenge evaluations;
+- replication scheduling gated on an observed improvement rather than mere process completion;
 - shell and autonomy safety guards.
 
 ## Quick start
