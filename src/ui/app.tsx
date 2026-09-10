@@ -33,6 +33,7 @@ import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../c
 import { evaluateTrajectory, type TrajectoryEvent } from "../core/trajectories.js";
 import { routeCapability } from "../core/capability-router.js";
 import { allocateNextResearch } from "../core/allocation.js";
+import { rankPriorities } from "../core/scheduler.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -778,15 +779,44 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const proposeLatestExperiment = async (): Promise<{ id: string; text: string } | null> => {
     const adapter = activeAdapter();
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    const hypothesis = store.hypotheses()[0];
+    const experiments = store.experiments();
+    const inFlightOrCompleted = new Set(experiments
+      .filter((experiment) => ["running", "completed"].includes(String((experiment.payload as { status?: string }).status)))
+      .map((experiment) => String((experiment.payload as { hypothesisId?: string }).hypothesisId ?? "")));
+    const candidates = store.hypotheses().filter((candidate) => !inFlightOrCompleted.has(candidate.id));
+    const ranked = rankPriorities(candidates.map((candidate) => {
+      const payload = candidate.payload as {
+        expectedMetricDelta?: { median?: number };
+        computeCostGpuHours?: number;
+        implementationRisk?: "low" | "medium" | "high";
+        leakageRisk?: "low" | "medium" | "high";
+        informationValue?: number;
+        diversityValue?: number;
+      };
+      const implementationRisk = payload.implementationRisk === "high" ? 1 : payload.implementationRisk === "medium" ? 0.5 : 0.1;
+      const leakageRisk = payload.leakageRisk === "high" ? 1 : payload.leakageRisk === "medium" ? 0.5 : 0.1;
+      return {
+        hypothesis: candidate,
+        probabilityOfSuccess: payload.implementationRisk === "high" ? 0.35 : payload.implementationRisk === "medium" ? 0.6 : 0.8,
+        expectedDelta: payload.expectedMetricDelta?.median ?? 0,
+        informationValue: payload.informationValue ?? 0.5,
+        diversityValue: payload.diversityValue ?? 0,
+        gpuCost: payload.computeCostGpuHours ?? 1,
+        llmCost: 1,
+        engineeringCost: implementationRisk,
+        risk: leakageRisk,
+      };
+    }));
+    const hypothesis = ranked[0]?.hypothesis;
     if (!hypothesis) { store.close(); return null; }
     const commit = await runProcess(["git", "rev-parse", "HEAD"], root);
     if (commit.exitCode !== 0) { store.close(); throw new Error(`Cannot create manifest: ${commit.stderr || commit.stdout}`); }
     const id = `exp_${Date.now()}_${hypothesis.id.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
     const manifest = createExperimentManifest({ id, hypothesisId: hypothesis.id, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: config.experimentExecutor, configPatch: { estimatorPath: candidateEstimatorPath(hypothesis.payload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
     store.saveExperiment({ id, payload: { ...manifest, status: "proposed" } });
+    store.appendEvent("experiment.priority.selected", { experimentId: id, hypothesisId: hypothesis.id, priority: ranked[0].priority, score: ranked[0] });
     store.close();
-    return { id, text: `\n\nExperiment manifest proposed\n${manifestSummary(manifest)}\nNext: /experiment show ${id}` };
+    return { id, text: `\n\nExperiment manifest proposed\nPriority: ${ranked[0].priority.toFixed(4)} (${ranked[0].numerator.toFixed(4)} value / ${ranked[0].denominator.toFixed(4)} cost)\n${manifestSummary(manifest)}\nNext: /experiment show ${id}` };
   };
 
   const prepareAutomaticReplication = (parentId: string): { id: string; text: string } | null => {

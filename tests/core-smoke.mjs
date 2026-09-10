@@ -29,6 +29,7 @@ import { createExperimentManifest, createReplicationManifest } from "../dist/cor
 import { evaluateTrajectory, capabilityGaps } from "../dist/core/trajectories.js";
 import { routeCapability } from "../dist/core/capability-router.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
+import { rankPriorities } from "../dist/core/scheduler.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -91,6 +92,15 @@ test("trajectory deficiencies allocate the next research focus", () => {
   assert.equal(allocation.focus, "evidence-validation");
   assert.equal(allocation.priority, "critical");
   assert.match(allocation.strategy, /provenance|leakage/i);
+});
+
+test("experiment scheduler ranks expected information per cost", () => {
+  const ranked = rankPriorities([
+    { id: "cheap", probabilityOfSuccess: 0.8, expectedDelta: 0.01, informationValue: 0.5, diversityValue: 0, gpuCost: 1, llmCost: 1, engineeringCost: 0.1, risk: 0.1 },
+    { id: "expensive", probabilityOfSuccess: 0.9, expectedDelta: 0.02, informationValue: 0.2, diversityValue: 0, gpuCost: 20, llmCost: 1, engineeringCost: 1, risk: 0.5 },
+  ]);
+  assert.equal(ranked[0].id, "cheap");
+  assert.ok(ranked[0].priority > ranked[1].priority);
 });
 
 test("workspace root discovery keeps nested CLI invocations on the project state", () => {
