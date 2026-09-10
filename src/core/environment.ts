@@ -53,7 +53,7 @@ export async function captureEnvironment(
     probe(["node", "--version"], cwd),
     probe(["python", "--version"], cwd),
     probe(["python3", "--version"], cwd),
-    probe(["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"], cwd),
+    probe(["nvidia-smi", "--query-gpu=name,driver_version,memory.total,memory.used,utilization.gpu,temperature.gpu,power.draw", "--format=csv,noheader"], cwd),
   ]);
   const lockfiles: Record<string, string> = {};
   const roots = new Set<string>();

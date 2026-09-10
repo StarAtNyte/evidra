@@ -1321,6 +1321,7 @@ test("environment snapshots preserve reproducibility metadata without secrets", 
     else process.env.EVIDRA_SMOKE_SECRET = previous;
     assert.equal(snapshot.executor, "local");
     assert.equal(snapshot.gpu, "none");
+    assert.ok(Object.hasOwn(snapshot.probes, "nvidiaSmi"));
     assert.match(snapshot.lockfiles["package-lock.json"], /^sha256:/);
     assert.match(snapshot.lockfiles["nested/uv.lock"], /^sha256:/);
     assert.equal(snapshot.environment.EVIDRA_SMOKE_SECRET, undefined);
