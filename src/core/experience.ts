@@ -10,6 +10,7 @@ export interface ExperienceRecord {
   scene: { task: string; domain: string; context: string; askingOrDoing: "asking" | "doing" | "unknown" };
   goal: { objective: string; acceptance: string; relation: "new" | "continued" | "modified" | "resumed" | "unknown" };
   outcome: { status: "success" | "partial" | "failure" | "unknown"; evidence: string[] };
+  verification?: { declared: number; executed: number; passed: number; failed: number; independent: boolean };
   quality: TrajectoryQuality;
   routing?: { predictedTier: CapabilityTier; tierScores?: Record<CapabilityTier, number>; provider?: string; model?: string };
   gaps: string[];
@@ -66,6 +67,18 @@ function storedRouting(payload: Record<string, unknown>): ExperienceRecord["rout
   return { predictedTier: tier, ...(Object.keys(tierScores).length ? { tierScores } : {}), ...(typeof value.provider === "string" ? { provider: value.provider } : {}), ...(typeof value.model === "string" ? { model: value.model } : {}) };
 }
 
+function storedVerification(payload: Record<string, unknown>): ExperienceRecord["verification"] | undefined {
+  const value = record(payload.verification);
+  if (!["declared", "executed", "passed", "failed"].every((key) => typeof value[key] === "number" && Number.isInteger(value[key]) && (value[key] as number) >= 0) || typeof value.independent !== "boolean") return undefined;
+  return {
+    declared: value.declared as number,
+    executed: value.executed as number,
+    passed: value.passed as number,
+    failed: value.failed as number,
+    independent: value.independent,
+  };
+}
+
 /** Convert a validated trajectory into a reusable, provenance-preserving experience unit. */
 export function buildExperienceRecord(input: {
   trajectoryId: string;
@@ -79,13 +92,15 @@ export function buildExperienceRecord(input: {
   const goal = record(payload.goal);
   const scene = record(payload.scene);
   const objective = text(payload.objective ?? goal.objective, "unspecified objective");
-  const admission: ExperienceAdmission = structure.status === "quarantined" || input.quality.structural.verdict === "FAIL"
-    ? "quarantined"
-    : structure.status === "recoverable" || input.quality.overall === "FAIL"
-      ? "replay-only"
-      : "candidate";
   const status = outcomeFor(input.quality);
   const routing = input.routing ?? storedRouting(payload);
+  const verification = storedVerification(payload);
+  const weakVerification = Boolean(verification && (verification.failed > 0 || verification.executed !== verification.declared || verification.passed !== verification.executed || (verification.declared >= 2 && !verification.independent)));
+  const admission: ExperienceAdmission = structure.status === "quarantined" || input.quality.structural.verdict === "FAIL"
+    ? "quarantined"
+    : weakVerification || structure.status === "recoverable" || input.quality.overall === "FAIL"
+      ? "replay-only"
+      : "candidate";
   return {
     schemaVersion: 1,
     trajectoryId: input.trajectoryId,
@@ -101,6 +116,7 @@ export function buildExperienceRecord(input: {
       relation: ["new", "continued", "modified", "resumed"].includes(String(goal.relation)) ? String(goal.relation) as ExperienceRecord["goal"]["relation"] : "unknown",
     },
     outcome: { status, evidence: input.quality.goalAttainment.evidence },
+    ...(verification ? { verification } : {}),
     quality: input.quality,
     routing,
     gaps: capabilityGaps(input.quality),

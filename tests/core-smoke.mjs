@@ -243,6 +243,9 @@ test("experience ledger quarantines malformed traces and selects a curriculum", 
   assert.equal(replay[0].trajectoryId, "t1");
   assert.equal(replay[0].outcome, "partial");
   assert.match(replay[0].objective, /inspect data/);
+  const weakVerification = buildExperienceRecord({ trajectoryId: "weak-verification", payload: { verification: { declared: 2, executed: 1, passed: 1, failed: 0, independent: false }, events: record.events }, quality });
+  assert.equal(weakVerification.admission, "replay-only");
+  assert.equal(weakVerification.verification?.executed, 1);
   const malformed = buildExperienceRecord({ trajectoryId: "bad", payload: { events: [{ id: "orphan", kind: "tool_result", callId: "missing", payload: {} }] }, quality: evaluateTrajectory([{ id: "orphan", kind: "tool_result", callId: "missing", payload: {} }]) });
   assert.equal(malformed.admission, "quarantined");
   assert.equal(experienceJsonl([record, malformed]).trim().split("\n").length, 1);

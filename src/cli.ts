@@ -2522,7 +2522,7 @@ experiment.command("run")
     ];
     const experimentQuality = evaluateTrajectory(experimentTrajectoryEvents);
     const experimentTrajectoryId = `trajectory_${result.runId}`;
-    const experimentTrajectoryPayload = { manifest, hypothesis: hypothesis?.payload ?? null, events: experimentTrajectoryEvents };
+    const experimentTrajectoryPayload = { manifest, hypothesis: hypothesis?.payload ?? null, verification: recorded.verification, events: experimentTrajectoryEvents };
     resultStore.saveTrajectory({ id: experimentTrajectoryId, runId: result.runId, experimentId: id, payload: experimentTrajectoryPayload, quality: experimentQuality });
     const experimentExperience = buildExperienceRecord({ trajectoryId: experimentTrajectoryId, payload: experimentTrajectoryPayload, quality: experimentQuality });
     const priorExperiences = resultStore.trajectories(100).filter((entry) => entry.id !== experimentTrajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));

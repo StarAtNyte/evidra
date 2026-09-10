@@ -1483,7 +1483,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     ];
     const quality = evaluateTrajectory(trajectoryEvents);
     const experimentTrajectoryId = `trajectory_${result.runId}`;
-    const experimentTrajectoryPayload = { goal: hypothesis?.payload ?? null, events: trajectoryEvents, manifest: entryPayload.manifest ?? null };
+    const experimentTrajectoryPayload = { goal: hypothesis?.payload ?? null, events: trajectoryEvents, manifest: entryPayload.manifest ?? null, verification: recordedResult.verification };
     resultStore.saveTrajectory({ id: experimentTrajectoryId, runId: result.runId, experimentId: id, payload: experimentTrajectoryPayload, quality });
     const experimentExperience = buildExperienceRecord({ trajectoryId: experimentTrajectoryId, payload: experimentTrajectoryPayload, quality });
     const priorExperiences = resultStore.trajectories(100).filter((entry) => entry.id !== experimentTrajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
