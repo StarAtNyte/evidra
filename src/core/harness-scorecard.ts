@@ -154,6 +154,9 @@ export interface HarnessComparison {
   pairedProcessQualityDelta: number | null;
   timeComparableArms: number;
   pairedTimeEfficiencyDelta: number | null;
+  sliceMeanDeltas: Record<string, number>;
+  sliceLower95: Record<string, number>;
+  sliceRegressions: string[];
   challengerWins: boolean;
   reason: string;
 }
@@ -350,7 +353,7 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
     const rightProcess = processReliability(right);
     const leftTime = timeEfficiency(left);
     const rightTime = timeEfficiency(right);
-    return [{ task: left.task, delta, processDelta: leftProcess !== undefined && rightProcess !== undefined ? leftProcess - rightProcess : undefined, timeDelta: leftTime !== undefined && rightTime !== undefined ? leftTime - rightTime : undefined }];
+    return [{ task: left.task, slice: left.slice, delta, processDelta: leftProcess !== undefined && rightProcess !== undefined ? leftProcess - rightProcess : undefined, timeDelta: leftTime !== undefined && rightTime !== undefined ? leftTime - rightTime : undefined }];
   });
   const byTask = new Map<string, number[]>();
   for (const entry of paired) byTask.set(entry.task, [...(byTask.get(entry.task) ?? []), entry.delta]);
@@ -363,6 +366,21 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
   const timeDeltas = paired.flatMap((entry) => entry.timeDelta === undefined ? [] : [{ task: entry.task, value: entry.timeDelta }]);
   const pairedTimeEfficiencyDelta = taskBalancedMean(timeDeltas);
   const timeComparableArms = timeDeltas.length;
+  const bySliceTask = new Map<string, Map<string, number[]>>();
+  for (const entry of paired) {
+    const slice = entry.slice ?? "unscoped";
+    const tasks = bySliceTask.get(slice) ?? new Map<string, number[]>();
+    tasks.set(entry.task, [...(tasks.get(entry.task) ?? []), entry.delta]);
+    bySliceTask.set(slice, tasks);
+  }
+  const sliceMeanDeltas: Record<string, number> = {};
+  const sliceLower95: Record<string, number> = {};
+  for (const [slice, tasks] of [...bySliceTask.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+    const taskValues = [...tasks.values()].map((values) => values.reduce((sum, value) => sum + value, 0) / values.length);
+    sliceMeanDeltas[slice] = taskValues.reduce((sum, value) => sum + value, 0) / taskValues.length;
+    sliceLower95[slice] = bootstrapLower95(taskValues, `${challenger}::${incumbent}::slice::${slice}`);
+  }
+  const sliceRegressions = Object.entries(sliceLower95).filter(([, lower]) => lower < 0).map(([slice]) => slice);
   // Include unmatched declared arms in the denominator. Otherwise a harness
   // could appear fully paired by comparing only the intersection and hiding
   // missing task/seed/model/budget arms.
@@ -373,13 +391,16 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
   // purported win that consumes substantially more of the same declared
   // budget on average. Missing budgets remain explicitly incomparable.
   const timeGate = pairedTimeEfficiencyDelta === null || pairedTimeEfficiencyDelta >= -0.25;
-  const challengerWins = pairedLower95 !== null && pairedLower95 > 0 && coverage >= 0.8 && taskDeltas.length >= minimumTasks && processGate && timeGate;
+  const sliceGate = sliceRegressions.length === 0;
+  const challengerWins = pairedLower95 !== null && pairedLower95 > 0 && coverage >= 0.8 && taskDeltas.length >= minimumTasks && processGate && timeGate && sliceGate;
   const reason = challengerWins
     ? `paired lower 95% bound ${pairedLower95.toFixed(6)} is positive across ${taskDeltas.length} tasks with ${(coverage * 100).toFixed(0)}% valid paired coverage`
     : !processGate
       ? `paired process-quality delta ${pairedProcessQualityDelta?.toFixed(3)} is below the -0.1 non-regression threshold`
       : !timeGate
         ? `paired time-efficiency delta ${pairedTimeEfficiencyDelta?.toFixed(3)} is below the -0.25 non-regression threshold`
+        : !sliceGate
+          ? `slice regressions block the claim: ${sliceRegressions.join(", ")}`
       : pairedLower95 === null
       ? "no valid paired evaluator outcomes are available"
       : taskDeltas.length < minimumTasks
@@ -400,6 +421,9 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
     pairedProcessQualityDelta,
     timeComparableArms,
     pairedTimeEfficiencyDelta,
+    sliceMeanDeltas,
+    sliceLower95,
+    sliceRegressions,
     challengerWins,
     reason,
   };

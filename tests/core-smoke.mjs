@@ -2447,6 +2447,17 @@ test("harness comparison requires paired coverage and task-balanced evidence", (
   const singleTask = compareHarnesses(trials.filter((trial) => trial.task === "task-a"), "evidra", "incumbent");
   assert.equal(singleTask.challengerWins, false);
   assert.match(singleTask.reason, /at least 2 tasks/);
+
+  const hiddenSliceRegression = [
+    ["task-a", "majority", 0.9, 0.6], ["task-b", "minority", 0.4, 0.5],
+  ].flatMap(([task, slice, challengerMetric, incumbentMetric]) => [
+    { harness: "evidra", task, slice, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: challengerMetric, validRun: true, durationSeconds: 1, recovered: false, reproducible: true },
+    { harness: "incumbent", task, slice, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: incumbentMetric, validRun: true, durationSeconds: 1, recovered: false, reproducible: true },
+  ]);
+  const sliceGate = compareHarnesses(hiddenSliceRegression, "evidra", "incumbent");
+  assert.equal(sliceGate.challengerWins, false);
+  assert.deepEqual(sliceGate.sliceRegressions, ["minority"]);
+  assert.match(sliceGate.reason, /slice regressions/i);
 });
 
 test("harness comparison counts unmatched declared arms against coverage", () => {
