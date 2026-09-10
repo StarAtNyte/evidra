@@ -104,7 +104,15 @@ Rules: propose no more than five hypotheses; never invent measurements; distingu
       onProgress?.(`Research tool · ${call.name}`);
       let result: ResearchToolResult | undefined;
       for (let attempt = 1; attempt <= maxToolAttempts; attempt += 1) {
-        result = await options.executeTool(call);
+        try {
+          result = await options.executeTool(call);
+        } catch (error) {
+          result = {
+            name: call.name,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
         if (result.ok || !isRetryableResearchToolFailure(result) || attempt === maxToolAttempts) break;
         const delayMs = attempt * 500;
         onProgress?.(`Tool ${call.name} failed transiently; retrying ${attempt}/${maxToolAttempts - 1} in ${delayMs}ms...`);
