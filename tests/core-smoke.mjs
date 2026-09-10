@@ -44,6 +44,7 @@ import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
 import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../dist/core/campaign.js";
 import { applyCriticGate } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
+import { auditExperiment } from "../dist/core/validation.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -511,6 +512,19 @@ test("baseline evidence is persisted as checksummed artifacts", () => {
     const baseline = store.recentEvents(20).find((event) => event.type === "baseline.completed");
     assert.equal(Object.keys(baseline.payload.artifactChecksums).length, 4);
     store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("evidence audit rejects missing declared artifact files", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-audit-"));
+  try {
+    const artifact = join(root, "predictions.json");
+    writeFileSync(artifact, "{}\n");
+    const manifest = { id: "exp", gitCommit: "commit", datasetVersion: "data", splitVersion: "split", change: { configPatch: {} }, resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0], seeds: [0], requiredArtifacts: ["predictions.json"] }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 1, requireReplication: false }, createdAt: new Date().toISOString() };
+    const run = { runId: "run", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 1 }, metricsByFold: {}, artifacts: { "predictions.json": artifact } };
+    const context = { currentCommit: "commit", datasetVersion: "data", splitVersion: "split", leakageAuditPassed: true, reviewerApproved: true };
+    assert.equal(auditExperiment(manifest, run, context).gates.outputsComplete, true);
+    assert.equal(auditExperiment(manifest, { ...run, artifacts: { "predictions.json": join(root, "missing.json") } }, context).gates.outputsComplete, false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
