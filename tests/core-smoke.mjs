@@ -1795,6 +1795,8 @@ test("metric parser accepts evaluator JSON and keyed log output", () => {
   assert.deepEqual(parsed.subgroupDeltas, [0.1, -0.02]);
   const autoresearch = parseMetricOutput("---\nval_bpb:          1.253616\ntraining_seconds: 45.0\n", "val_bpb");
   assert.equal(autoresearch.metrics.val_bpb, 1.253616);
+  const whest = parseMetricOutput("Raw Final-Layer MSE [final_layer_mse]         2.22e-04\n", "final_layer_mse");
+  assert.equal(whest.metrics.final_layer_mse, 2.22e-4);
   const pretty = parseMetricOutput('--- EVALUATION RESULT ---\n{\n  "Accuracy": 0.5260905014268243\n}\n', "Accuracy");
   assert.equal(pretty.metrics.Accuracy, 0.5260905014268243);
 });

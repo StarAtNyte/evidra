@@ -98,6 +98,14 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
       const value = Number(keyed[1]);
       if (Number.isFinite(value)) metrics[metricName] = value;
     }
+    // Human-readable evaluator tables often render a stable machine label in
+    // brackets, e.g. `Raw MSE [final_layer_mse] 2.22e-04`. Keep this parser
+    // generic so competition adapters do not need to know the table's prose.
+    const bracketed = line.match(new RegExp(`\\[${escapedMetric}\\]\\s+(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`, "i"));
+    if (bracketed) {
+      const value = Number(bracketed[1]);
+      if (Number.isFinite(value)) metrics[metricName] = value;
+    }
     const columns = line.split("|").map((column) => column.trim());
     if (columns.length >= 5 && /^\d[\d,]*$/.test(columns[0])) {
       const value = Number(columns[columns.length - 1]);
