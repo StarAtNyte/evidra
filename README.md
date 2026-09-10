@@ -80,6 +80,8 @@ export EVIDRA_MODAL_CODEX_SECRET=evidra-codex
 EVIDRA_MODAL_WORKSPACE="$PWD" modal run modal_controller.py::run --goal "..." --budget 4h
 ```
 
+If the Modal controller should launch separate Modal experiment workers, create a second Modal Secret containing `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`, then set `EVIDRA_MODAL_AUTH_SECRET` to its name. The controller checkpoints its SQLite state volume during long runs and commits the final state before exit.
+
 This headless mode has no interactive TUI or implicit approval channel. Inspect or approve external actions from a trusted local session after attaching to the persisted state. A local ChatGPT subscription login is intentionally not copied into Modal.
 
 The controller initializes the requested competition in the durable Modal state volume on first start. `--executor local` runs experiments inside the controller container; `--executor modal` routes them to a separate Modal worker and requires the Modal CLI/runtime in the image.

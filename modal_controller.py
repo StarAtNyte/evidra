@@ -11,6 +11,7 @@ import os
 import json
 import sqlite3
 import subprocess
+import time
 from pathlib import Path
 
 import modal
@@ -19,6 +20,7 @@ WORKSPACE = Path(os.environ.get("EVIDRA_MODAL_WORKSPACE", ".")).resolve()
 REMOTE_WORKSPACE = Path("/workspace")
 STATE_VOLUME = modal.Volume.from_name(os.environ.get("EVIDRA_MODAL_STATE_VOLUME", "evidra-controller-state"), create_if_missing=True)
 CODEX_SECRET_NAME = os.environ.get("EVIDRA_MODAL_CODEX_SECRET")
+MODAL_AUTH_SECRET_NAME = os.environ.get("EVIDRA_MODAL_AUTH_SECRET")
 
 
 def include_workspace_path(path: str) -> bool:
@@ -37,7 +39,7 @@ image = (
     .add_local_dir(WORKSPACE, remote_path=str(REMOTE_WORKSPACE), ignore=ignore_workspace_path)
 )
 app = modal.App("evidra-controller")
-secrets = [modal.Secret.from_name(CODEX_SECRET_NAME)] if CODEX_SECRET_NAME else []
+secrets = [modal.Secret.from_name(name) for name in (CODEX_SECRET_NAME, MODAL_AUTH_SECRET_NAME) if name]
 
 
 @app.function(volumes={"/state": STATE_VOLUME})
@@ -113,9 +115,17 @@ def execute(goal: str, budget: str, mode: str = "research", autonomy: str = "saf
     ]
     process = subprocess.Popen(command, cwd=REMOTE_WORKSPACE, env=environment, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     assert process.stdout is not None
+    last_volume_commit = time.monotonic()
     for line in process.stdout:
         print(line, end="", flush=True)
-    return process.wait()
+        if time.monotonic() - last_volume_commit >= 30:
+            STATE_VOLUME.commit()
+            last_volume_commit = time.monotonic()
+    exit_code = process.wait()
+    # Modal Volume writes are not durable across function/container teardown
+    # until explicitly committed. Always publish the final SQLite/WAL state.
+    STATE_VOLUME.commit()
+    return exit_code
 
 
 @app.local_entrypoint()
