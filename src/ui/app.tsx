@@ -870,6 +870,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const contract = validateExecutionContract(manifest, experimentCwd, command);
     const contractStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     contractStore.appendEvent(contract.valid ? "experiment.stage.feasibility.completed" : "experiment.stage.feasibility.failed", { experimentId: id, reasons: contract.reasons, command, cwd: experimentCwd });
+    if (!contract.valid) contractStore.saveExperiment({ id, payload: { ...entryPayload, status: "failed", executionPlan } });
     contractStore.close();
     executionPlan = advanceExecutionStage(executionPlan, "feasibility", contract.valid ? "completed" : "failed");
     if (!contract.valid) throw new Error(`Experiment feasibility check failed:\n${contract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
@@ -1789,7 +1790,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const id = `exp_${Date.now()}_${hypothesisId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
       const adapter = activeAdapter();
       const manifest = createExperimentManifest({ id, hypothesisId, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: config.experimentExecutor }, adapter.config);
-      store.saveExperiment({ id, payload: { ...manifest, status: "proposed" } });
+      store.saveExperiment({ id, payload: { ...manifest, status: "proposed", executionPlan: createExecutionPlan(manifest) } });
       store.close();
       append("assistant", `Immutable experiment manifest created\n${manifestSummary(manifest)}\n\nNext: /experiment show ${id}`);
       return;
