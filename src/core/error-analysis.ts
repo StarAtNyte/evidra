@@ -3,6 +3,7 @@ export interface PredictionRow {
   actual: string | number | boolean | null;
   predicted: string | number | boolean | null;
   group?: string;
+  metadata?: Record<string, string | number | boolean | null>;
 }
 
 export interface ErrorGroupSummary {
@@ -25,6 +26,9 @@ export interface ErrorAnalysisReport {
   confusion?: Array<{ actual: string; predicted: string; count: number }>;
   groups: ErrorGroupSummary[];
   worstGroups: ErrorGroupSummary[];
+  slices: ErrorSliceSummary[];
+  worstSlices: ErrorSliceSummary[];
+  calibration?: CalibrationBin[];
 }
 
 export interface PredictionComparison {
@@ -33,6 +37,23 @@ export interface PredictionComparison {
   regressed: number;
   unchangedErrors: number;
   groups: Array<{ group: string; fixed: number; regressed: number; net: number }>;
+}
+
+export interface ErrorSliceSummary {
+  feature: string;
+  value: string;
+  total: number;
+  errors: number;
+  errorRate: number;
+  meanAbsoluteError?: number;
+}
+
+export interface CalibrationBin {
+  bin: number;
+  total: number;
+  meanPredicted: number;
+  empiricalRate: number;
+  gap: number;
 }
 
 type Scalar = PredictionRow["actual"];
@@ -52,15 +73,20 @@ function finiteNumber(value: Scalar | undefined): value is number {
 
 function normalizedRow(value: unknown): PredictionRow | undefined {
   if (!value || typeof value !== "object") return undefined;
-  const row = value as { id?: unknown; actual?: unknown; target?: unknown; y?: unknown; predicted?: unknown; prediction?: unknown; pred?: unknown; group?: unknown; subgroup?: unknown };
+  const row = value as { id?: unknown; actual?: unknown; target?: unknown; y?: unknown; predicted?: unknown; prediction?: unknown; pred?: unknown; group?: unknown; subgroup?: unknown; metadata?: unknown; attributes?: unknown };
   const actual = scalar(row.actual ?? row.target ?? row.y);
   const predicted = scalar(row.predicted ?? row.prediction ?? row.pred);
   if (actual === undefined || predicted === undefined) return undefined;
+  const rawMetadata = row.metadata ?? row.attributes;
+  const metadata = rawMetadata && typeof rawMetadata === "object" && !Array.isArray(rawMetadata)
+    ? Object.fromEntries(Object.entries(rawMetadata).filter(([, item]) => item === null || typeof item === "string" || typeof item === "number" || typeof item === "boolean")) as Record<string, string | number | boolean | null>
+    : undefined;
   return {
     ...(typeof row.id === "string" ? { id: row.id } : {}),
     actual,
     predicted,
     ...(typeof (row.group ?? row.subgroup) === "string" ? { group: String(row.group ?? row.subgroup) } : {}),
+    ...(metadata && Object.keys(metadata).length ? { metadata } : {}),
   };
 }
 
@@ -80,6 +106,8 @@ export function analyzePredictionRows(rows: PredictionRow[], limit = 20): ErrorA
   const bounded = rows.slice(0, Math.max(0, Math.min(rows.length, 100_000)));
   const numeric = bounded.length > 0 && bounded.every((row) => finiteNumber(row.actual) && finiteNumber(row.predicted));
   const groups = new Map<string, { total: number; errors: number; absolute: number[] }>();
+  const slices = new Map<string, { feature: string; value: string; total: number; errors: number; absolute: number[] }>();
+  const calibration = Array.from({ length: 10 }, () => ({ total: 0, predicted: 0, positive: 0 }));
   const confusion = new Map<string, number>();
   let errors = 0;
   let absoluteSum = 0;
@@ -96,6 +124,21 @@ export function analyzePredictionRows(rows: PredictionRow[], limit = 20): ErrorA
     if (isError) entry.errors += 1;
     entry.absolute.push(absolute);
     groups.set(group, entry);
+    for (const [feature, metadataValue] of Object.entries(row.metadata ?? {})) {
+      const sliceValue = key(metadataValue);
+      const sliceKey = `${feature}\u001f${sliceValue}`;
+      const slice = slices.get(sliceKey) ?? { feature, value: sliceValue, total: 0, errors: 0, absolute: [] };
+      slice.total += 1;
+      if (isError) slice.errors += 1;
+      slice.absolute.push(absolute);
+      slices.set(sliceKey, slice);
+    }
+    if (typeof row.predicted === "number" && Number.isFinite(row.predicted) && row.predicted >= 0 && row.predicted <= 1 && (row.actual === 0 || row.actual === 1 || row.actual === false || row.actual === true)) {
+      const bin = Math.min(9, Math.floor(row.predicted * 10));
+      calibration[bin].total += 1;
+      calibration[bin].predicted += row.predicted;
+      calibration[bin].positive += row.actual === 1 || row.actual === true ? 1 : 0;
+    }
     if (!numeric) {
       const pair = `${key(row.actual)}\u001f${key(row.predicted)}`;
       confusion.set(pair, (confusion.get(pair) ?? 0) + 1);
@@ -103,6 +146,9 @@ export function analyzePredictionRows(rows: PredictionRow[], limit = 20): ErrorA
   }
   const summaries = [...groups.entries()].filter(([group]) => group !== "__all__").map(([group, value]) => ({ group, total: value.total, errors: value.errors, errorRate: value.errors / value.total, ...(numeric ? { meanAbsoluteError: value.absolute.reduce((sum, item) => sum + item, 0) / value.total } : {}) } satisfies ErrorGroupSummary));
   summaries.sort((left, right) => right.errorRate - left.errorRate || right.total - left.total || left.group.localeCompare(right.group));
+  const sliceSummaries = [...slices.values()].map((value) => ({ feature: value.feature, value: value.value, total: value.total, errors: value.errors, errorRate: value.errors / value.total, ...(numeric ? { meanAbsoluteError: value.absolute.reduce((sum, item) => sum + item, 0) / value.total } : {}) } satisfies ErrorSliceSummary));
+  sliceSummaries.sort((left, right) => right.errorRate - left.errorRate || right.total - left.total || left.feature.localeCompare(right.feature) || left.value.localeCompare(right.value));
+  const calibrationBins = calibration.flatMap((value, bin) => value.total ? [{ bin, total: value.total, meanPredicted: value.predicted / value.total, empiricalRate: value.positive / value.total, gap: Math.abs(value.predicted / value.total - value.positive / value.total) }] : []);
   const report: ErrorAnalysisReport = {
     schemaVersion: 1,
     task: numeric ? "regression" : "classification",
@@ -112,6 +158,9 @@ export function analyzePredictionRows(rows: PredictionRow[], limit = 20): ErrorA
     ...(numeric ? { mae: bounded.length ? absoluteSum / bounded.length : 0, rmse: bounded.length ? Math.sqrt(squareSum / bounded.length) : 0 } : { accuracy: bounded.length ? 1 - errors / bounded.length : 0, confusion: [...confusion.entries()].map(([pair, count]) => { const [actual, predicted] = pair.split("\u001f"); return { actual, predicted, count }; }).sort((left, right) => right.count - left.count || left.actual.localeCompare(right.actual)).slice(0, 100) }),
     groups: summaries.slice(0, Math.max(0, limit)),
     worstGroups: summaries.slice(0, Math.max(0, limit)),
+    slices: sliceSummaries.slice(0, Math.max(0, limit * 4)),
+    worstSlices: sliceSummaries.slice(0, Math.max(0, limit)),
+    ...(calibrationBins.length ? { calibration: calibrationBins } : {}),
   };
   return report;
 }

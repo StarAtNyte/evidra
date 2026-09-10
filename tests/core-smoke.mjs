@@ -534,6 +534,19 @@ test("prediction error analysis turns aggregate outcomes into actionable failure
   assert.deepEqual(comparePredictionRows(rows, candidate), { matched: 3, fixed: 2, regressed: 0, unchangedErrors: 0, groups: [{ group: "source-a", fixed: 1, regressed: 0, net: 1 }, { group: "source-b", fixed: 1, regressed: 0, net: 1 }] });
 });
 
+test("prediction diagnostics expose metadata slices and calibration gaps", () => {
+  const rows = parsePredictionRows({ predictions: [
+    { actual: 1, predicted: 0.9, metadata: { modality: "image", region: "rare" } },
+    { actual: 0, predicted: 0.8, metadata: { modality: "image", region: "rare" } },
+    { actual: 0, predicted: 0.1, metadata: { modality: "text", region: "common" } },
+  ] });
+  const report = analyzePredictionRows(rows);
+  const rareSlice = report.worstSlices.find((slice) => slice.feature === "region" && slice.value === "rare");
+  assert.equal(rareSlice?.errors, 2);
+  assert.equal(report.calibration?.length, 3);
+  assert.ok((report.calibration?.find((bin) => bin.bin === 8)?.gap ?? 0) > 0);
+});
+
 test("only independently replicated method events enter transfer memory", () => {
   const method = createTransferableMethod({ id: "method-1", sourceCompetition: "task-a", sourceTaskType: "tabular", title: "Group-aware split", formulationFamily: "validation", mechanism: "keep source groups isolated", proposedChange: "use grouped folds", evidenceIds: ["run-1", "run-2"], tags: ["validation"] });
   const methods = transferableMethodsFromEvents([

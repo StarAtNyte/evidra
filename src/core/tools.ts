@@ -70,7 +70,7 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   { name: "source.search", description: "Search scholarly works and return ranked candidates for later retrieval.", input: { query: "research question or keywords", limit: "optional result count" }, readOnly: true },
   { name: "data.audit", description: "Audit workspace files for size, duplicates, and suspicious data issues.", input: { path: "optional relative path" }, readOnly: true },
   { name: "artifact.audit", description: "Audit bounded research artifacts for safe containment, regular-file integrity, size, checksum, and optional JSON validity.", input: { paths: "relative artifact paths array", maxBytes: "optional per-file size limit" }, readOnly: true },
-  { name: "prediction.analyze", description: "Analyze a bounded JSON/JSONL prediction artifact for classification errors, regression residuals, and worst groups.", input: { path: "relative JSON or JSONL prediction artifact", maxRows: "optional row limit" }, readOnly: true },
+  { name: "prediction.analyze", description: "Analyze a bounded JSON/JSONL prediction artifact for classification errors, regression residuals, metadata-defined worst slices, and binary calibration gaps.", input: { path: "relative JSON or JSONL prediction artifact", maxRows: "optional row limit" }, readOnly: true },
   { name: "validation.generate", description: "Create a versioned validation policy for the active workspace.", input: {}, readOnly: false },
   { name: "report.generate", description: "Write a durable research, challenge, or final report.", input: { kind: "research|challenge|final" }, readOnly: false },
 ];
