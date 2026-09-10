@@ -605,17 +605,20 @@ airsBenchmark.command("protocol")
   .requiredOption("--model <model>", "fixed model identifier for every harness arm")
   .requiredOption("--seed <seed>", "fixed seed for every harness arm")
   .requiredOption("--budget <minutes>", "fixed per-arm wall-clock budget in minutes")
-  .requiredOption("--baseline <metric>", "measured common baseline metric")
+  .option("--baseline <metric>", "explicit fallback baseline metric for every task")
+  .option("--baseline-map <file>", "JSON object keyed by task id or family/task id with measured baselines")
   .option("--out <file>", "write the generated protocol to JSON")
   .description("Generate matched AIRS benchmark arms from explicit harness command templates")
-  .action((inventory: string, options: { arm: string[]; model: string; seed: string; budget: string; baseline: string; out?: string }) => {
+  .action((inventory: string, options: { arm: string[]; model: string; seed: string; budget: string; baseline?: string; baselineMap?: string; out?: string }) => {
     const parsed = JSON.parse(readFileSync(resolve(inventory), "utf8")) as AirsBenchDiscovery;
     const templates = options.arm.map((raw) => {
       const value = JSON.parse(raw) as Partial<AirsHarnessTemplate>;
       if (typeof value.harness !== "string" || !Array.isArray(value.command) || !value.command.every((part) => typeof part === "string")) throw new Error("Each --arm value must be JSON like {\"harness\":\"evidra\",\"command\":[\"...\"]}.");
       return { harness: value.harness, command: value.command, ...(typeof value.cwd === "string" ? { cwd: value.cwd } : {}) };
     });
-    const protocol = createAirsBenchmarkProtocol(parsed, { templates, model: options.model, seed: options.seed, budgetMinutes: Number(options.budget), baselineMetric: Number(options.baseline) });
+    const baselineMetrics = options.baselineMap ? JSON.parse(readFileSync(resolve(options.baselineMap), "utf8")) as Record<string, number> : undefined;
+    if (options.baseline === undefined && !baselineMetrics) throw new Error("Supply --baseline-map for heterogeneous AIRS tasks or an explicit --baseline fallback.");
+    const protocol = createAirsBenchmarkProtocol(parsed, { templates, model: options.model, seed: options.seed, budgetMinutes: Number(options.budget), ...(options.baseline !== undefined ? { baselineMetric: Number(options.baseline) } : {}), ...(baselineMetrics ? { baselineMetrics } : {}) });
     const output = `${JSON.stringify(protocol, null, 2)}\n`;
     if (options.out) writeFileSync(resolve(options.out), output);
     else process.stdout.write(output);

@@ -46,7 +46,10 @@ export interface AirsProtocolOptions {
   model: string;
   seed: string | number;
   budgetMinutes: number;
-  baselineMetric: number;
+  /** A legacy fallback for protocols with one homogeneous task metric. */
+  baselineMetric?: number;
+  /** Preferred for AIRS: measured baseline keyed by task id or family/task id. */
+  baselineMetrics?: Record<string, number>;
 }
 
 export interface AirsBenchmarkProtocol {
@@ -133,10 +136,13 @@ export function createAirsBenchmarkProtocol(discovery: AirsBenchDiscovery, optio
   const harnesses = new Set(options.templates.map((template) => template.harness.trim()).filter(Boolean));
   if (harnesses.size < 2) throw new Error("A matched AIRS protocol requires at least two distinct harness command templates.");
   if (!Number.isFinite(options.budgetMinutes) || options.budgetMinutes <= 0) throw new Error("AIRS benchmark budget must be positive.");
-  if (!Number.isFinite(options.baselineMetric)) throw new Error("AIRS benchmark baseline metric must be finite.");
+  if (options.baselineMetric !== undefined && !Number.isFinite(options.baselineMetric)) throw new Error("AIRS benchmark baseline metric must be finite.");
+  if (options.baselineMetrics && Object.values(options.baselineMetrics).some((metric) => !Number.isFinite(metric))) throw new Error("Every AIRS task baseline metric must be finite.");
   const arms: BenchmarkArmSpec[] = [];
   for (const task of discovery.tasks) {
     if (!task.valid || !task.metric || !task.direction) continue;
+    const baselineMetric = options.baselineMetrics?.[`${task.family}/${task.id}`] ?? options.baselineMetrics?.[task.id] ?? options.baselineMetric;
+    if (baselineMetric === undefined || !Number.isFinite(baselineMetric)) throw new Error(`AIRS task '${task.family}/${task.id}' has no measured baseline. Supply --baseline-map with a value for this task or an explicit --baseline fallback.`);
     for (const template of options.templates) {
       if (!template.harness.trim() || !template.command.length || template.command.some((part) => !part.trim())) throw new Error("AIRS harness templates require a name and non-empty command.");
       arms.push({
@@ -147,7 +153,7 @@ export function createAirsBenchmarkProtocol(discovery: AirsBenchDiscovery, optio
         model: options.model,
         budgetMinutes: options.budgetMinutes,
         direction: task.direction,
-        baselineMetric: options.baselineMetric,
+        baselineMetric,
         ...(task.estimatedWorstScore !== undefined ? { taskWorstMetric: task.estimatedWorstScore } : {}),
         ...(task.optimalScore !== undefined ? { taskBestMetric: task.optimalScore } : {}),
         metric: task.metric,

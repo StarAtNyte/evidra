@@ -70,9 +70,21 @@ Generate that matched protocol with explicit command templates. Templates may
 use `{taskId}`, `{taskPath}`, `{family}`, `{repo}`, `{model}`, `{seed}`, and
 `{budget}`:
 
+For a heterogeneous suite, supply a measured baseline per task. A single
+`--baseline` is retained only as an explicit fallback for homogeneous or
+partial trials; it is not silently copied across tasks when a baseline map is
+provided.
+
 ```bash
+cat > airs-baselines.json <<'JSON'
+{
+  "rad/TextualClassificationSickAccuracy": 0.5686913983,
+  "rad/TextualSimilaritySickSpearmanCorrelation": 0.423
+}
+JSON
+
 evidra benchmark airs protocol airs-inventory.json \
-  --model gpt-5.6-codex --seed 0 --budget 30 --baseline 0.5687 \
+  --model gpt-5.6-codex --seed 0 --budget 30 --baseline-map airs-baselines.json \
   --arm '{"harness":"evidra","command":["./run-evidra.sh","{taskId}"]}' \
   --arm '{"harness":"mlgym","command":["./run-mlgym.sh","{taskId}"]}' \
   --out airs-protocol.json

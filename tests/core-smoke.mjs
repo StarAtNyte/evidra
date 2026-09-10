@@ -1974,6 +1974,19 @@ test("AIRS protocol generation creates matched task arms with safe template expa
   assert.throws(() => createAirsBenchmarkProtocol(discovery, { templates: [{ harness: "evidra", command: ["run"] }], model: "m", seed: 0, budgetMinutes: 1, baselineMetric: 0 }), /at least two distinct/);
 });
 
+test("AIRS protocol generation preserves task-specific baselines", () => {
+  const discovery = {
+    schemaVersion: 1, repository: "/tmp/airs", family: "rad", validTasks: 2, invalidTasks: 0,
+    tasks: [
+      { id: "TaskA", family: "rad", path: "a", metadataPath: "a/m", descriptionPath: "a/d", preparePath: "a/p", evaluatePath: "a/e", evaluatePreparePath: "a/ep", valid: true, missingFiles: [], metric: "Accuracy", direction: "maximize" },
+      { id: "TaskB", family: "rad", path: "b", metadataPath: "b/m", descriptionPath: "b/d", preparePath: "b/p", evaluatePath: "b/e", evaluatePreparePath: "b/ep", valid: true, missingFiles: [], metric: "MAE", direction: "minimize" },
+    ],
+  };
+  const protocol = createAirsBenchmarkProtocol(discovery, { templates: [{ harness: "evidra", command: ["run", "{taskId}"] }, { harness: "other", command: ["run", "{taskId}"] }], model: "m", seed: 1, budgetMinutes: 1, baselineMetrics: { TaskA: 0.8, "rad/TaskB": 2.5 } });
+  assert.deepEqual([...new Set(protocol.arms.filter((arm) => arm.task.endsWith("TaskA")).map((arm) => arm.baselineMetric))], [0.8]);
+  assert.deepEqual([...new Set(protocol.arms.filter((arm) => arm.task.endsWith("TaskB")).map((arm) => arm.baselineMetric))], [2.5]);
+});
+
 test("search policy explores untried operators and penalizes invalid evidence", () => {
   const ranked = rankSearchArms({
     arms: [
