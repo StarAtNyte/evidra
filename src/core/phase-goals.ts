@@ -90,6 +90,7 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
       });
       if (!validated) missing.push("completed evaluated run with primary metric");
       else if (!has("run.completed")) missing.push("completed evaluated run");
+      else if (evidence.mode !== "research" && !has("experiment.comparison.completed")) missing.push("baseline comparison");
       break;
     }
     case "replication": if (!has("replication.manifest.created") || evidence.runs < 2) missing.push("independent replication run"); break;

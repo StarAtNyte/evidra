@@ -1025,6 +1025,34 @@ export function App({ root }: { root: string }): React.JSX.Element {
     for (const [name, path] of Object.entries(recordedResult.artifacts)) {
       resultStore.saveArtifact({ id: `${result.runId}-${name}`, runId: result.runId, name, path, checksum: sha256File(path) });
     }
+    if (recordedResult.status === "completed") {
+      const baselineEvent = resultStore.recentEvents(500).reverse().find((event) => event.type === "baseline.completed");
+      const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string; stderr?: string; durationMs?: number; command?: string[]; cwd?: string } | undefined;
+      const baselineMetricName = activeAdapter().config.metric.name;
+      const parsedBaseline = baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, baselineMetricName) : { metrics: {}, metricsByFold: {} };
+      const baselineMetric = typeof baselinePayload?.metric === "number" && Number.isFinite(baselinePayload.metric)
+        ? baselinePayload.metric
+        : parsedBaseline.metrics[baselineMetricName];
+      if (typeof baselineMetric === "number" && Number.isFinite(baselineMetric)) {
+        const baselineRun = {
+          runId: `baseline-${baselineEvent?.createdAt ?? "recorded"}`,
+          status: "completed" as const,
+          exitCode: 0,
+          durationSeconds: (baselinePayload?.durationMs ?? 0) / 1000,
+          metrics: { [baselineMetricName]: baselineMetric },
+          metricsByFold: { [baselineMetricName]: baselinePayload?.stdout ? parsedBaseline.metricsByFold[baselineMetricName] ?? [] : [] },
+          artifacts: {},
+          stdout: baselinePayload?.stdout,
+          stderr: baselinePayload?.stderr,
+          command: baselinePayload?.command,
+          cwd: baselinePayload?.cwd,
+        };
+        const comparison = compareRuns(baselineRun, RunResultSchema.parse(recordedResult), baselineMetricName, activeAdapter().config.metric.direction === "minimize");
+        resultStore.appendEvent("experiment.comparison.completed", { experimentId: id, baselineSource: baselineEvent?.createdAt ?? "baseline", comparison });
+      } else {
+        resultStore.appendEvent("experiment.comparison.insufficient_data", { experimentId: id, reason: "No finite baseline metric was available." });
+      }
+    }
     resultStore.saveExperiment({ id, payload: { ...entryPayload, status: recordedResult.status === "completed" ? "completed" : "failed", runId: result.runId, worktreePath: experimentCwd, executionPlan } });
     const trajectoryEvents: TrajectoryEvent[] = [
       { id: `${result.runId}-process`, kind: "process", payload: { status: recordedResult.status, exitCode: recordedResult.exitCode, failureClass: recordedResult.failureClass ?? null } },

@@ -416,11 +416,26 @@ test("evaluation phase requires a measured primary metric", () => {
   });
   assert.deepEqual(missing.missing, ["completed evaluated run with primary metric"]);
   const complete = evaluatePhaseGoalEvidence(goal, {
+    mode: "research",
     eventTypes: ["experiment.stage.full_validation.completed", "run.completed"],
     eventPayloads: [{ type: "experiment.stage.full_validation.completed", payload: { exitCode: 0, metric: 0.81 } }, { type: "run.completed", payload: {} }],
     hypotheses: 1, experiments: 1, runs: 1, artifacts: 1,
   });
   assert.equal(complete.met, true);
+  const challengeWithoutComparison = evaluatePhaseGoalEvidence(goal, {
+    mode: "challenge",
+    eventTypes: ["experiment.stage.full_validation.completed", "run.completed"],
+    eventPayloads: [{ type: "experiment.stage.full_validation.completed", payload: { exitCode: 0, metric: 0.81 } }, { type: "run.completed", payload: {} }],
+    hypotheses: 1, experiments: 1, runs: 1, artifacts: 1,
+  });
+  assert.deepEqual(challengeWithoutComparison.missing, ["baseline comparison"]);
+  const challengeComplete = evaluatePhaseGoalEvidence(goal, {
+    mode: "challenge",
+    eventTypes: ["experiment.stage.full_validation.completed", "run.completed", "experiment.comparison.completed"],
+    eventPayloads: [{ type: "experiment.stage.full_validation.completed", payload: { exitCode: 0, metric: 0.81 } }, { type: "run.completed", payload: {} }, { type: "experiment.comparison.completed", payload: {} }],
+    hypotheses: 1, experiments: 1, runs: 1, artifacts: 1,
+  });
+  assert.equal(challengeComplete.met, true);
 });
 
 test("project-local competition manifests replace hardcoded adapters", () => {

@@ -107,6 +107,7 @@ Implemented today:
 - source hashes, extracted claims, research graph edges, evidence reports, statistical comparison helpers, and ensemble utilities;
 - bounded HTML, text, and common PDF research-source extraction with explicit fallback when a PDF encoding cannot be decoded;
 - multi-split validation acceptance, durable leakage/reviewer gates, and conservative external-score split-belief modeling;
+- automatic baseline-to-candidate comparison events after successful challenge evaluations;
 - shell and autonomy safety guards.
 
 ## Quick start
