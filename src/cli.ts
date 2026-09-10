@@ -285,7 +285,7 @@ program.command("doctor").description("Check local providers, runtimes, and exec
   }
   const modalAuth = process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET
     ? "environment credentials"
-    : (await runProcess(["modal", "token", "list"], root, 10_000)).exitCode === 0 ? "CLI profile available" : "not configured";
+    : (await runProcess(["modal", "profile", "current"], root, 10_000)).exitCode === 0 ? "CLI profile selected" : "not configured";
   checks.push(`modal auth    ${modalAuth}`);
   console.log(checks.join("\n"));
 });
