@@ -729,6 +729,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }, {
         provider: config.provider,
         model: config.model,
+        modelPool: config.provider === "local" ? await listLocalModels().then((models) => models.length ? models.map((model) => ({ provider: "local" as const, model: model.id })) : [{ provider: "local" as const, model: config.model }]).catch(() => [{ provider: "local" as const, model: config.model }]) : [{ provider: "codex" as const, model: config.model }],
         fallbackLocalModel: config.fallbackModel,
         limitPolicy: config.limitPolicy,
         reasoningEffort: config.reasoningEffort,

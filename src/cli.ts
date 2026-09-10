@@ -656,6 +656,13 @@ research
     const selectedModel = options.provider === "local" && options.model === "default"
       ? await resolveLocalFallbackModel("auto")
       : options.model;
+    let researchModelPool: Array<{ provider: "codex" | "local"; model: string }> = [{ provider: options.provider as "codex" | "local", model: selectedModel }];
+    if (options.provider === "local") {
+      try {
+        const models = await listLocalModels();
+        researchModelPool = models.length ? models.map((model) => ({ provider: "local" as const, model: model.id })) : researchModelPool;
+      } catch { /* The already-validated primary model remains usable if discovery briefly fails. */ }
+    }
     const laneLimit = Math.max(1, Math.min(6, Number.parseInt(options.lanes, 10) || 1));
     await checkProvider({ provider: options.provider, model: selectedModel, cwd: root });
     const releaseLease = acquireCliControllerLease(mode);
@@ -737,6 +744,7 @@ research
           }, {
             provider: options.provider,
             model: selectedModel,
+            modelPool: researchModelPool,
             fallbackLocalModel: options.limitPolicy === "fallback" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
             limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop",
             reasoningEffort: options.thinking,

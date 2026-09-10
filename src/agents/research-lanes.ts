@@ -56,6 +56,8 @@ export type ResearchReview = z.infer<typeof ResearchReviewSchema> & {
 export interface ResearchLanesOptions {
   provider: AgentProvider;
   model: string;
+  /** Optional heterogeneous pool. The first route is the primary route; remaining routes are assigned round-robin. */
+  modelPool?: Array<{ provider: AgentProvider; model: string }>;
   fallbackLocalModel?: string;
   limitPolicy?: ExecAgentOptions["limitPolicy"];
   reasoningEffort?: string;
@@ -67,6 +69,18 @@ export interface ResearchLanesOptions {
   onProcess?: (control: ProcessControl) => void;
   isCancelled?: () => boolean;
   executeTool?: (call: ResearchToolCall) => Promise<ResearchToolResult>;
+}
+
+export interface ResearchLaneRoute {
+  role: ResearchLaneRole;
+  provider: AgentProvider;
+  model: string;
+}
+
+export function assignResearchLaneRoutes(roles: ResearchLaneRole[], options: Pick<ResearchLanesOptions, "provider" | "model" | "modelPool">): ResearchLaneRoute[] {
+  const pool = (options.modelPool ?? []).filter((route) => route.model.trim().length > 0);
+  const routes = pool.length ? pool : [{ provider: options.provider, model: options.model }];
+  return roles.map((role, index) => ({ role, ...routes[index % routes.length] }));
 }
 
 /** Keep lane observations bounded and role-specific before model synthesis. */
@@ -208,9 +222,9 @@ export async function runResearchCritic(
   }
 }
 
-async function runLane(role: ResearchLaneRole, objective: string, context: Record<string, unknown>, options: ResearchLanesOptions): Promise<ResearchLaneReport> {
+async function runLane(role: ResearchLaneRole, objective: string, context: Record<string, unknown>, options: ResearchLanesOptions, laneRoute: ResearchLaneRoute): Promise<ResearchLaneReport> {
   const store = new ResearchStore(options.storePath);
-  store.updateAgentLane({ role, status: "running", provider: options.provider, model: options.model, task: objective, error: null });
+  store.updateAgentLane({ role, status: "running", provider: laneRoute.provider, model: laneRoute.model, task: objective, error: null });
   store.close();
   options.onProgress?.(`Research lane · ${role} · investigating...`);
   try {
@@ -222,8 +236,8 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         toolResults.push(boundLaneToolResult(await options.executeTool(call)));
       }
     }
-    let provider = options.provider;
-    let model = options.model;
+    let provider = laneRoute.provider;
+    let model = laneRoute.model;
     let parsed: z.infer<typeof ResearchLaneReportSchema> | undefined;
     let lastError: unknown;
     for (let attempt = 1; attempt <= 3 && !parsed; attempt += 1) {
@@ -265,7 +279,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     const report: ResearchLaneReport = { role, summary: "Lane failed before producing a validated report.", findings: [], recommendations: [], uncertainties: [message], evidence: [], confidence: 0, status: "failed", error: message };
     saveLaneEvent(options.storePath, role, report);
     const failed = new ResearchStore(options.storePath);
-    failed.updateAgentLane({ role, status: "failed", provider: options.provider, model: options.model, task: objective, error: message });
+    failed.updateAgentLane({ role, status: "failed", provider: laneRoute.provider, model: laneRoute.model, task: objective, error: message });
     failed.close();
     return report;
   }
@@ -275,12 +289,13 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
 export async function runResearchLanes(objective: string, context: Record<string, unknown>, options: ResearchLanesOptions): Promise<ResearchLaneReport[]> {
   const concurrency = researchLaneConcurrency({ autonomy: options.autonomy, provider: options.provider, requested: options.maxParallel });
   const roles = selectResearchLaneRoles(objective, concurrency);
+  const routes = assignResearchLaneRoutes(roles, options);
   const reports: ResearchLaneReport[] = [];
   let next = 0;
   const worker = async (): Promise<void> => {
     while (next < roles.length) {
       const role = roles[next++];
-      reports.push(await runLane(role, objective, context, options));
+      reports.push(await runLane(role, objective, context, options, routes.find((route) => route.role === role)!));
     }
   };
   await Promise.all(Array.from({ length: Math.min(roles.length, concurrency) }, () => worker()));

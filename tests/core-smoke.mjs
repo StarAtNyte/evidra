@@ -46,7 +46,7 @@ import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../dist/c
 import { applyCriticGate } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment } from "../dist/core/validation.js";
-import { boundLaneToolResult, laneToolCalls, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
+import { assignResearchLaneRoutes, boundLaneToolResult, laneToolCalls, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceGoalTermination } from "../dist/core/termination.js";
 import { summarizeUsage } from "../dist/core/usage.js";
@@ -402,6 +402,13 @@ test("research lane concurrency respects permission mode and local inference lim
   process.env.OLLAMA_NUM_PARALLEL = "1";
   try { assert.equal(researchLaneConcurrency({ autonomy: "yolo", provider: "local", requested: 6 }), 1); }
   finally { if (previous === undefined) delete process.env.OLLAMA_NUM_PARALLEL; else process.env.OLLAMA_NUM_PARALLEL = previous; }
+});
+
+test("research lanes assign a bounded heterogeneous model pool deterministically", () => {
+  const roles = selectResearchLaneRoles("research a competition dataset", 3);
+  const routes = assignResearchLaneRoutes(roles, { provider: "local", model: "primary", modelPool: [{ provider: "local", model: "qwen3.5:4b" }, { provider: "local", model: "qwen3.5:9b" }] });
+  assert.deepEqual(routes.map((route) => route.model), ["qwen3.5:4b", "qwen3.5:9b", "qwen3.5:4b"]);
+  assert.deepEqual(assignResearchLaneRoutes(roles, { provider: "codex", model: "default" }).map((route) => route.model), ["default", "default", "default"]);
 });
 
 test("replication manifests preserve provenance while changing the independent seed", () => {
