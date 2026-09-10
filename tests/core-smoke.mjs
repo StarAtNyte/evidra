@@ -61,6 +61,7 @@ import { rankSearchArms, searchReward } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
 import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "../dist/core/promotion-learning.js";
+import { captureProtectedFiles, changedProtectedFiles } from "../dist/core/integrity.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
 
@@ -1543,4 +1544,15 @@ test("promotion learning stays conservative until paired evidence is sufficient"
   assert.equal(learned.learned, true);
   assert.ok(learned.minimumDelta >= 0.01);
   assert.equal(learnPromotionPolicy(observations.slice(0, 2), 0).learned, false);
+});
+
+test("specification-gaming guard detects evaluator mutations", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-integrity-"));
+  try {
+    writeFileSync(join(root, "eval.py"), "print('score')\n");
+    writeFileSync(join(root, "submission.csv"), "score\n");
+    const snapshot = captureProtectedFiles(root, [["python", "eval.py", "--submission-file", "submission.csv"]]);
+    writeFileSync(join(root, "eval.py"), "print('cheat')\n");
+    assert.deepEqual(changedProtectedFiles(snapshot, root), ["eval.py"]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

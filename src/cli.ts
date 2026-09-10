@@ -62,6 +62,7 @@ import { planPortfolio } from "./core/portfolio.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
 import { scoreHarnessTrials, type HarnessTrial } from "./core/harness-scorecard.js";
+import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -123,9 +124,10 @@ async function implementCampaignHypothesis(
   experimentId: string,
   hypothesis: unknown,
   manifest: unknown,
-  options: { provider: "codex" | "local"; model: string; thinking: string },
+  options: { provider: "codex" | "local"; model: string; thinking: string; protectedCommands?: string[][] },
 ): Promise<void> {
   const worktree = await ensureWorktree(rootPath, rootPath, experimentId);
+  const integrity = captureProtectedFiles(worktree, options.protectedCommands ?? []);
   const manifestValue = manifest as { change?: { configPatch?: { estimatorPath?: unknown } } };
   const target = typeof manifestValue.change?.configPatch?.estimatorPath === "string" ? manifestValue.change.configPatch.estimatorPath : undefined;
   const targetPath = target ? resolve(worktree, target) : undefined;
@@ -151,21 +153,23 @@ async function implementCampaignHypothesis(
       sandbox: "workspace-write",
       limitPolicy: "wait",
     }, (message) => console.log(`Experiment ${experimentId} · ${message}`));
-    return;
+  } else {
+    const result = await runWithLocalFallback({
+      ...task,
+      objective: `${task.objective}\nYou cannot call tools directly. Return ONLY a unified diff whose first line begins with diff --git. The diff must be applicable from the worktree root. Do not return a plan or prose.`,
+    }, {
+      provider: options.provider,
+      model: options.model,
+      cwd: worktree,
+      reasoningEffort: options.thinking,
+      sandbox: "read-only",
+    }, undefined, (message) => console.log(`Experiment ${experimentId} · ${message}`));
+    const diff = extractUnifiedDiff(String(result.output));
+    if (!diff) throw new Error("Local experiment engineer did not return a valid unified diff.");
+    await applyUnifiedDiff(worktree, diff);
   }
-  const result = await runWithLocalFallback({
-    ...task,
-    objective: `${task.objective}\nYou cannot call tools directly. Return ONLY a unified diff whose first line begins with diff --git. The diff must be applicable from the worktree root. Do not return a plan or prose.`,
-  }, {
-    provider: options.provider,
-    model: options.model,
-    cwd: worktree,
-    reasoningEffort: options.thinking,
-    sandbox: "read-only",
-  }, undefined, (message) => console.log(`Experiment ${experimentId} · ${message}`));
-  const diff = extractUnifiedDiff(String(result.output));
-  if (!diff) throw new Error("Local experiment engineer did not return a valid unified diff.");
-  await applyUnifiedDiff(worktree, diff);
+  const changed = changedProtectedFiles(integrity, worktree);
+  if (changed.length) throw new Error(`Specification-gaming guard rejected ${experimentId}: protected evaluator files changed: ${changed.join(", ")}`);
 }
 
 type ControllerDirective = "run" | "pause" | "stop";
@@ -1242,7 +1246,7 @@ research
             decisionStore.close();
             let run: { exitCode: number; stdout: string; stderr: string };
             try {
-              await implementCampaignHypothesis(root, experimentId, selectedHypothesis, manifest, { provider: options.provider as "codex" | "local", model: selectedModel, thinking: options.thinking });
+              await implementCampaignHypothesis(root, experimentId, selectedHypothesis, manifest, { provider: options.provider as "codex" | "local", model: selectedModel, thinking: options.thinking, protectedCommands: [adapter.config.evaluator.command] });
               run = await runCampaignExperiment(root, experimentId);
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
@@ -1479,6 +1483,15 @@ experiment.command("run")
     store.close();
     const worktreePath = await ensureWorktree(root, root, id);
     const experimentCwd = join(worktreePath, relative(root, adapter.workspacePath(root)));
+    const protectedReference = captureProtectedFiles(adapter.workspacePath(root), [adapter.config.evaluator.command]);
+    const changedProtected = changedProtectedFiles(protectedReference, experimentCwd);
+    if (changedProtected.length) {
+      const integrityStore = new ResearchStore(statePath);
+      integrityStore.appendEvent("experiment.integrity.failed", { experimentId: id, protectedFiles: changedProtected, reason: "evaluator or configuration changed inside the isolated worktree" });
+      integrityStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "invalid", integrityFailure: changedProtected } });
+      integrityStore.close();
+      throw new Error(`Experiment ${id} rejected: protected evaluator files changed: ${changedProtected.join(", ")}`);
+    }
     const command = experimentCommandFor(adapter, hypothesis?.payload);
     const contract = validateExecutionContract(manifest, experimentCwd, command);
     const contractStore = new ResearchStore(statePath);

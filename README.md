@@ -94,6 +94,8 @@ The controller also records evaluated trajectories for both research cycles and 
 
 Autonomous fast/yolo campaigns also use a bounded best-of-k portfolio. Hypotheses declare formulation families, are ranked by expected value per minute, and are rejected when their estimated cost cannot fit the remaining campaign budget. Independent lane reports are cross-pollinated into a bounded board of agreements, tensions, recommendations, and source evidence before the director chooses experiments. These mechanisms improve search diversity and information flow; they do not substitute for equal-budget benchmark evidence.
 
+Evaluator integrity is a hard gate: before an experiment engineer runs, Evidra fingerprints protected evaluator/configuration files and rejects any isolated worktree that changes them. This prevents specification-gaming results from entering the research ledger while still allowing the declared candidate implementation to change.
+
 Implemented today:
 
 - Ink-based interactive TUI with Codex-style transcript output;
