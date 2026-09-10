@@ -16,6 +16,8 @@ export interface BenchmarkArmSpec {
   baselineMetric: number;
   taskWorstMetric?: number;
   taskBestMetric?: number;
+  /** Maximum bounded retries within the arm's total time budget. */
+  retries?: number;
   metric: string;
   command: string[];
   cwd?: string;
@@ -25,7 +27,7 @@ export interface BenchmarkRunReport {
   schemaVersion: 1;
   startedAt: string;
   trials: HarnessTrial[];
-  runs: Array<{ harness: string; command: string[]; cwd: string; result: ProcessResult; metric?: number }>;
+  runs: Array<{ harness: string; command: string[]; cwd: string; result: ProcessResult; metric?: number; attempts: number }>;
 }
 
 function benchmarkCwd(root: string, requested: string | undefined, harness: string): string {
@@ -49,6 +51,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
   const prepared = arms.map((arm) => {
     if (!arm.command.length || arm.command.some((part) => !part.trim())) throw new Error(`Benchmark arm '${arm.harness}' has an empty command.`);
     if (!Number.isFinite(arm.budgetMinutes) || arm.budgetMinutes <= 0) throw new Error(`Benchmark arm '${arm.harness}' must have a positive budget.`);
+    if (arm.retries !== undefined && (!Number.isInteger(arm.retries) || arm.retries < 0 || arm.retries > 3)) throw new Error(`Benchmark arm '${arm.harness}' retries must be an integer from 0 to 3.`);
     return { arm, cwd: benchmarkCwd(root, arm.cwd, arm.harness) };
   });
   const startedAt = new Date().toISOString();
@@ -56,11 +59,27 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
   const runs: BenchmarkRunReport["runs"] = [];
   for (const { arm, cwd } of prepared) {
     onProgress?.(`Benchmark · ${arm.harness} · ${arm.task} · ${arm.budgetMinutes}m`);
-    const result = await runProcess(arm.command, cwd, arm.budgetMinutes * 60_000);
-    const parsed = parseMetricOutput(result.stdout, arm.metric);
-    const metric = parsed.metrics[arm.metric];
-    const validRun = result.exitCode === 0 && Number.isFinite(metric);
-    runs.push({ harness: arm.harness, command: arm.command, cwd, result, metric: Number.isFinite(metric) ? metric : undefined });
+    const deadline = Date.now() + arm.budgetMinutes * 60_000;
+    const maxAttempts = 1 + Math.min(3, Math.max(0, Math.floor(arm.retries ?? 0)));
+    let result: ProcessResult | undefined;
+    let metric: number | undefined;
+    let validRun = false;
+    let attempts = 0;
+    let totalDurationMs = 0;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs < 1_000) break;
+      attempts += 1;
+      result = await runProcess(arm.command, cwd, remainingMs);
+      totalDurationMs += result.durationMs;
+      const parsed = parseMetricOutput(result.stdout, arm.metric);
+      metric = parsed.metrics[arm.metric];
+      validRun = result.exitCode === 0 && Number.isFinite(metric);
+      if (validRun || attempt === maxAttempts - 1) break;
+      onProgress?.(`Benchmark · ${arm.harness} failed; retrying ${attempt + 1}/${maxAttempts - 1}`);
+    }
+    if (!result) throw new Error(`Benchmark arm '${arm.harness}' exhausted its time budget before the first attempt.`);
+    runs.push({ harness: arm.harness, command: arm.command, cwd, result, metric: Number.isFinite(metric) ? metric : undefined, attempts });
     trials.push({
       harness: arm.harness,
       task: arm.task,
@@ -74,8 +93,8 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       ...(arm.taskBestMetric !== undefined ? { taskBestMetric: arm.taskBestMetric } : {}),
       candidateMetric: Number.isFinite(metric) ? metric : undefined,
       validRun,
-      durationSeconds: result.durationMs / 1000,
-      recovered: false,
+      durationSeconds: totalDurationMs / 1000,
+      recovered: validRun && attempts > 1,
       reproducible: false,
     });
   }

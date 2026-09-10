@@ -1711,6 +1711,18 @@ test("benchmark runner executes matched arms and records evaluator-backed metric
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("benchmark runner records bounded recovery after a failed arm attempt", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-recovery-"));
+  try {
+    const marker = join(root, "attempted");
+    const script = `const fs=require("node:fs"); const p=${JSON.stringify(marker)}; if(!fs.existsSync(p)){fs.writeFileSync(p,"1"); process.exit(1)} console.log(JSON.stringify({score:0.8}));`;
+    const report = await runBenchmarkArms([{ harness: "recovering", task: "task-a", arm: "default", seed: 1, model: "test-model", budgetMinutes: 1, retries: 1, direction: "maximize", baselineMetric: 0.5, metric: "score", command: [process.execPath, "-e", script] }], root);
+    assert.equal(report.trials[0].validRun, true);
+    assert.equal(report.trials[0].recovered, true);
+    assert.equal(report.runs[0].attempts, 2);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("benchmark runner rejects arms that escape the benchmark workspace before execution", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-boundary-"));
   try {

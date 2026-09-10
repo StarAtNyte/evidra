@@ -43,6 +43,11 @@ declared time budgets, parses the declared metric, and writes raw process
 evidence alongside the scorecards. The runner does not claim reproducibility;
 independent repeats must be declared as separate matched arms.
 
+An arm may declare `retries` from 0 to 3. Retries share the arm's total time
+budget, and a later successful attempt is recorded as `recovered: true`; total
+elapsed time includes failed attempts. This makes recovery behavior measurable
+without allowing retries to quietly expand the declared budget.
+
 `benchmark compare` is the claim gate. It pairs the challenger and incumbent on
 the exact task, arm, seed, model, and budget, drops invalid evaluator outcomes,
 aggregates paired deltas by task, and computes a deterministic bootstrap lower
