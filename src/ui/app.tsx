@@ -7,7 +7,7 @@ import { ResearchStore } from "../core/store.js";
 import { runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
-import { executorFor, parseMetricOutput } from "../core/executors.js";
+import { executorFor, parseMetricOutput, validateRunMetric } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
 import { auditExperiment } from "../core/validation.js";
 import { sha256File } from "../core/evidence.js";
@@ -1198,6 +1198,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }),
       };
     }
+    result = validateRunMetric(result, adapter.config.metric.name);
     executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
     const fullStageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     fullStageStore.appendEvent(result.status === "completed" ? "experiment.stage.full_validation.completed" : "experiment.stage.full_validation.failed", { experimentId: id, runId: result.runId, metric: result.metrics[adapter.config.metric.name] ?? null, exitCode: result.exitCode, attempts: attempt });
