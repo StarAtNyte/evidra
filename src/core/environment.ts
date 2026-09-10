@@ -21,6 +21,11 @@ export interface EnvironmentSnapshot {
   lockfiles: Record<string, string>;
   probes: Record<string, Probe>;
   environment: Record<string, string>;
+  entropyAudit: {
+    reproducibilityFingerprint: string;
+    explicitSeedSignals: string[];
+    uncontrolledInputs: string[];
+  };
 }
 
 const LOCKFILES = ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock", "uv.lock", "poetry.lock", "Pipfile.lock"];
@@ -28,6 +33,24 @@ const SECRET_KEY = /(TOKEN|KEY|SECRET|PASSWORD|COOKIE|AUTH|CREDENTIAL|PASS)/i;
 
 function digest(value: string | Buffer): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+const VOLATILE_ENV = /^(PWD|OLDPWD|SHLVL|_|TERM|COLORTERM|LS_COLORS|XDG_RUNTIME_DIR|HOSTNAME|SSH_CONNECTION|TMPDIR|TMP)$/i;
+const SEED_KEY = /(?:^|_)(SEED|RANDOM_STATE|DETERMINISTIC|CUBLAS_WORKSPACE_CONFIG|CUDA_LAUNCH_BLOCKING)(?:$|_)/i;
+
+function entropyAudit(command: string[], environment: Record<string, string>, stable: Record<string, unknown>): EnvironmentSnapshot["entropyAudit"] {
+  const explicitSeedSignals = Object.entries(environment).filter(([key]) => SEED_KEY.test(key)).map(([key, value]) => `${key}=${value}`).sort();
+  const commandSeedSignals = command.filter((part) => /(?:seed|random[_-]?state|deterministic|reproduc)/i.test(part));
+  const uncontrolledInputs = [
+    ...(explicitSeedSignals.length || commandSeedSignals.length ? [] : ["no explicit seed or deterministic-mode signal in command/environment"]),
+    ...(environment.CUDA_VISIBLE_DEVICES ? [] : ["CUDA_VISIBLE_DEVICES is not pinned"]),
+    ...(environment.OMP_NUM_THREADS || environment.MKL_NUM_THREADS ? [] : ["thread-count environment is not pinned"]),
+  ];
+  return {
+    reproducibilityFingerprint: digest(JSON.stringify(stable)),
+    explicitSeedSignals: [...explicitSeedSignals, ...commandSeedSignals].slice(0, 20),
+    uncontrolledInputs,
+  };
 }
 
 async function probe(command: string[], cwd: string): Promise<Probe> {
@@ -80,7 +103,7 @@ export async function captureEnvironment(
       if (/^[a-z][a-z\d+.-]*:\/\/[^/\s]+@/i.test(text)) return [key, "<redacted-url-credentials>"];
       return [key, text];
     }));
-  return {
+  const snapshot: Omit<EnvironmentSnapshot, "entropyAudit"> = {
     capturedAt: new Date().toISOString(),
     node: process.version,
     platform: platform(),
@@ -96,4 +119,5 @@ export async function captureEnvironment(
     probes: { node: nodeProbe, python: pythonProbe, python3: python3Probe, nvidiaSmi: gpuProbe },
     environment,
   };
+  return { ...snapshot, entropyAudit: entropyAudit(command, environment, { node: snapshot.node, platform: snapshot.platform, arch: snapshot.arch, os: snapshot.os, cwd: snapshot.cwd, command: snapshot.command, executor: snapshot.executor, gpu: snapshot.gpu, gitHead: snapshot.gitHead, workingTreeDiffHash: snapshot.workingTreeDiffHash, lockfiles: snapshot.lockfiles, probes: snapshot.probes, environment: Object.fromEntries(Object.entries(environment).filter(([key]) => !VOLATILE_ENV.test(key))) }) };
 }

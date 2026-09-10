@@ -285,6 +285,12 @@ distinct runtime responsibilities.
 Source: [AI Harness Engineering: A Runtime Substrate for Foundation-Model
 Software Agents](https://arxiv.org/abs/2605.13357).
 
+Entropy auditing is now part of every recorded execution environment. Evidra
+emits a reproducibility fingerprint over stable runtime inputs, records explicit
+seed/determinism signals, and reports unpinned CUDA and thread settings as
+uncontrolled inputs. These findings are diagnostic rather than a fabricated
+guarantee of determinism; repeated runs still need independent validation.
+
 Matched benchmark runs now close the loop operationally: Evidra persists each
 scorecard and failure profile, surfaces it in reports, and supplies recent
 benchmark feedback to the next research-director cycle. A recurring timeout or
