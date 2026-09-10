@@ -1,8 +1,8 @@
 import { existsSync, readdirSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, relative, resolve } from "node:path";
 import { guardCommand } from "./permissions.js";
 import { runProcess, type ProcessControl } from "./process.js";
-import { validateSubmissionBundle, type SubmissionValidation } from "./submissions.js";
+import { safeBundlePath, validateSubmissionBundle, type SubmissionValidation } from "./submissions.js";
 import type { CompetitionConfig } from "./types.js";
 
 export interface SubmissionReceipt {
@@ -20,10 +20,9 @@ export interface SubmissionAttempt {
 }
 
 function predictionFile(bundlePath: string, configured?: string): string {
-  const candidate = configured ? resolve(bundlePath, configured) : readdirSync(bundlePath).map((name) => join(bundlePath, name)).find((path) => /submission|prediction/i.test(basename(path)));
+  const candidateName = configured ?? readdirSync(bundlePath).find((name) => /submission|prediction/i.test(basename(name)));
+  const candidate = candidateName ? safeBundlePath(bundlePath, candidateName) : undefined;
   if (!candidate || !existsSync(candidate)) throw new Error("Submission adapter could not find a configured prediction file in the bundle.");
-  const rel = relative(resolve(bundlePath), resolve(candidate));
-  if (isAbsolute(rel) || rel.startsWith("..")) throw new Error("Configured predictionFile escapes the submission bundle.");
   return candidate;
 }
 

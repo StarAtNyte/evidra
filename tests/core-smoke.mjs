@@ -887,10 +887,11 @@ test("source claims and submission provenance are auditable", () => {
     assert.equal(sourceClaims("This method improves validation accuracy by using a robust model and reports results on a held-out dataset.").length, 1);
     const artifact = join(root, "submission.csv");
     writeFileSync(artifact, "id,prediction\n1,0\n");
-    const manifest = { schemaVersion: 1, id: "exp-1", parent: null, hypothesisId: "hyp-1", gitCommit: "abc", datasetVersion: "data", splitVersion: "split", change: { configPatch: {} }, resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0], seeds: [0], requiredArtifacts: [] }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 0, requireReplication: false }, createdAt: new Date().toISOString() };
+    const manifest = { schemaVersion: 1, id: "exp-1", parent: null, hypothesisId: "hyp-1", gitCommit: "abc", datasetVersion: "data", splitVersion: "split", change: { configPatch: { apiKey: "sk-test_12345678901234567890" } }, resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0], seeds: [0], requiredArtifacts: [] }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 0, requireReplication: false }, createdAt: new Date().toISOString() };
     const run = { runId: "run-1", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 1 }, artifacts: { submission: artifact } };
     const bundle = prepareSubmission(root, "exp-1", manifest, run, { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } });
     assert.equal(validateSubmissionBundle(bundle.path).valid, true);
+    assert.doesNotMatch(readFileSync(join(bundle.path, "provenance.json"), "utf8"), /sk-test_/);
     assert.throws(() => prepareSubmission(root, "exp-1", manifest, { ...run, status: "failed" }, { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } }), /not successfully completed/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -904,6 +905,24 @@ test("submission validation rejects unsafe checksum paths", () => {
     assert.equal(report.valid, false);
     assert.equal(report.checks.some((check) => check.name === "prediction-artifact" && !check.passed), true);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("submission validation rejects symlinked bundle artifacts", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-submission-symlink-"));
+  const outside = join(tmpdir(), `evidra-submission-secret-${Date.now()}.csv`);
+  try {
+    writeFileSync(outside, "id,prediction\n1,0.5\n");
+    writeFileSync(join(root, "provenance.json"), JSON.stringify({ submissionId: "sub-2", experimentId: "exp-2" }));
+    symlinkSync(outside, join(root, "prediction.csv"));
+    const digest = createHash("sha256").update(readFileSync(outside)).digest("hex");
+    writeFileSync(join(root, "checksums.sha256"), `sha256:${digest}  prediction.csv\n`);
+    const report = validateSubmissionBundle(root);
+    assert.equal(report.valid, false);
+    assert.equal(report.checks.some((check) => check.name === "checksum:prediction.csv" && !check.passed), true);
+  } finally {
+    rmSync(outside, { force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("configured command submission requires a valid approved bundle and preserves a receipt", async () => {
