@@ -102,6 +102,42 @@ async function waitForControllerDirective(): Promise<"run" | "stop"> {
   }
 }
 
+function acquireCliControllerLease(mode: "research" | "challenge"): () => void {
+  const controllerId = `cli-${process.pid}-${Date.now()}`;
+  const initial = new ResearchStore(statePath);
+  const acquired = initial.acquireControllerLease(controllerId, process.pid, mode, "starting");
+  initial.close();
+  if (!acquired.acquired) {
+    const lease = acquired.lease;
+    throw new Error(`Another Evidra controller is already running (pid ${lease?.pid ?? "unknown"}, step ${lease?.currentStep ?? "unknown"}). Use evidra controller status or pause it before starting another campaign.`);
+  }
+  let released = false;
+  const heartbeat = setInterval(() => {
+    try {
+      const store = new ResearchStore(statePath);
+      store.heartbeatControllerLease(controllerId, mode, "research-cycle");
+      store.close();
+    } catch {
+      // The active loop remains authoritative; a later lease check will detect failure.
+    }
+  }, 10_000);
+  heartbeat.unref();
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    clearInterval(heartbeat);
+    try {
+      const store = new ResearchStore(statePath);
+      store.releaseControllerLease(controllerId);
+      store.close();
+    } catch {
+      // Process shutdown must not turn a completed campaign into an exit failure.
+    }
+  };
+  process.once("exit", release);
+  return release;
+}
+
 async function ingestCompetitionSources(adapter: ReturnType<typeof activeCompetition>): Promise<void> {
   if (!adapter.config.researchSources?.length) return;
   const store = new ResearchStore(statePath);
@@ -459,19 +495,27 @@ research
   .option("--thinking <effort>", "reasoning effort", "high")
   .option("--lanes <count>", "maximum independent research lanes", "3")
   .option("--limit-policy <policy>", "on provider usage limit: wait, fallback, or stop", "wait")
+  .option("--resume", "resume the latest durable non-completed research campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; limitPolicy: string; skipBaseline?: boolean }) => {
+  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; limitPolicy: string; resume?: boolean; skipBaseline?: boolean }) => {
     if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
     if (!["wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'wait', 'fallback', or 'stop'.");
     const adapter = activeCompetition();
     await ingestCompetitionSources(adapter);
-    const objective = `${options.goal}. Stop condition: ${options.stop}`;
     const budget = durationMinutes(options.budget);
     const selectedModel = options.provider === "local" && options.model === "default" ? "qwen3.6:27b" : options.model;
     const laneLimit = Math.max(1, Math.min(6, Number.parseInt(options.lanes, 10) || 1));
     await checkProvider({ provider: options.provider, model: selectedModel, cwd: root });
+    const releaseLease = acquireCliControllerLease("research");
     const started = Date.now();
-    const campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed" } = { goal: options.goal, budgetMinutes: budget, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running" };
+    const savedStore = new ResearchStore(statePath);
+    const savedCampaign = savedStore.campaign() as { goal?: string; budgetMinutes?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed" } | undefined;
+    savedStore.close();
+    const campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed" } = options.resume && savedCampaign && savedCampaign.status !== "completed"
+      ? { goal: savedCampaign.goal ?? options.goal, budgetMinutes: savedCampaign.budgetMinutes ?? budget, stopCondition: savedCampaign.stopCondition ?? options.stop, startedAt: savedCampaign.startedAt ?? new Date(started).toISOString(), status: "running" }
+      : { goal: options.goal, budgetMinutes: budget, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running" };
+    if (options.resume) console.log(savedCampaign && savedCampaign.status !== "completed" ? `Resuming durable research campaign from ${savedCampaign.startedAt ?? "saved state"}.` : "No resumable campaign found; starting a new research campaign.");
+    const objective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}`;
     let cycle = 0;
     do {
       const directive = await waitForControllerDirective();
