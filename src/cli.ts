@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
@@ -31,6 +31,7 @@ import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { compareRuns } from "./core/statistics.js";
 import { evaluateTrajectory, type TrajectoryEvent } from "./core/trajectories.js";
+import { extractUnifiedDiff } from "./core/experiment-patches.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
@@ -99,19 +100,55 @@ async function implementCampaignHypothesis(
   manifest: unknown,
   options: { provider: "codex" | "local"; model: string; thinking: string },
 ): Promise<void> {
-  if (options.provider !== "codex") return;
   const worktree = await ensureWorktree(rootPath, rootPath, experimentId);
-  await runWithLocalFallback({
+  const manifestValue = manifest as { change?: { configPatch?: { estimatorPath?: unknown } } };
+  const target = typeof manifestValue.change?.configPatch?.estimatorPath === "string" ? manifestValue.change.configPatch.estimatorPath : undefined;
+  const targetPath = target ? resolve(worktree, target) : undefined;
+  const safeTarget = targetPath && (targetPath === worktree || targetPath.startsWith(`${worktree}/`)) && existsSync(targetPath) ? targetPath : undefined;
+  const inventory = await runProcess(["rg", "--files", "-g", "!.git/**", "-g", "!.sota/**", "-g", "!node_modules/**"], worktree, 60_000);
+  const task = {
     role: "experiment engineer",
     objective: "Implement the selected hypothesis in this isolated worktree. Inspect the existing project, make the smallest reproducible change described by the hypothesis, run relevant smoke checks, and leave the worktree ready for evaluation. Do not touch files outside this worktree, submit anything, or invent a result.",
-    context: { manifest, hypothesis, worktree },
+    context: {
+      manifest,
+      hypothesis,
+      worktree,
+      workspaceFiles: inventory.stdout.split("\n").filter(Boolean).slice(0, 300),
+      ...(safeTarget ? { targetFile: { path: target, content: readFileSync(safeTarget, "utf8").slice(0, 60_000) } } : {}),
+    },
+  } as const;
+  if (options.provider === "codex") {
+    await runWithLocalFallback(task, {
+      provider: options.provider,
+      model: options.model,
+      cwd: worktree,
+      reasoningEffort: options.thinking,
+      sandbox: "workspace-write",
+    }, undefined, (message) => console.log(`Experiment ${experimentId} · ${message}`));
+    return;
+  }
+  const result = await runWithLocalFallback({
+    ...task,
+    objective: `${task.objective}\nYou cannot call tools directly. Return ONLY a unified diff whose first line begins with diff --git. The diff must be applicable from the worktree root. Do not return a plan or prose.`,
   }, {
     provider: options.provider,
     model: options.model,
     cwd: worktree,
     reasoningEffort: options.thinking,
-    sandbox: "workspace-write",
+    sandbox: "read-only",
   }, undefined, (message) => console.log(`Experiment ${experimentId} · ${message}`));
+  const diff = extractUnifiedDiff(String(result.output));
+  if (!diff) throw new Error("Local experiment engineer did not return a valid unified diff.");
+  const patchPath = join(worktree, `.evidra-patch-${experimentId}.diff`);
+  writeFileSync(patchPath, `${diff}\n`);
+  try {
+    const check = await runProcess(["git", "apply", "--check", patchPath], worktree, 60_000);
+    if (check.exitCode !== 0) throw new Error(`Local engineer patch failed validation: ${check.stderr || check.stdout}`);
+    const applied = await runProcess(["git", "apply", "--whitespace=nowarn", patchPath], worktree, 60_000);
+    if (applied.exitCode !== 0) throw new Error(`Local engineer patch could not be applied: ${applied.stderr || applied.stdout}`);
+  } finally {
+    try { unlinkSync(patchPath); } catch { /* patch cleanup is best effort */ }
+  }
 }
 
 type ControllerDirective = "run" | "pause" | "stop";

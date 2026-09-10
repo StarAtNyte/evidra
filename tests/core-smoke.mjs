@@ -37,6 +37,7 @@ import { rankPriorities } from "../dist/core/scheduler.js";
 import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
 import { latestSourceEntries, latestSourcePayloads, researchMemoryContext } from "../dist/core/research-context.js";
+import { extractUnifiedDiff } from "../dist/core/experiment-patches.js";
 import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js";
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
@@ -78,6 +79,11 @@ test("active research context keeps only the newest source version per URL", () 
   ];
   assert.deepEqual(latestSourcePayloads(sources, 12).map((source) => source.title), ["new", "paper"]);
   assert.deepEqual(latestSourceEntries(sources, 12).map((source) => source.id), ["new", "other"]);
+});
+
+test("local experiment engineer output is reduced to a validated unified diff", () => {
+  assert.match(extractUnifiedDiff("I changed it:\n```diff\ndiff --git a/src/x.ts b/src/x.ts\n--- a/src/x.ts\n+++ b/src/x.ts\n@@ -1 +1 @@\n-a\n+b\n```"), /^diff --git/);
+  assert.equal(extractUnifiedDiff("I cannot safely produce a patch."), undefined);
 });
 
 test("paused campaign time is excluded from the autonomous budget", () => {

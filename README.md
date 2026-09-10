@@ -117,6 +117,7 @@ Implemented today:
 - headless research and challenge campaigns that execute selected hypotheses through the same isolated runner as the TUI, with optional `--executor local|modal` routing;
 - Codex-backed experiment-engineer implementation in the isolated worktree before evaluation, with failed hypotheses retained as evidence instead of being blindly retried;
 - durable headless research trajectories with structural, goal, evidence, recovery, and termination quality signals feeding future allocation;
+- local-model experiment implementation through bounded unified-diff proposals, checked and applied only inside the experiment worktree;
 - shell and autonomy safety guards.
 
 ## Quick start
