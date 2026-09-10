@@ -128,6 +128,14 @@ test("route drift requires adjacent windows before changing policy", () => {
   assert.equal(detectRouteDrift([{ route: "codex/model", outcome: "failure" }], { window: 3 }).drifted, false);
 });
 
+test("route drift keeps different research modes isolated by route key", () => {
+  const mixed = [
+    { route: "research/codex/model", outcome: "success" }, { route: "research/codex/model", outcome: "success" },
+    { route: "challenge/codex/model", outcome: "failure" }, { route: "challenge/codex/model", outcome: "failure" },
+  ];
+  assert.equal(detectRouteDrift(mixed, { window: 2 }).drifted, false);
+});
+
 test("formal verification adapters classify proof and solver evidence", () => {
   assert.equal(verifierKind(["lake", "env", "lean", "Proof.lean"]), "lean");
   assert.equal(verifierKind(["z3", "proof.smt2"]), "smt");

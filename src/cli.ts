@@ -1444,10 +1444,11 @@ research
       }), budgetRemainingMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)), requestedParallel: laneLimit });
       const routeOutcomes = durableEvents.filter((event) => event.type === "research.capability_outcome").slice(-24).map((event) => {
         const payload = event.payload as { mode?: unknown; servedProvider?: unknown; servedModel?: unknown; outcome?: unknown; quality?: unknown };
+        const routeMode = payload.mode === "challenge" || payload.mode === "research" ? payload.mode : mode;
         const provider = typeof payload.servedProvider === "string" ? payload.servedProvider : "unknown";
         const model = typeof payload.servedModel === "string" ? payload.servedModel : "unknown";
         const outcome = payload.outcome === "success" || payload.outcome === "partial" || payload.outcome === "failure" ? payload.outcome : "partial";
-        return { route: `${provider}/${model}`, outcome, quality: typeof payload.quality === "string" ? payload.quality : undefined } as const;
+        return { route: `${routeMode}/${provider}/${model}`, outcome, quality: typeof payload.quality === "string" ? payload.quality : undefined } as const;
       });
       const environmentDrift = detectRouteDrift(routeOutcomes).drifted;
       if (environmentDrift) store.appendEvent("research.environment_drift.detected", { cycle, report: detectRouteDrift(routeOutcomes) });
