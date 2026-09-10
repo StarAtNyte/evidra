@@ -59,7 +59,7 @@ import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
-import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward } from "../dist/core/search-policy.js";
+import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
 import { planSuccessiveHalving, promoteHalvingStage } from "../dist/core/successive-halving.js";
 import { estimateCost } from "../dist/core/cost-model.js";
@@ -1865,6 +1865,21 @@ test("search policy explores untried operators and penalizes invalid evidence", 
 
 test("default autonomous search portfolio exposes every documented operator", () => {
   assert.deepEqual(DEFAULT_SEARCH_OPERATORS, ["greedy", "ucb_portfolio", "evolutionary", "mcts", "ablation", "combination", "replication", "audit"]);
+});
+
+test("search policy evidence reports rankings, rewards, cost, and reproducibility", () => {
+  const report = summarizeSearchPolicyEvidence([
+    { type: "research.search_policy.selected", payload: { competitionId: "arc", selected: { operator: "greedy", score: 2 }, ranked: [{ operator: "greedy", score: 2 }, { operator: "audit", score: 1 }] } },
+    { type: "research.search_policy.selected", payload: { competitionId: "arc", selected: { operator: "audit", score: 3 }, ranked: [{ operator: "audit", score: 3 }, { operator: "greedy", score: 1 }] } },
+    { type: "research.search.reward", payload: { competitionId: "arc", operator: "greedy", reward: 0.4, durationSeconds: 120, valid: true, reproducible: true } },
+    { type: "research.search.reward", payload: { competitionId: "arc", operator: "audit", reward: -1, durationSeconds: 60, valid: false, reproducible: false } },
+    { type: "research.search.reward", payload: { competitionId: "other", operator: "greedy", reward: 1, durationSeconds: 1, valid: true, reproducible: true } },
+  ], "arc");
+  assert.equal(report.cycles, 2);
+  assert.equal(report.operators.find((entry) => entry.operator === "greedy")?.selections, 1);
+  assert.equal(report.operators.find((entry) => entry.operator === "audit")?.meanRank, 1.5);
+  assert.equal(report.operators.find((entry) => entry.operator === "audit")?.failureRate, 1);
+  assert.equal(report.operators.find((entry) => entry.operator === "greedy")?.meanCostMinutes, 2);
 });
 
 test("search policy exposes bounded evolutionary and MCTS exploration", () => {

@@ -135,6 +135,9 @@ The search-policy item is implemented as a stable default portfolio:
 `replication`, and `audit` are explicit bounded operators. They share the same
 experiment manifests and reward ledger; the remaining work is a controlled
 benchmark, not an assumption that a named policy is automatically better.
+Every cycle now persists the complete bounded ranking and the budget, failure,
+and evidence-conflict context that produced it, so policy evolution can be
+audited rather than inferred from the selected operator alone.
 
 Portfolio scheduling now executes a domain-agnostic successive-halving plan:
 cheap screen fractions cover the candidate set first, deterministic retain counts

@@ -30,6 +30,97 @@ export interface RankedSearchArm extends SearchArm {
   rationale: string;
 }
 
+export interface SearchPolicyEvent {
+  selected?: RankedSearchArm;
+  ranked?: RankedSearchArm[];
+  portfolio?: RankedSearchArm[];
+  remainingBudgetMinutes?: number;
+  recentFailures?: number;
+  evidenceConflicts?: number;
+  competitionId?: string;
+}
+
+export interface SearchRewardEvent {
+  operator?: string;
+  reward?: number;
+  durationSeconds?: number;
+  valid?: boolean;
+  reproducible?: boolean;
+  competitionId?: string;
+}
+
+export interface SearchPolicyEvidence {
+  competitionId?: string;
+  cycles: number;
+  operators: Array<{
+    operator: SearchOperator;
+    selections: number;
+    appearances: number;
+    meanRank: number | null;
+    meanScore: number | null;
+    rewardSamples: number;
+    meanReward: number | null;
+    meanCostMinutes: number | null;
+    failureRate: number | null;
+    reproducibilityRate: number | null;
+  }>;
+}
+
+/**
+ * Turn durable policy and reward events into an auditable policy report.
+ * Missing legacy metadata is accepted, but scoped events never leak between
+ * unrelated competitions.
+ */
+export function summarizeSearchPolicyEvidence(
+  events: Array<{ type: string; payload: unknown }>,
+  competitionId?: string,
+): SearchPolicyEvidence {
+  const sameCompetition = (payload: unknown): boolean => {
+    const value = payload && typeof payload === "object" ? payload as { competitionId?: unknown } : {};
+    return value.competitionId === undefined || value.competitionId === competitionId;
+  };
+  const policies = events
+    .filter((event) => event.type === "research.search_policy.selected" && sameCompetition(event.payload))
+    .map((event) => event.payload as SearchPolicyEvent)
+    .filter((event) => Array.isArray(event.ranked) || event.selected?.operator);
+  const rewards = events
+    .filter((event) => event.type === "research.search.reward" && sameCompetition(event.payload))
+    .map((event) => event.payload as SearchRewardEvent);
+  const operators = DEFAULT_SEARCH_OPERATORS.map((operator) => {
+    const ranks: number[] = [];
+    const scores: number[] = [];
+    let selections = 0;
+    for (const policy of policies) {
+      const ranked = Array.isArray(policy.ranked) ? policy.ranked : policy.selected ? [policy.selected] : [];
+      const index = ranked.findIndex((arm) => arm.operator === operator);
+      if (index >= 0) {
+        ranks.push(index + 1);
+        const score = Number(ranked[index]?.score);
+        if (Number.isFinite(score)) scores.push(score);
+      }
+      if (policy.selected?.operator === operator) selections += 1;
+    }
+    const operatorRewards = rewards.filter((reward) => reward.operator === operator && Number.isFinite(Number(reward.reward)));
+    const values = operatorRewards.map((reward) => Number(reward.reward));
+    const durations = operatorRewards.map((reward) => Number(reward.durationSeconds) / 60).filter((value) => Number.isFinite(value) && value > 0);
+    const successful = operatorRewards.filter((reward) => reward.valid === true).length;
+    const reproducible = operatorRewards.filter((reward) => reward.reproducible !== undefined);
+    return {
+      operator,
+      selections,
+      appearances: ranks.length,
+      meanRank: ranks.length ? ranks.reduce((sum, value) => sum + value, 0) / ranks.length : null,
+      meanScore: scores.length ? scores.reduce((sum, value) => sum + value, 0) / scores.length : null,
+      rewardSamples: values.length,
+      meanReward: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null,
+      meanCostMinutes: durations.length ? durations.reduce((sum, value) => sum + value, 0) / durations.length : null,
+      failureRate: operatorRewards.length ? 1 - successful / operatorRewards.length : null,
+      reproducibilityRate: reproducible.length ? reproducible.filter((reward) => reward.reproducible === true).length / reproducible.length : null,
+    };
+  });
+  return { competitionId, cycles: policies.length, operators };
+}
+
 /**
  * Select the next research operator with an explicit bounded search policy.
  * UCB is the default; evolutionary and MCTS-style arms expose different

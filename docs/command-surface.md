@@ -80,6 +80,7 @@ The initial adapter is `whestbench`. Future adapters include Kaggle, AIcrowd, ma
 /research pause               Pause only the research scheduler
 /research stop                Stop scheduling and preserve state
 /research propose <question>  Generate validated hypotheses
+/research policy              Show empirical operator rankings, rewards, cost, and failure rates
 /research explain <id>        Explain why a hypothesis or experiment matters
 /research compare <a> <b>    Compare two research directions
 /research adapt <source>     Convert a source technique into a challenge hypothesis

@@ -58,7 +58,7 @@ import { validateCompetitionContract } from "./core/competition-contract.js";
 import { candidateChangePath } from "./core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "./core/execution-heartbeat.js";
 import { researchFailureRecord } from "./core/research-failure.js";
-import { DEFAULT_SEARCH_OPERATORS, DEFAULT_SEARCH_OPERATOR_COSTS, DEFAULT_SEARCH_OPERATOR_NOVELTY, rankSearchArms, searchReward } from "./core/search-policy.js";
+import { DEFAULT_SEARCH_OPERATORS, DEFAULT_SEARCH_OPERATOR_COSTS, DEFAULT_SEARCH_OPERATOR_NOVELTY, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "./core/search-policy.js";
 import { planPortfolio } from "./core/portfolio.js";
 import { promoteHalvingStage } from "./core/successive-halving.js";
 import type { CostObservation } from "./core/cost-model.js";
@@ -1199,7 +1199,18 @@ research
         recentFailures: recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length,
         evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
       });
-      store.appendEvent("research.search_policy.selected", { selected: searchPolicy[0], portfolio: searchPolicy.slice(0, 4) });
+      store.appendEvent("research.search_policy.selected", {
+        cycle,
+        competitionId: store.project()?.competitionId,
+        selected: searchPolicy[0],
+        // Persist the complete bounded ranking so policy analysis can explain
+        // both the chosen operator and the alternatives it rejected.
+        ranked: searchPolicy,
+        portfolio: searchPolicy.slice(0, 4),
+        remainingBudgetMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
+        recentFailures: recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length,
+        evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
+      });
       const experienceRecords = recentTrajectories.map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
       const experienceMix = selectCurriculum(experienceRecords);
       const curriculumGuidance = experienceMix.map((stage) => `stage ${stage.stage}: ${stage.trajectoryIds.join(", ") || "none"} (${stage.rationale})`).join("; ");
@@ -1714,6 +1725,17 @@ research
       if (terminal) break;
     } while (true);
   });
+
+research.command("policy")
+  .description("Show empirical search-operator evidence from autonomous cycles")
+  .action(() => {
+    const store = new ResearchStore(statePath);
+    const project = store.project();
+    const report = summarizeSearchPolicyEvidence(store.recentEvents(5000), project?.competitionId);
+    store.close();
+    console.log(JSON.stringify(report, null, 2));
+  });
+
 research.command("propose")
   .argument("[objective]", "research objective", "Inspect the current workspace and propose three falsifiable, evidence-driven hypotheses.")
   .action(async (objective: string) => {
