@@ -151,7 +151,10 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
   };
   const results: Array<{ trial: HarnessTrial; run: BenchmarkRunReport["runs"][number] } | undefined> = Array.from({ length: prepared.length });
   let next = 0;
-  const concurrency = Math.max(1, Math.min(prepared.length, Math.floor(options.maxParallel ?? 1)));
+  const requestedConcurrency = Math.max(1, Math.min(prepared.length, Math.floor(options.maxParallel ?? 1)));
+  const sharedWorkspace = new Set(prepared.map((entry) => entry.cwd)).size < prepared.length;
+  const concurrency = sharedWorkspace ? 1 : requestedConcurrency;
+  if (sharedWorkspace && requestedConcurrency > 1) onProgress?.("Benchmark · shared workspace detected; serializing arms to preserve isolation");
   const worker = async (): Promise<void> => {
     while (true) {
       const index = next++;

@@ -57,6 +57,11 @@ evidence—including bounded, redacted stdout/stderr and metric data for every
 attempt—alongside the scorecards. The runner does not claim reproducibility;
 independent repeats must be declared as separate matched arms.
 
+Parallel arms are serialized automatically when their resolved working
+directories overlap. Parallel execution is retained only for genuinely
+separate workspaces, preventing concurrent harnesses from contaminating one
+another through shared files, caches, or generated artifacts.
+
 Trials may also declare `dataRevision` and `runtimeFingerprint`. When either is
 present, every harness on the matched arm must agree; a hidden dataset or
 runtime mismatch invalidates the protocol instead of becoming a silent source

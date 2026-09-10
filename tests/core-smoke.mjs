@@ -1976,6 +1976,20 @@ test("benchmark runner bounds parallel arms while preserving protocol order", as
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("benchmark runner serializes parallel requests that share a workspace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-shared-workspace-"));
+  try {
+    const busy = join(root, "busy");
+    const script = `const fs=require("node:fs"); const p=${JSON.stringify(busy)}; if(fs.existsSync(p)){process.exit(2)} fs.writeFileSync(p,"1"); setTimeout(()=>{fs.unlinkSync(p); console.log(JSON.stringify({score:0.8}))},40);`;
+    const arms = ["first", "second"].map((harness) => ({
+      harness, task: harness, arm: "default", seed: 1, model: "test-model", budgetMinutes: 1,
+      direction: "maximize", baselineMetric: 0.5, metric: "score", cwd: ".", command: [process.execPath, "-e", script],
+    }));
+    const report = await runBenchmarkArms(arms, root, undefined, { maxParallel: 2 });
+    assert.equal(report.trials.every((trial) => trial.validRun), true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("benchmark runner records bounded recovery after a failed arm attempt", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-recovery-"));
   try {
