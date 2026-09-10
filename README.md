@@ -314,6 +314,8 @@ The store also performs a conservative consistency pass: exact duplicates are re
 
 Unresolved evidence conflicts feed back into autonomous allocation: the next research cycle prioritizes source review and independent falsification before spending compute on another hypothesis.
 
+Long campaigns also receive a bounded durable-memory snapshot on every cycle. It contains recent claims, hypotheses, and contradiction edges independently of the short event window, so research does not forget earlier evidence after a restart or many experiments.
+
 ## Experiments and permissions
 
 Experiment execution is intended to be isolated and reproducible:

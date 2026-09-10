@@ -39,6 +39,7 @@ import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "../core/execution-stages.js";
 import { runReducedValidation } from "../core/stage-executor.js";
 import { renderTimeline } from "../core/timeline.js";
+import { researchMemoryContext } from "../core/research-context.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -658,6 +659,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       contradictions: store.edges().filter((edge) => edge.relation === "contradicts").length,
       duplicates: consistencyEvents.filter((event) => event.type === "evidence.claim.duplicate_detected").length,
     };
+    const researchMemory = researchMemoryContext(store, 30);
     const recentFailureCount = store.trajectories(50).filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
     const campaignRemaining = campaign ? Math.max(0, campaign.budgetMinutes - (Date.now() - Date.parse(campaign.startedAt)) / 60_000) : undefined;
     const route = routeCapability({ objective, mode, provider: config.provider, autonomy: config.autonomy, recentFailureCount, budgetRemainingMinutes: campaignRemaining, requestedParallel: 3 });
@@ -690,6 +692,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         ultimateGoal: objective,
         allocation,
         evidenceConflicts,
+        researchMemory,
       }, {
         provider: config.provider,
         model: config.model,
@@ -717,6 +720,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         phaseGoal: phaseGoal ?? null,
         allocation,
         evidenceConflicts,
+        researchMemory,
         laneReports,
         constraints: { no_submission: true, no_file_edits: true },
       }, {

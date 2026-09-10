@@ -36,6 +36,7 @@ import { allocateNextResearch } from "../dist/core/allocation.js";
 import { rankPriorities } from "../dist/core/scheduler.js";
 import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
+import { researchMemoryContext } from "../dist/core/research-context.js";
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
 
@@ -345,6 +346,20 @@ test("evidence conflicts take priority in research allocation", () => {
   assert.equal(allocation.focus, "evidence-validation");
   assert.equal(allocation.priority, "critical");
   assert.match(allocation.strategy, /conflicting/);
+});
+
+test("research memory context remains bounded and cumulative", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-research-memory-context-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.saveClaim({ id: "memory-claim", payload: { statement: "A durable measured observation", scope: "workspace", confidence: 0.9, sourceType: "observation", sourceId: "obs-1", status: "active" } });
+    store.saveHypothesis({ id: "memory-hypothesis", payload: { title: "Bounded memory", mechanism: "Keep durable context available", status: "proposed" } });
+    const context = researchMemoryContext(store, 1);
+    assert.equal(context.claims[0].id, "memory-claim");
+    assert.equal(context.hypotheses[0].title, "Bounded memory");
+    assert.deepEqual(context.contradictions, []);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("project-local competition manifests replace hardcoded adapters", () => {

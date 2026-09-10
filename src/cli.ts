@@ -17,6 +17,7 @@ import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.
 import { submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
 import { renderTimeline } from "./core/timeline.js";
+import { researchMemoryContext } from "./core/research-context.js";
 import { recoveryDelay, recoveryPlan } from "./core/recovery.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
@@ -490,6 +491,7 @@ research
       const phaseGoal = activePhaseGoal(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)));
       const recentEvents = store.recentEvents(20);
       const researchSources = store.sources().slice(0, 12).map((entry) => entry.payload);
+      const researchMemory = researchMemoryContext(store, 30);
       console.log(`Research ${cycle} · inspecting workspace and baseline (budget ${budget}m)...`);
       const gitStatus = await runProcess(["git", "status", "--short"], root);
       const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
@@ -523,6 +525,7 @@ research
             researchSources,
             ultimateGoal: options.goal,
             phaseGoal: phaseGoal ?? null,
+            researchMemory,
           }, {
             provider: options.provider,
             model: selectedModel,
@@ -535,7 +538,7 @@ research
             autonomy: "fast",
           });
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: options.goal, phaseGoal: phaseGoal ?? null, laneReports }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter) });
+          decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: options.goal, phaseGoal: phaseGoal ?? null, laneReports, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter) });
           criticReview = await runResearchCritic(objective, decision, laneReports, {
             provider: options.provider,
             model: selectedModel,
@@ -609,6 +612,7 @@ research.command("propose")
     store.appendEvent("research.observation", observation);
     store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
     const recentEvents = store.recentEvents(20);
+    const researchMemory = researchMemoryContext(store, 30);
     store.close();
     console.log("Research 3/3 · analyzing observed evidence...");
     const decision = await runResearchDirector(objective, {
@@ -619,6 +623,7 @@ research.command("propose")
       observation,
       ultimateGoal: objective,
       phaseGoal: phaseGoal ?? null,
+      researchMemory,
     }, { provider: "codex", model: "default", reasoningEffort: "medium", fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });
     const decisionStore = new ResearchStore(statePath);
     materializeResearchDecision(decisionStore, decision);
