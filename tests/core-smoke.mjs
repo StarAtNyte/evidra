@@ -47,7 +47,7 @@ import { materializeResearchDecision } from "../dist/core/research-graph.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
 import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../dist/core/campaign.js";
 import { readCampaignRuntime } from "../dist/core/campaign.js";
-import { applyCriticGate } from "../dist/core/critic-gate.js";
+import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment } from "../dist/core/validation.js";
 import { assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
@@ -249,6 +249,18 @@ test("critic gate converts terminal and execution decisions into inspection", ()
   assert.equal(revisedRun.blocked, true);
   assert.equal(revisedRun.decision.decision, "inspect");
   assert.match(revisedRun.decision.nextAction, /critic verdict is revise/i);
+});
+
+test("critic constraints survive short event windows until a later proceed result", () => {
+  const open = latestOpenCriticConstraint([
+    { type: "research.critic.completed", payload: { review: { verdict: "revise", summary: "check leakage", objections: ["split is unverified"], requiredChecks: ["run grouped audit"] } } },
+    { type: "research.observation", payload: {} },
+  ]);
+  assert.deepEqual(open, { verdict: "revise", summary: "check leakage", objections: ["split is unverified"], requiredChecks: ["run grouped audit"] });
+  assert.equal(latestOpenCriticConstraint([
+    { type: "research.critic.completed", payload: { review: { verdict: "revise", summary: "old", objections: [], requiredChecks: ["old check"] } } },
+    { type: "research.critic.completed", payload: { review: { verdict: "proceed", summary: "resolved", objections: [], requiredChecks: [] } } },
+  ]), undefined);
 });
 
 test("active goals cannot be terminated by a premature model stop", () => {
