@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { ProcessResult } from "./types.js";
 import { sha256File } from "./evidence.js";
 import type { ResearchStore } from "./store.js";
+import { redactSecrets } from "./redaction.js";
 
 export interface BaselineEvidence {
   runId: string;
@@ -28,8 +29,8 @@ export function recordBaselineEvidence(
   const artifactDir = join(root, ".sota", "artifacts", runId);
   mkdirSync(artifactDir, { recursive: true });
   const artifactContents: Record<string, string> = {
-    "stdout.log": result.stdout,
-    "stderr.log": result.stderr,
+    "stdout.log": redactSecrets(result.stdout),
+    "stderr.log": redactSecrets(result.stderr),
     "metrics.json": `${JSON.stringify({ metric }, null, 2)}\n`,
     "provenance.json": `${JSON.stringify({ runId, command: result.command, cwd: result.cwd, exitCode: result.exitCode, durationMs: result.durationMs, recordedAt: new Date().toISOString() }, null, 2)}\n`,
   };
@@ -49,8 +50,8 @@ export function recordBaselineEvidence(
     exitCode: result.exitCode,
     durationMs: result.durationMs,
     metric,
-    stdout: result.stdout,
-    stderr: result.stderr,
+    stdout: redactSecrets(result.stdout),
+    stderr: redactSecrets(result.stderr),
     artifactPaths,
     artifactChecksums,
   };

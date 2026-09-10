@@ -45,6 +45,7 @@ import { detectStagnation } from "../core/stagnation.js";
 import { applyCriticGate } from "../core/critic-gate.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "../core/experiment-patches.js";
 import { recordBaselineEvidence } from "../core/baseline.js";
+import { redactSecrets } from "../core/redaction.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -650,7 +651,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         upgradedBaseline.appendEvent("baseline.completed", { ...(priorBaseline.payload as Record<string, unknown>), metric, upgradedFromLegacyEvent: true });
         upgradedBaseline.close();
       }
-      observation.baseline = { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout.slice(-4000), stderr: baseline.stderr.slice(-4000) };
+      observation.baseline = { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: redactSecrets(baseline.stdout.slice(-4000)), stderr: redactSecrets(baseline.stderr.slice(-4000)) };
     }
     const evidenceStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     evidenceStore.appendEvent("research.observation", observation);

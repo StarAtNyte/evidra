@@ -35,6 +35,7 @@ import { evaluateTrajectory, type TrajectoryEvent } from "./core/trajectories.js
 import { applyUnifiedDiff, extractUnifiedDiff } from "./core/experiment-patches.js";
 import { applyCriticGate } from "./core/critic-gate.js";
 import { recordBaselineEvidence } from "./core/baseline.js";
+import { redactSecrets } from "./core/redaction.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
@@ -684,7 +685,7 @@ research
         const metric = parseMetricOutput(baseline.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
         recordBaselineEvidence(store, root, baseline, metric);
       }
-      const observation = { gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40), repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120), ...(baseline ? { baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout.slice(-4000), stderr: baseline.stderr.slice(-4000) } } : {}) };
+      const observation = { gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40), repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120), ...(baseline ? { baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: redactSecrets(baseline.stdout.slice(-4000)), stderr: redactSecrets(baseline.stderr.slice(-4000)) } } : {}) };
       store.appendEvent("research.observation", observation);
       store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
       store.close();
@@ -886,7 +887,7 @@ research.command("propose")
     const observation = {
       gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40),
       repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120),
-      baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout.slice(-4000), stderr: baseline.stderr.slice(-4000) },
+      baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: redactSecrets(baseline.stdout.slice(-4000)), stderr: redactSecrets(baseline.stderr.slice(-4000)) },
     };
     const metric = parseMetricOutput(baseline.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
     recordBaselineEvidence(store, root, baseline, metric);
