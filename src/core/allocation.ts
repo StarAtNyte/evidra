@@ -6,6 +6,8 @@ export interface AllocationInput {
   trajectories: Array<{ quality: unknown }>;
   phase?: string;
   evidenceConflicts?: { contradictions: number; duplicates: number };
+  /** Recent executor failures, kept separate from trajectory quality so the controller can choose a repair route. */
+  failureClasses?: string[];
 }
 
 export interface ResearchAllocation {
@@ -25,6 +27,25 @@ function verdict(quality: unknown, key: keyof TrajectoryQuality): string {
 export function allocateNextResearch(input: AllocationInput): ResearchAllocation {
   const contradictions = input.evidenceConflicts?.contradictions ?? 0;
   const duplicates = input.evidenceConflicts?.duplicates ?? 0;
+  const failureClasses = input.failureClasses ?? [];
+  if (failureClasses.length) {
+    const counts = new Map<string, number>();
+    for (const failureClass of failureClasses) counts.set(failureClass, (counts.get(failureClass) ?? 0) + 1);
+    const [failureClass, count] = [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0];
+    const route = failureClass === "data_missing" ? ["evidence-validation", "Refresh the data contract and audit missing inputs before allocating compute."]
+      : failureClass === "dependency" ? ["recovery", "Repair or provision the dependency in the selected execution image before retrying."]
+        : failureClass === "auth" || failureClass === "rate_limit" ? ["recovery", "Repair provider access or route to the configured alternate provider before retrying."]
+          : failureClass === "invalid_metric" || failureClass === "corrupt_artifact" ? ["evidence-validation", "Repair the output contract and run the independent artifact/metric verifier before changing the hypothesis."]
+            : failureClass === "cuda_oom" || failureClass === "timeout" || failureClass === "disk" || failureClass === "transient_cloud" ? ["recovery", "Change the resource route or bounded retry policy; do not repeat the same failed execution unchanged."]
+              : ["recovery", "Classify and reproduce the failure with one controlled environmental change before selecting another expensive experiment."];
+    return {
+      focus: route[0] as AllocationFocus,
+      priority: count >= 2 ? "critical" : "high",
+      failedTrajectories: input.trajectories.filter((entry) => (entry.quality as { overall?: string } | null)?.overall === "FAIL").length,
+      strategy: route[1],
+      reasons: [`${count} recent run(s) classified as ${failureClass}`, ...(input.phase ? [`active phase: ${input.phase}`] : [])],
+    };
+  }
   if (contradictions > 0 || duplicates > 0) return {
     focus: "evidence-validation",
     priority: contradictions > 0 ? "critical" : "high",

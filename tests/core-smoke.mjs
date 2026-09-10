@@ -440,6 +440,14 @@ test("trajectory deficiencies allocate the next research focus", () => {
   assert.match(allocation.strategy, /provenance|leakage/i);
 });
 
+test("executor failures change the next research allocation into a specific repair route", () => {
+  const allocation = allocateNextResearch({ trajectories: [], failureClasses: ["invalid_metric", "invalid_metric"] });
+  assert.equal(allocation.focus, "evidence-validation");
+  assert.equal(allocation.priority, "critical");
+  assert.match(allocation.strategy, /artifact|metric|verifier/i);
+  assert.match(allocation.reasons[0], /2 recent run/);
+});
+
 test("experiment scheduler ranks expected information per cost", () => {
   const ranked = rankPriorities([
     { id: "cheap", probabilityOfSuccess: 0.8, expectedDelta: 0.01, informationValue: 0.5, diversityValue: 0, gpuCost: 1, llmCost: 1, engineeringCost: 0.1, risk: 0.1 },

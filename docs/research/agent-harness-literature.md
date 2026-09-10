@@ -297,5 +297,11 @@ benchmark feedback to the next research-director cycle. A recurring timeout or
 dependency failure is therefore an explicit harness-repair target followed by a
 same-protocol remeasurement, not just a lower leaderboard number.
 
+The same principle now applies below the benchmark layer: recent executor
+failure classes are fed directly into the next allocation. An invalid metric or
+corrupt artifact prioritizes verifier repair, a missing-data failure prioritizes
+the data contract, and resource/provider failures select a recovery route rather
+than allowing the director to spend another cycle repeating the same run.
+
 Sources: [AutoResearchBench](https://arxiv.org/abs/2604.25256) and
 [Agentic Harness Engineering](https://arxiv.org/abs/2604.25850).
