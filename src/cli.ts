@@ -324,6 +324,9 @@ program.command("status").action(() => {
     console.log(`Project       ${project.name}`);
   console.log(`Workspace     ${project.competitionId}`);
     console.log(`Events        ${store.eventCount()}`);
+    const lease = store.liveControllerLease();
+    const running = store.experiments().filter((entry) => (entry.payload as { status?: unknown }).status === "running");
+    if (!lease && running.length) console.log(`Stale experiments ${running.length} (no live controller; run research/challenge to recover safely)`);
   }
   store.close();
 });
@@ -917,6 +920,10 @@ program.command("report")
   .action((kind: string) => {
     if (!["research", "challenge", "final"].includes(kind)) throw new Error("Report kind must be research, challenge, or final.");
     const store = new ResearchStore(statePath);
+    // A report must not present a dead controller's in-flight records as live
+    // work. Active controllers retain ownership; otherwise stale experiments
+    // are durably quarantined for the normal bounded recovery path.
+    if (!store.liveControllerLease()) store.recoverStaleExperiments();
     const content = renderReport(store, kind as ReportKind);
     const path = writeReport(root, kind as ReportKind, content);
     store.appendEvent("report.generated", { kind, path });
