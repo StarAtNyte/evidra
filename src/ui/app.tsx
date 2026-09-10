@@ -613,7 +613,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         );
         activeProcess.current = null;
         const baselineStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        baselineStore.appendEvent("baseline.completed", { command: adapter.baselineCommand(), cwd: adapter.workspacePath(root), exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout, stderr: baseline.stderr });
+        baselineStore.appendEvent(baseline.exitCode === 0 ? "baseline.completed" : "baseline.failed", { command: adapter.baselineCommand(), cwd: adapter.workspacePath(root), exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout, stderr: baseline.stderr });
         baselineStore.close();
       }
       observation.baseline = { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout.slice(-4000), stderr: baseline.stderr.slice(-4000) };
