@@ -34,7 +34,7 @@ import { runReducedValidation } from "../dist/core/stage-executor.js";
 import { evaluateTrajectory, capabilityGaps } from "../dist/core/trajectories.js";
 import { qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
-import { rankPriorities } from "../dist/core/scheduler.js";
+import { experimentNovelty, rankExperimentCandidates, rankPriorities } from "../dist/core/scheduler.js";
 import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
 import { latestSourceEntries, latestSourcePayloads, researchMemoryContext } from "../dist/core/research-context.js";
@@ -255,6 +255,18 @@ test("experiment scheduler ranks expected information per cost", () => {
   ]);
   assert.equal(ranked[0].id, "cheap");
   assert.ok(ranked[0].priority > ranked[1].priority);
+});
+
+test("experiment scheduler rewards novelty against prior directions", () => {
+  const prior = [{ title: "group-aware validation", mechanism: "hold out groups" }];
+  assert.equal(experimentNovelty({ title: "group-aware validation", mechanism: "hold out groups" }, prior), 0);
+  assert.equal(experimentNovelty({ title: "calibrated ensemble", mechanism: "blend diverse models" }, prior), 1);
+  const ranked = rankExperimentCandidates([
+    { id: "same", title: "group-aware validation", mechanism: "hold out groups", probabilityOfSuccess: 0.9, expectedDelta: 0.1, informationValue: 0.1, diversityValue: 0, gpuCost: 1, llmCost: 1, engineeringCost: 0.1, risk: 0.1 },
+    { id: "new", title: "calibrated ensemble", mechanism: "blend diverse models", probabilityOfSuccess: 0.7, expectedDelta: 0.1, informationValue: 0.1, diversityValue: 0, gpuCost: 1, llmCost: 1, engineeringCost: 0.1, risk: 0.1 },
+  ], prior);
+  assert.equal(ranked[0].id, "new");
+  assert.equal(ranked[0].novelty, 1);
 });
 
 test("validation acceptance requires replicated evidence and safety gates", () => {

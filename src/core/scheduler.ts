@@ -6,6 +6,40 @@ export interface PriorityBreakdown extends PriorityInput {
   priority: number;
 }
 
+export interface ExperimentCandidate extends PriorityInput {
+  id: string;
+  title: string;
+  mechanism?: string;
+}
+
+function tokens(value: string): Set<string> {
+  return new Set(value.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length > 2));
+}
+
+/** Estimate novelty against prior directions using explainable lexical overlap. */
+export function experimentNovelty(candidate: Pick<ExperimentCandidate, "title" | "mechanism">, prior: Array<Pick<ExperimentCandidate, "title" | "mechanism">>): number {
+  if (!prior.length) return 1;
+  const current = tokens(`${candidate.title} ${candidate.mechanism ?? ""}`);
+  if (!current.size) return 0;
+  let highestSimilarity = 0;
+  for (const entry of prior.slice(-100)) {
+    const other = tokens(`${entry.title} ${entry.mechanism ?? ""}`);
+    const intersection = [...current].filter((token) => other.has(token)).length;
+    const union = new Set([...current, ...other]).size;
+    highestSimilarity = Math.max(highestSimilarity, union ? intersection / union : 0);
+  }
+  return Math.max(0, Math.min(1, 1 - highestSimilarity));
+}
+
+/** Rank candidates while rewarding information value that is not redundant with prior work. */
+export function rankExperimentCandidates<T extends ExperimentCandidate>(candidates: T[], prior: Array<Pick<ExperimentCandidate, "title" | "mechanism">>): Array<T & PriorityBreakdown & { novelty: number }> {
+  return candidates.map((candidate) => {
+    const novelty = experimentNovelty(candidate, prior);
+    const scored = scorePriority({ ...candidate, diversityValue: Math.max(candidate.diversityValue, novelty) });
+    return { ...candidate, ...scored, novelty };
+  }).sort((left, right) => right.priority - left.priority);
+}
+
 /**
  * Cost-aware research priority. The weights are deliberately explicit so the
  * director can explain why one hypothesis was scheduled ahead of another.

@@ -35,7 +35,7 @@ import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../c
 import { evaluateTrajectory, type TrajectoryEvent } from "../core/trajectories.js";
 import { qualityFeedback, routeCapability } from "../core/capability-router.js";
 import { allocateNextResearch } from "../core/allocation.js";
-import { rankPriorities } from "../core/scheduler.js";
+import { rankExperimentCandidates } from "../core/scheduler.js";
 import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "../core/execution-stages.js";
 import { runReducedValidation } from "../core/stage-executor.js";
@@ -881,9 +881,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
       .filter((experiment) => ["proposed", "scheduled", "running", "completed"].includes(String((experiment.payload as { status?: string }).status)))
       .map((experiment) => String((experiment.payload as { hypothesisId?: string }).hypothesisId ?? "")));
     const candidates = store.hypotheses().filter((candidate) => !inFlightOrCompleted.has(candidate.id));
-    const ranked = rankPriorities(candidates.map((candidate) => {
+    const candidateInputs = candidates.map((candidate) => {
       const payload = candidate.payload as {
         expectedMetricDelta?: { median?: number };
+        title?: string;
+        mechanism?: string;
         computeCostGpuHours?: number;
         implementationRisk?: "low" | "medium" | "high";
         leakageRisk?: "low" | "medium" | "high";
@@ -893,6 +895,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const implementationRisk = payload.implementationRisk === "high" ? 1 : payload.implementationRisk === "medium" ? 0.5 : 0.1;
       const leakageRisk = payload.leakageRisk === "high" ? 1 : payload.leakageRisk === "medium" ? 0.5 : 0.1;
       return {
+        id: candidate.id,
+        title: String(payload.title ?? candidate.id),
+        mechanism: typeof payload.mechanism === "string" ? payload.mechanism : "",
         hypothesis: candidate,
         probabilityOfSuccess: payload.implementationRisk === "high" ? 0.35 : payload.implementationRisk === "medium" ? 0.6 : 0.8,
         expectedDelta: payload.expectedMetricDelta?.median ?? 0,
@@ -903,7 +908,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
         engineeringCost: implementationRisk,
         risk: leakageRisk,
       };
-    }));
+    });
+    const priorDirections = experiments.map((experiment) => {
+      const hypothesisId = String((experiment.payload as { hypothesisId?: unknown }).hypothesisId ?? "");
+      const prior = store.hypotheses().find((candidate) => candidate.id === hypothesisId);
+      const payload = prior?.payload as { title?: unknown; mechanism?: unknown } | undefined;
+      return { title: typeof payload?.title === "string" ? payload.title : hypothesisId, mechanism: typeof payload?.mechanism === "string" ? payload.mechanism : "" };
+    });
+    const ranked = rankExperimentCandidates(candidateInputs, priorDirections);
     const hypothesis = ranked[0]?.hypothesis;
     if (!hypothesis) { store.close(); return null; }
     const commit = await runProcess(["git", "rev-parse", "HEAD"], root);
@@ -911,9 +923,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const id = `exp_${Date.now()}_${hypothesis.id.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
     const manifest = createExperimentManifest({ id, hypothesisId: hypothesis.id, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: config.experimentExecutor, configPatch: { estimatorPath: candidateEstimatorPath(hypothesis.payload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
     store.saveExperiment({ id, payload: { ...manifest, status: "proposed", executionPlan: createExecutionPlan(manifest) } });
-    store.appendEvent("experiment.priority.selected", { experimentId: id, hypothesisId: hypothesis.id, priority: ranked[0].priority, score: ranked[0] });
+    store.appendEvent("experiment.priority.selected", { experimentId: id, hypothesisId: hypothesis.id, priority: ranked[0].priority, novelty: ranked[0].novelty, score: ranked[0] });
     store.close();
-    return { id, text: `\n\nExperiment manifest proposed\nPriority: ${ranked[0].priority.toFixed(4)} (${ranked[0].numerator.toFixed(4)} value / ${ranked[0].denominator.toFixed(4)} cost)\n${manifestSummary(manifest)}\nNext: /experiment show ${id}` };
+    return { id, text: `\n\nExperiment manifest proposed\nPriority: ${ranked[0].priority.toFixed(4)} · novelty ${(ranked[0].novelty * 100).toFixed(0)}% (${ranked[0].numerator.toFixed(4)} value / ${ranked[0].denominator.toFixed(4)} cost)\n${manifestSummary(manifest)}\nNext: /experiment show ${id}` };
   };
 
   const prepareAutomaticReplication = (parentId: string): { id: string; text: string } | null => {
