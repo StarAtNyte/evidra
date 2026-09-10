@@ -96,7 +96,19 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
       else if (evidence.mode !== "research" && !has("experiment.comparison.completed")) missing.push("baseline comparison");
       break;
     }
-    case "replication": if (!has("replication.manifest.created") || evidence.runs < 2) missing.push("independent replication run"); break;
+    case "replication": {
+      const replicationIds = new Set(payloads("replication.manifest.created").map((payload) => (payload as { replicationId?: unknown }).replicationId).filter((value): value is string => typeof value === "string"));
+      const successfulReplication = payloads("experiment.autonomous.replication.completed").some((payload) => {
+        const value = payload as { replicationId?: unknown; exitCode?: unknown };
+        return value.exitCode === 0 && typeof value.replicationId === "string" && replicationIds.has(value.replicationId);
+      }) || evidence.eventPayloads.some((event) => {
+        if (event.type !== "run.completed") return false;
+        const value = event.payload as { experimentId?: unknown; exitCode?: unknown };
+        return value.exitCode === 0 && typeof value.experimentId === "string" && replicationIds.has(value.experimentId);
+      });
+      if (!replicationIds.size || evidence.runs < 2 || !successfulReplication) missing.push("independent replication run");
+      break;
+    }
     case "promotion": {
       if (!payloads("experiment.gates.updated").some((payload) => { const value = payload as { leakageAuditPassed?: unknown; reviewerApproved?: unknown }; return value.leakageAuditPassed === true && value.reviewerApproved === true; })) missing.push("approved leakage and reviewer gates");
       if (!payloads("experiment.validation.assessed").some((payload) => { const value = payload as { acceptance?: { accepted?: unknown } }; return value.acceptance?.accepted === true; })) missing.push("accepted validation assessment");

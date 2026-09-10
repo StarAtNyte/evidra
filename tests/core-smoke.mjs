@@ -958,6 +958,16 @@ test("promotion phase requires accepted validation in addition to human gates", 
   assert.equal(complete.met, true);
 });
 
+test("replication phase requires a successful run for the declared child manifest", () => {
+  const goal = definePhaseGoals("test", "challenge").find((entry) => entry.phase === "replication");
+  const manifest = { type: "replication.manifest.created", payload: { parentId: "exp-parent", replicationId: "exp-child" } };
+  const unrelated = { type: "run.completed", payload: { experimentId: "exp-other", exitCode: 0 } };
+  const missing = evaluatePhaseGoalEvidence(goal, { eventTypes: [manifest.type, unrelated.type], eventPayloads: [manifest, unrelated], hypotheses: 1, experiments: 2, runs: 2, artifacts: 2 });
+  assert.equal(missing.met, false);
+  const complete = evaluatePhaseGoalEvidence(goal, { eventTypes: [manifest.type, "run.completed"], eventPayloads: [manifest, { type: "run.completed", payload: { experimentId: "exp-child", exitCode: 0 } }], hypotheses: 1, experiments: 2, runs: 2, artifacts: 2 });
+  assert.equal(complete.met, true);
+});
+
 test("project-local competition manifests replace hardcoded adapters", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-competition-"));
   try {

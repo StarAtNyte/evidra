@@ -140,6 +140,10 @@ leakage/reviewer gates and an accepted validation assessment. A model cannot
 advance the campaign by reporting that a candidate is ready without the durable
 validation event.
 
+Replication gates are tied to the declared child manifest as well: two
+unrelated successful runs cannot satisfy the replication phase. The controller
+must observe a successful run for the recorded replication ID.
+
 ## Evaluator integrity and specification gaming
 
 DeltaML-Bench reports that ordinary modular ML-agent configurations can exhibit
