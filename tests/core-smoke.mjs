@@ -80,6 +80,7 @@ import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock,
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
 import { evaluateHarnessChange, inventoryHarnessComponents, planHarnessInterventions } from "../dist/core/harness-evolution.js";
+import { assessEarlyStopping, EarlyStoppingMonitor } from "../dist/core/early-stopping.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -1945,6 +1946,22 @@ test("process output capture is bounded while retaining the tail", async () => {
   assert.match(result.stdout, /FINAL_METRIC=0\.123/);
 });
 
+test("process early stopping terminates a persistently underperforming worker", async () => {
+  const script = "console.log(JSON.stringify({step:1,accuracy:0.69})); setTimeout(() => console.log(JSON.stringify({step:2,accuracy:0.76})), 25); setTimeout(() => console.log(JSON.stringify({step:3,accuracy:0.84})), 50); setTimeout(() => {}, 30000);";
+  const result = await runProcess([process.execPath, "-e", script], process.cwd(), 30_000, undefined, undefined, undefined, {
+    enabled: true,
+    metric: "accuracy",
+    direction: "maximize",
+    warmupSteps: 1,
+    patience: 2,
+    minimumImprovement: 0.01,
+    reference: [{ step: 1, metric: 0.70 }, { step: 2, metric: 0.80 }, { step: 3, metric: 0.90 }],
+  });
+  assert.match(result.stderr, /Early stopped by Evidra/);
+  assert.notEqual(result.exitCode, 0);
+  assert.ok(result.durationMs < 5_000);
+});
+
 test("environment snapshots preserve reproducibility metadata without secrets", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-environment-"));
   try {
@@ -2480,6 +2497,21 @@ test("portfolio planning rewards bounded value of information", () => {
     { id: "uncertain", title: "uncertain", operator: "audit", expectedValue: 0.3, costMinutes: 1, novelty: 0, informationValue: 1, family: "uncertain" },
   ], { maxCandidates: 1, maxParallel: 1, budgetMinutes: 2 });
   assert.equal(plan.selected[0]?.id, "uncertain");
+});
+
+test("early stopping requires persistent underperformance against a reference curve", () => {
+  const config = { enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 1, patience: 2, minimumImprovement: 0.01 };
+  const reference = [{ step: 1, metric: 0.70 }, { step: 2, metric: 0.80 }, { step: 3, metric: 0.90 }];
+  const oneBadPoint = assessEarlyStopping([{ step: 1, metric: 0.69 }, { step: 2, metric: 0.79 }], reference, config);
+  assert.equal(oneBadPoint.stop, false);
+  const twoBadPoints = assessEarlyStopping([{ step: 1, metric: 0.69 }, { step: 2, metric: 0.76 }, { step: 3, metric: 0.84 }], reference, config);
+  assert.equal(twoBadPoints.stop, true);
+  assert.match(twoBadPoints.reason, /reference curve/);
+  const monitor = new EarlyStoppingMonitor(config, reference);
+  monitor.observe('{"step":1,"accuracy":0.69}\n');
+  monitor.observe('{"step":2,"metrics":{"accuracy":0.76}}\n');
+  const decision = monitor.observe('{"step":3,"accuracy":0.84}\n');
+  assert.equal(decision.stop, true);
 });
 
 test("successive halving budgets cheap screens and promotes only measured survivors", () => {

@@ -10,6 +10,7 @@ export interface ExperimentExecutor {
 
 export function classifyProcessFailure(result: ProcessResult, remote = false): RunResult["failureClass"] {
   const text = `${result.stdout}\n${result.stderr}`.toLowerCase();
+  if (/early stopped by evidra/.test(text)) return "early_stopped";
   if (/out of memory|cuda oom|cuda.*memory/.test(text)) return "cuda_oom";
   if (/nan|inf loss/.test(text)) return "nan_loss";
   if (/timed out|timeout/.test(text)) return "timeout";
@@ -155,7 +156,7 @@ export class LocalExecutor implements ExperimentExecutor {
   readonly kind = "local" as const;
 
   async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse"): Promise<RunResult> {
-    return toRunResult(manifest, await runProcess(command, cwd, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess), metricName);
+    return toRunResult(manifest, await runProcess(command, cwd, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, undefined, manifest.resources.earlyStopping), metricName);
   }
 }
 
@@ -187,7 +188,7 @@ export class ContainerExecutor implements ExperimentExecutor {
       return toRunResult(manifest, { command, cwd, exitCode: 127, durationMs: 0, stdout: "", stderr: "No Docker or Podman runtime was found. Install one or select the local executor." }, metricName);
     }
     try {
-      const result = await runProcess(containerCommand(runtime, image, resolve(cwd), command), launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess);
+      const result = await runProcess(containerCommand(runtime, image, resolve(cwd), command), launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, undefined, manifest.resources.earlyStopping);
       return toRunResult(manifest, { ...result, command, cwd }, metricName);
     } catch (error) {
       return toRunResult(manifest, { command, cwd, exitCode: 126, durationMs: 0, stdout: "", stderr: error instanceof Error ? error.message : String(error) }, metricName);
@@ -216,7 +217,7 @@ export class ModalExecutor implements ExperimentExecutor {
       EVIDRA_MODAL_WORKSPACE: experimentWorkspace,
       ...(manifest.resources.gpu ? { EVIDRA_MODAL_GPU: manifest.resources.gpu } : {}),
       EVIDRA_MODAL_TIMEOUT_SECONDS: String(timeoutSeconds),
-    });
+    }, manifest.resources.earlyStopping);
     const payload = parseModalWorkerResult(result.stdout);
     if (!payload) return toRunResult(manifest, { ...result, command, cwd }, metricName, true);
     const allowedArtifacts = new Set(manifest.evaluation?.requiredArtifacts ?? []);

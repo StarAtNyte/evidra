@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type { ProcessResult } from "./types.js";
+import { EarlyStoppingMonitor, type EarlyStoppingConfig } from "./early-stopping.js";
 
 const MAX_CAPTURE_BYTES = 16 * 1024 * 1024;
 
@@ -28,6 +29,7 @@ export function runProcess(
   onOutput?: (stream: "stdout" | "stderr", chunk: string) => void,
   onProcess?: (control: ProcessControl) => void,
   environment?: NodeJS.ProcessEnv,
+  earlyStopping?: EarlyStoppingConfig & { reference: Array<{ step: number; metric: number }> },
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const started = Date.now();
@@ -60,6 +62,8 @@ export function runProcess(
       },
       get paused() { return paused; },
     };
+    const earlyStoppingMonitor = earlyStopping?.enabled ? new EarlyStoppingMonitor(earlyStopping, earlyStopping.reference) : undefined;
+    let earlyStopReason: string | undefined;
     onProcess?.(control);
     let stdout = "";
     let stderr = "";
@@ -68,7 +72,7 @@ export function runProcess(
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      resolve(result);
+      resolve(earlyStopReason ? { ...result, stderr: `${result.stderr}\nEarly stopped by Evidra: ${earlyStopReason}` } : result);
     };
 
     const fail = (error: Error): void => {
@@ -79,7 +83,13 @@ export function runProcess(
       reject(error);
     };
 
-    child.stdout.on("data", (chunk: Buffer) => { const text = chunk.toString(); stdout = appendCapture(stdout, text); onOutput?.("stdout", text); });
+    child.stdout.on("data", (chunk: Buffer) => {
+      const text = chunk.toString(); stdout = appendCapture(stdout, text); onOutput?.("stdout", text);
+      if (earlyStoppingMonitor && !earlyStopReason) {
+        const decision = earlyStoppingMonitor.observe(text);
+        if (decision.stop) { earlyStopReason = decision.reason; control.terminate(); }
+      }
+    });
     child.stderr.on("data", (chunk: Buffer) => { const text = chunk.toString(); stderr = appendCapture(stderr, text); onOutput?.("stderr", text); });
     child.on("error", fail);
     child.on("close", (exitCode) => {

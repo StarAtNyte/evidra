@@ -11,6 +11,7 @@ export interface ManifestInput {
   executor?: "local" | "container" | "modal";
   image?: string;
   gpu?: string;
+  earlyStopping?: { enabled: boolean; metric: string; direction: "maximize" | "minimize"; warmupSteps: number; patience: number; minimumImprovement: number; reference: Array<{ step: number; metric: number }> };
   timeoutMinutes?: number;
   folds?: number[];
   seeds?: number[];
@@ -40,6 +41,7 @@ export function createExperimentManifest(input: ManifestInput, competition: Comp
       ...(input.image ? { image: input.image } : {}),
       ...(input.gpu ? { gpu: input.gpu } : {}),
       timeoutMinutes: input.timeoutMinutes ?? 30,
+      ...(input.earlyStopping ? { earlyStopping: input.earlyStopping } : {}),
     },
     evaluation: {
       folds: input.folds ?? [0],
@@ -88,6 +90,7 @@ export function createReplicationManifest(parent: ExperimentManifest, competitio
     requiredArtifacts: parent.evaluation.requiredArtifacts,
     verificationCommand: parent.evaluation.verificationCommand,
     verificationCommands: parent.evaluation.verificationCommands,
+    earlyStopping: parent.resources.earlyStopping,
     minimumPrimaryDelta: parent.acceptance.minimumPrimaryDelta,
     maximumRegressionShift: parent.acceptance.maximumRegressionShift,
     requireReplication: false,

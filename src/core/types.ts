@@ -196,7 +196,7 @@ export const ExperimentManifestSchema = z.object({
   datasetVersion: z.string().min(1),
   splitVersion: z.string().min(1),
   change: z.object({ configPatch: z.record(z.string(), z.unknown()) }),
-  resources: z.object({ executor: z.enum(["local", "container", "modal"]), image: z.string().min(1).optional(), gpu: z.string().optional(), timeoutMinutes: z.number().positive() }),
+  resources: z.object({ executor: z.enum(["local", "container", "modal"]), image: z.string().min(1).optional(), gpu: z.string().optional(), timeoutMinutes: z.number().positive(), earlyStopping: z.object({ enabled: z.boolean(), metric: z.string().min(1), direction: z.enum(["maximize", "minimize"]), warmupSteps: z.number().int().nonnegative(), patience: z.number().int().positive(), minimumImprovement: z.number().nonnegative(), reference: z.array(z.object({ step: z.number().finite(), metric: z.number().finite() })).default([]) }).optional() }),
   evaluation: z.object({ folds: z.array(z.number().int().nonnegative()), seeds: z.array(z.number().int()), requiredArtifacts: z.array(z.string()), verificationCommand: z.array(z.string()).min(1).optional(), verificationCommands: z.array(z.array(z.string()).min(1)).min(1).optional() }).superRefine((evaluation, context) => {
     const commands = [
       ...(evaluation.verificationCommand ? [evaluation.verificationCommand] : []),
@@ -236,7 +236,7 @@ export const RunResultSchema = z.object({
   stderr: z.string().optional(),
   command: z.array(z.string()).optional(),
   cwd: z.string().optional(),
-  failureClass: z.enum(["cuda_oom", "transient_cloud", "data_missing", "nan_loss", "dependency", "timeout", "corrupt_artifact", "invalid_metric", "code_regression", "auth", "rate_limit", "disk", "unknown"]).optional(),
+  failureClass: z.enum(["cuda_oom", "transient_cloud", "data_missing", "nan_loss", "dependency", "timeout", "early_stopped", "corrupt_artifact", "invalid_metric", "code_regression", "auth", "rate_limit", "disk", "unknown"]).optional(),
 });
 
 export type RunResult = z.infer<typeof RunResultSchema>;

@@ -452,6 +452,31 @@ minimize metrics, then skips full validation when the improvement is below the c
 `tolerance` protects against noisy cheap splits. If no finite baseline exists, the candidate is
 preserved for full validation; a missing candidate metric is rejected.
 
+For long-running training or search workers, an experiment may also declare an evidence-safe
+learning-curve stop policy in `resources.earlyStopping`:
+
+```json
+{
+  "enabled": true,
+  "metric": "validation_score",
+  "direction": "maximize",
+  "warmupSteps": 100,
+  "patience": 3,
+  "minimumImprovement": 0.002,
+  "reference": [
+    { "step": 100, "metric": 0.41 },
+    { "step": 200, "metric": 0.55 },
+    { "step": 400, "metric": 0.66 }
+  ]
+}
+```
+
+Workers can emit JSON progress lines such as `{"step": 200, "validation_score": 0.51}`.
+Evidra stops only after persistent underperformance against the comparable reference curve;
+one noisy observation cannot discard a run. The result is recorded as `early_stopped`, preserving
+the progress log and the reason for the decision. A missing reference curve disables the policy,
+so an uncalibrated controller never stops work merely because a model guessed poorly.
+
 ## State and provenance
 
 Durable controller state lives under .sota:
