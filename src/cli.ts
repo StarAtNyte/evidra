@@ -295,7 +295,7 @@ function controllerEntrypoint(): string {
   return process.env.EVIDRA_MODAL_CONTROLLER_ENTRYPOINT ?? "modal_controller.py::run";
 }
 async function invokeModalController(action: "status" | "pause" | "resume" | "stop"): Promise<void> {
-  const result = await runProcess(["modal", "run", controllerEntrypoint(), "--", "--action", action], root, 120_000);
+  const result = await runProcess(["modal", "run", controllerEntrypoint(), "--action", action], root, 120_000);
   if (result.stdout.trim()) process.stdout.write(result.stdout);
   if (result.stderr.trim()) process.stderr.write(result.stderr);
   if (result.exitCode !== 0) process.exitCode = result.exitCode;

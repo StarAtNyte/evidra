@@ -107,7 +107,7 @@ export class ModalExecutor implements ExperimentExecutor {
     const commandJson = JSON.stringify(command);
     // The worker image must contain the isolated worktree. Mounting the repo
     // root would omit `.sota/worktrees` and silently execute the wrong source.
-    const args = ["run", modalEntrypoint, "--", "--command-json", commandJson, "--cwd", ".", "--artifacts-json", JSON.stringify(manifest.evaluation?.requiredArtifacts ?? []), "--timeout-seconds", String(timeoutSeconds)];
+    const args = ["modal", "run", modalEntrypoint, "--command-json", commandJson, "--cwd", ".", "--artifacts-json", JSON.stringify(manifest.evaluation?.requiredArtifacts ?? []), "--timeout-seconds", String(timeoutSeconds)];
     const result = await runProcess(args, launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, {
       ...process.env,
       EVIDRA_MODAL_WORKSPACE: experimentWorkspace,
