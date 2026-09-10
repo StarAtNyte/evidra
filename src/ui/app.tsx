@@ -1231,8 +1231,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const proposed = mode === "challenge" || campaign?.autoExecuteExperiments === true ? await proposeLatestExperiment() : null;
       append("assistant", cycle.text + (proposed?.text ?? ""));
       if (proposed && (mode === "challenge" || campaign?.autoExecuteExperiments === true)) {
-        const campaignMayExecute = campaign?.autoExecuteExperiments === true;
-        if (!campaignMayExecute && !autonomyPolicy(config.autonomy).canRunIsolatedExperiments) {
+        const permissionAllowsExecution = autonomyPolicy(config.autonomy).canRunIsolatedExperiments;
+        if (!permissionAllowsExecution) {
           append("assistant", `Approval required before autonomous execution. The manifest is ready: ${proposed.id}\nRun /experiment run ${proposed.id} to approve this specific experiment, or switch to /permissions fast/yolo for automatic isolated execution.`);
         } else {
           const experimentText = await executeExperiment(proposed.id);
@@ -1242,7 +1242,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
             if (comparison?.direction === "improved") {
               const replication = prepareAutomaticReplication(proposed.id);
               if (replication) {
-                if (!campaignMayExecute && config.autonomy === "safe") append("assistant", `${replication.text}\nApproval required: run /experiment run ${replication.id}`);
+                if (!permissionAllowsExecution) append("assistant", `${replication.text}\nApproval required: run /experiment run ${replication.id}`);
                 else append("assistant", `${replication.text}\n\n${await executeExperiment(replication.id)}`);
               }
             } else {
