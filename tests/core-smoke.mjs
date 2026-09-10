@@ -18,7 +18,7 @@ import { autonomyPolicy, guardCommand, guardReadOnlyInspection } from "../dist/c
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, RESEARCH_TOOLS } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
-import { LocalExecutor, parseMetricOutput } from "../dist/core/executors.js";
+import { LocalExecutor, parseMetricOutput, parseModalWorkerResult } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
@@ -819,6 +819,19 @@ test("metric parser accepts evaluator JSON and keyed log output", () => {
   const parsed = parseMetricOutput('{"metrics":{"rmse":0.42},"metricsByFold":{"rmse":[0.4,0.44]}}\nrmse: 0.41\n', "rmse");
   assert.equal(parsed.metrics.rmse, 0.41);
   assert.deepEqual(parsed.metricsByFold.rmse, [0.4, 0.44]);
+});
+
+test("Modal result parser ignores progress and rejects malformed worker payloads", () => {
+  const payload = parseModalWorkerResult([
+    "Building image...",
+    "Running remote function",
+    JSON.stringify({ exitCode: 0, stdout: '{\"macro_f1\":0.8}', stderr: "", artifacts: { "predictions.json": Buffer.from("{}", "utf8").toString("base64") } }),
+  ].join("\n"));
+  assert.equal(payload?.exitCode, 0);
+  assert.equal(payload?.stdout, '{"macro_f1":0.8}');
+  assert.equal(payload?.artifacts["predictions.json"], "e30=");
+  assert.equal(parseModalWorkerResult(JSON.stringify({ exitCode: 0, artifacts: { "bad": 42 } })), undefined);
+  assert.equal(parseModalWorkerResult("Modal failed before the worker returned"), undefined);
 });
 
 test("paired statistics and recovery are deterministic", () => {

@@ -1,5 +1,5 @@
 import { runProcess, type ProcessControl } from "./process.js";
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { ExperimentManifest, ProcessResult, RunResult } from "./types.js";
 
@@ -18,6 +18,41 @@ function failureClass(result: ProcessResult): RunResult["failureClass"] {
   if (/rate limit|429|usage limit/.test(text)) return "rate_limit";
   if (/auth|unauthorized|forbidden/.test(text)) return "auth";
   return "unknown";
+}
+
+export interface ModalWorkerResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  artifacts: Record<string, string>;
+}
+
+/** Parse the final JSON emitted by modal_app.py without trusting progress logs. */
+export function parseModalWorkerResult(output: string): ModalWorkerResult | undefined {
+  for (const line of output.trim().split("\n").reverse()) {
+    try {
+      const candidate = JSON.parse(line) as Record<string, unknown>;
+      if (!candidate || typeof candidate !== "object" || typeof candidate.exitCode !== "number") continue;
+      const artifacts = candidate.artifacts ?? {};
+      if (typeof candidate.stdout !== "string" || typeof candidate.stderr !== "string" || typeof artifacts !== "object" || Array.isArray(artifacts)) continue;
+      const normalized: Record<string, string> = {};
+      for (const [name, encoded] of Object.entries(artifacts)) {
+        if (typeof encoded !== "string" || encoded.length > 96 * 1024 * 1024) return undefined;
+        normalized[name] = encoded;
+      }
+      return { exitCode: candidate.exitCode, stdout: candidate.stdout, stderr: candidate.stderr, artifacts: normalized };
+    } catch { /* Modal progress output is not the worker result. */ }
+  }
+  return undefined;
+}
+
+function safeArtifactPath(root: string, name: string): string | undefined {
+  const destination = resolve(root, name);
+  const destinationRelative = relative(root, destination);
+  if (destinationRelative.startsWith("..") || isAbsolute(destinationRelative) || name.length === 0) return undefined;
+  // Do not follow an existing symlink when importing a worker artifact.
+  try { if (lstatSync(destination).isSymbolicLink()) return undefined; } catch { /* destination does not exist yet */ }
+  return destination;
 }
 
 export function parseMetricOutput(stdout: string, metricName: string): { metrics: Record<string, number>; metricsByFold: Record<string, number[]> } {
@@ -58,9 +93,9 @@ function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metric
   const artifacts: Record<string, string> = {};
   const missing: string[] = [];
   for (const name of manifest.evaluation?.requiredArtifacts ?? []) {
-    const path = resolve(result.cwd, name);
-    const rel = relative(result.cwd, path);
-    if (rel.startsWith("..") || isAbsolute(rel) || !existsSync(path) || !statSync(path).isFile()) {
+    const path = safeArtifactPath(result.cwd, name);
+    const rel = path ? relative(result.cwd, path) : "..";
+    if (!path || rel.startsWith("..") || isAbsolute(rel) || !existsSync(path) || !statSync(path).isFile()) {
       missing.push(name);
     } else {
       artifacts[name] = path;
@@ -114,22 +149,17 @@ export class ModalExecutor implements ExperimentExecutor {
       ...(manifest.resources.gpu ? { EVIDRA_MODAL_GPU: manifest.resources.gpu } : {}),
       EVIDRA_MODAL_TIMEOUT_SECONDS: String(timeoutSeconds),
     });
-    let payload: { exitCode?: number; stdout?: string; stderr?: string; artifacts?: Record<string, string> } | undefined;
-    for (const line of result.stdout.trim().split("\n").reverse()) {
-      try {
-        const candidate = JSON.parse(line) as typeof payload;
-        if (candidate && typeof candidate === "object" && (typeof candidate.exitCode === "number" || candidate.artifacts)) { payload = candidate; break; }
-      } catch { /* Modal progress output is not the worker result. */ }
-    }
+    const payload = parseModalWorkerResult(result.stdout);
     if (!payload) return toRunResult(manifest, { ...result, command, cwd }, metricName);
     for (const [name, encoded] of Object.entries(payload.artifacts ?? {})) {
-      const destination = resolve(cwd, name);
-      const destinationRelative = relative(cwd, destination);
-      if (destinationRelative.startsWith("..") || isAbsolute(destinationRelative)) continue;
+      const destination = safeArtifactPath(cwd, name);
+      if (!destination) continue;
       mkdirSync(dirname(destination), { recursive: true });
-      writeFileSync(destination, Buffer.from(encoded, "base64"));
+      const decoded = Buffer.from(encoded, "base64");
+      if (decoded.length > 64 * 1024 * 1024) continue;
+      writeFileSync(destination, decoded);
     }
-    return toRunResult(manifest, { ...result, command, exitCode: payload.exitCode ?? result.exitCode, stdout: payload.stdout ?? result.stdout, stderr: payload.stderr ?? result.stderr, cwd }, metricName);
+    return toRunResult(manifest, { ...result, command, exitCode: payload.exitCode, stdout: payload.stdout, stderr: payload.stderr, cwd }, metricName);
   }
 }
 
