@@ -1596,6 +1596,27 @@ test("benchmark runner executes matched arms and records evaluator-backed metric
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("benchmark runner rejects arms that escape the benchmark workspace before execution", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-boundary-"));
+  try {
+    await assert.rejects(
+      runBenchmarkArms([
+        {
+          harness: "outside", task: "task-a", arm: "default", seed: 1, model: "test-model",
+          budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, metric: "score", cwd: "../",
+          command: [process.execPath, "-e", "console.log(JSON.stringify({score: 1}))"],
+        },
+        {
+          harness: "valid", task: "task-a", arm: "default", seed: 1, model: "test-model",
+          budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, metric: "score", cwd: ".",
+          command: [process.execPath, "-e", "console.log(JSON.stringify({score: 1}))"],
+        },
+      ], root),
+      /escapes benchmark root/,
+    );
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("search policy explores untried operators and penalizes invalid evidence", () => {
   const ranked = rankSearchArms({
     arms: [
