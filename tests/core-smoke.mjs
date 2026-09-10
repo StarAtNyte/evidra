@@ -417,6 +417,19 @@ test("reduced validation runs with a cheap artifact contract", async () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("reduced promotion rejection prevents the full executor from starting", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-promotion-gate-"));
+  try {
+    const manifest = { id: "exp-promotion", resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { requiredArtifacts: [], folds: [0], seeds: [0] } };
+    const reduced = await runReducedValidation(new LocalExecutor(), manifest, root, [process.execPath, "-e", "console.log('macro_f1: 0.40')"], "macro_f1");
+    const gate = evaluateReducedPromotion({ candidateMetric: reduced.metrics.macro_f1, baselineMetric: 0.5, direction: "maximize", minimumDelta: 0.01 });
+    let fullStarted = false;
+    if (gate.promote) { fullStarted = true; await new LocalExecutor().run(manifest, root, [process.execPath, "-e", "console.log('macro_f1: 0.9')"], undefined, "macro_f1"); }
+    assert.equal(gate.promote, false);
+    assert.equal(fullStarted, false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("timeline renders durable events without provider protocol noise", () => {
   const events = [
     { type: "experiment.stage.reduced_validation.completed", payload: { experimentId: "exp-1", metric: 0.42 }, createdAt: "2026-09-10T12:34:56.000Z" },
