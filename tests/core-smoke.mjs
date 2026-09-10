@@ -2509,6 +2509,10 @@ test("harness generalization requires a task-disjoint held-out win", () => {
   const overlap = evaluateHarnessGeneralization(training, [make("train-a", "evidra", 0.9), make("train-a", "incumbent", 0.7), make("test-b", "evidra", 0.9), make("test-b", "incumbent", 0.7)], "evidra", "incumbent");
   assert.equal(overlap.generalizes, false);
   assert.deepEqual(overlap.overlappingTasks, ["train-a"]);
+  const protocolMismatch = evaluateHarnessGeneralization(training, heldOut.map((trial) => ({ ...trial, model: "different-model" })), "evidra", "incumbent");
+  assert.equal(protocolMismatch.generalizes, false);
+  assert.equal(protocolMismatch.protocolParity, false);
+  assert.match(protocolMismatch.reason, /protocols differ/i);
 });
 
 test("cross-pollination preserves agreement, tension, and evidence provenance", () => {

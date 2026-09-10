@@ -111,6 +111,8 @@ Benchmark runs can also enforce retention with `benchmark run --retention previo
 
 Competitive claims can additionally require task-disjoint transfer with `benchmark run --holdout held-out-report.json`. Evidra rejects overlapping train/holdout tasks and requires a matched challenger win on both partitions. This follows the central lesson of [Rethinking the Evaluation of Harness Evolution](https://arxiv.org/abs/2607.12227): harness search must be separated from final evaluation and compared under matched feedback and inference budgets. The broader benchmark design is compatible with model × harness diagnostics such as [PawBench](https://github.com/agentscope-ai/PawBench) and layered component ablations such as [harness-bench](https://github.com/LamaSu/harness-bench).
 
+The holdout gate also requires protocol parity: model, budget, metric direction, data revision, and runtime fingerprint must match between training and held-out reports. A task-disjoint result with a changed protocol is reported as incomparable rather than accepted as transfer.
+
 Benchmark input may also include a `change` contract with `id`, `componentIds`, predicted delta bounds, prediction, falsification, and acceptance fields. The resulting report records whether the prediction was confirmed, partially confirmed, refuted, or unobserved from the paired evaluator outcome; a polished narrative cannot count as a confirmed harness improvement.
 
 Reports also expose a Pareto frontier over task-balanced score, conservative lower-95% score, and median time to evidence. This keeps fast/reliable/accurate tradeoffs visible instead of forcing every harness into one opaque ranking.

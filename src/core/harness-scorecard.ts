@@ -177,6 +177,8 @@ export interface HarnessGeneralizationReport {
   training: HarnessComparison;
   heldOut: HarnessComparison;
   overlappingTasks: string[];
+  protocolParity: boolean;
+  protocolDifferences: string[];
   generalizes: boolean;
   reason: string;
 }
@@ -297,6 +299,25 @@ function fairPair(left: HarnessTrial, right: HarnessTrial): boolean {
     left.taskWorstMetric === right.taskWorstMetric &&
     left.taskBestMetric === right.taskBestMetric &&
     left.reproducibilityChecked === right.reproducibilityChecked;
+}
+
+function protocolValues(trials: HarnessTrial[], read: (trial: HarnessTrial) => string): string[] {
+  return [...new Set(trials.map(read))].sort();
+}
+
+function compareProtocolParity(training: HarnessTrial[], heldOut: HarnessTrial[]): string[] {
+  const fields: Array<[string, (trial: HarnessTrial) => string]> = [
+    ["model", (trial) => trial.model ?? "<missing>"],
+    ["budgetMinutes", (trial) => String(trial.budgetMinutes ?? "<missing>")],
+    ["direction", (trial) => trial.direction],
+    ["dataRevision", (trial) => trial.dataRevision ?? "<missing>"],
+    ["runtimeFingerprint", (trial) => trial.runtimeFingerprint ?? "<missing>"],
+  ];
+  return fields.flatMap(([name, read]) => {
+    const left = protocolValues(training, read);
+    const right = protocolValues(heldOut, read);
+    return JSON.stringify(left) === JSON.stringify(right) ? [] : [`${name} differs between training (${left.join(", ")}) and held-out (${right.join(", ")})`];
+  });
 }
 
 /**
@@ -440,17 +461,21 @@ export function evaluateHarnessGeneralization(
   const trainingTasks = new Set(training.filter((trial) => trial.harness === challenger || trial.harness === incumbent).map((trial) => trial.task));
   const heldOutTasks = new Set(heldOut.filter((trial) => trial.harness === challenger || trial.harness === incumbent).map((trial) => trial.task));
   const overlappingTasks = [...trainingTasks].filter((task) => heldOutTasks.has(task)).sort();
+  const protocolDifferences = compareProtocolParity(training, heldOut);
+  const protocolParity = protocolDifferences.length === 0;
   const trainingComparison = compareHarnesses(training, challenger, incumbent);
   const heldOutComparison = compareHarnesses(heldOut, challenger, incumbent);
-  const generalizes = overlappingTasks.length === 0 && trainingComparison.challengerWins && heldOutComparison.challengerWins;
+  const generalizes = overlappingTasks.length === 0 && protocolParity && trainingComparison.challengerWins && heldOutComparison.challengerWins;
   const reason = overlappingTasks.length
     ? `train and held-out task sets overlap: ${overlappingTasks.join(", ")}`
+    : !protocolParity
+      ? `train and held-out protocols differ: ${protocolDifferences.join("; ")}`
     : !trainingComparison.challengerWins
       ? `challenger has no proven training win: ${trainingComparison.reason}`
       : !heldOutComparison.challengerWins
         ? `training win does not transfer to held-out tasks: ${heldOutComparison.reason}`
         : `challenger wins both task-disjoint training and held-out comparisons`;
-  return { challenger, incumbent, training: trainingComparison, heldOut: heldOutComparison, overlappingTasks, generalizes, reason };
+  return { challenger, incumbent, training: trainingComparison, heldOut: heldOutComparison, overlappingTasks, protocolParity, protocolDifferences, generalizes, reason };
 }
 
 /**
