@@ -4,6 +4,12 @@
   "private": true,
   "description": "A research-focused autonomous experimentation workbench.",
   "type": "module",
+  "files": [
+    "dist",
+    "README.md",
+    "modal_app.py",
+    "modal_controller.py"
+  ],
   "bin": {
     "evidra": "./dist/cli.js",
     "workbench": "./dist/cli.js"
