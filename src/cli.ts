@@ -767,8 +767,33 @@ research
       const materialized = materializeResearchDecision(decisionStore, decision);
       const policyBlocksExecution = !autonomyPolicy(autonomy).canRunIsolatedExperiments && decision.decision === "run" && Boolean(decision.selectedHypothesis);
       if (policyBlocksExecution) {
-        decisionStore.appendEvent("experiment.autonomous.approval_required", { decision: decision.decision, selectedHypothesis: decision.selectedHypothesis, autonomy, nextAction: "Approve or run the proposed experiment explicitly." });
-        console.log(`Autonomous experiment paused by ${autonomy.toUpperCase()} permissions; approve the proposed work explicitly before execution.`);
+        const selectedIndex = decision.hypotheses.findIndex((hypothesis) => hypothesis.title === decision.selectedHypothesis);
+        const selectedHypothesisId = selectedIndex >= 0 ? materialized.hypothesisIds[selectedIndex] : undefined;
+        const selectedHypothesis = selectedIndex >= 0 ? decision.hypotheses[selectedIndex] : undefined;
+        const existingProposal = selectedHypothesis
+          ? decisionStore.experiments().find((entry) => {
+            const payload = entry.payload as { hypothesisId?: unknown; status?: unknown };
+            return payload.hypothesisId === selectedHypothesisId && payload.status === "proposed";
+          })
+          : undefined;
+        let proposalId = existingProposal?.id;
+        if (!proposalId && selectedHypothesisId && selectedHypothesis) {
+          const commit = await runProcess(["git", "rev-parse", "HEAD"], root);
+          if (commit.exitCode === 0) {
+            proposalId = `exp_${Date.now()}_${selectedHypothesisId.slice(-32)}`;
+            const proposal = createExperimentManifest({
+              id: proposalId,
+              hypothesisId: selectedHypothesisId,
+              gitCommit: commit.stdout.trim(),
+              datasetVersion: adapter.config.datasetRevision,
+              executor: options.executor as "local" | "modal",
+              configPatch: { estimatorPath: candidateEstimatorPath(selectedHypothesis) ?? adapter.config.evaluator.estimatorPath },
+            }, adapter.config);
+            decisionStore.saveExperiment({ id: proposalId, payload: { ...proposal, status: "proposed", executionPlan: createExecutionPlan(proposal) } });
+          }
+        }
+        decisionStore.appendEvent("experiment.autonomous.approval_required", { experimentId: proposalId, decision: decision.decision, selectedHypothesis: decision.selectedHypothesis, autonomy, nextAction: proposalId ? `Run evidra experiment run ${proposalId} after approval.` : "Create an explicit experiment proposal before execution." });
+        console.log(`Autonomous experiment paused by ${autonomy.toUpperCase()} permissions${proposalId ? `; proposal ${proposalId} is ready for explicit approval.` : "."}`);
       }
       if (!criticBlocks && !policyBlocksExecution && decision.decision === "run" && decision.selectedHypothesis) {
         const selectedIndex = decision.hypotheses.findIndex((hypothesis) => hypothesis.title === decision.selectedHypothesis);
