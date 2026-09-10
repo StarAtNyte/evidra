@@ -878,7 +878,16 @@ research
         store.appendEvent("experiment.recovery.scheduled", { experimentId: staleExperiment.id, reason: "controller restart", attempt: Number(stalePayload.recoveryAttempts ?? 0) + 1, policy: "one bounded retry of the immutable manifest" });
         store.close();
         console.log(`Recovering stale experiment ${staleExperiment.id} once before choosing a new research action...`);
-        const recovery = await runCampaignExperiment(root, staleExperiment.id);
+        let recovery: { exitCode: number; stdout: string; stderr: string };
+        try {
+          recovery = await runCampaignExperiment(root, staleExperiment.id);
+        } catch (error) {
+          recovery = {
+            exitCode: 1,
+            stdout: "",
+            stderr: error instanceof Error ? error.message : String(error),
+          };
+        }
         const recoveryStore = new ResearchStore(statePath);
         if (recovery.exitCode !== 0) {
           const recoveredEntry = recoveryStore.experiments().find((entry) => entry.id === staleExperiment.id);
