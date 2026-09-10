@@ -704,6 +704,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
     store.appendEvent("research.capability_route", { route, objective, recentFailureCount, recentQuality, predictedTier: route.tier, servedProvider: config.provider, servedModel: config.model });
     const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts });
     store.appendEvent("research.next_allocation", { allocation, objective });
+    const experienceRecords = recentTrajectories.map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
+    const experienceMix = selectCurriculum(experienceRecords);
+    const curriculumGuidance = experienceMix.map((stage) => `stage ${stage.stage}: ${stage.trajectoryIds.join(", ") || "none"} (${stage.rationale})`).join("; ");
     const researchSources = latestSourceEntries(store.sources(), 12).map((entry) => {
       const payload = entry.payload as { title?: string; url?: string; excerpt?: string; claims?: string[] };
       return { id: entry.id, title: payload.title, url: payload.url, excerpt: payload.excerpt, claims: payload.claims?.slice(0, 8) };
@@ -720,7 +723,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       activeSteer.current = null;
       await checkProvider({ provider: config.provider, model: config.model, cwd: root });
       setProgress(`Research 3/4 · route ${route.tier} · ${route.reasoningEffort} reasoning · investigating...`);
-      const allocatedObjective = `${objective}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}`;
+      const allocatedObjective = `${objective}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}`;
       laneReports = await runResearchLanes(allocatedObjective, {
         mode,
         project,
