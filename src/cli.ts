@@ -1355,6 +1355,7 @@ research
       const allocation = allocateNextResearch({ trajectories: recentTrajectories, phase: phaseGoal?.phase, evidenceConflicts, failureClasses });
       store.appendEvent("research.next_allocation", { allocation, objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}` });
       const adaptiveHarness = deriveAdaptiveHarnessPolicy({
+        phase: phaseGoal?.phase,
         quality: recentQuality as Array<{ overall?: string; toolUse?: { verdict?: string }; evidenceConsistency?: { verdict?: string }; errorRecovery?: { verdict?: string }; termination?: { verdict?: string } }>,
         failureClasses,
         evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,

@@ -8,12 +8,15 @@
  */
 
 export interface AdaptiveHarnessInput {
+  phase?: string;
   quality: Array<{ overall?: string; toolUse?: { verdict?: string }; evidenceConsistency?: { verdict?: string }; errorRecovery?: { verdict?: string }; termination?: { verdict?: string } }>;
   failureClasses?: string[];
   evidenceConflicts?: number;
   budgetRemainingMinutes?: number;
   benchmarkInterventions?: Array<{ kind?: string; priority?: string }>;
 }
+
+export type AdaptiveHarnessProfile = "exploration" | "evidence" | "recovery" | "budget";
 
 export interface AdaptiveHarnessPolicy {
   schemaVersion: 1;
@@ -24,6 +27,7 @@ export interface AdaptiveHarnessPolicy {
   requireReplication: boolean;
   preferDiverseSearch: boolean;
   recoveryRoute: "same_manifest" | "alternate_route" | "repair_first";
+  profile: AdaptiveHarnessProfile;
   reasons: string[];
 }
 
@@ -58,6 +62,14 @@ export function deriveAdaptiveHarnessPolicy(input: AdaptiveHarnessInput): Adapti
   let requireReplication = true;
   let preferDiverseSearch = false;
   let recoveryRoute: AdaptiveHarnessPolicy["recoveryRoute"] = "same_manifest";
+  let profile: AdaptiveHarnessProfile = "exploration";
+
+  if (["data_audit", "validation", "evaluation", "replication", "promotion"].includes(input.phase ?? "")) {
+    profile = "evidence";
+    peerReview = true;
+    requireReplication = true;
+    reasons.push(`phase ${input.phase} selects evidence-preserving harness policy`);
+  }
 
   if (toolGaps > 0) {
     maxToolRounds = 8;
@@ -71,21 +83,24 @@ export function deriveAdaptiveHarnessPolicy(input: AdaptiveHarnessInput): Adapti
   if (recoveryGaps > 0 || hasTransientFailure) {
     maxToolAttempts = 3;
     recoveryRoute = "alternate_route";
+    profile = "recovery";
     reasons.push("recovery pressure: change route after a bounded retry");
   }
   if (hasContractFailure) {
     recoveryRoute = "repair_first";
+    profile = "recovery";
     reasons.push("contract failure: repair the execution/evidence contract before retrying");
   }
   if (terminationGaps > 0) {
     requireReplication = true;
     reasons.push("termination gaps: preserve replication and explicit terminal evidence");
   }
-  if (quality.length === 0 || toolGaps === 0 && evidenceGaps === 0 && recoveryGaps === 0) {
+  if (profile !== "evidence" && (quality.length === 0 || toolGaps === 0 && evidenceGaps === 0 && recoveryGaps === 0)) {
     preferDiverseSearch = true;
     reasons.push("no recurring capability failure: explore a diverse search operator");
   }
   if (lowBudget) {
+    profile = "budget";
     maxToolRounds = Math.min(maxToolRounds, 4);
     peerReview = conflictCount > 0 || evidenceGaps > 0;
     reasons.push("low remaining budget: cap tool deliberation and preserve evaluator time");
@@ -100,6 +115,7 @@ export function deriveAdaptiveHarnessPolicy(input: AdaptiveHarnessInput): Adapti
     requireReplication,
     preferDiverseSearch,
     recoveryRoute,
+    profile,
     reasons,
   };
 }

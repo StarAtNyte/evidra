@@ -537,6 +537,11 @@ test("adaptive harness policy changes routing from measured failure pressure", (
   const clean = deriveAdaptiveHarnessPolicy({ quality: [], budgetRemainingMinutes: 60 });
   assert.equal(clean.preferDiverseSearch, true);
   assert.equal(clean.peerReview, false);
+  assert.equal(clean.profile, "exploration");
+  const evidence = deriveAdaptiveHarnessPolicy({ phase: "validation", quality: [], budgetRemainingMinutes: 60 });
+  assert.equal(evidence.profile, "evidence");
+  assert.equal(evidence.peerReview, true);
+  assert.equal(evidence.requireReplication, true);
   const pressured = deriveAdaptiveHarnessPolicy({
     quality: [
       { overall: "FAIL", toolUse: { verdict: "FAIL" }, evidenceConsistency: { verdict: "WARN" }, errorRecovery: { verdict: "FAIL" }, termination: { verdict: "WARN" } },
@@ -550,6 +555,7 @@ test("adaptive harness policy changes routing from measured failure pressure", (
   assert.equal(pressured.peerReview, true);
   assert.equal(pressured.recoveryRoute, "repair_first");
   assert.equal(pressured.requireReplication, true);
+  assert.equal(pressured.profile, "recovery");
   assert.ok(pressured.reasons.length >= 3);
 });
 

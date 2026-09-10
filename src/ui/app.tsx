@@ -780,6 +780,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts });
     store.appendEvent("research.next_allocation", { allocation, objective });
     const adaptiveHarness = deriveAdaptiveHarnessPolicy({
+      phase: phaseGoal?.phase,
       quality: recentQuality as Array<{ overall?: string; toolUse?: { verdict?: string }; evidenceConsistency?: { verdict?: string }; errorRecovery?: { verdict?: string }; termination?: { verdict?: string } }>,
       failureClasses: store.runs().slice(0, 20).map((entry) => (entry.payload as { failureClass?: unknown }).failureClass).filter((value): value is string => typeof value === "string"),
       evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
