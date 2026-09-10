@@ -242,3 +242,23 @@ intervals for split/external-score correlation and ranks splits by a
 shrinkage-adjusted lower predictive bound. This makes sparse leaderboard data
 useful for prioritization without allowing an extreme correlation from a few
 submissions to replace broad validation.
+
+## Newer harness lessons: search depth and automatic evolution
+
+AutoResearchBench separates deep literature retrieval from wide collection and
+shows that strong general browsing performance does not imply reliable scientific
+search. Evidra should therefore treat literature work as a bounded search
+frontier with source coverage, deduplication, and claim-level provenance rather
+than one search call followed by a narrative answer. The current source graph
+and bounded retrieval are the foundation; frontier coverage metrics remain a
+next benchmark target.
+
+The Agentic Harness Engineering work frames harness improvement as an
+observability-driven evolution loop: freeze failures, measure them under fixed
+budgets, and let later harness versions target the observed failure classes.
+Evidra's durable trajectories, capability gaps, critic constraints, and bounded
+experience replay now provide that feedback loop without silently treating a
+failed rollout as training data or proof.
+
+Sources: [AutoResearchBench](https://arxiv.org/abs/2604.25256) and
+[Agentic Harness Engineering](https://arxiv.org/abs/2604.25850).
