@@ -13,6 +13,11 @@ The comparison protocol uses the same task arm for every harness and records:
 - a bounded competitive score that weights improvement most heavily, then valid
   evidence, reproducibility, and recovery.
 
+Scores are aggregated by task before ranking harnesses, so repeated trials on one
+easy task cannot outweigh failures on other tasks. The scorecard also reports a
+deterministic bootstrap `competitiveScoreLower95` over task means; benchmark
+claims should use that conservative bound when comparing close systems.
+
 Invalid runs and unverified model claims score zero improvement. This prevents a
 harness from winning by producing persuasive text without a measured artifact.
 
