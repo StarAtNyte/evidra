@@ -2217,6 +2217,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         };
         const baseline = resolveRun(left);
         const candidate = resolveRun(right);
+        const comparisonCount = Math.max(1, store.experiments().length);
         store.close();
         if (!baseline || !candidate) { append("assistant", "Usage: /experiment compare <baseline-id> <candidate-id> (experiment or run ids accepted)"); return; }
         try {
@@ -2233,6 +2234,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
             requireReplication: policy.acceptance.requireReplication,
             leakageAuditPassed: false,
             reviewerApproved: false,
+            comparisonCount,
           });
           append("assistant", `Run comparison\n  baseline: ${comparison.baselineRunId} · ${comparison.baseline ?? "missing"}\n  candidate: ${comparison.candidateRunId} · ${comparison.candidate ?? "missing"}\n  delta: ${comparison.delta ?? "missing"}\n  result: ${comparison.direction}\n  evidence: ${comparison.evidence}${comparison.probabilityImproved === undefined ? "" : `\n  probability improved: ${(comparison.probabilityImproved * 100).toFixed(1)}%\n  95% CI: [${comparison.confidenceInterval?.[0].toFixed(6)}, ${comparison.confidenceInterval?.[1].toFixed(6)}]`}\n  promotion: ${acceptance.accepted ? "eligible" : "blocked by evidence gates"}\n\n${comparison.note}${acceptance.reasons.length ? `\n\nPromotion gates:\n${acceptance.reasons.map((reason) => `- ${reason}`).join("\n")}` : ""}`);
         } catch (error) { appendError(error); }

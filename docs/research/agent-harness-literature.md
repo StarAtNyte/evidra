@@ -142,3 +142,15 @@ studies reinforce that research agents should be evaluated across a lifecycle,
 not only on the final answer. The rubric is therefore attached to the decision
 loop while evaluator-backed artifacts, replication, and the competitive scorecard
 remain the promotion authority.
+
+## Search-wide statistical discipline
+
+Exploring many hypotheses creates a multiple-comparisons problem: even valid
+per-experiment tests will eventually produce a lucky apparent improvement.
+Evidra therefore applies a conservative Bonferroni-style family-wise threshold
+to promotion evidence using the number of comparable candidates already tested
+in the active dataset family. The raw bootstrap probability remains visible,
+but a candidate cannot pass promotion merely because it won one uncorrected
+comparison. This complements reduced-validation promotion, independent
+replication, subgroup checks, and evaluator integrity rather than replacing
+them.

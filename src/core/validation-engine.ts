@@ -13,6 +13,8 @@ export interface ValidationAcceptanceInput {
   reviewerApproved: boolean;
   subgroupDeltas?: number[];
   probabilityThreshold?: number;
+  /** Number of candidate comparisons in the current search family/campaign. */
+  comparisonCount?: number;
 }
 
 export interface ValidationAcceptance {
@@ -29,6 +31,7 @@ export interface ValidationAcceptance {
   reasons: string[];
   normalizedDelta: number | null;
   worstSubgroupDelta: number | null;
+  adjustedProbabilityThreshold: number;
 }
 
 export interface SplitRunPair {
@@ -54,9 +57,13 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   const comparison = compareRuns(input.baseline, input.candidate, input.metric, lowerIsBetter);
   const normalizedDelta = comparison.delta === null ? null : lowerIsBetter ? -comparison.delta : comparison.delta;
   const probabilityThreshold = input.probabilityThreshold ?? 0.95;
+  const comparisonCount = Math.max(1, Math.floor(input.comparisonCount ?? 1));
+  // Bonferroni-style family-wise correction prevents a campaign from treating
+  // one lucky result among many hypotheses as statistically convincing.
+  const adjustedProbabilityThreshold = 1 - ((1 - probabilityThreshold) / comparisonCount);
   const gates = {
     minimumDelta: normalizedDelta !== null && normalizedDelta >= input.minimumDelta,
-    statisticalConfidence: comparison.evidence === "replicated" && (comparison.probabilityImproved ?? 0) >= probabilityThreshold,
+    statisticalConfidence: comparison.evidence === "replicated" && (comparison.probabilityImproved ?? 0) >= adjustedProbabilityThreshold,
     replication: !input.requireReplication || comparison.evidence === "replicated",
     subgroupRegression: !input.subgroupDeltas?.length || input.subgroupDeltas.every((delta) => delta >= -input.maximumRegressionShift),
     leakageAudit: input.leakageAuditPassed,
@@ -65,12 +72,12 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   const worstSubgroupDelta = input.subgroupDeltas?.length ? Math.min(...input.subgroupDeltas) : null;
   const reasons: string[] = [];
   if (!gates.minimumDelta) reasons.push(`normalized delta ${normalizedDelta ?? "missing"} is below required ${input.minimumDelta}`);
-  if (!gates.statisticalConfidence) reasons.push(`replicated improvement probability ${(comparison.probabilityImproved ?? 0).toFixed(3)} is below ${probabilityThreshold}`);
+  if (!gates.statisticalConfidence) reasons.push(`replicated improvement probability ${(comparison.probabilityImproved ?? 0).toFixed(3)} is below family-wise threshold ${adjustedProbabilityThreshold.toFixed(3)} across ${comparisonCount} comparison(s)`);
   if (!gates.replication) reasons.push("independent fold/seed replication is required");
   if (!gates.subgroupRegression) reasons.push(`worst subgroup delta ${worstSubgroupDelta?.toFixed(6)} exceeds allowed regression ${input.maximumRegressionShift}`);
   if (!gates.leakageAudit) reasons.push("leakage audit has not passed");
   if (!gates.review) reasons.push("independent reviewer approval is missing");
-  return { accepted: Object.values(gates).every(Boolean), comparison, gates, reasons, normalizedDelta, worstSubgroupDelta };
+  return { accepted: Object.values(gates).every(Boolean), comparison, gates, reasons, normalizedDelta, worstSubgroupDelta, adjustedProbabilityThreshold };
 }
 
 /** Compare every required validation environment, preserving split identity. */

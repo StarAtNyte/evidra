@@ -1834,6 +1834,10 @@ experiment.command("run")
         const operator = manifest.searchOperator ?? "ucb_portfolio";
         resultStore.appendEvent("experiment.comparison.completed", { experimentId: id, baselineSource: baselineEvent?.createdAt ?? "baseline", comparison, searchOperator: operator });
         const gates = resultStore.experimentGates(id);
+        const comparisonCount = Math.max(1, resultStore.experiments().filter((candidate) => {
+          const candidateManifest = candidate.payload as { datasetVersion?: unknown; outcomeType?: unknown; status?: unknown };
+          return candidateManifest.datasetVersion === manifest.datasetVersion && candidateManifest.outcomeType === "metric" && (candidateManifest.status === "completed" || candidate.id === id);
+        }).length);
         const acceptance = evaluateValidationAcceptance({
           baseline: baselineRun,
           candidate: RunResultSchema.parse(recorded),
@@ -1844,8 +1848,9 @@ experiment.command("run")
           requireReplication: manifest.acceptance.requireReplication,
           leakageAuditPassed: gates.leakageAuditPassed,
           reviewerApproved: gates.reviewerApproved,
+          comparisonCount,
         });
-        resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });
+        resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, comparisonCount, adjustedProbabilityThreshold: acceptance.adjustedProbabilityThreshold, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });
         if (operator) {
           const improvementDelta = comparison.delta === null ? undefined : adapter.config.metric.direction === "minimize" ? -comparison.delta : comparison.delta;
           resultStore.appendEvent("research.search.reward", { experimentId: id, operator, reward: searchReward(improvementDelta, recorded.status === "completed", comparison.evidence === "replicated"), valid: recorded.status === "completed", reproducible: comparison.evidence === "replicated", delta: improvementDelta, durationSeconds: recorded.durationSeconds });
