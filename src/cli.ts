@@ -1162,7 +1162,16 @@ research
       const searchPolicy = rankSearchArms({
         arms: [
           ...(["ucb_portfolio", "evolutionary", "mcts", "ablation", "combination", "replication", "audit"] as SearchOperator[]).map((operator, index) => {
-            const outcomes = store.recentEvents(500).filter((event) => event.type === "research.search.reward" && (event.payload as { operator?: string }).operator === operator);
+            const activeCompetitionId = store.project()?.competitionId;
+            const outcomes = store.recentEvents(500).filter((event) => {
+              if (event.type !== "research.search.reward") return false;
+              const payload = event.payload as { operator?: string; competitionId?: string };
+              // Legacy rewards without a competition id remain usable for a
+              // fresh project, but once a reward is scoped it must not leak
+              // across unrelated competitions.
+              const sameCompetition = payload.competitionId === undefined || payload.competitionId === activeCompetitionId;
+              return payload.operator === operator && sameCompetition;
+            });
             const rewards = outcomes.map((event) => Number((event.payload as { reward?: number }).reward)).filter(Number.isFinite);
             const observedCosts = outcomes.map((event) => Number((event.payload as { durationSeconds?: number }).durationSeconds) / 60).filter((minutes) => Number.isFinite(minutes) && minutes > 0);
             const meanReward = rewards.length ? rewards.reduce((sum, reward) => sum + reward, 0) / rewards.length : 0;
@@ -2103,7 +2112,7 @@ experiment.command("run")
         resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, comparisonCount, adjustedProbabilityThreshold: acceptance.adjustedProbabilityThreshold, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });
         if (operator) {
           const improvementDelta = comparison.delta === null ? undefined : adapter.config.metric.direction === "minimize" ? -comparison.delta : comparison.delta;
-          resultStore.appendEvent("research.search.reward", { experimentId: id, operator, reward: searchReward(improvementDelta, recorded.status === "completed", comparison.evidence === "replicated"), valid: recorded.status === "completed", reproducible: comparison.evidence === "replicated", delta: improvementDelta, durationSeconds: recorded.durationSeconds });
+          resultStore.appendEvent("research.search.reward", { experimentId: id, competitionId: adapter.id, datasetRevision: manifest.datasetVersion, operator, reward: searchReward(improvementDelta, recorded.status === "completed", comparison.evidence === "replicated"), valid: recorded.status === "completed", reproducible: comparison.evidence === "replicated", delta: improvementDelta, durationSeconds: recorded.durationSeconds });
         }
       } else {
         resultStore.appendEvent("experiment.comparison.insufficient_data", { experimentId: id, reason: "No finite baseline metric was available." });
