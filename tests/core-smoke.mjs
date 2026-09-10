@@ -57,7 +57,7 @@ import { summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
-import { compareHarnesses, evaluateHarnessRetention, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
+import { compareHarnesses, evaluateHarnessGeneralization, evaluateHarnessRetention, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { planHarnessAdaptation } from "../dist/core/harness-adaptation.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "../dist/core/claim-audit.js";
 import { deriveAdaptiveHarnessPolicy } from "../dist/core/adaptive-harness.js";
@@ -2463,6 +2463,20 @@ test("harness retention gate detects regression on previously solved tasks", () 
   const missingArm = evaluateHarnessRetention(before, before.slice(0, 2), "evidra");
   assert.equal(missingArm.retained, false);
   assert.ok(missingArm.reason.includes("100%"));
+});
+
+test("harness generalization requires a task-disjoint held-out win", () => {
+  const make = (task, harness, metric) => ({ harness, task, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: metric, validRun: true, durationSeconds: 1, recovered: false, reproducible: true });
+  const training = ["train-a", "train-b"].flatMap((task) => [make(task, "evidra", 0.9), make(task, "incumbent", 0.7)]);
+  const heldOut = ["test-a", "test-b"].flatMap((task) => [make(task, "evidra", 0.85), make(task, "incumbent", 0.7)]);
+  const result = evaluateHarnessGeneralization(training, heldOut, "evidra", "incumbent");
+  assert.equal(result.generalizes, true);
+  assert.deepEqual(result.overlappingTasks, []);
+  assert.equal(result.training.challengerWins, true);
+  assert.equal(result.heldOut.challengerWins, true);
+  const overlap = evaluateHarnessGeneralization(training, [make("train-a", "evidra", 0.9), make("train-a", "incumbent", 0.7), make("test-b", "evidra", 0.9), make("test-b", "incumbent", 0.7)], "evidra", "incumbent");
+  assert.equal(overlap.generalizes, false);
+  assert.deepEqual(overlap.overlappingTasks, ["train-a"]);
 });
 
 test("cross-pollination preserves agreement, tension, and evidence provenance", () => {

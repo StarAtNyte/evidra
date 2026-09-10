@@ -166,6 +166,16 @@ export interface HarnessRetentionReport {
   reason: string;
 }
 
+export interface HarnessGeneralizationReport {
+  challenger: string;
+  incumbent: string;
+  training: HarnessComparison;
+  heldOut: HarnessComparison;
+  overlappingTasks: string[];
+  generalizes: boolean;
+  reason: string;
+}
+
 function delta(trial: HarnessTrial): number | undefined {
   if (!trial.validRun || trial.candidateMetric === undefined || !Number.isFinite(trial.candidateMetric) || !Number.isFinite(trial.baselineMetric)) return undefined;
   return trial.direction === "maximize" ? trial.candidateMetric - trial.baselineMetric : trial.baselineMetric - trial.candidateMetric;
@@ -380,6 +390,38 @@ export function evaluateHarnessRetention(before: HarnessTrial[], after: HarnessT
           ? `retention coverage ${(coverage * 100).toFixed(0)}% is below the required 100% prior-arm coverage`
           : `lower 95% retention bound ${pairedLower95.toFixed(6)} is below the allowed regression`;
   return { harness, comparableArms: allKeys.length, validPairedArms: paired.length, tasks: taskDeltas.length, coverage, pairedMeanDelta, pairedLower95, regressedTasks, retained, reason };
+}
+
+/**
+ * Require an apparent harness improvement to survive a task-disjoint holdout.
+ * Harness evolution is a search procedure, so a training-set win alone is not
+ * evidence of a transferable improvement. The two comparisons still use the
+ * normal matched-protocol and task-balanced gates.
+ */
+export function evaluateHarnessGeneralization(
+  training: HarnessTrial[],
+  heldOut: HarnessTrial[],
+  challenger: string,
+  incumbent: string,
+): HarnessGeneralizationReport {
+  const trainingProtocol = validateBenchmarkProtocol(training);
+  const heldOutProtocol = validateBenchmarkProtocol(heldOut);
+  if (!trainingProtocol.valid) throw new Error(`Training benchmark protocol is invalid: ${trainingProtocol.issues.map((issue) => issue.message).join("; ")}`);
+  if (!heldOutProtocol.valid) throw new Error(`Held-out benchmark protocol is invalid: ${heldOutProtocol.issues.map((issue) => issue.message).join("; ")}`);
+  const trainingTasks = new Set(training.filter((trial) => trial.harness === challenger || trial.harness === incumbent).map((trial) => trial.task));
+  const heldOutTasks = new Set(heldOut.filter((trial) => trial.harness === challenger || trial.harness === incumbent).map((trial) => trial.task));
+  const overlappingTasks = [...trainingTasks].filter((task) => heldOutTasks.has(task)).sort();
+  const trainingComparison = compareHarnesses(training, challenger, incumbent);
+  const heldOutComparison = compareHarnesses(heldOut, challenger, incumbent);
+  const generalizes = overlappingTasks.length === 0 && trainingComparison.challengerWins && heldOutComparison.challengerWins;
+  const reason = overlappingTasks.length
+    ? `train and held-out task sets overlap: ${overlappingTasks.join(", ")}`
+    : !trainingComparison.challengerWins
+      ? `challenger has no proven training win: ${trainingComparison.reason}`
+      : !heldOutComparison.challengerWins
+        ? `training win does not transfer to held-out tasks: ${heldOutComparison.reason}`
+        : `challenger wins both task-disjoint training and held-out comparisons`;
+  return { challenger, incumbent, training: trainingComparison, heldOut: heldOutComparison, overlappingTasks, generalizes, reason };
 }
 
 /**

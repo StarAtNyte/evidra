@@ -66,7 +66,7 @@ import { promoteHalvingStage } from "./core/successive-halving.js";
 import type { CostObservation } from "./core/cost-model.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
-import { compareHarnesses, evaluateHarnessRetention, scoreHarnessTrials, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
+import { compareHarnesses, evaluateHarnessGeneralization, evaluateHarnessRetention, scoreHarnessTrials, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
 import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.js";
 import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
@@ -426,8 +426,9 @@ benchmark.command("run")
   .option("--incumbent <harness>", "compare only against this incumbent; by default compare against every other harness")
   .option("--retention <file>", "previous benchmark report whose challenger performance must be retained")
   .option("--retention-regression <delta>", "maximum allowed task-level regression for retention", "0")
+  .option("--holdout <file>", "task-disjoint held-out benchmark report required to validate transfer")
   .description("Execute matched arms, score the evidence, and verify the challenger beats incumbents")
-  .action(async (file: string, options: { out?: string; workspace?: string; challenger: string; incumbent?: string; parallel: string; retention?: string; retentionRegression: string }) => {
+  .action(async (file: string, options: { out?: string; workspace?: string; challenger: string; incumbent?: string; parallel: string; retention?: string; retentionRegression: string; holdout?: string }) => {
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
     const raw = parsed && typeof parsed === "object" && Array.isArray((parsed as { arms?: unknown }).arms) ? (parsed as { arms: unknown[] }).arms : undefined;
     if (!raw?.length) throw new Error("Benchmark protocol must contain a non-empty arms array.");
@@ -451,6 +452,14 @@ benchmark.command("run")
     const incumbents = options.incumbent ? [options.incumbent] : harnesses.filter((harness) => harness !== options.challenger);
     const comparisons = incumbents.map((incumbent) => compareHarnesses(report.trials, options.challenger, incumbent));
     const adaptation = planHarnessAdaptation(report.trials, scorecards, comparisons, options.challenger);
+    let generalization: ReturnType<typeof evaluateHarnessGeneralization>[] | undefined;
+    if (options.holdout) {
+      const heldOutParsed: unknown = JSON.parse(readFileSync(resolve(options.holdout), "utf8"));
+      const heldOutRaw = Array.isArray(heldOutParsed) ? heldOutParsed : heldOutParsed && typeof heldOutParsed === "object" && Array.isArray((heldOutParsed as { trials?: unknown }).trials) ? (heldOutParsed as { trials: unknown[] }).trials : undefined;
+      if (!heldOutRaw?.length) throw new Error("Held-out benchmark report must contain a non-empty trials array.");
+      const heldOutTrials = heldOutRaw as HarnessTrial[];
+      generalization = incumbents.map((incumbent) => evaluateHarnessGeneralization(report.trials, heldOutTrials, options.challenger, incumbent));
+    }
     let retention: ReturnType<typeof evaluateHarnessRetention> | undefined;
     if (options.retention) {
       const priorParsed: unknown = JSON.parse(readFileSync(resolve(options.retention), "utf8"));
@@ -462,7 +471,7 @@ benchmark.command("run")
       const maximumRegression = Number(options.retentionRegression);
       retention = evaluateHarnessRetention(priorTrials, report.trials, options.challenger, maximumRegression);
     }
-    const output = { ...report, scorecards, protocol: matched, challenger: options.challenger, comparisons, adaptation, ...(retention ? { retention } : {}) };
+    const output = { ...report, scorecards, protocol: matched, challenger: options.challenger, comparisons, adaptation, ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
     if (options.out) writeFileSync(resolve(options.out), `${JSON.stringify(output, null, 2)}\n`);
     const benchmarkStore = new ResearchStore(statePath);
     benchmarkStore.appendEvent("harness.benchmark.completed", {
@@ -474,6 +483,7 @@ benchmark.command("run")
       scorecards: scorecards.map((scorecard) => ({ harness: scorecard.harness, competitiveScore: scorecard.competitiveScore, lower95: scorecard.competitiveScoreLower95, validRunRate: scorecard.validRunRate, failureProfile: scorecard.failureProfile })),
       comparisons: comparisons.map((comparison) => ({ incumbent: comparison.incumbent, challengerWins: comparison.challengerWins, reason: comparison.reason, pairedLower95: comparison.pairedLower95 })),
       adaptation,
+      ...(generalization ? { generalization: generalization.map((report) => ({ incumbent: report.incumbent, generalizes: report.generalizes, reason: report.reason })) } : {}),
       ...(retention ? { retention } : {}),
     });
     benchmarkStore.close();
@@ -486,6 +496,11 @@ benchmark.command("run")
       console.log(`\nNext harness agenda · ${adaptation.interventions.length} intervention(s)`);
       for (const intervention of adaptation.interventions.slice(0, 5)) console.log(`- [${intervention.priority}] ${intervention.target}: ${intervention.action}`);
       if (comparisons.some((comparison) => !comparison.challengerWins)) process.exitCode = 2;
+      if (generalization) {
+        console.log(`\nHeld-out generalization gate`);
+        for (const result of generalization) console.log(`vs ${result.incumbent}: ${result.generalizes ? "GENERALIZES" : "DOES NOT GENERALIZE"} · ${result.reason}`);
+        if (generalization.some((result) => !result.generalizes)) process.exitCode = 2;
+      }
     } else {
       console.log(`\nCompetitive gate · no incumbent arm found; result is scored evidence, not a win claim.`);
     }
