@@ -1532,6 +1532,18 @@ test("search policy exposes bounded evolutionary and MCTS exploration", () => {
   assert.match(ranked.find((arm) => arm.operator === "evolutionary")?.rationale ?? "", /evolutionary/);
 });
 
+test("search policy uses empirical uncertainty and excludes unaffordable arms", () => {
+  const ranked = rankSearchArms({
+    arms: [
+      { id: "stable", operator: "greedy", attempts: 6, successes: 5, meanReward: 0.35, rewardVariance: 0.01, cost: 1, novelty: 0.1 },
+      { id: "noisy", operator: "combination", attempts: 6, successes: 3, meanReward: 0.2, rewardVariance: 0.8, cost: 1, novelty: 0.5 },
+      { id: "unaffordable", operator: "audit", attempts: 0, successes: 0, meanReward: 0, cost: 100, novelty: 1 },
+    ], remainingBudgetMinutes: 2, recentFailures: 0, evidenceConflicts: 0,
+  });
+  assert.equal(ranked.at(-1)?.id, "unaffordable");
+  assert.ok(ranked.find((arm) => arm.id === "noisy")?.score > ranked.find((arm) => arm.id === "stable")?.score);
+});
+
 test("portfolio planner is bounded, diverse, and cost aware", () => {
   const plan = planPortfolio([
     { id: "cheap", title: "cheap novel", operator: "ablation", expectedValue: 0.4, costMinutes: 2, novelty: 0.8, family: "features" },

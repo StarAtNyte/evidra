@@ -6,6 +6,8 @@ export interface SearchArm {
   attempts: number;
   successes: number;
   meanReward: number;
+  /** Population variance of observed bounded rewards, when available. */
+  rewardVariance?: number;
   cost: number;
   novelty: number;
 }
@@ -35,9 +37,21 @@ export function rankSearchArms(input: SearchPolicyInput): RankedSearchArm[] {
   return input.arms.map((arm) => {
     const conflictPressure = input.evidenceConflicts > 0 && arm.operator === "audit" ? 0.8 : 0;
     const recoveryPressure = input.recentFailures > 0 && arm.operator === "replication" ? 0.35 : 0;
-    const untriedBonus = arm.attempts === 0 ? (arm.operator === "evolutionary" || arm.operator === "mcts" ? 2.4 : 2) : 0;
-    const uncertainty = arm.attempts === 0 ? 1 : exploration * Math.sqrt(Math.log(totalAttempts + 1) / arm.attempts);
-    const costPenalty = Math.max(0, arm.cost) * 0.05;
+    const untriedBonus = arm.attempts === 0
+      ? arm.operator === "mcts" ? 3.4 : arm.operator === "evolutionary" ? 2.4 : 2
+      : 0;
+    // Empirical-Bernstein uncertainty uses observed variance when available;
+    // this allocates trials to arms that are both promising and informative,
+    // instead of treating every noisy arm as equally uncertain.
+    const logTerm = Math.log(totalAttempts + 2);
+    const variance = Math.max(0, arm.rewardVariance ?? 0.25);
+    const uncertainty = arm.attempts === 0
+      ? 1
+      // Rewards are bounded to [-1, 1]; cap the confidence bonus so a tiny
+      // sample cannot dominate an explicitly untried search strategy.
+      : Math.min(2, exploration * (Math.sqrt((2 * variance * logTerm) / arm.attempts) + (3 * logTerm) / arm.attempts));
+    const cost = Math.max(0.1, arm.cost);
+    const costPenalty = cost > Math.max(0.1, input.remainingBudgetMinutes) ? 100 : cost * 0.05;
     const successRate = arm.attempts ? arm.successes / arm.attempts : 0;
     const strategyBonus = arm.operator === "greedy"
       ? arm.meanReward * 0.5 - uncertainty * 0.5
