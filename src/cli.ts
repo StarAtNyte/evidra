@@ -71,6 +71,7 @@ import { assessResearchDecisionRubric } from "./core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "./core/validation-lock.js";
 import { runBenchmarkArms, type BenchmarkArmSpec } from "./core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, type AirsBenchFamily, type AirsBenchDiscovery, type AirsHarnessTemplate } from "./core/airs-bench.js";
+import { inventoryHarnessComponents, planHarnessInterventions } from "./core/harness-evolution.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -1224,9 +1225,24 @@ research
         .slice(-3)
         .map((event) => event.payload)
         .slice(-3);
+      const harnessComponents = inventoryHarnessComponents(root);
+      const harnessFailureProfile = Object.fromEntries(Object.entries(harnessBenchmarkEvidence
+        .flatMap((payload) => Array.isArray((payload as { scorecards?: unknown }).scorecards) ? (payload as { scorecards: Array<{ failureProfile?: Record<string, number> }> }).scorecards : [])
+        .flatMap((scorecard) => Object.entries(scorecard.failureProfile ?? {}))
+        .reduce((counts, [failureClass, count]) => counts.set(failureClass, (counts.get(failureClass) ?? 0) + Number(count)), new Map<string, number>())));
+      const harnessEvolutionPlan = planHarnessInterventions({
+        inventory: harnessComponents,
+        failureProfile: harnessFailureProfile,
+        qualityGaps: durableEvents.slice(-20).filter((event) => event.type === "trajectory.capability_gaps").flatMap((event) => {
+          const quality = (event.payload as { quality?: Record<string, { verdict?: string }> }).quality ?? {};
+          return Object.entries(quality).filter(([, value]) => value?.verdict === "FAIL" || value?.verdict === "WARN").map(([key]) => key);
+        }),
+        benchmarkAvailable: harnessBenchmarkEvidence.length > 0,
+      });
+      store.appendEvent("harness.evolution.plan", { cycle, components: harnessComponents.map((component) => ({ id: component.id, path: component.path, kind: component.kind, checksum: component.checksum })), interventions: harnessEvolutionPlan, failureProfile: harnessFailureProfile });
       const harnessGuidance = harnessBenchmarkEvidence.length
-        ? `Harness-evolution evidence from matched benchmark runs (diagnostic, not workspace task evidence): ${JSON.stringify(harnessBenchmarkEvidence).slice(0, 8_000)}. Prioritize repairs for recurring failure classes and remeasure them under the same protocol.`
-        : "No matched harness benchmark evidence is recorded yet; preserve failure telemetry for the first comparison.";
+        ? `Harness-evolution evidence from matched benchmark runs (diagnostic, not workspace task evidence): ${JSON.stringify(harnessBenchmarkEvidence).slice(0, 8_000)}. Prioritize these checksummed, falsifiable interventions and remeasure them under the same protocol: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}`
+        : `No matched harness benchmark evidence is recorded yet; preserve failure telemetry for the first comparison. The harness action space is inventory-backed; use these candidate intervention contracts when a failure is observed: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}`;
       const recentTrajectories = store.trajectories(20);
       const recentQuality = recentTrajectories.map((entry) => qualityFeedback(entry.quality));
       const route = routeCapability({ objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}`, mode, provider: options.provider as "codex" | "local", autonomy, recentFailureCount: recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length, recentQuality, budgetRemainingMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)), requestedParallel: laneLimit });
@@ -1343,6 +1359,7 @@ research
             recentEvents,
             researchSources,
             harnessBenchmarkEvidence,
+            harnessEvolutionPlan,
             ultimateGoal: options.goal,
             phaseGoal: phaseGoal ?? null,
             allocation,
@@ -1423,7 +1440,7 @@ research
           crossPollinationStore.appendEvent("research.cross_pollination.completed", { cycle, board: crossPollination });
           crossPollinationStore.close();
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, openCriticConstraint }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, openCriticConstraint }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
           criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
             provider: options.provider,
             model: selectedModel,

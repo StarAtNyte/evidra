@@ -268,6 +268,23 @@ Evidra's durable trajectories, capability gaps, critic constraints, and bounded
 experience replay now provide that feedback loop without silently treating a
 failed rollout as training data or proof.
 
+Evidra now makes the action space explicit as well. Each autonomous cycle
+inventories editable source/config components with SHA-256 checksums, maps
+observed failure classes to likely intervention components, and persists a
+bounded intervention plan with a prediction, falsification condition, and
+acceptance rule. A paired outcome can then be classified as confirmed,
+partially confirmed, refuted, or unobserved. This is deliberately a planning
+and measurement layer: it does not let an agent edit the controller checkout or
+declare itself improved without a matched evaluator result.
+
+This also follows the broader harness-substrate framing, which identifies task
+state, context selection, tools, memory, observability, failure attribution,
+verification, permissions, entropy auditing, and intervention recording as
+distinct runtime responsibilities.
+
+Source: [AI Harness Engineering: A Runtime Substrate for Foundation-Model
+Software Agents](https://arxiv.org/abs/2605.13357).
+
 Matched benchmark runs now close the loop operationally: Evidra persists each
 scorecard and failure profile, surfaces it in reports, and supplies recent
 benchmark feedback to the next research-director cycle. A recurring timeout or

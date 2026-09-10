@@ -73,6 +73,7 @@ import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../dist/core/validation-lock.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
+import { evaluateHarnessChange, inventoryHarnessComponents, planHarnessInterventions } from "../dist/core/harness-evolution.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -1678,6 +1679,29 @@ test("harness scorecard incorporates optional process and alignment evidence", (
   assert.equal(clean.executionAlignmentRate, 1);
   assert.equal(misaligned.executionAlignmentRate, 0);
   assert.ok(clean.competitiveScore > misaligned.competitiveScore);
+});
+
+test("harness evolution inventories editable components and enforces prediction contracts", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-harness-evolution-"));
+  try {
+    mkdirSync(join(root, "src", "core"), { recursive: true });
+    mkdirSync(join(root, "src", "agents"), { recursive: true });
+    writeFileSync(join(root, "src", "core", "executors.ts"), "export const executor = true;\n");
+    writeFileSync(join(root, "src", "agents", "codex-exec.ts"), "export const provider = true;\n");
+    const inventory = inventoryHarnessComponents(root);
+    assert.equal(inventory.length, 2);
+    assert.equal(inventory.every((component) => component.editable), true);
+    assert.equal(inventory.find((component) => component.path.endsWith("executors.ts"))?.kind, "execution");
+    const interventions = planHarnessInterventions({ inventory, failureProfile: { invalid_metric: 2, rate_limit: 1 }, benchmarkAvailable: true });
+    assert.equal(interventions[0].failureClass, "invalid_metric");
+    assert.ok(interventions[0].components.some((id) => id.includes("executors.ts")));
+    const contract = { id: "change-1", componentIds: interventions[0].components, baselineScore: 0.5, predictedDelta: { low: 0.02, median: 0.05, high: 0.1 }, prediction: "score improves", falsification: "no improvement", acceptance: "paired" };
+    assert.equal(evaluateHarnessChange(contract, { candidateScore: 0.57, valid: true }).status, "confirmed");
+    assert.equal(evaluateHarnessChange(contract, { candidateScore: 0.51, valid: true }).status, "refuted");
+    assert.equal(evaluateHarnessChange(contract, { candidateScore: 0.9, valid: false }).status, "unobserved");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("harness scorecard rewards valid evidence that arrives within the declared budget", () => {
