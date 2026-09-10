@@ -940,10 +940,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
       store.close();
       return { id: pending.id, text: `\n\nExisting experiment proposal awaiting approval: ${pending.id}\nNext: /experiment run ${pending.id}` };
     }
-    const inFlightOrCompleted = new Set(experiments
-      .filter((experiment) => ["proposed", "scheduled", "running", "completed"].includes(String((experiment.payload as { status?: string }).status)))
+    const inFlightOrExhausted = new Set(experiments
+      .filter((experiment) => ["proposed", "scheduled", "running", "completed", "failed", "rejected", "invalid"].includes(String((experiment.payload as { status?: string }).status)))
       .map((experiment) => String((experiment.payload as { hypothesisId?: string }).hypothesisId ?? "")));
-    const candidates = store.hypotheses().filter((candidate) => !inFlightOrCompleted.has(candidate.id));
+    const candidates = store.hypotheses().filter((candidate) => !inFlightOrExhausted.has(candidate.id));
     const candidateInputs = candidates.map((candidate) => {
       const payload = candidate.payload as {
         expectedMetricDelta?: { median?: number };
