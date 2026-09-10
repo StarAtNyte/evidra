@@ -37,7 +37,7 @@ export function createExperimentManifest(input: ManifestInput, competition: Comp
     evaluation: {
       folds: input.folds ?? [0],
       seeds: input.seeds ?? [0],
-      requiredArtifacts: input.requiredArtifacts ?? ["metrics.json", "predictions.json"],
+      requiredArtifacts: input.requiredArtifacts ?? competition.execution?.requiredArtifacts ?? [],
     },
     acceptance: {
       minimumPrimaryDelta: input.minimumPrimaryDelta ?? 0,

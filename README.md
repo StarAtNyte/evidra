@@ -97,6 +97,7 @@ Implemented today:
 - durable SQLite state and append-only events;
 - complete promotion-gate snapshots on every leakage/reviewer approval change;
 - generic project-local competition manifests;
+- manifest-driven artifact contracts (`execution.requiredArtifacts`), with no ML-specific artifact assumptions for general research;
 - autonomous campaigns and internal phase goals;
 - independent durable phase machines for Research and Challenge campaigns in the same project;
 - bounded research-director tool loop;

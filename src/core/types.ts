@@ -38,6 +38,7 @@ export const CompetitionConfigSchema = z.object({
   }).optional(),
   execution: z.object({
     reducedValidationCommand: z.array(z.string()).min(1).optional(),
+    requiredArtifacts: z.array(z.string()).default([]),
   }).optional(),
   validation: z.object({
     primarySplit: z.string().min(1).default("mini"),

@@ -312,6 +312,20 @@ test("replication manifests preserve provenance while changing the independent s
   assert.equal(child.acceptance.requireReplication, false);
 });
 
+test("generic experiment manifests do not assume ML-specific artifacts", () => {
+  const manifest = createExperimentManifest({ id: "generic", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "workspace" }, {
+    id: "general", name: "General", taskType: "scientific", datasetRevision: "workspace",
+    metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" },
+  });
+  assert.deepEqual(manifest.evaluation.requiredArtifacts, []);
+  const configured = createExperimentManifest({ id: "configured", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "data" }, {
+    id: "configured", name: "Configured", taskType: "regression", datasetRevision: "data",
+    metric: { name: "rmse", direction: "minimize" }, evaluator: { command: ["true"], estimatorPath: "" },
+    execution: { requiredArtifacts: ["metrics.json"] },
+  });
+  assert.deepEqual(configured.evaluation.requiredArtifacts, ["metrics.json"]);
+});
+
 test("terminal sessions are fresh by default and explicitly resumable", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-session-"));
   try {
