@@ -15,11 +15,15 @@ function checksum(path: string): string {
 }
 
 export function safeBundlePath(bundlePath: string, name: string): string | undefined {
-  const root = realpathSync(bundlePath);
+  let root: string;
+  try { root = realpathSync(bundlePath); } catch { return undefined; }
   const candidate = resolve(root, name);
   const lexical = relative(root, candidate);
   if (!name || isAbsolute(lexical) || lexical.startsWith("..")) return undefined;
-  try { if (lstatSync(candidate).isSymbolicLink()) return undefined; } catch { return undefined; }
+  try {
+    const stats = lstatSync(candidate);
+    if (stats.isSymbolicLink() || !stats.isFile()) return undefined;
+  } catch { return undefined; }
   let ancestor = candidate;
   while (true) {
     try {
@@ -61,18 +65,18 @@ export function prepareSubmission(root: string, experimentId: string, manifest: 
 
 export function validateSubmissionBundle(path: string): SubmissionValidation {
   const checks: SubmissionValidation["checks"] = [];
-  const provenancePath = join(path, "provenance.json");
-  const checksumPath = join(path, "checksums.sha256");
-  checks.push({ name: "provenance", passed: existsSync(provenancePath), detail: existsSync(provenancePath) ? "provenance.json exists" : "provenance.json is missing" });
-  checks.push({ name: "checksums", passed: existsSync(checksumPath), detail: existsSync(checksumPath) ? "checksums.sha256 exists" : "checksums.sha256 is missing" });
+  const provenancePath = safeBundlePath(path, "provenance.json");
+  const checksumPath = safeBundlePath(path, "checksums.sha256");
+  checks.push({ name: "provenance", passed: Boolean(provenancePath), detail: provenancePath ? "provenance.json exists" : "provenance.json is missing or unsafe" });
+  checks.push({ name: "checksums", passed: Boolean(checksumPath), detail: checksumPath ? "checksums.sha256 exists" : "checksums.sha256 is missing or unsafe" });
   let provenance: { submissionId?: unknown; experimentId?: unknown; submission?: { source?: unknown } } | undefined;
-  if (existsSync(provenancePath)) {
+  if (provenancePath) {
     try { provenance = JSON.parse(readFileSync(provenancePath, "utf8")) as { submissionId?: unknown; experimentId?: unknown }; }
     catch { /* reported as a failed provenance check below */ }
   }
   checks.push({ name: "provenance-schema", passed: typeof provenance?.submissionId === "string" && typeof provenance?.experimentId === "string", detail: typeof provenance?.submissionId === "string" && typeof provenance?.experimentId === "string" ? "submission and experiment identifiers exist" : "provenance.json is invalid or incomplete" });
   let predictionArtifact = false;
-  if (existsSync(checksumPath)) {
+  if (checksumPath) {
     for (const line of readFileSync(checksumPath, "utf8").split("\n").map((value) => value.trim()).filter(Boolean)) {
       const separator = line.indexOf("  ");
       if (separator <= 0) { checks.push({ name: "checksum:format", passed: false, detail: "expected '<sha256>  <filename>'" }); continue; }

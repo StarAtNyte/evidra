@@ -926,6 +926,18 @@ test("submission validation rejects symlinked bundle artifacts", () => {
   }
 });
 
+test("submission validation reports malformed control entries without throwing", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-submission-malformed-"));
+  try {
+    mkdirSync(join(root, "provenance.json"));
+    mkdirSync(join(root, "checksums.sha256"));
+    const report = validateSubmissionBundle(root);
+    assert.equal(report.valid, false);
+    assert.equal(report.checks.find((check) => check.name === "provenance")?.passed, false);
+    assert.equal(report.checks.find((check) => check.name === "checksums")?.passed, false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("configured command submission requires a valid approved bundle and preserves a receipt", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-submit-adapter-"));
   try {
