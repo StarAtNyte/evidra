@@ -30,7 +30,7 @@ import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
 import { checkProvider, codexLoginStatus, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, runWithLocalFallback, runWithUsageLimitWait, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
-import { runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
+import { boundedPeerBoard, runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
 import { evaluateTrajectory, type TrajectoryEvent } from "../core/trajectories.js";
 import { qualityFeedback, routeCapability } from "../core/capability-router.js";
@@ -691,6 +691,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       duplicates: consistencyEvents.filter((event) => event.type === "evidence.claim.duplicate_detected").length,
     };
     const researchMemory = researchMemoryContext(store, 30);
+    const peerLaneBoard = boundedPeerBoard(recentEvents);
     const recentTrajectories = store.trajectories(50);
     const recentFailureCount = recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
     const recentQuality = recentTrajectories.slice(0, 20).map((entry) => qualityFeedback(entry.quality));
@@ -726,6 +727,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         allocation,
         evidenceConflicts,
         researchMemory,
+        peerLaneBoard,
       }, {
         provider: config.provider,
         model: config.model,

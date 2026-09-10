@@ -46,7 +46,7 @@ import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../dist/c
 import { applyCriticGate } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment } from "../dist/core/validation.js";
-import { assignResearchLaneRoutes, boundLaneToolResult, laneToolCalls, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
+import { assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceGoalTermination } from "../dist/core/termination.js";
 import { summarizeUsage } from "../dist/core/usage.js";
@@ -409,6 +409,16 @@ test("research lanes assign a bounded heterogeneous model pool deterministically
   const routes = assignResearchLaneRoutes(roles, { provider: "local", model: "primary", modelPool: [{ provider: "local", model: "qwen3.5:4b" }, { provider: "local", model: "qwen3.5:9b" }] });
   assert.deepEqual(routes.map((route) => route.model), ["qwen3.5:4b", "qwen3.5:9b", "qwen3.5:4b"]);
   assert.deepEqual(assignResearchLaneRoutes(roles, { provider: "codex", model: "default" }).map((route) => route.model), ["default", "default", "default"]);
+});
+
+test("peer research board is bounded and keeps provenance-shaped evidence", () => {
+  const board = boundedPeerBoard([
+    { type: "research.lane.completed", payload: { report: { role: "data detective", summary: "A".repeat(2_000), findings: ["f1", "f2", "f3", "f4", "f5", "f6"], uncertainties: ["u1"], evidence: ["e1"] } } },
+    { type: "research.lane.failed", payload: { role: "ignored" } },
+  ], 4);
+  assert.equal(board.length, 1);
+  assert.equal(String(board[0].summary).length, 1_200);
+  assert.deepEqual(board[0].findings, ["f1", "f2", "f3", "f4", "f5"]);
 });
 
 test("replication manifests preserve provenance while changing the independent seed", () => {

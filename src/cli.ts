@@ -39,7 +39,7 @@ import { redactSecrets } from "./core/redaction.js";
 import { enforceGoalTermination } from "./core/termination.js";
 import { summarizeUsage } from "./core/usage.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
-import { runResearchLanes } from "./agents/research-lanes.js";
+import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
 import { checkProvider, codexLoginStatus, isProviderUsageLimit, listLocalModels, providerRetryAfterMs, resolveLocalFallbackModel, runWithUsageLimitWait, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
@@ -702,6 +702,7 @@ research
       store.appendEvent("research.capability_route", { route, predictedTier: route.tier, servedProvider: options.provider, servedModel: selectedModel, recentQuality });
       const researchSources = latestSourcePayloads(store.sources(), 12);
       const researchMemory = researchMemoryContext(store, 30);
+      const peerLaneBoard = boundedPeerBoard(recentEvents);
       console.log(`${mode === "challenge" ? "Challenge" : "Research"} ${cycle} · inspecting workspace${mode === "challenge" ? " and baseline" : ""} (budget ${campaign.budgetMinutes}m)...`);
       const gitStatus = await runProcess(["git", "status", "--short"], root);
       const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
@@ -741,6 +742,7 @@ research
             ultimateGoal: options.goal,
             phaseGoal: phaseGoal ?? null,
             researchMemory,
+            peerLaneBoard,
           }, {
             provider: options.provider,
             model: selectedModel,

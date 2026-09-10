@@ -157,7 +157,25 @@ function lanePrompt(role: ResearchLaneRole, objective: string): string {
   return `${focus}\n\nObjective: ${objective}\n\n` +
     "You are an independent Evidra research lane. Use the supplied workspace and evidence context; run only read-only inspection when tools are available. Do not edit files, submit anything, or claim measurements you did not observe. Return ONLY JSON with this shape: " +
     '{"role":"...","summary":"...","findings":["..."],"recommendations":["..."],"uncertainties":["..."],"evidence":["command, artifact, or source supporting each important statement"],"confidence":0.0}. ' +
-    "Recommendations must be testable and should state what would falsify them. Treat other lanes as unknown; the director will cross-pollinate reports later.";
+    "Recommendations must be testable and should state what would falsify them. A bounded prior-peer board may be present in the context: use it to challenge, extend, or explicitly reject earlier findings, but never treat it as stronger than primary evidence.";
+}
+
+/** Keep cross-cycle peer communication useful without replaying unbounded transcripts. */
+export function boundedPeerBoard(events: Array<{ type: string; payload: unknown }>, limit = 4): Array<Record<string, unknown>> {
+  return events
+    .filter((event) => event.type === "research.lane.completed")
+    .map((event) => {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload as { report?: unknown } : {};
+      const report = payload.report && typeof payload.report === "object" ? payload.report as Record<string, unknown> : {};
+      return {
+        role: typeof report.role === "string" ? report.role : "unknown",
+        summary: typeof report.summary === "string" ? report.summary.slice(0, 1200) : "",
+        findings: Array.isArray(report.findings) ? report.findings.slice(0, 5) : [],
+        uncertainties: Array.isArray(report.uncertainties) ? report.uncertainties.slice(0, 3) : [],
+        evidence: Array.isArray(report.evidence) ? report.evidence.slice(0, 5) : [],
+      };
+    })
+    .slice(-Math.max(1, Math.min(limit, 8)));
 }
 
 function saveLaneEvent(storePath: string, role: string, report: ResearchLaneReport): void {
