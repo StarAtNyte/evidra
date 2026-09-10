@@ -102,3 +102,14 @@ artifact checks; a valid-looking score is insufficient if the measurement path
 was altered.
 
 Source: [DeltaML-Bench](https://arxiv.org/abs/2608.19653).
+
+## Research taste before compute
+
+Research-level benchmarks emphasize that useful agents must make judgment calls
+about what question the data can support, how to validate it, and when evidence
+is strong enough. Evidra now records a structural hypothesis-quality assessment
+before portfolio allocation: mechanism clarity, concrete implementation,
+falsification test, evidence attachment, cost validity, implementation risk, and
+leakage risk. This is deliberately only a scheduling signal. It cannot promote
+a candidate; only evaluator-backed metrics, verification, and replication can
+do that. This follows the judgment-heavy framing in [GeneBench-Pro](https://openai.com/index/introducing-genebench-pro/), while keeping Evidra's claims tied to executable evidence.

@@ -62,6 +62,7 @@ import { planPortfolio } from "../dist/core/portfolio.js";
 import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "../dist/core/promotion-learning.js";
 import { captureProtectedFiles, changedProtectedFiles } from "../dist/core/integrity.js";
+import { assessHypothesisQuality } from "../dist/core/hypothesis-quality.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
 
@@ -1560,4 +1561,12 @@ test("specification-gaming guard detects evaluator mutations", () => {
 test("experiment manifests preserve multiple independent verifiers", () => {
   const manifest = createExperimentManifest({ id: "multi-verify", hypothesisId: "hyp-1", gitCommit: "abc123", datasetVersion: "data", verificationCommands: [["python", "check_unit.py"], ["python", "check_reference.py"]] }, { id: "test", name: "Test", taskType: "general", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["python", "eval.py"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["python", "baseline.py"], experimentCommand: ["python", "run.py"] });
   assert.deepEqual(manifest.evaluation.verificationCommands, [["python", "check_unit.py"], ["python", "check_reference.py"]]);
+});
+
+test("hypothesis quality rewards falsifiable grounded proposals", () => {
+  const strong = assessHypothesisQuality({ title: "group-aware validation", mechanism: "Group-aware folds prevent source identity from crossing validation boundaries.", evidence: ["audit report"], proposedChange: "Use grouped cross-validation by source_id.", falsificationTest: "Reject the change if held-out group accuracy does not improve across three seeds.", expectedDelta: 0.08, costGpuHours: 1, implementationRisk: "low", leakageRisk: "low" });
+  const weak = assessHypothesisQuality({ title: "try thing", mechanism: "maybe better", evidence: [], proposedChange: "change it", falsificationTest: "see if good", expectedDelta: 0, costGpuHours: 1, implementationRisk: "high", leakageRisk: "high" });
+  assert.ok(strong.score > weak.score);
+  assert.equal(strong.verdict, "strong");
+  assert.equal(weak.verdict, "weak");
 });

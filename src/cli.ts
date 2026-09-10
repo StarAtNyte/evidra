@@ -63,6 +63,7 @@ import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
 import { scoreHarnessTrials, type HarnessTrial } from "./core/harness-scorecard.js";
 import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.js";
+import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -1177,6 +1178,18 @@ research
         }
       }
       const materialized = materializeResearchDecision(decisionStore, decision);
+      const hypothesisQuality = decision.hypotheses.map((hypothesis) => assessHypothesisQuality({
+        title: hypothesis.title,
+        mechanism: hypothesis.mechanism,
+        evidence: hypothesis.evidence,
+        proposedChange: hypothesis.proposedChange,
+        falsificationTest: hypothesis.falsificationTest,
+        expectedDelta: hypothesis.expectedMetricDelta.median,
+        costGpuHours: hypothesis.computeCostGpuHours,
+        implementationRisk: hypothesis.implementationRisk,
+        leakageRisk: hypothesis.leakageRisk,
+      }));
+      decisionStore.appendEvent("research.hypothesis_quality.assessed", { cycle, hypotheses: decision.hypotheses.map((hypothesis, index) => ({ title: hypothesis.title, ...hypothesisQuality[index] })) });
       const portfolioBudget = Math.max(1, campaign.budgetMinutes - campaignElapsedMinutes(campaign));
       const portfolioPlan = planPortfolio(decision.hypotheses.map((hypothesis, index) => ({
         id: materialized.hypothesisIds[index] ?? `hypothesis-${index}`,
@@ -1190,6 +1203,7 @@ research
         novelty: hypothesis.evidence.length === 0 ? 1 : 0.4,
         risk: hypothesis.implementationRisk === "high" ? 1 : hypothesis.implementationRisk === "medium" ? 0.5 : 0.1,
         family: hypothesis.formulationFamily,
+        quality: hypothesisQuality[index]?.score,
       })), {
         maxCandidates: autonomy === "yolo" ? 3 : autonomy === "fast" ? 2 : 1,
         maxParallel: effectiveLaneLimit,
@@ -1253,6 +1267,7 @@ research
         expectedValue: decision.hypotheses[selectedDecisionIndex].expectedMetricDelta.median,
         costMinutes: Math.max(1, decision.hypotheses[selectedDecisionIndex].computeCostGpuHours * 60),
         family: decision.hypotheses[selectedDecisionIndex].formulationFamily,
+        quality: hypothesisQuality[selectedDecisionIndex]?.score,
       } : undefined;
       const executionCandidates = !criticBlocks && !policyBlocksExecution && decision.decision === "run" && decision.selectedHypothesis && autonomyPolicy(autonomy).canRunIsolatedExperiments
         ? (portfolioPlan.selected.length ? portfolioPlan.selected : selectedDecisionCandidate ? [selectedDecisionCandidate] : [])

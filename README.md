@@ -96,6 +96,8 @@ Autonomous fast/yolo campaigns also use a bounded best-of-k portfolio. Hypothese
 
 Evaluator integrity is a hard gate: before an experiment engineer runs, Evidra fingerprints protected evaluator/configuration files and rejects any isolated worktree that changes them. This prevents specification-gaming results from entering the research ledger while still allowing the declared candidate implementation to change.
 
+Before allocating compute, Evidra also structurally scores each hypothesis for a concrete mechanism, grounded evidence, falsifiability, implementation cost, and leakage risk. This score only prioritizes work; it never counts as an empirical improvement.
+
 Implemented today:
 
 - Ink-based interactive TUI with Codex-style transcript output;

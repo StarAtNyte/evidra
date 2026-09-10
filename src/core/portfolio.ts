@@ -7,6 +7,7 @@ export interface PortfolioCandidate {
   novelty?: number;
   risk?: number;
   family?: string;
+  quality?: number;
 }
 
 export interface PortfolioPlanOptions {
@@ -77,5 +78,6 @@ function score(candidate: PortfolioCandidate): number {
   const cost = Math.max(0.1, candidate.costMinutes);
   const novelty = Math.max(0, Math.min(1, candidate.novelty ?? 0));
   const risk = Math.max(0, Math.min(1, candidate.risk ?? 0));
-  return (candidate.expectedValue + novelty * 0.2 - risk * 0.1) / cost;
+  const quality = Math.max(0.25, Math.min(1, candidate.quality ?? 1));
+  return (candidate.expectedValue * quality + novelty * 0.2 - risk * 0.1) / cost;
 }
