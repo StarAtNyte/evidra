@@ -401,6 +401,42 @@ benchmark.command("score")
     console.log("Harness                 Tasks  Trials  Score  Lower95  Valid  Improve  Repro");
     for (const scorecard of scorecards) console.log(`${scorecard.harness.padEnd(23).slice(0, 23)} ${String(scorecard.tasks).padStart(5)} ${String(scorecard.trials).padStart(7)} ${scorecard.competitiveScore.toFixed(1).padStart(6)} ${scorecard.competitiveScoreLower95.toFixed(1).padStart(8)} ${(scorecard.validRunRate * 100).toFixed(0).padStart(5)}% ${(scorecard.improvementRate * 100).toFixed(0).padStart(7)}% ${(scorecard.reproducibilityRate * 100).toFixed(0).padStart(5)}%`);
   });
+benchmark.command("export")
+  .option("--out <file>", "write JSON to a file instead of stdout")
+  .option("--harness <name>", "harness label", "evidra")
+  .description("Export durable Evidra experiments as benchmark trial records")
+  .action((options: { out?: string; harness: string }) => {
+    const store = new ResearchStore(statePath);
+    const adapter = activeCompetition();
+    const project = store.project();
+    const baselineEvent = store.recentEvents(5_000).reverse().find((event) => event.type === "baseline.completed");
+    const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string } | undefined;
+    const baselineMetric = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] : undefined;
+    if (!Number.isFinite(baselineMetric)) { store.close(); throw new Error("No finite baseline.completed metric is available for benchmark export."); }
+    const events = store.recentEvents(5_000);
+    const trials: HarnessTrial[] = [];
+    for (const run of store.runs()) {
+      const payload = run.payload as { metrics?: Record<string, number>; durationSeconds?: number; recoveryAttempts?: number; status?: string };
+      const candidateMetric = payload.metrics?.[adapter.config.metric.name];
+      const experimentEvents = events.filter((event) => (event.payload as { experimentId?: unknown }).experimentId === run.experimentId);
+      const comparison = [...experimentEvents].reverse().find((event) => event.type === "experiment.comparison.completed")?.payload as { comparison?: { evidence?: string } } | undefined;
+      trials.push({
+        harness: options.harness,
+        task: project?.competitionId ?? adapter.id,
+        direction: adapter.config.metric.direction,
+        baselineMetric: baselineMetric as number,
+        candidateMetric: Number.isFinite(candidateMetric) ? candidateMetric : undefined,
+        validRun: run.status === "completed" && Number.isFinite(candidateMetric),
+        durationSeconds: typeof payload.durationSeconds === "number" ? payload.durationSeconds : 0,
+        recovered: (payload.recoveryAttempts ?? 1) > 1 || experimentEvents.some((event) => event.type === "run.retry.scheduled"),
+        reproducible: comparison?.comparison?.evidence === "replicated",
+      });
+    }
+    store.close();
+    const output = `${JSON.stringify({ schemaVersion: 1, generatedAt: new Date().toISOString(), metric: adapter.config.metric, trials }, null, 2)}\n`;
+    if (options.out) writeFileSync(resolve(options.out), output);
+    else process.stdout.write(output);
+  });
 program.addCommand(benchmark);
 
 const sources = new Command("sources").description("Retrieve and search durable research sources");

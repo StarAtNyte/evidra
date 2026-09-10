@@ -23,6 +23,7 @@ The same protocol is available from the CLI:
 ```bash
 evidra benchmark score trials.json
 evidra benchmark score trials.json --json
+evidra benchmark export --out evidra-trials.json
 ```
 
 The input is either a JSON array or `{ "trials": [...] }`, with one record per
