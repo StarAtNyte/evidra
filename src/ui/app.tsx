@@ -292,6 +292,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const [picker, setPicker] = useState<"provider" | "model" | "reasoning" | "mode" | "permissions" | null>(null);
   const [pickerIndex, setPickerIndex] = useState(0);
   const [firstRun] = useState(() => !existsSync(configPath));
+  const [onboardingComplete, setOnboardingComplete] = useState(() => !firstRun);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [setupStep, setSetupStep] = useState<"goal" | "budget" | "stop" | null>(null);
   const [setupDraft, setSetupDraft] = useState<{ goal?: string; budgetMinutes?: number }>({});
@@ -392,7 +393,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
     return () => clearInterval(timer);
   }, [busy]);
 
-  useEffect(() => saveConfig(configPath, config), [config, configPath]);
+  useEffect(() => {
+    // Do not persist the default config while the first-run provider choice is
+    // still open. This keeps an escaped/interrupted setup resumable next time.
+    if (!onboardingComplete) return;
+    saveConfig(configPath, config);
+  }, [config, configPath, onboardingComplete]);
 
   useEffect(() => {
     if (!firstRun) return;
@@ -512,6 +518,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
               ? (current.provider === "local" ? current.model : "qwen3.6:27b")
               : (current.provider === "codex" ? current.model : "default"),
           }));
+          setOnboardingComplete(true);
           setPicker(null);
           if (provider === "codex") {
             append("assistant", codexIsLoggedIn()
