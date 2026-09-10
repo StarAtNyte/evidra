@@ -72,6 +72,7 @@ import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "./core/validation-lock.js";
 import { runBenchmarkArms, type BenchmarkArmSpec } from "./core/benchmark-runner.js";
+import { evaluateHarnessChange, type HarnessChangeContract } from "./core/harness-evolution.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, type AirsBenchFamily, type AirsBenchDiscovery, type AirsHarnessTemplate } from "./core/airs-bench.js";
 import { inventoryHarnessComponents, planHarnessInterventions } from "./core/harness-evolution.js";
 import { planHarnessAdaptation } from "./core/harness-adaptation.js";
@@ -432,6 +433,11 @@ benchmark.command("run")
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
     const raw = parsed && typeof parsed === "object" && Array.isArray((parsed as { arms?: unknown }).arms) ? (parsed as { arms: unknown[] }).arms : undefined;
     if (!raw?.length) throw new Error("Benchmark protocol must contain a non-empty arms array.");
+    const changeValue = parsed && typeof parsed === "object" ? (parsed as { change?: unknown }).change : undefined;
+    const change = changeValue && typeof changeValue === "object" ? changeValue as Partial<HarnessChangeContract> : undefined;
+    if (change && (typeof change.id !== "string" || !Array.isArray(change.componentIds) || !change.componentIds.every((item) => typeof item === "string") || !change.predictedDelta || typeof change.predictedDelta.low !== "number" || typeof change.predictedDelta.median !== "number" || typeof change.predictedDelta.high !== "number" || typeof change.prediction !== "string" || typeof change.falsification !== "string" || typeof change.acceptance !== "string")) {
+      throw new Error("Benchmark change contract must declare id, componentIds, predictedDelta, prediction, falsification, and acceptance.");
+    }
     const arms = raw.map((value, index) => {
       if (!value || typeof value !== "object") throw new Error(`Benchmark arm ${index + 1} is not an object.`);
       const arm = value as Partial<BenchmarkArmSpec>;
@@ -452,6 +458,9 @@ benchmark.command("run")
     const incumbents = options.incumbent ? [options.incumbent] : harnesses.filter((harness) => harness !== options.challenger);
     const comparisons = incumbents.map((incumbent) => compareHarnesses(report.trials, options.challenger, incumbent));
     const adaptation = planHarnessAdaptation(report.trials, scorecards, comparisons, options.challenger);
+    const changeOutcomes = change
+      ? comparisons.map((comparison) => ({ incumbent: comparison.incumbent, outcome: evaluateHarnessChange({ ...change, id: change.id!, componentIds: change.componentIds!, predictedDelta: change.predictedDelta!, prediction: change.prediction!, falsification: change.falsification!, acceptance: change.acceptance! }, { baselineScore: change.baselineScore, candidateScore: comparison.pairedMeanDelta === null ? undefined : (change.baselineScore ?? 0) + comparison.pairedMeanDelta, valid: comparison.validPairedArms > 0 && comparison.pairedLower95 !== null }) }))
+      : undefined;
     let generalization: ReturnType<typeof evaluateHarnessGeneralization>[] | undefined;
     if (options.holdout) {
       const heldOutParsed: unknown = JSON.parse(readFileSync(resolve(options.holdout), "utf8"));
@@ -471,7 +480,7 @@ benchmark.command("run")
       const maximumRegression = Number(options.retentionRegression);
       retention = evaluateHarnessRetention(priorTrials, report.trials, options.challenger, maximumRegression);
     }
-    const output = { ...report, scorecards, protocol: matched, challenger: options.challenger, comparisons, adaptation, ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
+    const output = { ...report, scorecards, protocol: matched, challenger: options.challenger, comparisons, adaptation, ...(change ? { change, changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
     if (options.out) writeFileSync(resolve(options.out), `${JSON.stringify(output, null, 2)}\n`);
     const benchmarkStore = new ResearchStore(statePath);
     benchmarkStore.appendEvent("harness.benchmark.completed", {
@@ -483,6 +492,7 @@ benchmark.command("run")
       scorecards: scorecards.map((scorecard) => ({ harness: scorecard.harness, competitiveScore: scorecard.competitiveScore, lower95: scorecard.competitiveScoreLower95, validRunRate: scorecard.validRunRate, failureProfile: scorecard.failureProfile })),
       comparisons: comparisons.map((comparison) => ({ incumbent: comparison.incumbent, challengerWins: comparison.challengerWins, reason: comparison.reason, pairedLower95: comparison.pairedLower95 })),
       adaptation,
+      ...(change ? { change, changeOutcomes } : {}),
       ...(generalization ? { generalization: generalization.map((report) => ({ incumbent: report.incumbent, generalizes: report.generalizes, reason: report.reason })) } : {}),
       ...(retention ? { retention } : {}),
     });
@@ -500,6 +510,10 @@ benchmark.command("run")
         console.log(`\nHeld-out generalization gate`);
         for (const result of generalization) console.log(`vs ${result.incumbent}: ${result.generalizes ? "GENERALIZES" : "DOES NOT GENERALIZE"} · ${result.reason}`);
         if (generalization.some((result) => !result.generalizes)) process.exitCode = 2;
+      }
+      if (changeOutcomes) {
+        console.log(`\nHarness prediction ledger · ${change!.id}`);
+        for (const result of changeOutcomes) console.log(`vs ${result.incumbent}: ${result.outcome.status.toUpperCase()} · ${result.outcome.explanation}`);
       }
     } else {
       console.log(`\nCompetitive gate · no incumbent arm found; result is scored evidence, not a win claim.`);
