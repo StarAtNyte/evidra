@@ -21,6 +21,8 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const artifacts = store.artifacts();
   const trajectories = store.trajectories(100);
   const events = store.recentEvents(40);
+  const contradictionEdges = store.edges().filter((edge) => edge.relation === "contradicts");
+  const duplicateEvents = events.filter((event) => event.type === "evidence.claim.duplicate_detected");
   const title = kind === "research" ? "Research report" : kind === "challenge" ? "Challenge report" : "Final provenance report";
   const sections = [
     `# ${title}`,
@@ -43,6 +45,9 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   if (kind !== "challenge") sections.push("", "## Hypotheses", "", hypotheses.length ? hypotheses.map((hypothesis) => `- ${hypothesis.id}: ${line((hypothesis.payload as { title?: string }).title ?? hypothesis.payload)}`).join("\n") : "No hypotheses recorded.");
   sections.push("", "## Decisions", "", decisions.length ? decisions.map((decision) => `- ${decision.id} · ${decision.createdAt}\n  ${line(decision.payload)}`).join("\n") : "No decisions recorded.");
   sections.push("", "## Evidence claims", "", claims.length ? claims.slice(0, 80).map((claim) => `- ${claim.id}: ${line((claim.payload as { statement?: string }).statement ?? claim.payload)}`).join("\n") : "No claims recorded.");
+  sections.push("", "## Evidence consistency", "", contradictionEdges.length || duplicateEvents.length
+    ? [`Contradiction edges: ${contradictionEdges.length}`, ...contradictionEdges.slice(0, 40).map((edge) => `- ${edge.fromId} contradicts ${edge.toId} · review required`), `Duplicate findings in recent events: ${duplicateEvents.length}`].join("\n")
+    : "No recorded duplicate or contradiction findings.");
   sections.push("", "## Trajectory quality", "", trajectories.length ? trajectories.map((trajectory) => {
     const quality = trajectory.quality as { overall?: string; [key: string]: unknown };
     const dimensions = Object.entries(quality).filter(([key]) => key !== "overall").map(([key, value]) => `${key}=${(value as { verdict?: string }).verdict ?? "unknown"}`).join(", ");

@@ -5,6 +5,7 @@ export type AllocationFocus = "breadth" | "tool-reliability" | "evidence-validat
 export interface AllocationInput {
   trajectories: Array<{ quality: unknown }>;
   phase?: string;
+  evidenceConflicts?: { contradictions: number; duplicates: number };
 }
 
 export interface ResearchAllocation {
@@ -22,6 +23,15 @@ function verdict(quality: unknown, key: keyof TrajectoryQuality): string {
 
 /** Convert observed trajectory deficiencies into the next research allocation. */
 export function allocateNextResearch(input: AllocationInput): ResearchAllocation {
+  const contradictions = input.evidenceConflicts?.contradictions ?? 0;
+  const duplicates = input.evidenceConflicts?.duplicates ?? 0;
+  if (contradictions > 0 || duplicates > 0) return {
+    focus: "evidence-validation",
+    priority: contradictions > 0 ? "critical" : "high",
+    failedTrajectories: input.trajectories.filter((entry) => (entry.quality as { overall?: string } | null)?.overall === "FAIL").length,
+    strategy: "Resolve conflicting or duplicate evidence with source-level review and an independent falsification check before selecting another expensive experiment.",
+    reasons: [`${contradictions} contradiction(s) and ${duplicates} duplicate claim(s) require review`, ...(input.phase ? [`active phase: ${input.phase}`] : [])],
+  };
   const quality = input.trajectories.map((entry) => entry.quality);
   const failed = quality.filter((item) => (item as { overall?: string } | null)?.overall === "FAIL").length;
   if (!quality.length) return {

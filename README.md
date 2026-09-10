@@ -311,6 +311,8 @@ Evidence claims are validated at the SQLite boundary. Every claim requires a sta
 
 The store also performs a conservative consistency pass: exact duplicates are recorded for review, and only strongly overlapping statements with explicit negation receive a `contradicts` graph edge. These findings never invalidate or promote a claim automatically; inspect them with `/graph` or the generated report.
 
+Unresolved evidence conflicts feed back into autonomous allocation: the next research cycle prioritizes source review and independent falsification before spending compute on another hypothesis.
+
 ## Experiments and permissions
 
 Experiment execution is intended to be isolated and reproducible:

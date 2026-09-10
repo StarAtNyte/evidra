@@ -653,11 +653,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     const phaseGoal = activePhaseGoal(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)));
     const recentEvents = store.recentEvents(20);
+    const consistencyEvents = store.recentEvents(200);
+    const evidenceConflicts = {
+      contradictions: store.edges().filter((edge) => edge.relation === "contradicts").length,
+      duplicates: consistencyEvents.filter((event) => event.type === "evidence.claim.duplicate_detected").length,
+    };
     const recentFailureCount = store.trajectories(50).filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
     const campaignRemaining = campaign ? Math.max(0, campaign.budgetMinutes - (Date.now() - Date.parse(campaign.startedAt)) / 60_000) : undefined;
     const route = routeCapability({ objective, mode, provider: config.provider, autonomy: config.autonomy, recentFailureCount, budgetRemainingMinutes: campaignRemaining, requestedParallel: 3 });
     store.appendEvent("research.capability_route", { route, objective, recentFailureCount });
-    const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase });
+    const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts });
     store.appendEvent("research.next_allocation", { allocation, objective });
     const researchSources = store.sources().slice(0, 12).map((entry) => {
       const payload = entry.payload as { id?: string; title?: string; url?: string; excerpt?: string; claims?: string[] };
@@ -684,6 +689,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         researchSources,
         ultimateGoal: objective,
         allocation,
+        evidenceConflicts,
       }, {
         provider: config.provider,
         model: config.model,
@@ -710,6 +716,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         ultimateGoal: objective,
         phaseGoal: phaseGoal ?? null,
         allocation,
+        evidenceConflicts,
         laneReports,
         constraints: { no_submission: true, no_file_edits: true },
       }, {

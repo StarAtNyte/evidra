@@ -340,6 +340,13 @@ test("claim consistency surfaces duplicates and only explicit contradictions", (
   assert.equal(compareClaims({ ...base, statement: "Group holdout reduces leakage risk" }, { ...base, id: "b", statement: "Temporal validation improves robustness" }), undefined);
 });
 
+test("evidence conflicts take priority in research allocation", () => {
+  const allocation = allocateNextResearch({ trajectories: [], evidenceConflicts: { contradictions: 1, duplicates: 0 } });
+  assert.equal(allocation.focus, "evidence-validation");
+  assert.equal(allocation.priority, "critical");
+  assert.match(allocation.strategy, /conflicting/);
+});
+
 test("project-local competition manifests replace hardcoded adapters", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-competition-"));
   try {
