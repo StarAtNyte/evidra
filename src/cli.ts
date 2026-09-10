@@ -66,6 +66,7 @@ import { scoreHarnessTrials, validateBenchmarkProtocol, type HarnessTrial } from
 import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.js";
 import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
+import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "./core/validation-lock.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -835,10 +836,11 @@ challenge.command("audit").action(() => {
 });
 challenge.command("policy").action(() => {
   const adapter = activeCompetition();
+  const paths = validationPaths();
+  if (readValidationPolicyLock(paths.lock)?.locked) throw new Error("Validation policy is locked. Use 'evidra validation unlock --reason <reason>' before regenerating it.");
   const policy = createValidationPolicy(adapter.config);
-  mkdirSync(join(root, ".sota"), { recursive: true });
-  const path = join(root, ".sota", "validation-policy.json");
-  console.log(`Validation policy: ${path}\nChecksum: ${writeValidationPolicy(path, policy)}\n${JSON.stringify(policy, null, 2)}`);
+  mkdirSync(stateDirectory, { recursive: true });
+  console.log(`Validation policy: ${paths.policy}\nChecksum: ${writeValidationPolicy(paths.policy, policy)}\n${JSON.stringify(policy, null, 2)}`);
 });
 challenge.command("baseline").description("Run the canonical baseline").action(async () => {
   const adapter = activeCompetition();
@@ -1544,6 +1546,44 @@ program.command("baseline")
     if (result.exitCode !== 0) process.exitCode = result.exitCode;
   });
 
+const validation = new Command("validation").description("Manage the immutable validation policy");
+const validationPaths = () => ({ policy: join(stateDirectory, "validation-policy.json"), lock: join(stateDirectory, "validation-policy.lock.json") });
+validation.command("inspect").action(() => {
+  const paths = validationPaths();
+  const lock = readValidationPolicyLock(paths.lock);
+  console.log(existsSync(paths.policy) ? readFileSync(paths.policy, "utf8").trim() : "No validation policy generated.");
+  console.log(`Lock: ${lock?.locked ? `locked (${lock.checksum})` : lock ? `unlocked (${lock.unlockReason ?? "no reason"})` : "not locked"}`);
+});
+validation.command("generate").description("Generate a policy; locked policies require an explicit unlock first").action(() => {
+  const paths = validationPaths();
+  if (readValidationPolicyLock(paths.lock)?.locked) throw new Error("Validation policy is locked. Run 'evidra validation unlock --reason <reason>' first.");
+  const adapter = activeCompetition();
+  const policy = createValidationPolicy(adapter.config);
+  mkdirSync(stateDirectory, { recursive: true });
+  const checksum = writeValidationPolicy(paths.policy, policy);
+  const store = new ResearchStore(statePath);
+  store.appendEvent("validation.policy.created", { path: paths.policy, checksum, policy });
+  store.close();
+  console.log(`Validation policy generated\nVersion: ${policy.version}\nChecksum: ${checksum}`);
+});
+validation.command("lock").description("Lock the current policy against mutation").action(() => {
+  const paths = validationPaths();
+  const record = lockValidationPolicy(paths.policy, paths.lock);
+  const store = new ResearchStore(statePath);
+  store.appendEvent("validation.policy.locked", record);
+  store.close();
+  console.log(`Validation policy locked\nChecksum: ${record.checksum}`);
+});
+validation.command("unlock").requiredOption("--reason <reason>", "why the validation policy must change").description("Unlock only with an auditable reason").action((options: { reason: string }) => {
+  const paths = validationPaths();
+  const record = unlockValidationPolicy(paths.policy, paths.lock, options.reason);
+  const store = new ResearchStore(statePath);
+  store.appendEvent("validation.policy.unlocked", record);
+  store.close();
+  console.log(`Validation policy unlocked\nReason: ${record.unlockReason}`);
+});
+program.addCommand(validation);
+
 const experiment = new Command("experiment").description("Manage research experiments");
 experiment.command("propose")
   .argument("[hypothesis]", "hypothesis identifier; defaults to the newest hypothesis")
@@ -1591,6 +1631,11 @@ experiment.command("run")
     const entry = store.experiments().find((candidate) => candidate.id === id);
     if (!entry) { store.close(); throw new Error(`Experiment ${id} is not registered. Run: evidra experiment propose`); }
     const manifest = ExperimentManifestSchema.parse(entry.payload);
+    const validationPathsForRun = validationPaths();
+    if (readValidationPolicyLock(validationPathsForRun.lock)?.locked) {
+      assertValidationPolicy(validationPathsForRun.policy, validationPathsForRun.lock);
+      store.appendEvent("validation.policy.verified", { experimentId: id, lockPath: validationPathsForRun.lock });
+    }
     let executionPlan: ExecutionStage[] = Array.isArray((entry.payload as { executionPlan?: unknown }).executionPlan)
       ? (entry.payload as { executionPlan: ExecutionStage[] }).executionPlan
       : createExecutionPlan(manifest);

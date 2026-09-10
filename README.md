@@ -143,6 +143,7 @@ Implemented today:
 - empirical-Bernstein search allocation with variance-aware uncertainty and hard remaining-budget checks;
 - deterministic hierarchical research-decision rubrics for action closure, falsifiability, evidence, verification, diversity, and risk, with gaps fed into the next cycle;
 - matched benchmark-arm validation requiring task, seed, model, and budget parity before a competitive claim.
+- checksum-locked validation policies with auditable unlock reasons and pre-experiment mutation checks.
 
 ### Experience-driven improvement
 

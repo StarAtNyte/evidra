@@ -55,6 +55,7 @@ import { recordBaselineEvidence } from "../core/baseline.js";
 import { redactSecrets } from "../core/redaction.js";
 import { enforceGoalTermination } from "../core/termination.js";
 import { summarizeUsage } from "../core/usage.js";
+import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../core/validation-lock.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -141,7 +142,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/sources": [["/sources list", "List retrieved sources"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
-  "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"]],
+  "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
   "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"]],
   "/limits": [["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Switch to local Qwen automatically"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute budget", "Show campaign usage"]],
@@ -1018,6 +1019,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const entry = store.experiments().find((experiment) => experiment.id === id);
     if (!entry) { store.close(); throw new Error(`Experiment not found: ${id}`); }
     const manifest = ExperimentManifestSchema.parse(entry.payload);
+    const validationPolicyPath = join(root, ".sota", "validation-policy.json");
+    const validationLockPath = join(root, ".sota", "validation-policy.lock.json");
+    if (readValidationPolicyLock(validationLockPath)?.locked) {
+      assertValidationPolicy(validationPolicyPath, validationLockPath);
+      store.appendEvent("validation.policy.verified", { experimentId: id, lockPath: validationLockPath });
+    }
     let executionPlan: ExecutionStage[] = Array.isArray((entry.payload as { executionPlan?: unknown }).executionPlan)
       ? (entry.payload as { executionPlan: ExecutionStage[] }).executionPlan
       : createExecutionPlan(manifest);
@@ -2081,18 +2088,47 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request === "/validation inspect" || request === "/validation") {
       const path = join(root, ".sota", "validation-policy.json");
-      append("assistant", existsSync(path) ? readFileSync(path, "utf8").trim() : "No validation policy is locked. Use /validation generate.");
+      const lock = readValidationPolicyLock(join(root, ".sota", "validation-policy.lock.json"));
+      append("assistant", `${existsSync(path) ? readFileSync(path, "utf8").trim() : "No validation policy generated. Use /validation generate."}\n\nLock: ${lock?.locked ? `locked (${lock.checksum})` : lock ? `unlocked (${lock.unlockReason ?? "no reason"})` : "not locked"}`);
       return;
     }
     if (request === "/validation generate") {
       const adapter = activeAdapter();
+      const policyPath = join(root, ".sota", "validation-policy.json");
+      const lockPath = join(root, ".sota", "validation-policy.lock.json");
+      if (readValidationPolicyLock(lockPath)?.locked) {
+        append("assistant", "Validation policy is locked. Use /validation unlock <reason> before regenerating it.");
+        return;
+      }
       const policy = createValidationPolicy(adapter.config);
       mkdirSync(join(root, ".sota"), { recursive: true });
-      const path = join(root, ".sota", "validation-policy.json");
-      const checksum = writeValidationPolicy(path, policy);
+      const checksum = writeValidationPolicy(policyPath, policy);
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      store.appendEvent("validation.policy.created", { path, checksum, policy }); store.close();
+      store.appendEvent("validation.policy.created", { path: policyPath, checksum, policy }); store.close();
       append("assistant", `Validation policy generated\n  version: ${policy.version}\n  split: ${policy.primarySplit}\n  folds: ${policy.folds.join(", ")}\n  seeds: ${policy.seeds.join(", ")}\n  checksum: ${checksum}`);
+      return;
+    }
+    if (request === "/validation lock") {
+      const policyPath = join(root, ".sota", "validation-policy.json");
+      const lockPath = join(root, ".sota", "validation-policy.lock.json");
+      try {
+        const record = lockValidationPolicy(policyPath, lockPath);
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        store.appendEvent("validation.policy.locked", record); store.close();
+        append("assistant", `Validation policy locked\n  checksum: ${record.checksum}`);
+      } catch (error) { appendError(error); }
+      return;
+    }
+    if (request.startsWith("/validation unlock")) {
+      const reason = request.slice("/validation unlock".length).trim();
+      const policyPath = join(root, ".sota", "validation-policy.json");
+      const lockPath = join(root, ".sota", "validation-policy.lock.json");
+      try {
+        const record = unlockValidationPolicy(policyPath, lockPath, reason);
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        store.appendEvent("validation.policy.unlocked", record); store.close();
+        append("assistant", `Validation policy unlocked\n  reason: ${record.unlockReason}`);
+      } catch (error) { appendError(error); }
       return;
     }
     if (request === "/challenge baseline") {

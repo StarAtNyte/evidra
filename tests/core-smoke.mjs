@@ -65,6 +65,7 @@ import { captureProtectedFiles, changedProtectedFiles } from "../dist/core/integ
 import { assessHypothesisQuality } from "../dist/core/hypothesis-quality.js";
 import { ResearchDecisionSchema } from "../dist/core/types.js";
 import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
+import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../dist/core/validation-lock.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
 
@@ -449,6 +450,25 @@ test("comparison family size includes failed and legacy metric attempts", () => 
     { datasetVersion: "d2", outcomeType: "metric" },
   ], "d1"), 3);
   assert.equal(comparisonFamilySize([], "d1"), 1);
+});
+
+test("validation policy lock detects mutation and requires an unlock reason", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-validation-lock-"));
+  try {
+    const policy = join(root, "validation-policy.json");
+    const lock = join(root, "validation-policy.lock.json");
+    writeFileSync(policy, "{\"version\":\"v1\"}\n");
+    const record = lockValidationPolicy(policy, lock);
+    assert.equal(record.locked, true);
+    assert.equal(assertValidationPolicy(policy, lock).checksum, record.checksum);
+    writeFileSync(policy, "{\"version\":\"tampered\"}\n");
+    assert.throws(() => assertValidationPolicy(policy, lock), /Locked validation policy changed/);
+    assert.throws(() => unlockValidationPolicy(policy, lock, ""), /requires a non-empty reason/);
+    writeFileSync(policy, "{\"version\":\"v1\"}\n");
+    const unlocked = unlockValidationPolicy(policy, lock, "update split after data revision");
+    assert.equal(unlocked.locked, false);
+    assert.equal(readValidationPolicyLock(lock)?.unlockReason, "update split after data revision");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("multi-split validation rejects a regression hidden by the aggregate", () => {

@@ -142,6 +142,8 @@ Roles are director, data detective, validation scientist, model researcher, expe
 
 /validation inspect           Show the current split policy
 /validation generate         Generate a versioned split
+/validation lock              Freeze the policy checksum before experiments
+/validation unlock <reason>   Unlock only with an auditable reason
 /validation compare <a> <b> Compare split strategies
 /validation lock              Lock the primary validation policy
 /validation unlock            Unlock only with an approval record
