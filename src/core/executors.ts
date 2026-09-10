@@ -8,7 +8,7 @@ export interface ExperimentExecutor {
   run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName?: string): Promise<RunResult>;
 }
 
-function failureClass(result: ProcessResult): RunResult["failureClass"] {
+function failureClass(result: ProcessResult, remote = false): RunResult["failureClass"] {
   const text = `${result.stdout}\n${result.stderr}`.toLowerCase();
   if (/out of memory|cuda oom|cuda.*memory/.test(text)) return "cuda_oom";
   if (/nan|inf loss/.test(text)) return "nan_loss";
@@ -17,6 +17,7 @@ function failureClass(result: ProcessResult): RunResult["failureClass"] {
   if (/modul enotfound|cannot import|dependency/.test(text)) return "dependency";
   if (/rate limit|429|usage limit/.test(text)) return "rate_limit";
   if (/auth|unauthorized|forbidden/.test(text)) return "auth";
+  if (remote && /modal|connection reset|connection refused|failed to connect|temporarily unavailable|gateway timeout|\b502\b|\b503\b|container.*(failed|crashed)|worker.*(failed|crashed)/.test(text)) return "transient_cloud";
   return "unknown";
 }
 
@@ -32,12 +33,12 @@ export function parseModalWorkerResult(output: string): ModalWorkerResult | unde
   for (const line of output.trim().split("\n").reverse()) {
     try {
       const candidate = JSON.parse(line) as Record<string, unknown>;
-      if (!candidate || typeof candidate !== "object" || typeof candidate.exitCode !== "number") continue;
+      if (!candidate || typeof candidate !== "object" || typeof candidate.exitCode !== "number" || !Number.isInteger(candidate.exitCode) || candidate.exitCode < 0 || candidate.exitCode > 255) continue;
       const artifacts = candidate.artifacts ?? {};
       if (typeof candidate.stdout !== "string" || typeof candidate.stderr !== "string" || typeof artifacts !== "object" || Array.isArray(artifacts)) continue;
       const normalized: Record<string, string> = {};
       for (const [name, encoded] of Object.entries(artifacts)) {
-        if (typeof encoded !== "string" || encoded.length > 96 * 1024 * 1024) return undefined;
+        if (typeof encoded !== "string" || encoded.length > 96 * 1024 * 1024 || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) return undefined;
         normalized[name] = encoded;
       }
       return { exitCode: candidate.exitCode, stdout: candidate.stdout, stderr: candidate.stderr, artifacts: normalized };
@@ -88,7 +89,7 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
   return { metrics, metricsByFold };
 }
 
-function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metricName: string): RunResult {
+function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metricName: string, remote = false): RunResult {
   const parsed = parseMetricOutput(result.stdout, metricName);
   const artifacts: Record<string, string> = {};
   const missing: string[] = [];
@@ -115,7 +116,7 @@ function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metric
     stderr,
     command: result.command,
     cwd: result.cwd,
-    ...(artifactFailure ? { failureClass: "corrupt_artifact" as const } : result.exitCode === 0 ? {} : { failureClass: failureClass(result) }),
+    ...(artifactFailure ? { failureClass: "corrupt_artifact" as const } : result.exitCode === 0 ? {} : { failureClass: failureClass(result, remote) }),
   };
 }
 
@@ -150,8 +151,10 @@ export class ModalExecutor implements ExperimentExecutor {
       EVIDRA_MODAL_TIMEOUT_SECONDS: String(timeoutSeconds),
     });
     const payload = parseModalWorkerResult(result.stdout);
-    if (!payload) return toRunResult(manifest, { ...result, command, cwd }, metricName);
+    if (!payload) return toRunResult(manifest, { ...result, command, cwd }, metricName, true);
+    const allowedArtifacts = new Set(manifest.evaluation?.requiredArtifacts ?? []);
     for (const [name, encoded] of Object.entries(payload.artifacts ?? {})) {
+      if (!allowedArtifacts.has(name)) continue;
       const destination = safeArtifactPath(cwd, name);
       if (!destination) continue;
       mkdirSync(dirname(destination), { recursive: true });
@@ -159,7 +162,7 @@ export class ModalExecutor implements ExperimentExecutor {
       if (decoded.length > 64 * 1024 * 1024) continue;
       writeFileSync(destination, decoded);
     }
-    return toRunResult(manifest, { ...result, command, exitCode: payload.exitCode, stdout: payload.stdout, stderr: payload.stderr, cwd }, metricName);
+    return toRunResult(manifest, { ...result, command, exitCode: payload.exitCode, stdout: payload.stdout, stderr: payload.stderr, cwd }, metricName, true);
   }
 }
 
