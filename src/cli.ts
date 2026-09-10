@@ -501,7 +501,11 @@ sources.command("add").argument("<url>").action(async (url: string) => {
   const claims = sourceClaims(retrieved.text);
   const store = new ResearchStore(statePath);
   store.saveSource({ id: retrieved.id, payload: { ...retrieved, claims } });
-  for (const [index, statement] of claims.entries()) store.saveClaim({ id: `${retrieved.id}_claim_${index + 1}`, payload: { id: `${retrieved.id}_claim_${index + 1}`, statement, scope: retrieved.url, confidence: 0.35, sourceType: "literature", sourceId: retrieved.id, status: "active" } });
+  for (const [index, statement] of claims.entries()) {
+    const claimId = `${retrieved.id}_claim_${index + 1}`;
+    store.saveClaim({ id: claimId, payload: { id: claimId, statement, scope: retrieved.url, confidence: 0.35, sourceType: "literature", sourceId: retrieved.id, status: "active" } });
+    store.saveEdge({ id: `edge_${claimId}_${retrieved.id}`, fromId: claimId, toId: retrieved.id, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
+  }
   store.appendEvent("research.source.retrieved", { id: retrieved.id, url: retrieved.url, contentHash: retrieved.contentHash, claimCount: claims.length });
   store.close();
   console.log(`${retrieved.id}\n${retrieved.title}\n${retrieved.url}\nclaims: ${claims.length}\nhash: ${retrieved.contentHash}`);

@@ -1066,6 +1066,7 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.match(reportDenied.error, /inspection tools only/);
     assert.equal(existsSync(join(root, "reports")), false);
     assert(RESEARCH_TOOLS.some((tool) => tool.name === "source.retrieve"));
+    assert(RESEARCH_TOOLS.some((tool) => tool.name === "source.search" && tool.readOnly));
     const eventStore = new ResearchStore(db);
     const events = eventStore.recentEvents(10).map((event) => event.type);
     eventStore.close();
@@ -1083,6 +1084,26 @@ test("scholarly source discovery returns candidates without trusting them", () =
   assert.equal(parsed[0].title, "Adaptive research agents");
   assert.equal(parsed[0].abstract, "Adaptive agents improve");
   assert.equal(parsed[0].authors[0], "A. Researcher");
+});
+
+test("tool source retrieval preserves the SSRF safety boundary", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-source-tool-"));
+  const server = createServer((_request, response) => {
+    response.setHeader("content-type", "text/plain");
+    response.end("The method improves validation accuracy across held-out groups.");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  try {
+    const result = await executeResearchTool({ name: "source.retrieve", arguments: { url: `http://127.0.0.1:${port}/paper` } }, { root, storePath: join(root, ".sota", "database.sqlite"), autonomy: "fast" });
+    // Loopback is intentionally rejected by the source boundary.
+    assert.equal(result.ok, false);
+    assert.match(result.error, /private or loopback/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("research director executes typed tools and reasons over returned evidence", async () => {

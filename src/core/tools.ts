@@ -10,6 +10,7 @@ import { retrieveSource, searchResearchSources, sourceClaims } from "./sources.j
 import { ResearchStore } from "./store.js";
 import type { CompetitionConfig } from "./types.js";
 import { isSensitiveWorkspacePath, redactSecrets } from "./redaction.js";
+import { readValidationPolicyLock } from "./validation-lock.js";
 
 export interface ResearchToolContext {
   root: string;
@@ -151,7 +152,11 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         const claims = sourceClaims(retrieved.text);
         const store = new ResearchStore(context.storePath);
         store.saveSource({ id: retrieved.id, payload: { ...retrieved, claims } });
-        for (const [index, statement] of claims.entries()) store.saveClaim({ id: `${retrieved.id}_claim_${index + 1}`, payload: { id: `${retrieved.id}_claim_${index + 1}`, statement, scope: retrieved.url, confidence: 0.35, sourceType: "literature", sourceId: retrieved.id, status: "active" } });
+        for (const [index, statement] of claims.entries()) {
+          const claimId = `${retrieved.id}_claim_${index + 1}`;
+          store.saveClaim({ id: claimId, payload: { id: claimId, statement, scope: retrieved.url, confidence: 0.35, sourceType: "literature", sourceId: retrieved.id, status: "active" } });
+          store.saveEdge({ id: `edge_${claimId}_${retrieved.id}`, fromId: claimId, toId: retrieved.id, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
+        }
         store.appendEvent("research.source.retrieved", { id: retrieved.id, url: retrieved.url, claimCount: claims.length });
         store.close();
         output = { id: retrieved.id, title: retrieved.title, url: retrieved.url, claims, excerpt: retrieved.excerpt };
@@ -170,11 +175,13 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       }
       case "validation.generate": {
         if (!context.competition) throw new Error("No workspace configuration is active.");
+        const policyPath = join(context.root, ".sota", "validation-policy.json");
+        const lockPath = join(context.root, ".sota", "validation-policy.lock.json");
+        if (readValidationPolicyLock(lockPath)?.locked) throw new Error("Validation policy is locked; unlock it explicitly before regenerating.");
         const policy = createValidationPolicy(context.competition);
-        const path = join(context.root, ".sota", "validation-policy.json");
         mkdirSync(join(context.root, ".sota"), { recursive: true });
-        const checksum = writeValidationPolicy(path, policy);
-        output = { path, checksum, policy };
+        const checksum = writeValidationPolicy(policyPath, policy);
+        output = { path: policyPath, checksum, policy };
         break;
       }
       case "report.generate": {
