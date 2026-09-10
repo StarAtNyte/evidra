@@ -58,9 +58,11 @@ export function planHarnessAdaptation(
     if (comparison.coverage < 0.8 || comparison.validPairedArms < comparison.comparableArms) {
       add("reliability", `${comparison.incumbent} paired validity`, `${(comparison.coverage * 100).toFixed(0)}% valid paired coverage against ${comparison.incumbent}.`, "Reducing invalid or missing runs will raise the conservative lower bound without changing the task metric.", "Instrument the failing route, classify the terminal failure, and add a bounded alternate route before retesting.", "At least 80% valid paired coverage with no silently dropped arms.");
     }
-    if (comparison.sliceRegressions.length) {
-      for (const slice of comparison.sliceRegressions.slice(0, 4)) {
-        const lower = comparison.sliceLower95[slice];
+    const sliceRegressions = comparison.sliceRegressions ?? [];
+    const sliceLower95 = comparison.sliceLower95 ?? {};
+    if (sliceRegressions.length) {
+      for (const slice of sliceRegressions.slice(0, 4)) {
+        const lower = sliceLower95[slice];
         add(
           "coverage",
           `${comparison.incumbent} slice ${slice}`,

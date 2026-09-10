@@ -524,6 +524,26 @@ test("slice regressions become targeted adaptive interventions", () => {
   assert.match(intervention.action, /minority/);
 });
 
+test("adaptive planning remains compatible with pre-slice benchmark records", () => {
+  const plan = planHarnessAdaptation([], [], [{
+    challenger: "evidra",
+    incumbent: "incumbent",
+    comparableArms: 2,
+    validPairedArms: 1,
+    tasks: 1,
+    coverage: 0.5,
+    pairedMeanDelta: null,
+    pairedLower95: null,
+    processComparableArms: 0,
+    pairedProcessQualityDelta: null,
+    timeComparableArms: 0,
+    pairedTimeEfficiencyDelta: null,
+    challengerWins: false,
+    reason: "legacy report",
+  }], "evidra");
+  assert.ok(plan.interventions.some((item) => item.kind === "reliability"));
+});
+
 test("claim audit separates measured, literature, unsupported, and conflicted evidence", () => {
   const report = auditClaims({
     claims: [
