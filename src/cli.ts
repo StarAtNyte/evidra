@@ -20,7 +20,7 @@ import { renderTimeline } from "./core/timeline.js";
 import { latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
 import { detectStagnation } from "./core/stagnation.js";
 import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
-import { campaignElapsedMinutes, pauseCampaign, readCampaignRuntime, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
+import { campaignElapsedMinutes, campaignRemainingMs, pauseCampaign, readCampaignRuntime, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { auditExperiment } from "./core/validation.js";
 import { comparisonFamilySize, evaluateValidationAcceptance } from "./core/validation-engine.js";
@@ -150,10 +150,10 @@ function experimentCommandFor(adapter: ReturnType<typeof activeCompetition>, hyp
   return command;
 }
 
-async function runCampaignExperiment(rootPath: string, experimentId: string, stage: "all" | "reduced" | "full-after-screen" = "all"): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+async function runCampaignExperiment(rootPath: string, experimentId: string, stage: "all" | "reduced" | "full-after-screen" = "all", timeoutMs = 7 * 24 * 60 * 60_000): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const script = process.argv[1];
   if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint for autonomous experiment execution.");
-  return runProcess([process.execPath, script, "experiment", "run", experimentId, ...(stage === "reduced" ? ["--reduced-only"] : stage === "full-after-screen" ? ["--skip-reduced"] : [])], rootPath, 7 * 24 * 60 * 60_000, (stream, chunk) => {
+  return runProcess([process.execPath, script, "experiment", "run", experimentId, ...(stage === "reduced" ? ["--reduced-only"] : stage === "full-after-screen" ? ["--skip-reduced"] : [])], rootPath, Math.max(1, timeoutMs), (stream, chunk) => {
     (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
   });
 }
@@ -1901,7 +1901,7 @@ research
             console.log(`Ablation plan scheduled: ${ablationIds.join(", ")}`);
             completionStore.close();
             for (const ablationId of ablationIds) {
-              const ablationRun = await runCampaignExperiment(root, ablationId);
+              const ablationRun = await runCampaignExperiment(root, ablationId, "all", campaignRemainingMs(campaign));
               const variantId = ablationPlan.variants.find((variant) => ablationId.includes(`_${variant.factorId}`))?.id;
               if (variantId) ablationResults.push({ id: variantId, exitCode: ablationRun.exitCode });
               const ablationStore = new ResearchStore(statePath);
@@ -1921,7 +1921,7 @@ research
           replicationSetupStore.appendEvent("replication.manifest.created", { parentId: experimentId, replicationId: replication.id, automatic: true });
           console.log(`Independent replication scheduled: ${replication.id}\n${manifestSummary(replication)}`);
           replicationSetupStore.close();
-          const replicationRun = await runCampaignExperiment(root, replication.id);
+          const replicationRun = await runCampaignExperiment(root, replication.id, "all", campaignRemainingMs(campaign));
           const replicationStore = new ResearchStore(statePath);
           replicationStore.appendEvent(replicationRun.exitCode === 0 ? "experiment.autonomous.replication.completed" : "experiment.autonomous.replication.failed", { parentId: experimentId, replicationId: replication.id, exitCode: replicationRun.exitCode, stdout: replicationRun.stdout.slice(-4000), stderr: replicationRun.stderr.slice(-4000) });
           const replicationComparisonEvent = replicationStore.recentEvents(500).reverse().find((event) => event.type === "experiment.comparison.completed" && (event.payload as { experimentId?: unknown }).experimentId === replication.id);
@@ -1981,7 +1981,7 @@ research
             try {
               await implementCampaignHypothesis(root, experimentId, selectedHypothesis, manifest, { provider: options.provider as "codex" | "local", model: selectedModel, thinking: options.thinking, protectedCommands: [adapter.config.evaluator.command] });
               if (halvingEnabled) {
-                run = await runCampaignExperiment(root, experimentId, "reduced");
+                run = await runCampaignExperiment(root, experimentId, "reduced", campaignRemainingMs(campaign));
                 const screenStore = new ResearchStore(statePath);
                 const screenEvent = screenStore.recentEvents(500).reverse().find((event) => event.type === "experiment.screening.completed" && (event.payload as { experimentId?: unknown }).experimentId === experimentId);
                 const screenPayload = screenEvent?.payload as { metric?: unknown } | undefined;
@@ -1992,7 +1992,7 @@ research
                 decisionStore = new ResearchStore(statePath);
                 continue;
               }
-              run = await runCampaignExperiment(root, experimentId);
+              run = await runCampaignExperiment(root, experimentId, "all", campaignRemainingMs(campaign));
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
               const failedImplementationStore = new ResearchStore(statePath);
@@ -2013,7 +2013,7 @@ research
         promotionStore.appendEvent("research.portfolio.screening_promoted", { cycle, stage: screeningStage.index, candidates: screenedCandidates, promoted, retainCount: screeningStage.retainCount, direction: adapter.config.metric.direction });
         promotionStore.close();
         for (const candidate of screenedCandidates.filter((entry) => promoted.includes(entry.experimentId))) {
-          const fullRun = await runCampaignExperiment(root, candidate.experimentId, "full-after-screen");
+          const fullRun = await runCampaignExperiment(root, candidate.experimentId, "full-after-screen", campaignRemainingMs(campaign));
           await finalizeAutonomousRun(candidate.experimentId, fullRun);
         }
       }

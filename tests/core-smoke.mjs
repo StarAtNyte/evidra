@@ -45,7 +45,7 @@ import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js"
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { materializeResearchDecision } from "../dist/core/research-graph.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
-import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../dist/core/campaign.js";
+import { campaignElapsedMinutes, campaignRemainingMs, pauseCampaign, resumeCampaign } from "../dist/core/campaign.js";
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
@@ -352,6 +352,14 @@ test("paused campaign time is excluded from the autonomous budget", () => {
   const resumed = resumeCampaign(paused, "2026-01-01T01:00:00.000Z");
   assert.equal(Math.round(resumed.pausedDurationMinutes), 50);
   assert.equal(Math.round(campaignElapsedMinutes(resumed, Date.parse("2026-01-01T01:10:00.000Z"))), 20);
+});
+
+test("campaign child timeout is bounded by remaining active budget", () => {
+  const campaign = { startedAt: "2026-01-01T00:00:00.000Z", status: "running", budgetMinutes: 30 };
+  assert.equal(campaignRemainingMs(campaign, Date.parse("2026-01-01T00:10:00.000Z")), 20 * 60_000);
+  const paused = { ...campaign, status: "paused", pausedAt: "2026-01-01T00:05:00.000Z" };
+  assert.equal(campaignRemainingMs(paused, Date.parse("2026-01-01T00:20:00.000Z")), 25 * 60_000);
+  assert.equal(campaignRemainingMs(campaign, Date.parse("2026-01-01T00:40:00.000Z")), 0);
 });
 
 test("durable campaign runtime settings are validated before resume", () => {

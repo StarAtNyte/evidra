@@ -58,6 +58,12 @@ export function campaignElapsedMinutes(campaign: CampaignTimeState, now = Date.n
   return Math.max(0, (now - started - accumulatedPause - activePause) / 60_000);
 }
 
+/** Remaining wall-clock budget for a durable campaign, excluding paused time. */
+export function campaignRemainingMs(campaign: CampaignTimeState & { budgetMinutes: number }, now = Date.now()): number {
+  if (!Number.isFinite(campaign.budgetMinutes) || campaign.budgetMinutes < 0) return 0;
+  return Math.max(0, (campaign.budgetMinutes - campaignElapsedMinutes(campaign, now)) * 60_000);
+}
+
 export function pauseCampaign<T extends CampaignTimeState>(campaign: T, now = new Date().toISOString()): T {
   if (campaign.status === "paused") return campaign;
   return { ...campaign, status: "paused", pausedAt: now };
