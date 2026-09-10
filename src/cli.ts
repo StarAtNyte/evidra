@@ -61,6 +61,7 @@ import { rankSearchArms, searchReward, type SearchOperator } from "./core/search
 import { planPortfolio } from "./core/portfolio.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
+import { scoreHarnessTrials, type HarnessTrial } from "./core/harness-scorecard.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -369,6 +370,34 @@ program.command("usage").description("Show research, experiment, and campaign us
   for (const [executor, bucket] of Object.entries(usage.byExecutor)) console.log(`  ${executor.padEnd(11)} ${bucket.runs} runs · ${bucket.wallMinutes.toFixed(1)}m · ${bucket.gpuWallHours.toFixed(3)} GPU-h`);
   store.close();
 });
+
+const benchmark = new Command("benchmark").description("Compare research harnesses under a common task/budget protocol");
+benchmark.command("score")
+  .argument("<file>", "JSON file containing a trial array or { trials: [...] }")
+  .option("--json", "emit machine-readable scorecards")
+  .description("Score task-balanced, evaluator-backed harness trials")
+  .action((file: string, options: { json?: boolean }) => {
+    const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
+    const raw = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray((parsed as { trials?: unknown }).trials) ? (parsed as { trials: unknown[] }).trials : undefined;
+    if (!raw?.length) throw new Error("Benchmark input must contain a non-empty JSON trial array.");
+    const trials = raw.map((value, index) => {
+      if (!value || typeof value !== "object") throw new Error(`Benchmark trial ${index + 1} is not an object.`);
+      const trial = value as Partial<HarnessTrial>;
+      if (typeof trial.harness !== "string" || typeof trial.task !== "string" || (trial.direction !== "maximize" && trial.direction !== "minimize") || typeof trial.baselineMetric !== "number" || typeof trial.validRun !== "boolean" || typeof trial.durationSeconds !== "number" || typeof trial.recovered !== "boolean" || typeof trial.reproducible !== "boolean") {
+        throw new Error(`Benchmark trial ${index + 1} is missing a required field.`);
+      }
+      return trial as HarnessTrial;
+    });
+    const scorecards = scoreHarnessTrials(trials);
+    if (options.json) {
+      console.log(JSON.stringify(scorecards, null, 2));
+      return;
+    }
+    console.log("Harness benchmark · task-balanced evidence score");
+    console.log("Harness                 Tasks  Trials  Score  Lower95  Valid  Improve  Repro");
+    for (const scorecard of scorecards) console.log(`${scorecard.harness.padEnd(23).slice(0, 23)} ${String(scorecard.tasks).padStart(5)} ${String(scorecard.trials).padStart(7)} ${scorecard.competitiveScore.toFixed(1).padStart(6)} ${scorecard.competitiveScoreLower95.toFixed(1).padStart(8)} ${(scorecard.validRunRate * 100).toFixed(0).padStart(5)}% ${(scorecard.improvementRate * 100).toFixed(0).padStart(7)}% ${(scorecard.reproducibilityRate * 100).toFixed(0).padStart(5)}%`);
+  });
+program.addCommand(benchmark);
 
 const sources = new Command("sources").description("Retrieve and search durable research sources");
 sources.command("list").action(() => {

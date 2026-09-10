@@ -18,6 +18,17 @@ easy task cannot outweigh failures on other tasks. The scorecard also reports a
 deterministic bootstrap `competitiveScoreLower95` over task means; benchmark
 claims should use that conservative bound when comparing close systems.
 
+The same protocol is available from the CLI:
+
+```bash
+evidra benchmark score trials.json
+evidra benchmark score trials.json --json
+```
+
+The input is either a JSON array or `{ "trials": [...] }`, with one record per
+fixed task/seed arm and fields for baseline, candidate metric, validity,
+duration, recovery, and reproducibility.
+
 Invalid runs and unverified model claims score zero improvement. This prevents a
 harness from winning by producing persuasive text without a measured artifact.
 
