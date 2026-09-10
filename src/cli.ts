@@ -1386,6 +1386,7 @@ research
         remainingBudgetMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
         recentFailures: recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length,
         evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
+        profile: adaptiveHarness.profile,
       });
       store.appendEvent("research.search_policy.selected", {
         cycle,

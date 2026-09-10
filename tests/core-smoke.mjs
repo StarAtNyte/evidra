@@ -2233,6 +2233,21 @@ test("search policy explores untried operators and penalizes invalid evidence", 
   assert.equal(searchReward(0.2, true, true), 0.2);
 });
 
+test("adaptive harness profiles influence search operator selection", () => {
+  const ranked = rankSearchArms({
+    arms: [
+      { id: "greedy", operator: "greedy", attempts: 3, successes: 2, meanReward: 0.2, cost: 1, novelty: 0.1 },
+      { id: "audit", operator: "audit", attempts: 3, successes: 1, meanReward: 0.2, cost: 1, novelty: 0.1 },
+    ],
+    remainingBudgetMinutes: 30,
+    recentFailures: 0,
+    evidenceConflicts: 0,
+    profile: "evidence",
+  });
+  assert.equal(ranked[0].operator, "audit");
+  assert.match(ranked[0].rationale, /evidence profile/);
+});
+
 test("default autonomous search portfolio exposes every documented operator", () => {
   assert.deepEqual(DEFAULT_SEARCH_OPERATORS, ["greedy", "ucb_portfolio", "evolutionary", "mcts", "ablation", "combination", "replication", "audit"]);
 });

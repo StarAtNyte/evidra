@@ -23,6 +23,7 @@ export interface SearchPolicyInput {
   recentFailures: number;
   evidenceConflicts: number;
   exploration?: number;
+  profile?: "exploration" | "evidence" | "recovery" | "budget";
 }
 
 export interface RankedSearchArm extends SearchArm {
@@ -131,8 +132,18 @@ export function rankSearchArms(input: SearchPolicyInput): RankedSearchArm[] {
   const exploration = input.exploration ?? 1.4;
   const totalAttempts = Math.max(1, input.arms.reduce((sum, arm) => sum + arm.attempts, 0));
   return input.arms.map((arm) => {
+    const cost = Math.max(0.1, arm.cost);
     const conflictPressure = input.evidenceConflicts > 0 && arm.operator === "audit" ? 0.8 : 0;
     const recoveryPressure = input.recentFailures > 0 && arm.operator === "replication" ? 0.35 : 0;
+    const profileBonus = input.profile === "evidence"
+      ? arm.operator === "audit" || arm.operator === "replication" ? 0.9 : arm.operator === "mcts" || arm.operator === "evolutionary" ? -0.25 : 0
+      : input.profile === "recovery"
+        ? arm.operator === "replication" || arm.operator === "audit" ? 0.65 : 0
+        : input.profile === "exploration"
+          ? arm.novelty * 0.25
+          : input.profile === "budget"
+            ? -Math.min(1, cost * 0.1)
+            : 0;
     const untriedBonus = arm.attempts === 0
       ? arm.operator === "mcts" ? 3.4 : arm.operator === "evolutionary" ? 2.4 : 2
       : 0;
@@ -146,7 +157,6 @@ export function rankSearchArms(input: SearchPolicyInput): RankedSearchArm[] {
       // Rewards are bounded to [-1, 1]; cap the confidence bonus so a tiny
       // sample cannot dominate an explicitly untried search strategy.
       : Math.min(2, exploration * (Math.sqrt((2 * variance * logTerm) / arm.attempts) + (3 * logTerm) / arm.attempts));
-    const cost = Math.max(0.1, arm.cost);
     const costPenalty = cost > Math.max(0.1, input.remainingBudgetMinutes) ? 100 : cost * 0.05;
     const successRate = arm.attempts ? arm.successes / arm.attempts : 0;
     const strategyBonus = arm.operator === "greedy"
@@ -156,10 +166,10 @@ export function rankSearchArms(input: SearchPolicyInput): RankedSearchArm[] {
         : arm.operator === "mcts"
           ? uncertainty * 1.25 + arm.novelty * 0.35
           : arm.novelty * 0.5;
-    const score = arm.meanReward + strategyBonus + uncertainty + untriedBonus + conflictPressure + recoveryPressure - costPenalty;
+    const score = arm.meanReward + strategyBonus + uncertainty + untriedBonus + conflictPressure + recoveryPressure + profileBonus - costPenalty;
     const rationale = arm.attempts === 0
       ? `untried ${arm.operator} policy: obtain information before over-exploiting a known direction`
-      : `${arm.operator} reward ${arm.meanReward.toFixed(3)} with uncertainty ${uncertainty.toFixed(3)}`;
+      : `${arm.operator} reward ${arm.meanReward.toFixed(3)} with uncertainty ${uncertainty.toFixed(3)}${profileBonus ? ` and ${input.profile} profile adjustment ${profileBonus.toFixed(3)}` : ""}`;
     return { ...arm, score, rationale };
   }).sort((left, right) => right.score - left.score);
 }
