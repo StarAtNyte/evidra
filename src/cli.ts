@@ -1246,6 +1246,10 @@ research
         .slice(-3)
         .map((event) => event.payload)
         .slice(-3);
+      const harnessAdaptationAgenda = harnessBenchmarkEvidence
+        .map((payload) => (payload as { adaptation?: unknown }).adaptation)
+        .filter((adaptation): adaptation is Record<string, unknown> => Boolean(adaptation && typeof adaptation === "object"))
+        .slice(-1)[0];
       const harnessComponents = inventoryHarnessComponents(root);
       const harnessFailureProfile = Object.fromEntries(Object.entries(harnessBenchmarkEvidence
         .flatMap((payload) => Array.isArray((payload as { scorecards?: unknown }).scorecards) ? (payload as { scorecards: Array<{ failureProfile?: Record<string, number> }> }).scorecards : [])
@@ -1262,7 +1266,7 @@ research
       });
       store.appendEvent("harness.evolution.plan", { cycle, components: harnessComponents.map((component) => ({ id: component.id, path: component.path, kind: component.kind, checksum: component.checksum })), interventions: harnessEvolutionPlan, failureProfile: harnessFailureProfile });
       const harnessGuidance = harnessBenchmarkEvidence.length
-        ? `Harness-evolution evidence from matched benchmark runs (diagnostic, not workspace task evidence): ${JSON.stringify(harnessBenchmarkEvidence).slice(0, 8_000)}. Prioritize these checksummed, falsifiable interventions and remeasure them under the same protocol: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}`
+        ? `Harness-evolution evidence from matched benchmark runs (diagnostic, not workspace task evidence): ${JSON.stringify(harnessBenchmarkEvidence).slice(0, 8_000)}. Prioritize these checksummed, falsifiable interventions and remeasure them under the same protocol: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}${harnessAdaptationAgenda ? `\n\nLocked adaptive retest agenda (must be addressed before claiming a win): ${JSON.stringify(harnessAdaptationAgenda).slice(0, 8_000)}` : ""}`
         : `No matched harness benchmark evidence is recorded yet; preserve failure telemetry for the first comparison. The harness action space is inventory-backed; use these candidate intervention contracts when a failure is observed: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}`;
       const recentTrajectories = store.trajectories(20);
       const recentQuality = recentTrajectories.map((entry) => qualityFeedback(entry.quality));
@@ -1389,6 +1393,7 @@ research
             researchSources,
             harnessBenchmarkEvidence,
             harnessEvolutionPlan,
+            harnessAdaptationAgenda: harnessAdaptationAgenda ?? null,
             ultimateGoal: options.goal,
             phaseGoal: phaseGoal ?? null,
             allocation,
@@ -1429,6 +1434,7 @@ research
                 observation,
                 recentEvents,
                 researchSources,
+                harnessAdaptationAgenda: harnessAdaptationAgenda ?? null,
                 ultimateGoal: options.goal,
                 phaseGoal: phaseGoal ?? null,
                 allocation,
@@ -1469,7 +1475,7 @@ research
           crossPollinationStore.appendEvent("research.cross_pollination.completed", { cycle, board: crossPollination });
           crossPollinationStore.close();
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, openCriticConstraint }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
           criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
             provider: options.provider,
             model: selectedModel,
