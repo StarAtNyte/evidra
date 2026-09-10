@@ -26,6 +26,16 @@ export const CompetitionConfigSchema = z.object({
     workingDirectory: z.string().optional(),
     submitCommand: z.array(z.string()).optional(),
   }).optional(),
+  submissionPolicy: z.object({
+    requireHumanApproval: z.boolean().default(true),
+    minimumInformationValue: z.number().nonnegative().default(0),
+    minimumLocalConfidence: z.number().min(0).max(1).default(0),
+    rejectIfLeakageFlagged: z.boolean().default(true),
+    reserveForFinalEnsemble: z.number().int().nonnegative().default(0),
+    minimumHoursBetweenSubmissions: z.number().nonnegative().default(0),
+    totalLimit: z.number().int().positive().optional(),
+    dailyLimit: z.number().int().positive().optional(),
+  }).optional(),
   validation: z.object({
     primarySplit: z.string().min(1).default("mini"),
     folds: z.array(z.number().int().nonnegative()).min(1).default([0]),

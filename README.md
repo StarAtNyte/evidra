@@ -273,7 +273,15 @@ Evidra does not require a fixed competition name. A project can provide competit
       "workspacePath": ".",
       "baselineCommand": ["python", "baseline.py"],
       "experimentCommand": ["python", "run_experiment.py"],
-      "submission": { "platform": "manual" }
+      "submission": { "platform": "manual" },
+      "submissionPolicy": {
+        "minimumInformationValue": 0.2,
+        "minimumLocalConfidence": 0.8,
+        "reserveForFinalEnsemble": 3,
+        "minimumHoursBetweenSubmissions": 8,
+        "totalLimit": 10,
+        "dailyLimit": 2
+      }
     }
 
 The manifest is intentionally small. Dataset manifests, split registries, metrics, worker protocols, and platform adapters belong in the workspace instead of being hardcoded into Evidra. Paths are checked to remain inside the project root.
@@ -313,6 +321,8 @@ Experiment execution is intended to be isolated and reproducible:
 External submissions, destructive commands, secret access, and unrestricted execution are not enabled by selecting YOLO.
 
 Submission is always explicit and approval-gated. After preparing, validating, and approving a bundle, use `/submission submit <bundle-id>` or `evidra submission submit <bundle-id>`. Manual upload is the default. Kaggle can be configured without exposing credentials to agents:
+
+When a manifest declares `submissionPolicy`, Evidra also enforces its external budget before the adapter runs. The CLI accepts `--information-value`, `--local-confidence`, and `--final`; the TUI accepts the equivalent flags on `/submission submit`. Failed policy checks do not consume a submission slot, and every successful adapter receipt remains durable in the event log.
 
     "submission": {
       "platform": "kaggle",

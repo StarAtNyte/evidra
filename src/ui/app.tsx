@@ -16,6 +16,7 @@ import { compareRuns } from "../core/statistics.js";
 import { recoveryDelay, recoveryPlan } from "../core/recovery.js";
 import { prepareSubmission, validateSubmissionBundle } from "../core/submissions.js";
 import { submitApprovedBundle } from "../core/submission-adapters.js";
+import { evaluateSubmissionPolicy } from "../core/submission-policy.js";
 import { diversityReport, greedyBlend, loadPredictionVector, type PredictionVector } from "../core/ensemble.js";
 import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
 import { auditData } from "../core/data-audit.js";
@@ -186,7 +187,7 @@ function help(): string {
     "/compute [local|modal|status] Select the experiment execution target",
     "/doctor                     Diagnose local dependencies",
     "!<shell command>            Run a shell command in the project workspace",
-    "/submission [prepare|validate|approve|record] Manage safe bundles and external scores",
+    "/submission [prepare|validate|approve|submit|record] Manage safe bundles and external scores",
     "/queue [status|recover]      Show or recover durable tasks",
     "/sessions                   List saved terminal sessions",
     "/resume [session-id]        Explicitly resume a saved session",
@@ -1894,6 +1895,26 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (entry.status !== "approved") { store.close(); append("assistant", `Submission ${bundleId} is '${entry.status}'. Run /submission approve first.`); return; }
         const gates = store.experimentGates(entry.experimentId);
         if (!gates.leakageAuditPassed) { store.close(); append("assistant", `Submission blocked: leakage audit approval is required. Use /experiment gate ${entry.experimentId} leakage approve.`); return; }
+        const optionValue = (name: string): number | undefined => {
+          const index = parts.findIndex((part) => part === name);
+          const inline = parts.find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1);
+          const value = inline ?? (index >= 0 ? parts[index + 1] : undefined);
+          if (value === undefined) return undefined;
+          const parsed = Number(value);
+          return Number.isFinite(parsed) ? parsed : undefined;
+        };
+        const payload = entry.payload as { informationValue?: unknown; localConfidence?: unknown; isFinalEnsemble?: unknown };
+        const policyDecision = evaluateSubmissionPolicy(activeAdapter().config.submissionPolicy, {
+          submittedAt: store.submissions().filter((candidate) => candidate.status === "submitted" || candidate.status === "scored").map((candidate) => {
+            const candidatePayload = candidate.payload as { receipt?: { submittedAt?: unknown } };
+            return typeof candidatePayload.receipt?.submittedAt === "string" ? candidatePayload.receipt.submittedAt : candidate.updatedAt;
+          }),
+          informationValue: optionValue("--information-value") ?? (typeof payload.informationValue === "number" ? payload.informationValue : undefined),
+          localConfidence: optionValue("--local-confidence") ?? (typeof payload.localConfidence === "number" ? payload.localConfidence : undefined),
+          leakageFlagged: !gates.leakageAuditPassed,
+          isFinalEnsemble: parts.includes("--final") || payload.isFinalEnsemble === true,
+        });
+        if (!policyDecision.allowed) { store.close(); append("assistant", `Submission policy blocked ${bundleId}: ${policyDecision.reasons.join("; ")}`); return; }
         setBusy(true); setProgress(`Submitting ${bundleId} through the configured adapter...`);
         try {
           const attempt = await submitApprovedBundle(root, entry.path, activeAdapter().config, "Evidra research submission", registerProcess);

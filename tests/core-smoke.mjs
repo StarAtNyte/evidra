@@ -34,6 +34,7 @@ import { routeCapability } from "../dist/core/capability-router.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
 import { rankPriorities } from "../dist/core/scheduler.js";
 import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
+import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -168,6 +169,43 @@ test("data audit reports bounded tabular duplicate and missingness diagnostics",
     assert.equal(report.distributionShift.length, 1);
     assert.deepEqual(new Set(report.distributionShift[0].shiftedColumns), new Set(["id", "domain"]));
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("data audit parses quoted delimiters, escaped quotes, and multiline fields", () => {
+    const root = mkdtempSync(join(tmpdir(), "evidra-audit-quoted-"));
+    writeFileSync(join(root, "quoted.csv"), 'id,description,kind\n1,"Toronto, Canada","a ""quoted"" value"\n2,"line one\nline two",b\n');
+    const report = auditData(root);
+    const quoted = report.tabularDiagnostics.find((entry) => entry.file === "quoted.csv");
+    assert.equal(quoted.rows, 2);
+    assert.equal(quoted.columns, 3);
+    assert.equal(quoted.duplicateRows, 0);
+    assert.deepEqual(quoted.constantColumns, []);
+    assert.ok(quoted.columnProfiles.description.sample.includes("Toronto, Canada"));
+    assert.ok(quoted.columnProfiles.kind.sample.includes('a "quoted" value'));
+});
+
+test("submission policy enforces budgets, spacing, and final reserve", () => {
+    const now = new Date("2026-09-10T12:00:00.000Z");
+    const policy = { minimumInformationValue: 0.2, minimumLocalConfidence: 0.8, rejectIfLeakageFlagged: true, reserveForFinalEnsemble: 1, minimumHoursBetweenSubmissions: 8, totalLimit: 3, dailyLimit: 2, requireHumanApproval: true };
+    const blocked = evaluateSubmissionPolicy(policy, {
+        now,
+        submittedAt: ["2026-09-10T05:00:00.000Z", "2026-09-09T00:00:00.000Z"],
+        informationValue: 0.1,
+        localConfidence: 0.7,
+        leakageFlagged: true,
+    });
+    assert.equal(blocked.allowed, false);
+    assert.ok(blocked.reasons.some((reason) => reason.includes("minimum spacing")));
+    assert.ok(blocked.reasons.some((reason) => reason.includes("information value")));
+    assert.ok(blocked.reasons.some((reason) => reason.includes("leakage")));
+    const final = evaluateSubmissionPolicy(policy, {
+        now,
+        submittedAt: ["2026-09-09T00:00:00.000Z"],
+        informationValue: 0.5,
+        localConfidence: 0.9,
+        isFinalEnsemble: true,
+    });
+    assert.equal(final.allowed, true);
 });
 
 test("workspace root discovery keeps nested CLI invocations on the project state", () => {

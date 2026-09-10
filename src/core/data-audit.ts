@@ -17,13 +17,64 @@ export interface DataAuditReport {
 const IGNORED = new Set([".git", ".venv", "node_modules", ".sota", "__pycache__"]);
 const TABULAR_EXTENSIONS = new Set([".csv", ".tsv", ".jsonl"]);
 
+/** Parse RFC-4180-style delimited text without loading an unbounded number of rows. */
+function parseDelimited(text: string, delimiter: string, maxRows: number): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  let reachedLimit = false;
+
+  const finishField = (): void => {
+    row.push(field);
+    field = "";
+  };
+  const finishRow = (): void => {
+    finishField();
+    if (row.some((value) => value.length > 0)) rows.push(row);
+    row = [];
+    if (rows.length >= maxRows) reachedLimit = true;
+  };
+
+  for (let index = 0; index < text.length && !reachedLimit; index += 1) {
+    const character = text[index];
+    if (quoted) {
+      if (character === '"') {
+        if (text[index + 1] === '"') {
+          field += '"';
+          index += 1;
+        } else {
+          quoted = false;
+        }
+      } else {
+        field += character;
+      }
+      continue;
+    }
+    if (character === '"' && field.length === 0) {
+      quoted = true;
+    } else if (character === delimiter) {
+      finishField();
+    } else if (character === "\n") {
+      finishRow();
+    } else if (character === "\r") {
+      if (text[index + 1] === "\n") index += 1;
+      finishRow();
+    } else {
+      field += character;
+    }
+  }
+  if (!reachedLimit && (row.length > 0 || field.length > 0)) finishRow();
+  return rows;
+}
+
 function tabularDiagnostic(root: string, path: string, maxRows = 50_000): DataAuditReport["tabularDiagnostics"][number] | undefined {
   const extension = path.slice(path.lastIndexOf(".")).toLowerCase();
   if (!TABULAR_EXTENSIONS.has(extension)) return undefined;
   const text = readFileSync(path, "utf8");
-  const lines = text.split(/\r?\n/).filter((line) => line.trim()).slice(0, maxRows + 1);
-  if (lines.length < 2) return { file: relative(root, path), rows: 0, columns: 0, duplicateRows: 0, constantColumns: [], highMissingColumns: [], columnProfiles: {} };
   if (extension === ".jsonl") {
+    const lines = text.split(/\r?\n/).filter((line) => line.trim()).slice(0, maxRows);
+    if (lines.length === 0) return { file: relative(root, path), rows: 0, columns: 0, duplicateRows: 0, constantColumns: [], highMissingColumns: [], columnProfiles: {} };
     const records = lines.slice(0, maxRows).map((line) => { try { return JSON.parse(line) as Record<string, unknown>; } catch { return {}; } });
     const headers = [...new Set(records.flatMap((record) => Object.keys(record)))];
     const counts = new Map<string, Set<string>>();
@@ -44,8 +95,10 @@ function tabularDiagnostic(root: string, path: string, maxRows = 50_000): DataAu
     return { file: relative(root, path), rows: records.length, columns: headers.length, duplicateRows: records.length - rows.size, constantColumns: headers.filter((header) => (counts.get(header)?.size ?? 0) <= 1), highMissingColumns: headers.filter((header) => (missing.get(header) ?? 0) / Math.max(1, records.length) >= 0.5), columnProfiles: Object.fromEntries(headers.map((header) => [header, { missingRate: (missing.get(header) ?? 0) / Math.max(1, records.length), uniqueValues: counts.get(header)?.size ?? 0, sample: [...(counts.get(header) ?? new Set<string>())].slice(0, 20) }])) };
   }
   const delimiter = extension === ".tsv" ? "\t" : ",";
-  const header = lines[0].split(delimiter).map((value) => value.trim());
-  const rows = lines.slice(1, maxRows + 1).map((line) => line.split(delimiter));
+  const parsed = parseDelimited(text, delimiter, maxRows + 1);
+  if (parsed.length < 2) return { file: relative(root, path), rows: 0, columns: 0, duplicateRows: 0, constantColumns: [], highMissingColumns: [], columnProfiles: {} };
+  const header = parsed[0].map((value) => value.trim());
+  const rows = parsed.slice(1, maxRows + 1);
   const values = header.map((_, index) => new Set(rows.map((row) => row[index] ?? "")));
   const missing = header.map((_, index) => rows.filter((row) => !row[index]?.trim()).length);
   const duplicateRows = rows.length - new Set(rows.map((row) => row.join("\u001f"))).size;

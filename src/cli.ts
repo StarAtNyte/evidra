@@ -15,6 +15,7 @@ import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, 
 import { retrieveSource, sourceClaims, sourceSearchText } from "./core/sources.js";
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
 import { submitApprovedBundle } from "./core/submission-adapters.js";
+import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
@@ -266,7 +267,7 @@ submission.command("approve").argument("<bundle>").action((bundle: string) => {
   store.close();
   console.log(`Approved ${bundle}. Submit explicitly with: evidra submission submit ${bundle}`);
 });
-submission.command("submit").argument("<bundle>").option("--message <message>", "submission message", "Evidra research submission").action(async (bundle: string, options: { message: string }) => {
+submission.command("submit").argument("<bundle>").option("--message <message>", "submission message", "Evidra research submission").option("--information-value <value>", "expected information value of this submission").option("--local-confidence <value>", "confidence in the local validation").option("--final", "identify this as a final ensemble submission").action(async (bundle: string, options: { message: string; informationValue?: string; localConfidence?: string; final?: boolean }) => {
   const store = new ResearchStore(statePath);
   const entry = store.submissions().find((candidate) => candidate.id === bundle);
   if (!entry) { store.close(); throw new Error(`Submission bundle ${bundle} is not registered.`); }
@@ -274,6 +275,16 @@ submission.command("submit").argument("<bundle>").option("--message <message>", 
   const gates = store.experimentGates(entry.experimentId);
   if (!gates.leakageAuditPassed) { store.close(); throw new Error(`Submission ${bundle} is blocked: leakage audit approval is required. Run evidra experiment gate ${entry.experimentId} leakage approve.`); }
   const adapter = activeCompetition();
+  const policy = adapter.config.submissionPolicy;
+  const priorSubmittedAt = store.submissions().filter((candidate) => candidate.status === "submitted" || candidate.status === "scored").map((candidate) => {
+    const payload = candidate.payload as { receipt?: { submittedAt?: unknown } };
+    return typeof payload.receipt?.submittedAt === "string" ? payload.receipt.submittedAt : candidate.updatedAt;
+  });
+  const payload = entry.payload as { informationValue?: unknown; localConfidence?: unknown; isFinalEnsemble?: unknown };
+  const informationValue = options.informationValue === undefined ? (typeof payload.informationValue === "number" ? payload.informationValue : undefined) : Number(options.informationValue);
+  const localConfidence = options.localConfidence === undefined ? (typeof payload.localConfidence === "number" ? payload.localConfidence : undefined) : Number(options.localConfidence);
+  const policyDecision = evaluateSubmissionPolicy(policy, { submittedAt: priorSubmittedAt, informationValue, localConfidence, leakageFlagged: !gates.leakageAuditPassed, isFinalEnsemble: options.final || payload.isFinalEnsemble === true });
+  if (!policyDecision.allowed) { store.close(); throw new Error(`Submission policy blocked ${bundle}: ${policyDecision.reasons.join("; ")}`); }
   try {
     const attempt = await submitApprovedBundle(root, entry.path, adapter.config, options.message);
     store.updateSubmissionStatus(bundle, "submitted", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), receipt: attempt.receipt });
