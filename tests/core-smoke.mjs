@@ -1890,6 +1890,7 @@ test("AIRS protocol generation creates matched task arms with safe template expa
   assert.equal(protocol.arms[1].harness, "mlgym");
   assert.equal(protocol.arms[0].taskBestMetric, 1);
   assert.equal(protocol.arms[0].task, "airsbench:rad/TaskA");
+  assert.throws(() => createAirsBenchmarkProtocol(discovery, { templates: [{ harness: "evidra", command: ["run"] }], model: "m", seed: 0, budgetMinutes: 1, baselineMetric: 0 }), /at least two distinct/);
 });
 
 test("search policy explores untried operators and penalizes invalid evidence", () => {

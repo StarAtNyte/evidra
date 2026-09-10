@@ -130,7 +130,8 @@ function expandTemplate(part: string, task: AirsBenchTask, repository: string, o
  * task identity, scoring metadata, and budget controls are fixed by Evidra.
  */
 export function createAirsBenchmarkProtocol(discovery: AirsBenchDiscovery, options: AirsProtocolOptions): AirsBenchmarkProtocol {
-  if (!options.templates.length) throw new Error("At least one AIRS harness command template is required.");
+  const harnesses = new Set(options.templates.map((template) => template.harness.trim()).filter(Boolean));
+  if (harnesses.size < 2) throw new Error("A matched AIRS protocol requires at least two distinct harness command templates.");
   if (!Number.isFinite(options.budgetMinutes) || options.budgetMinutes <= 0) throw new Error("AIRS benchmark budget must be positive.");
   if (!Number.isFinite(options.baselineMetric)) throw new Error("AIRS benchmark baseline metric must be finite.");
   const arms: BenchmarkArmSpec[] = [];

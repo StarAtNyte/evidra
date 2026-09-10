@@ -80,7 +80,9 @@ evidra benchmark run airs-protocol.json --workspace /path/to/airs-bench
 ```
 
 The command templates are the only harness-specific part; Evidra fixes task
-identity, seed, model, budget, metric direction, and normalization bounds.
+identity, seed, model, budget, metric direction, and normalization bounds. At
+least two distinct harnesses are required so the generated file cannot be
+mistaken for comparative evidence when it contains only a single system.
 
 ```bash
 git clone https://github.com/facebookresearch/airs-bench.git
