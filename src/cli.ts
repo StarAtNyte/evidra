@@ -19,7 +19,7 @@ import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
 import { renderTimeline } from "./core/timeline.js";
 import { latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
 import { detectStagnation } from "./core/stagnation.js";
-import { recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
+import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
 import { campaignElapsedMinutes, pauseCampaign, readCampaignRuntime, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { auditExperiment } from "./core/validation.js";
@@ -2176,6 +2176,8 @@ experiment.command("run")
     const entry = store.experiments().find((candidate) => candidate.id === id);
     if (!entry) { store.close(); throw new Error(`Experiment ${id} is not registered. Run: evidra experiment propose`); }
     const entryPayload = entry.payload as Record<string, unknown>;
+    const replay = experimentReplayDecision(entryPayload.status);
+    if (!replay.allowed) { store.close(); throw new Error(replay.reason); }
     if (options.skipReduced && (entryPayload.status !== "screened" || typeof entryPayload.reducedRunId !== "string")) {
       store.close();
       throw new Error("--skip-reduced requires a durable completed reduced screening for this experiment.");

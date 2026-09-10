@@ -91,6 +91,8 @@ Provider and lane failures are recoverable. Transient network, timeout, stream, 
 
 Lane tool failures are also bounded and observable: each transient inspection-tool error is retried once, then preserved in the lane context so the agent can explain the missing observation or choose another route. A failed tool call no longer discards the entire independent lane.
 
+Experiment manifests are immutable measurement identities. After a manifest completes, fails after bounded recovery, or is rejected by an evidence gate, Evidra refuses to replay it; the next attempt must be a new manifest with an explicit changed route or repaired contract.
+
 Every research cycle now has an adversarial critic stage. The critic reviews lane disagreement and the director decision, records objections and required checks, and returns `proceed`, `revise`, or `reject`. An explicitly started autonomous research or challenge campaign can implement and run isolated experiments automatically; external submissions remain approval-gated in every mode.
 
 Critic output is normalized before it becomes a gate: a review that says `proceed` while listing unresolved `requiredChecks`, citing no durable evidence anchor, or citing an anchor absent from the lane/store evidence is downgraded to `revise`, so unsupported approval cannot disappear between cycles.

@@ -16,6 +16,14 @@ export interface RecoveryRouteDirective {
   sameManifestRetryExhausted: boolean;
 }
 
+/** Immutable manifests are never replayed after a terminal outcome. */
+export function experimentReplayDecision(status: unknown): { allowed: boolean; reason?: string } {
+  if (status === "completed") return { allowed: false, reason: "Experiment already completed; create a new manifest for another measurement." };
+  if (status === "failed") return { allowed: false, reason: "Experiment failed after its bounded recovery route; create a new manifest with a changed route." };
+  if (status === "rejected") return { allowed: false, reason: "Experiment was rejected by an evidence gate; create a new manifest after addressing the rejection." };
+  return { allowed: true };
+}
+
 export function recoveryPlan(failureClass: RunResult["failureClass"]): RecoveryPlan {
   switch (failureClass) {
     case "cuda_oom": return { retry: true, maxAttempts: 2, backoffSeconds: 2, action: "retry with the same immutable manifest; then reduce memory pressure", route: "reduce_resources" };

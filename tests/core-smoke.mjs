@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { compareMetricSeries, compareRuns } from "../dist/core/statistics.js";
-import { recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
+import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseSourceSearchResults, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
@@ -1597,6 +1597,15 @@ test("paired statistics and recovery are deterministic", () => {
   assert.equal(recoveryRouteDirective("timeout").routeKey, "timeout:reduce_resources");
   assert.equal(recoveryRouteDirective("timeout").sameManifestRetryExhausted, true);
   assert.match(recoveryRouteDirective("timeout").instruction, /lower-resource|split-workload/);
+});
+
+test("terminal experiments cannot replay an immutable manifest", () => {
+  assert.equal(experimentReplayDecision("proposed").allowed, true);
+  assert.equal(experimentReplayDecision("screened").allowed, true);
+  assert.equal(experimentReplayDecision("completed").allowed, false);
+  assert.equal(experimentReplayDecision("failed").allowed, false);
+  assert.match(experimentReplayDecision("failed").reason, /changed route/);
+  assert.equal(experimentReplayDecision("rejected").allowed, false);
 });
 
 test("metric registry computes common classification, regression, and ranking metrics", () => {
