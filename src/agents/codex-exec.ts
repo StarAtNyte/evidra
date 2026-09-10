@@ -24,12 +24,20 @@ export function effectiveCodexSandbox(requested?: CodexSandboxMode): CodexSandbo
  */
 export function createIsolatedCodexWorkspace(source: string): { path: string; cleanup: () => void } {
   const path = mkdtempSync(join(tmpdir(), "evidra-codex-research-"));
-  const excluded = new Set([".git", ".sota", "node_modules"]);
   cpSync(source, path, {
     recursive: true,
     filter: (entry) => {
-      const first = relative(source, entry).split("/")[0] ?? basename(entry);
-      return !excluded.has(first);
+      const parts = relative(source, entry).split("/");
+      const first = parts[0] ?? basename(entry);
+      const name = basename(entry);
+      // Keep .git and .sota so the provider can inspect the same project
+      // context as the controller. Never copy dependencies, generated
+      // experiment worktrees, or common credential files into the provider
+      // sandbox.
+      if (first === "node_modules") return false;
+      if (first === ".sota" && parts[1] === "worktrees") return false;
+      if (/^\.env(?:\.|$)/i.test(name) || /(?:credentials|token|secret|private).*\.(?:json|ya?ml|toml|pem|key)$/i.test(name)) return false;
+      return true;
     },
   });
   return {

@@ -100,7 +100,7 @@ test("full-access research workspaces cannot modify the controller checkout", ()
     try {
       writeFileSync(join(isolated.path, "controller.txt"), "provider edit\n");
       assert.equal(readFileSync(join(root, "controller.txt"), "utf8"), "original\n");
-      assert.equal(existsSync(join(isolated.path, ".sota")), false);
+      assert.equal(existsSync(join(isolated.path, ".sota")), true);
     } finally {
       isolated.cleanup();
     }
