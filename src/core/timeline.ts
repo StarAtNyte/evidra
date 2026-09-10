@@ -30,6 +30,8 @@ export function summarizeTimelineEvent(event: TimelineEvent): string {
   if (event.type.startsWith("controller.")) return `controller · ${event.type.slice("controller.".length).replace(/\./g, " ")}${id ? ` · ${id}` : ""}`;
   if (event.type === "submission.external.submitted") return `submission · submitted via ${text(payload.platform, "adapter")}`;
   if (event.type === "submission.score.recorded" || event.type === "submission.score.polled") return `submission · score ${String(payload.score ?? "unknown")}${event.type.endsWith("polled") ? " (polled)" : ""}`;
+  if (event.type === "ensemble.candidate.created" || event.type === "ensemble.candidate.recorded") return `ensemble · candidate ${text(payload.id, "created")}${payload.checksum ? ` · ${text(payload.checksum, "checksummed")}` : ""}`;
+  if (event.type === "ensemble.candidate.status") return `ensemble · ${text(payload.id, "candidate")} · ${text(payload.status, "status")}`;
   if (event.type.startsWith("queue.")) return `queue · ${event.type.slice("queue.".length).replace(/\./g, " ")}${id ? ` · ${id}` : ""}`;
   return event.type.replace(/\./g, " ") + (id ? ` · ${id}` : "");
 }

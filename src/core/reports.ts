@@ -20,6 +20,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const runs = store.runs();
   const artifacts = store.artifacts();
   const trajectories = store.trajectories(100);
+  const ensembles = store.ensembleCandidates(100);
   const events = store.recentEvents(40);
   const contradictionEdges = store.edges().filter((edge) => edge.relation === "contradicts");
   const duplicateEvents = events.filter((event) => event.type === "evidence.claim.duplicate_detected");
@@ -54,6 +55,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     return `- ${trajectory.id} · ${quality.overall ?? "unknown"}${trajectory.experimentId ? ` · experiment ${trajectory.experimentId}` : ""}${trajectory.runId ? ` · run ${trajectory.runId}` : ""}\n  ${dimensions}`;
   }).join("\n") : "No evaluated trajectories recorded.");
   sections.push("", "## Sources", "", sources.length ? sources.map((source) => `- ${source.id}: ${line((source.payload as { title?: string; url?: string }).title ?? source.payload)} · ${(source.payload as { url?: string }).url ?? ""}`).join("\n") : "No sources recorded.");
+  sections.push("", "## Ensemble candidates", "", ensembles.length ? ensembles.map((candidate) => `- ${candidate.id} · ${candidate.status} · ${candidate.checksum}\n  ${candidate.path}`).join("\n") : "No ensemble candidates recorded.");
   if (kind !== "research") sections.push("", "## Experiments and runs", "", experiments.length ? experiments.map((experiment) => {
     const payload = experiment.payload as { status?: string; executionPlan?: Array<{ id: string; status: string }> };
     const plan = payload.executionPlan?.map((stage) => `${stage.id}=${stage.status}`).join(", ");

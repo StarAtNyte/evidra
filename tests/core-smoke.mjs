@@ -37,6 +37,7 @@ import { allocateNextResearch } from "../dist/core/allocation.js";
 import { experimentNovelty, rankExperimentCandidates, rankPriorities } from "../dist/core/scheduler.js";
 import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
+import { renderReport } from "../dist/core/reports.js";
 import { latestSourceEntries, latestSourcePayloads, researchMemoryContext } from "../dist/core/research-context.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "../dist/core/experiment-patches.js";
 import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js";
@@ -339,6 +340,20 @@ test("timeline renders durable events without provider protocol noise", () => {
   assert.match(renderTimeline(events, 10), /attempt 2 · started · modal/);
   assert.match(renderTimeline(events, 10), /attempt 2 · completed · metric 0.43/);
   assert.doesNotMatch(renderTimeline(events, 10), /thread\.started|thread_id/);
+});
+
+test("reports and timeline expose ensemble lifecycle state", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-report-ensemble-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.saveEnsembleCandidate({ id: "blend-report", path: join(root, "blend.json"), checksum: "sha256:test", status: "validated", payload: { id: "blend-report", status: "validated" } });
+    store.appendEvent("ensemble.candidate.status", { id: "blend-report", status: "validated" });
+    const report = renderReport(store, "final");
+    assert.match(report, /## Ensemble candidates/);
+    assert.match(report, /blend-report.*validated/);
+    assert.match(renderTimeline(store.recentEvents(20)), /ensemble · blend-report · validated/);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("data audit reports bounded tabular duplicate and missingness diagnostics", () => {
