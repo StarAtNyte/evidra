@@ -57,7 +57,7 @@ import { validateCompetitionContract } from "./core/competition-contract.js";
 import { candidateChangePath } from "./core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "./core/execution-heartbeat.js";
 import { researchFailureRecord } from "./core/research-failure.js";
-import { rankSearchArms } from "./core/search-policy.js";
+import { rankSearchArms, searchReward, type SearchOperator } from "./core/search-policy.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -919,11 +919,10 @@ research
       store.appendEvent("research.next_allocation", { allocation, objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}` });
       const searchPolicy = rankSearchArms({
         arms: [
-          { id: "new-method", operator: "ucb_portfolio", attempts: 0, successes: 0, meanReward: 0, cost: 1, novelty: 0.8 },
-          { id: "ablation", operator: "ablation", attempts: 0, successes: 0, meanReward: 0, cost: 0.5, novelty: 0.6 },
-          { id: "combination", operator: "combination", attempts: 0, successes: 0, meanReward: 0, cost: 1.5, novelty: 0.9 },
-          { id: "replication", operator: "replication", attempts: recentTrajectories.length, successes: 0, meanReward: 0, cost: 1, novelty: 0.2 },
-          { id: "audit", operator: "audit", attempts: evidenceConflicts.contradictions + evidenceConflicts.duplicates, successes: 0, meanReward: 0, cost: 0.25, novelty: 0.4 },
+          ...(["ucb_portfolio", "ablation", "combination", "replication", "audit"] as SearchOperator[]).map((operator, index) => {
+            const rewards = store.recentEvents(500).filter((event) => event.type === "research.search.reward" && (event.payload as { operator?: string }).operator === operator).map((event) => Number((event.payload as { reward?: number }).reward)).filter(Number.isFinite);
+            return { id: operator, operator, attempts: rewards.length, successes: rewards.filter((reward) => reward > 0).length, meanReward: rewards.length ? rewards.reduce((sum, reward) => sum + reward, 0) / rewards.length : 0, cost: [1, 0.5, 1.5, 1, 0.25][index], novelty: [0.8, 0.6, 0.9, 0.2, 0.4][index] };
+          }),
         ],
         remainingBudgetMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
         recentFailures: recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length,
@@ -1596,7 +1595,13 @@ experiment.command("run")
           cwd: baselinePayload?.cwd,
         };
         const comparison = compareRuns(baselineRun, RunResultSchema.parse(recorded), metricName, adapter.config.metric.direction === "minimize");
-        resultStore.appendEvent("experiment.comparison.completed", { experimentId: id, baselineSource: baselineEvent?.createdAt ?? "baseline", comparison });
+        const selectedPolicy = resultStore.recentEvents(500).reverse().find((event) => event.type === "research.search_policy.selected");
+        const operator = (selectedPolicy?.payload as { selected?: { operator?: string } } | undefined)?.selected?.operator ?? "ucb_portfolio";
+        resultStore.appendEvent("experiment.comparison.completed", { experimentId: id, baselineSource: baselineEvent?.createdAt ?? "baseline", comparison, searchOperator: operator });
+        if (operator) {
+          const improvementDelta = comparison.delta === null ? undefined : adapter.config.metric.direction === "minimize" ? -comparison.delta : comparison.delta;
+          resultStore.appendEvent("research.search.reward", { experimentId: id, operator, reward: searchReward(improvementDelta, recorded.status === "completed", comparison.evidence === "replicated"), valid: recorded.status === "completed", reproducible: comparison.evidence === "replicated", delta: improvementDelta });
+        }
       } else {
         resultStore.appendEvent("experiment.comparison.insufficient_data", { experimentId: id, reason: "No finite baseline metric was available." });
       }
