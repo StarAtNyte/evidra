@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { EvidenceClaimSchema } from "./types.js";
 
 export type QueueTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export interface QueuedTask {
@@ -546,10 +547,21 @@ export class ResearchStore {
 
   saveClaim(claim: { id: string; payload: unknown }): void {
     const createdAt = new Date().toISOString();
-    const payload = JSON.stringify(claim.payload);
-    this.db.prepare(`INSERT OR REPLACE INTO evidence_claims (id, payload_json, created_at) VALUES (?, ?, ?)`).run(claim.id, payload, createdAt);
-    this.indexMemory("claim", claim.id, payload, createdAt);
-    this.appendEvent("evidence.claim.created", claim.payload);
+    const candidate = claim.payload && typeof claim.payload === "object" && !Array.isArray(claim.payload)
+      ? { ...(claim.payload as Record<string, unknown>), id: claim.id }
+      : claim.payload;
+    const parsed = EvidenceClaimSchema.safeParse(candidate);
+    if (!parsed.success) {
+      throw new Error(`Invalid evidence claim ${claim.id}: ${parsed.error.issues.map((issue) => `${issue.path.join(".")} ${issue.message}`).join("; ")}`);
+    }
+    if (parsed.data.sourceType === "literature") {
+      const source = this.db.prepare("SELECT 1 AS present FROM research_sources WHERE id = ?").get(parsed.data.sourceId) as { present: number } | undefined;
+      if (!source) throw new Error(`Literature claim ${claim.id} references missing source ${parsed.data.sourceId}.`);
+    }
+    const durablePayload = JSON.stringify(candidate);
+    this.db.prepare(`INSERT OR REPLACE INTO evidence_claims (id, payload_json, created_at) VALUES (?, ?, ?)`).run(claim.id, durablePayload, createdAt);
+    this.indexMemory("claim", claim.id, durablePayload, createdAt);
+    this.appendEvent("evidence.claim.created", candidate);
   }
 
   private indexMemory(kind: "claim" | "hypothesis" | "source", id: string, content: string, createdAt: string): void {

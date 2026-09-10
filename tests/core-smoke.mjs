@@ -305,7 +305,7 @@ test("research memory search is durable and searches claims, hypotheses, and sou
   try {
     const db = join(root, ".sota", "database.sqlite");
     const store = new ResearchStore(db);
-    store.saveClaim({ id: "claim-1", payload: { statement: "Group holdout reduces leakage risk", sourceType: "observation" } });
+    store.saveClaim({ id: "claim-1", payload: { statement: "Group holdout reduces leakage risk", scope: "validation", confidence: 0.8, sourceType: "observation", sourceId: "audit-1", status: "active" } });
     store.saveHypothesis({ id: "hyp-1", payload: { title: "Group-aware validation", mechanism: "Avoid duplicate groups" } });
     store.saveSource({ id: "src-1", payload: { title: "Validation paper", url: "https://example.com/paper", claims: ["group holdout"] } });
     assert.equal(store.searchMemory("group", 20).length, 3);
@@ -313,6 +313,20 @@ test("research memory search is durable and searches claims, hypotheses, and sou
     const reopened = new ResearchStore(db);
     assert.equal(reopened.searchMemory("leakage risk", 20)[0].id, "claim-1");
     reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("evidence claims require provenance and grounded literature sources", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-claim-contract-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    assert.throws(() => store.saveClaim({ id: "bad", payload: { statement: "unscoped", sourceType: "observation" } }), /Invalid evidence claim/);
+    assert.throws(() => store.saveClaim({ id: "orphan", payload: { statement: "paper claim", scope: "paper", confidence: 0.5, sourceType: "literature", sourceId: "missing-source", status: "active" } }), /missing source/);
+    store.saveSource({ id: "paper-1", payload: { title: "Paper", url: "https://example.com/paper", claims: [] } });
+    store.saveClaim({ id: "grounded", payload: { statement: "paper claim", scope: "paper", confidence: 0.5, sourceType: "literature", sourceId: "paper-1", status: "active", excerpt: "quoted context" } });
+    assert.equal(store.claims()[0].id, "grounded");
+    assert.equal(store.claims()[0].payload.excerpt, "quoted context");
+    store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

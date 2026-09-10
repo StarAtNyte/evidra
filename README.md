@@ -307,6 +307,8 @@ Durable controller state lives under .sota:
 
 The event log records observations, tool calls, source retrieval, queue claims, phase-goal updates, experiment runs, artifacts, and generated reports. Generated summaries never replace primary logs, metrics, or source hashes.
 
+Evidence claims are validated at the SQLite boundary. Every claim requires a statement, scope, confidence, source type, source identifier, and lifecycle status; literature claims are rejected unless their source was retrieved and stored. Additional provenance such as excerpts, findings, reports, and artifact references is retained alongside the validated core.
+
 ## Experiments and permissions
 
 Experiment execution is intended to be isolated and reproducible:
