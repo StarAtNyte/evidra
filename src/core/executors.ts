@@ -98,19 +98,19 @@ export class ModalExecutor implements ExperimentExecutor {
   constructor(private readonly workspaceRoot?: string) {}
 
   async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse"): Promise<RunResult> {
-    if (!process.env.MODAL_TOKEN_ID || !process.env.MODAL_TOKEN_SECRET) {
-      throw new Error("Modal is not configured. Set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET, or choose local execution.");
-    }
-    const workspaceRoot = resolve(this.workspaceRoot ?? cwd);
-    const relativeCwd = relative(workspaceRoot, resolve(cwd));
-    if (relativeCwd.startsWith("..") || isAbsolute(relativeCwd)) throw new Error("Modal experiment cwd must stay inside the project workspace.");
+    // Modal CLI profiles (created by `modal token set`) are valid credentials
+    // too; do not require secrets to be duplicated into Evidra's environment.
+    const launchRoot = resolve(this.workspaceRoot ?? cwd);
+    const experimentWorkspace = resolve(cwd);
     const modalEntrypoint = process.env.EVIDRA_MODAL_ENTRYPOINT ?? "modal_app.py::run";
     const timeoutSeconds = Math.max(60, Math.round(manifest.resources.timeoutMinutes * 60));
     const commandJson = JSON.stringify(command);
-    const args = ["run", modalEntrypoint, "--", "--command-json", commandJson, "--cwd", relativeCwd || ".", "--artifacts-json", JSON.stringify(manifest.evaluation?.requiredArtifacts ?? []), "--timeout-seconds", String(timeoutSeconds)];
-    const result = await runProcess(args, workspaceRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, {
+    // The worker image must contain the isolated worktree. Mounting the repo
+    // root would omit `.sota/worktrees` and silently execute the wrong source.
+    const args = ["run", modalEntrypoint, "--", "--command-json", commandJson, "--cwd", ".", "--artifacts-json", JSON.stringify(manifest.evaluation?.requiredArtifacts ?? []), "--timeout-seconds", String(timeoutSeconds)];
+    const result = await runProcess(args, launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, {
       ...process.env,
-      EVIDRA_MODAL_WORKSPACE: workspaceRoot,
+      EVIDRA_MODAL_WORKSPACE: experimentWorkspace,
       ...(manifest.resources.gpu ? { EVIDRA_MODAL_GPU: manifest.resources.gpu } : {}),
       EVIDRA_MODAL_TIMEOUT_SECONDS: String(timeoutSeconds),
     });

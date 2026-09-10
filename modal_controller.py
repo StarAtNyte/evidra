@@ -33,7 +33,7 @@ def ignore_workspace_path(path: Path) -> bool:
 image = (
     modal.Image.from_registry("python:3.11-slim-bookworm")
     .apt_install("nodejs", "npm")
-    .run_commands("python -m pip install uv")
+    .run_commands("python -m pip install uv modal")
     .add_local_dir(WORKSPACE, remote_path=str(REMOTE_WORKSPACE), ignore=ignore_workspace_path)
 )
 app = modal.App("evidra-controller")
@@ -76,11 +76,13 @@ def set_control(action: str) -> str:
 
 
 @app.function(image=image, secrets=secrets, volumes={"/state": STATE_VOLUME}, timeout=24 * 60 * 60)
-def execute(goal: str, budget: str, mode: str = "research", autonomy: str = "safe", provider: str = "codex", model: str = "default", lanes: int = 3) -> int:
+def execute(goal: str, budget: str, mode: str = "research", autonomy: str = "safe", provider: str = "codex", model: str = "default", lanes: int = 3, competition: str = "local-research", executor: str = "local") -> int:
     if mode not in {"research", "challenge"}:
         raise ValueError("Controller mode must be research or challenge")
     if autonomy not in {"safe", "fast", "yolo"}:
         raise ValueError("Controller autonomy must be safe, fast, or yolo")
+    if executor not in {"local", "modal"}:
+        raise ValueError("Controller executor must be local or modal")
     environment = {
         **os.environ,
         "EVIDRA_STATE_DIR": "/state",
@@ -93,6 +95,10 @@ def execute(goal: str, budget: str, mode: str = "research", autonomy: str = "saf
     build = subprocess.run(["npm", "run", "build"], cwd=REMOTE_WORKSPACE, env=environment, text=True, check=False)
     if build.returncode != 0:
         return build.returncode
+    if not Path("/state/database.sqlite").exists():
+        initialize = subprocess.run(["node", "dist/cli.js", "init", competition], cwd=REMOTE_WORKSPACE, env=environment, text=True, check=False)
+        if initialize.returncode != 0:
+            return initialize.returncode
     command = [
         "node", "dist/cli.js", "research",
         "--mode", mode,
@@ -103,6 +109,7 @@ def execute(goal: str, budget: str, mode: str = "research", autonomy: str = "saf
         "--model", model,
         "--lanes", str(max(1, min(lanes, 6))),
         "--limit-policy", "wait",
+        "--executor", executor,
     ]
     process = subprocess.Popen(command, cwd=REMOTE_WORKSPACE, env=environment, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     assert process.stdout is not None
@@ -112,7 +119,7 @@ def execute(goal: str, budget: str, mode: str = "research", autonomy: str = "saf
 
 
 @app.local_entrypoint()
-def run(action: str = "start", goal: str = "", budget: str = "4h", mode: str = "research", autonomy: str = "safe", provider: str = "codex", model: str = "default", lanes: int = 3) -> None:
+def run(action: str = "start", goal: str = "", budget: str = "4h", mode: str = "research", autonomy: str = "safe", provider: str = "codex", model: str = "default", lanes: int = 3, competition: str = "local-research", executor: str = "local") -> None:
     if action == "status":
         print(json.dumps(inspect_state.remote(), indent=2, default=str))
         return
@@ -121,4 +128,4 @@ def run(action: str = "start", goal: str = "", budget: str = "4h", mode: str = "
         return
     if action != "start" or not goal:
         raise ValueError("Start requires --goal; actions are start, status, pause, resume, and stop")
-    raise SystemExit(execute.remote(goal, budget, mode, autonomy, provider, model, lanes))
+    raise SystemExit(execute.remote(goal, budget, mode, autonomy, provider, model, lanes, competition, executor))

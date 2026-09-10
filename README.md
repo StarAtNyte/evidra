@@ -56,7 +56,7 @@ For unattended operation, `modal_controller.py` runs the Node controller headles
 
 ```bash
 EVIDRA_MODAL_WORKSPACE="$PWD" modal run modal_controller.py::run \
-  --goal "maximize robust validation performance" --budget 4h --mode challenge --autonomy fast --lanes 3
+  --goal "maximize robust validation performance" --budget 4h --mode challenge --competition arc-whestbench-2026 --executor local --autonomy fast --lanes 3
 ```
 
 The headless controller is controllable without attaching a second interactive agent. Its
@@ -81,6 +81,8 @@ EVIDRA_MODAL_WORKSPACE="$PWD" modal run modal_controller.py::run --goal "..." --
 ```
 
 This headless mode has no interactive TUI or implicit approval channel. Inspect or approve external actions from a trusted local session after attaching to the persisted state. A local ChatGPT subscription login is intentionally not copied into Modal.
+
+The controller initializes the requested competition in the durable Modal state volume on first start. `--executor local` runs experiments inside the controller container; `--executor modal` routes them to a separate Modal worker and requires the Modal CLI/runtime in the image.
 
 Provider and lane failures are recoverable. Transient network, timeout, stream, malformed-response, and service errors receive bounded retries with backoff; configured Codex-to-local fallback changes route when appropriate; every exhausted lane is recorded as failed evidence so the director can choose a different path instead of silently treating it as success. SDK subprocesses are cancelled on timeout and terminal interruption.
 
@@ -118,6 +120,7 @@ Implemented today:
 - Codex-backed experiment-engineer implementation in the isolated worktree before evaluation, with failed hypotheses retained as evidence instead of being blindly retried;
 - durable headless research trajectories with structural, goal, evidence, recovery, and termination quality signals feeding future allocation;
 - local-model experiment implementation through bounded unified-diff proposals, checked and applied only inside the experiment worktree;
+- Modal execution mounts the exact isolated experiment worktree and accepts either Modal CLI profiles or environment credentials;
 - shell and autonomy safety guards.
 
 ## Quick start
