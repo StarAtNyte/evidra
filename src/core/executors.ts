@@ -1,5 +1,5 @@
 import { runProcess, type ProcessControl } from "./process.js";
-import { existsSync, lstatSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { ExperimentManifest, ProcessResult, RunResult } from "./types.js";
 
@@ -48,11 +48,22 @@ export function parseModalWorkerResult(output: string): ModalWorkerResult | unde
 }
 
 function safeArtifactPath(root: string, name: string): string | undefined {
-  const destination = resolve(root, name);
-  const destinationRelative = relative(root, destination);
+  const rootPath = realpathSync(root);
+  const destination = resolve(rootPath, name);
+  const destinationRelative = relative(rootPath, destination);
   if (destinationRelative.startsWith("..") || isAbsolute(destinationRelative) || name.length === 0) return undefined;
   // Do not follow an existing symlink when importing a worker artifact.
   try { if (lstatSync(destination).isSymbolicLink()) return undefined; } catch { /* destination does not exist yet */ }
+  // A symlinked parent can redirect a not-yet-created artifact outside the
+  // experiment worktree, so inspect the nearest existing ancestor as well.
+  let ancestor = destination;
+  while (!existsSync(ancestor)) {
+    const parent = dirname(ancestor);
+    if (parent === ancestor) return undefined;
+    ancestor = parent;
+  }
+  const ancestorRelative = relative(rootPath, realpathSync(ancestor));
+  if (ancestorRelative.startsWith("..") || isAbsolute(ancestorRelative)) return undefined;
   return destination;
 }
 
