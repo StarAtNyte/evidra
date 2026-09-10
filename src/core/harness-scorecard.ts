@@ -3,6 +3,11 @@ export type ScoreDirection = "maximize" | "minimize";
 export interface HarnessTrial {
   harness: string;
   task: string;
+  /** Optional protocol identity fields. Older exports remain readable. */
+  arm?: string;
+  seed?: string | number;
+  model?: string;
+  budgetMinutes?: number;
   direction: ScoreDirection;
   baselineMetric: number;
   candidateMetric?: number;
@@ -10,6 +15,76 @@ export interface HarnessTrial {
   durationSeconds: number;
   recovered: boolean;
   reproducible: boolean;
+}
+
+export interface BenchmarkProtocolIssue {
+  key: string;
+  field: "task" | "arm" | "seed" | "model" | "budgetMinutes" | "direction";
+  values: string[];
+  message: string;
+}
+
+export interface BenchmarkProtocolReport {
+  valid: boolean;
+  complete: boolean;
+  arms: number;
+  harnesses: string[];
+  issues: BenchmarkProtocolIssue[];
+}
+
+/**
+ * Check whether a trial file can support a fair head-to-head comparison.
+ * Missing metadata is reported as incomplete rather than silently inferred;
+ * scoreHarnessTrials remains backwards-compatible for historical exports.
+ */
+export function validateBenchmarkProtocol(trials: HarnessTrial[]): BenchmarkProtocolReport {
+  const issues: BenchmarkProtocolIssue[] = [];
+  const harnesses = [...new Set(trials.map((trial) => trial.harness))].sort();
+  const groups = new Map<string, HarnessTrial[]>();
+  for (const trial of trials) {
+    const key = [trial.task, trial.arm ?? "", trial.seed ?? "", trial.model ?? "", trial.budgetMinutes ?? ""].join("\u001f");
+    groups.set(key, [...(groups.get(key) ?? []), trial]);
+  }
+
+  const required: Array<BenchmarkProtocolIssue["field"]> = ["arm", "seed", "model", "budgetMinutes"];
+  const complete = trials.length > 0 && trials.every((trial) =>
+    trial.arm !== undefined && trial.arm.length > 0 && !trial.arm.includes("unknown") &&
+    trial.seed !== undefined && String(trial.seed).length > 0 && !String(trial.seed).includes("unknown") &&
+    typeof trial.model === "string" && trial.model.length > 0 && trial.model !== "unknown-model" &&
+    typeof trial.budgetMinutes === "number" && Number.isFinite(trial.budgetMinutes) && trial.budgetMinutes > 0);
+  if (!complete) {
+    issues.push({
+      key: "metadata",
+      field: "arm",
+      values: [],
+      message: `Every trial must declare ${required.join(", ")} before claiming a matched comparison.`,
+    });
+  }
+
+  const byArm = new Map<string, HarnessTrial[]>();
+  for (const trial of trials) {
+    const key = [trial.task, trial.arm ?? "", trial.seed ?? ""].join("\u001f");
+    byArm.set(key, [...(byArm.get(key) ?? []), trial]);
+  }
+  for (const [key, entries] of byArm) {
+    const fields: Array<[BenchmarkProtocolIssue["field"], (trial: HarnessTrial) => string]> = [
+      ["task", (trial) => trial.task],
+      ["arm", (trial) => trial.arm === undefined ? "<missing>" : String(trial.arm)],
+      ["seed", (trial) => trial.seed === undefined ? "<missing>" : String(trial.seed)],
+      ["model", (trial) => trial.model ?? "<missing>"],
+      ["budgetMinutes", (trial) => trial.budgetMinutes === undefined ? "<missing>" : String(trial.budgetMinutes)],
+      ["direction", (trial) => trial.direction],
+    ];
+    for (const [field, read] of fields) {
+      const values = [...new Set(entries.map(read))];
+      if (values.length > 1) issues.push({ key, field, values, message: `${field} differs within a matched task arm.` });
+    }
+    const observedHarnesses = new Set(entries.map((entry) => entry.harness));
+    if (observedHarnesses.size !== harnesses.length) {
+      issues.push({ key, field: "arm", values: [...observedHarnesses].sort(), message: "Not every harness was run on this task arm." });
+    }
+  }
+  return { valid: complete && issues.length === 0, complete, arms: groups.size, harnesses, issues };
 }
 
 export interface HarnessScorecard {

@@ -21,10 +21,17 @@ claims should use that conservative bound when comparing close systems.
 The same protocol is available from the CLI:
 
 ```bash
+evidra benchmark validate trials.json
 evidra benchmark score trials.json
 evidra benchmark score trials.json --json
 evidra benchmark export --out evidra-trials.json
 ```
+
+`benchmark validate` is the required preflight for a competitive claim. Each
+trial must declare a task arm, seed, model, and budget; every harness must be
+present on every matched arm, with the same metric direction. Historical trial
+exports can still be scored for diagnostics, but incomplete or mismatched files
+are explicitly marked rather than treated as evidence that Evidra won.
 
 The input is either a JSON array or `{ "trials": [...] }`, with one record per
 fixed task/seed arm and fields for baseline, candidate metric, validity,

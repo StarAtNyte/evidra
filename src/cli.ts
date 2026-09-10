@@ -62,7 +62,7 @@ import { rankSearchArms, searchReward, type SearchOperator } from "./core/search
 import { planPortfolio } from "./core/portfolio.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
-import { scoreHarnessTrials, type HarnessTrial } from "./core/harness-scorecard.js";
+import { scoreHarnessTrials, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
 import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.js";
 import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 
@@ -378,6 +378,30 @@ program.command("usage").description("Show research, experiment, and campaign us
 });
 
 const benchmark = new Command("benchmark").description("Compare research harnesses under a common task/budget protocol");
+benchmark.command("validate")
+  .argument("<file>", "JSON file containing a trial array or { trials: [...] }")
+  .option("--json", "emit machine-readable validation")
+  .description("Validate matched task, seed, model, and budget arms before scoring")
+  .action((file: string, options: { json?: boolean }) => {
+    const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
+    const raw = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray((parsed as { trials?: unknown }).trials) ? (parsed as { trials: unknown[] }).trials : undefined;
+    if (!raw?.length) throw new Error("Benchmark input must contain a non-empty JSON trial array.");
+    const trials = raw.map((value, index) => {
+      if (!value || typeof value !== "object") throw new Error(`Benchmark trial ${index + 1} is not an object.`);
+      return value as HarnessTrial;
+    });
+    const report = validateBenchmarkProtocol(trials);
+    if (options.json) {
+      console.log(JSON.stringify(report, null, 2));
+      if (!report.valid) process.exitCode = 2;
+      return;
+    }
+    console.log(`Benchmark protocol · ${report.valid ? "MATCHED" : report.complete ? "MISMATCHED" : "INCOMPLETE"}`);
+    console.log(`Harnesses  ${report.harnesses.join(", ") || "none"}`);
+    console.log(`Arms       ${report.arms}`);
+    for (const issue of report.issues) console.log(`- ${issue.message}${issue.values.length ? ` [${issue.values.join(", ")}]` : ""}`);
+    if (!report.valid) process.exitCode = 2;
+  });
 benchmark.command("score")
   .argument("<file>", "JSON file containing a trial array or { trials: [...] }")
   .option("--json", "emit machine-readable scorecards")
@@ -416,6 +440,7 @@ benchmark.command("export")
     const baselineMetric = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] : undefined;
     if (!Number.isFinite(baselineMetric)) { store.close(); throw new Error("No finite baseline.completed metric is available for benchmark export."); }
     const events = store.recentEvents(5_000);
+    const campaign = store.campaign() as { budgetMinutes?: unknown; runtime?: { model?: unknown } } | undefined;
     const independentlyReplicatedParents = new Set(events
       .filter((event) => event.type === "experiment.autonomous.replication.completed")
       .map((event) => (event.payload as { parentId?: unknown }).parentId)
@@ -423,11 +448,17 @@ benchmark.command("export")
     const trials: HarnessTrial[] = [];
     for (const run of store.runs()) {
       const payload = run.payload as { metrics?: Record<string, number>; durationSeconds?: number; recoveryAttempts?: number; status?: string };
+      const experiment = store.experiments().find((entry) => entry.id === run.experimentId);
+      const manifest = experiment?.payload as { datasetVersion?: unknown; splitVersion?: unknown; evaluation?: { seeds?: unknown } } | undefined;
       const candidateMetric = payload.metrics?.[adapter.config.metric.name];
       const experimentEvents = events.filter((event) => (event.payload as { experimentId?: unknown }).experimentId === run.experimentId);
       trials.push({
         harness: options.harness,
         task: project?.competitionId ?? adapter.id,
+        arm: `${String(manifest?.datasetVersion ?? "unknown-dataset")}::${String(manifest?.splitVersion ?? "unknown-split")}`,
+        seed: Array.isArray(manifest?.evaluation?.seeds) ? manifest.evaluation.seeds.join(",") : "unknown-seed",
+        model: typeof campaign?.runtime?.model === "string" ? campaign.runtime.model : "unknown-model",
+        budgetMinutes: typeof campaign?.budgetMinutes === "number" ? campaign.budgetMinutes : 0,
         direction: adapter.config.metric.direction,
         baselineMetric: baselineMetric as number,
         candidateMetric: Number.isFinite(candidateMetric) ? candidateMetric : undefined,

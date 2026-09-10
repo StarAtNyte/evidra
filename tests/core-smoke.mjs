@@ -56,7 +56,7 @@ import { summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
-import { scoreHarnessTrials } from "../dist/core/harness-scorecard.js";
+import { scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { rankSearchArms, searchReward } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
 import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
@@ -1478,6 +1478,31 @@ test("harness scorecard balances tasks instead of rewarding repeated easy arms",
   assert.equal(repeater?.tasks, 2);
   assert.equal(balanced?.tasks, 2);
   assert.equal(repeater?.competitiveScore, balanced?.competitiveScore);
+});
+
+test("benchmark protocol rejects unmatched arms before a competitive claim", () => {
+  const base = {
+    task: "task-1", arm: "arm-a", seed: 7, model: "codex", budgetMinutes: 30,
+    direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6,
+    validRun: true, durationSeconds: 10, recovered: true, reproducible: true,
+  };
+  const matched = validateBenchmarkProtocol([
+    { harness: "evidra", ...base },
+    { harness: "other", ...base },
+  ]);
+  assert.equal(matched.valid, true);
+  assert.equal(matched.arms, 1);
+
+  const mismatched = validateBenchmarkProtocol([
+    { harness: "evidra", ...base },
+    { harness: "other", ...base, model: "different-model" },
+  ]);
+  assert.equal(mismatched.valid, false);
+  assert.ok(mismatched.issues.some((issue) => issue.field === "model"));
+
+  const incomplete = validateBenchmarkProtocol([{ harness: "evidra", ...base, model: undefined }]);
+  assert.equal(incomplete.complete, false);
+  assert.equal(incomplete.valid, false);
 });
 
 test("search policy explores untried operators and penalizes invalid evidence", () => {

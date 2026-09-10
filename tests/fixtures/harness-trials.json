@@ -1,8 +1,8 @@
 {
   "trials": [
-    { "harness": "evidra", "task": "task-a", "direction": "maximize", "baselineMetric": 0.5, "candidateMetric": 0.6, "validRun": true, "durationSeconds": 12, "recovered": true, "reproducible": true },
-    { "harness": "evidra", "task": "task-b", "direction": "maximize", "baselineMetric": 0.5, "candidateMetric": 0.4, "validRun": true, "durationSeconds": 18, "recovered": false, "reproducible": true },
-    { "harness": "other", "task": "task-a", "direction": "maximize", "baselineMetric": 0.5, "candidateMetric": 0.55, "validRun": true, "durationSeconds": 10, "recovered": false, "reproducible": false },
-    { "harness": "other", "task": "task-b", "direction": "maximize", "baselineMetric": 0.5, "validRun": false, "durationSeconds": 10, "recovered": true, "reproducible": false }
+    { "harness": "evidra", "task": "task-a", "arm": "default", "seed": 1, "model": "benchmark-model", "budgetMinutes": 30, "direction": "maximize", "baselineMetric": 0.5, "candidateMetric": 0.6, "validRun": true, "durationSeconds": 12, "recovered": true, "reproducible": true },
+    { "harness": "evidra", "task": "task-b", "arm": "default", "seed": 1, "model": "benchmark-model", "budgetMinutes": 30, "direction": "maximize", "baselineMetric": 0.5, "candidateMetric": 0.4, "validRun": true, "durationSeconds": 18, "recovered": false, "reproducible": true },
+    { "harness": "other", "task": "task-a", "arm": "default", "seed": 1, "model": "benchmark-model", "budgetMinutes": 30, "direction": "maximize", "baselineMetric": 0.5, "candidateMetric": 0.55, "validRun": true, "durationSeconds": 10, "recovered": false, "reproducible": false },
+    { "harness": "other", "task": "task-b", "arm": "default", "seed": 1, "model": "benchmark-model", "budgetMinutes": 30, "direction": "maximize", "baselineMetric": 0.5, "validRun": false, "durationSeconds": 10, "recovered": true, "reproducible": false }
   ]
 }
