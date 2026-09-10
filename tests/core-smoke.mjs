@@ -61,6 +61,7 @@ import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { rankSearchArms, searchReward } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
 import { planSuccessiveHalving, promoteHalvingStage } from "../dist/core/successive-halving.js";
+import { estimateCost } from "../dist/core/cost-model.js";
 import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "../dist/core/promotion-learning.js";
 import { captureProtectedFiles, changedProtectedFiles } from "../dist/core/integrity.js";
@@ -1668,6 +1669,11 @@ test("portfolio planner is bounded, diverse, and cost aware", () => {
   assert.equal(plan.reservedMinutes, 8);
   assert.equal(plan.halving.stages.length, 2);
   assert.equal(plan.halving.stages.at(-1)?.fraction, 1);
+  const historyAware = planPortfolio([
+    { id: "known-slow", title: "known slow", operator: "ablation", expectedValue: 0.8, costMinutes: 2, family: "slow" },
+    { id: "new-fast", title: "new fast", operator: "mcts", expectedValue: 0.3, costMinutes: 2, family: "fast" },
+  ], { maxCandidates: 2, maxParallel: 1, budgetMinutes: 5, costHistory: [{ operator: "ablation", actualMinutes: 20, status: "timeout" }] });
+  assert.deepEqual(historyAware.selected.map((candidate) => candidate.id), ["new-fast"]);
   assert.match(plan.rejected.find((entry) => entry.candidate.id === "duplicate")?.reason ?? "", /family/);
   const overBudget = planPortfolio([{ id: "too-large", title: "too large", operator: "audit", expectedValue: 1, costMinutes: 11 }], { maxCandidates: 1, maxParallel: 1, budgetMinutes: 10 });
   assert.equal(overBudget.selected.length, 0);
@@ -1695,6 +1701,19 @@ test("successive halving budgets cheap screens and promotes only measured surviv
   assert.deepEqual(promoted, ["b", "d"]);
   const impossible = planSuccessiveHalving([{ id: "expensive", costMinutes: 100 }], 1);
   assert.equal(impossible.feasible, false);
+});
+
+test("cost model uses observed upper runtimes and inflates failure risk", () => {
+  const estimate = estimateCost("mcts", 10, [
+    { operator: "mcts", actualMinutes: 8, status: "completed" },
+    { operator: "mcts", actualMinutes: 12, status: "failed" },
+    { operator: "other", actualMinutes: 100, status: "completed" },
+  ]);
+  assert.equal(estimate.sampleCount, 2);
+  assert.equal(estimate.predictedMinutes, 10);
+  assert.equal(estimate.upperMinutes, 15);
+  assert.match(estimate.rationale, /failure inflation/);
+  assert.equal(estimateCost("new", 4, []).upperMinutes, 4);
 });
 
 test("harness comparison requires paired coverage and task-balanced evidence", () => {

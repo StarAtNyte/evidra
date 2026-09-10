@@ -61,6 +61,7 @@ import { researchFailureRecord } from "./core/research-failure.js";
 import { rankSearchArms, searchReward, type SearchOperator } from "./core/search-policy.js";
 import { planPortfolio } from "./core/portfolio.js";
 import { promoteHalvingStage } from "./core/successive-halving.js";
+import type { CostObservation } from "./core/cost-model.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
 import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
@@ -1317,6 +1318,12 @@ research
       }));
       decisionStore.appendEvent("research.hypothesis_quality.assessed", { cycle, hypotheses: decision.hypotheses.map((hypothesis, index) => ({ title: hypothesis.title, ...hypothesisQuality[index] })) });
       const portfolioBudget = Math.max(1, campaign.budgetMinutes - campaignElapsedMinutes(campaign));
+      const costHistory: CostObservation[] = decisionStore.recentEvents(2_000).flatMap((event) => {
+        if (event.type !== "research.search.reward") return [];
+        const payload = event.payload as { operator?: unknown; durationSeconds?: unknown; valid?: unknown };
+        if (typeof payload.operator !== "string" || typeof payload.durationSeconds !== "number" || !Number.isFinite(payload.durationSeconds) || payload.durationSeconds <= 0) return [];
+        return [{ operator: payload.operator, actualMinutes: payload.durationSeconds / 60, status: payload.valid === true ? "completed" : "failed" }];
+      });
       const portfolioPlan = planPortfolio(decision.hypotheses.map((hypothesis, index) => ({
         id: materialized.hypothesisIds[index] ?? `hypothesis-${index}`,
         title: hypothesis.title,
@@ -1335,6 +1342,7 @@ research
         maxParallel: effectiveLaneLimit,
         budgetMinutes: portfolioBudget,
         reserveMinutes: Math.min(5, portfolioBudget * 0.1),
+        costHistory,
       });
       decisionStore.appendEvent("research.portfolio.planned", {
         cycle,

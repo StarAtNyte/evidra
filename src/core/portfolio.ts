@@ -15,6 +15,7 @@ export interface PortfolioPlanOptions {
   maxParallel: number;
   budgetMinutes: number;
   reserveMinutes?: number;
+  costHistory?: CostObservation[];
 }
 
 export interface PortfolioPlan {
@@ -23,6 +24,7 @@ export interface PortfolioPlan {
   reservedMinutes: number;
   parallelism: number;
   halving: SuccessiveHalvingPlan;
+  costEstimates: Record<string, CostEstimate>;
 }
 
 /**
@@ -41,16 +43,22 @@ export function planPortfolio(candidates: PortfolioCandidate[], options: Portfol
   const operators = new Set<string>();
   const families = new Set<string>();
   let reservedMinutes = 0;
+  const costEstimates: Record<string, CostEstimate> = {};
+  const estimatedCost = (candidate: PortfolioCandidate): number => {
+    const estimate = estimateCost(candidate.operator, candidate.costMinutes, options.costHistory ?? []);
+    costEstimates[candidate.id] = estimate;
+    return Math.max(0.1, estimate.upperMinutes);
+  };
 
   const ranked = [...candidates]
     .filter((candidate) => candidate.id && Number.isFinite(candidate.expectedValue) && Number.isFinite(candidate.costMinutes))
-    .sort((left, right) => score(right) - score(left));
+    .sort((left, right) => score(right, options.costHistory) - score(left, options.costHistory));
   for (const candidate of ranked) {
     if (selected.length >= maxCandidates) {
       rejected.push({ candidate, reason: "portfolio capacity reached" });
       continue;
     }
-    const cost = Math.max(0.1, candidate.costMinutes);
+    const cost = estimatedCost(candidate);
     const family = candidate.family ?? candidate.title;
     const duplicateOperator = operators.has(candidate.operator);
     const duplicateFamily = families.has(family);
@@ -76,15 +84,16 @@ export function planPortfolio(candidates: PortfolioCandidate[], options: Portfol
   // stages: reduced screen, then full validation. Deeper generic schedules
   // remain available through planSuccessiveHalving for adapters that expose
   // more intermediate worker contracts.
-  const halving = planSuccessiveHalving(selected.map((candidate) => ({ id: candidate.id, costMinutes: Math.max(0.1, candidate.costMinutes), family: candidate.family })), available, { rounds: 2 });
-  return { selected, rejected, reservedMinutes, parallelism, halving };
+  const halving = planSuccessiveHalving(selected.map((candidate) => ({ id: candidate.id, costMinutes: costEstimates[candidate.id]?.upperMinutes ?? Math.max(0.1, candidate.costMinutes), family: candidate.family })), available, { rounds: 2 });
+  return { selected, rejected, reservedMinutes, parallelism, halving, costEstimates };
 }
 
-function score(candidate: PortfolioCandidate): number {
-  const cost = Math.max(0.1, candidate.costMinutes);
+function score(candidate: PortfolioCandidate, history?: CostObservation[]): number {
+  const cost = estimateCost(candidate.operator, candidate.costMinutes, history ?? []).upperMinutes;
   const novelty = Math.max(0, Math.min(1, candidate.novelty ?? 0));
   const risk = Math.max(0, Math.min(1, candidate.risk ?? 0));
   const quality = Math.max(0.25, Math.min(1, candidate.quality ?? 1));
   return (candidate.expectedValue * quality + novelty * 0.2 - risk * 0.1) / cost;
 }
+import { estimateCost, type CostEstimate, type CostObservation } from "./cost-model.js";
 import { planSuccessiveHalving, type SuccessiveHalvingPlan } from "./successive-halving.js";
