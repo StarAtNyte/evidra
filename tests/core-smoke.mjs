@@ -53,6 +53,7 @@ import { assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneTo
 import { isSensitiveWorkspacePath, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceGoalTermination } from "../dist/core/termination.js";
 import { summarizeUsage } from "../dist/core/usage.js";
+import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -1008,6 +1009,24 @@ test("metric parser accepts evaluator JSON and keyed log output", () => {
   assert.deepEqual(parsed.metricsByFold.rmse, [0.4, 0.44]);
   const autoresearch = parseMetricOutput("---\nval_bpb:          1.253616\ntraining_seconds: 45.0\n", "val_bpb");
   assert.equal(autoresearch.metrics.val_bpb, 1.253616);
+});
+
+test("competition contract validates generic autoresearch-style workspaces", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-contract-"));
+  try {
+    writeFileSync(join(root, "train.py"), "print('val_bpb: 1.2')\n");
+    const config = {
+      id: "autoresearch",
+      name: "Autoresearch",
+      taskType: "llm_training",
+      datasetRevision: "pinned",
+      metric: { name: "val_bpb", direction: "minimize" },
+      evaluator: { command: ["uv", "run", "train.py"], estimatorPath: "train.py" },
+      evaluatorTimeoutMinutes: 5,
+    };
+    assert.equal(validateCompetitionContract(config, root).valid, true);
+    assert.equal(validateCompetitionContract({ ...config, evaluator: { ...config.evaluator, estimatorPath: "../secret.py" } }, root).valid, false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("Modal result parser ignores progress and rejects malformed worker payloads", () => {

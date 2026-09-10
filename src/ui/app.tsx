@@ -38,6 +38,7 @@ import { allocateNextResearch } from "../core/allocation.js";
 import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurriculum } from "../core/experience.js";
 import { rankExperimentCandidates } from "../core/scheduler.js";
 import { evaluateReducedPromotion } from "../core/scheduler.js";
+import { validateCompetitionContract } from "../core/competition-contract.js";
 import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "../core/execution-stages.js";
 import { runReducedValidation } from "../core/stage-executor.js";
@@ -101,6 +102,7 @@ const COMMANDS = [
   ["/report", "Generate portable research reports"],
   ["/timeline", "Show readable autonomous progress"],
   ["/doctor", "Diagnose local research dependencies"],
+  ["/contract", "Validate workspace and experiment contract"],
   ["/provider", "Select codex or local provider"],
   ["/model", "Select the active model"],
   ["/thinking", "Select model thinking effort"],
@@ -2265,6 +2267,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
       try { await listLocalModels(); checks.push("ollama: reachable"); } catch { checks.push("ollama: unavailable"); }
       checks.push(`modal: ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}`);
       append("assistant", `Evidra doctor\n${checks.map((check) => `  ${check}`).join("\n")}`);
+      return;
+    }
+    if (request === "/contract" || request === "/validate") {
+      const adapter = activeAdapter();
+      const report = validateCompetitionContract(adapter.config, adapter.workspacePath(root));
+      append("assistant", `Contract · ${adapter.config.name}\n${report.checks.map((check) => `  ${check.passed ? "✓" : "✗"} ${check.name}: ${check.detail}`).join("\n")}`);
       return;
     }
     if (request === "/submission" || request === "/submission status" || request === "/submission distribution" || request.startsWith("/submission prepare") || request.startsWith("/submission validate") || request.startsWith("/submission approve") || request.startsWith("/submission submit") || request.startsWith("/submission poll") || request.startsWith("/submission record")) {

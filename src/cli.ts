@@ -53,6 +53,7 @@ import { capabilityOutcome, qualityFeedback, routeCapability } from "./core/capa
 import { allocateNextResearch } from "./core/allocation.js";
 import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurriculum } from "./core/experience.js";
 import { evaluateReducedPromotion } from "./core/scheduler.js";
+import { validateCompetitionContract } from "./core/competition-contract.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -634,6 +635,16 @@ program.command("inspect").action(() => {
   }
   store.close();
 });
+
+program.command("validate")
+  .alias("contract")
+  .description("Validate the active workspace and experiment contract without running compute")
+  .action(() => {
+    const adapter = activeCompetition();
+    const report = validateCompetitionContract(adapter.config, adapter.workspacePath(root));
+    console.log(`Contract · ${adapter.config.name}\n${report.checks.map((check) => `  ${check.passed ? "✓" : "✗"} ${check.name}: ${check.detail}`).join("\n")}`);
+    if (!report.valid) process.exitCode = 2;
+  });
 
 const project = new Command("project").description("Inspect the active Evidra project");
 project.command("status").action(() => {
