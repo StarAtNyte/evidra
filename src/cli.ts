@@ -42,7 +42,7 @@ import { createBlendCandidate, diversityReport, loadPredictionVector, safePredic
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
-import { checkProvider, codexLoginStatus, isProviderUsageLimit, isRetryableAgentError, listLocalModels, providerRetryAfterMs, resolveLocalFallbackModel, runWithUsageLimitWait, runWithLocalFallback } from "./agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, isProviderUsageLimit, isRetryableAgentError, listLocalModels, providerRetryAfterMs, resolveCodexModel, resolveLocalFallbackModel, runWithUsageLimitWait, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -812,7 +812,9 @@ research
     const budget = durationMinutes(options.budget);
     const selectedModel = options.provider === "local" && options.model === "default"
       ? await resolveLocalFallbackModel("auto")
-      : options.model;
+      : options.provider === "codex"
+        ? await resolveCodexModel(options.model)
+        : options.model;
     let researchModelPool: Array<{ provider: "codex" | "local"; model: string }> = [{ provider: options.provider as "codex" | "local", model: selectedModel }];
     if (options.provider === "local") {
       try {

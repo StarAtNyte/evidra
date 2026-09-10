@@ -57,7 +57,7 @@ import { validateCompetitionContract } from "../dist/core/competition-contract.j
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
-import { createIsolatedCodexWorkspace, effectiveCodexSandbox } from "../dist/agents/codex-exec.js";
+import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -88,6 +88,10 @@ test("Codex sandbox remains safe by default and supports an explicit benchmark o
   assert.equal(effectiveCodexSandbox("read-only"), "danger-full-access");
   if (previous === undefined) delete process.env.EVIDRA_CODEX_SANDBOX;
   else process.env.EVIDRA_CODEX_SANDBOX = previous;
+});
+
+test("Codex model resolution preserves explicit selections", async () => {
+  assert.equal(await resolveCodexModel("gpt-5.6-luna"), "gpt-5.6-luna");
 });
 
 test("full-access research workspaces cannot modify the controller checkout", () => {

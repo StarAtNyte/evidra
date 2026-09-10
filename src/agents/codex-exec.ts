@@ -154,6 +154,15 @@ export function listCodexModels(): Promise<AvailableModel[]> {
   });
 }
 
+/** Resolve Evidra's UI-friendly `default` sentinel to a real account model. */
+export async function resolveCodexModel(preferred = "default"): Promise<string> {
+  if (preferred !== "default") return preferred;
+  const models = await listCodexModels();
+  const selected = models.find((model) => model.isDefault) ?? models.find((model) => !model.hidden) ?? models[0];
+  if (!selected?.id) throw new Error("Codex returned no usable models. Use /model to select an available model.");
+  return selected.id;
+}
+
 export async function listLocalModels(): Promise<AvailableModel[]> {
   const response = await fetch(`${process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434"}/api/tags`);
   if (!response.ok) throw new Error(`Local Ollama is unavailable (${response.status}). Start Ollama and try again.`);
