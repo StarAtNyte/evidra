@@ -66,6 +66,21 @@ with a non-zero exit code. It does not execute or modify the benchmark; the
 inventory is the input for a later matched protocol whose agent commands,
 model, seed, and budget are explicitly declared.
 
+Generate that matched protocol with explicit command templates. Templates may
+use `{taskId}`, `{taskPath}`, `{family}`, and `{repo}`:
+
+```bash
+evidra benchmark airs protocol airs-inventory.json \
+  --model gpt-5.6-codex --seed 0 --budget 30 --baseline 0.5687 \
+  --arm '{"harness":"evidra","command":["./run-evidra.sh","{taskId}"]}' \
+  --arm '{"harness":"mlgym","command":["./run-mlgym.sh","{taskId}"]}' \
+  --out airs-protocol.json
+evidra benchmark run airs-protocol.json --workspace /path/to/airs-bench
+```
+
+The command templates are the only harness-specific part; Evidra fixes task
+identity, seed, model, budget, metric direction, and normalization bounds.
+
 ```bash
 git clone https://github.com/facebookresearch/airs-bench.git
 cd airs-bench

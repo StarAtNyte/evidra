@@ -96,6 +96,8 @@ The initial adapter is `whestbench`. Future adapters include Kaggle, AIcrowd, ma
                               Require paired, task-balanced evidence for a win claim
 /benchmark airs discover <repo>
                               Import and validate AIRS-Bench task contracts
+/benchmark airs protocol <inventory>
+                              Generate matched AIRS arms from harness templates
 /benchmark export             Export durable Evidra runs as benchmark JSON
 /sources discover <query>     Search scholarly literature for candidates
 /sources frontier             Show deduplicated discovery and retrieval coverage

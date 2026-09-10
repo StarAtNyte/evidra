@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
+import type { BenchmarkArmSpec } from "./benchmark-runner.js";
 
 export type AirsBenchFamily = "rad" | "mlgym" | "all";
 
@@ -32,6 +33,30 @@ export interface AirsBenchDiscovery {
   tasks: AirsBenchTask[];
   validTasks: number;
   invalidTasks: number;
+}
+
+export interface AirsHarnessTemplate {
+  harness: string;
+  command: string[];
+  cwd?: string;
+}
+
+export interface AirsProtocolOptions {
+  templates: AirsHarnessTemplate[];
+  model: string;
+  seed: string | number;
+  budgetMinutes: number;
+  baselineMetric: number;
+}
+
+export interface AirsBenchmarkProtocol {
+  schemaVersion: 1;
+  suite: "airs-bench";
+  repository: string;
+  model: string;
+  seed: string | number;
+  budgetMinutes: number;
+  arms: BenchmarkArmSpec[];
 }
 
 function scalar(text: string, key: string): string | undefined {
@@ -86,6 +111,49 @@ function mlgymFiles(taskPath: string): Record<string, string> {
 function metricFromTaskId(id: string): string | undefined {
   const match = id.match(/(MeanAbsoluteError|SpearmanCorrelation|ExactMatch|RougeL|MAE|Mae|Accuracy|MASE|MRR|PassAt\d+)$/);
   return match?.[1];
+}
+
+function expandTemplate(part: string, task: AirsBenchTask, repository: string): string {
+  return part
+    .replaceAll("{taskId}", task.id)
+    .replaceAll("{taskPath}", task.path)
+    .replaceAll("{family}", task.family)
+    .replaceAll("{repo}", repository);
+}
+
+/**
+ * Materialize a matched AIRS protocol from a discovered inventory. Commands
+ * remain caller-supplied because each harness has a different entrypoint; all
+ * task identity, scoring metadata, and budget controls are fixed by Evidra.
+ */
+export function createAirsBenchmarkProtocol(discovery: AirsBenchDiscovery, options: AirsProtocolOptions): AirsBenchmarkProtocol {
+  if (!options.templates.length) throw new Error("At least one AIRS harness command template is required.");
+  if (!Number.isFinite(options.budgetMinutes) || options.budgetMinutes <= 0) throw new Error("AIRS benchmark budget must be positive.");
+  if (!Number.isFinite(options.baselineMetric)) throw new Error("AIRS benchmark baseline metric must be finite.");
+  const arms: BenchmarkArmSpec[] = [];
+  for (const task of discovery.tasks) {
+    if (!task.valid || !task.metric || !task.direction) continue;
+    for (const template of options.templates) {
+      if (!template.harness.trim() || !template.command.length || template.command.some((part) => !part.trim())) throw new Error("AIRS harness templates require a name and non-empty command.");
+      arms.push({
+        harness: template.harness,
+        task: `airsbench:${task.family}/${task.id}`,
+        arm: `${task.family}/${task.id}`,
+        seed: options.seed,
+        model: options.model,
+        budgetMinutes: options.budgetMinutes,
+        direction: task.direction,
+        baselineMetric: options.baselineMetric,
+        ...(task.estimatedWorstScore !== undefined ? { taskWorstMetric: task.estimatedWorstScore } : {}),
+        ...(task.optimalScore !== undefined ? { taskBestMetric: task.optimalScore } : {}),
+        metric: task.metric,
+        command: template.command.map((part) => expandTemplate(part, task, discovery.repository)),
+        ...(template.cwd ? { cwd: expandTemplate(template.cwd, task, discovery.repository) } : {}),
+      });
+    }
+  }
+  if (!arms.length) throw new Error("AIRS inventory contains no valid tasks that can become benchmark arms.");
+  return { schemaVersion: 1, suite: "airs-bench", repository: discovery.repository, model: options.model, seed: options.seed, budgetMinutes: options.budgetMinutes, arms };
 }
 
 /**

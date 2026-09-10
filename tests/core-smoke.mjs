@@ -59,7 +59,7 @@ import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
-import { discoverAirsBenchTasks } from "../dist/core/airs-bench.js";
+import { createAirsBenchmarkProtocol, discoverAirsBenchTasks } from "../dist/core/airs-bench.js";
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
 import { planSuccessiveHalving, promoteHalvingStage } from "../dist/core/successive-halving.js";
@@ -1870,6 +1870,26 @@ test("AIRS-Bench discovery normalizes task metadata and flags incomplete contrac
     assert.ok(task?.missingFiles.length === 0);
     assert.ok(report.tasks.find((entry) => entry.id === "TaskB")?.missingFiles.includes("evaluatePath"));
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("AIRS protocol generation creates matched task arms with safe template expansion", () => {
+  const discovery = {
+    schemaVersion: 1,
+    repository: "/bench/airs",
+    family: "rad",
+    tasks: [{ id: "TaskA", family: "rad", path: "airsbench/tasks/rad/TaskA", metadataPath: "m", descriptionPath: "d", preparePath: "p", evaluatePath: "e", evaluatePreparePath: "ep", valid: true, missingFiles: [], metric: "Accuracy", direction: "maximize", estimatedWorstScore: 0, optimalScore: 1 }],
+    validTasks: 1,
+    invalidTasks: 0,
+  };
+  const protocol = createAirsBenchmarkProtocol(discovery, {
+    templates: [{ harness: "evidra", command: ["./run.sh", "{taskId}", "{taskPath}", "{family}", "{repo}"] }, { harness: "mlgym", command: ["python", "run.py", "{taskId}"] }],
+    model: "test-model", seed: 7, budgetMinutes: 5, baselineMetric: 0.2,
+  });
+  assert.equal(protocol.arms.length, 2);
+  assert.deepEqual(protocol.arms[0].command, ["./run.sh", "TaskA", "airsbench/tasks/rad/TaskA", "rad", "/bench/airs"]);
+  assert.equal(protocol.arms[1].harness, "mlgym");
+  assert.equal(protocol.arms[0].taskBestMetric, 1);
+  assert.equal(protocol.arms[0].task, "airsbench:rad/TaskA");
 });
 
 test("search policy explores untried operators and penalizes invalid evidence", () => {
