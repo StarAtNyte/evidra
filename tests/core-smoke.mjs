@@ -498,6 +498,7 @@ test("research director executes typed tools and reasons over returned evidence"
   const root = mkdtempSync(join(tmpdir(), "evidra-director-"));
   const previousHost = process.env.OLLAMA_HOST;
   let calls = 0;
+  let toolAttempts = 0;
   const server = createServer((_request, response) => {
     calls += 1;
     const decision = calls === 1
@@ -510,8 +511,13 @@ test("research director executes typed tools and reasons over returned evidence"
   const address = server.address();
   process.env.OLLAMA_HOST = `http://127.0.0.1:${address.port}`;
   try {
-    const decision = await runResearchDirector("Inspect this workspace", {}, { provider: "local", model: "test", cwd: root, maxToolRounds: 2, executeTool: async (call) => ({ name: call.name, ok: true, output: { files: ["notes.txt"] } }) });
+    const decision = await runResearchDirector("Inspect this workspace", {}, { provider: "local", model: "test", cwd: root, maxToolRounds: 2, executeTool: async (call) => {
+      toolAttempts += 1;
+      if (toolAttempts === 1) return { name: call.name, ok: false, error: "temporary network unavailable" };
+      return { name: call.name, ok: true, output: { files: ["notes.txt"] } };
+    } });
     assert.equal(calls, 2);
+    assert.equal(toolAttempts, 2);
     assert.equal(decision.decision, "propose");
     assert.equal(decision.toolCalls.length, 0);
   } finally {

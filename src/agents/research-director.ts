@@ -24,6 +24,12 @@ export interface ResearchDirectorOptions {
   onThread?: (threadId: string) => void;
   executeTool?: (call: ResearchToolCall) => Promise<ResearchToolResult>;
   maxToolRounds?: number;
+  maxToolAttempts?: number;
+}
+
+function isRetryableResearchToolFailure(result: ResearchToolResult): boolean {
+  const text = result.error ?? "";
+  return /network|unreachable|timed out|timeout|temporarily|connection|econnreset|ePIPE|rate limit|quota|429|502|503|504|worker|busy|try again/i.test(text);
 }
 
 export async function runResearchDirector(
@@ -38,6 +44,7 @@ export async function runResearchDirector(
     context,
   };
   const maxToolRounds = Math.max(0, Math.min(options.maxToolRounds ?? 6, 8));
+  const maxToolAttempts = Math.max(1, Math.min(options.maxToolAttempts ?? 3, 3));
   const contract = `Return ONLY valid JSON matching this exact shape:
 {
   "phase": "orientation|baseline|data_audit|validation|hypothesis|implementation|evaluation|replication|promotion",
@@ -95,7 +102,17 @@ Rules: propose no more than five hypotheses; never invent measurements; distingu
     const results: ResearchToolResult[] = [];
     for (const call of decision.toolCalls) {
       onProgress?.(`Research tool · ${call.name}`);
-      results.push(await options.executeTool(call));
+      let result: ResearchToolResult | undefined;
+      for (let attempt = 1; attempt <= maxToolAttempts; attempt += 1) {
+        result = await options.executeTool(call);
+        if (result.ok || !isRetryableResearchToolFailure(result) || attempt === maxToolAttempts) break;
+        const delayMs = attempt * 500;
+        onProgress?.(`Tool ${call.name} failed transiently; retrying ${attempt}/${maxToolAttempts - 1} in ${delayMs}ms...`);
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      }
+      if (!result) throw new Error(`Research tool ${call.name} returned no result.`);
+      if (!result.ok) onProgress?.(`Tool ${call.name} failed; the director will replan from this evidence.`);
+      results.push(result);
     }
     workingContext = {
       ...workingContext,
