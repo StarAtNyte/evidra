@@ -1267,6 +1267,17 @@ test("process interruption terminates the detached worker group", async () => {
   assert.notEqual(result.exitCode, 0);
 });
 
+test("process interruption escalates when a worker ignores SIGTERM", async () => {
+  const started = Date.now();
+  let control;
+  const promise = runProcess([process.execPath, "-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], process.cwd(), 30_000, undefined, (value) => { control = value; });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  control.terminate();
+  const result = await promise;
+  assert.notEqual(result.exitCode, 0);
+  assert(Date.now() - started < 5_000);
+});
+
 test("missing process executables reject without retaining the timeout", async () => {
   const started = Date.now();
   await assert.rejects(() => runProcess(["evidra-command-that-does-not-exist"], process.cwd(), 30_000));

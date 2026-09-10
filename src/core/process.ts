@@ -36,7 +36,9 @@ export function runProcess(
     const child = spawn(command[0], command.slice(1), { cwd, shell: false, detached: true, env: environment });
     let paused = false;
     let settled = false;
+    let processExited = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let forceTimer: ReturnType<typeof setTimeout> | undefined;
     const signalGroup = (signal: NodeJS.Signals): void => {
       if (!child.pid) return;
       try { process.kill(-child.pid, signal); } catch { try { child.kill(signal); } catch { /* already exited */ } }
@@ -44,7 +46,18 @@ export function runProcess(
     const control: ProcessControl = {
       pause: () => { if (!settled && !paused) { signalGroup("SIGSTOP"); paused = true; } },
       resume: () => { if (!settled && paused) { signalGroup("SIGCONT"); paused = false; } },
-      terminate: () => { if (!settled) { if (paused) signalGroup("SIGCONT"); signalGroup("SIGTERM"); } },
+      terminate: () => {
+        if (settled || processExited) return;
+        if (paused) signalGroup("SIGCONT");
+        signalGroup("SIGTERM");
+        if (!forceTimer) {
+          forceTimer = setTimeout(() => {
+            forceTimer = undefined;
+            if (!processExited) signalGroup("SIGKILL");
+          }, 1_500);
+          forceTimer.unref();
+        }
+      },
       get paused() { return paused; },
     };
     onProcess?.(control);
@@ -62,23 +75,35 @@ export function runProcess(
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (forceTimer) clearTimeout(forceTimer);
       reject(error);
     };
 
     child.stdout.on("data", (chunk: Buffer) => { const text = chunk.toString(); stdout = appendCapture(stdout, text); onOutput?.("stdout", text); });
     child.stderr.on("data", (chunk: Buffer) => { const text = chunk.toString(); stderr = appendCapture(stderr, text); onOutput?.("stderr", text); });
     child.on("error", fail);
-    child.on("close", (exitCode) => finish({
-      command,
-      cwd,
-      exitCode: exitCode ?? 1,
-      durationMs: Date.now() - started,
-      stdout,
-      stderr,
-    }));
+    child.on("close", (exitCode) => {
+      processExited = true;
+      if (forceTimer) clearTimeout(forceTimer);
+      finish({
+        command,
+        cwd,
+        exitCode: exitCode ?? 1,
+        durationMs: Date.now() - started,
+        stdout,
+        stderr,
+      });
+    });
 
     timer = setTimeout(() => {
-      signalGroup("SIGTERM");
+      if (!processExited) {
+        signalGroup("SIGTERM");
+        forceTimer = setTimeout(() => {
+          forceTimer = undefined;
+          if (!processExited) signalGroup("SIGKILL");
+        }, 1_500);
+        forceTimer.unref();
+      }
       finish({ command, cwd, exitCode: 124, durationMs: Date.now() - started, stdout, stderr: `${stderr}\nTimed out.` });
     }, timeoutMs);
   });
