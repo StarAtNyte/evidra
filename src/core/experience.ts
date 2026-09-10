@@ -47,6 +47,15 @@ function outcomeFor(quality: TrajectoryQuality): ExperienceRecord["outcome"]["st
   return "unknown";
 }
 
+function storedRouting(payload: Record<string, unknown>): ExperienceRecord["routing"] | undefined {
+  const value = record(payload.routing);
+  const tier = value.predictedTier;
+  if (tier !== "C0" && tier !== "C1" && tier !== "C2" && tier !== "C3") return undefined;
+  const rawScores = record(value.tierScores);
+  const tierScores = Object.fromEntries(["C0", "C1", "C2", "C3"].filter((key) => typeof rawScores[key] === "number").map((key) => [key, rawScores[key]])) as Record<CapabilityTier, number>;
+  return { predictedTier: tier, ...(Object.keys(tierScores).length ? { tierScores } : {}), ...(typeof value.provider === "string" ? { provider: value.provider } : {}), ...(typeof value.model === "string" ? { model: value.model } : {}) };
+}
+
 /** Convert a validated trajectory into a reusable, provenance-preserving experience unit. */
 export function buildExperienceRecord(input: {
   trajectoryId: string;
@@ -66,6 +75,7 @@ export function buildExperienceRecord(input: {
       ? "replay-only"
       : "candidate";
   const status = outcomeFor(input.quality);
+  const routing = input.routing ?? storedRouting(payload);
   return {
     schemaVersion: 1,
     trajectoryId: input.trajectoryId,
@@ -82,7 +92,7 @@ export function buildExperienceRecord(input: {
     },
     outcome: { status, evidence: input.quality.goalAttainment.evidence },
     quality: input.quality,
-    routing: input.routing,
+    routing,
     gaps: capabilityGaps(input.quality),
     admission,
     events,

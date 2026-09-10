@@ -143,6 +143,8 @@ test("experience ledger quarantines malformed traces and selects a curriculum", 
   const record = buildExperienceRecord({ trajectoryId: "t1", payload: { objective: "inspect data", events: [{ id: "call", kind: "tool_call", callId: "c1", payload: { tool: "inspect" } }, { id: "result", kind: "tool_result", callId: "c1", payload: { ok: true } }, { id: "terminal", kind: "terminal", payload: { status: "completed", goalAttained: true } }] }, quality, routing: { predictedTier: "C1", tierScores: { C0: 0.1, C1: 0.7, C2: 0.15, C3: 0.05 } } });
   assert.equal(record.admission, "candidate");
   assert.equal(capabilityProfile([record]).eligible, 1);
+  const persistedRouting = buildExperienceRecord({ trajectoryId: "t2", payload: { routing: { predictedTier: "C3", tierScores: { C0: 0.01, C1: 0.04, C2: 0.2, C3: 0.75 } }, events: record.events }, quality });
+  assert.equal(persistedRouting.routing?.predictedTier, "C3");
   assert.equal(selectCurriculum([record], 3).reduce((sum, stage) => sum + stage.trajectoryIds.length, 0), 1);
   const malformed = buildExperienceRecord({ trajectoryId: "bad", payload: { events: [{ id: "orphan", kind: "tool_result", callId: "missing", payload: {} }] }, quality: evaluateTrajectory([{ id: "orphan", kind: "tool_result", callId: "missing", payload: {} }]) });
   assert.equal(malformed.admission, "quarantined");

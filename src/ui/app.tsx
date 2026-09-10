@@ -868,7 +868,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const routingOutcome = capabilityOutcome({ objective, mode, route, provider: config.provider, model: config.model, quality: researchQuality, parallelLanes: route.parallelLanes });
     const trajectoryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const trajectoryId = `trajectory_research_${Date.now()}`;
-    const trajectoryPayload = { objective, observation, laneReports, criticReview, decision, events: researchTrajectoryEvents };
+    const trajectoryPayload = { objective, observation, laneReports, criticReview, decision, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: config.provider, model: config.model }, events: researchTrajectoryEvents };
     trajectoryStore.saveTrajectory({ id: trajectoryId, payload: trajectoryPayload, quality: researchQuality });
     const experience = buildExperienceRecord({ trajectoryId, payload: trajectoryPayload, quality: researchQuality, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: config.provider, model: config.model } });
     const priorExperiences = trajectoryStore.trajectories(100).filter((entry) => entry.id !== trajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
@@ -1515,7 +1515,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const outputRelative = relative(root, output);
         if (outputRelative.startsWith("..") || outputRelative.startsWith("/") || outputRelative.includes("..")) { append("assistant", "Experience export path must stay inside the project root."); return; }
         const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        const records = store.trajectories(1000).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
+        const byId = new Map(store.trajectories(1000).map((entry) => [entry.id, buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> })]));
+        for (const event of store.recentEvents(1000).reverse()) {
+          if (event.type !== "research.experience.recorded") continue;
+          const experience = (event.payload as { experience?: unknown }).experience;
+          if (experience && typeof experience === "object" && typeof (experience as { trajectoryId?: unknown }).trajectoryId === "string") byId.set((experience as { trajectoryId: string }).trajectoryId, experience as ReturnType<typeof buildExperienceRecord>);
+        }
+        const records = [...byId.values()];
         store.close();
         mkdirSync(dirname(output), { recursive: true });
         const content = experienceJsonl(records, includeReplay);

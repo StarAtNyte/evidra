@@ -392,7 +392,13 @@ program.addCommand(memory);
 
 const experience = new Command("experience").description("Inspect and export reusable research trajectories");
 function storedExperiences(store: ResearchStore) {
-  return store.trajectories(1000).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
+  const byId = new Map(store.trajectories(1000).map((entry) => [entry.id, buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> })]));
+  for (const event of store.recentEvents(1000).reverse()) {
+    if (event.type !== "research.experience.recorded") continue;
+    const experience = (event.payload as { experience?: unknown }).experience;
+    if (experience && typeof experience === "object" && typeof (experience as { trajectoryId?: unknown }).trajectoryId === "string") byId.set((experience as { trajectoryId: string }).trajectoryId, experience as ReturnType<typeof buildExperienceRecord>);
+  }
+  return [...byId.values()];
 }
 experience.command("status").action(() => {
   const store = new ResearchStore(statePath);
@@ -1104,7 +1110,7 @@ research
       const researchQuality = evaluateTrajectory(researchTrajectoryEvents);
       const routingOutcome = capabilityOutcome({ objective: allocatedObjective, mode, route, provider: options.provider, model: selectedModel, quality: researchQuality, parallelLanes: effectiveLaneLimit });
       const trajectoryId = `trajectory_research_${Date.now()}`;
-      const trajectoryPayload = { objective, observation, laneReports, criticReview, decision, events: researchTrajectoryEvents };
+      const trajectoryPayload = { objective, observation, laneReports, criticReview, decision, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: options.provider, model: selectedModel }, events: researchTrajectoryEvents };
       decisionStore.saveTrajectory({ id: trajectoryId, payload: trajectoryPayload, quality: researchQuality });
       const experience = buildExperienceRecord({ trajectoryId, payload: trajectoryPayload, quality: researchQuality, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: options.provider, model: selectedModel } });
       const priorExperiences = decisionStore.trajectories(100).filter((entry) => entry.id !== trajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
