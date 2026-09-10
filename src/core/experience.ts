@@ -1,5 +1,6 @@
 import { capabilityGaps, validateTrajectoryStructure, type TrajectoryEvent, type TrajectoryQuality } from "./trajectories.js";
 import type { CapabilityTier } from "./capability-router.js";
+import { redactStructured } from "./redaction.js";
 
 export type ExperienceAdmission = "candidate" | "replay-only" | "quarantined";
 
@@ -122,4 +123,12 @@ export function selectCurriculum(records: ExperienceRecord[], limit = 12): Curri
     { stage: 2, trajectoryIds: second.map((item) => item.trajectoryId), rationale: "expand across observed tasks and outcomes" },
     { stage: 3, trajectoryIds: third.map((item) => item.trajectoryId), rationale: "introduce higher-demand and replay-worthy experiences" },
   ];
+}
+
+/** Serialize only admissible experience for replay, analysis, or later post-training. */
+export function experienceJsonl(records: ExperienceRecord[], includeReplay = false): string {
+  return records
+    .filter((item) => item.admission === "candidate" || (includeReplay && item.admission === "replay-only"))
+    .map((item) => JSON.stringify(redactStructured(item)))
+    .join("\n") + (records.some((item) => item.admission === "candidate" || (includeReplay && item.admission === "replay-only")) ? "\n" : "");
 }

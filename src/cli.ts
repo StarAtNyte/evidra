@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "./core/experiment-manifest.js";
@@ -51,7 +51,7 @@ import { findWorkspaceRoot } from "./core/workspace.js";
 import { autonomyPolicy, type AutonomyLevel } from "./core/permissions.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "./core/capability-router.js";
 import { allocateNextResearch } from "./core/allocation.js";
-import { buildExperienceRecord, capabilityProfile, selectCurriculum } from "./core/experience.js";
+import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurriculum } from "./core/experience.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -389,6 +389,34 @@ memory.command("search").argument("<query>").action((query: string) => {
   store.close();
 });
 program.addCommand(memory);
+
+const experience = new Command("experience").description("Inspect and export reusable research trajectories");
+function storedExperiences(store: ResearchStore) {
+  return store.trajectories(1000).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
+}
+experience.command("status").action(() => {
+  const store = new ResearchStore(statePath);
+  const records = storedExperiences(store);
+  store.close();
+  console.log(JSON.stringify({ profile: capabilityProfile(records), curriculum: selectCurriculum(records) }, null, 2));
+});
+experience.command("export")
+  .option("-o, --output <path>", "JSONL output path", ".sota/experience.jsonl")
+  .option("--include-replay", "include recoverable failure trajectories for replay")
+  .action((options: { output: string; includeReplay?: boolean }) => {
+    const output = resolve(root, options.output);
+    const outputRelative = relative(root, output);
+    if (outputRelative.startsWith("..") || outputRelative.startsWith("/") || outputRelative.includes("..")) throw new Error("Experience export path must stay inside the project root.");
+    const store = new ResearchStore(statePath);
+    const records = storedExperiences(store);
+    store.close();
+    mkdirSync(dirname(output), { recursive: true });
+    const content = experienceJsonl(records, options.includeReplay === true);
+    writeFileSync(output, content);
+    const exported = content ? content.trimEnd().split("\n").length : 0;
+    console.log(`Exported ${exported} experience record(s) to ${output}`);
+  });
+program.addCommand(experience);
 
 const submission = new Command("submission").description("Prepare, approve, and validate safe submission bundles");
 submission.command("status").action(() => {

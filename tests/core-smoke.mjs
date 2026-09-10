@@ -33,7 +33,7 @@ import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validat
 import { runReducedValidation } from "../dist/core/stage-executor.js";
 import { evaluateTrajectory, capabilityGaps, validateTrajectoryStructure } from "../dist/core/trajectories.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
-import { buildExperienceRecord, capabilityProfile, selectCurriculum } from "../dist/core/experience.js";
+import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurriculum } from "../dist/core/experience.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
 import { experimentNovelty, rankExperimentCandidates, rankPriorities } from "../dist/core/scheduler.js";
 import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
@@ -146,6 +146,8 @@ test("experience ledger quarantines malformed traces and selects a curriculum", 
   assert.equal(selectCurriculum([record], 3).reduce((sum, stage) => sum + stage.trajectoryIds.length, 0), 1);
   const malformed = buildExperienceRecord({ trajectoryId: "bad", payload: { events: [{ id: "orphan", kind: "tool_result", callId: "missing", payload: {} }] }, quality: evaluateTrajectory([{ id: "orphan", kind: "tool_result", callId: "missing", payload: {} }]) });
   assert.equal(malformed.admission, "quarantined");
+  assert.equal(experienceJsonl([record, malformed]).trim().split("\n").length, 1);
+  assert.equal(experienceJsonl([record, malformed], true).trim().split("\n").length, 1);
 });
 
 test("critic gate converts terminal and execution decisions into inspection", () => {

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
-import { join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
 import { runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
@@ -35,7 +35,7 @@ import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../c
 import { evaluateTrajectory, type TrajectoryEvent } from "../core/trajectories.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../core/capability-router.js";
 import { allocateNextResearch } from "../core/allocation.js";
-import { buildExperienceRecord, capabilityProfile, selectCurriculum } from "../core/experience.js";
+import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurriculum } from "../core/experience.js";
 import { rankExperimentCandidates } from "../core/scheduler.js";
 import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "../core/execution-stages.js";
@@ -121,7 +121,7 @@ const AGENT_ROLES = ["research director", "domain researcher", "method researche
 const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/workbench": [["/workbench research", "Enter Research mode"], ["/workbench challenge", "Enter Challenge mode"]],
   "/mode": [["/mode research", "Enter Research mode"], ["/mode challenge", "Enter Challenge mode"]],
-  "/experience": [["/experience", "Show capability profile and curriculum"]],
+  "/experience": [["/experience", "Show capability profile and curriculum"], ["/experience export", "Export admissible experiences as JSONL"]],
   "/autonomy": [["/autonomy safe", "Approval-gated"], ["/autonomy fast", "Run local work automatically"], ["/autonomy yolo", "Run routine work automatically"]],
   "/permissions": [["/permissions safe", "Approval-gated"], ["/permissions fast", "Run local work automatically"], ["/permissions yolo", "Run routine work automatically"]],
   "/loop": [["/loop status", "Show loop state"], ["/loop once", "Run one research cycle"], ["/loop start", "Start autonomous loop"], ["/loop pause", "Pause loop"], ["/loop stop", "Stop loop"]],
@@ -193,7 +193,7 @@ function help(): string {
     "/experiment [propose|run]    Create or run a reproducible experiment",
     "/loop [once|start|pause]     Run the autonomous research loop",
     "/status                      Show complete workbench state",
-    "/experience                 Show trajectory experience and next curriculum",
+    "/experience [export]       Show or export trajectory experience",
     "/usage                       Show budgets and research activity",
     "/sources [add|search|show]   Retrieve or search research sources",
     "/memory [recent|search]      Search durable evidence memory",
@@ -1506,7 +1506,23 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Evidra Workbench\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\n\nActive phase goal\n  ${activeGoal?.phase ?? "not initialized"}: ${activeGoal?.title ?? "Run /research to define goals"}\n  status: ${activeGoal?.status ?? "pending"}\n  attempts: ${activeGoal?.attempts ?? 0}\n\nResearch graph\n  hypotheses  ${counts.hypotheses}\n  claims      ${counts.claims}\n  edges       ${counts.edges}\n  sources     ${counts.sources}\n  decisions   ${counts.decisions}\n\nChallenge execution\n  experiments ${counts.experiments}\n  runs        ${counts.runs}\n  artifacts   ${counts.artifacts}\n\nRecent events\n${recent}\n\nUse /mode to switch modes or /permissions to change automation permissions.`);
       return;
     }
-    if (request === "/experience") {
+    if (request === "/experience" || request.startsWith("/experience ")) {
+      const parts = request.split(/\s+/);
+      if (parts[1] === "export") {
+        const includeReplay = parts.includes("--include-replay");
+        const requestedPath = parts.find((part, index) => index > 1 && part !== "--include-replay");
+        const output = resolve(root, requestedPath ?? ".sota/experience.jsonl");
+        const outputRelative = relative(root, output);
+        if (outputRelative.startsWith("..") || outputRelative.startsWith("/") || outputRelative.includes("..")) { append("assistant", "Experience export path must stay inside the project root."); return; }
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        const records = store.trajectories(1000).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
+        store.close();
+        mkdirSync(dirname(output), { recursive: true });
+        const content = experienceJsonl(records, includeReplay);
+        writeFileSync(output, content);
+        append("assistant", `Exported ${content ? content.trimEnd().split("\\n").length : 0} experience record(s)\n  path: ${output}\n  replay failures: ${includeReplay ? "included" : "excluded"}`);
+        return;
+      }
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const records = store.trajectories(100).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
       const profile = capabilityProfile(records);

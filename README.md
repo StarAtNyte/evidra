@@ -226,6 +226,8 @@ Useful commands:
     /permissions          Select safe, fast, or YOLO automation
     /sources              Retrieve/search durable research sources
     /memory               Search durable evidence and research memory
+    /experience           Inspect the capability profile and next curriculum
+    /experience export    Export admissible trajectories as JSONL for replay or analysis
     /data                 Audit workspace data
     /validation           Inspect or generate validation policy
     /experiment           Create or run reproducible experiments
@@ -253,6 +255,15 @@ Explicit shell escapes are available for operator-directed work:
 
     !ls -la
     !git status --short
+
+Experience can also be exported headlessly:
+
+    evidra experience status
+    evidra experience export --output .sota/experience.jsonl
+    evidra experience export --include-replay --output reports/replay-experience.jsonl
+
+Candidate experiences are exported by default. `--include-replay` adds recoverable failures;
+quarantined or structurally ambiguous trajectories are always excluded.
     !python -m pytest -q
 
 Shell execution passes through Evidra's command guard. YOLO does not override the hard block on destructive cleanup, privilege escalation, remote-script execution, or external submission.
