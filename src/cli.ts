@@ -22,6 +22,7 @@ import { detectStagnation } from "./core/stagnation.js";
 import { recoveryDelay, recoveryPlan } from "./core/recovery.js";
 import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
+import { auditExperiment } from "./core/validation.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
@@ -1151,6 +1152,34 @@ experiment.command("run")
     console.log(`Metric (${adapter.config.metric.name}): ${recorded.metrics[adapter.config.metric.name] ?? "not parsed"}`);
     console.log(`Artifacts: ${Object.keys(artifactPaths).join(", ")}`);
     if (recorded.exitCode !== 0) process.exitCode = recorded.exitCode;
+  });
+experiment.command("audit")
+  .argument("<experiment>", "experiment identifier")
+  .description("Audit an experiment's reproducibility and evidence gates")
+  .action(async (id: string) => {
+    const store = new ResearchStore(statePath);
+    const entry = store.experiments().find((candidate) => candidate.id === id);
+    if (!entry) { store.close(); throw new Error(`Experiment ${id} is not registered.`); }
+    const payload = entry.payload as Record<string, unknown>;
+    const run = store.runs().find((candidate) => candidate.id === payload.runId || candidate.experimentId === id);
+    if (!run) { store.close(); throw new Error(`No run recorded for experiment ${id}.`); }
+    const gates = store.experimentGates(id);
+    const artifactChecksums = Object.fromEntries(store.artifacts(run.id).map((artifact) => [artifact.name, artifact.checksum]));
+    const currentCommit = await runProcess(["git", "rev-parse", "HEAD"], root);
+    store.close();
+    const manifest = ExperimentManifestSchema.parse(payload);
+    const runResult = RunResultSchema.parse(run.payload);
+    const adapter = activeCompetition();
+    const audit = auditExperiment(manifest, runResult, {
+      currentCommit: currentCommit.stdout.trim(),
+      datasetVersion: adapter.config.datasetRevision,
+      splitVersion: manifest.splitVersion,
+      leakageAuditPassed: gates.leakageAuditPassed,
+      reviewerApproved: gates.reviewerApproved,
+      artifactChecksums,
+    });
+    console.log(`Evidence audit · ${id}\nStatus: ${audit.accepted ? "ACCEPTED" : "NOT ACCEPTED"}\n\n${Object.entries(audit.gates).map(([name, passed]) => `  ${passed ? "✓" : "·"} ${name}`).join("\n")}${audit.reasons.length ? `\n\nReasons:\n${audit.reasons.map((reason) => `- ${reason}`).join("\n")}` : ""}`);
+    if (!audit.accepted) process.exitCode = 2;
   });
 program.addCommand(experiment);
 

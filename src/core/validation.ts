@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { evaluateEvidenceGate } from "./evidence.js";
+import { evaluateEvidenceGate, sha256File } from "./evidence.js";
 import type { ExperimentManifest, RunResult } from "./types.js";
 
 export interface ValidationContext {
@@ -8,6 +8,7 @@ export interface ValidationContext {
   splitVersion: string;
   leakageAuditPassed?: boolean;
   reviewerApproved?: boolean;
+  artifactChecksums?: Record<string, string>;
 }
 
 export function auditExperiment(manifest: ExperimentManifest, run: RunResult, context: ValidationContext): { accepted: boolean; reasons: string[]; gates: Record<string, boolean> } {
@@ -17,7 +18,9 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
     splitMatch: manifest.splitVersion === context.splitVersion,
     outputsComplete: manifest.evaluation.requiredArtifacts.every((artifact) => {
       const path = run.artifacts[artifact];
-      return typeof path === "string" && existsSync(path) && statSync(path).isFile();
+      if (typeof path !== "string" || !existsSync(path) || !statSync(path).isFile()) return false;
+      const expectedChecksum = context.artifactChecksums?.[artifact];
+      return !expectedChecksum || sha256File(path) === expectedChecksum;
     }),
     predictionsValid: run.status === "completed" && run.exitCode === 0,
     metricsRecomputed: Object.keys(run.metrics).length > 0,
