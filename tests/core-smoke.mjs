@@ -2734,3 +2734,14 @@ test("non-metric experiments can pass evidence audit through verified completion
   const audit = auditExperiment(manifest, { runId: "run-proof", status: "completed", exitCode: 0, durationSeconds: 1, metrics: {}, artifacts: {} }, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true });
   assert.equal(audit.accepted, true);
 });
+
+test("experiment audit rejects incomplete declared verifier evidence", () => {
+  const competition = { id: "verified", name: "Verified", taskType: "formal", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"] }, execution: { verificationCommands: [["true", "unit"], ["true", "reference"]] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["true"], experimentCommand: ["true"] };
+  const manifest = createExperimentManifest({ id: "verified-exp", hypothesisId: "hyp", outcomeType: "proof", gitCommit: "abc", datasetVersion: "data" }, competition);
+  const base = { runId: "run", status: "completed", exitCode: 0, durationSeconds: 1, metrics: {}, artifacts: {} };
+  const incomplete = auditExperiment(manifest, { ...base, verification: { declared: 2, executed: 1, passed: 1, failed: 0, independent: false } }, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true });
+  assert.equal(incomplete.accepted, false);
+  assert.equal(incomplete.gates.verifiersPassed, false);
+  const complete = auditExperiment(manifest, { ...base, verification: { declared: 2, executed: 2, passed: 2, failed: 0, independent: true } }, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true });
+  assert.equal(complete.gates.verifiersPassed, true);
+});

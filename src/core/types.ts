@@ -249,6 +249,7 @@ export const EvidenceGateSchema = z.object({
   metricsRecomputed: z.boolean(),
   leakageAuditPassed: z.boolean(),
   reviewerApproved: z.boolean(),
+  verifiersPassed: z.boolean().default(true),
 });
 
 export type EvidenceGate = z.infer<typeof EvidenceGateSchema>;

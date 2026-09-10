@@ -12,6 +12,15 @@ export interface ValidationContext {
 }
 
 export function auditExperiment(manifest: ExperimentManifest, run: RunResult, context: ValidationContext): { accepted: boolean; reasons: string[]; gates: Record<string, boolean> } {
+  const declaredVerifiers = (manifest.evaluation.verificationCommand ? 1 : 0) + (manifest.evaluation.verificationCommands?.length ?? 0);
+  const verification = run.verification;
+  const verifiersPassed = declaredVerifiers === 0
+    ? true
+    : verification?.declared === declaredVerifiers
+      && verification.executed === declaredVerifiers
+      && verification.passed === declaredVerifiers
+      && verification.failed === 0
+      && (declaredVerifiers < 2 || verification.independent === true);
   const gates = {
     validCommit: manifest.gitCommit === context.currentCommit,
     datasetMatch: manifest.datasetVersion === context.datasetVersion,
@@ -26,6 +35,7 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
     metricsRecomputed: manifest.outcomeType !== "metric" ? run.status === "completed" : Object.keys(run.metrics).length > 0,
     leakageAuditPassed: context.leakageAuditPassed ?? false,
     reviewerApproved: context.reviewerApproved ?? false,
+    verifiersPassed,
   };
   const result = evaluateEvidenceGate(manifest, gates);
   return { ...result, gates };

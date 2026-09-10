@@ -24,5 +24,6 @@ export function evaluateEvidenceGate(manifest: ExperimentManifest, gate: Evidenc
   if (!parsed.metricsRecomputed) reasons.push("metrics were not independently recomputed");
   if (!parsed.leakageAuditPassed) reasons.push("leakage audit did not pass");
   if (!parsed.reviewerApproved) reasons.push("independent review is missing");
+  if (!parsed.verifiersPassed) reasons.push("declared verifiers did not all pass with complete independent evidence");
   return { accepted: reasons.length === 0, reasons };
 }
