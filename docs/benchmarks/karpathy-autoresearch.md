@@ -72,10 +72,24 @@ The first integration gate is not leaderboard improvement. It is durable evidenc
 - the timeline records the baseline;
 - a failed or OOM run is classified as evidence rather than treated as progress.
 
+### Verified smoke result
+
+The reduced configuration was verified through the Evidra CLI on an NVIDIA RTX 4090:
+
+```text
+contract: valid
+worker: completed (45.0 s training budget)
+metric: val_bpb = 1.267521
+durable state: .sota/database.sqlite (11 events)
+```
+
+This confirms the generic contract, GPU worker, metric parser, baseline recorder, and
+durable state path together. It is an integration smoke result, not a leaderboard claim;
+run the canonical configuration before comparing results across machines.
+
 ## Other autoresearch-style evaluations
 
 Karpathy's repository is the best local executor test. [Autoresearch Bench](https://www.autoresearch-bench.com/)
 is a separate externally graded benchmark covering optimization, model training,
 inference, and scientific machine learning; it should be integrated later through a
 submission/evaluation adapter rather than confused with the local worker contract.
-
