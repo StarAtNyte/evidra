@@ -589,11 +589,13 @@ challenge.command("start")
   .option("--limit-policy <policy>", "on provider usage limit: wait, fallback, or stop", "wait")
   .option("--executor <executor>", "experiment execution target: local or modal", "local")
   .option("--resume", "resume the saved challenge campaign")
-  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean }) => {
+  .option("--skip-baseline", "reuse the latest recorded baseline observation")
+  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
     const script = process.argv[1];
     if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
     const args = ["research", "--mode", "challenge", "--goal", options.goal, "--budget", options.budget, "--stop", options.stop, "--provider", options.provider, "--model", options.model, "--thinking", options.thinking, "--lanes", options.lanes, "--autonomy", options.autonomy, "--limit-policy", options.limitPolicy, "--executor", options.executor];
     if (options.resume) args.push("--resume");
+    if (options.skipBaseline) args.push("--skip-baseline");
     const result = await runProcess([process.execPath, script, ...args], root, 7 * 24 * 60 * 60_000, (stream, chunk) => {
       (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
     });
@@ -737,6 +739,18 @@ research
         }
       }
       let decisionStore = new ResearchStore(statePath);
+      const criticBlocks = criticReview !== undefined && criticReview.verdict !== "proceed";
+      if (criticBlocks) {
+        decisionStore.appendEvent("research.critic.gate", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks });
+        if (decision.goalStatus !== "blocked") {
+          decision = {
+            ...decision,
+            goalStatus: "active",
+            decision: ["stop", "run", "replicate"].includes(decision.decision) ? "inspect" : decision.decision,
+            nextAction: `${decision.nextAction} Critic verdict is ${criticReview?.verdict}; resolve its objections before execution or stopping.`,
+          };
+        }
+      }
       if (phaseGoal && decision.goalStatus === "met") {
         const phaseEvents = decisionStore.recentEvents(500);
         const gate = evaluatePhaseGoalEvidence(phaseGoal, {
@@ -752,7 +766,7 @@ research
         }
       }
       const materialized = materializeResearchDecision(decisionStore, decision);
-      if (decision.decision === "run" && decision.selectedHypothesis) {
+      if (!criticBlocks && decision.decision === "run" && decision.selectedHypothesis) {
         const selectedIndex = decision.hypotheses.findIndex((hypothesis) => hypothesis.title === decision.selectedHypothesis);
         const selectedHypothesisId = selectedIndex >= 0 ? materialized.hypothesisIds[selectedIndex] : undefined;
         const selectedHypothesis = selectedIndex >= 0 ? decision.hypotheses[selectedIndex] : undefined;

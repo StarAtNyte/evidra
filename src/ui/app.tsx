@@ -785,6 +785,18 @@ export function App({ root }: { root: string }): React.JSX.Element {
       failedLane.close();
       throw error;
     }
+    const criticBlocks = criticReview !== undefined && criticReview.verdict !== "proceed";
+    if (criticBlocks) {
+      decision = {
+        ...decision,
+        goalStatus: decision.goalStatus === "blocked" ? "blocked" : "active",
+        decision: ["stop", "run", "replicate"].includes(decision.decision) ? "inspect" : decision.decision,
+        nextAction: `${decision.nextAction} Critic verdict is ${criticReview?.verdict}; resolve its objections before execution or stopping.`,
+      };
+      const criticGate = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      criticGate.appendEvent("research.critic.gate", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks });
+      criticGate.close();
+    }
     const decisionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const phaseEvents = phaseGoal ? decisionStore.recentEvents(500) : [];
     const phaseEvidence = phaseGoal ? {
