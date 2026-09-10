@@ -6,12 +6,14 @@ export interface PredictionVector {
   id: string;
   path: string;
   values: number[];
+  checksum?: string;
 }
 
 export interface BlendCandidate {
   id: string;
   path: string;
   members: string[];
+  memberChecksums: Record<string, string>;
   values: number[];
   createdAt: string;
   checksum: string;
@@ -22,7 +24,7 @@ export interface BlendValidation {
   valid: boolean;
   checksum: string;
   reason: string;
-  payload?: { id?: unknown; members?: unknown; values?: unknown; status?: unknown };
+  payload?: { id?: unknown; members?: unknown; memberChecksums?: unknown; values?: unknown; status?: unknown };
 }
 
 export interface DiversityPair {
@@ -45,7 +47,9 @@ function numericValues(value: unknown): number[] {
 
 export function loadPredictionVector(id: string, path: string): PredictionVector {
   if (!existsSync(path)) throw new Error(`Prediction artifact does not exist: ${path}`);
-  const raw = readFileSync(path, "utf8").trim();
+  const rawFile = readFileSync(path, "utf8");
+  const checksum = `sha256:${createHash("sha256").update(rawFile).digest("hex")}`;
+  const raw = rawFile.trim();
   let values: number[] = [];
   try { values = numericValues(JSON.parse(raw)); } catch {
     const lines = raw.split(/\r?\n/).filter(Boolean);
@@ -54,7 +58,7 @@ export function loadPredictionVector(id: string, path: string): PredictionVector
     values = lines.slice(rows.length && rows.some((value) => /prediction|pred|score|value/.test(value)) ? 1 : 0).map((line) => Number(line.split(",")[predictionIndex])).filter(Number.isFinite);
   }
   if (values.length < 2) throw new Error(`Prediction artifact '${path}' contains fewer than two numeric predictions.`);
-  return { id, path, values };
+  return { id, path, values, checksum };
 }
 
 function mean(values: number[]): number { return values.reduce((sum, value) => sum + value, 0) / values.length; }
@@ -91,13 +95,14 @@ export function createBlendCandidate(root: string, vectors: PredictionVector[], 
   const id = `blend_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const createdAt = new Date().toISOString();
   const values = greedyBlend(vectors, weights);
-  const payload = { schemaVersion: 1, id, members: vectors.map((vector) => ({ id: vector.id, path: vector.path, length: vector.values.length })), values, createdAt, status: "candidate" as const };
+  const memberChecksums = Object.fromEntries(vectors.filter((vector) => vector.checksum).map((vector) => [vector.id, vector.checksum as string]));
+  const payload = { schemaVersion: 1, id, members: vectors.map((vector) => ({ id: vector.id, path: vector.path, length: vector.values.length })), memberChecksums, values, createdAt, status: "candidate" as const };
   const content = `${JSON.stringify(payload, null, 2)}\n`;
   const checksum = `sha256:${createHash("sha256").update(content).digest("hex")}`;
   const path = join(root, ".sota", "ensembles", `${id}.json`);
   mkdirSync(join(root, ".sota", "ensembles"), { recursive: true });
   writeFileSync(path, content, { encoding: "utf8", flag: "wx" });
-  return { id, path, members: vectors.map((vector) => vector.id), values, createdAt, checksum, status: "candidate" };
+  return { id, path, members: vectors.map((vector) => vector.id), memberChecksums, values, createdAt, checksum, status: "candidate" };
 }
 
 /** Verify the immutable blend artifact before allowing a lifecycle transition. */
@@ -108,10 +113,19 @@ export function validateBlendCandidate(path: string, expectedChecksum: string): 
   const checksum = `sha256:${createHash("sha256").update(content).digest("hex")}`;
   if (checksum !== expectedChecksum) return { valid: false, checksum, reason: "blend checksum does not match its durable record" };
   try {
-    const payload = JSON.parse(content) as { id?: unknown; members?: unknown; values?: unknown; status?: unknown };
+    const payload = JSON.parse(content) as { id?: unknown; members?: unknown; memberChecksums?: unknown; values?: unknown; status?: unknown };
     const values = Array.isArray(payload.values) && payload.values.length > 1 && payload.values.every((value) => typeof value === "number" && Number.isFinite(value));
     const members = Array.isArray(payload.members) && payload.members.length >= 2;
     if (typeof payload.id !== "string" || !members || !values) return { valid: false, checksum, reason: "blend schema or numeric values are invalid", payload };
+    const memberChecksums = payload.memberChecksums && typeof payload.memberChecksums === "object" ? payload.memberChecksums as Record<string, unknown> : {};
+    for (const member of payload.members as Array<{ id?: unknown; path?: unknown }>) {
+      if (typeof member.id !== "string" || typeof member.path !== "string") return { valid: false, checksum, reason: "blend member provenance is invalid", payload };
+      const expected = memberChecksums[member.id];
+      if (typeof expected !== "string") continue;
+      if (!existsSync(member.path)) return { valid: false, checksum, reason: `blend member is missing: ${member.id}`, payload };
+      const actual = `sha256:${createHash("sha256").update(readFileSync(member.path)).digest("hex")}`;
+      if (actual !== expected) return { valid: false, checksum, reason: `blend member checksum changed: ${member.id}`, payload };
+    }
     return { valid: true, checksum, reason: "checksum and blend schema are valid", payload };
   } catch { return { valid: false, checksum, reason: "blend artifact is not valid JSON" }; }
 }

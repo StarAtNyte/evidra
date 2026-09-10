@@ -10,7 +10,7 @@ import { recoveryPlan } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { DEFAULT_SOURCE_REFRESH_MS, extractPdfText, retrieveSource, sourceClaims, sourceIsFresh } from "../dist/core/sources.js";
-import { createBlendCandidate, diversityReport, greedyBlend, validateBlendCandidate } from "../dist/core/ensemble.js";
+import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
@@ -939,7 +939,9 @@ test("ensemble analysis exposes diversity and deterministic blends", () => {
 test("ensemble candidates are checksummed and durable across store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-ensemble-candidate-"));
   try {
-    const vectors = [{ id: "a", path: join(root, "a.json"), values: [0, 1, 0] }, { id: "b", path: join(root, "b.json"), values: [1, 1, 0] }];
+    writeFileSync(join(root, "a.json"), JSON.stringify([0, 1, 0]));
+    writeFileSync(join(root, "b.json"), JSON.stringify([1, 1, 0]));
+    const vectors = [loadPredictionVector("a", join(root, "a.json")), loadPredictionVector("b", join(root, "b.json"))];
     const candidate = createBlendCandidate(root, vectors);
     assert.match(candidate.checksum, /^sha256:[a-f0-9]{64}$/);
     assert.equal(existsSync(candidate.path), true);
@@ -950,6 +952,8 @@ test("ensemble candidates are checksummed and durable across store reopen", () =
     assert.equal(reopened.ensembleCandidates()[0].id, candidate.id);
     assert.equal(reopened.ensembleCandidates()[0].checksum, candidate.checksum);
     assert.equal(validateBlendCandidate(candidate.path, candidate.checksum).valid, true);
+    writeFileSync(join(root, "a.json"), JSON.stringify([1, 1, 1]));
+    assert.equal(validateBlendCandidate(candidate.path, candidate.checksum).valid, false);
     assert.equal(reopened.updateEnsembleCandidateStatus(candidate.id, "validated"), true);
     assert.equal(reopened.updateEnsembleCandidateStatus(candidate.id, "promoted"), true);
     assert.throws(() => reopened.updateEnsembleCandidateStatus(candidate.id, "rejected"), /Invalid ensemble transition/);
