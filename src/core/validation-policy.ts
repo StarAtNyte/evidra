@@ -21,6 +21,7 @@ export const ValidationPolicySchema = z.object({
   version: z.string().min(1),
   datasetRevision: z.string().min(1),
   primarySplit: z.string().min(1),
+  secondarySplits: z.array(z.string().min(1)),
   folds: z.array(z.number().int().nonnegative()).min(1),
   seeds: z.array(z.number().int()).min(1),
   metric: z.object({ name: z.string(), direction: z.enum(["minimize", "maximize"]) }),
@@ -33,10 +34,12 @@ export function createValidationPolicy(competition: CompetitionConfig): Validati
   const split = competition.validation?.primarySplit ?? "mini";
   const folds = competition.validation?.folds ?? [0];
   const seeds = competition.validation?.seeds ?? [0, 1, 2];
+  const secondarySplits = competition.validation?.secondarySplits ?? [];
   return ValidationPolicySchema.parse({
     version: `${competition.id}:${competition.datasetRevision}:${split}-v1`,
     datasetRevision: competition.datasetRevision,
     primarySplit: split,
+    secondarySplits,
     folds,
     seeds,
     metric: competition.metric,

@@ -30,6 +30,7 @@ export const CompetitionConfigSchema = z.object({
     primarySplit: z.string().min(1).default("mini"),
     folds: z.array(z.number().int().nonnegative()).min(1).default([0]),
     seeds: z.array(z.number().int()).min(1).default([0, 1, 2]),
+    secondarySplits: z.array(z.string().min(1)).default([]),
   }).optional(),
 });
 

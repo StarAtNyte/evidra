@@ -30,7 +30,7 @@ import { evaluateTrajectory, capabilityGaps } from "../dist/core/trajectories.js
 import { routeCapability } from "../dist/core/capability-router.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
 import { rankPriorities } from "../dist/core/scheduler.js";
-import { evaluateValidationAcceptance } from "../dist/core/validation-engine.js";
+import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -116,6 +116,20 @@ test("validation acceptance requires replicated evidence and safety gates", () =
   const lowerIsBetter = evaluateValidationAcceptance({ baseline: { ...base, metrics: { score: 0.8 }, metricsByFold: { score: [0.79, 0.8, 0.81] } }, candidate: { ...candidate, metrics: { score: 0.78 }, metricsByFold: { score: [0.77, 0.78, 0.79] } }, metric: "score", direction: "minimize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true });
   assert.ok(Math.abs(lowerIsBetter.normalizedDelta - 0.02) < 1e-12);
   assert.equal(lowerIsBetter.accepted, true);
+});
+
+test("multi-split validation rejects a regression hidden by the aggregate", () => {
+  const make = (id, score, folds) => ({ runId: id, status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score }, metricsByFold: { score: folds }, artifacts: {} });
+  const result = evaluateMultiSplitValidation({
+    metric: "score", direction: "maximize", minimumDelta: 0.002,
+    runs: [
+      { split: "group", baseline: make("bg", 0.7, [0.7, 0.7]), candidate: make("cg", 0.71, [0.71, 0.71]) },
+      { split: "temporal", baseline: make("bt", 0.7, [0.7, 0.7]), candidate: make("ct", 0.69, [0.69, 0.69]) },
+    ],
+  });
+  assert.equal(result.accepted, false);
+  assert.equal(result.worstNormalizedDelta, -0.010000000000000009);
+  assert.match(result.reasons[0], /temporal/);
 });
 
 test("workspace root discovery keeps nested CLI invocations on the project state", () => {
