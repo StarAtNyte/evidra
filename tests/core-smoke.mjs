@@ -473,12 +473,16 @@ test("capability routing learns from trajectory quality feedback", () => {
 });
 
 test("capability routing isolates provider-specific failure pressure", () => {
-  const route = routeCapability({ objective: "research and evaluate a hypothesis", mode: "research", provider: "codex", autonomy: "fast", recentOutcomes: [
+  const route = routeCapability({ objective: "research and evaluate a hypothesis", mode: "research", provider: "codex", model: "gpt", autonomy: "fast", recentOutcomes: [
     { mode: "research", provider: "codex", model: "gpt", outcome: "failure", quality: "FAIL" },
     { mode: "research", provider: "local", model: "qwen", outcome: "success", quality: "PASS" },
   ], requestedParallel: 4 });
   assert.match(route.rationale.join(" "), /provider\/mode route/);
   assert.equal(route.parallelLanes, 2);
+  const differentModel = routeCapability({ objective: "research and evaluate a hypothesis", mode: "research", provider: "codex", model: "other", autonomy: "fast", recentOutcomes: [
+    { mode: "research", provider: "codex", model: "gpt", outcome: "failure", quality: "FAIL" },
+  ], requestedParallel: 4 });
+  assert.doesNotMatch(differentModel.rationale.join(" "), /provider\/mode route/);
 });
 
 test("routing feedback ignores unobserved quality dimensions", () => {

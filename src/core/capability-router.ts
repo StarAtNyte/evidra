@@ -6,6 +6,7 @@ export interface CapabilityRouteInput {
   objective: string;
   mode: "research" | "challenge";
   provider: "codex" | "local";
+  model?: string;
   autonomy: AutonomyLevel;
   recentFailureCount?: number;
   /** Quality feedback from prior trajectories; this is the harness feedback signal. */
@@ -98,7 +99,7 @@ export function routeCapability(input: CapabilityRouteInput): CapabilityRoute {
   if (warnedQuality > 0) { score += Math.min(2, warnedQuality); rationale.push(`${warnedQuality} prior trajectory warning(s) require stronger verification`); }
   const recurringGaps = new Set(quality.flatMap((item) => item.gaps ?? [])).size;
   if (recurringGaps >= 2) { score += 1; rationale.push(`${recurringGaps} distinct capability gaps were observed in prior trajectories`); }
-  const matchingOutcomes = (input.recentOutcomes ?? []).filter((outcome) => outcome.mode === input.mode && outcome.provider === input.provider);
+  const matchingOutcomes = (input.recentOutcomes ?? []).filter((outcome) => outcome.mode === input.mode && outcome.provider === input.provider && (input.model === undefined || outcome.model === input.model));
   const matchingFailures = matchingOutcomes.filter((outcome) => outcome.outcome === "failure" || outcome.quality === "FAIL").length;
   const matchingSuccesses = matchingOutcomes.filter((outcome) => outcome.outcome === "success" || outcome.quality === "PASS").length;
   if (matchingFailures > 0) { score += Math.min(2, matchingFailures); rationale.push(`${matchingFailures} prior failure(s) on this provider/mode route increase scrutiny`); }
