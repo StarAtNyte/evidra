@@ -9,6 +9,8 @@ import { redactSecrets } from "./redaction.js";
 
 export interface BenchmarkArmSpec {
   harness: string;
+  /** Optional checksummed harness component manifest for ablation attribution. */
+  componentIds?: string[];
   task: string;
   slice?: string;
   arm: string;
@@ -130,6 +132,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     const run: BenchmarkRunReport["runs"][number] = { harness: arm.harness, command: arm.command, cwd, result, metric: Number.isFinite(metric) ? metric : undefined, attempts, attemptDetails, ...(finalFailure ? { failureClass: finalFailure } : {}), ...(reproducibility ? { reproducibility } : {}) };
     const trial: HarnessTrial = {
       harness: arm.harness,
+      ...(arm.componentIds ? { componentIds: [...new Set(arm.componentIds)].sort() } : {}),
       task: arm.task,
       ...(arm.slice ? { slice: arm.slice } : {}),
       arm: arm.arm,
