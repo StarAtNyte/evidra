@@ -251,6 +251,7 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
   }
   const challengerArms = new Map(trials.filter((trial) => trial.harness === challenger).map((trial) => [protocolKey(trial), trial]));
   const incumbentArms = new Map(trials.filter((trial) => trial.harness === incumbent).map((trial) => [protocolKey(trial), trial]));
+  const allKeys = [...new Set([...challengerArms.keys(), ...incumbentArms.keys()])];
   const keys = [...challengerArms.keys()].filter((key) => incumbentArms.has(key));
   const paired = keys.flatMap((key) => {
     const left = challengerArms.get(key)!;
@@ -276,7 +277,10 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
   const timeDeltas = paired.flatMap((entry) => entry.timeDelta === undefined ? [] : [{ task: entry.task, value: entry.timeDelta }]);
   const pairedTimeEfficiencyDelta = taskBalancedMean(timeDeltas);
   const timeComparableArms = timeDeltas.length;
-  const coverage = keys.length ? paired.length / keys.length : 0;
+  // Include unmatched declared arms in the denominator. Otherwise a harness
+  // could appear fully paired by comparing only the intersection and hiding
+  // missing task/seed/model/budget arms.
+  const coverage = allKeys.length ? paired.length / allKeys.length : 0;
   const minimumTasks = 2;
   const processGate = pairedProcessQualityDelta === null || pairedProcessQualityDelta >= -0.1;
   // Allow a meaningful metric improvement to cost some time, but reject a
@@ -300,7 +304,7 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
   return {
     challenger,
     incumbent,
-    comparableArms: keys.length,
+    comparableArms: allKeys.length,
     validPairedArms: paired.length,
     tasks: taskDeltas.length,
     coverage,

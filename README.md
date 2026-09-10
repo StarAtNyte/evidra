@@ -174,6 +174,7 @@ Implemented today:
 - matched benchmark-arm validation requiring task, seed, model, and budget parity before a competitive claim.
 - executable matched-arm benchmark protocols that capture raw process evidence before scoring harnesses.
 - paired, task-balanced benchmark comparisons that refuse a win claim without positive lower-bound evidence and sufficient coverage.
+- benchmark coverage counts the full union of declared arms, so unmatched task/seed/model/budget arms cannot be hidden by scoring only the intersection;
 - domain-agnostic successive-halving schedules that allocate cheap screens before expensive validation.
 - autonomous portfolio execution that screens candidates in a first pass and promotes survivors into full validation and replication.
 - explicit leave-one-factor-out ablation plans for composite hypotheses, with bounded autonomous variant execution and independent evidence per factor;

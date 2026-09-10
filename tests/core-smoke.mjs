@@ -2376,6 +2376,20 @@ test("harness comparison requires paired coverage and task-balanced evidence", (
   assert.match(singleTask.reason, /at least 2 tasks/);
 });
 
+test("harness comparison counts unmatched declared arms against coverage", () => {
+  const matched = ["task-a", "task-b"].flatMap((task) => [
+    { harness: "evidra", task, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: 0.8, validRun: true, durationSeconds: 1, recovered: false, reproducible: true },
+    { harness: "incumbent", task, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: 0.7, validRun: true, durationSeconds: 1, recovered: false, reproducible: true },
+  ]);
+  const partial = compareHarnesses([
+    ...matched,
+    { harness: "incumbent", task: "task-c", arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: 0.7, validRun: true, durationSeconds: 1, recovered: false, reproducible: true },
+  ], "evidra", "incumbent");
+  assert.equal(partial.comparableArms, 3);
+  assert.ok(partial.coverage < 0.8);
+  assert.equal(partial.challengerWins, false);
+});
+
 test("cross-pollination preserves agreement, tension, and evidence provenance", () => {
   const board = synthesizeLaneReports([
     { role: "data", status: "completed", findings: ["group leakage affects validation"], recommendations: ["lock grouped folds"], uncertainties: ["site shift is unknown"], evidence: ["audit.csv"] },
