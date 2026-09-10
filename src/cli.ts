@@ -50,6 +50,7 @@ import { App } from "./ui/app.js";
 import { findWorkspaceRoot } from "./core/workspace.js";
 import { autonomyPolicy, type AutonomyLevel } from "./core/permissions.js";
 import { qualityFeedback, routeCapability } from "./core/capability-router.js";
+import { allocateNextResearch } from "./core/allocation.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -818,6 +819,13 @@ research
       const route = routeCapability({ objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}`, mode, provider: options.provider as "codex" | "local", autonomy, recentFailureCount: recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length, recentQuality, budgetRemainingMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)), requestedParallel: laneLimit });
       const effectiveLaneLimit = route.parallelLanes;
       store.appendEvent("research.capability_route", { route, predictedTier: route.tier, servedProvider: options.provider, servedModel: selectedModel, recentQuality });
+      const evidenceConflicts = {
+        contradictions: store.edges().filter((edge) => edge.relation === "contradicts").length,
+        duplicates: store.recentEvents(200).filter((event) => event.type === "evidence.claim.duplicate_detected").length,
+      };
+      const allocation = allocateNextResearch({ trajectories: recentTrajectories, phase: phaseGoal?.phase, evidenceConflicts });
+      store.appendEvent("research.next_allocation", { allocation, objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}` });
+      const allocatedObjective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}`;
       const researchSources = latestSourcePayloads(store.sources(), 12);
       const researchMemory = researchMemoryContext(store, 30);
       const peerLaneBoard = boundedPeerBoard(recentEvents);
@@ -851,7 +859,7 @@ research
       while (true) {
         try {
           console.log("Research · independent lanes are investigating the evidence...");
-          laneReports = await runResearchLanes(objective, {
+          laneReports = await runResearchLanes(allocatedObjective, {
             project: activeProject,
             competition: adapter.config,
             observation,
@@ -859,6 +867,8 @@ research
             researchSources,
             ultimateGoal: options.goal,
             phaseGoal: phaseGoal ?? null,
+            allocation,
+            evidenceConflicts,
             researchMemory,
             peerLaneBoard,
           }, {
@@ -875,8 +885,8 @@ research
             executeTool: researchToolExecutor(adapter, autonomy),
           });
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(objective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, laneReports, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy) });
-          criticReview = await runResearchCritic(objective, decision, laneReports, {
+          decision = await runResearchDirector(allocatedObjective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy) });
+          criticReview = await runResearchCritic(allocatedObjective, decision, laneReports, {
             provider: options.provider,
             model: selectedModel,
             fallbackLocalModel: options.limitPolicy === "fallback" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
