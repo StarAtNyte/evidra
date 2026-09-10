@@ -46,6 +46,7 @@ import { applyCriticGate } from "../core/critic-gate.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "../core/experiment-patches.js";
 import { recordBaselineEvidence } from "../core/baseline.js";
 import { redactSecrets } from "../core/redaction.js";
+import { enforceGoalTermination } from "../core/termination.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -810,6 +811,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       criticGateStore.appendEvent("research.critic.gate", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks });
       criticGateStore.close();
     }
+    decision = enforceGoalTermination(decision);
     const decisionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const phaseEvents = phaseGoal ? decisionStore.recentEvents(500) : [];
     const phaseEvidence = phaseGoal ? {

@@ -36,6 +36,7 @@ import { applyUnifiedDiff, extractUnifiedDiff } from "./core/experiment-patches.
 import { applyCriticGate } from "./core/critic-gate.js";
 import { recordBaselineEvidence } from "./core/baseline.js";
 import { redactSecrets } from "./core/redaction.js";
+import { enforceGoalTermination } from "./core/termination.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
@@ -750,6 +751,7 @@ research
         decisionStore.appendEvent("research.critic.gate", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks });
         decision = criticGate.decision;
       }
+      decision = enforceGoalTermination(decision);
       if (phaseGoal && decision.goalStatus === "met") {
         const phaseEvents = decisionStore.recentEvents(500);
         const gate = evaluatePhaseGoalEvidence(phaseGoal, {

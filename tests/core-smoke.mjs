@@ -48,6 +48,7 @@ import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment } from "../dist/core/validation.js";
 import { boundLaneToolResult, laneToolCalls, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactSecrets, redactStructured } from "../dist/core/redaction.js";
+import { enforceGoalTermination } from "../dist/core/termination.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -101,6 +102,14 @@ test("critic gate converts terminal and execution decisions into inspection", ()
   assert.equal(gated.decision.decision, "inspect");
   assert.match(gated.decision.nextAction, /critic verdict is revise/i);
   assert.equal(applyCriticGate(decision, { verdict: "proceed" }).blocked, false);
+});
+
+test("active goals cannot be terminated by a premature model stop", () => {
+  const guarded = enforceGoalTermination({ phase: "evaluation", goalStatus: "active", decision: "stop", bottleneck: "b", rationale: "r", hypotheses: [], selectedHypothesis: null, nextAction: "stop now", toolCalls: [] });
+  assert.equal(guarded.decision, "inspect");
+  assert.equal(guarded.goalStatus, "active");
+  assert.match(guarded.nextAction, /cannot stop/i);
+  assert.equal(enforceGoalTermination({ phase: "promotion", goalStatus: "met", decision: "stop", bottleneck: "done", rationale: "r", hypotheses: [], selectedHypothesis: null, nextAction: "finish", toolCalls: [] }).decision, "stop");
 });
 
 test("local engineer patches are checked and applied inside the worktree", async () => {
