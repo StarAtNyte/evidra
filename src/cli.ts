@@ -1764,6 +1764,7 @@ research
         expectedValue: hypothesis.expectedMetricDelta.median,
         costMinutes: Math.max(1, hypothesis.computeCostGpuHours * 60),
         novelty: hypothesis.evidence.length === 0 ? 1 : 0.4,
+        informationValue: Math.min(1, Math.max(0, (hypothesis.expectedMetricDelta.high - hypothesis.expectedMetricDelta.low) / (Math.abs(hypothesis.expectedMetricDelta.high) + Math.abs(hypothesis.expectedMetricDelta.low) + 0.01))),
         risk: hypothesis.implementationRisk === "high" ? 1 : hypothesis.implementationRisk === "medium" ? 0.5 : 0.1,
         family: hypothesis.formulationFamily,
         quality: hypothesisQuality[index]?.score,

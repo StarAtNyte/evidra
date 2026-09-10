@@ -2467,6 +2467,14 @@ test("portfolio planner is bounded, diverse, and cost aware", () => {
   assert.match(overBudget.rejected[0]?.reason ?? "", /budget/);
 });
 
+test("portfolio planning rewards bounded value of information", () => {
+  const plan = planPortfolio([
+    { id: "certain", title: "certain", operator: "greedy", expectedValue: 0.3, costMinutes: 1, novelty: 0, informationValue: 0, family: "certain" },
+    { id: "uncertain", title: "uncertain", operator: "audit", expectedValue: 0.3, costMinutes: 1, novelty: 0, informationValue: 1, family: "uncertain" },
+  ], { maxCandidates: 1, maxParallel: 1, budgetMinutes: 2 });
+  assert.equal(plan.selected[0]?.id, "uncertain");
+});
+
 test("successive halving budgets cheap screens and promotes only measured survivors", () => {
   const plan = planSuccessiveHalving([
     { id: "a", costMinutes: 10 },

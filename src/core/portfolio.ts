@@ -5,6 +5,8 @@ export interface PortfolioCandidate {
   expectedValue: number;
   costMinutes: number;
   novelty?: number;
+  /** Expected information gain from resolving the candidate's uncertainty. */
+  informationValue?: number;
   risk?: number;
   family?: string;
   quality?: number;
@@ -92,9 +94,10 @@ export function planPortfolio(candidates: PortfolioCandidate[], options: Portfol
 function score(candidate: PortfolioCandidate, history?: CostObservation[], context?: CostContext): number {
   const cost = estimateCost(candidate.operator, candidate.costMinutes, history ?? [], context).upperMinutes;
   const novelty = Math.max(0, Math.min(1, candidate.novelty ?? 0));
+  const informationValue = Math.max(0, Math.min(1, candidate.informationValue ?? 0));
   const risk = Math.max(0, Math.min(1, candidate.risk ?? 0));
   const quality = Math.max(0.25, Math.min(1, candidate.quality ?? 1));
-  return (candidate.expectedValue * quality + novelty * 0.2 - risk * 0.1) / cost;
+  return (candidate.expectedValue * quality + novelty * 0.2 + informationValue * 0.25 - risk * 0.1) / cost;
 }
 import { estimateCost, type CostContext, type CostEstimate, type CostObservation } from "./cost-model.js";
 import { planSuccessiveHalving, type SuccessiveHalvingPlan } from "./successive-halving.js";
