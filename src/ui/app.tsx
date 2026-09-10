@@ -55,6 +55,7 @@ import { recordBaselineEvidence } from "../core/baseline.js";
 import { redactSecrets } from "../core/redaction.js";
 import { enforceGoalTermination } from "../core/termination.js";
 import { summarizeUsage } from "../core/usage.js";
+import { assessResearchDecisionRubric } from "../core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../core/validation-lock.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
@@ -878,6 +879,19 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     decision = enforceGoalTermination(decision);
     const decisionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const decisionRubric = assessResearchDecisionRubric(decision, {
+      baselineAvailable: Boolean((observation as { baseline?: { exitCode?: unknown } }).baseline?.exitCode === 0),
+      sourceCount: researchSources.length,
+      evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
+    });
+    decisionStore.appendEvent("research.rubric.assessed", {
+      score: decisionRubric.score,
+      threshold: decisionRubric.threshold,
+      verdict: decisionRubric.verdict,
+      criteria: decisionRubric.criteria,
+      gaps: decisionRubric.gaps,
+      source: "tui",
+    });
     const phaseEvents = phaseGoal ? decisionStore.recentEvents(500) : [];
     const phaseEvidence = phaseGoal ? {
       mode,
