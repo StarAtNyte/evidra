@@ -18,6 +18,11 @@ export interface TrajectoryEvent {
   callId?: string;
 }
 
+export interface TrajectoryStructure {
+  status: "complete" | "recoverable" | "quarantined";
+  issues: string[];
+}
+
 export interface QualityDimension {
   verdict: QualityVerdict;
   coverage: "observed" | "partial" | "missing";
@@ -38,10 +43,58 @@ export interface TrajectoryQuality {
 const dimension = (verdict: QualityVerdict, coverage: QualityDimension["coverage"], ...evidence: string[]): QualityDimension => ({ verdict, coverage, evidence });
 
 /**
+ * Validate the event stream before semantic quality is considered. This is
+ * deliberately deterministic: malformed or ambiguous traces must not become
+ * positive training/routing feedback merely because a judge found a plausible
+ * final answer.
+ */
+export function validateTrajectoryStructure(events: TrajectoryEvent[]): TrajectoryStructure {
+  const issues: string[] = [];
+  const quarantined: string[] = [];
+  const eventIds = new Set<string>();
+  const callIndexes = new Map<string, number>();
+  const resultCallIds = new Set<string>();
+  let terminalIndex = -1;
+
+  events.forEach((event, index) => {
+    if (!event.id) issues.push(`event ${index} has no id`);
+    else if (eventIds.has(event.id)) quarantined.push(`duplicate event id '${event.id}'`);
+    else eventIds.add(event.id);
+    if (event.kind === "terminal") {
+      if (terminalIndex >= 0) quarantined.push("trajectory has multiple terminal events");
+      else terminalIndex = index;
+    }
+    if (terminalIndex >= 0 && index > terminalIndex) quarantined.push("events occur after terminal state");
+    if (event.kind === "tool_call") {
+      if (!event.callId) quarantined.push(`tool call '${event.id || index}' has no call id`);
+      else if (callIndexes.has(event.callId)) quarantined.push(`duplicate tool call id '${event.callId}'`);
+      else callIndexes.set(event.callId, index);
+    }
+    if (event.kind === "tool_result") {
+      if (!event.callId) quarantined.push(`tool result '${event.id || index}' has no call id`);
+      else if (resultCallIds.has(event.callId)) quarantined.push(`duplicate tool result for '${event.callId}'`);
+      else resultCallIds.add(event.callId);
+      const callIndex = event.callId ? callIndexes.get(event.callId) : undefined;
+      if (callIndex === undefined) quarantined.push(`tool result '${event.callId ?? (event.id || index)}' has no matching call`);
+      else if (callIndex >= index) quarantined.push(`tool result '${event.callId}' precedes its call`);
+    }
+  });
+
+  for (const callId of callIndexes.keys()) {
+    if (!resultCallIds.has(callId)) quarantined.push(`tool call '${callId}' has no matching result`);
+  }
+  if (terminalIndex < 0) issues.push("trajectory has no terminal event");
+  if (quarantined.length) return { status: "quarantined", issues: [...issues, ...quarantined] };
+  if (issues.length) return { status: "recoverable", issues };
+  return { status: "complete", issues: [] };
+}
+
+/**
  * Deterministic first-pass trajectory evaluation. Model judges may enrich this
  * later, but they must not overwrite facts established by this evaluator.
  */
 export function evaluateTrajectory(events: TrajectoryEvent[]): TrajectoryQuality {
+  const structure = validateTrajectoryStructure(events);
   const calls = events.filter((event) => event.kind === "tool_call");
   const results = new Set(events.filter((event) => event.kind === "tool_result").map((event) => event.callId).filter(Boolean));
   const unresolved = calls.filter((event) => !event.callId || !results.has(event.callId));
@@ -55,9 +108,11 @@ export function evaluateTrajectory(events: TrajectoryEvent[]): TrajectoryQuality
   const instructionFailure = events.some((event) => event.payload.instructionAdherence === false);
   const evidenceFailure = events.some((event) => event.payload.evidenceConsistent === false);
 
-  const structural = unresolved.length
-    ? dimension("FAIL", "observed", `${unresolved.length} tool call(s) have no matching result`)
-    : dimension("PASS", "observed", `event stream is causally closed (${events.length} events)`);
+  const structural = structure.status === "quarantined"
+    ? dimension("FAIL", "observed", ...structure.issues)
+    : structure.status === "recoverable"
+      ? dimension("WARN", "partial", ...structure.issues)
+      : dimension("PASS", "observed", `event stream is causally closed (${events.length} events)`);
   const goalAttainment = goalMet
     ? dimension("PASS", "observed", "trajectory records explicit goal attainment")
     : completed

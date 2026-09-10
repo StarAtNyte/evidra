@@ -31,7 +31,7 @@ import { estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.j
 import { auditData } from "../dist/core/data-audit.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { runReducedValidation } from "../dist/core/stage-executor.js";
-import { evaluateTrajectory, capabilityGaps } from "../dist/core/trajectories.js";
+import { evaluateTrajectory, capabilityGaps, validateTrajectoryStructure } from "../dist/core/trajectories.js";
 import { qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
 import { experimentNovelty, rankExperimentCandidates, rankPriorities } from "../dist/core/scheduler.js";
@@ -95,6 +95,27 @@ test("critic revision is not recorded as evidence-consistent", () => {
   ]);
   assert.equal(quality.evidenceConsistency.verdict, "FAIL");
   assert.equal(quality.overall, "FAIL");
+});
+
+test("trajectory structural gate quarantines ambiguous tool traces", () => {
+  const valid = [
+    { id: "call", kind: "tool_call", callId: "c1", payload: { tool: "inspect" } },
+    { id: "result", kind: "tool_result", callId: "c1", payload: { ok: true } },
+    { id: "terminal", kind: "terminal", payload: { status: "completed", goalAttained: true } },
+  ];
+  assert.deepEqual(validateTrajectoryStructure(valid), { status: "complete", issues: [] });
+  const malformed = [
+    { id: "call", kind: "tool_call", callId: "c1", payload: { tool: "inspect" } },
+    { id: "call", kind: "tool_call", callId: "c1", payload: { tool: "inspect" } },
+    { id: "orphan", kind: "tool_result", callId: "missing", payload: {} },
+    { id: "terminal", kind: "terminal", payload: { status: "completed" } },
+    { id: "late", kind: "assistant", payload: {} },
+  ];
+  const structure = validateTrajectoryStructure(malformed);
+  assert.equal(structure.status, "quarantined");
+  assert.ok(structure.issues.some((issue) => issue.includes("duplicate tool call id")));
+  assert.ok(structure.issues.some((issue) => issue.includes("no matching call")));
+  assert.equal(evaluateTrajectory(malformed).structural.verdict, "FAIL");
 });
 
 test("critic gate converts terminal and execution decisions into inspection", () => {
