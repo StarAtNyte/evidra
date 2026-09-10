@@ -18,6 +18,8 @@ export interface AdaptiveHarnessInput {
   benchmarkRegression?: boolean;
   /** Recent route quality fell across adjacent windows and needs re-verification. */
   environmentDrift?: boolean;
+  /** The controller repeated the same active decision and must widen search. */
+  searchStagnation?: boolean;
 }
 
 export type AdaptiveHarnessProfile = "exploration" | "evidence" | "recovery" | "budget";
@@ -116,6 +118,18 @@ export function deriveAdaptiveHarnessPolicy(input: AdaptiveHarnessInput): Adapti
     maxToolRounds = Math.max(maxToolRounds, 8);
     maxToolAttempts = Math.max(maxToolAttempts, 3);
     reasons.push("benchmark regression: lock targeted repair, alternate-route retest, and replication before exploration");
+  }
+  if (input.searchStagnation) {
+    // A repeated decision is not evidence that the objective is exhausted. It
+    // is evidence that the current search topology is not producing a new
+    // decision. Give the controller one explicit diversification cycle before
+    // allowing the outer stagnation guard to pause the campaign.
+    profile = "exploration";
+    preferDiverseSearch = true;
+    recoveryRoute = "alternate_route";
+    maxToolRounds = Math.max(maxToolRounds, 8);
+    maxToolAttempts = Math.max(maxToolAttempts, 3);
+    reasons.push("search stagnation: widen formulation families and use an alternate route before pausing");
   }
   if (input.environmentDrift) {
     profile = "recovery";

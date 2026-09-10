@@ -16,6 +16,19 @@ and bandit policies without changing the experiment contract.
 Source: [AI Research Agents for Machine Learning: Search, Exploration, and
 Generalization in MLE-bench](https://arxiv.org/abs/2507.02554).
 
+The newer FML-bench results sharpen that design rather than endorsing a single
+algorithm: greedy search can be competitive when improvement opportunities are
+dense, while tree/evolutionary search is more useful when opportunities are
+sparse; an adaptive switch after stagnation outperforms a fixed topology. AutoLab
+also finds that persistence—repeatedly benchmarking, editing, and incorporating
+empirical feedback—is a stronger predictor of long-horizon success than the
+quality of the first attempt. Evidra now treats stagnation as a control signal:
+it spends one durable recovery cycle on broader formulation families and an
+alternate route before pausing, while retaining a bounded terminal guard.
+
+Sources: [FML-bench](https://arxiv.org/abs/2605.17373) and
+[AutoLab](https://arxiv.org/abs/2606.05080).
+
 ## Optimize time-to-valid-progress
 
 RE-Bench shows that agent performance changes with total time budget and that
@@ -54,6 +67,19 @@ and SMT solver commands are classified automatically; semantic markers such as
 recognizable marker remain explicitly provisional. This makes proof-oriented
 and solver-oriented research artifacts auditable without making the harness
 specific to machine learning.
+
+AlphaEvolve and AI Scientist-v2 suggest two complementary search mechanisms for
+the workbench: evaluator-gated evolution of a population of candidate programs,
+and progressive tree search with an experiment manager. Evidra should use these
+as bounded operators over immutable experiment manifests—not as unconstrained
+self-modification. Candidate generation may be creative, but promotion remains
+dependent on the declared evaluator, independent replication, artifact
+provenance, and retention/holdout gates. This preserves the useful part of
+evolutionary and tree search while preventing a search agent from changing the
+yardstick or silently discarding failed branches.
+
+Sources: [AlphaEvolve](https://arxiv.org/abs/2506.13131) and
+[AI Scientist-v2](https://github.com/SakanaAI/AI-Scientist-v2).
 
 ## Benchmark the harness, not just the model
 
@@ -121,6 +147,16 @@ The next high-value upgrades are:
    AIRA-dojo, MLGym, and comparable harnesses;
 2. run equal-budget comparisons of greedy, UCB, evolutionary, and MCTS policies
    under the same task and compute budgets.
+
+3. Add an agent-agnostic, stepwise scientific-task suite. SciAgentArena's
+roughly 200 interactive tasks and InnovatorBench's ResearchGym both reinforce
+that final answers are insufficient: the environment must expose intermediate
+verification, asynchronous execution, snapshots, and process-level outcomes.
+Evidra already persists these primitives; the remaining work is a reproducible
+adapter and matched runs rather than another prompt-only benchmark.
+
+Sources: [SciAgentArena](https://arxiv.org/abs/2606.12736) and
+[InnovatorBench](https://arxiv.org/abs/2510.27598).
 
 Paired confidence intervals and task-balanced scores are implemented in the
 scorecard, and formal-verification adapters are implemented in run evidence;

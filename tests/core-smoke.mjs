@@ -68,6 +68,18 @@ test("search policies receive independent matched scorecards and comparisons", (
   assert.equal(comparison.challengerWins, true);
 });
 
+test("stagnation widens search before the campaign can pause", () => {
+  const policy = deriveAdaptiveHarnessPolicy({
+    quality: [],
+    searchStagnation: true,
+    budgetRemainingMinutes: 20,
+  });
+  assert.equal(policy.preferDiverseSearch, true);
+  assert.equal(policy.recoveryRoute, "alternate_route");
+  assert.equal(policy.profile, "exploration");
+  assert.match(policy.reasons.join(" "), /stagnation/);
+});
+
 test("component ablations require one declared removal and preserve the paired gate", () => {
   const trial = (harness, componentIds, candidateMetric, task = "task-a") => ({ harness, componentIds, task, arm: "arm", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: true, reproducible: true });
   const report = evaluateHarnessComponentAblations([

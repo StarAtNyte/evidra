@@ -1467,6 +1467,7 @@ research
       };
       const allocation = allocateNextResearch({ trajectories: recentTrajectories, phase: phaseGoal?.phase, evidenceConflicts, failureClasses });
       store.appendEvent("research.next_allocation", { allocation, objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}` });
+      const priorStagnation = detectStagnation(store.decisions().map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3));
       const adaptiveHarness = deriveAdaptiveHarnessPolicy({
         phase: phaseGoal?.phase,
         quality: recentQuality as Array<{ overall?: string; toolUse?: { verdict?: string }; evidenceConsistency?: { verdict?: string }; errorRecovery?: { verdict?: string }; termination?: { verdict?: string } }>,
@@ -1475,6 +1476,7 @@ research
         budgetRemainingMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
         benchmarkRegression,
         environmentDrift,
+        searchStagnation: priorStagnation.stagnant,
         benchmarkInterventions: [
           ...harnessEvolutionPlan.map((item) => ({ kind: item.failureClass, priority: item.priority >= 8 ? "critical" : item.priority >= 5 ? "high" : "normal" })),
           ...(Array.isArray(harnessAdaptationAgenda?.interventions)
@@ -2142,13 +2144,26 @@ research
       // pending proposal is durable and visible; subsequent cycles can gather
       // evidence or select an unrelated hypothesis until the budget/stop
       // condition is reached.
-      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || stagnation.stagnant || stopPolicy.action !== "continue" || elapsedMinutes >= campaign.budgetMinutes;
+      const stagnationRecoveryStarted = durableEvents.some((event) => event.type === "research.stagnation.recovery_started");
+      // The first repeated-decision window gets a forced diversification cycle.
+      // Only a second unchanged window may pause the campaign; otherwise a
+      // locally stuck director can terminate before trying another formulation
+      // family, evaluator route, or search operator.
+      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || (stagnation.stagnant && stagnationRecoveryStarted) || stopPolicy.action !== "continue" || elapsedMinutes >= campaign.budgetMinutes;
       if (terminal) {
-        if (decision.goalStatus === "blocked" || stagnation.stagnant || stopPolicy.action === "pause") Object.assign(campaign, pauseCampaign(campaign));
+        if (decision.goalStatus === "blocked" || (stagnation.stagnant && stagnationRecoveryStarted) || stopPolicy.action === "pause") Object.assign(campaign, pauseCampaign(campaign));
         else campaign.status = "completed";
         if (stagnation.stagnant) decisionStore.appendEvent("research.stagnation.detected", { cycles: stagnation.cycles, signature: stagnation.signature, action: "pause_for_review" });
         if (stopPolicy.action !== "continue") decisionStore.appendEvent("research.stop_policy.triggered", { cycle, action: stopPolicy.action, reason: stopPolicy.reason, samples: stopPolicy.samples, meanRewardPerMinute: stopPolicy.meanRewardPerMinute });
         decisionStore.saveCampaign(campaign);
+      } else if (stagnation.stagnant) {
+        decisionStore.appendEvent("research.stagnation.recovery_started", {
+          cycle,
+          cycles: stagnation.cycles,
+          signature: stagnation.signature,
+          action: "force_diverse_search_cycle",
+          policy: adaptiveHarness,
+        });
       }
       decisionStore.close();
       console.log(formatResearchDecision(decision));
