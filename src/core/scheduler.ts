@@ -12,6 +12,31 @@ export interface ExperimentCandidate extends PriorityInput {
   mechanism?: string;
 }
 
+export interface ReducedPromotionInput {
+  candidateMetric: number | undefined;
+  baselineMetric: number | undefined;
+  direction: "maximize" | "minimize";
+  minimumDelta?: number;
+  tolerance?: number;
+}
+
+export interface ReducedPromotionDecision {
+  promote: boolean;
+  delta: number | undefined;
+  threshold: number;
+  reason: string;
+}
+
+/** Decide whether a cheap reduced run earns the right to consume full-validation compute. */
+export function evaluateReducedPromotion(input: ReducedPromotionInput): ReducedPromotionDecision {
+  const threshold = Math.max(0, input.minimumDelta ?? 0) - Math.max(0, input.tolerance ?? 0);
+  if (!Number.isFinite(input.candidateMetric)) return { promote: false, delta: undefined, threshold, reason: "reduced validation emitted no finite candidate metric" };
+  if (!Number.isFinite(input.baselineMetric)) return { promote: true, delta: undefined, threshold, reason: "no finite baseline metric is available; preserving the candidate for full validation" };
+  const delta = input.direction === "maximize" ? input.candidateMetric! - input.baselineMetric! : input.baselineMetric! - input.candidateMetric!;
+  const promote = delta >= threshold;
+  return { promote, delta, threshold, reason: promote ? `reduced delta ${delta} meets promotion threshold ${threshold}` : `reduced delta ${delta} is below promotion threshold ${threshold}` };
+}
+
 function tokens(value: string): Set<string> {
   return new Set(value.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length > 2));
 }

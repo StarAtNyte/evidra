@@ -35,7 +35,7 @@ import { createToolTraceRecorder, evaluateTrajectory, capabilityGaps, validateTr
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
 import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurriculum } from "../dist/core/experience.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
-import { experimentNovelty, rankExperimentCandidates, rankPriorities } from "../dist/core/scheduler.js";
+import { evaluateReducedPromotion, experimentNovelty, rankExperimentCandidates, rankPriorities } from "../dist/core/scheduler.js";
 import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
 import { renderReport } from "../dist/core/reports.js";
@@ -339,6 +339,13 @@ test("experiment scheduler ranks expected information per cost", () => {
   ]);
   assert.equal(ranked[0].id, "cheap");
   assert.ok(ranked[0].priority > ranked[1].priority);
+});
+
+test("reduced promotion gate is direction-aware and tolerance-bounded", () => {
+  assert.equal(evaluateReducedPromotion({ candidateMetric: 0.81, baselineMetric: 0.8, direction: "maximize", minimumDelta: 0.02 }).promote, false);
+  assert.equal(evaluateReducedPromotion({ candidateMetric: 0.81, baselineMetric: 0.8, direction: "maximize", minimumDelta: 0.02, tolerance: 0.02 }).promote, true);
+  assert.equal(evaluateReducedPromotion({ candidateMetric: 0.7, baselineMetric: 0.8, direction: "minimize", minimumDelta: 0.05 }).promote, true);
+  assert.equal(evaluateReducedPromotion({ candidateMetric: undefined, baselineMetric: 0.8, direction: "maximize" }).promote, false);
 });
 
 test("experiment scheduler rewards novelty against prior directions", () => {

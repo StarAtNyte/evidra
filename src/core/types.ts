@@ -40,6 +40,11 @@ export const CompetitionConfigSchema = z.object({
   execution: z.object({
     smokeCommand: z.array(z.string()).min(1).optional(),
     reducedValidationCommand: z.array(z.string()).min(1).optional(),
+    reducedPromotion: z.object({
+      enabled: z.boolean().default(false),
+      minimumDelta: z.number().default(0),
+      tolerance: z.number().nonnegative().default(0),
+    }).optional(),
     requiredArtifacts: z.array(z.string()).default([]),
   }).optional(),
   validation: z.object({

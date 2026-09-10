@@ -37,6 +37,7 @@ import { capabilityOutcome, qualityFeedback, routeCapability } from "../core/cap
 import { allocateNextResearch } from "../core/allocation.js";
 import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurriculum } from "../core/experience.js";
 import { rankExperimentCandidates } from "../core/scheduler.js";
+import { evaluateReducedPromotion } from "../core/scheduler.js";
 import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "../core/execution-stages.js";
 import { runReducedValidation } from "../core/stage-executor.js";
@@ -1065,6 +1066,22 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (reduced.status !== "completed") reducedStore.saveExperiment({ id, payload: { ...entryPayload, status: "failed", executionPlan } });
       reducedStore.close();
       if (reduced.status !== "completed") throw new Error(`Reduced validation failed (${reduced.exitCode}): ${reduced.stderr || reduced.stdout}`);
+      const promotionPolicy = adapter.config.execution?.reducedPromotion;
+      if (promotionPolicy?.enabled) {
+        const promotionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        const baselineEvent = promotionStore.recentEvents(500).reverse().find((event) => event.type === "baseline.completed");
+        const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string } | undefined;
+        const baselineMetric = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] : undefined;
+        const gate = evaluateReducedPromotion({ candidateMetric: reduced.metrics[adapter.config.metric.name], baselineMetric, direction: adapter.config.metric.direction, minimumDelta: promotionPolicy.minimumDelta, tolerance: promotionPolicy.tolerance });
+        promotionStore.appendEvent(gate.promote ? "experiment.stage.reduced_validation.promoted" : "experiment.stage.reduced_validation.rejected", { experimentId: id, runId: reduced.runId, ...gate, baselineMetric, candidateMetric: reduced.metrics[adapter.config.metric.name] ?? null });
+        if (!gate.promote) {
+          executionPlan = advanceExecutionStage(executionPlan, "full_validation", "skipped");
+          promotionStore.saveExperiment({ id, payload: { ...entryPayload, status: "rejected", rejection: gate.reason, executionPlan } });
+          promotionStore.close();
+          throw new Error(`Reduced validation did not earn full validation: ${gate.reason}`);
+        }
+        promotionStore.close();
+      }
     } else {
       executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", "skipped");
       const skippedStore = new ResearchStore(join(root, ".sota", "database.sqlite"));

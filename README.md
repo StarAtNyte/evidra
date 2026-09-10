@@ -350,7 +350,12 @@ Evidra does not require a fixed competition name. A project can provide competit
       "experimentCommand": ["python", "run_experiment.py"],
       "execution": {
         "smokeCommand": ["python", "run_experiment.py", "--smoke"],
-        "reducedValidationCommand": ["python", "run_experiment.py", "--folds", "1", "--epochs", "1"]
+        "reducedValidationCommand": ["python", "run_experiment.py", "--folds", "1", "--epochs", "1"],
+        "reducedPromotion": {
+          "enabled": true,
+          "minimumDelta": 0.01,
+          "tolerance": 0.005
+        }
       },
       "submission": { "platform": "manual" },
       "submissionPolicy": {
@@ -364,6 +369,12 @@ Evidra does not require a fixed competition name. A project can provide competit
     }
 
 The manifest is intentionally small. Dataset manifests, split registries, metrics, worker protocols, and platform adapters belong in the workspace instead of being hardcoded into Evidra. Paths are checked to remain inside the project root.
+
+When `reducedPromotion.enabled` is true, the reduced run becomes an early compute gate. Evidra
+compares its declared metric against the latest durable baseline, correctly handling maximize and
+minimize metrics, then skips full validation when the improvement is below the configured threshold.
+`tolerance` protects against noisy cheap splits. If no finite baseline exists, the candidate is
+preserved for full validation; a missing candidate metric is rejected.
 
 ## State and provenance
 
