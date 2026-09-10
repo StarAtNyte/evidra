@@ -1160,6 +1160,7 @@ research
       const durableEvents = store.recentEvents(500);
       const recentEvents = durableEvents.slice(-20);
       const openCriticConstraint = latestOpenCriticConstraint(durableEvents);
+      const literatureFrontier = sourceFrontier(durableEvents);
       const recentTrajectories = store.trajectories(20);
       const recentQuality = recentTrajectories.map((entry) => qualityFeedback(entry.quality));
       const route = routeCapability({ objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}`, mode, provider: options.provider as "codex" | "local", autonomy, recentFailureCount: recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length, recentQuality, budgetRemainingMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)), requestedParallel: laneLimit });
@@ -1206,7 +1207,8 @@ research
       const criticConstraintGuidance = openCriticConstraint
         ? `\n\nOPEN CRITIC CONSTRAINT (${openCriticConstraint.verdict}):\n${openCriticConstraint.summary}\nObjections: ${openCriticConstraint.objections.join("; ") || "none listed"}\nRequired checks: ${openCriticConstraint.requiredChecks.join("; ") || "produce an independent evidence check"}\nDo not run or stop until these checks are addressed with durable evidence.`
         : "";
-      const allocatedObjective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra search policy:\nPrioritize the '${searchPolicy[0]?.operator ?? "ucb_portfolio"}' operator (${searchPolicy[0]?.rationale ?? "portfolio default"}) while preserving at least one diverse alternative.\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}\n\nBounded experience replay (use as lessons, not proof):\n${replayGuidance}${criticConstraintGuidance}`;
+      const literatureGuidance = `Literature frontier: ${literatureFrontier.uniqueWorks} unique works discovered across ${literatureFrontier.queryCount} queries; ${literatureFrontier.retrievedWorks} retrieved; ${literatureFrontier.pendingWorks} pending. Treat pending works as search leads, not evidence. Deepen or broaden search when the objective still lacks primary support.`;
+      const allocatedObjective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra search policy:\nPrioritize the '${searchPolicy[0]?.operator ?? "ucb_portfolio"}' operator (${searchPolicy[0]?.rationale ?? "portfolio default"}) while preserving at least one diverse alternative.\n\n${literatureGuidance}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}\n\nBounded experience replay (use as lessons, not proof):\n${replayGuidance}${criticConstraintGuidance}`;
       const priorRubricGaps = recentEvents
         .filter((event) => event.type === "research.rubric.assessed")
         .slice(-2)
@@ -1269,6 +1271,7 @@ research
             evidenceConflicts,
             researchMemory,
             experienceReplay: replayContext,
+            literatureFrontier,
             openCriticConstraint,
             peerLaneBoard,
           }, {
@@ -1342,7 +1345,7 @@ research
           crossPollinationStore.appendEvent("research.cross_pollination.completed", { cycle, board: crossPollination });
           crossPollinationStore.close();
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, openCriticConstraint }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, openCriticConstraint }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
           criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
             provider: options.provider,
             model: selectedModel,
