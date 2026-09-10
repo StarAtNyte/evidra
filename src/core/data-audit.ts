@@ -7,7 +7,8 @@ export interface DataAuditReport {
   scannedFiles: number;
   totalBytes: number;
   duplicateGroups: Array<{ checksum: string; files: string[] }>;
-  tabularDiagnostics: Array<{ file: string; rows: number; columns: number; duplicateRows: number; constantColumns: string[]; highMissingColumns: string[] }>;
+  tabularDiagnostics: Array<{ file: string; rows: number; columns: number; duplicateRows: number; constantColumns: string[]; highMissingColumns: string[]; columnProfiles: Record<string, { missingRate: number; uniqueValues: number; sample: string[] }> }>;
+  distributionShift: Array<{ trainFile: string; testFile: string; shiftedColumns: string[] }>;
   skippedFiles: string[];
   warnings: string[];
   generatedAt: string;
@@ -21,7 +22,7 @@ function tabularDiagnostic(root: string, path: string, maxRows = 50_000): DataAu
   if (!TABULAR_EXTENSIONS.has(extension)) return undefined;
   const text = readFileSync(path, "utf8");
   const lines = text.split(/\r?\n/).filter((line) => line.trim()).slice(0, maxRows + 1);
-  if (lines.length < 2) return { file: relative(root, path), rows: 0, columns: 0, duplicateRows: 0, constantColumns: [], highMissingColumns: [] };
+  if (lines.length < 2) return { file: relative(root, path), rows: 0, columns: 0, duplicateRows: 0, constantColumns: [], highMissingColumns: [], columnProfiles: {} };
   if (extension === ".jsonl") {
     const records = lines.slice(0, maxRows).map((line) => { try { return JSON.parse(line) as Record<string, unknown>; } catch { return {}; } });
     const headers = [...new Set(records.flatMap((record) => Object.keys(record)))];
@@ -40,7 +41,7 @@ function tabularDiagnostic(root: string, path: string, maxRows = 50_000): DataAu
         }
       }
     }
-    return { file: relative(root, path), rows: records.length, columns: headers.length, duplicateRows: records.length - rows.size, constantColumns: headers.filter((header) => (counts.get(header)?.size ?? 0) <= 1), highMissingColumns: headers.filter((header) => (missing.get(header) ?? 0) / Math.max(1, records.length) >= 0.5) };
+    return { file: relative(root, path), rows: records.length, columns: headers.length, duplicateRows: records.length - rows.size, constantColumns: headers.filter((header) => (counts.get(header)?.size ?? 0) <= 1), highMissingColumns: headers.filter((header) => (missing.get(header) ?? 0) / Math.max(1, records.length) >= 0.5), columnProfiles: Object.fromEntries(headers.map((header) => [header, { missingRate: (missing.get(header) ?? 0) / Math.max(1, records.length), uniqueValues: counts.get(header)?.size ?? 0, sample: [...(counts.get(header) ?? new Set<string>())].slice(0, 20) }])) };
   }
   const delimiter = extension === ".tsv" ? "\t" : ",";
   const header = lines[0].split(delimiter).map((value) => value.trim());
@@ -48,7 +49,7 @@ function tabularDiagnostic(root: string, path: string, maxRows = 50_000): DataAu
   const values = header.map((_, index) => new Set(rows.map((row) => row[index] ?? "")));
   const missing = header.map((_, index) => rows.filter((row) => !row[index]?.trim()).length);
   const duplicateRows = rows.length - new Set(rows.map((row) => row.join("\u001f"))).size;
-  return { file: relative(root, path), rows: rows.length, columns: header.length, duplicateRows, constantColumns: header.filter((_, index) => values[index].size <= 1), highMissingColumns: header.filter((_, index) => missing[index] / Math.max(1, rows.length) >= 0.5) };
+  return { file: relative(root, path), rows: rows.length, columns: header.length, duplicateRows, constantColumns: header.filter((_, index) => values[index].size <= 1), highMissingColumns: header.filter((_, index) => missing[index] / Math.max(1, rows.length) >= 0.5), columnProfiles: Object.fromEntries(header.map((name, index) => [name, { missingRate: missing[index] / Math.max(1, rows.length), uniqueValues: values[index].size, sample: [...values[index]].filter(Boolean).slice(0, 20) }])) };
 }
 
 export function auditData(root: string, maxFiles = 2000, maxFileBytes = 50 * 1024 * 1024): DataAuditReport {
@@ -81,12 +82,27 @@ export function auditData(root: string, maxFiles = 2000, maxFileBytes = 50 * 102
   };
   visit(root);
   const duplicateGroups = [...checksums.entries()].filter(([, files]) => files.length > 1).map(([checksum, files]) => ({ checksum, files }));
+  const distributionShift: DataAuditReport["distributionShift"] = [];
+  for (const train of tabularDiagnostics.filter((entry) => /(^|[._/-])train(ing)?([._/-]|$)/i.test(entry.file))) {
+    const expectedTest = train.file.replace(/train(ing)?/i, "test");
+    const test = tabularDiagnostics.find((entry) => entry.file === expectedTest);
+    if (!test) continue;
+    const shiftedColumns = Object.keys(train.columnProfiles).filter((column) => {
+      const trainProfile = train.columnProfiles[column];
+      const testProfile = test.columnProfiles[column];
+      if (!testProfile) return true;
+      const sampleOverlap = new Set(trainProfile.sample).size ? testProfile.sample.filter((value) => trainProfile.sample.includes(value)).length / Math.max(1, new Set(testProfile.sample).size) : 0;
+      return Math.abs(trainProfile.missingRate - testProfile.missingRate) >= 0.25 || (trainProfile.sample.length > 0 && testProfile.sample.length > 0 && sampleOverlap < 0.25);
+    });
+    if (shiftedColumns.length) distributionShift.push({ trainFile: train.file, testFile: test.file, shiftedColumns });
+  }
   const warnings = [
     ...(duplicateGroups.length ? [`${duplicateGroups.length} exact duplicate file group(s) detected; ensure split policy keeps duplicates together.`] : []),
     ...(skippedFiles.length ? [`${skippedFiles.length} file(s) skipped due to audit limits.`] : []),
     ...(tabularDiagnostics.some((diagnostic) => diagnostic.duplicateRows > 0) ? ["Duplicate rows detected in tabular files; use group-aware or duplicate-component splits."] : []),
     ...(tabularDiagnostics.some((diagnostic) => diagnostic.constantColumns.length > 0) ? ["Constant tabular columns detected; verify they are not artifacts or unusable identifiers."] : []),
     ...(tabularDiagnostics.some((diagnostic) => diagnostic.highMissingColumns.length > 0) ? ["High-missingness tabular columns detected; inspect train/test missingness before modeling."] : []),
+    ...(distributionShift.length ? [`Candidate train/test distribution shift detected in ${distributionShift.length} file pair(s); validate by group, source, or time before trusting random splits.`] : []),
   ];
-  return { root, scannedFiles, totalBytes, duplicateGroups, tabularDiagnostics, skippedFiles, warnings, generatedAt: new Date().toISOString() };
+  return { root, scannedFiles, totalBytes, duplicateGroups, tabularDiagnostics, distributionShift, skippedFiles, warnings, generatedAt: new Date().toISOString() };
 }

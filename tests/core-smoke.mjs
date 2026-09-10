@@ -157,11 +157,16 @@ test("data audit reports bounded tabular duplicate and missingness diagnostics",
   const root = mkdtempSync(join(tmpdir(), "evidra-data-audit-"));
   try {
     writeFileSync(join(root, "samples.csv"), "id,value,constant\n1,a,x\n2,,x\n2,,x\n");
+    writeFileSync(join(root, "train.csv"), "id,domain\n1,a\n2,a\n3,a\n");
+    writeFileSync(join(root, "test.csv"), "id,domain\n4,z\n5,z\n6,z\n");
     const report = auditData(root);
-    assert.equal(report.tabularDiagnostics.length, 1);
-    assert.equal(report.tabularDiagnostics[0].duplicateRows, 1);
-    assert.deepEqual(report.tabularDiagnostics[0].constantColumns, ["constant"]);
+    assert.equal(report.tabularDiagnostics.length, 3);
+    const samples = report.tabularDiagnostics.find((entry) => entry.file === "samples.csv");
+    assert.equal(samples.duplicateRows, 1);
+    assert.deepEqual(samples.constantColumns, ["constant"]);
     assert.ok(report.warnings.some((warning) => /duplicate rows/i.test(warning)));
+    assert.equal(report.distributionShift.length, 1);
+    assert.deepEqual(new Set(report.distributionShift[0].shiftedColumns), new Set(["id", "domain"]));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
