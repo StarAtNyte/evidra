@@ -54,7 +54,7 @@ import { applyUnifiedDiff, extractUnifiedDiff } from "../core/experiment-patches
 import { recordBaselineEvidence } from "../core/baseline.js";
 import { redactSecrets } from "../core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../core/termination.js";
-import { auditClaims } from "../core/claim-audit.js";
+import { auditClaims, selfDescribingClaimEvidenceIds } from "../core/claim-audit.js";
 import { summarizeUsage } from "../core/usage.js";
 import { assessResearchDecisionRubric } from "../core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../core/validation-lock.js";
@@ -94,11 +94,7 @@ function auditEvidenceStore(store: ResearchStore) {
   const runs = store.runs();
   const artifacts = store.artifacts();
   const edges = store.edges().filter((edge) => edge.relation === "contradicts");
-  const selfDescribing = claims.flatMap((claim) => {
-    const payload = claim.payload && typeof claim.payload === "object" ? claim.payload as { sourceId?: unknown; observation?: unknown; findings?: unknown; evidence?: unknown } : {};
-    const sourceId = typeof payload.sourceId === "string" ? payload.sourceId : "";
-    return sourceId && ((payload.observation && typeof payload.observation === "object") || (Array.isArray(payload.findings) && Array.isArray(payload.evidence))) ? [sourceId] : [];
-  });
+  const selfDescribing = selfDescribingClaimEvidenceIds(claims);
   return auditClaims({
     claims: claims.map((claim) => ({ id: claim.id, payload: claim.payload })),
     knownEvidenceIds: new Set([

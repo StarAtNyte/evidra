@@ -29,6 +29,19 @@ export interface ClaimAuditInput {
   conflictedClaimIds?: Set<string>;
 }
 
+/** Evidence IDs embedded in durable claim payloads, such as lane observations. */
+export function selfDescribingClaimEvidenceIds(claims: Array<{ payload: unknown }>): Set<string> {
+  const ids = new Set<string>();
+  for (const claim of claims) {
+    const payload = claim.payload && typeof claim.payload === "object" ? claim.payload as { sourceId?: unknown; observation?: unknown; findings?: unknown; evidence?: unknown } : {};
+    const sourceId = typeof payload.sourceId === "string" ? payload.sourceId : "";
+    const durableObservation = Boolean(payload.observation && typeof payload.observation === "object");
+    const durableLaneReport = Array.isArray(payload.findings) && Array.isArray(payload.evidence);
+    if (sourceId && (durableObservation || durableLaneReport)) ids.add(sourceId);
+  }
+  return ids;
+}
+
 /**
  * Audit claims without asking a model to decide whether its own prose is true.
  * Literature is useful for hypothesis generation but never counts as measured

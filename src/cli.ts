@@ -38,7 +38,7 @@ import { applyCriticGate, latestOpenCriticConstraint } from "./core/critic-gate.
 import { recordBaselineEvidence } from "./core/baseline.js";
 import { redactSecrets } from "./core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "./core/termination.js";
-import { auditClaims, type ClaimAuditReport } from "./core/claim-audit.js";
+import { auditClaims, selfDescribingClaimEvidenceIds, type ClaimAuditReport } from "./core/claim-audit.js";
 import { analyzePredictionRows, parsePredictionRows } from "./core/error-analysis.js";
 import { summarizeUsage } from "./core/usage.js";
 import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "./core/ensemble.js";
@@ -97,13 +97,7 @@ function auditCurrentClaims(store: ResearchStore): ClaimAuditReport {
   const runs = store.runs();
   const artifacts = store.artifacts();
   const contradictionEdges = store.edges().filter((edge) => edge.relation === "contradicts");
-  const claimPayloads = claims.map((claim) => claim.payload && typeof claim.payload === "object" ? claim.payload as { sourceId?: unknown; observation?: unknown; findings?: unknown; evidence?: unknown } : {});
-  const selfDescribingEvidenceIds = claimPayloads.flatMap((payload) => {
-    const sourceId = typeof payload.sourceId === "string" ? payload.sourceId : "";
-    const hasDurableObservation = Boolean(payload.observation && typeof payload.observation === "object");
-    const hasDurableLaneReport = Array.isArray(payload.findings) && Array.isArray(payload.evidence);
-    return sourceId && (hasDurableObservation || hasDurableLaneReport) ? [sourceId] : [];
-  });
+  const selfDescribingEvidenceIds = selfDescribingClaimEvidenceIds(claims);
   return auditClaims({
     claims: claims.map((claim) => ({ id: claim.id, payload: claim.payload })),
     knownEvidenceIds: new Set([

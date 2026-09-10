@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ResearchStore } from "./store.js";
-import { auditClaims } from "./claim-audit.js";
+import { auditClaims, selfDescribingClaimEvidenceIds } from "./claim-audit.js";
 
 export type ReportKind = "research" | "challenge" | "final";
 
@@ -38,6 +38,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
       ...runs.map((run) => run.id),
       ...artifacts.map((artifact) => artifact.id),
       ...claims.map((claim) => claim.id),
+      ...selfDescribingClaimEvidenceIds(claims),
     ]),
     conflictedClaimIds,
   });

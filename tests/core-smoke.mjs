@@ -59,7 +59,7 @@ import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { planHarnessAdaptation } from "../dist/core/harness-adaptation.js";
-import { auditClaims } from "../dist/core/claim-audit.js";
+import { auditClaims, selfDescribingClaimEvidenceIds } from "../dist/core/claim-audit.js";
 import { deriveAdaptiveHarnessPolicy } from "../dist/core/adaptive-harness.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "../dist/core/error-analysis.js";
 import { createTransferableMethod, transferableMethodsFromEvents } from "../dist/core/method-transfer.js";
@@ -493,6 +493,20 @@ test("claim audit separates measured, literature, unsupported, and conflicted ev
   assert.equal(report.unsupported, 1);
   assert.equal(report.conflicted, 1);
   assert.equal(report.publishable, false);
+});
+
+test("self-describing lane evidence is shared by interactive and report audits", () => {
+  const claims = [{ id: "lane-claim", payload: { statement: "lane observation", scope: "lane", confidence: 0.9, sourceType: "observation", sourceId: "lane-data", findings: ["finding"], evidence: ["workspace.files"] } }];
+  assert.deepEqual([...selfDescribingClaimEvidenceIds(claims)], ["lane-data"]);
+  const root = mkdtempSync(join(tmpdir(), "evidra-report-lane-claim-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.saveClaim(claims[0]);
+    const report = renderReport(store, "final");
+    assert.match(report, /Verified: 1/);
+    assert.doesNotMatch(report, /unsupported: 1/);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("adaptive harness policy changes routing from measured failure pressure", () => {
