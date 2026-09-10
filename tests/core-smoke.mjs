@@ -61,6 +61,7 @@ import { compareHarnesses, scoreHarnessTrials, validateBenchmarkProtocol } from 
 import { planHarnessAdaptation } from "../dist/core/harness-adaptation.js";
 import { auditClaims } from "../dist/core/claim-audit.js";
 import { deriveAdaptiveHarnessPolicy } from "../dist/core/adaptive-harness.js";
+import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "../dist/core/error-analysis.js";
 import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks } from "../dist/core/airs-bench.js";
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
@@ -510,6 +511,25 @@ test("adaptive harness policy changes routing from measured failure pressure", (
   assert.equal(pressured.recoveryRoute, "repair_first");
   assert.equal(pressured.requireReplication, true);
   assert.ok(pressured.reasons.length >= 3);
+});
+
+test("prediction error analysis turns aggregate outcomes into actionable failures", () => {
+  const rows = parsePredictionRows({ predictions: [
+    { id: "a", actual: "cat", predicted: "dog", group: "source-a" },
+    { id: "b", actual: "cat", predicted: "cat", group: "source-a" },
+    { id: "c", actual: "dog", predicted: "cat", group: "source-b" },
+  ] });
+  const report = analyzePredictionRows(rows);
+  assert.equal(report.task, "classification");
+  assert.equal(report.errors, 2);
+  assert.ok(Math.abs(report.accuracy - (1 / 3)) < 1e-12);
+  assert.equal(report.worstGroups[0].group, "source-b");
+  const candidate = parsePredictionRows({ predictions: [
+    { id: "a", actual: "cat", predicted: "cat", group: "source-a" },
+    { id: "b", actual: "cat", predicted: "cat", group: "source-a" },
+    { id: "c", actual: "dog", predicted: "dog", group: "source-b" },
+  ] });
+  assert.deepEqual(comparePredictionRows(rows, candidate), { matched: 3, fixed: 2, regressed: 0, unchangedErrors: 0, groups: [{ group: "source-a", fixed: 1, regressed: 0, net: 1 }, { group: "source-b", fixed: 1, regressed: 0, net: 1 }] });
 });
 
 test("experiment scheduler ranks expected information per cost", () => {

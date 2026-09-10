@@ -39,6 +39,7 @@ import { recordBaselineEvidence } from "./core/baseline.js";
 import { redactSecrets } from "./core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "./core/termination.js";
 import { auditClaims, type ClaimAuditReport } from "./core/claim-audit.js";
+import { analyzePredictionRows, parsePredictionRows } from "./core/error-analysis.js";
 import { summarizeUsage } from "./core/usage.js";
 import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "./core/ensemble.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
@@ -760,6 +761,15 @@ evidence.command("audit").option("--json", "emit machine-readable JSON").descrip
     for (const entry of report.entries) console.log(`${entry.status === "verified" ? "✓" : "!"} ${entry.id} · ${entry.reasons.join("; ")}`);
   }
   if (!report.publishable && report.total > 0) process.exitCode = 2;
+});
+evidence.command("analyze").argument("<file>", "JSON array, {predictions: [...]}, or JSONL prediction artifact").option("--max-rows <count>", "bounded rows to inspect", "100000").description("Analyze prediction errors and worst groups").action((file: string, options: { maxRows: string }) => {
+  const path = resolve(file);
+  const text = readFileSync(path, "utf8");
+  let parsed: unknown = text;
+  try { parsed = JSON.parse(text); } catch { /* JSONL is parsed row-by-row. */ }
+  const maxRows = Math.max(1, Math.min(100_000, Number.parseInt(options.maxRows, 10) || 100_000));
+  const rows = parsePredictionRows(parsed, maxRows);
+  console.log(JSON.stringify({ path, rows: rows.length, analysis: analyzePredictionRows(rows) }, null, 2));
 });
 program.addCommand(evidence);
 

@@ -99,6 +99,8 @@ Harness benchmarking is closed-loop: `benchmark run` records matched outcomes an
 
 The controller also derives an adaptive runtime policy from recent trajectory quality and failure classes. Tool-round limits, retry posture, peer review, critic pressure, replication requirements, and search diversity change within bounded limits when the evidence warrants it; they are persisted as `research.adaptive_harness.policy` events. This makes harness evolution operational rather than a prose recommendation.
 
+Prediction artifacts can now be turned into targeted research evidence with `evidra evidence analyze predictions.json` or `/evidence analyze predictions.json` in the TUI. The typed `prediction.analyze` research tool reports classification confusion, regression residuals, and worst groups from JSON/JSONL artifacts, so the director can form hypotheses about concrete failure slices rather than optimizing only an aggregate metric.
+
 Evaluator integrity is a hard gate: before an experiment engineer runs, Evidra fingerprints protected evaluator/configuration files and rejects any isolated worktree that changes them. This prevents specification-gaming results from entering the research ledger while still allowing the declared candidate implementation to change.
 
 Final reports also run a deterministic claim audit: measured, literature-only, provisional, unsupported, and conflicted claims are separated, and a report is not marked publishable when unsupported or contradictory claims remain.

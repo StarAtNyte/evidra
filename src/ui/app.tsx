@@ -60,6 +60,7 @@ import { assessResearchDecisionRubric } from "../core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../core/validation-lock.js";
 import { deriveAdaptiveHarnessPolicy } from "../core/adaptive-harness.js";
 import { synthesizeLaneReports } from "../core/cross-pollination.js";
+import { analyzePredictionRows, parsePredictionRows } from "../core/error-analysis.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -168,7 +169,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
   "/sources": [["/sources list", "List retrieved sources"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources discover", "Search scholarly literature"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
-  "/evidence": [["/evidence audit", "Audit claim provenance and completion blockers"]],
+  "/evidence": [["/evidence audit", "Audit claim provenance and completion blockers"], ["/evidence analyze", "Analyze prediction errors and worst groups"]],
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
@@ -2730,6 +2731,22 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const report = auditEvidenceStore(store);
       store.close();
       append("assistant", `Claim verification · ${report.publishable ? "PUBLISHABLE" : "BLOCKED"}\nTotal ${report.total} · verified ${report.verified} · provisional ${report.provisional} · literature-only ${report.literatureOnly} · unsupported ${report.unsupported} · conflicted ${report.conflicted}\n\n${report.entries.length ? report.entries.map((entry) => `${entry.status === "verified" ? "✓" : "!"} ${entry.id} · ${entry.reasons.join("; ")}`).join("\n") : "No claims recorded."}`);
+      return;
+    }
+    if (request === "/evidence analyze" || request.startsWith("/evidence analyze ")) {
+      const requested = request.slice("/evidence analyze".length).trim();
+      if (!requested) { append("assistant", "Usage: /evidence analyze <prediction.json|prediction.jsonl>"); return; }
+      const path = resolve(root, requested);
+      try {
+        const escaped = relative(root, path);
+        if (escaped.startsWith("..") || escaped === ".sota" || escaped.startsWith(".sota/")) throw new Error("Prediction artifact must be inside the workspace and outside Evidra state.");
+        if (!existsSync(path)) throw new Error(`Prediction artifact does not exist: ${requested}`);
+        const text = readFileSync(path, "utf8");
+        let parsed: unknown = text;
+        try { parsed = JSON.parse(text); } catch { /* JSONL is parsed row-by-row. */ }
+        const rows = parsePredictionRows(parsed);
+        append("assistant", `Prediction error analysis\n  path: ${relative(root, path)}\n  rows: ${rows.length}\n\n${JSON.stringify(analyzePredictionRows(rows), null, 2)}`);
+      } catch (error) { appendError(error); }
       return;
     }
     if (request === "/memory recent" || request === "/memory") {

@@ -12,6 +12,7 @@ import type { CompetitionConfig } from "./types.js";
 import { isSensitiveWorkspacePath, redactSecrets } from "./redaction.js";
 import { readValidationPolicyLock } from "./validation-lock.js";
 import { sha256File } from "./evidence.js";
+import { analyzePredictionRows, parsePredictionRows } from "./error-analysis.js";
 
 export interface ResearchToolContext {
   root: string;
@@ -69,6 +70,7 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   { name: "source.search", description: "Search scholarly works and return ranked candidates for later retrieval.", input: { query: "research question or keywords", limit: "optional result count" }, readOnly: true },
   { name: "data.audit", description: "Audit workspace files for size, duplicates, and suspicious data issues.", input: { path: "optional relative path" }, readOnly: true },
   { name: "artifact.audit", description: "Audit bounded research artifacts for safe containment, regular-file integrity, size, checksum, and optional JSON validity.", input: { paths: "relative artifact paths array", maxBytes: "optional per-file size limit" }, readOnly: true },
+  { name: "prediction.analyze", description: "Analyze a bounded JSON/JSONL prediction artifact for classification errors, regression residuals, and worst groups.", input: { path: "relative JSON or JSONL prediction artifact", maxRows: "optional row limit" }, readOnly: true },
   { name: "validation.generate", description: "Create a versioned validation policy for the active workspace.", input: {}, readOnly: false },
   { name: "report.generate", description: "Write a durable research, challenge, or final report.", input: { kind: "research|challenge|final" }, readOnly: false },
 ];
@@ -202,6 +204,17 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
           return entry;
         });
         output = { valid: artifacts.every((artifact) => artifact.valid), artifacts };
+        break;
+      }
+      case "prediction.analyze": {
+        const path = inside(context.root, stringArg(args, "path"));
+        if (!existsSync(path) || !statSync(path).isFile()) throw new Error(`Prediction artifact does not exist: ${args.path}`);
+        const maxRows = typeof args.maxRows === "number" ? Math.max(1, Math.min(Math.floor(args.maxRows), 100_000)) : 100_000;
+        const text = readFileSync(path, "utf8");
+        let parsed: unknown = text;
+        try { parsed = JSON.parse(text); } catch { /* JSONL is parsed row-by-row. */ }
+        const rows = parsePredictionRows(parsed, maxRows);
+        output = { path: relative(context.root, path), rows: rows.length, ignoredRows: Math.max(0, text.split(/\r?\n/).filter(Boolean).length - rows.length), analysis: analyzePredictionRows(rows) };
         break;
       }
       case "validation.generate": {
