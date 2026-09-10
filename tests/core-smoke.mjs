@@ -50,7 +50,7 @@ import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment } from "../dist/core/validation.js";
-import { assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
+import { assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
 import { summarizeUsage } from "../dist/core/usage.js";
@@ -493,6 +493,14 @@ test("claim audit separates measured, literature, unsupported, and conflicted ev
   assert.equal(report.unsupported, 1);
   assert.equal(report.conflicted, 1);
   assert.equal(report.publishable, false);
+});
+
+test("critic approval is downgraded when required checks remain", () => {
+  const review = normalizeResearchReview({ verdict: "proceed", summary: "Looks promising", objections: [], requiredChecks: ["verify held-out split"], independentReplication: true, confidence: 0.95, status: "completed" });
+  assert.equal(review.verdict, "revise");
+  assert.equal(review.confidence, 0.6);
+  assert.match(review.summary, /Approval withheld/);
+  assert.ok(review.objections.length > 0);
 });
 
 test("self-describing lane evidence is shared by interactive and report audits", () => {

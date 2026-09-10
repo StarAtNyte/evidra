@@ -53,6 +53,18 @@ export type ResearchReview = z.infer<typeof ResearchReviewSchema> & {
   error?: string;
 };
 
+/** A review cannot approve a decision while declaring unresolved checks. */
+export function normalizeResearchReview(review: ResearchReview): ResearchReview {
+  if (review.verdict !== "proceed" || review.requiredChecks.length === 0) return review;
+  return {
+    ...review,
+    verdict: "revise",
+    summary: `${review.summary} Approval withheld until the declared checks are completed.`,
+    objections: [...new Set([...review.objections, "The review declared unresolved required checks while requesting proceed."])].slice(0, 12),
+    confidence: Math.min(review.confidence, 0.6),
+  };
+}
+
 export interface ResearchLanesOptions {
   provider: AgentProvider;
   model: string;
@@ -225,7 +237,7 @@ export async function runResearchCritic(
       cwd: options.cwd,
       sandbox: "read-only",
     }, options.provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
-    const review: ResearchReview = { ...ResearchReviewSchema.parse(parseJson(result.output)), status: "completed" };
+    const review = normalizeResearchReview({ ...ResearchReviewSchema.parse(parseJson(result.output)), status: "completed" });
     const completed = new ResearchStore(options.storePath);
     completed.appendEvent("research.critic.completed", { review, objective });
     const claimId = `claim_critic_${Date.now()}`;
