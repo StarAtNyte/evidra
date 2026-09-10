@@ -57,7 +57,7 @@ import { summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
-import { compareHarnesses, evaluateHarnessGeneralization, evaluateHarnessRetention, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
+import { compareHarnesses, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { planHarnessAdaptation } from "../dist/core/harness-adaptation.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "../dist/core/claim-audit.js";
 import { deriveAdaptiveHarnessPolicy } from "../dist/core/adaptive-harness.js";
@@ -1981,6 +1981,18 @@ test("harness scorecard balances tasks instead of rewarding repeated easy arms",
   assert.equal(repeater?.tasks, 2);
   assert.equal(balanced?.tasks, 2);
   assert.equal(repeater?.competitiveScore, balanced?.competitiveScore);
+});
+
+test("harness scorecard exposes a quality-reliability-time Pareto frontier", () => {
+  const scorecards = scoreHarnessTrials([
+    ...["a", "b"].flatMap((task) => [{ harness: "balanced", task, budgetMinutes: 10, direction: "maximize", baselineMetric: 0, taskWorstMetric: 0, taskBestMetric: 1, candidateMetric: 0.8, validRun: true, durationSeconds: 10, recovered: false, reproducible: true }, { harness: "fast", task, budgetMinutes: 10, direction: "maximize", baselineMetric: 0, taskWorstMetric: 0, taskBestMetric: 1, candidateMetric: 0.6, validRun: true, durationSeconds: 1, recovered: false, reproducible: true }]),
+  ]);
+  const frontier = harnessParetoFrontier(scorecards);
+  assert.equal(frontier.filter((point) => point.onFrontier).length, 2);
+  assert.ok(frontier.every((point) => point.dominatedBy.length === 0));
+  const dominated = harnessParetoFrontier([...scorecards, { ...scorecards.find((point) => point.harness === "balanced"), harness: "dominated", medianTimeToEvidenceSeconds: 30 }]);
+  assert.equal(dominated.find((point) => point.harness === "dominated")?.onFrontier, false);
+  assert.deepEqual(dominated.find((point) => point.harness === "dominated")?.dominatedBy, ["balanced"]);
 });
 
 test("benchmark protocol rejects unmatched arms before a competitive claim", () => {

@@ -113,6 +113,8 @@ Competitive claims can additionally require task-disjoint transfer with `benchma
 
 Benchmark input may also include a `change` contract with `id`, `componentIds`, predicted delta bounds, prediction, falsification, and acceptance fields. The resulting report records whether the prediction was confirmed, partially confirmed, refuted, or unobserved from the paired evaluator outcome; a polished narrative cannot count as a confirmed harness improvement.
 
+Reports also expose a Pareto frontier over task-balanced score, conservative lower-95% score, and median time to evidence. This keeps fast/reliable/accurate tradeoffs visible instead of forcing every harness into one opaque ranking.
+
 The controller also derives an adaptive runtime policy from recent trajectory quality and failure classes. Tool-round limits, retry posture, peer review, critic pressure, replication requirements, and search diversity change within bounded limits when the evidence warrants it; they are persisted as `research.adaptive_harness.policy` events. This makes harness evolution operational rather than a prose recommendation.
 
 The policy is phase-aware as well as failure-aware: orientation and hypothesis phases use an `exploration` profile, validation/evaluation/replication/promotion use `evidence`, terminal failures use `recovery`, and low remaining budgets use `budget`. Profiles are operational: evidence and recovery profiles boost audit/replication operators, exploration boosts novelty, and budget pressure penalizes expensive arms. This gives the controller bounded specialist policies without allowing unmeasured policy drift.

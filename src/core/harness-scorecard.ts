@@ -176,6 +176,15 @@ export interface HarnessGeneralizationReport {
   reason: string;
 }
 
+export interface HarnessParetoPoint {
+  harness: string;
+  competitiveScore: number;
+  competitiveScoreLower95: number;
+  medianTimeToEvidenceSeconds: number | null;
+  onFrontier: boolean;
+  dominatedBy: string[];
+}
+
 function delta(trial: HarnessTrial): number | undefined {
   if (!trial.validRun || trial.candidateMetric === undefined || !Number.isFinite(trial.candidateMetric) || !Number.isFinite(trial.baselineMetric)) return undefined;
   return trial.direction === "maximize" ? trial.candidateMetric - trial.baselineMetric : trial.baselineMetric - trial.candidateMetric;
@@ -476,4 +485,39 @@ export function scoreHarnessTrials(trials: HarnessTrial[]): HarnessScorecard[] {
       failureProfile,
     };
   }).sort((a, b) => b.competitiveScore - a.competitiveScore);
+}
+
+/**
+ * Return the non-dominated harnesses instead of collapsing quality and cost
+ * into one arbitrary scalar. Higher score/lower bound is better; lower median
+ * time is better. Missing timing is conservatively treated as infinitely slow.
+ */
+export function harnessParetoFrontier(scorecards: HarnessScorecard[]): HarnessParetoPoint[] {
+  const points = scorecards.map((scorecard) => ({
+    harness: scorecard.harness,
+    competitiveScore: scorecard.competitiveScore,
+    competitiveScoreLower95: scorecard.competitiveScoreLower95,
+    medianTimeToEvidenceSeconds: scorecard.medianTimeToEvidenceSeconds,
+    onFrontier: true,
+    dominatedBy: [] as string[],
+  }));
+  for (const point of points) {
+    for (const other of points) {
+      if (other.harness === point.harness) continue;
+      const pointTime = point.medianTimeToEvidenceSeconds ?? Infinity;
+      const otherTime = other.medianTimeToEvidenceSeconds ?? Infinity;
+      const noWorse = other.competitiveScore >= point.competitiveScore &&
+        other.competitiveScoreLower95 >= point.competitiveScoreLower95 &&
+        otherTime <= pointTime;
+      const strictlyBetter = other.competitiveScore > point.competitiveScore ||
+        other.competitiveScoreLower95 > point.competitiveScoreLower95 ||
+        otherTime < pointTime;
+      if (noWorse && strictlyBetter) {
+        point.onFrontier = false;
+        point.dominatedBy.push(other.harness);
+      }
+    }
+    point.dominatedBy.sort();
+  }
+  return points.sort((left, right) => Number(right.onFrontier) - Number(left.onFrontier) || right.competitiveScoreLower95 - left.competitiveScoreLower95 || left.harness.localeCompare(right.harness));
 }
