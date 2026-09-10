@@ -621,8 +621,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
         );
         activeProcess.current = null;
         const baselineStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        baselineStore.appendEvent(baseline.exitCode === 0 ? "baseline.completed" : "baseline.failed", { command: adapter.baselineCommand(), cwd: adapter.workspacePath(root), exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout, stderr: baseline.stderr });
+        const metric = parseMetricOutput(baseline.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
+        baselineStore.appendEvent(baseline.exitCode === 0 ? "baseline.completed" : "baseline.failed", { command: adapter.baselineCommand(), cwd: adapter.workspacePath(root), exitCode: baseline.exitCode, durationMs: baseline.durationMs, metric, stdout: baseline.stdout, stderr: baseline.stderr });
         baselineStore.close();
+      }
+      if (priorBaseline && typeof (priorBaseline.payload as { metric?: unknown }).metric !== "number") {
+        const metric = parseMetricOutput(baseline.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
+        const upgradedBaseline = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        upgradedBaseline.appendEvent("baseline.completed", { ...(priorBaseline.payload as Record<string, unknown>), metric, upgradedFromLegacyEvent: true });
+        upgradedBaseline.close();
       }
       observation.baseline = { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: baseline.stdout.slice(-4000), stderr: baseline.stderr.slice(-4000) };
     }

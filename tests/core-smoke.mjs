@@ -376,7 +376,9 @@ test("phase completion requires durable evidence instead of model status alone",
   const missing = evaluatePhaseGoalEvidence(goal, { eventTypes: [], eventPayloads: [], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
   assert.equal(missing.met, false);
   assert.deepEqual(missing.missing, ["successful baseline"]);
-  const complete = evaluatePhaseGoalEvidence(goal, { eventTypes: ["baseline.completed"], eventPayloads: [{ type: "baseline.completed", payload: { exitCode: 0 } }], hypotheses: 0, experiments: 0, runs: 0, artifacts: 2 });
+  const incomplete = evaluatePhaseGoalEvidence(goal, { eventTypes: ["baseline.completed"], eventPayloads: [{ type: "baseline.completed", payload: { exitCode: 0 } }], hypotheses: 0, experiments: 0, runs: 0, artifacts: 2 });
+  assert.deepEqual(incomplete.missing, ["parsed primary baseline metric"]);
+  const complete = evaluatePhaseGoalEvidence(goal, { eventTypes: ["baseline.completed"], eventPayloads: [{ type: "baseline.completed", payload: { exitCode: 0, metric: 0.42 } }], hypotheses: 0, experiments: 0, runs: 0, artifacts: 2 });
   assert.equal(complete.met, true);
 });
 

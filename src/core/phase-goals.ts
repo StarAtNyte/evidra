@@ -56,7 +56,12 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
   const missing: string[] = [];
   switch (goal.phase) {
     case "orientation": if (!has("research.observation") && !has("project.created")) missing.push("workspace observation"); break;
-    case "baseline": if (!payloads("baseline.completed").some((payload) => (payload as { exitCode?: unknown }).exitCode === 0)) missing.push("successful baseline"); break;
+    case "baseline": {
+      const baseline = payloads("baseline.completed").find((payload) => (payload as { exitCode?: unknown }).exitCode === 0);
+      if (!baseline) missing.push("successful baseline");
+      else if (typeof (baseline as { metric?: unknown }).metric !== "number" || !Number.isFinite((baseline as { metric?: number }).metric)) missing.push("parsed primary baseline metric");
+      break;
+    }
     case "data_audit": if (!has("data.audit.completed")) missing.push("data audit report"); break;
     case "validation": if (!has("validation.policy.created")) missing.push("versioned validation policy"); break;
     case "hypothesis": if ((evidence.hypotheses + (evidence.candidateHypotheses ?? 0)) < 1) missing.push("durable hypothesis"); if (evidence.experiments < 1 && !has("experiment.created")) missing.push("experiment manifest"); break;
