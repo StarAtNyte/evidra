@@ -57,12 +57,24 @@ task protocol with comparable seeds and budgets.
 
 Source: [AIRS-Bench](https://github.com/facebookresearch/airs-bench).
 
+## Cross-pollination must preserve disagreement
+
+Independent lanes now return through a bounded cross-pollination board before the
+director decides. Evidra records overlapping findings, unresolved tensions,
+deduplicated recommendations, and source evidence separately. This matters
+because agreement is useful for prioritization, while disagreement is often the
+signal that a validation or formulation experiment is needed. Hypotheses also
+declare a formulation family (`representation`, `data`, `validation`,
+`objective`, `model`, `inference`, `ensemble`, `repair`, or `other`) so the
+portfolio planner can spend a cycle across genuinely different approaches.
+
 ## Current implementation gaps
 
 The next high-value upgrades are:
 
-1. connect `rankSearchArms` to campaign allocation and persist arm rewards;
-2. add explicit formulation families and cross-lane synthesis records;
-3. add task adapters for formal verification and non-ML research artifacts;
-4. run equal-budget AIRS-Bench arms across Evidra, AIRA-dojo, and MLGym;
-5. report confidence intervals over repeated seeds instead of single-run wins.
+1. run equal-budget AIRS-Bench arms across Evidra, AIRA-dojo, and MLGym;
+2. report confidence intervals and task-balanced scores over repeated seeds;
+3. add formal-verification adapters for non-ML research artifacts;
+4. learn early-metric-to-final-metric promotion thresholds from completed runs;
+5. add a richer operator library (evolutionary and tree-search policies) behind
+   the existing manifest and evidence gates.

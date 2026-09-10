@@ -92,6 +92,8 @@ Every research cycle now has an adversarial critic stage. The critic reviews lan
 
 The controller also records evaluated trajectories for both research cycles and experiments. A deterministic quality pass checks structural closure, goal attainment, tool use, evidence consistency, recovery, and termination. Capability routing assigns each cycle a demand tier (`C0`–`C3`) using task complexity, failure pressure, budget, provider, and autonomy. Recurring deficiencies are converted into the next research allocation—for example, evidence failures prioritize provenance and leakage checks, while recovery failures prioritize reproduction and alternate execution routes. New experiments are selected by expected information per combined GPU, model, engineering, and risk cost rather than simply choosing the newest hypothesis.
 
+Autonomous fast/yolo campaigns also use a bounded best-of-k portfolio. Hypotheses declare formulation families, are ranked by expected value per minute, and are rejected when their estimated cost cannot fit the remaining campaign budget. Independent lane reports are cross-pollinated into a bounded board of agreements, tensions, recommendations, and source evidence before the director chooses experiments. These mechanisms improve search diversity and information flow; they do not substitute for equal-budget benchmark evidence.
+
 Implemented today:
 
 - Ink-based interactive TUI with Codex-style transcript output;
