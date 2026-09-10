@@ -76,6 +76,7 @@ import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, type AirsBenchFami
 import { inventoryHarnessComponents, planHarnessInterventions } from "./core/harness-evolution.js";
 import { planHarnessAdaptation } from "./core/harness-adaptation.js";
 import { deriveAdaptiveHarnessPolicy } from "./core/adaptive-harness.js";
+import { createTransferableMethod } from "./core/method-transfer.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -1772,6 +1773,24 @@ research
           const replicationRun = await runCampaignExperiment(root, replication.id);
           const replicationStore = new ResearchStore(statePath);
           replicationStore.appendEvent(replicationRun.exitCode === 0 ? "experiment.autonomous.replication.completed" : "experiment.autonomous.replication.failed", { parentId: experimentId, replicationId: replication.id, exitCode: replicationRun.exitCode, stdout: replicationRun.stdout.slice(-4000), stderr: replicationRun.stderr.slice(-4000) });
+          const replicationComparisonEvent = replicationStore.recentEvents(500).reverse().find((event) => event.type === "experiment.comparison.completed" && (event.payload as { experimentId?: unknown }).experimentId === replication.id);
+          const replicationComparison = replicationComparisonEvent?.payload as { comparison?: { direction?: unknown } } | undefined;
+          const hypothesisPayload = parentManifest.data.hypothesisId
+            ? replicationStore.hypotheses().find((entry) => entry.id === parentManifest.data.hypothesisId)?.payload as { title?: unknown; formulationFamily?: unknown; mechanism?: unknown; proposedChange?: unknown } | undefined
+            : undefined;
+          if (replicationRun.exitCode === 0 && replicationComparison?.comparison?.direction === "improved" && hypothesisPayload) {
+            replicationStore.appendEvent("research.method.transferable", createTransferableMethod({
+              id: `method_${experimentId}`,
+              sourceCompetition: adapter.id,
+              sourceTaskType: adapter.config.taskType,
+              title: typeof hypothesisPayload.title === "string" ? hypothesisPayload.title : parentManifest.data.hypothesisId,
+              formulationFamily: typeof hypothesisPayload.formulationFamily === "string" ? hypothesisPayload.formulationFamily : "other",
+              mechanism: typeof hypothesisPayload.mechanism === "string" ? hypothesisPayload.mechanism : "",
+              proposedChange: typeof hypothesisPayload.proposedChange === "string" ? hypothesisPayload.proposedChange : "",
+              evidenceIds: [experimentId, replication.id],
+              tags: [adapter.config.taskType, typeof hypothesisPayload.formulationFamily === "string" ? hypothesisPayload.formulationFamily : "other"],
+            }));
+          }
           replicationStore.close();
         } else {
           completionStore.close();

@@ -1,9 +1,11 @@
 import type { ResearchStore } from "./store.js";
+import { transferableMethodsFromEvents, type TransferableMethod } from "./method-transfer.js";
 
 export interface ResearchMemoryContext {
   claims: Array<{ id: string; statement: string; scope: string; confidence: number; sourceType: string; sourceId: string; status: string }>;
   hypotheses: Array<{ id: string; title: string; status: string; mechanism?: string }>;
   contradictions: Array<{ fromId: string; toId: string; confidence: number }>;
+  transferableMethods: TransferableMethod[];
 }
 
 /** Return the newest source entry for each URL while preserving source history in storage. */
@@ -63,5 +65,6 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
     return typeof value.title === "string" ? [{ id: entry.id, title: value.title, status: typeof value.status === "string" ? value.status : "proposed", ...(typeof value.mechanism === "string" ? { mechanism: value.mechanism.slice(0, 500) } : {}) }] : [];
   });
   const contradictions = store.edges().filter((edge) => edge.relation === "contradicts").slice(0, bounded).map((edge) => ({ fromId: edge.fromId, toId: edge.toId, confidence: edge.confidence }));
-  return { claims, hypotheses, contradictions };
+  const transferableMethods = transferableMethodsFromEvents(store.recentEvents(5_000), query, Math.min(8, bounded));
+  return { claims, hypotheses, contradictions, transferableMethods };
 }

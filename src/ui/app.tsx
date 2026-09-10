@@ -61,6 +61,7 @@ import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock,
 import { deriveAdaptiveHarnessPolicy } from "../core/adaptive-harness.js";
 import { synthesizeLaneReports } from "../core/cross-pollination.js";
 import { analyzePredictionRows, parsePredictionRows } from "../core/error-analysis.js";
+import { createTransferableMethod } from "../core/method-transfer.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -1073,6 +1074,54 @@ export function App({ root }: { root: string }): React.JSX.Element {
     return event?.payload && typeof event.payload === "object" ? (event.payload as { comparison?: { direction?: string; evidence?: string; note?: string } }).comparison : undefined;
   };
 
+  const recordTransferableMethodIfReplicated = (experimentId: string): void => {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const experiment = store.experiments().find((candidate) => candidate.id === experimentId);
+    const replicationOf = experiment?.payload && typeof experiment.payload === "object"
+      ? (experiment.payload as { replicationOf?: unknown }).replicationOf
+      : undefined;
+    if (typeof replicationOf !== "string") { store.close(); return; }
+    const parent = store.experiments().find((candidate) => candidate.id === replicationOf);
+    const parentManifest = parent ? ExperimentManifestSchema.safeParse(parent.payload) : undefined;
+    const comparisonFor = (id: string): { direction?: unknown } | undefined => {
+      const event = store.recentEvents(2_000).reverse().find((candidate) => candidate.type === "experiment.comparison.completed" && (candidate.payload as { experimentId?: unknown }).experimentId === id);
+      return event?.payload && typeof event.payload === "object" ? (event.payload as { comparison?: { direction?: unknown } }).comparison : undefined;
+    };
+    const parentComparison = comparisonFor(replicationOf);
+    const replicationComparison = comparisonFor(experimentId);
+    if (!parentManifest?.success || parentComparison?.direction !== "improved" || replicationComparison?.direction !== "improved") {
+      store.close();
+      return;
+    }
+    const alreadyRecorded = store.recentEvents(5_000).some((event) => {
+      if (event.type !== "research.method.transferable" || !event.payload || typeof event.payload !== "object") return false;
+      const evidenceIds = (event.payload as { evidenceIds?: unknown }).evidenceIds;
+      return Array.isArray(evidenceIds) && evidenceIds.includes(replicationOf) && evidenceIds.includes(experimentId);
+    });
+    if (alreadyRecorded) { store.close(); return; }
+    const hypothesis = store.hypotheses().find((candidate) => candidate.id === parentManifest.data.hypothesisId);
+    const hypothesisPayload = hypothesis?.payload && typeof hypothesis.payload === "object" ? hypothesis.payload as {
+      title?: unknown;
+      formulationFamily?: unknown;
+      mechanism?: unknown;
+      proposedChange?: unknown;
+    } : undefined;
+    if (!hypothesisPayload) { store.close(); return; }
+    const formulationFamily = typeof hypothesisPayload.formulationFamily === "string" ? hypothesisPayload.formulationFamily : "other";
+    store.appendEvent("research.method.transferable", createTransferableMethod({
+      id: `method_${replicationOf}`,
+      sourceCompetition: activeAdapter().id,
+      sourceTaskType: activeAdapter().config.taskType,
+      title: typeof hypothesisPayload.title === "string" ? hypothesisPayload.title : parentManifest.data.hypothesisId,
+      formulationFamily,
+      mechanism: typeof hypothesisPayload.mechanism === "string" ? hypothesisPayload.mechanism : "",
+      proposedChange: typeof hypothesisPayload.proposedChange === "string" ? hypothesisPayload.proposedChange : "",
+      evidenceIds: [replicationOf, experimentId],
+      tags: [activeAdapter().config.taskType, formulationFamily],
+    }));
+    store.close();
+  };
+
     const executeExperiment = async (id: string): Promise<string> => {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const entry = store.experiments().find((experiment) => experiment.id === id);
@@ -1383,6 +1432,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     resultStore.appendEvent("research.experience.recorded", { experience: experimentExperience, capabilityProfile: capabilityProfile([...priorExperiences, experimentExperience]), curriculum: selectCurriculum([...priorExperiences, experimentExperience]), source: "experiment" });
     if (quality.overall !== "PASS") resultStore.appendEvent("trajectory.capability_gaps", { trajectoryId: `trajectory_${result.runId}`, gaps: Object.entries(quality).filter(([key, value]) => key !== "overall" && (value as { verdict: string }).verdict !== "PASS").map(([key, value]) => ({ dimension: key, verdict: (value as { verdict: string }).verdict, evidence: (value as { evidence: string[] }).evidence })) });
     resultStore.close();
+    recordTransferableMethodIfReplicated(id);
     const metricName = activeAdapter().config.metric.name;
     return `\n\nExperiment ${id} ${recordedResult.status}\nRun: ${recordedResult.runId}\nExit code: ${recordedResult.exitCode}\nDuration: ${recordedResult.durationSeconds.toFixed(1)}s\nMetric (${metricName}): ${recordedResult.metrics[metricName] ?? "not parsed"}\nArtifacts: ${Object.keys(recordedResult.artifacts).join(", ")}\nFailure: ${recordedResult.failureClass ?? "none"}`;
     } catch (error) {

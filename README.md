@@ -101,6 +101,8 @@ The controller also derives an adaptive runtime policy from recent trajectory qu
 
 Prediction artifacts can now be turned into targeted research evidence with `evidra evidence analyze predictions.json` or `/evidence analyze predictions.json` in the TUI. The typed `prediction.analyze` research tool reports classification confusion, regression residuals, and worst groups from JSON/JSONL artifacts, so the director can form hypotheses about concrete failure slices rather than optimizing only an aggregate metric.
 
+Validated methods can transfer across projects without becoming unearned folklore. After a parent experiment improves the declared evaluator and an independently created replication improves it again, Evidra records a provenance-linked `research.method.transferable` event. Relevant methods are ranked into the next research context as leads; they never count as evidence for the new task until a fresh experiment verifies them. This gives the harness a compounding search advantage while preserving equal-budget, evaluator-backed comparisons.
+
 Evaluator integrity is a hard gate: before an experiment engineer runs, Evidra fingerprints protected evaluator/configuration files and rejects any isolated worktree that changes them. This prevents specification-gaming results from entering the research ledger while still allowing the declared candidate implementation to change.
 
 Final reports also run a deterministic claim audit: measured, literature-only, provisional, unsupported, and conflicted claims are separated, and a report is not marked publishable when unsupported or contradictory claims remain.
@@ -429,6 +431,8 @@ The store also performs a conservative consistency pass: exact duplicates are re
 Unresolved evidence conflicts feed back into autonomous allocation: the next research cycle prioritizes source review and independent falsification before spending compute on another hypothesis.
 
 Long campaigns also receive a bounded durable-memory snapshot on every cycle. It contains recent claims, hypotheses, and contradiction edges independently of the short event window, so research does not forget earlier evidence after a restart or many experiments.
+
+The memory snapshot also includes validated cross-competition methods. These records retain the source task, formulation family, mechanism, proposed change, and both experiment IDs that established replication, so a new challenge can reuse a mechanism without losing the audit trail.
 
 Autonomous campaigns include a stagnation guard: three identical unresolved active decisions pause the campaign for review and persist the decision signature. A new hypothesis, execution, replication, phase transition, or explicit resume can continue the work; Evidra does not silently spend the remaining budget repeating the same blocked action.
 

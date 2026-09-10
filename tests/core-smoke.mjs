@@ -62,6 +62,7 @@ import { planHarnessAdaptation } from "../dist/core/harness-adaptation.js";
 import { auditClaims } from "../dist/core/claim-audit.js";
 import { deriveAdaptiveHarnessPolicy } from "../dist/core/adaptive-harness.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "../dist/core/error-analysis.js";
+import { createTransferableMethod, transferableMethodsFromEvents } from "../dist/core/method-transfer.js";
 import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks } from "../dist/core/airs-bench.js";
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
@@ -530,6 +531,15 @@ test("prediction error analysis turns aggregate outcomes into actionable failure
     { id: "c", actual: "dog", predicted: "dog", group: "source-b" },
   ] });
   assert.deepEqual(comparePredictionRows(rows, candidate), { matched: 3, fixed: 2, regressed: 0, unchangedErrors: 0, groups: [{ group: "source-a", fixed: 1, regressed: 0, net: 1 }, { group: "source-b", fixed: 1, regressed: 0, net: 1 }] });
+});
+
+test("only independently replicated method events enter transfer memory", () => {
+  const method = createTransferableMethod({ id: "method-1", sourceCompetition: "task-a", sourceTaskType: "tabular", title: "Group-aware split", formulationFamily: "validation", mechanism: "keep source groups isolated", proposedChange: "use grouped folds", evidenceIds: ["run-1", "run-2"], tags: ["validation"] });
+  const methods = transferableMethodsFromEvents([
+    { type: "research.method.transferable", payload: method },
+    { type: "research.method.transferable", payload: { ...method, id: "bad", replicated: false } },
+  ], "group validation");
+  assert.deepEqual(methods.map((entry) => entry.id), ["method-1"]);
 });
 
 test("experiment scheduler ranks expected information per cost", () => {
