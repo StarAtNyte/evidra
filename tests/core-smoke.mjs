@@ -603,6 +603,14 @@ test("autonomy policy and shell guard enforce hard safety boundaries", () => {
   assert.equal(guardReadOnlyInspection(["find", ".", "-exec", "rm", "{}", ";"]).allowed, false);
 });
 
+test("shell parsing and safety guard handle quoted and wrapped commands", () => {
+  assert.equal(guardCommand(["/bin/rm", "-rf", "tmp"]).allowed, false);
+  assert.equal(guardCommand(["env", "-i", "rm", "-rf", "tmp"]).allowed, false);
+  assert.equal(guardCommand(["busybox", "rm", "tmp"]).allowed, false);
+  assert.equal(guardCommand(["python3", "-c", "import os; os.remove('x')"]).allowed, false);
+  assert.equal(guardCommand(["rg", "-n", "hello world", "src"]).allowed, true);
+});
+
 test("durable queue worker bounds concurrency and retries failures", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-worker-"));
   try {

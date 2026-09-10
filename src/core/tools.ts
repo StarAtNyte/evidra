@@ -3,6 +3,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { auditData } from "./data-audit.js";
 import { guardCommand, guardReadOnlyInspection, type AutonomyLevel } from "./permissions.js";
 import { runProcess, type ProcessControl } from "./process.js";
+import { splitCommandLine } from "./process.js";
 import { renderReport, writeReport, type ReportKind } from "./reports.js";
 import { createValidationPolicy, writeValidationPolicy } from "./validation-policy.js";
 import { retrieveSource, sourceClaims } from "./sources.js";
@@ -80,7 +81,7 @@ function stringArg(args: Record<string, unknown>, name: string): string {
 
 function commandArgs(value: unknown): string[] {
   if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) return value as string[];
-  if (typeof value === "string") return value.trim().split(/\s+/).filter(Boolean);
+  if (typeof value === "string") return splitCommandLine(value);
   throw new Error("Tool argument 'command' must be an argv array or non-empty string.");
 }
 
