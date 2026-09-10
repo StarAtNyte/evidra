@@ -1570,3 +1570,13 @@ test("hypothesis quality rewards falsifiable grounded proposals", () => {
   assert.equal(strong.verdict, "strong");
   assert.equal(weak.verdict, "weak");
 });
+
+test("validation acceptance keeps headless promotion gates explicit", () => {
+  const base = { runId: "base", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 0.5 }, metricsByFold: { score: [0.5, 0.5, 0.5] }, artifacts: {} };
+  const candidate = { runId: "candidate", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 0.52 }, metricsByFold: { score: [0.52, 0.52, 0.52] }, artifacts: {} };
+  const acceptance = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.01, maximumRegressionShift: 0, requireReplication: true, leakageAuditPassed: false, reviewerApproved: false });
+  assert.equal(acceptance.gates.minimumDelta, true);
+  assert.equal(acceptance.gates.statisticalConfidence, true);
+  assert.equal(acceptance.gates.leakageAudit, false);
+  assert.equal(acceptance.accepted, false);
+});

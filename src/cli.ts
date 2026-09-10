@@ -23,6 +23,7 @@ import { recoveryDelay, recoveryPlan } from "./core/recovery.js";
 import { campaignElapsedMinutes, pauseCampaign, readCampaignRuntime, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { auditExperiment } from "./core/validation.js";
+import { evaluateValidationAcceptance } from "./core/validation-engine.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
@@ -1773,6 +1774,19 @@ experiment.command("run")
         const comparison = compareRuns(baselineRun, RunResultSchema.parse(recorded), metricName, adapter.config.metric.direction === "minimize");
         const operator = manifest.searchOperator ?? "ucb_portfolio";
         resultStore.appendEvent("experiment.comparison.completed", { experimentId: id, baselineSource: baselineEvent?.createdAt ?? "baseline", comparison, searchOperator: operator });
+        const gates = resultStore.experimentGates(id);
+        const acceptance = evaluateValidationAcceptance({
+          baseline: baselineRun,
+          candidate: RunResultSchema.parse(recorded),
+          metric: metricName,
+          direction: adapter.config.metric.direction,
+          minimumDelta: manifest.acceptance.minimumPrimaryDelta,
+          maximumRegressionShift: manifest.acceptance.maximumRegressionShift,
+          requireReplication: manifest.acceptance.requireReplication,
+          leakageAuditPassed: gates.leakageAuditPassed,
+          reviewerApproved: gates.reviewerApproved,
+        });
+        resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });
         if (operator) {
           const improvementDelta = comparison.delta === null ? undefined : adapter.config.metric.direction === "minimize" ? -comparison.delta : comparison.delta;
           resultStore.appendEvent("research.search.reward", { experimentId: id, operator, reward: searchReward(improvementDelta, recorded.status === "completed", comparison.evidence === "replicated"), valid: recorded.status === "completed", reproducible: comparison.evidence === "replicated", delta: improvementDelta, durationSeconds: recorded.durationSeconds });
