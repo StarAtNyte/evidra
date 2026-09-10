@@ -864,8 +864,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const adapter = activeAdapter();
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const experiments = store.experiments();
+    const pending = experiments.find((experiment) => String((experiment.payload as { status?: string }).status) === "proposed");
+    if (pending) {
+      store.close();
+      return { id: pending.id, text: `\n\nExisting experiment proposal awaiting approval: ${pending.id}\nNext: /experiment run ${pending.id}` };
+    }
     const inFlightOrCompleted = new Set(experiments
-      .filter((experiment) => ["running", "completed"].includes(String((experiment.payload as { status?: string }).status)))
+      .filter((experiment) => ["proposed", "scheduled", "running", "completed"].includes(String((experiment.payload as { status?: string }).status)))
       .map((experiment) => String((experiment.payload as { hypothesisId?: string }).hypothesisId ?? "")));
     const candidates = store.hypotheses().filter((candidate) => !inFlightOrCompleted.has(candidate.id));
     const ranked = rankPriorities(candidates.map((candidate) => {
@@ -1230,9 +1235,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
       update.close();
       const proposed = mode === "challenge" || campaign?.autoExecuteExperiments === true ? await proposeLatestExperiment() : null;
       append("assistant", cycle.text + (proposed?.text ?? ""));
+      let approvalRequired = false;
       if (proposed && (mode === "challenge" || campaign?.autoExecuteExperiments === true)) {
         const permissionAllowsExecution = autonomyPolicy(config.autonomy).canRunIsolatedExperiments;
         if (!permissionAllowsExecution) {
+          approvalRequired = true;
           append("assistant", `Approval required before autonomous execution. The manifest is ready: ${proposed.id}\nRun /experiment run ${proposed.id} to approve this specific experiment, or switch to /permissions fast/yolo for automatic isolated execution.`);
         } else {
           const experimentText = await executeExperiment(proposed.id);
@@ -1251,7 +1258,18 @@ export function App({ root }: { root: string }): React.JSX.Element {
           }
         }
       }
-      if (campaign && cycle.decision === "stop") {
+      if (approvalRequired && campaign) {
+        const paused = pauseCampaign(campaign);
+        persistCampaign(paused);
+        setConfig((current) => ({ ...current, campaign: paused }));
+        if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
+        const approvalStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        approvalStore.setSchedulerState({ status: "paused", mode, currentStep: "approval-required" });
+        approvalStore.appendEvent("research.autonomy.approval_required", { experimentId: proposed?.id, reason: "safe permission mode", next: `/experiment run ${proposed?.id}` });
+        approvalStore.close();
+        append("assistant", `Campaign paused for approval. Run /experiment run ${proposed?.id ?? "<proposal>"}, then /${mode} resume.`);
+      }
+      if (campaign && !approvalRequired && cycle.decision === "stop") {
         campaign.status = "completed";
         persistCampaign(campaign);
         setConfig((current) => ({ ...current, campaign: { ...campaign, status: "completed" } }));
