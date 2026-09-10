@@ -816,6 +816,20 @@ test("included WhestBench manifest resolves its starter-kit workspace", () => {
   assert.deepEqual(adapter.experimentCommand(), ["uv", "run", "python", "estimator.py"]);
 });
 
+test("detected Karpathy autoresearch workspaces get a usable adapter without a hand-written manifest", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-autoresearch-adapter-"));
+  try {
+    writeFileSync(join(root, "train.py"), "print('val_bpb: 1.0')\n");
+    writeFileSync(join(root, "prepare.py"), "print('prepared')\n");
+    const adapter = loadCompetitionAdapter(root, "autoresearch");
+    assert.equal(adapter.id, "autoresearch");
+    assert.equal(adapter.workspacePath(root), root);
+    assert.deepEqual(adapter.baselineCommand(), ["uv", "run", "train.py"]);
+    assert.equal(adapter.config.metric.name, "val_bpb");
+    assert.equal(adapter.config.metric.direction, "minimize");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("validation policy is manifest-driven and split strategies are discoverable", () => {
   const policy = createValidationPolicy({
     id: "toy", name: "Toy", taskType: "classification", datasetRevision: "data-v2",

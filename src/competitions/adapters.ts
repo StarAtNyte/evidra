@@ -17,6 +17,27 @@ export const localResearchConfig: CompetitionConfig = {
   experimentCommand: ["true"],
 };
 
+/**
+ * The canonical Karpathy autoresearch checkout is intentionally small and
+ * stable: prepare.py materializes the data and train.py is the editable
+ * worker/evaluator. Keep this as a convenience adapter only; a project-local
+ * competition.json still takes precedence and can override every field.
+ */
+export const autoresearchConfig: CompetitionConfig = {
+  id: "autoresearch",
+  name: "Karpathy Autoresearch",
+  taskType: "llm_training",
+  datasetRevision: "autoresearch-workspace",
+  metric: { name: "val_bpb", direction: "minimize" },
+  evaluator: { command: ["uv", "run", "train.py"], estimatorPath: "train.py" },
+  researchSources: [],
+  evaluatorTimeoutMinutes: 240,
+  workspacePath: ".",
+  baselineCommand: ["uv", "run", "train.py"],
+  experimentCommand: ["uv", "run", "train.py"],
+  validation: { primarySplit: "pinned-validation-shard", folds: [0], seeds: [0], secondarySplits: [] },
+};
+
 export interface CompetitionAdapter {
   readonly id: string;
   readonly config: CompetitionConfig;
@@ -31,6 +52,14 @@ const whestbenchAdapter: CompetitionAdapter = {
   workspacePath: (projectRoot) => join(projectRoot, "competitions", "whestbench", "starterkit"),
   baselineCommand: () => ["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"],
   experimentCommand: () => ["uv", "run", "python", "estimator.py"],
+};
+
+const autoresearchAdapter: CompetitionAdapter = {
+  id: autoresearchConfig.id,
+  config: autoresearchConfig,
+  workspacePath: (projectRoot) => projectRoot,
+  baselineCommand: () => [...(autoresearchConfig.baselineCommand ?? autoresearchConfig.evaluator.command)],
+  experimentCommand: () => [...(autoresearchConfig.experimentCommand ?? autoresearchConfig.evaluator.command)],
 };
 
 const localResearchAdapter = manifestAdapter(localResearchConfig, process.cwd());
@@ -54,8 +83,13 @@ function manifestAdapter(config: CompetitionConfig, projectRoot: string): Compet
 const adapters = new Map([
   [whestbenchAdapter.id, whestbenchAdapter],
   ["whestbench", whestbenchAdapter],
+  [autoresearchAdapter.id, autoresearchAdapter],
   [localResearchAdapter.id, localResearchAdapter],
 ]);
+
+function looksLikeAutoresearchWorkspace(projectRoot: string): boolean {
+  return existsSync(join(projectRoot, "train.py")) && existsSync(join(projectRoot, "prepare.py"));
+}
 
 export function getCompetitionAdapter(id = "local-research"): CompetitionAdapter {
   const adapter = adapters.get(id);
@@ -83,6 +117,7 @@ export function loadCompetitionAdapter(projectRoot: string, id = "local-research
     if (!parsed.success) throw new Error(`Invalid competition manifest ${path}: ${parsed.error.issues.map((issue) => `${issue.path.join(".")} ${issue.message}`).join("; ")}`);
     return manifestAdapter(parsed.data, projectRoot);
   }
+  if (id === autoresearchAdapter.id && looksLikeAutoresearchWorkspace(projectRoot)) return autoresearchAdapter;
   return registered ?? getCompetitionAdapter(id);
 }
 

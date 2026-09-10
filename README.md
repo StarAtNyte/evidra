@@ -477,7 +477,9 @@ The next research-lab layers are:
 
 These are separate from the core TUI so Evidra remains useful for non-Kaggle research and can be operated entirely from a terminal.
 
-For a reproducible end-to-end harness trial, see [the Karpathy Autoresearch recipe](docs/benchmarks/karpathy-autoresearch.md). It exercises the generic manifest, GPU worker, metric parser, evidence artifacts, and autonomous experiment loop without adding a benchmark-specific agent path.
+For a reproducible end-to-end harness trial, see [the Karpathy Autoresearch recipe](docs/benchmarks/karpathy-autoresearch.md). A standard checkout is detected by `evidra init autoresearch`, so the generic manifest, GPU worker, metric parser, evidence artifacts, and autonomous experiment loop can be exercised without a benchmark-specific agent path.
+
+The separate [Autoresearch Bench](https://www.autoresearch-bench.com/) is an external evaluation: agents work in isolated workspaces, may receive public feedback from a grader, and are scored on held-out private results. Evidra's submission adapters and durable public-score observations are the integration boundary for that benchmark; a local smoke run must never be presented as an official Autoresearch Bench score.
 
 ## Contribution
 

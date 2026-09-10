@@ -21,9 +21,20 @@ The canonical project requires a single NVIDIA GPU. For a shared GPU or a quick
 integration test, reduce the model/batch settings in `train.py` and keep the
 training budget explicit in the recorded campaign metadata.
 
-## 2. Add the Evidra manifest
+## 2. Initialize Evidra
 
-Create `competition.json` in the benchmark repository:
+Evidra detects the standard checkout automatically. From the benchmark
+repository, run:
+
+```bash
+evidra init autoresearch
+```
+
+This detects `train.py` and `prepare.py`, uses `val_bpb` as the minimized
+metric, and runs `uv run train.py` for baseline and experiment evaluation.
+
+If the checkout is customized, add `competition.json` in the benchmark
+repository to override the detected defaults:
 
 ```json
 {
@@ -54,7 +65,6 @@ Create `competition.json` in the benchmark repository:
 From the benchmark repository, with Evidra installed:
 
 ```bash
-evidra init autoresearch
 evidra baseline
 evidra status
 evidra
