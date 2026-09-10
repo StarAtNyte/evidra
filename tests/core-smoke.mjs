@@ -10,7 +10,7 @@ import { recoveryPlan } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { DEFAULT_SOURCE_REFRESH_MS, extractPdfText, retrieveSource, sourceClaims, sourceIsFresh } from "../dist/core/sources.js";
-import { createBlendCandidate, diversityReport, greedyBlend } from "../dist/core/ensemble.js";
+import { createBlendCandidate, diversityReport, greedyBlend, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
@@ -949,6 +949,10 @@ test("ensemble candidates are checksummed and durable across store reopen", () =
     const reopened = new ResearchStore(join(root, "state.sqlite"));
     assert.equal(reopened.ensembleCandidates()[0].id, candidate.id);
     assert.equal(reopened.ensembleCandidates()[0].checksum, candidate.checksum);
+    assert.equal(validateBlendCandidate(candidate.path, candidate.checksum).valid, true);
+    assert.equal(reopened.updateEnsembleCandidateStatus(candidate.id, "validated"), true);
+    assert.equal(reopened.updateEnsembleCandidateStatus(candidate.id, "promoted"), true);
+    assert.throws(() => reopened.updateEnsembleCandidateStatus(candidate.id, "rejected"), /Invalid ensemble transition/);
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

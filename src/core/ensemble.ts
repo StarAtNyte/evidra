@@ -18,6 +18,13 @@ export interface BlendCandidate {
   status: "candidate" | "validated" | "promoted" | "rejected";
 }
 
+export interface BlendValidation {
+  valid: boolean;
+  checksum: string;
+  reason: string;
+  payload?: { id?: unknown; members?: unknown; values?: unknown; status?: unknown };
+}
+
 export interface DiversityPair {
   left: string;
   right: string;
@@ -91,4 +98,20 @@ export function createBlendCandidate(root: string, vectors: PredictionVector[], 
   mkdirSync(join(root, ".sota", "ensembles"), { recursive: true });
   writeFileSync(path, content, { encoding: "utf8", flag: "wx" });
   return { id, path, members: vectors.map((vector) => vector.id), values, createdAt, checksum, status: "candidate" };
+}
+
+/** Verify the immutable blend artifact before allowing a lifecycle transition. */
+export function validateBlendCandidate(path: string, expectedChecksum: string): BlendValidation {
+  if (!existsSync(path)) return { valid: false, checksum: "", reason: "blend artifact is missing" };
+  let content: string;
+  try { content = readFileSync(path, "utf8"); } catch { return { valid: false, checksum: "", reason: "blend artifact is unreadable" }; }
+  const checksum = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+  if (checksum !== expectedChecksum) return { valid: false, checksum, reason: "blend checksum does not match its durable record" };
+  try {
+    const payload = JSON.parse(content) as { id?: unknown; members?: unknown; values?: unknown; status?: unknown };
+    const values = Array.isArray(payload.values) && payload.values.length > 1 && payload.values.every((value) => typeof value === "number" && Number.isFinite(value));
+    const members = Array.isArray(payload.members) && payload.members.length >= 2;
+    if (typeof payload.id !== "string" || !members || !values) return { valid: false, checksum, reason: "blend schema or numeric values are invalid", payload };
+    return { valid: true, checksum, reason: "checksum and blend schema are valid", payload };
+  } catch { return { valid: false, checksum, reason: "blend artifact is not valid JSON" }; }
 }

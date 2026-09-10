@@ -218,6 +218,9 @@ Useful commands:
     /validation           Inspect or generate validation policy
     /experiment           Create or run reproducible experiments
     /ensemble             Inspect diversity or create a durable blend candidate
+    /ensemble validate    Verify a candidate checksum and schema
+    /ensemble promote     Promote only a validated local candidate
+    /ensemble reject      Reject a candidate permanently
     /experiment gate      Record leakage or reviewer approval
     /challenge start      Start a fully autonomous challenge campaign
     /challenge pause      Pause challenge workers

@@ -303,6 +303,19 @@ export class ResearchStore {
     this.appendEvent("ensemble.candidate.recorded", { id: candidate.id, path: candidate.path, checksum: candidate.checksum, status: candidate.status });
   }
 
+  updateEnsembleCandidateStatus(id: string, status: "candidate" | "validated" | "promoted" | "rejected", payload?: unknown): boolean {
+    const current = this.db.prepare("SELECT status, payload_json FROM ensemble_candidates WHERE id = ?").get(id) as { status: string; payload_json: string } | undefined;
+    if (!current) return false;
+    const allowed: Record<string, string[]> = { candidate: ["validated", "rejected"], validated: ["promoted", "rejected"], promoted: [], rejected: [] };
+    if (!allowed[current.status]?.includes(status)) throw new Error(`Invalid ensemble transition ${current.status} -> ${status}.`);
+    const now = new Date().toISOString();
+    const basePayload = payload ?? JSON.parse(current.payload_json);
+    const nextPayload = basePayload && typeof basePayload === "object" && !Array.isArray(basePayload) ? { ...(basePayload as Record<string, unknown>), status } : { status, value: basePayload };
+    this.db.prepare("UPDATE ensemble_candidates SET status = ?, payload_json = ?, updated_at = ? WHERE id = ?").run(status, safeJson(nextPayload), now, id);
+    this.appendEvent("ensemble.candidate.status", { id, from: current.status, status, payload: nextPayload });
+    return true;
+  }
+
   ensembleCandidates(limit = 100): Array<{ id: string; path: string; checksum: string; status: string; payload: unknown; createdAt: string; updatedAt: string }> {
     const rows = this.db.prepare("SELECT id, path, checksum, status, payload_json, created_at, updated_at FROM ensemble_candidates ORDER BY updated_at DESC LIMIT ?").all(Math.max(1, Math.min(limit, 1000))) as Array<{ id: string; path: string; checksum: string; status: string; payload_json: string; created_at: string; updated_at: string }>;
     return rows.map((row) => ({ id: row.id, path: row.path, checksum: row.checksum, status: row.status, payload: JSON.parse(row.payload_json), createdAt: row.created_at, updatedAt: row.updated_at }));

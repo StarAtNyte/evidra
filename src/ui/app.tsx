@@ -18,7 +18,7 @@ import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../core/c
 import { prepareSubmission, validateSubmissionBundle } from "../core/submissions.js";
 import { pollSubmissionScore, submitApprovedBundle } from "../core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "../core/submission-policy.js";
-import { createBlendCandidate, diversityReport, loadPredictionVector, type PredictionVector } from "../core/ensemble.js";
+import { createBlendCandidate, diversityReport, loadPredictionVector, validateBlendCandidate, type PredictionVector } from "../core/ensemble.js";
 import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
 import { auditData } from "../core/data-audit.js";
 import { executeResearchTool } from "../core/tools.js";
@@ -140,7 +140,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/resume": [["/resume", "Resume the latest saved session"], ["/resume ", "Resume a selected session"]],
-  "/ensemble": [["/ensemble candidates", "List prediction artifacts"], ["/ensemble diversity", "Compare prediction diversity"], ["/ensemble propose", "Create an OOF blend candidate"]],
+  "/ensemble": [["/ensemble candidates", "List prediction artifacts"], ["/ensemble diversity", "Compare prediction diversity"], ["/ensemble propose", "Create an OOF blend candidate"], ["/ensemble validate", "Verify a blend candidate"], ["/ensemble promote", "Promote a validated candidate"], ["/ensemble reject", "Reject a candidate"]],
   "/report": [["/report research", "Write a research report"], ["/report challenge", "Write a challenge report"], ["/report final", "Write a provenance report"]],
   "/timeline": [["/timeline", "Show recent autonomous progress"]],
 };
@@ -204,7 +204,7 @@ function help(): string {
     "/queue [status|recover]      Show or recover durable tasks",
     "/sessions                   List saved terminal sessions",
     "/resume [session-id]        Explicitly resume a saved session",
-    "/ensemble [candidates|diversity|propose] Analyze prediction artifacts",
+    "/ensemble [candidates|diversity|propose|validate|promote|reject] Analyze prediction artifacts",
     "/report [research|challenge|final] Generate a portable report",
     "/timeline [limit]            Show recent autonomous progress",
     "/provider [codex|local]      Select ChatGPT Codex or local Ollama",
@@ -2262,8 +2262,29 @@ export function App({ root }: { root: string }): React.JSX.Element {
       store.close();
       return;
     }
-    if (request === "/ensemble" || request === "/ensemble candidates" || request === "/ensemble diversity" || request === "/ensemble propose") {
+    if (request === "/ensemble" || request === "/ensemble candidates" || request === "/ensemble diversity" || request === "/ensemble propose" || request.startsWith("/ensemble validate") || request.startsWith("/ensemble promote") || request.startsWith("/ensemble reject")) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const ensembleParts = request.split(/\s+/);
+      const ensembleAction = ensembleParts[1] ?? "candidates";
+      if (["validate", "promote", "reject"].includes(ensembleAction)) {
+        const candidateId = ensembleParts[2];
+        const candidate = candidateId ? store.ensembleCandidates(100).find((entry) => entry.id === candidateId) : undefined;
+        if (!candidate) { store.close(); append("assistant", `Usage: /ensemble ${ensembleAction} <candidate-id>`); return; }
+        if (ensembleAction === "validate") {
+          const report = validateBlendCandidate(candidate.path, candidate.checksum);
+          if (report.valid) store.updateEnsembleCandidateStatus(candidate.id, "validated", { ...(candidate.payload as Record<string, unknown>), validatedAt: new Date().toISOString(), validation: report });
+          store.close();
+          append("assistant", `Ensemble ${candidate.id} · ${report.valid ? "validated" : `validation failed: ${report.reason}`}`);
+          return;
+        }
+        try {
+          const next = ensembleAction === "promote" ? "promoted" : "rejected";
+          store.updateEnsembleCandidateStatus(candidate.id, next, { ...(candidate.payload as Record<string, unknown>), [`${next}At`]: new Date().toISOString() });
+          store.close();
+          append("assistant", `Ensemble ${candidate.id} marked ${next}. External submission remains approval-gated.`);
+        } catch (error) { store.close(); appendError(error); }
+        return;
+      }
       const vectors: PredictionVector[] = [];
       for (const artifact of store.artifacts().filter((entry) => /prediction|oof/i.test(entry.name))) {
         try { vectors.push(loadPredictionVector(artifact.id, artifact.path)); } catch { /* invalid candidates are reported below */ }

@@ -38,7 +38,7 @@ import { recordBaselineEvidence } from "./core/baseline.js";
 import { redactSecrets } from "./core/redaction.js";
 import { enforceGoalTermination } from "./core/termination.js";
 import { summarizeUsage } from "./core/usage.js";
-import { createBlendCandidate, diversityReport, loadPredictionVector, type PredictionVector } from "./core/ensemble.js";
+import { createBlendCandidate, diversityReport, loadPredictionVector, validateBlendCandidate, type PredictionVector } from "./core/ensemble.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
@@ -503,6 +503,25 @@ ensemble.command("propose").action(() => {
   store.close();
   console.log(`Ensemble candidate created\n  id: ${candidate.id}\n  members: ${candidate.members.length}\n  path: ${candidate.path}\n  checksum: ${candidate.checksum}\n  status: ${candidate.status}`);
 });
+for (const action of ["validate", "promote", "reject"] as const) {
+  ensemble.command(action).argument("<candidate>").action((candidateId: string) => {
+    const store = new ResearchStore(statePath);
+    const candidate = store.ensembleCandidates(100).find((entry) => entry.id === candidateId);
+    if (!candidate) { store.close(); throw new Error(`Ensemble candidate ${candidateId} is not registered.`); }
+    try {
+      if (action === "validate") {
+        const report = validateBlendCandidate(candidate.path, candidate.checksum);
+        if (!report.valid) throw new Error(`Ensemble validation failed: ${report.reason}`);
+        store.updateEnsembleCandidateStatus(candidate.id, "validated", { ...(candidate.payload as Record<string, unknown>), validatedAt: new Date().toISOString(), validation: report });
+        console.log(`Validated ensemble ${candidate.id}: ${report.reason}`);
+      } else {
+        const next = action === "promote" ? "promoted" : "rejected";
+        store.updateEnsembleCandidateStatus(candidate.id, next, { ...(candidate.payload as Record<string, unknown>), [`${next}At`]: new Date().toISOString() });
+        console.log(`Marked ensemble ${candidate.id} ${next}. External submission remains approval-gated.`);
+      }
+    } finally { store.close(); }
+  });
+}
 program.addCommand(ensemble);
 
 const queue = new Command("queue").description("Inspect the durable research work queue");
