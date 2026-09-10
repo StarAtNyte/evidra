@@ -765,7 +765,7 @@ sources.command("discover").argument("<query>").option("--limit <count>", "maxim
   store.appendEvent("research.source.search.completed", { query, results, source: "openalex" });
   const frontier = sourceFrontier(store.recentEvents(2_000));
   store.close();
-  console.log(`${results.length ? results.map((result, index) => `${index + 1}. ${result.title}\n   ${result.url}${result.venue ? ` · ${result.venue}` : ""}${result.publicationDate ? ` · ${result.publicationDate}` : ""}${result.authors.length ? `\n   authors: ${result.authors.join(", ")}` : ""}`).join("\n") : "No scholarly sources found."}\n\nFrontier: ${frontier.uniqueWorks} unique works · ${frontier.retrievedWorks} retrieved · ${frontier.pendingWorks} pending across ${frontier.queryCount} queries`);
+  console.log(`${results.length ? results.map((result, index) => `${index + 1}. ${result.title}\n   ${result.url}${result.venue ? ` · ${result.venue}` : ""}${result.publicationDate ? ` · ${result.publicationDate}` : ""}${result.authors.length ? `\n   authors: ${result.authors.join(", ")}` : ""}`).join("\n") : "No scholarly sources found."}\n\nFrontier: ${frontier.uniqueWorks} unique works · ${frontier.retrievedWorks} retrieved · ${frontier.pendingWorks} pending across ${frontier.queryCount} queries · query coverage ${(frontier.queryCoverage * 100).toFixed(0)}% · claim coverage ${(frontier.claimCoverage * 100).toFixed(0)}%`);
 });
 sources.command("add").argument("<url>").action(async (url: string) => {
   const retrieved = await retrieveSource(url);

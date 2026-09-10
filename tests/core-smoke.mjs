@@ -1597,12 +1597,17 @@ test("literature search frontier deduplicates works and reports retrieval covera
   const report = sourceFrontier([
     { type: "research.source.search.completed", payload: { query: "agent harness", results: [{ title: "Paper A", url: "https://example.org/a", doi: "10.1/a", authors: [] }, { title: "Paper B", url: "https://example.org/b", authors: [] }] } },
     { type: "research.source.search.completed", payload: { query: "scientific harness", results: [{ title: "Paper A revised", url: "https://other.example/a", doi: "10.1/a", authors: [] }] } },
-    { type: "research.source.retrieved", payload: { url: "https://example.org/a" } },
+    { type: "research.source.retrieved", payload: { url: "https://example.org/a", claimCount: 3 } },
   ]);
   assert.equal(report.queryCount, 2);
   assert.equal(report.uniqueWorks, 2);
   assert.equal(report.retrievedWorks, 1);
   assert.equal(report.pendingWorks, 1);
+  assert.equal(report.queriesWithCandidates, 2);
+  assert.equal(report.queryCoverage, 1);
+  assert.equal(report.retrievalCoverage, 0.5);
+  assert.equal(report.retrievedWithClaims, 1);
+  assert.equal(report.claimCoverage, 1);
   assert.deepEqual(report.candidates.find((candidate) => candidate.key === "10.1/a")?.queries, ["agent harness", "scientific harness"]);
 });
 

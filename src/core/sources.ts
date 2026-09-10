@@ -225,9 +225,14 @@ export interface SourceFrontierCandidate extends SourceSearchResult {
 export interface SourceFrontierReport {
   candidates: SourceFrontierCandidate[];
   queryCount: number;
+  queriesWithCandidates: number;
+  queryCoverage: number;
   uniqueWorks: number;
   retrievedWorks: number;
   pendingWorks: number;
+  retrievalCoverage: number;
+  retrievedWithClaims: number;
+  claimCoverage: number;
 }
 
 function sourceWorkKey(result: { url: string; doi?: string }): string {
@@ -239,6 +244,7 @@ export function sourceFrontier(events: Array<{ type: string; payload: unknown }>
   const byKey = new Map<string, SourceFrontierCandidate>();
   const queries = new Set<string>();
   const retrieved = new Set<string>();
+  const retrievedClaimCounts = new Map<string, number>();
   for (const event of events) {
     const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
     if (event.type === "research.source.search.completed") {
@@ -266,15 +272,28 @@ export function sourceFrontier(events: Array<{ type: string; payload: unknown }>
       }
     } else if (event.type === "research.source.retrieved") {
       const url = typeof payload.url === "string" ? payload.url : "";
-      if (url) retrieved.add(sourceWorkKey({ url }));
+      if (url) {
+        const key = sourceWorkKey({ url });
+        retrieved.add(key);
+        const claimCount = Number(payload.claimCount);
+        if (Number.isFinite(claimCount) && claimCount > 0) retrievedClaimCounts.set(key, claimCount);
+      }
     }
   }
   const candidates = [...byKey.values()].map((candidate) => ({ ...candidate, retrieved: candidate.retrieved || retrieved.has(candidate.key) || retrieved.has(sourceWorkKey({ url: candidate.url })) })).slice(0, Math.max(1, limit));
+  const queriesWithCandidates = new Set(candidates.flatMap((candidate) => candidate.queries)).size;
+  const retrievedCandidates = candidates.filter((candidate) => candidate.retrieved);
+  const retrievedWithClaims = retrievedCandidates.filter((candidate) => retrievedClaimCounts.has(candidate.key) || retrievedClaimCounts.has(sourceWorkKey({ url: candidate.url }))).length;
   return {
     candidates,
     queryCount: queries.size,
+    queriesWithCandidates,
+    queryCoverage: queries.size ? queriesWithCandidates / queries.size : 0,
     uniqueWorks: candidates.length,
-    retrievedWorks: candidates.filter((candidate) => candidate.retrieved).length,
+    retrievedWorks: retrievedCandidates.length,
     pendingWorks: candidates.filter((candidate) => !candidate.retrieved).length,
+    retrievalCoverage: candidates.length ? retrievedCandidates.length / candidates.length : 0,
+    retrievedWithClaims,
+    claimCoverage: retrievedCandidates.length ? retrievedWithClaims / retrievedCandidates.length : 0,
   };
 }

@@ -281,8 +281,10 @@ shows that strong general browsing performance does not imply reliable scientifi
 search. Evidra should therefore treat literature work as a bounded search
 frontier with source coverage, deduplication, and claim-level provenance rather
 than one search call followed by a narrative answer. The current source graph
-and bounded retrieval are the foundation; frontier coverage metrics remain a
-next benchmark target.
+and bounded retrieval are the foundation. The source frontier now reports query
+coverage, retrieval coverage, and claim-extraction coverage so the director can
+prioritize pending retrieval or weakly grounded sources instead of treating
+candidate count as research progress.
 
 The Agentic Harness Engineering work frames harness improvement as an
 observability-driven evolution loop: freeze failures, measure them under fixed
