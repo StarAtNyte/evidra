@@ -23,6 +23,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const ensembles = store.ensembleCandidates(100);
   const events = store.recentEvents(40);
   const routingEvents = events.filter((event) => event.type === "research.capability_outcome");
+  const experienceEvents = events.filter((event) => event.type === "research.experience.recorded");
   const contradictionEdges = store.edges().filter((edge) => edge.relation === "contradicts");
   const duplicateEvents = events.filter((event) => event.type === "evidence.claim.duplicate_detected");
   const title = kind === "research" ? "Research report" : kind === "challenge" ? "Challenge report" : "Final provenance report";
@@ -56,12 +57,19 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     return `- ${trajectory.id} · ${quality.overall ?? "unknown"}${trajectory.experimentId ? ` · experiment ${trajectory.experimentId}` : ""}${trajectory.runId ? ` · run ${trajectory.runId}` : ""}\n  ${dimensions}`;
   }).join("\n") : "No evaluated trajectories recorded.");
   sections.push("", "## Capability routing", "", routingEvents.length ? routingEvents.map((event) => {
-    const payload = event.payload as { outcome?: string; predictedTier?: string; quality?: string; served?: { provider?: string; model?: string; parallelLanes?: number }; servedProvider?: string; servedModel?: string };
+    const payload = event.payload as { outcome?: string; predictedTier?: string; quality?: string; predictedTierScores?: Record<string, number>; served?: { provider?: string; model?: string; parallelLanes?: number }; servedProvider?: string; servedModel?: string };
     const provider = payload.served?.provider ?? payload.servedProvider ?? "unknown";
     const model = payload.served?.model ?? payload.servedModel ?? "unknown";
     const lanes = payload.served?.parallelLanes;
-    return `- ${event.createdAt} · ${payload.outcome ?? "unknown"} · predicted ${payload.predictedTier ?? "?"} · ${provider}/${model}${lanes ? ` · lanes ${lanes}` : ""} · quality ${payload.quality ?? "?"}`;
+    const scores = payload.predictedTierScores ? ` · demand ${Object.entries(payload.predictedTierScores).map(([tier, score]) => `${tier}=${score}`).join(" ")}` : "";
+    return `- ${event.createdAt} · ${payload.outcome ?? "unknown"} · predicted ${payload.predictedTier ?? "?"} · ${provider}/${model}${lanes ? ` · lanes ${lanes}` : ""} · quality ${payload.quality ?? "?"}${scores}`;
   }).join("\n") : "No capability-routing outcomes recorded.");
+  sections.push("", "## Experience curriculum", "", experienceEvents.length ? (() => {
+    const latest = experienceEvents.at(-1)?.payload as { capabilityProfile?: { total?: number; eligible?: number; quarantined?: number; byOutcome?: Record<string, number>; gaps?: Record<string, number> }; curriculum?: Array<{ stage: number; trajectoryIds: string[]; rationale: string }> } | undefined;
+    const profile = latest?.capabilityProfile;
+    const curriculum = latest?.curriculum ?? [];
+    return [`Total experiences: ${profile?.total ?? 0} · eligible: ${profile?.eligible ?? 0} · quarantined: ${profile?.quarantined ?? 0}`, `Outcomes: ${Object.entries(profile?.byOutcome ?? {}).map(([key, value]) => `${key}=${value}`).join(" ") || "none"}`, `Gaps: ${Object.entries(profile?.gaps ?? {}).slice(0, 8).map(([key, value]) => `${key}=${value}`).join(" ") || "none"}`, ...curriculum.map((stage) => `- Stage ${stage.stage}: ${stage.trajectoryIds.join(", ") || "none"} · ${stage.rationale}`)].join("\n");
+  })() : "No experience curriculum recorded.");
   sections.push("", "## Sources", "", sources.length ? sources.map((source) => `- ${source.id}: ${line((source.payload as { title?: string; url?: string }).title ?? source.payload)} · ${(source.payload as { url?: string }).url ?? ""}`).join("\n") : "No sources recorded.");
   sections.push("", "## Ensemble candidates", "", ensembles.length ? ensembles.map((candidate) => `- ${candidate.id} · ${candidate.status} · ${candidate.checksum}\n  ${candidate.path}`).join("\n") : "No ensemble candidates recorded.");
   if (kind !== "research") sections.push("", "## Experiments and runs", "", experiments.length ? experiments.map((experiment) => {

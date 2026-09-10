@@ -33,6 +33,7 @@ import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validat
 import { runReducedValidation } from "../dist/core/stage-executor.js";
 import { evaluateTrajectory, capabilityGaps, validateTrajectoryStructure } from "../dist/core/trajectories.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
+import { buildExperienceRecord, capabilityProfile, selectCurriculum } from "../dist/core/experience.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
 import { experimentNovelty, rankExperimentCandidates, rankPriorities } from "../dist/core/scheduler.js";
 import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
@@ -125,11 +126,26 @@ test("capability outcomes preserve prediction, serving action, and result", () =
     objective: "run and replicate an experiment",
     mode: "challenge",
     predictedTier: route.tier,
+    predictedTierScores: route.tierScores,
     served: { provider: "codex", model: "gpt-test", parallelLanes: 2 },
     outcome: "failure",
     quality: "FAIL",
     gaps: ["toolUse"],
   });
+});
+
+test("experience ledger quarantines malformed traces and selects a curriculum", () => {
+  const quality = evaluateTrajectory([
+    { id: "call", kind: "tool_call", callId: "c1", payload: { tool: "inspect" } },
+    { id: "result", kind: "tool_result", callId: "c1", payload: { ok: true } },
+    { id: "terminal", kind: "terminal", payload: { status: "completed", goalAttained: true } },
+  ]);
+  const record = buildExperienceRecord({ trajectoryId: "t1", payload: { objective: "inspect data", events: [{ id: "call", kind: "tool_call", callId: "c1", payload: { tool: "inspect" } }, { id: "result", kind: "tool_result", callId: "c1", payload: { ok: true } }, { id: "terminal", kind: "terminal", payload: { status: "completed", goalAttained: true } }] }, quality, routing: { predictedTier: "C1", tierScores: { C0: 0.1, C1: 0.7, C2: 0.15, C3: 0.05 } } });
+  assert.equal(record.admission, "candidate");
+  assert.equal(capabilityProfile([record]).eligible, 1);
+  assert.equal(selectCurriculum([record], 3).reduce((sum, stage) => sum + stage.trajectoryIds.length, 0), 1);
+  const malformed = buildExperienceRecord({ trajectoryId: "bad", payload: { events: [{ id: "orphan", kind: "tool_result", callId: "missing", payload: {} }] }, quality: evaluateTrajectory([{ id: "orphan", kind: "tool_result", callId: "missing", payload: {} }]) });
+  assert.equal(malformed.admission, "quarantined");
 });
 
 test("critic gate converts terminal and execution decisions into inspection", () => {

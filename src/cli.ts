@@ -51,6 +51,7 @@ import { findWorkspaceRoot } from "./core/workspace.js";
 import { autonomyPolicy, type AutonomyLevel } from "./core/permissions.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "./core/capability-router.js";
 import { allocateNextResearch } from "./core/allocation.js";
+import { buildExperienceRecord, capabilityProfile, selectCurriculum } from "./core/experience.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -1071,7 +1072,12 @@ research
       ];
       const researchQuality = evaluateTrajectory(researchTrajectoryEvents);
       const routingOutcome = capabilityOutcome({ objective: allocatedObjective, mode, route, provider: options.provider, model: selectedModel, quality: researchQuality, parallelLanes: effectiveLaneLimit });
-      decisionStore.saveTrajectory({ id: `trajectory_research_${Date.now()}`, payload: { objective, observation, laneReports, criticReview, decision }, quality: researchQuality });
+      const trajectoryId = `trajectory_research_${Date.now()}`;
+      const trajectoryPayload = { objective, observation, laneReports, criticReview, decision, events: researchTrajectoryEvents };
+      decisionStore.saveTrajectory({ id: trajectoryId, payload: trajectoryPayload, quality: researchQuality });
+      const experience = buildExperienceRecord({ trajectoryId, payload: trajectoryPayload, quality: researchQuality, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: options.provider, model: selectedModel } });
+      const priorExperiences = decisionStore.trajectories(100).filter((entry) => entry.id !== trajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
+      decisionStore.appendEvent("research.experience.recorded", { experience, capabilityProfile: capabilityProfile([...priorExperiences, experience]), curriculum: selectCurriculum([...priorExperiences, experience]) });
       const researchGaps = Object.entries(researchQuality).filter(([key, value]) => key !== "overall" && (value as { verdict: string }).verdict !== "PASS").map(([key]) => key);
       decisionStore.appendEvent("research.capability_outcome", { ...routingOutcome, objective, predictedTier: route.tier, servedProvider: options.provider, servedModel: selectedModel, lanes: laneReports.map((lane) => ({ role: lane.role, provider: lane.provider, model: lane.model, status: lane.status })), quality: researchQuality.overall, gaps: researchGaps, laneCount: laneReports.length });
       if (researchQuality.overall !== "PASS") decisionStore.appendEvent("trajectory.capability_gaps", { trajectoryType: "research", quality: researchQuality, objective });

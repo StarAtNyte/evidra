@@ -123,6 +123,7 @@ Implemented today:
 - durable headless research trajectories with structural, goal, evidence, recovery, and termination quality signals feeding future allocation;
 - unattended experiment runs also record the same quality-scored process/evaluator/recovery trajectory used by the interactive workbench;
 - capability routing learns from prior trajectory quality: failed or warning-heavy cycles raise verification pressure, bound lane fan-out, and persist predicted tier versus served provider/model and observed outcome;
+- every research cycle now emits a durable experience record: validated trajectory events, scene/goal/outcome metadata, independent quality verdicts, C0-C3 demand scores, admission status, capability-gap profile, and a three-stage curriculum for subsequent cycles;
 - local research lanes can use a bounded heterogeneous Ollama pool: installed local models are discovered at campaign start, assigned deterministically across independent roles, and the actual model used by every lane is recorded for replay and routing analysis;
 - experiment proposals receive an explainable novelty score against prior directions, reducing redundant hypothesis families while preserving probability-of-success, information-value, risk, and compute-cost ranking;
 - ensemble proposals are durable, checksummed candidate artifacts with member-file checksums, provenance, and explicit candidate/validated/promoted/rejected status; source mutation blocks validation, and creating a blend never silently promotes or submits it;
@@ -131,6 +132,17 @@ Implemented today:
 - Docker/Podman execution mounts only the exact isolated experiment worktree, uses a network-disabled container, and keeps the same artifact, metric, retry, and evidence gates;
 - Codex-backed experiment engineers honor entitlement reset windows with bounded retry/wait behavior instead of silently abandoning an authorized campaign;
 - shell and autonomy safety guards.
+
+### Experience-driven improvement
+
+Evidra treats an autonomous run as reusable research experience rather than disposable chat
+history. A structurally complete trajectory becomes a candidate experience; recoverable failures
+remain replay-only; ambiguous or malformed traces are quarantined. The workbench aggregates these
+records into a capability profile and recommends a curriculum that starts with bounded examples,
+expands across observed tasks and outcomes, and then introduces higher-demand or recovery-heavy
+trajectories. This is inspired by routing-harness research such as NeoHorse-1, but remains
+model- and domain-agnostic: it works for scientific research, software experiments, and challenge
+workflows without requiring model fine-tuning.
 
 ## Quick start
 

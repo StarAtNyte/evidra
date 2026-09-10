@@ -17,6 +17,8 @@ export interface CapabilityRouteInput {
 export interface CapabilityRoute {
   tier: CapabilityTier;
   demandScore: number;
+  /** Normalized C0-C3 demand distribution used for curriculum allocation. */
+  tierScores: Record<CapabilityTier, number>;
   parallelLanes: number;
   reasoningEffort: "low" | "medium" | "high";
   rationale: string[];
@@ -27,6 +29,7 @@ export interface CapabilityOutcome {
   objective: string;
   mode: "research" | "challenge";
   predictedTier: CapabilityTier;
+  predictedTierScores: Record<CapabilityTier, number>;
   served: { provider: string; model: string; parallelLanes: number };
   outcome: "success" | "partial" | "failure";
   quality: string;
@@ -63,6 +66,7 @@ export function capabilityOutcome(input: {
     objective: input.objective,
     mode: input.mode,
     predictedTier: input.route.tier,
+    predictedTierScores: input.route.tierScores,
     served: { provider: input.provider, model: input.model, parallelLanes: input.parallelLanes },
     outcome: quality === "PASS" ? "success" : quality === "FAIL" ? "failure" : "partial",
     quality,
@@ -95,12 +99,17 @@ export function routeCapability(input: CapabilityRouteInput): CapabilityRoute {
   if (input.budgetRemainingMinutes !== undefined && input.budgetRemainingMinutes < 10) { score += 1; rationale.push("budget pressure increases the cost of another failed attempt"); }
   if (input.provider === "local") rationale.push("local provider capacity is conservatively bounded");
   const tier: CapabilityTier = score >= 6 ? "C3" : score >= 4 ? "C2" : score >= 2 ? "C1" : "C0";
+  const tierCenters: Array<[CapabilityTier, number]> = [["C0", 0], ["C1", 2.5], ["C2", 5], ["C3", 8]];
+  const weights = tierCenters.map(([, center]) => Math.exp(-Math.abs(score - center) / 1.8));
+  const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+  const tierScores = Object.fromEntries(tierCenters.map(([name], index) => [name, Number((weights[index] / totalWeight).toFixed(4))])) as Record<CapabilityTier, number>;
   const defaultParallel = tier === "C3" ? 1 : tier === "C2" ? 2 : tier === "C1" ? 2 : 1;
   const autonomyCeiling = input.autonomy === "safe" ? 1 : input.autonomy === "fast" ? 2 : 4;
   const parallelLanes = Math.max(1, Math.min(input.requestedParallel ?? defaultParallel, defaultParallel, autonomyCeiling));
   return {
     tier,
     demandScore: score,
+    tierScores,
     parallelLanes,
     reasoningEffort: tier === "C3" ? "high" : tier === "C2" ? "medium" : "low",
     rationale: rationale.length ? rationale : ["bounded request with no elevated demand signals"],

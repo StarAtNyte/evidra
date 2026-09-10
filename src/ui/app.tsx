@@ -35,6 +35,7 @@ import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../c
 import { evaluateTrajectory, type TrajectoryEvent } from "../core/trajectories.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../core/capability-router.js";
 import { allocateNextResearch } from "../core/allocation.js";
+import { buildExperienceRecord, capabilityProfile, selectCurriculum } from "../core/experience.js";
 import { rankExperimentCandidates } from "../core/scheduler.js";
 import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "../core/execution-stages.js";
@@ -860,7 +861,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const researchQuality = evaluateTrajectory(researchTrajectoryEvents);
     const routingOutcome = capabilityOutcome({ objective, mode, route, provider: config.provider, model: config.model, quality: researchQuality, parallelLanes: route.parallelLanes });
     const trajectoryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    trajectoryStore.saveTrajectory({ id: `trajectory_research_${Date.now()}`, payload: { objective, observation, laneReports, criticReview, decision }, quality: researchQuality });
+    const trajectoryId = `trajectory_research_${Date.now()}`;
+    const trajectoryPayload = { objective, observation, laneReports, criticReview, decision, events: researchTrajectoryEvents };
+    trajectoryStore.saveTrajectory({ id: trajectoryId, payload: trajectoryPayload, quality: researchQuality });
+    const experience = buildExperienceRecord({ trajectoryId, payload: trajectoryPayload, quality: researchQuality, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: config.provider, model: config.model } });
+    const priorExperiences = trajectoryStore.trajectories(100).filter((entry) => entry.id !== trajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
+    trajectoryStore.appendEvent("research.experience.recorded", { experience, capabilityProfile: capabilityProfile([...priorExperiences, experience]), curriculum: selectCurriculum([...priorExperiences, experience]) });
     const researchGaps = Object.entries(researchQuality).filter(([key, value]) => key !== "overall" && (value as { verdict: string }).verdict !== "PASS").map(([key]) => key);
     trajectoryStore.appendEvent("research.capability_outcome", { ...routingOutcome, objective, predictedTier: route.tier, servedProvider: config.provider, servedModel: config.model, lanes: laneReports.map((lane) => ({ role: lane.role, provider: lane.provider, model: lane.model, status: lane.status })), quality: researchQuality.overall, gaps: researchGaps, laneCount: laneReports.length });
     if (researchQuality.overall !== "PASS") trajectoryStore.appendEvent("trajectory.capability_gaps", { trajectoryType: "research", quality: researchQuality, objective });
