@@ -25,6 +25,8 @@ export interface HarnessTrial {
   taskBestMetric?: number;
   validRun: boolean;
   durationSeconds: number;
+  /** Seconds from arm start until the first finite declared metric was observed. */
+  timeToEvidenceSeconds?: number;
   recovered: boolean;
   reproducible: boolean;
   /** Whether an independent reproducibility command was actually requested. */
@@ -612,7 +614,7 @@ export function scoreHarnessTrials(trials: HarnessTrial[]): HarnessScorecard[] {
       validRunRate: validRate,
       improvementRate,
       meanDelta: deltas.length ? deltas.reduce((sum, value) => sum + value, 0) / deltas.length : null,
-      medianTimeToEvidenceSeconds: median(entries.filter((entry) => entry.validRun && Number.isFinite(entry.durationSeconds)).map((entry) => entry.durationSeconds)),
+      medianTimeToEvidenceSeconds: median(entries.filter((entry) => entry.validRun && Number.isFinite(entry.timeToEvidenceSeconds ?? entry.durationSeconds)).map((entry) => entry.timeToEvidenceSeconds ?? entry.durationSeconds)),
       recoveryRate,
       reproducibilityRate,
       competitiveScore,

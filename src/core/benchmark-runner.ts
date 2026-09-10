@@ -94,17 +94,27 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     let validRun = false;
     let attempts = 0;
     let totalDurationMs = 0;
+    let timeToEvidenceSeconds: number | undefined;
     const attemptDetails: BenchmarkAttemptRecord[] = [];
     let reproducibility: BenchmarkRunReport["runs"][number]["reproducibility"];
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const remainingMs = deadline - Date.now();
       if (remainingMs < 1_000) break;
       attempts += 1;
-      result = await runProcess(arm.command, cwd, remainingMs);
+      const attemptStartedAt = Date.now();
+      let attemptEvidenceMs: number | undefined;
+      let outputBuffer = "";
+      result = await runProcess(arm.command, cwd, remainingMs, (_stream, chunk) => {
+        if (attemptEvidenceMs !== undefined) return;
+        outputBuffer = `${outputBuffer}${chunk}`.slice(-128_000);
+        const observed = parseMetricOutput(outputBuffer, arm.metric).metrics[arm.metric];
+        if (Number.isFinite(observed)) attemptEvidenceMs = Date.now() - attemptStartedAt;
+      });
       totalDurationMs += result.durationMs;
       const parsed = parseMetricOutput(result.stdout, arm.metric);
       metric = parsed.metrics[arm.metric];
       validRun = result.exitCode === 0 && Number.isFinite(metric);
+      if (validRun && attemptEvidenceMs !== undefined) timeToEvidenceSeconds = (totalDurationMs - result.durationMs + attemptEvidenceMs) / 1000;
       attemptDetails.push({
         attempt: attempt + 1,
         exitCode: result.exitCode,
@@ -152,6 +162,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       candidateMetric: Number.isFinite(metric) ? metric : undefined,
       validRun,
       durationSeconds: totalDurationMs / 1000,
+      ...(timeToEvidenceSeconds !== undefined ? { timeToEvidenceSeconds } : {}),
       recovered: validRun && attempts > 1,
       reproducibilityChecked: Boolean(arm.reproducibilityCommand),
       ...(finalFailure ? { failureClass: finalFailure } : {}),

@@ -7,7 +7,9 @@ The comparison protocol uses the same task arm for every harness and records:
 
 - valid-run rate: a candidate must have a durable evaluator run and finite metric;
 - improvement rate: the candidate must beat that arm's baseline in the declared direction;
-- mean metric delta and median time to first valid evidence;
+- mean metric delta and median time to first valid evidence (captured from the
+  evaluator stream when a finite declared metric appears, with total runtime as
+  a backward-compatible fallback);
 - time efficiency: the fraction of the declared wall-clock budget remaining
   after a valid evaluator outcome;
 - recovery rate after a failed tool, worker, or provider route;

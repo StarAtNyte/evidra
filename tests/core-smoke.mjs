@@ -2223,6 +2223,11 @@ test("harness scorecard rewards valid evidence that arrives within the declared 
   assert.ok(fast.competitiveScore > slow.competitiveScore);
 });
 
+test("harness scorecard uses first valid evidence time when available", () => {
+  const [early] = scoreHarnessTrials([{ harness: "early", task: "task", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 50, timeToEvidenceSeconds: 5, recovered: false, reproducible: true }]);
+  assert.equal(early.medianTimeToEvidenceSeconds, 5);
+});
+
 test("harness scorecard normalizes bounded task metrics instead of binary improvements", () => {
   const [halfway] = scoreHarnessTrials([{ harness: "halfway", task: "task", direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.75, taskWorstMetric: 0.5, taskBestMetric: 1, validRun: true, durationSeconds: 1, recovered: false, reproducible: false }]);
   const [best] = scoreHarnessTrials([{ harness: "best", task: "task", direction: "maximize", baselineMetric: 0.5, candidateMetric: 1, taskWorstMetric: 0.5, taskBestMetric: 1, validRun: true, durationSeconds: 1, recovered: false, reproducible: false }]);
@@ -2376,6 +2381,7 @@ test("benchmark runner executes matched arms and records evaluator-backed metric
     assert.equal(report.runs.every((run) => run.result.exitCode === 0), true);
     assert.equal(report.runs.every((run) => run.attemptDetails.length === 1), true);
     assert.equal(report.runs[0].attemptDetails[0].metric, 0.6);
+    assert.ok(typeof report.trials[0].timeToEvidenceSeconds === "number");
     assert.deepEqual(report.trials[0].componentIds, ["routing", "verification"]);
     assert.equal(report.trials[0].policy, "ucb_portfolio");
   } finally { rmSync(root, { recursive: true, force: true }); }
