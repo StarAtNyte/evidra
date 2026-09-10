@@ -1946,6 +1946,14 @@ test("harness comparison requires paired coverage and task-balanced evidence", (
   assert.equal(win.coverage, 1);
   assert.ok(win.pairedLower95 > 0);
 
+  const slowChallenger = ["task-a", "task-b"].flatMap((task) => [
+    { harness: "evidra", task, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: 0.8, validRun: true, durationSeconds: 599, recovered: false, reproducible: true },
+    { harness: "incumbent", task, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: 0.7, validRun: true, durationSeconds: 1, recovered: false, reproducible: true },
+  ]);
+  const timeRegression = compareHarnesses(slowChallenger, "evidra", "incumbent");
+  assert.equal(timeRegression.challengerWins, false);
+  assert.match(timeRegression.reason, /time-efficiency/i);
+
   const singleTask = compareHarnesses(trials.filter((trial) => trial.task === "task-a"), "evidra", "incumbent");
   assert.equal(singleTask.challengerWins, false);
   assert.match(singleTask.reason, /at least 2 tasks/);

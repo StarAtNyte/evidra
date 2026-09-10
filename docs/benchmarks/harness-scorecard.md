@@ -63,8 +63,9 @@ without allowing retries to quietly expand the declared budget.
 the exact task, arm, seed, model, and budget, drops invalid evaluator outcomes,
 aggregates paired deltas by task, and computes a deterministic bootstrap lower
 95% bound. A win is reported only with at least two tasks, positive lower bound,
-at least 80% valid paired coverage, and no material paired process-quality
-regression when trajectory fields are available. Otherwise the result is
+at least 80% valid paired coverage, no material paired process-quality
+regression, and no material time-efficiency regression when budget metadata is
+available. Otherwise the result is
 explicitly `NOT PROVEN`; a higher point score alone is not sufficient.
 
 The input is either a JSON array or `{ "trials": [...] }`, with one record per

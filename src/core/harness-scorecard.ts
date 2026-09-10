@@ -137,6 +137,8 @@ export interface HarnessComparison {
   pairedLower95: number | null;
   processComparableArms: number;
   pairedProcessQualityDelta: number | null;
+  timeComparableArms: number;
+  pairedTimeEfficiencyDelta: number | null;
   challengerWins: boolean;
   reason: string;
 }
@@ -243,7 +245,9 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
     const delta = direction === "maximize" ? left.candidateMetric! - right.candidateMetric! : right.candidateMetric! - left.candidateMetric!;
     const leftProcess = processReliability(left);
     const rightProcess = processReliability(right);
-    return [{ task: left.task, delta, processDelta: leftProcess !== undefined && rightProcess !== undefined ? leftProcess - rightProcess : undefined }];
+    const leftTime = timeEfficiency(left);
+    const rightTime = timeEfficiency(right);
+    return [{ task: left.task, delta, processDelta: leftProcess !== undefined && rightProcess !== undefined ? leftProcess - rightProcess : undefined, timeDelta: leftTime !== undefined && rightTime !== undefined ? leftTime - rightTime : undefined }];
   });
   const byTask = new Map<string, number[]>();
   for (const entry of paired) byTask.set(entry.task, [...(byTask.get(entry.task) ?? []), entry.delta]);
@@ -253,14 +257,23 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
   const processDeltas = paired.map((entry) => entry.processDelta).filter((value): value is number => value !== undefined);
   const pairedProcessQualityDelta = processDeltas.length ? processDeltas.reduce((sum, value) => sum + value, 0) / processDeltas.length : null;
   const processComparableArms = processDeltas.length;
+  const timeDeltas = paired.map((entry) => entry.timeDelta).filter((value): value is number => value !== undefined);
+  const pairedTimeEfficiencyDelta = timeDeltas.length ? timeDeltas.reduce((sum, value) => sum + value, 0) / timeDeltas.length : null;
+  const timeComparableArms = timeDeltas.length;
   const coverage = keys.length ? paired.length / keys.length : 0;
   const minimumTasks = 2;
   const processGate = pairedProcessQualityDelta === null || pairedProcessQualityDelta >= -0.1;
-  const challengerWins = pairedLower95 !== null && pairedLower95 > 0 && coverage >= 0.8 && taskDeltas.length >= minimumTasks && processGate;
+  // Allow a meaningful metric improvement to cost some time, but reject a
+  // purported win that consumes substantially more of the same declared
+  // budget on average. Missing budgets remain explicitly incomparable.
+  const timeGate = pairedTimeEfficiencyDelta === null || pairedTimeEfficiencyDelta >= -0.25;
+  const challengerWins = pairedLower95 !== null && pairedLower95 > 0 && coverage >= 0.8 && taskDeltas.length >= minimumTasks && processGate && timeGate;
   const reason = challengerWins
     ? `paired lower 95% bound ${pairedLower95.toFixed(6)} is positive across ${taskDeltas.length} tasks with ${(coverage * 100).toFixed(0)}% valid paired coverage`
     : !processGate
       ? `paired process-quality delta ${pairedProcessQualityDelta?.toFixed(3)} is below the -0.1 non-regression threshold`
+      : !timeGate
+        ? `paired time-efficiency delta ${pairedTimeEfficiencyDelta?.toFixed(3)} is below the -0.25 non-regression threshold`
       : pairedLower95 === null
       ? "no valid paired evaluator outcomes are available"
       : taskDeltas.length < minimumTasks
@@ -279,6 +292,8 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
     pairedLower95,
     processComparableArms,
     pairedProcessQualityDelta,
+    timeComparableArms,
+    pairedTimeEfficiencyDelta,
     challengerWins,
     reason,
   };
