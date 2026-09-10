@@ -125,6 +125,7 @@ Implemented today:
 - capability routing learns from prior trajectory quality: failed or warning-heavy cycles raise verification pressure, bound lane fan-out, and persist predicted tier versus served provider/model and observed outcome;
 - local research lanes can use a bounded heterogeneous Ollama pool: installed local models are discovered at campaign start, assigned deterministically across independent roles, and the actual model used by every lane is recorded for replay and routing analysis;
 - experiment proposals receive an explainable novelty score against prior directions, reducing redundant hypothesis families while preserving probability-of-success, information-value, risk, and compute-cost ranking;
+- ensemble proposals are durable, checksummed candidate artifacts with member provenance and explicit candidate/validated/promoted/rejected status; creating a blend never silently promotes or submits it;
 - local-model experiment implementation through bounded unified-diff proposals, checked and applied only inside the experiment worktree;
 - Modal execution mounts the exact isolated experiment worktree and accepts either Modal CLI profiles or environment credentials;
 - Docker/Podman execution mounts only the exact isolated experiment worktree, uses a network-disabled container, and keeps the same artifact, metric, retry, and evidence gates;

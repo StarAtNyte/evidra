@@ -84,6 +84,15 @@ export class ResearchStore {
         checksum TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS ensemble_candidates (
+        id TEXT PRIMARY KEY,
+        path TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        status TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS decisions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         decision_json TEXT NOT NULL,
@@ -286,6 +295,17 @@ export class ResearchStore {
     this.db.prepare(`INSERT OR REPLACE INTO artifacts (id, run_id, name, path, checksum, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
       .run(artifact.id, artifact.runId, artifact.name, artifact.path, artifact.checksum, new Date().toISOString());
     this.appendEvent("artifact.created", artifact);
+  }
+
+  saveEnsembleCandidate(candidate: { id: string; path: string; checksum: string; status: string; payload: unknown }): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`INSERT OR REPLACE INTO ensemble_candidates (id, path, checksum, status, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM ensemble_candidates WHERE id = ?), ?), ?)`).run(candidate.id, candidate.path, candidate.checksum, candidate.status, safeJson(candidate.payload), candidate.id, now, now);
+    this.appendEvent("ensemble.candidate.recorded", { id: candidate.id, path: candidate.path, checksum: candidate.checksum, status: candidate.status });
+  }
+
+  ensembleCandidates(limit = 100): Array<{ id: string; path: string; checksum: string; status: string; payload: unknown; createdAt: string; updatedAt: string }> {
+    const rows = this.db.prepare("SELECT id, path, checksum, status, payload_json, created_at, updated_at FROM ensemble_candidates ORDER BY updated_at DESC LIMIT ?").all(Math.max(1, Math.min(limit, 1000))) as Array<{ id: string; path: string; checksum: string; status: string; payload_json: string; created_at: string; updated_at: string }>;
+    return rows.map((row) => ({ id: row.id, path: row.path, checksum: row.checksum, status: row.status, payload: JSON.parse(row.payload_json), createdAt: row.created_at, updatedAt: row.updated_at }));
   }
 
   savePhaseGoal(goal: { id: string; phase: string; status: string; payload: unknown }): void {

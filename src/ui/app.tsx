@@ -18,7 +18,7 @@ import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../core/c
 import { prepareSubmission, validateSubmissionBundle } from "../core/submissions.js";
 import { pollSubmissionScore, submitApprovedBundle } from "../core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "../core/submission-policy.js";
-import { diversityReport, greedyBlend, loadPredictionVector, type PredictionVector } from "../core/ensemble.js";
+import { createBlendCandidate, diversityReport, loadPredictionVector, type PredictionVector } from "../core/ensemble.js";
 import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
 import { auditData } from "../core/data-audit.js";
 import { executeResearchTool } from "../core/tools.js";
@@ -2269,8 +2269,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         try { vectors.push(loadPredictionVector(artifact.id, artifact.path)); } catch { /* invalid candidates are reported below */ }
       }
       if (request === "/ensemble" || request === "/ensemble candidates") {
+        const blends = store.ensembleCandidates(12);
         store.close();
-        append("assistant", vectors.length ? `Prediction candidates\n${vectors.map((vector) => `- ${vector.id} · ${vector.values.length} values · ${vector.path}`).join("\n")}` : "No valid prediction or OOF artifacts found. Completed runs must record prediction files before ensemble analysis.");
+        append("assistant", `${vectors.length ? `Prediction candidates\n${vectors.map((vector) => `- ${vector.id} · ${vector.values.length} values · ${vector.path}`).join("\n")}` : "No valid prediction or OOF artifacts found. Completed runs must record prediction files before ensemble analysis."}${blends.length ? `\n\nBlend candidates\n${blends.map((blend) => `- ${blend.status} ${blend.id} · ${blend.path} · ${blend.checksum}`).join("\n")}` : ""}`);
         return;
       }
       if (vectors.length < 2) { store.close(); append("assistant", "At least two valid prediction artifacts are required for ensemble analysis."); return; }
@@ -2280,14 +2281,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", `Prediction diversity\n${pairs.map((pair) => `- ${pair.left} ↔ ${pair.right}\n  correlation: ${pair.correlation.toFixed(4)} · mean disagreement: ${pair.disagreement.toFixed(6)}`).join("\n")}`);
         return;
       }
-      const blend = greedyBlend(vectors);
-      const blendId = `blend_${Date.now()}`;
-      const blendPath = join(root, ".sota", "ensembles", `${blendId}.json`);
-      mkdirSync(join(root, ".sota", "ensembles"), { recursive: true });
-      writeFileSync(blendPath, `${JSON.stringify({ id: blendId, members: vectors.map((vector) => vector.id), values: blend, createdAt: new Date().toISOString(), status: "candidate" }, null, 2)}\n`);
-      store.appendEvent("ensemble.candidate.created", { id: blendId, path: blendPath, members: vectors.map((vector) => vector.id), diversity: pairs });
+      const blend = createBlendCandidate(root, vectors);
+      store.saveEnsembleCandidate({ id: blend.id, path: blend.path, checksum: blend.checksum, status: blend.status, payload: { ...blend, diversity: pairs } });
+      store.appendEvent("ensemble.candidate.created", { id: blend.id, path: blend.path, checksum: blend.checksum, members: blend.members, diversity: pairs });
       store.close();
-      append("assistant", `Ensemble candidate created\n  id: ${blendId}\n  members: ${vectors.length}\n  path: ${blendPath}\n  status: candidate\n\nEvaluate only on out-of-fold data before promotion.`);
+      append("assistant", `Ensemble candidate created\n  id: ${blend.id}\n  members: ${vectors.length}\n  path: ${blend.path}\n  checksum: ${blend.checksum}\n  status: candidate\n\nEvaluate only on out-of-fold data before promotion.`);
       return;
     }
     if (request === "/report" || request === "/report research" || request === "/report challenge" || request === "/report final" || request === "/export") {

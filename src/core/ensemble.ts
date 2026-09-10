@@ -1,9 +1,21 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
 
 export interface PredictionVector {
   id: string;
   path: string;
   values: number[];
+}
+
+export interface BlendCandidate {
+  id: string;
+  path: string;
+  members: string[];
+  values: number[];
+  createdAt: string;
+  checksum: string;
+  status: "candidate" | "validated" | "promoted" | "rejected";
 }
 
 export interface DiversityPair {
@@ -64,4 +76,19 @@ export function greedyBlend(vectors: PredictionVector[], weights?: number[]): nu
   const blendWeights = weights?.length === vectors.length ? weights : vectors.map(() => 1 / vectors.length);
   const total = blendWeights.reduce((sum, value) => sum + value, 0) || 1;
   return Array.from({ length }, (_, index) => vectors.reduce((sum, vector, vectorIndex) => sum + vector.values[index] * blendWeights[vectorIndex], 0) / total);
+}
+
+/** Write a reproducible, checksummed blend artifact without silently promoting it. */
+export function createBlendCandidate(root: string, vectors: PredictionVector[], weights?: number[]): BlendCandidate {
+  if (vectors.length < 2) throw new Error("At least two prediction vectors are required to create an ensemble candidate.");
+  const id = `blend_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const createdAt = new Date().toISOString();
+  const values = greedyBlend(vectors, weights);
+  const payload = { schemaVersion: 1, id, members: vectors.map((vector) => ({ id: vector.id, path: vector.path, length: vector.values.length })), values, createdAt, status: "candidate" as const };
+  const content = `${JSON.stringify(payload, null, 2)}\n`;
+  const checksum = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+  const path = join(root, ".sota", "ensembles", `${id}.json`);
+  mkdirSync(join(root, ".sota", "ensembles"), { recursive: true });
+  writeFileSync(path, content, { encoding: "utf8", flag: "wx" });
+  return { id, path, members: vectors.map((vector) => vector.id), values, createdAt, checksum, status: "candidate" };
 }
