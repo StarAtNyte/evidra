@@ -386,8 +386,10 @@ const benchmark = new Command("benchmark").description("Compare research harness
 benchmark.command("run")
   .argument("<file>", "JSON file containing { arms: [...] }")
   .option("--out <file>", "write the run report and scorecards to a JSON file")
-  .description("Execute declared matched harness arms, then score their evidence")
-  .action(async (file: string, options: { out?: string }) => {
+  .option("--challenger <harness>", "harness that must beat the incumbents", "evidra")
+  .option("--incumbent <harness>", "compare only against this incumbent; by default compare against every other harness")
+  .description("Execute matched arms, score the evidence, and verify the challenger beats incumbents")
+  .action(async (file: string, options: { out?: string; challenger: string; incumbent?: string }) => {
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
     const raw = parsed && typeof parsed === "object" && Array.isArray((parsed as { arms?: unknown }).arms) ? (parsed as { arms: unknown[] }).arms : undefined;
     if (!raw?.length) throw new Error("Benchmark protocol must contain a non-empty arms array.");
@@ -403,9 +405,21 @@ benchmark.command("run")
     const matched = validateBenchmarkProtocol(report.trials);
     if (!matched.valid) throw new Error(`Benchmark results are not matched:\n${matched.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
     const scorecards = scoreHarnessTrials(report.trials);
-    const output = { ...report, scorecards, protocol: matched };
+    const harnesses = [...new Set(report.trials.map((trial) => trial.harness))];
+    const incumbents = options.incumbent ? [options.incumbent] : harnesses.filter((harness) => harness !== options.challenger);
+    const comparisons = incumbents.map((incumbent) => compareHarnesses(report.trials, options.challenger, incumbent));
+    const output = { ...report, scorecards, protocol: matched, challenger: options.challenger, comparisons };
     if (options.out) writeFileSync(resolve(options.out), `${JSON.stringify(output, null, 2)}\n`);
     console.log(`Harness benchmark run complete\n${scorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})`).join("\n")}`);
+    if (comparisons.length) {
+      console.log(`\nCompetitive gate · challenger ${options.challenger}`);
+      for (const comparison of comparisons) {
+        console.log(`vs ${comparison.incumbent}: ${comparison.challengerWins ? "WIN PROVEN" : "NOT PROVEN"} · ${comparison.reason}`);
+      }
+      if (comparisons.some((comparison) => !comparison.challengerWins)) process.exitCode = 2;
+    } else {
+      console.log(`\nCompetitive gate · no incumbent arm found; result is scored evidence, not a win claim.`);
+    }
   });
 benchmark.command("validate")
   .argument("<file>", "JSON file containing a trial array or { trials: [...] }")

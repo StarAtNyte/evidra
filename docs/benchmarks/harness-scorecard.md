@@ -23,6 +23,8 @@ The same protocol is available from the CLI:
 
 ```bash
 evidra benchmark run protocol.json --out benchmark-run.json
+# optionally select one incumbent; otherwise Evidra is compared with every other arm
+evidra benchmark run protocol.json --challenger evidra --incumbent incumbent
 evidra benchmark validate trials.json
 evidra benchmark score trials.json
 evidra benchmark score trials.json --json
@@ -36,7 +38,13 @@ present on every matched arm, with the same metric direction. Historical trial
 exports can still be scored for diagnostics, but incomplete or mismatched files
 are explicitly marked rather than treated as evidence that Evidra won.
 
-`benchmark run` accepts `{ "arms": [...] }` with one command per harness arm.
+`benchmark run` accepts `{ "arms": [...] }` with one command per harness arm. By
+default it treats `evidra` as the challenger and compares it against every other
+harness present in the matched protocol. The command exits non-zero unless every
+comparison passes the conservative win gate. This makes competitiveness the
+default behavior of the executable harness path, while still refusing to call a
+single-task, incomplete, invalid, or unreplicated result a win. Use
+`--challenger` and `--incumbent` for explicit labels.
 Each arm declares the same protocol metadata plus a bounded command, working
 directory, metric name, and baseline. Evidra executes the commands with their
 declared time budgets, parses the declared metric, and writes raw process
