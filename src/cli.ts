@@ -283,7 +283,10 @@ program.command("doctor").description("Check local providers, runtimes, and exec
   } catch (error) {
     checks.push(`ollama API    ${error instanceof Error ? error.message : String(error)}`);
   }
-  checks.push(`modal auth    ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}`);
+  const modalAuth = process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET
+    ? "environment credentials"
+    : (await runProcess(["modal", "token", "list"], root, 10_000)).exitCode === 0 ? "CLI profile available" : "not configured";
+  checks.push(`modal auth    ${modalAuth}`);
   console.log(checks.join("\n"));
 });
 
