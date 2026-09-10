@@ -14,6 +14,8 @@ export interface BenchmarkArmSpec {
   budgetMinutes: number;
   direction: ScoreDirection;
   baselineMetric: number;
+  taskWorstMetric?: number;
+  taskBestMetric?: number;
   metric: string;
   command: string[];
   cwd?: string;
@@ -68,6 +70,8 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       budgetMinutes: arm.budgetMinutes,
       direction: arm.direction,
       baselineMetric: arm.baselineMetric,
+      ...(arm.taskWorstMetric !== undefined ? { taskWorstMetric: arm.taskWorstMetric } : {}),
+      ...(arm.taskBestMetric !== undefined ? { taskBestMetric: arm.taskBestMetric } : {}),
       candidateMetric: Number.isFinite(metric) ? metric : undefined,
       validRun,
       durationSeconds: result.durationMs / 1000,

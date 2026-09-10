@@ -54,6 +54,12 @@ The input is either a JSON array or `{ "trials": [...] }`, with one record per
 fixed task/seed arm and fields for baseline, candidate metric, validity,
 duration, recovery, and reproducibility.
 
+For suites with task-level reference bounds, a trial may also declare
+`taskWorstMetric` and `taskBestMetric`. Evidra then uses the bounded normalized
+outcome when scoring instead of treating every positive delta as equally good;
+this makes results across heterogeneous tasks more meaningful. If bounds are
+absent, the legacy evaluator-backed improvement rule is retained.
+
 Invalid runs and unverified model claims score zero improvement. This prevents a
 harness from winning by producing persuasive text without a measured artifact.
 When optional trajectory fields are present, process quality and alignment also

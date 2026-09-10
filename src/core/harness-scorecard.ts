@@ -11,6 +11,9 @@ export interface HarnessTrial {
   direction: ScoreDirection;
   baselineMetric: number;
   candidateMetric?: number;
+  /** Optional task-level bounds for cross-task metric normalization. */
+  taskWorstMetric?: number;
+  taskBestMetric?: number;
   validRun: boolean;
   durationSeconds: number;
   recovered: boolean;
@@ -126,6 +129,19 @@ function delta(trial: HarnessTrial): number | undefined {
   return trial.direction === "maximize" ? trial.candidateMetric - trial.baselineMetric : trial.baselineMetric - trial.candidateMetric;
 }
 
+function normalizedOutcome(trial: HarnessTrial): number {
+  if (!trial.validRun || trial.candidateMetric === undefined || !Number.isFinite(trial.candidateMetric)) return 0;
+  const best = trial.taskBestMetric;
+  const worst = trial.taskWorstMetric;
+  if (typeof best === "number" && Number.isFinite(best) && typeof worst === "number" && Number.isFinite(worst) && best !== worst) {
+    const value = trial.direction === "maximize"
+      ? (trial.candidateMetric - worst) / (best - worst)
+      : (worst - trial.candidateMetric) / (worst - best);
+    return Math.max(0, Math.min(1, value));
+  }
+  return delta(trial) !== undefined && (delta(trial) ?? 0) > 0 ? 1 : 0;
+}
+
 function median(values: number[]): number | null {
   if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -134,8 +150,7 @@ function median(values: number[]): number | null {
 }
 
 function trialQuality(trial: HarnessTrial): number {
-  const measuredDelta = delta(trial);
-  const improvement = measuredDelta !== undefined && measuredDelta > 0 ? 1 : 0;
+  const improvement = normalizedOutcome(trial);
   const process = typeof trial.processQuality === "number" && Number.isFinite(trial.processQuality)
     ? Math.max(0, Math.min(1, trial.processQuality))
     : trial.validRun ? 1 : 0;

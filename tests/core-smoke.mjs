@@ -1588,6 +1588,12 @@ test("harness scorecard incorporates optional process and alignment evidence", (
   assert.ok(clean.competitiveScore > misaligned.competitiveScore);
 });
 
+test("harness scorecard normalizes bounded task metrics instead of binary improvements", () => {
+  const [halfway] = scoreHarnessTrials([{ harness: "halfway", task: "task", direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.75, taskWorstMetric: 0.5, taskBestMetric: 1, validRun: true, durationSeconds: 1, recovered: false, reproducible: false }]);
+  const [best] = scoreHarnessTrials([{ harness: "best", task: "task", direction: "maximize", baselineMetric: 0.5, candidateMetric: 1, taskWorstMetric: 0.5, taskBestMetric: 1, validRun: true, durationSeconds: 1, recovered: false, reproducible: false }]);
+  assert.ok(best.competitiveScore > halfway.competitiveScore);
+});
+
 test("harness scorecard balances tasks instead of rewarding repeated easy arms", () => {
   const scorecards = scoreHarnessTrials([
     ...Array.from({ length: 9 }, () => ({ harness: "repeater", task: "easy", direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 1, recovered: true, reproducible: true })),
