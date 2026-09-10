@@ -1995,6 +1995,15 @@ test("harness scorecard exposes a quality-reliability-time Pareto frontier", () 
   assert.deepEqual(dominated.find((point) => point.harness === "dominated")?.dominatedBy, ["balanced"]);
 });
 
+test("harness scorecard reports slice-balanced diagnostics", () => {
+  const entries = [
+    ["easy-1", "easy", 0.9], ["easy-2", "easy", 0.9], ["easy-3", "easy", 0.9], ["hard-1", "hard", 0.1],
+  ].map(([task, slice, metric]) => ({ harness: "evidra", task, slice, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, taskWorstMetric: 0, taskBestMetric: 1, candidateMetric: metric, validRun: true, durationSeconds: 1, recovered: false, reproducible: true }));
+  const [scorecard] = scoreHarnessTrials(entries);
+  assert.ok(scorecard.sliceBalancedScore < scorecard.taskBalancedScore);
+  assert.deepEqual(Object.keys(scorecard.sliceScores), ["easy", "hard"]);
+});
+
 test("benchmark protocol rejects unmatched arms before a competitive claim", () => {
   const base = {
     task: "task-1", arm: "arm-a", seed: 7, model: "codex", budgetMinutes: 30,

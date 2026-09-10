@@ -3,6 +3,8 @@ export type ScoreDirection = "maximize" | "minimize";
 export interface HarnessTrial {
   harness: string;
   task: string;
+  /** Optional task slice/family used for slice-balanced diagnostics. */
+  slice?: string;
   /** Optional protocol identity fields. Older exports remain readable. */
   arm?: string;
   seed?: string | number;
@@ -33,7 +35,7 @@ export interface HarnessTrial {
 
 export interface BenchmarkProtocolIssue {
   key: string;
-  field: "task" | "arm" | "seed" | "model" | "budgetMinutes" | "dataRevision" | "runtimeFingerprint" | "direction" | "baselineMetric" | "taskWorstMetric" | "taskBestMetric";
+  field: "task" | "slice" | "arm" | "seed" | "model" | "budgetMinutes" | "dataRevision" | "runtimeFingerprint" | "direction" | "baselineMetric" | "taskWorstMetric" | "taskBestMetric";
   values: string[];
   message: string;
 }
@@ -90,6 +92,7 @@ export function validateBenchmarkProtocol(trials: HarnessTrial[]): BenchmarkProt
   for (const [key, entries] of byArm) {
     const fields: Array<[BenchmarkProtocolIssue["field"], (trial: HarnessTrial) => string]> = [
       ["task", (trial) => trial.task],
+      ["slice", (trial) => trial.slice ?? "<unscoped>"],
       ["arm", (trial) => trial.arm === undefined ? "<missing>" : String(trial.arm)],
       ["seed", (trial) => trial.seed === undefined ? "<missing>" : String(trial.seed)],
       ["model", (trial) => trial.model ?? "<missing>"],
@@ -129,6 +132,8 @@ export interface HarnessScorecard {
   reproducibilityRate: number;
   competitiveScore: number;
   taskBalancedScore: number;
+  sliceBalancedScore: number;
+  sliceScores: Record<string, number>;
   competitiveScoreLower95: number;
   meanProcessQuality: number | null;
   executionAlignmentRate: number | null;
@@ -239,6 +244,20 @@ function taskMeans(entries: HarnessTrial[]): number[] {
   return [...byTask.values()].map((taskEntries) => taskEntries.reduce((sum, entry) => sum + trialQuality(entry), 0) / taskEntries.length);
 }
 
+function sliceMeans(entries: HarnessTrial[]): Record<string, number> {
+  const bySlice = new Map<string, Map<string, number[]>>();
+  for (const entry of entries) {
+    const slice = entry.slice?.trim() || "unscoped";
+    const tasks = bySlice.get(slice) ?? new Map<string, number[]>();
+    tasks.set(entry.task, [...(tasks.get(entry.task) ?? []), trialQuality(entry)]);
+    bySlice.set(slice, tasks);
+  }
+  return Object.fromEntries([...bySlice.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([slice, tasks]) => {
+    const taskValues = [...tasks.values()].map((values) => values.reduce((sum, value) => sum + value, 0) / values.length);
+    return [slice, taskValues.reduce((sum, value) => sum + value, 0) / taskValues.length];
+  }));
+}
+
 /** Deterministic bootstrap lower bound over task means, avoiding a lucky task. */
 function bootstrapLower95(values: number[], seedText: string): number {
   if (!values.length) return 0;
@@ -271,6 +290,7 @@ function protocolKey(trial: HarnessTrial): string {
 
 function fairPair(left: HarnessTrial, right: HarnessTrial): boolean {
   return left.direction === right.direction &&
+    left.slice === right.slice &&
     left.baselineMetric === right.baselineMetric &&
     left.dataRevision === right.dataRevision &&
     left.runtimeFingerprint === right.runtimeFingerprint &&
@@ -465,6 +485,9 @@ export function scoreHarnessTrials(trials: HarnessTrial[]): HarnessScorecard[] {
     // task. The lower bound is a conservative guard against lucky portfolios.
     const means = taskMeans(entries);
     const taskBalancedScore = means.length ? means.reduce((sum, value) => sum + value, 0) / means.length : 0;
+    const sliceScores = sliceMeans(entries);
+    const sliceValues = Object.values(sliceScores);
+    const sliceBalancedScore = sliceValues.length ? sliceValues.reduce((sum, value) => sum + value, 0) / sliceValues.length : 0;
     const competitiveScore = taskBalancedScore;
     return {
       harness,
@@ -478,6 +501,8 @@ export function scoreHarnessTrials(trials: HarnessTrial[]): HarnessScorecard[] {
       reproducibilityRate,
       competitiveScore,
       taskBalancedScore,
+      sliceBalancedScore,
+      sliceScores,
       competitiveScoreLower95: bootstrapLower95(means, harness),
       meanProcessQuality: processValues.length ? processValues.reduce((sum, value) => sum + Math.max(0, Math.min(1, value)), 0) / processValues.length : null,
       executionAlignmentRate: alignmentValues.length ? alignmentValues.reduce<number>((sum, value) => sum + value, 0) / alignmentValues.length : null,

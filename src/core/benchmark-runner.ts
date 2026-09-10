@@ -10,6 +10,7 @@ import { redactSecrets } from "./redaction.js";
 export interface BenchmarkArmSpec {
   harness: string;
   task: string;
+  slice?: string;
   arm: string;
   seed: string | number;
   model: string;
@@ -130,6 +131,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     const trial: HarnessTrial = {
       harness: arm.harness,
       task: arm.task,
+      ...(arm.slice ? { slice: arm.slice } : {}),
       arm: arm.arm,
       seed: arm.seed,
       model: arm.model,
