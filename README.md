@@ -146,6 +146,7 @@ Implemented today:
 - executable matched-arm benchmark protocols that capture raw process evidence before scoring harnesses.
 - paired, task-balanced benchmark comparisons that refuse a win claim without positive lower-bound evidence and sufficient coverage.
 - domain-agnostic successive-halving schedules that allocate cheap screens before expensive validation.
+- autonomous portfolio execution that screens candidates in a first pass and promotes survivors into full validation and replication.
 - checksum-locked validation policies with auditable unlock reasons and pre-experiment mutation checks.
 - bounded scholarly-source discovery that returns candidates separately from trusted, hashed source retrieval.
 - SAFE research can retrieve and hash read-only literature evidence; workspace edits, policy changes, reports, and external actions remain permission-gated.

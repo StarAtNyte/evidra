@@ -89,10 +89,11 @@ The search-policy item is also partially implemented: `greedy`, `ucb_portfolio`,
 experiment manifests and reward ledger; the remaining work is a controlled
 benchmark, not an assumption that a named policy is automatically better.
 
-Portfolio scheduling now also emits a domain-agnostic successive-halving plan:
+Portfolio scheduling now executes a domain-agnostic successive-halving plan:
 cheap screen fractions cover the candidate set first, deterministic retain counts
-bound later stages, and only valid measured outcomes can be promoted. The plan
-is durable in `research.portfolio.planned`; worker-specific reduced commands
+bound later stages, and only valid measured outcomes can be promoted. Screening
+is persisted as `experiment.screening.completed`; full validation and replication
+are launched only for promoted candidates. Worker-specific reduced commands
 still define how a fraction maps to folds, examples, simulation steps, or proof
 search.
 
