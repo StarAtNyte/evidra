@@ -95,6 +95,7 @@ Implemented today:
 - thinking-effort, workbench-mode, and permission selectors;
 - fresh terminal sessions with explicit saved-session resume;
 - durable SQLite state and append-only events;
+- complete promotion-gate snapshots on every leakage/reviewer approval change;
 - generic project-local competition manifests;
 - autonomous campaigns and internal phase goals;
 - independent durable phase machines for Research and Challenge campaigns in the same project;

@@ -109,6 +109,20 @@ test("stale running experiments are recovered for retry after controller restart
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("experiment gate events contain the complete promotion snapshot", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-gates-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.saveExperiment({ id: "exp", payload: { id: "exp", status: "proposed" } });
+    store.setExperimentGates("exp", { leakageAuditPassed: true });
+    store.setExperimentGates("exp", { reviewerApproved: true });
+    const events = store.recentEvents(20).filter((event) => event.type === "experiment.gates.updated");
+    assert.equal(events.at(-1).payload.leakageAuditPassed, true);
+    assert.equal(events.at(-1).payload.reviewerApproved, true);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("capability routing increases verification pressure after failures", () => {
   const bounded = routeCapability({ objective: "summarize one file", mode: "research", provider: "local", autonomy: "safe" });
   const difficult = routeCapability({ objective: "research and run experiments to optimize and replicate a generalizing challenge solution", mode: "challenge", provider: "codex", autonomy: "fast", recentFailureCount: 2, budgetRemainingMinutes: 5 });

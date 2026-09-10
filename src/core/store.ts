@@ -525,7 +525,8 @@ export class ResearchStore {
       VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(experiment_id) DO UPDATE SET leakage_audit_passed = excluded.leakage_audit_passed, reviewer_approved = excluded.reviewer_approved, notes = excluded.notes, updated_at = excluded.updated_at
     `).run(experimentId, (gates.leakageAuditPassed ?? current.leakageAuditPassed) ? 1 : 0, (gates.reviewerApproved ?? current.reviewerApproved) ? 1 : 0, gates.notes ?? current.notes, updatedAt);
-    this.appendEvent("experiment.gates.updated", { experimentId, ...gates, updatedAt });
+    const snapshot = this.experimentGates(experimentId);
+    this.appendEvent("experiment.gates.updated", { experimentId, leakageAuditPassed: snapshot.leakageAuditPassed, reviewerApproved: snapshot.reviewerApproved, notes: snapshot.notes, updatedAt });
   }
 
   experimentGates(experimentId: string): { leakageAuditPassed: boolean; reviewerApproved: boolean; notes: string; updatedAt: string } {
