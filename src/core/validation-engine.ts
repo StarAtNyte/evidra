@@ -11,6 +11,8 @@ export interface ValidationAcceptanceInput {
   requireReplication: boolean;
   leakageAuditPassed: boolean;
   reviewerApproved: boolean;
+  /** Whether a distinct child experiment manifest produced a valid result. */
+  independentReplicationObserved?: boolean;
   subgroupDeltas?: number[];
   probabilityThreshold?: number;
   /** Number of candidate comparisons in the current search family/campaign. */
@@ -70,7 +72,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   const gates = {
     minimumDelta: normalizedDelta !== null && normalizedDelta >= input.minimumDelta,
     statisticalConfidence: comparison.evidence === "replicated" && (comparison.probabilityImproved ?? 0) >= adjustedProbabilityThreshold,
-    replication: !input.requireReplication || comparison.evidence === "replicated",
+    replication: !input.requireReplication || input.independentReplicationObserved === true,
     subgroupRegression: !input.subgroupDeltas?.length || input.subgroupDeltas.every((delta) => delta >= -input.maximumRegressionShift),
     leakageAudit: input.leakageAuditPassed,
     review: input.reviewerApproved,
@@ -79,7 +81,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   const reasons: string[] = [];
   if (!gates.minimumDelta) reasons.push(`normalized delta ${normalizedDelta ?? "missing"} is below required ${input.minimumDelta}`);
   if (!gates.statisticalConfidence) reasons.push(`replicated improvement probability ${(comparison.probabilityImproved ?? 0).toFixed(3)} is below family-wise threshold ${adjustedProbabilityThreshold.toFixed(3)} across ${comparisonCount} comparison(s)`);
-  if (!gates.replication) reasons.push("independent fold/seed replication is required");
+  if (!gates.replication) reasons.push("an independently executed child experiment is required");
   if (!gates.subgroupRegression) reasons.push(`worst subgroup delta ${worstSubgroupDelta?.toFixed(6)} exceeds allowed regression ${input.maximumRegressionShift}`);
   if (!gates.leakageAudit) reasons.push("leakage audit has not passed");
   if (!gates.review) reasons.push("independent reviewer approval is missing");

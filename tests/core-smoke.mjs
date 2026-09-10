@@ -610,13 +610,14 @@ test("validation acceptance requires replicated evidence and safety gates", () =
   const blocked = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: false, reviewerApproved: false });
   assert.equal(blocked.comparison.evidence, "replicated");
   assert.equal(blocked.gates.minimumDelta, true);
+  assert.equal(blocked.gates.replication, false);
   assert.equal(blocked.accepted, false);
-  const accepted = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true });
+  const accepted = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
   assert.equal(accepted.accepted, true);
   assert.equal(accepted.adjustedProbabilityThreshold, 0.95);
-  const familyWise = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, probabilityThreshold: 0.5, comparisonCount: 2 });
+  const familyWise = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, probabilityThreshold: 0.5, comparisonCount: 2 });
   assert.equal(familyWise.adjustedProbabilityThreshold, 0.75);
-  const lowerIsBetter = evaluateValidationAcceptance({ baseline: { ...base, metrics: { score: 0.8 }, metricsByFold: { score: [0.79, 0.8, 0.81] } }, candidate: { ...candidate, metrics: { score: 0.78 }, metricsByFold: { score: [0.77, 0.78, 0.79] } }, metric: "score", direction: "minimize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true });
+  const lowerIsBetter = evaluateValidationAcceptance({ baseline: { ...base, metrics: { score: 0.8 }, metricsByFold: { score: [0.79, 0.8, 0.81] } }, candidate: { ...candidate, metrics: { score: 0.78 }, metricsByFold: { score: [0.77, 0.78, 0.79] } }, metric: "score", direction: "minimize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
   assert.ok(Math.abs(lowerIsBetter.normalizedDelta - 0.02) < 1e-12);
   assert.equal(lowerIsBetter.accepted, true);
 });

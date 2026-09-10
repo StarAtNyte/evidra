@@ -2469,6 +2469,7 @@ experiment.command("run")
           requireReplication: manifest.acceptance.requireReplication,
           leakageAuditPassed: gates.leakageAuditPassed,
           reviewerApproved: gates.reviewerApproved,
+          independentReplicationObserved: typeof entryPayload.replicationOf === "string" || typeof manifest.parent === "string",
           comparisonCount,
         });
         resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, comparisonCount, adjustedProbabilityThreshold: acceptance.adjustedProbabilityThreshold, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });

@@ -109,6 +109,8 @@ Evaluator integrity is a hard gate: before an experiment engineer runs, Evidra f
 
 Final reports also run a deterministic claim audit: measured, literature-only, provisional, unsupported, and conflicted claims are separated, and a report is not marked publishable when unsupported or contradictory claims remain.
 
+Fold/seed bootstrap replication and independent child-experiment replication are tracked separately. A manifest with `requireReplication` cannot pass promotion from repeated folds alone; the controller must observe a valid run for a distinct replication manifest.
+
 The same audit is an execution gate, not just a report decoration. Autonomous research cannot mark a goal complete while durable claims are unsupported, provisional, literature-only, or conflicted. Inspect the gate directly with `evidra evidence audit` (or `--json` for automation); the controller records the rejection and continues from the missing evidence.
 
 Before allocating compute, Evidra also structurally scores each hypothesis for a concrete mechanism, grounded evidence, falsifiability, implementation cost, and leakage risk. This score only prioritizes work; it never counts as an empirical improvement.
