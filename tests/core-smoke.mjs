@@ -81,6 +81,21 @@ import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
 import { evaluateHarnessChange, inventoryHarnessComponents, planHarnessInterventions } from "../dist/core/harness-evolution.js";
 import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
+import { assessStopPolicy } from "../dist/core/stop-policy.js";
+
+test("stop policy only converges after enough low-gain evidence", () => {
+  const rewards = Array.from({ length: 5 }, () => ({ reward: 0.001, durationSeconds: 60, valid: true }));
+  const result = assessStopPolicy({ stopCondition: "stop after convergence or no useful expected gain", rewards, remainingBudgetMinutes: 10 });
+  assert.equal(result.action, "stop");
+  assert.match(result.reason, /below/);
+  assert.equal(assessStopPolicy({ stopCondition: "stop after convergence", rewards: rewards.slice(0, 2), remainingBudgetMinutes: 10 }).action, "continue");
+});
+
+test("stop policy pauses unresolved leakage and repeated failures", () => {
+  assert.equal(assessStopPolicy({ stopCondition: "pause for leakage review", rewards: [], remainingBudgetMinutes: 10, leakageUnresolved: true }).action, "pause");
+  const failures = Array.from({ length: 5 }, () => ({ reward: -1, durationSeconds: 60, valid: false }));
+  assert.equal(assessStopPolicy({ stopCondition: "pause after repeated failures", rewards: failures, remainingBudgetMinutes: 10 }).action, "pause");
+});
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));

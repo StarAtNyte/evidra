@@ -19,6 +19,7 @@ import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
 import { renderTimeline } from "./core/timeline.js";
 import { latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
 import { detectStagnation } from "./core/stagnation.js";
+import { assessStopPolicy } from "./core/stop-policy.js";
 import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
 import { campaignElapsedMinutes, campaignRemainingMs, pauseCampaign, readCampaignRuntime, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
@@ -2084,6 +2085,16 @@ research
       if (researchQuality.overall !== "PASS") decisionStore.appendEvent("trajectory.capability_gaps", { trajectoryType: "research", quality: researchQuality, objective });
       const recentDecisions = decisionStore.decisions().map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3);
       const stagnation = detectStagnation(recentDecisions);
+      const stopPolicy = assessStopPolicy({
+        stopCondition: campaign.stopCondition,
+        rewards: durableEvents.filter((event) => event.type === "research.search.reward").map((event) => {
+          const payload = event.payload as { reward?: unknown; durationSeconds?: unknown; valid?: unknown; reproducible?: unknown };
+          return { reward: Number(payload.reward), durationSeconds: Number(payload.durationSeconds), valid: payload.valid !== false, reproducible: payload.reproducible === true };
+        }).filter((observation) => Number.isFinite(observation.reward)),
+        remainingBudgetMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
+        leakageUnresolved: phaseGoal?.phase === "data_audit" && !durableEvents.some((event) => event.type === "data.audit.accepted"),
+      });
+      decisionStore.appendEvent("research.stop_policy.assessed", { cycle, ...stopPolicy });
       if (phaseGoal) {
         const now = new Date().toISOString();
         const goals = phaseGoalsForMode(decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode);
@@ -2103,16 +2114,18 @@ research
       // pending proposal is durable and visible; subsequent cycles can gather
       // evidence or select an unrelated hypothesis until the budget/stop
       // condition is reached.
-      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || stagnation.stagnant || elapsedMinutes >= campaign.budgetMinutes;
+      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || stagnation.stagnant || stopPolicy.action !== "continue" || elapsedMinutes >= campaign.budgetMinutes;
       if (terminal) {
-        if (decision.goalStatus === "blocked" || stagnation.stagnant) Object.assign(campaign, pauseCampaign(campaign));
+        if (decision.goalStatus === "blocked" || stagnation.stagnant || stopPolicy.action === "pause") Object.assign(campaign, pauseCampaign(campaign));
         else campaign.status = "completed";
         if (stagnation.stagnant) decisionStore.appendEvent("research.stagnation.detected", { cycles: stagnation.cycles, signature: stagnation.signature, action: "pause_for_review" });
+        if (stopPolicy.action !== "continue") decisionStore.appendEvent("research.stop_policy.triggered", { cycle, action: stopPolicy.action, reason: stopPolicy.reason, samples: stopPolicy.samples, meanRewardPerMinute: stopPolicy.meanRewardPerMinute });
         decisionStore.saveCampaign(campaign);
       }
       decisionStore.close();
       console.log(formatResearchDecision(decision));
       if (stagnation.stagnant) console.log(`\nCampaign paused after ${stagnation.cycles} unchanged active decisions; review the bottleneck before resuming.`);
+      if (stopPolicy.action !== "continue") console.log(`\nCampaign ${stopPolicy.action}: ${stopPolicy.reason}.`);
       if (criticReview) console.log(`\nCritic: ${criticReview.verdict} · confidence ${criticReview.confidence.toFixed(2)}\n${criticReview.summary}${criticReview.objections.length ? `\nObjections:\n${criticReview.objections.map((item) => `- ${item}`).join("\n")}` : ""}`);
       if (terminal) break;
     } while (true);
