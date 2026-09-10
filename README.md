@@ -273,6 +273,9 @@ Evidra does not require a fixed competition name. A project can provide competit
       "workspacePath": ".",
       "baselineCommand": ["python", "baseline.py"],
       "experimentCommand": ["python", "run_experiment.py"],
+      "execution": {
+        "reducedValidationCommand": ["python", "run_experiment.py", "--folds", "1", "--epochs", "1"]
+      },
       "submission": { "platform": "manual" },
       "submissionPolicy": {
         "minimumInformationValue": 0.2,

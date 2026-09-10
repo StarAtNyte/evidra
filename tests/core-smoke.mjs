@@ -29,6 +29,7 @@ import { createExperimentManifest, createReplicationManifest } from "../dist/cor
 import { estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.js";
 import { auditData } from "../dist/core/data-audit.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
+import { runReducedValidation } from "../dist/core/stage-executor.js";
 import { evaluateTrajectory, capabilityGaps } from "../dist/core/trajectories.js";
 import { routeCapability } from "../dist/core/capability-router.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
@@ -152,6 +153,17 @@ test("execution stages reject invalid contracts before expensive work", () => {
   assert.equal(validateExecutionContract({ ...manifest, evaluation: { requiredArtifacts: ["../secret.txt"] } }, "/tmp/evidra-worktree", ["python", "run.py"]).valid, false);
   const progressed = advanceExecutionStage(plan, "feasibility", "completed");
   assert.equal(nextExecutionStage(progressed).id, "smoke");
+});
+
+test("reduced validation runs with a cheap artifact contract", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-reduced-stage-"));
+  try {
+    const manifest = { id: "exp-reduced", resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { requiredArtifacts: ["final-predictions.csv"], folds: [0], seeds: [0] } };
+    const result = await runReducedValidation(new LocalExecutor(), manifest, root, [process.execPath, "-e", "console.log('macro_f1: 0.42')"], "macro_f1");
+    assert.equal(result.status, "completed");
+    assert.equal(result.metrics.macro_f1, 0.42);
+    assert.deepEqual(result.artifacts, {});
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("data audit reports bounded tabular duplicate and missingness diagnostics", () => {

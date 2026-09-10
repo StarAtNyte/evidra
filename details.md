@@ -240,6 +240,18 @@ validation:
     fraction: 0.1
     reveal_policy: final_only
 
+An adapter may expose a cheap successive-halving gate through the project manifest:
+
+```json
+{
+  "execution": {
+    "reducedValidationCommand": ["python", "run_experiment.py", "--folds", "1", "--epochs", "1"]
+  }
+}
+```
+
+Evidra runs this command on the selected executor before full validation, records its metric and provenance, and refuses to spend full compute when the reduced gate fails. The reduced stage intentionally has no final-artifact requirement; the full stage remains responsible for required predictions, metrics, and checksums.
+
 compute:
   local:
     enabled: true
@@ -1499,5 +1511,4 @@ when the subscription/limit hits, we can use local qwen model , also the tool sh
 
 
 should be able to run fully yolo too 
-
 

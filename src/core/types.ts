@@ -36,6 +36,9 @@ export const CompetitionConfigSchema = z.object({
     totalLimit: z.number().int().positive().optional(),
     dailyLimit: z.number().int().positive().optional(),
   }).optional(),
+  execution: z.object({
+    reducedValidationCommand: z.array(z.string()).min(1).optional(),
+  }).optional(),
   validation: z.object({
     primarySplit: z.string().min(1).default("mini"),
     folds: z.array(z.number().int().nonnegative()).min(1).default([0]),

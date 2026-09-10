@@ -37,6 +37,7 @@ import { allocateNextResearch } from "../core/allocation.js";
 import { rankPriorities } from "../core/scheduler.js";
 import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "../core/execution-stages.js";
+import { runReducedValidation } from "../core/stage-executor.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -878,13 +879,36 @@ export function App({ root }: { root: string }): React.JSX.Element {
     contractStore.close();
     executionPlan = advanceExecutionStage(executionPlan, "feasibility", contract.valid ? "completed" : "failed");
     if (!contract.valid) throw new Error(`Experiment feasibility check failed:\n${contract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
-    if (config.provider !== "codex") executionPlan = advanceExecutionStage(executionPlan, "smoke", "skipped");
-    // Generic competition commands do not expose a safe reduced-data contract
-    // yet; record that honestly instead of pretending the full command was a
-    // successive-halving stage.
-    executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", "skipped");
-    setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
     const executor = executorFor(manifest.resources.executor, root);
+    if (config.provider !== "codex") executionPlan = advanceExecutionStage(executionPlan, "smoke", "skipped");
+    const reducedCommand = adapter.config.execution?.reducedValidationCommand;
+    if (reducedCommand) {
+      setProgress(`Experiment ${id} · running reduced validation gate...`);
+      const reducedManifest = { ...manifest, evaluation: { ...manifest.evaluation, requiredArtifacts: [] } };
+      const reducedContract = validateExecutionContract(reducedManifest, experimentCwd, reducedCommand);
+      if (!reducedContract.valid) {
+        executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", "failed");
+        const failedStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        failedStore.appendEvent("experiment.stage.reduced_validation.failed", { experimentId: id, reasons: reducedContract.reasons, command: reducedCommand });
+        failedStore.saveExperiment({ id, payload: { ...entryPayload, status: "failed", executionPlan } });
+        failedStore.close();
+        throw new Error(`Reduced validation feasibility check failed:\n${reducedContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
+      }
+      const reduced = await runReducedValidation(executor, manifest, experimentCwd, reducedCommand, adapter.config.metric.name, registerProcess);
+      activeProcess.current = null;
+      executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", reduced.status === "completed" ? "completed" : "failed");
+      const reducedStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      reducedStore.appendEvent(reduced.status === "completed" ? "experiment.stage.reduced_validation.completed" : "experiment.stage.reduced_validation.failed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[adapter.config.metric.name] ?? null, exitCode: reduced.exitCode, command: reducedCommand });
+      if (reduced.status !== "completed") reducedStore.saveExperiment({ id, payload: { ...entryPayload, status: "failed", executionPlan } });
+      reducedStore.close();
+      if (reduced.status !== "completed") throw new Error(`Reduced validation failed (${reduced.exitCode}): ${reduced.stderr || reduced.stdout}`);
+    } else {
+      executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", "skipped");
+      const skippedStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      skippedStore.appendEvent("experiment.stage.reduced_validation.skipped", { experimentId: id, reason: "manifest has no generic reduced-data contract" });
+      skippedStore.close();
+    }
+    setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
     let evaluatorOutput: { stdout: string; stderr: string; exitCode: number } | undefined;
     let result = await executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name);
     let attempt = 1;

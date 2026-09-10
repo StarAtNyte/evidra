@@ -17,6 +17,7 @@ import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.
 import { submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
 import { recoveryDelay, recoveryPlan } from "./core/recovery.js";
+import { runReducedValidation } from "./core/stage-executor.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
@@ -714,15 +715,38 @@ experiment.command("run")
       failedStore.close();
       throw new Error(`Experiment feasibility check failed:\n${contract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
     }
-    executionPlan = advanceExecutionStage(executionPlan, "smoke", "skipped");
-    executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", "skipped");
-    const skippedStagesStore = new ResearchStore(statePath);
-    skippedStagesStore.appendEvent("experiment.stage.smoke.skipped", { experimentId: id, reason: "headless CLI has no configured smoke command" });
-    skippedStagesStore.appendEvent("experiment.stage.reduced_validation.skipped", { experimentId: id, reason: "manifest has no generic reduced-data contract" });
-    skippedStagesStore.close();
     const candidateEstimator = (manifest.change.configPatch as { estimatorPath?: unknown }).estimatorPath;
     const isCandidateEvaluation = typeof candidateEstimator === "string" && candidateEstimator !== adapter.config.evaluator.estimatorPath;
     const executor = executorFor(manifest.resources.executor, root);
+    executionPlan = advanceExecutionStage(executionPlan, "smoke", "skipped");
+    const stageStore = new ResearchStore(statePath);
+    stageStore.appendEvent("experiment.stage.smoke.skipped", { experimentId: id, reason: "manifest has no configured smoke command" });
+    stageStore.close();
+    const reducedCommand = adapter.config.execution?.reducedValidationCommand;
+    if (reducedCommand) {
+      const reducedManifest = { ...manifest, evaluation: { ...manifest.evaluation, requiredArtifacts: [] } };
+      const reducedContract = validateExecutionContract(reducedManifest, experimentCwd, reducedCommand);
+      if (!reducedContract.valid) {
+        executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", "failed");
+        const failedStore = new ResearchStore(statePath);
+        failedStore.appendEvent("experiment.stage.reduced_validation.failed", { experimentId: id, reasons: reducedContract.reasons, command: reducedCommand });
+        failedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "failed", executionPlan } });
+        failedStore.close();
+        throw new Error(`Reduced validation feasibility check failed:\n${reducedContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
+      }
+      const reduced = await runReducedValidation(executor, manifest, experimentCwd, reducedCommand, adapter.config.metric.name);
+      executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", reduced.status === "completed" ? "completed" : "failed");
+      const reducedStore = new ResearchStore(statePath);
+      reducedStore.appendEvent(reduced.status === "completed" ? "experiment.stage.reduced_validation.completed" : "experiment.stage.reduced_validation.failed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[adapter.config.metric.name] ?? null, exitCode: reduced.exitCode, command: reducedCommand });
+      if (reduced.status !== "completed") reducedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "failed", executionPlan } });
+      reducedStore.close();
+      if (reduced.status !== "completed") throw new Error(`Reduced validation failed (${reduced.exitCode}): ${reduced.stderr || reduced.stdout}`);
+    } else {
+      executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", "skipped");
+      const skippedStore = new ResearchStore(statePath);
+      skippedStore.appendEvent("experiment.stage.reduced_validation.skipped", { experimentId: id, reason: "manifest has no generic reduced-data contract" });
+      skippedStore.close();
+    }
     let result = await executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name);
     let attempt = 1;
     while (result.status !== "completed") {
