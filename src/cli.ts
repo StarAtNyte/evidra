@@ -1037,6 +1037,21 @@ research
         }
       }
       let decisionStore = new ResearchStore(statePath);
+      // In autonomous modes, a single concrete proposal plus a non-rejecting
+      // critic is enough to enter the controller's bounded execution path.
+      // Without this transition a director can repeatedly emit `propose`
+      // forever even though it has already supplied the exact hypothesis the
+      // controller needs. Safe mode deliberately remains approval-gated.
+      if (autonomyPolicy(autonomy).canRunIsolatedExperiments && criticReview?.verdict !== "reject" && decision.decision === "propose" && !decision.selectedHypothesis && decision.hypotheses.length === 1) {
+        const selected = decision.hypotheses[0];
+        decision = {
+          ...decision,
+          decision: "run",
+          selectedHypothesis: selected.title,
+          nextAction: `Execute the single concrete hypothesis in an isolated worktree: ${selected.title}.`,
+        };
+        decisionStore.appendEvent("research.autonomous.execution_promoted", { reason: "single concrete proposal with non-rejecting critic", hypothesis: selected.title, autonomy });
+      }
       const criticGate = applyCriticGate(decision, criticReview);
       const criticBlocks = criticGate.blocked;
       if (criticBlocks) {
