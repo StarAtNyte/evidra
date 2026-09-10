@@ -414,12 +414,15 @@ benchmark.command("export")
     const baselineMetric = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] : undefined;
     if (!Number.isFinite(baselineMetric)) { store.close(); throw new Error("No finite baseline.completed metric is available for benchmark export."); }
     const events = store.recentEvents(5_000);
+    const independentlyReplicatedParents = new Set(events
+      .filter((event) => event.type === "experiment.autonomous.replication.completed")
+      .map((event) => (event.payload as { parentId?: unknown }).parentId)
+      .filter((parentId): parentId is string => typeof parentId === "string"));
     const trials: HarnessTrial[] = [];
     for (const run of store.runs()) {
       const payload = run.payload as { metrics?: Record<string, number>; durationSeconds?: number; recoveryAttempts?: number; status?: string };
       const candidateMetric = payload.metrics?.[adapter.config.metric.name];
       const experimentEvents = events.filter((event) => (event.payload as { experimentId?: unknown }).experimentId === run.experimentId);
-      const comparison = [...experimentEvents].reverse().find((event) => event.type === "experiment.comparison.completed")?.payload as { comparison?: { evidence?: string } } | undefined;
       trials.push({
         harness: options.harness,
         task: project?.competitionId ?? adapter.id,
@@ -429,7 +432,9 @@ benchmark.command("export")
         validRun: run.status === "completed" && Number.isFinite(candidateMetric),
         durationSeconds: typeof payload.durationSeconds === "number" ? payload.durationSeconds : 0,
         recovered: (payload.recoveryAttempts ?? 1) > 1 || experimentEvents.some((event) => event.type === "run.retry.scheduled"),
-        reproducible: comparison?.comparison?.evidence === "replicated",
+        // Fold/seed bootstrap evidence is not the same as an independent
+        // replication experiment. Only a completed child manifest counts.
+        reproducible: independentlyReplicatedParents.has(run.experimentId),
       });
     }
     store.close();
