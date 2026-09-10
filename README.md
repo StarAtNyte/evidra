@@ -140,6 +140,9 @@ Implemented today:
 - Docker/Podman execution mounts only the exact isolated experiment worktree, uses a network-disabled container, and keeps the same artifact, metric, retry, and evidence gates;
 - Codex-backed experiment engineers honor entitlement reset windows with bounded retry/wait behavior instead of silently abandoning an authorized campaign;
 - shell and autonomy safety guards.
+- empirical-Bernstein search allocation with variance-aware uncertainty and hard remaining-budget checks;
+- deterministic hierarchical research-decision rubrics for action closure, falsifiability, evidence, verification, diversity, and risk, with gaps fed into the next cycle;
+- matched benchmark-arm validation requiring task, seed, model, and budget parity before a competitive claim.
 
 ### Experience-driven improvement
 

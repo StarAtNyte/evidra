@@ -64,6 +64,7 @@ import { learnPromotionPolicy, promotionObservations } from "../dist/core/promot
 import { captureProtectedFiles, changedProtectedFiles } from "../dist/core/integrity.js";
 import { assessHypothesisQuality } from "../dist/core/hypothesis-quality.js";
 import { ResearchDecisionSchema } from "../dist/core/types.js";
+import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
 
@@ -1631,6 +1632,23 @@ test("research decisions support non-metric outcomes without fabricated GPU esti
   assert.equal(decision.hypotheses[0].outcomeType, "proof");
   assert.equal(decision.hypotheses[0].computeCostGpuHours, 0);
   assert.equal(decision.hypotheses[0].expectedMetricDelta.median, 0);
+});
+
+test("research decision rubric exposes actionable evidence gaps", () => {
+  const strong = ResearchDecisionSchema.parse({
+    phase: "hypothesis", decision: "run", bottleneck: "choose a validated direction",
+    rationale: "The baseline and source audit support a falsifiable change.",
+    hypotheses: [
+      { formulationFamily: "data", title: "grouped split", mechanism: "Grouping prevents source leakage.", proposedChange: "Use grouped folds.", evidence: ["audit.json"], falsificationTest: "Reject if three held-out seeds do not improve.", expectedMetricDelta: { low: 0.01, median: 0.03, high: 0.06 } },
+      { formulationFamily: "validation", title: "shift check", mechanism: "Subgroup shift hides regression.", proposedChange: "Add subgroup validation.", evidence: ["shift.csv"], falsificationTest: "Reject if subgroup deltas remain unchanged.", expectedMetricDelta: { low: 0, median: 0.01, high: 0.03 } },
+    ], selectedHypothesis: "grouped split", nextAction: "Run reduced grouped validation.",
+  });
+  const strongAssessment = assessResearchDecisionRubric(strong, { baselineAvailable: true, sourceCount: 2, evidenceConflicts: 0 });
+  assert.equal(strongAssessment.verdict, "strong");
+  const weak = ResearchDecisionSchema.parse({ decision: "propose", bottleneck: "unknown", rationale: "try it", hypotheses: [], selectedHypothesis: null, nextAction: "go" });
+  const weakAssessment = assessResearchDecisionRubric(weak, { evidenceConflicts: 2 });
+  assert.ok(weakAssessment.gaps.length >= 2);
+  assert.equal(weakAssessment.verdict, "weak");
 });
 
 test("non-metric experiments can pass evidence audit through verified completion", () => {

@@ -123,3 +123,22 @@ falsification test, evidence attachment, cost validity, implementation risk, and
 leakage risk. This is deliberately only a scheduling signal. It cannot promote
 a candidate; only evaluator-backed metrics, verification, and replication can
 do that. This follows the judgment-heavy framing in [GeneBench-Pro](https://openai.com/index/introducing-genebench-pro/), while keeping Evidra's claims tied to executable evidence.
+
+## Hierarchical rubrics and research-cycle feedback
+
+[PaperBench](https://openai.com/index/paperbench/) evaluates research replication
+with hierarchically decomposed, individually gradable tasks rather than a single
+impressionistic score. [FrontierScience](https://openai.com/index/frontierscience/)
+and [LifeSciBench](https://openai.com/index/introducing-life-sci-bench/) likewise
+use expert-grounded criteria for intermediate reasoning, evidence handling, and
+operational usefulness. Evidra now applies a deterministic pre-compute rubric to
+each director decision: action closure, falsifiability, evidence grounding,
+verification contract, formulation diversity, and risk/conflict awareness.
+Rubric gaps are durable events and become explicit guidance in the next cycle;
+they are never treated as experimental success.
+
+[AARRI-Bench](https://arxiv.org/abs/2606.07462) and recent ideation-diversity
+studies reinforce that research agents should be evaluated across a lifecycle,
+not only on the final answer. The rubric is therefore attached to the decision
+loop while evaluator-backed artifacts, replication, and the competitive scorecard
+remain the promotion authority.

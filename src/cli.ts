@@ -65,6 +65,7 @@ import { learnPromotionPolicy, promotionObservations } from "./core/promotion-le
 import { scoreHarnessTrials, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
 import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.js";
 import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
+import { assessResearchDecisionRubric } from "./core/research-rubric.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -1047,6 +1048,15 @@ research
       const experienceMix = selectCurriculum(experienceRecords);
       const curriculumGuidance = experienceMix.map((stage) => `stage ${stage.stage}: ${stage.trajectoryIds.join(", ") || "none"} (${stage.rationale})`).join("; ");
       const allocatedObjective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra search policy:\nPrioritize the '${searchPolicy[0]?.operator ?? "ucb_portfolio"}' operator (${searchPolicy[0]?.rationale ?? "portfolio default"}) while preserving at least one diverse alternative.\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}`;
+      const priorRubricGaps = recentEvents
+        .filter((event) => event.type === "research.rubric.assessed")
+        .slice(-2)
+        .flatMap((event) => ((event.payload as { gaps?: unknown }).gaps ?? []))
+        .filter((gap): gap is string => typeof gap === "string");
+      const rubricGuidance = priorRubricGaps.length
+        ? `\n\nPrior decision-rubric gaps to repair before spending compute:\n${[...new Set(priorRubricGaps)].join("\n")}`
+        : "";
+      const cycleObjective = allocatedObjective + rubricGuidance;
       const researchSources = latestSourcePayloads(store.sources(), 12);
       const researchMemory = researchMemoryContext(store, 30);
       const peerLaneBoard = boundedPeerBoard(recentEvents);
@@ -1085,7 +1095,7 @@ research
       while (true) {
         try {
           console.log("Research · independent lanes are investigating the evidence...");
-          laneReports = await runResearchLanes(agentObjective, {
+          laneReports = await runResearchLanes(cycleObjective, {
             project: activeProject,
             competition: adapter.config,
             observation,
@@ -1118,8 +1128,8 @@ research
           crossPollinationStore.appendEvent("research.cross_pollination.completed", { cycle, board: crossPollination });
           crossPollinationStore.close();
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
-          criticReview = await runResearchCritic(agentObjective, decision, laneReports, {
+          decision = await runResearchDirector(cycleObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
+          criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
             provider: options.provider,
             model: selectedModel,
             fallbackLocalModel: options.limitPolicy === "fallback" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
@@ -1196,6 +1206,19 @@ research
         decisionStore.appendEvent("research.critic.gate", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks });
         decision = criticGate.decision;
       }
+      const decisionRubric = assessResearchDecisionRubric(decision, {
+        baselineAvailable: Boolean(observation.baseline?.exitCode === 0),
+        sourceCount: researchSources.length,
+        evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
+      });
+      decisionStore.appendEvent("research.rubric.assessed", {
+        cycle,
+        score: decisionRubric.score,
+        threshold: decisionRubric.threshold,
+        verdict: decisionRubric.verdict,
+        criteria: decisionRubric.criteria,
+        gaps: decisionRubric.gaps,
+      });
       decision = enforceGoalTermination(decision);
       if (phaseGoal && decision.goalStatus === "met") {
         const phaseEvents = decisionStore.recentEvents(500);
