@@ -21,7 +21,7 @@ import { LocalExecutor, parseMetricOutput } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
-import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence } from "../dist/core/phase-goals.js";
+import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalsForMode } from "../dist/core/phase-goals.js";
 import { submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
@@ -384,6 +384,16 @@ test("phase completion requires durable evidence instead of model status alone",
   assert.equal(researchGoal.title, "Establish a trusted reference");
   assert.equal(evaluatePhaseGoalEvidence(researchGoal, { mode: "research", eventTypes: ["research.observation"], eventPayloads: [], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, true);
   assert.equal(evaluatePhaseGoalEvidence(researchGoal, { mode: "research", eventTypes: [], eventPayloads: [], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, false);
+});
+
+test("research and challenge phase machines remain isolated in one durable project", () => {
+  const research = definePhaseGoals("research", "research");
+  const challenge = definePhaseGoals("challenge", "challenge");
+  const mixed = [...research, ...challenge];
+  assert.equal(phaseGoalsForMode(mixed, "research").length, research.length);
+  assert.equal(phaseGoalsForMode(mixed, "challenge").length, challenge.length);
+  const completedResearch = research.map((goal) => ({ ...goal, status: "met" }));
+  assert.equal(activePhaseGoal([...completedResearch, ...challenge], "challenge")?.id, challenge[0].id);
 });
 
 test("project-local competition manifests replace hardcoded adapters", () => {

@@ -5,7 +5,7 @@ import { join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
 import { createExperimentManifest, manifestSummary } from "./core/experiment-manifest.js";
-import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence } from "./core/phase-goals.js";
+import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalsForMode } from "./core/phase-goals.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "./core/types.js";
 import { loadCompetitionAdapter } from "./competitions/adapters.js";
 import { auditData } from "./core/data-audit.js";
@@ -572,7 +572,7 @@ research
       if (!store.project()) store.createProject({ id: `evidra-${adapter.id}`, name: adapter.config.name, competitionId: adapter.id, config: adapter.config });
       store.saveCampaign(campaign);
       if (!store.phaseGoals().length) for (const goal of definePhaseGoals(objective, mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
-      const phaseGoal = activePhaseGoal(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)));
+      const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode));
       const recentEvents = store.recentEvents(20);
       const researchSources = store.sources().slice(0, 12).map((entry) => entry.payload);
       const researchMemory = researchMemoryContext(store, 30);
@@ -669,7 +669,7 @@ research
       const stagnation = detectStagnation(recentDecisions);
       if (phaseGoal) {
         const now = new Date().toISOString();
-        const goals = decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));
+        const goals = phaseGoalsForMode(decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode);
         const index = goals.findIndex((goal) => goal.id === phaseGoal.id);
         if (index >= 0) {
           const met = decision.goalStatus === "met";
@@ -703,7 +703,7 @@ research.command("propose")
     if (!store.phaseGoals().length) {
       for (const goal of definePhaseGoals(objective, "research")) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
     }
-    const phaseGoal = activePhaseGoal(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)));
+    const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), "research"));
     console.log("Research 1/3 · inspecting repository...");
     const gitStatus = await runProcess(["git", "status", "--short"], root);
     const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);

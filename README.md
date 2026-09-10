@@ -97,6 +97,7 @@ Implemented today:
 - durable SQLite state and append-only events;
 - generic project-local competition manifests;
 - autonomous campaigns and internal phase goals;
+- independent durable phase machines for Research and Challenge campaigns in the same project;
 - bounded research-director tool loop;
 - workspace file/search/read, Git status, safe shell, data audit, source retrieval, validation-policy, and report tools;
 - durable queue with retries, stale-task recovery, bounded concurrency, and visible queued prompts;

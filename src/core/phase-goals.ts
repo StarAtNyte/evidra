@@ -34,10 +34,16 @@ export function definePhaseGoals(ultimateGoal: string, mode: "research" | "chall
   });
 }
 
-export function activePhaseGoal(goals: PhaseGoal[]): PhaseGoal | undefined {
+export function activePhaseGoal(goals: PhaseGoal[], mode?: "research" | "challenge"): PhaseGoal | undefined {
+  const scoped = mode ? phaseGoalsForMode(goals, mode) : goals;
   // A blocked goal is the next goal to revisit after the operator resolves its
   // bottleneck; never silently advance past it to a later pending phase.
-  return goals.find((goal) => goal.status === "active") ?? goals.find((goal) => goal.status === "blocked") ?? goals.find((goal) => goal.status === "pending");
+  return scoped.find((goal) => goal.status === "active") ?? scoped.find((goal) => goal.status === "blocked") ?? scoped.find((goal) => goal.status === "pending");
+}
+
+/** Keep research and challenge phase machines independent in one project store. */
+export function phaseGoalsForMode(goals: PhaseGoal[], mode: "research" | "challenge"): PhaseGoal[] {
+  return goals.filter((goal) => goal.id.startsWith(`goal_${mode}_`));
 }
 
 export interface PhaseGoalEvidence {

@@ -23,7 +23,7 @@ import { auditData } from "../core/data-audit.js";
 import { executeResearchTool } from "../core/tools.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { retrieveSource, sourceClaims, sourceSearchText } from "../core/sources.js";
-import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence } from "../core/phase-goals.js";
+import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalsForMode } from "../core/phase-goals.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
@@ -657,10 +657,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
     setProgress("Research 3/3 · asking the director to analyze observed evidence and select the next experiment...");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const project = store.project();
-    if (!store.phaseGoals().length) {
+    const persistedGoals = store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));
+    if (!phaseGoalsForMode(persistedGoals, mode).length) {
       for (const goal of definePhaseGoals(objective, mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
     }
-    const phaseGoal = activePhaseGoal(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)));
+    const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode));
     const recentEvents = store.recentEvents(20);
     const consistencyEvents = store.recentEvents(200);
     const evidenceConflicts = {
@@ -796,7 +797,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: nextStatus, payload: { ...phaseGoal, status: nextStatus, attempts: phaseGoal.attempts + 1, updatedAt: now } });
     }
     if (phaseGoal && effectiveDecision.goalStatus === "met") {
-      const goals = decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));
+      const goals = phaseGoalsForMode(decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode);
       const index = goals.findIndex((goal) => goal.id === phaseGoal.id);
       const now = new Date().toISOString();
       if (index >= 0) {
@@ -1258,7 +1259,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (request === "/mode" || request === "/workbench") {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const counts = store.counts();
-      const activeGoal = activePhaseGoal(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)));
+      const activeGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), config.mode));
       const recent = store.recentEvents(5).map((event) => `${event.type} · ${event.createdAt}`).join("\n") || "No events yet.";
       store.close();
       append("assistant", `Evidra Workbench\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\n\nActive phase goal\n  ${activeGoal?.phase ?? "not initialized"}: ${activeGoal?.title ?? "Run /research to define goals"}\n  status: ${activeGoal?.status ?? "pending"}\n  attempts: ${activeGoal?.attempts ?? 0}\n\nResearch graph\n  hypotheses  ${counts.hypotheses}\n  claims      ${counts.claims}\n  edges       ${counts.edges}\n  sources     ${counts.sources}\n  decisions   ${counts.decisions}\n\nChallenge execution\n  experiments ${counts.experiments}\n  runs        ${counts.runs}\n  artifacts   ${counts.artifacts}\n\nRecent events\n${recent}\n\nUse /mode to switch modes or /permissions to change automation permissions.`);
@@ -2187,7 +2188,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       if (action === "status") {
         const state = store.schedulerState();
-        const goal = activePhaseGoal(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)));
+        const goal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), config.mode));
         const campaign = config.campaign;
         const counts = store.counts();
         append("assistant", `Research status\n  scheduler: ${state.status}\n  step: ${state.currentStep ?? "idle"}\n  phase: ${goal?.phase ?? "not initialized"}\n  phase goal: ${goal?.title ?? "none"}\n  attempts: ${goal?.attempts ?? 0}\n  decisions: ${counts.decisions} · hypotheses: ${counts.hypotheses} · claims: ${counts.claims}${campaign ? `\n\nCampaign\n  status: ${campaign.status}\n  goal: ${campaign.goal}\n  budget: ${campaign.budgetMinutes} minutes\n  stop: ${campaign.stopCondition}` : "\n\nNo campaign configured. Use /research to start one."}`);
