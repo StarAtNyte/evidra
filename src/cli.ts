@@ -16,6 +16,7 @@ import { retrieveSource, sourceClaims, sourceSearchText } from "./core/sources.j
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
 import { submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
+import { recoveryDelay, recoveryPlan } from "./core/recovery.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
@@ -703,6 +704,9 @@ experiment.command("run")
     const experimentCwd = join(worktreePath, relative(root, adapter.workspacePath(root)));
     const command = experimentCommandFor(adapter, hypothesis?.payload);
     const contract = validateExecutionContract(manifest, experimentCwd, command);
+    const contractStore = new ResearchStore(statePath);
+    contractStore.appendEvent(contract.valid ? "experiment.stage.feasibility.completed" : "experiment.stage.feasibility.failed", { experimentId: id, reasons: contract.reasons, command, cwd: experimentCwd });
+    contractStore.close();
     executionPlan = advanceExecutionStage(executionPlan, "feasibility", contract.valid ? "completed" : "failed");
     if (!contract.valid) {
       const failedStore = new ResearchStore(statePath);
@@ -712,10 +716,27 @@ experiment.command("run")
     }
     executionPlan = advanceExecutionStage(executionPlan, "smoke", "skipped");
     executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", "skipped");
+    const skippedStagesStore = new ResearchStore(statePath);
+    skippedStagesStore.appendEvent("experiment.stage.smoke.skipped", { experimentId: id, reason: "headless CLI has no configured smoke command" });
+    skippedStagesStore.appendEvent("experiment.stage.reduced_validation.skipped", { experimentId: id, reason: "manifest has no generic reduced-data contract" });
+    skippedStagesStore.close();
     const candidateEstimator = (manifest.change.configPatch as { estimatorPath?: unknown }).estimatorPath;
     const isCandidateEvaluation = typeof candidateEstimator === "string" && candidateEstimator !== adapter.config.evaluator.estimatorPath;
     const executor = executorFor(manifest.resources.executor, root);
     let result = await executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name);
+    let attempt = 1;
+    while (result.status !== "completed") {
+      const plan = recoveryPlan(result.failureClass);
+      if (!plan.retry || attempt >= plan.maxAttempts) break;
+      const delay = recoveryDelay(plan, attempt);
+      const retryStore = new ResearchStore(statePath);
+      retryStore.appendEvent("run.retry.scheduled", { experimentId: id, runId: result.runId, attempt, delaySeconds: delay, failureClass: result.failureClass, action: plan.action });
+      retryStore.close();
+      console.log(`Retrying experiment ${id} (${attempt + 1}/${plan.maxAttempts}) after ${plan.action}; waiting ${delay}s...`);
+      await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, delay * 1000));
+      attempt += 1;
+      result = await executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name);
+    }
     const evaluatorCommand = isCandidateEvaluation ? command : adapter.config.evaluator.command;
     const sameCommand = evaluatorCommand.length === command.length && evaluatorCommand.every((part, index) => part === command[index]);
     let evaluator: { stdout: string; stderr: string; exitCode: number } | undefined;
@@ -726,6 +747,9 @@ experiment.command("run")
       result = { ...result, status: evaluated.exitCode === 0 ? "completed" : "failed", exitCode: evaluated.exitCode, metrics: { ...result.metrics, ...parsed.metrics }, metricsByFold: { ...result.metricsByFold, ...parsed.metricsByFold }, stdout: `${result.stdout ?? ""}\n[EVALUATOR]\n${evaluated.stdout}`, stderr: `${result.stderr ?? ""}\n[EVALUATOR]\n${evaluated.stderr}`, ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
     }
     executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
+    const fullStageStore = new ResearchStore(statePath);
+    fullStageStore.appendEvent(result.status === "completed" ? "experiment.stage.full_validation.completed" : "experiment.stage.full_validation.failed", { experimentId: id, runId: result.runId, metric: result.metrics[adapter.config.metric.name] ?? null, exitCode: result.exitCode, attempts: attempt });
+    fullStageStore.close();
     const artifactDir = join(root, ".sota", "artifacts", result.runId);
     mkdirSync(artifactDir, { recursive: true });
     const artifactPaths: Record<string, string> = {};
@@ -735,7 +759,7 @@ experiment.command("run")
       writeFileSync(path, content);
       artifactPaths[name] = path;
     }
-    const recorded = { ...result, artifacts: { ...result.artifacts, ...artifactPaths } };
+    const recorded = { ...result, recoveryAttempts: attempt, artifacts: { ...result.artifacts, ...artifactPaths } };
     const resultStore = new ResearchStore(statePath);
     resultStore.saveRun({ id: result.runId, experimentId: id, status: recorded.status, payload: recorded });
     for (const [name, path] of Object.entries(artifactPaths)) resultStore.saveArtifact({ id: `${result.runId}-${name}`, runId: result.runId, name, path, checksum: sha256File(path) });

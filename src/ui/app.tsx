@@ -902,7 +902,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
       attempt += 1;
       result = await executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name);
     }
-    executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
     activeProcess.current = null;
     const evaluatorCommand = isCandidateEvaluation ? command : adapter.config.evaluator.command;
     const sameCommand = evaluatorCommand.length === command.length && evaluatorCommand.every((part, index) => part === command[index]);
@@ -923,6 +922,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
         ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }),
       };
     }
+    executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
+    const fullStageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    fullStageStore.appendEvent(result.status === "completed" ? "experiment.stage.full_validation.completed" : "experiment.stage.full_validation.failed", { experimentId: id, runId: result.runId, metric: result.metrics[adapter.config.metric.name] ?? null, exitCode: result.exitCode, attempts: attempt });
+    fullStageStore.close();
     const artifactDir = join(root, ".sota", "artifacts", result.runId);
     mkdirSync(artifactDir, { recursive: true });
     const stdoutPath = join(artifactDir, "stdout.log");
