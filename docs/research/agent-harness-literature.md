@@ -78,6 +78,12 @@ gates: source claims remain low-confidence literature evidence, evaluator output
 must be reproducible, conflicts trigger audit/validation, and a campaign cannot
 terminate merely because a plausible answer was produced.
 
+Critic objections are execution gates, not advisory prose: a `revise` verdict
+now forces the next cycle into inspection until its required checks become
+durable evidence. This prevents an agent from satisfying diligence with a
+well-written acknowledgement while still running the originally challenged
+experiment.
+
 Source: [Act As a Real Researcher: A Suite of Benchmarks Evaluating Frontier
 LLMs and Agentic Harnesses in Research Lifecycle](https://arxiv.org/abs/2606.07462).
 

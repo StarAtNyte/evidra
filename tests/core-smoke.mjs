@@ -246,9 +246,9 @@ test("critic gate converts terminal and execution decisions into inspection", ()
   assert.equal(applyCriticGate(decision, { verdict: "proceed" }).blocked, false);
   const concreteRun = { ...decision, goalStatus: "active", selectedHypothesis: "candidate" };
   const revisedRun = applyCriticGate(concreteRun, { verdict: "revise" });
-  assert.equal(revisedRun.blocked, false);
-  assert.equal(revisedRun.decision.decision, "run");
-  assert.match(revisedRun.decision.nextAction, /bounded probe/i);
+  assert.equal(revisedRun.blocked, true);
+  assert.equal(revisedRun.decision.decision, "inspect");
+  assert.match(revisedRun.decision.nextAction, /critic verdict is revise/i);
 });
 
 test("active goals cannot be terminated by a premature model stop", () => {
