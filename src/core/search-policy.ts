@@ -15,6 +15,10 @@ export interface SearchArm {
   rewardVariance?: number;
   cost: number;
   novelty: number;
+  /** Optional context-local evidence; global history remains the prior. */
+  contextAttempts?: number;
+  contextMeanReward?: number;
+  contextRewardVariance?: number;
 }
 
 export interface SearchPolicyInput {
@@ -48,6 +52,10 @@ export interface SearchRewardEvent {
   valid?: boolean;
   reproducible?: boolean;
   competitionId?: string;
+  executor?: string;
+  provider?: string;
+  model?: string;
+  phase?: string;
 }
 
 export interface SearchPolicyEvidence {
@@ -133,6 +141,15 @@ export function rankSearchArms(input: SearchPolicyInput): RankedSearchArm[] {
   const totalAttempts = Math.max(1, input.arms.reduce((sum, arm) => sum + arm.attempts, 0));
   return input.arms.map((arm) => {
     const cost = Math.max(0.1, arm.cost);
+    const contextAttempts = Math.max(0, arm.contextAttempts ?? 0);
+    const hasContextEvidence = contextAttempts >= 2 && Number.isFinite(arm.contextMeanReward);
+    // Contextual evidence is a shrinkage estimate, not a replacement for the
+    // global prior. This prevents two lucky runs on one executor/model from
+    // dominating a new context while still allowing transfer when it repeats.
+    const contextWeight = hasContextEvidence ? contextAttempts / (contextAttempts + 3) : 0;
+    const estimatedReward = hasContextEvidence
+      ? (arm.contextMeanReward! * contextWeight) + (arm.meanReward * (1 - contextWeight))
+      : arm.meanReward;
     const conflictPressure = input.evidenceConflicts > 0 && arm.operator === "audit" ? 0.8 : 0;
     const recoveryPressure = input.recentFailures > 0 && arm.operator === "replication" ? 0.35 : 0;
     const profileBonus = input.profile === "evidence"
@@ -151,7 +168,7 @@ export function rankSearchArms(input: SearchPolicyInput): RankedSearchArm[] {
     // this allocates trials to arms that are both promising and informative,
     // instead of treating every noisy arm as equally uncertain.
     const logTerm = Math.log(totalAttempts + 2);
-    const variance = Math.max(0, arm.rewardVariance ?? 0.25);
+    const variance = Math.max(0, hasContextEvidence ? (arm.contextRewardVariance ?? arm.rewardVariance ?? 0.25) : (arm.rewardVariance ?? 0.25));
     const uncertainty = arm.attempts === 0
       ? 1
       // Rewards are bounded to [-1, 1]; cap the confidence bonus so a tiny
@@ -160,16 +177,16 @@ export function rankSearchArms(input: SearchPolicyInput): RankedSearchArm[] {
     const costPenalty = cost > Math.max(0.1, input.remainingBudgetMinutes) ? 100 : cost * 0.05;
     const successRate = arm.attempts ? arm.successes / arm.attempts : 0;
     const strategyBonus = arm.operator === "greedy"
-      ? arm.meanReward * 0.5 - uncertainty * 0.5
+      ? estimatedReward * 0.5 - uncertainty * 0.5
       : arm.operator === "evolutionary"
         ? arm.novelty * 0.9 + successRate * 0.25
         : arm.operator === "mcts"
           ? uncertainty * 1.25 + arm.novelty * 0.35
           : arm.novelty * 0.5;
-    const score = arm.meanReward + strategyBonus + uncertainty + untriedBonus + conflictPressure + recoveryPressure + profileBonus - costPenalty;
+    const score = estimatedReward + strategyBonus + uncertainty + untriedBonus + conflictPressure + recoveryPressure + profileBonus - costPenalty;
     const rationale = arm.attempts === 0
       ? `untried ${arm.operator} policy: obtain information before over-exploiting a known direction`
-      : `${arm.operator} reward ${arm.meanReward.toFixed(3)} with uncertainty ${uncertainty.toFixed(3)}${profileBonus ? ` and ${input.profile} profile adjustment ${profileBonus.toFixed(3)}` : ""}`;
+      : `${arm.operator} reward ${estimatedReward.toFixed(3)}${hasContextEvidence ? ` (context-shrunk from ${arm.meanReward.toFixed(3)} using ${contextAttempts} local samples)` : ""} with uncertainty ${uncertainty.toFixed(3)}${profileBonus ? ` and ${input.profile} profile adjustment ${profileBonus.toFixed(3)}` : ""}`;
     return { ...arm, score, rationale };
   }).sort((left, right) => right.score - left.score);
 }

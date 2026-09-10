@@ -2311,6 +2311,17 @@ test("search policy uses empirical uncertainty and excludes unaffordable arms", 
   assert.ok(ranked.find((arm) => arm.id === "noisy")?.score > ranked.find((arm) => arm.id === "stable")?.score);
 });
 
+test("search policy shrinks toward repeated execution-context evidence", () => {
+  const ranked = rankSearchArms({
+    arms: [
+      { id: "global-winner", operator: "greedy", attempts: 8, successes: 7, meanReward: 0.8, rewardVariance: 0.01, contextAttempts: 4, contextMeanReward: -0.8, contextRewardVariance: 0.01, cost: 1, novelty: 0.1 },
+      { id: "context-winner", operator: "combination", attempts: 8, successes: 4, meanReward: 0.1, rewardVariance: 0.2, contextAttempts: 4, contextMeanReward: 0.7, contextRewardVariance: 0.01, cost: 1, novelty: 0.8 },
+    ], remainingBudgetMinutes: 30, recentFailures: 0, evidenceConflicts: 0,
+  });
+  assert.equal(ranked[0].id, "context-winner");
+  assert.match(ranked.find((arm) => arm.id === "context-winner")?.rationale ?? "", /context-shrunk/);
+});
+
 test("portfolio planner is bounded, diverse, and cost aware", () => {
   const plan = planPortfolio([
     { id: "cheap", title: "cheap novel", operator: "ablation", expectedValue: 0.4, costMinutes: 2, novelty: 0.8, family: "features" },

@@ -1408,7 +1408,14 @@ research
             const observedCosts = outcomes.map((event) => Number((event.payload as { durationSeconds?: number }).durationSeconds) / 60).filter((minutes) => Number.isFinite(minutes) && minutes > 0);
             const meanReward = rewards.length ? rewards.reduce((sum, reward) => sum + reward, 0) / rewards.length : 0;
             const rewardVariance = rewards.length > 1 ? rewards.reduce((sum, reward) => sum + (reward - meanReward) ** 2, 0) / rewards.length : undefined;
-            return { id: operator, operator, attempts: rewards.length, successes: rewards.filter((reward) => reward > 0).length, meanReward, rewardVariance, cost: observedCosts.length ? observedCosts.reduce((sum, minutes) => sum + minutes, 0) / observedCosts.length : DEFAULT_SEARCH_OPERATOR_COSTS[index], novelty: DEFAULT_SEARCH_OPERATOR_NOVELTY[index] };
+            const contextOutcomes = outcomes.filter((event) => {
+              const payload = event.payload as { executor?: string; provider?: string; model?: string; phase?: string };
+              return payload.executor === options.executor && payload.provider === options.provider && payload.model === selectedModel && payload.phase === (phaseGoal?.phase ?? "unknown");
+            });
+            const contextRewards = contextOutcomes.map((event) => Number((event.payload as { reward?: number }).reward)).filter(Number.isFinite);
+            const contextMeanReward = contextRewards.length ? contextRewards.reduce((sum, reward) => sum + reward, 0) / contextRewards.length : undefined;
+            const contextRewardVariance = contextRewards.length > 1 ? contextRewards.reduce((sum, reward) => sum + (reward - contextMeanReward!) ** 2, 0) / contextRewards.length : undefined;
+            return { id: operator, operator, attempts: rewards.length, successes: rewards.filter((reward) => reward > 0).length, meanReward, rewardVariance, contextAttempts: contextRewards.length, contextMeanReward, contextRewardVariance, cost: observedCosts.length ? observedCosts.reduce((sum, minutes) => sum + minutes, 0) / observedCosts.length : DEFAULT_SEARCH_OPERATOR_COSTS[index], novelty: DEFAULT_SEARCH_OPERATOR_NOVELTY[index] };
           }),
         ],
         remainingBudgetMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
@@ -1778,7 +1785,7 @@ research
               searchOperator: decision.searchOperator,
               configPatch: { estimatorPath: candidateEstimatorPath(selectedHypothesis) ?? adapter.config.evaluator.estimatorPath },
             }, adapter.config);
-            decisionStore.saveExperiment({ id: proposalId, payload: { ...proposal, status: "proposed", executionPlan: createExecutionPlan(proposal) } });
+            decisionStore.saveExperiment({ id: proposalId, payload: { ...proposal, status: "proposed", runtimeContext: { provider: options.provider, model: selectedModel, phase: phaseGoal?.phase ?? "unknown" }, executionPlan: createExecutionPlan(proposal) } });
           }
         }
         decisionStore.appendEvent("experiment.autonomous.approval_required", { experimentId: proposalId, decision: decision.decision, selectedHypothesis: decision.selectedHypothesis, autonomy, nextAction: proposalId ? `Run evidra experiment run ${proposalId} after approval.` : "Create an explicit experiment proposal before execution." });
@@ -1843,7 +1850,9 @@ research
                 searchOperator: "ablation",
                 configPatch: { ...parentManifest.data.change.configPatch, ...variant.configPatch },
               }, adapter.config);
-              completionStore.saveExperiment({ id: ablationId, payload: { ...ablationManifest, status: "proposed", ablationOf: experimentId, ablationFactorId: variant.factorId, ablationLabel: variant.label, executionPlan: createExecutionPlan(ablationManifest) } });
+              const parentRuntimeContextValue = (parentManifest.data as unknown as { runtimeContext?: unknown }).runtimeContext;
+              const parentRuntimeContext = parentRuntimeContextValue && typeof parentRuntimeContextValue === "object" ? parentRuntimeContextValue : { provider: options.provider, model: selectedModel, phase: phaseGoal?.phase ?? "unknown" };
+              completionStore.saveExperiment({ id: ablationId, payload: { ...ablationManifest, status: "proposed", ablationOf: experimentId, ablationFactorId: variant.factorId, ablationLabel: variant.label, runtimeContext: parentRuntimeContext, executionPlan: createExecutionPlan(ablationManifest) } });
               completionStore.appendEvent("research.ablation.variant.scheduled", { parentId: experimentId, experimentId: ablationId, factorId: variant.factorId, label: variant.label, plan: ablationPlan });
               ablationIds.push(ablationId);
             }
@@ -1917,7 +1926,7 @@ research
               searchOperator: decision.searchOperator,
               configPatch: { estimatorPath: candidateEstimatorPath(selectedHypothesis) ?? adapter.config.evaluator.estimatorPath },
             }, adapter.config);
-            decisionStore.saveExperiment({ id: experimentId, payload: { ...manifest, status: "proposed", executionPlan: createExecutionPlan(manifest) } });
+            decisionStore.saveExperiment({ id: experimentId, payload: { ...manifest, status: "proposed", runtimeContext: { provider: options.provider, model: selectedModel, phase: phaseGoal?.phase ?? "unknown" }, executionPlan: createExecutionPlan(manifest) } });
             decisionStore.appendEvent("experiment.autonomous.scheduled", { experimentId, hypothesisId: selectedHypothesisId, decision: decision.decision, executor: options.executor });
             console.log(`Autonomous experiment scheduled: ${experimentId}\n${manifestSummary(manifest)}`);
             decisionStore.close();
@@ -2517,7 +2526,8 @@ experiment.command("run")
         resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, comparisonCount, adjustedProbabilityThreshold: acceptance.adjustedProbabilityThreshold, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });
         if (operator) {
           const improvementDelta = comparison.delta === null ? undefined : adapter.config.metric.direction === "minimize" ? -comparison.delta : comparison.delta;
-          resultStore.appendEvent("research.search.reward", { experimentId: id, competitionId: adapter.id, datasetRevision: manifest.datasetVersion, operator, reward: searchReward(improvementDelta, recorded.status === "completed", comparison.evidence === "replicated"), valid: recorded.status === "completed", reproducible: comparison.evidence === "replicated", delta: improvementDelta, durationSeconds: recorded.durationSeconds, executor: manifest.resources.executor, gpu: manifest.resources.gpu ?? undefined });
+          const runtimeContext = entryPayload.runtimeContext && typeof entryPayload.runtimeContext === "object" ? entryPayload.runtimeContext as { provider?: string; model?: string; phase?: string } : {};
+          resultStore.appendEvent("research.search.reward", { experimentId: id, competitionId: adapter.id, datasetRevision: manifest.datasetVersion, operator, reward: searchReward(improvementDelta, recorded.status === "completed", comparison.evidence === "replicated"), valid: recorded.status === "completed", reproducible: comparison.evidence === "replicated", delta: improvementDelta, durationSeconds: recorded.durationSeconds, executor: manifest.resources.executor, provider: runtimeContext.provider, model: runtimeContext.model, phase: runtimeContext.phase, gpu: manifest.resources.gpu ?? undefined });
         }
       } else {
         resultStore.appendEvent("experiment.comparison.insufficient_data", { experimentId: id, reason: "No finite baseline metric was available." });
