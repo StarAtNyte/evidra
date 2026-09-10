@@ -103,6 +103,7 @@ Implemented today:
 - durable queue with retries, stale-task recovery, bounded concurrency, and visible queued prompts;
 - detached process groups so Escape stops child workers as well as the parent;
 - experiment manifests, isolated worktrees, local/Modal executor boundaries, artifact capture, retries, and failure classification;
+- failure finalization that prevents started experiments from remaining indefinitely in `running` state;
 - source hashes, extracted claims, research graph edges, evidence reports, statistical comparison helpers, and ensemble utilities;
 - bounded HTML, text, and common PDF research-source extraction with explicit fallback when a PDF encoding cannot be decoded;
 - multi-split validation acceptance, durable leakage/reviewer gates, and conservative external-score split-belief modeling;

@@ -892,6 +892,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const entryPayload = entry.payload as Record<string, unknown>;
     store.saveExperiment({ id, payload: { ...entryPayload, status: "running", executionPlan } });
     store.close();
+    try {
     setProgress(`Experiment ${id} · creating isolated worktree...`);
     const worktree = await ensureWorktree(root, root, id);
     const experimentCwd = join(worktree, relative(root, adapter.workspacePath(root)));
@@ -1037,6 +1038,20 @@ export function App({ root }: { root: string }): React.JSX.Element {
     resultStore.close();
     const metricName = activeAdapter().config.metric.name;
     return `\n\nExperiment ${id} ${recordedResult.status}\nRun: ${recordedResult.runId}\nExit code: ${recordedResult.exitCode}\nDuration: ${recordedResult.durationSeconds.toFixed(1)}s\nMetric (${metricName}): ${recordedResult.metrics[metricName] ?? "not parsed"}\nArtifacts: ${Object.keys(recordedResult.artifacts).join(", ")}\nFailure: ${recordedResult.failureClass ?? "none"}`;
+    } catch (error) {
+      activeProcess.current = null;
+      activeSteer.current = null;
+      const message = error instanceof Error ? error.message : String(error);
+      const failedStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const current = failedStore.experiments().find((candidate) => candidate.id === id);
+      if (current) {
+        const payload = current.payload && typeof current.payload === "object" ? current.payload as Record<string, unknown> : {};
+        failedStore.saveExperiment({ id, payload: { ...payload, status: "failed", failure: message, failedAt: new Date().toISOString() } });
+      }
+      failedStore.appendEvent("experiment.failed", { experimentId: id, error: message });
+      failedStore.close();
+      throw error;
+    }
   };
 
   const runAutonomousCycle = async (campaignOverride?: ResearchCampaign, autoContinue = false): Promise<void> => {
