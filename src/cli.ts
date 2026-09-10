@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from 
 import { join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
-import { createExperimentManifest, manifestSummary } from "./core/experiment-manifest.js";
+import { createExperimentManifest, createReplicationManifest, manifestSummary } from "./core/experiment-manifest.js";
 import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalsForMode } from "./core/phase-goals.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "./core/types.js";
 import { loadCompetitionAdapter } from "./competitions/adapters.js";
@@ -29,6 +29,7 @@ import { executorFor, parseMetricOutput } from "./core/executors.js";
 import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
+import { compareRuns } from "./core/statistics.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
@@ -80,6 +81,14 @@ function experimentCommandFor(adapter: ReturnType<typeof activeCompetition>, hyp
   const index = command.indexOf("--estimator");
   if (index >= 0 && command[index + 1]) command[index + 1] = estimator;
   return command;
+}
+
+async function runCampaignExperiment(rootPath: string, experimentId: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const script = process.argv[1];
+  if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint for autonomous experiment execution.");
+  return runProcess([process.execPath, script, "experiment", "run", experimentId], rootPath, 7 * 24 * 60 * 60_000, (stream, chunk) => {
+    (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
+  });
 }
 
 type ControllerDirective = "run" | "pause" | "stop";
@@ -515,11 +524,12 @@ challenge.command("start")
   .option("--lanes <count>", "maximum independent research lanes", "3")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: wait, fallback, or stop", "wait")
+  .option("--executor <executor>", "experiment execution target: local or modal", "local")
   .option("--resume", "resume the saved challenge campaign")
-  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; resume?: boolean }) => {
+  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean }) => {
     const script = process.argv[1];
     if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
-    const args = ["research", "--mode", "challenge", "--goal", options.goal, "--budget", options.budget, "--stop", options.stop, "--provider", options.provider, "--model", options.model, "--thinking", options.thinking, "--lanes", options.lanes, "--autonomy", options.autonomy, "--limit-policy", options.limitPolicy];
+    const args = ["research", "--mode", "challenge", "--goal", options.goal, "--budget", options.budget, "--stop", options.stop, "--provider", options.provider, "--model", options.model, "--thinking", options.thinking, "--lanes", options.lanes, "--autonomy", options.autonomy, "--limit-policy", options.limitPolicy, "--executor", options.executor];
     if (options.resume) args.push("--resume");
     const result = await runProcess([process.execPath, script, ...args], root, 7 * 24 * 60 * 60_000, (stream, chunk) => {
       (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
@@ -540,13 +550,15 @@ research
   .option("--lanes <count>", "maximum independent research lanes", "3")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: wait, fallback, or stop", "wait")
+  .option("--executor <executor>", "experiment execution target: local or modal", "local")
   .option("--resume", "resume the latest durable non-completed research campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { mode: string; goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; resume?: boolean; skipBaseline?: boolean }) => {
+  .action(async (options: { mode: string; goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
     if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
     if (!["wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'wait', 'fallback', or 'stop'.");
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Mode must be 'research' or 'challenge'.");
     if (!["safe", "fast", "yolo"].includes(options.autonomy)) throw new Error("Autonomy must be 'safe', 'fast', or 'yolo'.");
+    if (options.executor !== "local" && options.executor !== "modal") throw new Error("Executor must be 'local' or 'modal'.");
     const mode = options.mode as "research" | "challenge";
     const autonomy = options.autonomy as AutonomyLevel;
     const adapter = activeCompetition();
@@ -660,7 +672,7 @@ research
           await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
         }
       }
-      const decisionStore = new ResearchStore(statePath);
+      let decisionStore = new ResearchStore(statePath);
       if (phaseGoal && decision.goalStatus === "met") {
         const phaseEvents = decisionStore.recentEvents(500);
         const gate = evaluatePhaseGoalEvidence(phaseGoal, {
@@ -675,7 +687,58 @@ research
           decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal.phase, missing: gate.missing });
         }
       }
-      materializeResearchDecision(decisionStore, decision);
+      const materialized = materializeResearchDecision(decisionStore, decision);
+      if (decision.decision === "run" && decision.selectedHypothesis) {
+        const selectedIndex = decision.hypotheses.findIndex((hypothesis) => hypothesis.title === decision.selectedHypothesis);
+        const selectedHypothesisId = selectedIndex >= 0 ? materialized.hypothesisIds[selectedIndex] : undefined;
+        const selectedHypothesis = selectedIndex >= 0 ? decision.hypotheses[selectedIndex] : undefined;
+        const hypothesisAlreadyScheduled = selectedHypothesis
+          ? decisionStore.experiments().some((entry) => {
+            const payload = entry.payload as { hypothesisId?: string; status?: string };
+            const hypothesis = payload.hypothesisId ? decisionStore.hypotheses().find((candidate) => candidate.id === payload.hypothesisId) : undefined;
+            return hypothesis && (hypothesis.payload as { title?: unknown }).title === selectedHypothesis.title && payload.status !== "failed";
+          })
+          : false;
+        if (selectedHypothesisId && selectedHypothesis && !hypothesisAlreadyScheduled) {
+          const commit = await runProcess(["git", "rev-parse", "HEAD"], root);
+          if (commit.exitCode === 0) {
+            const experimentId = `exp_${Date.now()}_${selectedHypothesisId.slice(-32)}`;
+            const manifest = createExperimentManifest({
+              id: experimentId,
+              hypothesisId: selectedHypothesisId,
+              gitCommit: commit.stdout.trim(),
+              datasetVersion: adapter.config.datasetRevision,
+              executor: options.executor as "local" | "modal",
+              configPatch: { estimatorPath: candidateEstimatorPath(selectedHypothesis) ?? adapter.config.evaluator.estimatorPath },
+            }, adapter.config);
+            decisionStore.saveExperiment({ id: experimentId, payload: { ...manifest, status: "proposed", executionPlan: createExecutionPlan(manifest) } });
+            decisionStore.appendEvent("experiment.autonomous.scheduled", { experimentId, hypothesisId: selectedHypothesisId, decision: decision.decision, executor: options.executor });
+            console.log(`Autonomous experiment scheduled: ${experimentId}\n${manifestSummary(manifest)}`);
+            decisionStore.close();
+            const run = await runCampaignExperiment(root, experimentId);
+            const completionStore = new ResearchStore(statePath);
+            completionStore.appendEvent(run.exitCode === 0 ? "experiment.autonomous.completed" : "experiment.autonomous.failed", { experimentId, exitCode: run.exitCode, stdout: run.stdout.slice(-4000), stderr: run.stderr.slice(-4000) });
+            const comparisonEvent = completionStore.recentEvents(500).reverse().find((event) => event.type === "experiment.comparison.completed" && (event.payload as { experimentId?: unknown }).experimentId === experimentId);
+            const comparison = comparisonEvent?.payload as { comparison?: { direction?: string } } | undefined;
+            const parent = completionStore.experiments().find((entry) => entry.id === experimentId);
+            const parentManifest = parent ? ExperimentManifestSchema.safeParse(parent.payload) : undefined;
+            if (run.exitCode === 0 && comparison?.comparison?.direction === "improved" && parentManifest?.success && parentManifest.data.acceptance.requireReplication) {
+              const replication = createReplicationManifest(parentManifest.data, adapter.config);
+              completionStore.saveExperiment({ id: replication.id, payload: { ...replication, status: "proposed", replicationOf: experimentId, automatic: true, executionPlan: createExecutionPlan(replication) } });
+              completionStore.appendEvent("replication.manifest.created", { parentId: experimentId, replicationId: replication.id, automatic: true });
+              console.log(`Independent replication scheduled: ${replication.id}\n${manifestSummary(replication)}`);
+              completionStore.close();
+              const replicationRun = await runCampaignExperiment(root, replication.id);
+              const replicationStore = new ResearchStore(statePath);
+              replicationStore.appendEvent(replicationRun.exitCode === 0 ? "experiment.autonomous.replication.completed" : "experiment.autonomous.replication.failed", { parentId: experimentId, replicationId: replication.id, exitCode: replicationRun.exitCode, stdout: replicationRun.stdout.slice(-4000), stderr: replicationRun.stderr.slice(-4000) });
+              replicationStore.close();
+            } else {
+              completionStore.close();
+            }
+            decisionStore = new ResearchStore(statePath);
+          }
+        }
+      }
       const recentDecisions = decisionStore.decisions().map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3);
       const stagnation = detectStagnation(recentDecisions);
       if (phaseGoal) {
@@ -937,6 +1000,34 @@ experiment.command("run")
     const resultStore = new ResearchStore(statePath);
     resultStore.saveRun({ id: result.runId, experimentId: id, status: recorded.status, payload: recorded });
     for (const [name, path] of Object.entries(artifactPaths)) resultStore.saveArtifact({ id: `${result.runId}-${name}`, runId: result.runId, name, path, checksum: sha256File(path) });
+    if (recorded.status === "completed") {
+      const baselineEvent = resultStore.recentEvents(500).reverse().find((event) => event.type === "baseline.completed");
+      const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string; stderr?: string; durationMs?: number; command?: string[]; cwd?: string } | undefined;
+      const metricName = adapter.config.metric.name;
+      const parsedBaseline = baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, metricName) : { metrics: {}, metricsByFold: {} };
+      const baselineMetric = typeof baselinePayload?.metric === "number" && Number.isFinite(baselinePayload.metric)
+        ? baselinePayload.metric
+        : parsedBaseline.metrics[metricName];
+      if (typeof baselineMetric === "number" && Number.isFinite(baselineMetric)) {
+        const baselineRun = {
+          runId: `baseline-${baselineEvent?.createdAt ?? "recorded"}`,
+          status: "completed" as const,
+          exitCode: 0,
+          durationSeconds: (baselinePayload?.durationMs ?? 0) / 1000,
+          metrics: { [metricName]: baselineMetric },
+          metricsByFold: { [metricName]: baselinePayload?.stdout ? parsedBaseline.metricsByFold[metricName] ?? [] : [] },
+          artifacts: {},
+          stdout: baselinePayload?.stdout,
+          stderr: baselinePayload?.stderr,
+          command: baselinePayload?.command,
+          cwd: baselinePayload?.cwd,
+        };
+        const comparison = compareRuns(baselineRun, RunResultSchema.parse(recorded), metricName, adapter.config.metric.direction === "minimize");
+        resultStore.appendEvent("experiment.comparison.completed", { experimentId: id, baselineSource: baselineEvent?.createdAt ?? "baseline", comparison });
+      } else {
+        resultStore.appendEvent("experiment.comparison.insufficient_data", { experimentId: id, reason: "No finite baseline metric was available." });
+      }
+    }
     resultStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: recorded.status === "completed" ? "completed" : "failed", runId: result.runId, worktreePath: experimentCwd, executionPlan } });
     resultStore.close();
     console.log(`Experiment ${id}: ${recorded.status}`);

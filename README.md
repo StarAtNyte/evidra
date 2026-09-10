@@ -114,6 +114,7 @@ Implemented today:
 - multi-split validation acceptance, durable leakage/reviewer gates, and conservative external-score split-belief modeling;
 - automatic baseline-to-candidate comparison events after successful challenge evaluations;
 - replication scheduling gated on an observed improvement rather than mere process completion;
+- headless research and challenge campaigns that execute selected hypotheses through the same isolated runner as the TUI, with optional `--executor local|modal` routing;
 - shell and autonomy safety guards.
 
 ## Quick start
