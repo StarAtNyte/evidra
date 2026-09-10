@@ -33,7 +33,7 @@ import { compareRuns } from "./core/statistics.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
-import { checkProvider, codexLoginStatus, isProviderUsageLimit, listLocalModels, providerRetryAfterMs } from "./agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, isProviderUsageLimit, listLocalModels, providerRetryAfterMs, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -89,6 +89,28 @@ async function runCampaignExperiment(rootPath: string, experimentId: string): Pr
   return runProcess([process.execPath, script, "experiment", "run", experimentId], rootPath, 7 * 24 * 60 * 60_000, (stream, chunk) => {
     (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
   });
+}
+
+async function implementCampaignHypothesis(
+  rootPath: string,
+  experimentId: string,
+  hypothesis: unknown,
+  manifest: unknown,
+  options: { provider: "codex" | "local"; model: string; thinking: string },
+): Promise<void> {
+  if (options.provider !== "codex") return;
+  const worktree = await ensureWorktree(rootPath, rootPath, experimentId);
+  await runWithLocalFallback({
+    role: "experiment engineer",
+    objective: "Implement the selected hypothesis in this isolated worktree. Inspect the existing project, make the smallest reproducible change described by the hypothesis, run relevant smoke checks, and leave the worktree ready for evaluation. Do not touch files outside this worktree, submit anything, or invent a result.",
+    context: { manifest, hypothesis, worktree },
+  }, {
+    provider: options.provider,
+    model: options.model,
+    cwd: worktree,
+    reasoningEffort: options.thinking,
+    sandbox: "workspace-write",
+  }, undefined, (message) => console.log(`Experiment ${experimentId} · ${message}`));
 }
 
 type ControllerDirective = "run" | "pause" | "stop";
@@ -696,7 +718,7 @@ research
           ? decisionStore.experiments().some((entry) => {
             const payload = entry.payload as { hypothesisId?: string; status?: string };
             const hypothesis = payload.hypothesisId ? decisionStore.hypotheses().find((candidate) => candidate.id === payload.hypothesisId) : undefined;
-            return hypothesis && (hypothesis.payload as { title?: unknown }).title === selectedHypothesis.title && payload.status !== "failed";
+            return hypothesis && (hypothesis.payload as { title?: unknown }).title === selectedHypothesis.title;
           })
           : false;
         if (selectedHypothesisId && selectedHypothesis && !hypothesisAlreadyScheduled) {
@@ -715,7 +737,19 @@ research
             decisionStore.appendEvent("experiment.autonomous.scheduled", { experimentId, hypothesisId: selectedHypothesisId, decision: decision.decision, executor: options.executor });
             console.log(`Autonomous experiment scheduled: ${experimentId}\n${manifestSummary(manifest)}`);
             decisionStore.close();
-            const run = await runCampaignExperiment(root, experimentId);
+            let run: { exitCode: number; stdout: string; stderr: string };
+            try {
+              await implementCampaignHypothesis(root, experimentId, selectedHypothesis, manifest, { provider: options.provider as "codex" | "local", model: selectedModel, thinking: options.thinking });
+              run = await runCampaignExperiment(root, experimentId);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              const failedImplementationStore = new ResearchStore(statePath);
+              const failedEntry = failedImplementationStore.experiments().find((entry) => entry.id === experimentId);
+              if (failedEntry) failedImplementationStore.saveExperiment({ id: experimentId, payload: { ...(failedEntry.payload as Record<string, unknown>), status: "failed" } });
+              failedImplementationStore.appendEvent("experiment.autonomous.implementation.failed", { experimentId, error: message });
+              failedImplementationStore.close();
+              run = { exitCode: 1, stdout: "", stderr: message };
+            }
             const completionStore = new ResearchStore(statePath);
             completionStore.appendEvent(run.exitCode === 0 ? "experiment.autonomous.completed" : "experiment.autonomous.failed", { experimentId, exitCode: run.exitCode, stdout: run.stdout.slice(-4000), stderr: run.stderr.slice(-4000) });
             const comparisonEvent = completionStore.recentEvents(500).reverse().find((event) => event.type === "experiment.comparison.completed" && (event.payload as { experimentId?: unknown }).experimentId === experimentId);
