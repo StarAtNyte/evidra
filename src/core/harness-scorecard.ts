@@ -15,6 +15,10 @@ export interface HarnessTrial {
   durationSeconds: number;
   recovered: boolean;
   reproducible: boolean;
+  /** Optional trajectory-derived process quality in [0, 1]. */
+  processQuality?: number;
+  /** Whether tool feedback and the next action were aligned. */
+  executionAlignment?: boolean;
 }
 
 export interface BenchmarkProtocolIssue {
@@ -100,6 +104,8 @@ export interface HarnessScorecard {
   competitiveScore: number;
   taskBalancedScore: number;
   competitiveScoreLower95: number;
+  meanProcessQuality: number | null;
+  executionAlignmentRate: number | null;
 }
 
 export interface HarnessComparison {
@@ -130,7 +136,11 @@ function median(values: number[]): number | null {
 function trialQuality(trial: HarnessTrial): number {
   const measuredDelta = delta(trial);
   const improvement = measuredDelta !== undefined && measuredDelta > 0 ? 1 : 0;
-  return 100 * (0.45 * improvement + 0.25 * (trial.validRun ? 1 : 0) + 0.15 * (trial.validRun && trial.reproducible ? 1 : 0) + 0.15 * (trial.recovered ? 1 : 0));
+  const process = typeof trial.processQuality === "number" && Number.isFinite(trial.processQuality)
+    ? Math.max(0, Math.min(1, trial.processQuality))
+    : trial.validRun ? 1 : 0;
+  const alignment = trial.executionAlignment === undefined ? (trial.validRun ? 1 : 0) : trial.executionAlignment ? 1 : 0;
+  return 100 * (0.35 * improvement + 0.2 * (trial.validRun ? 1 : 0) + 0.15 * (trial.validRun && trial.reproducible ? 1 : 0) + 0.1 * (trial.recovered ? 1 : 0) + 0.1 * process + 0.1 * alignment);
 }
 
 function taskMeans(entries: HarnessTrial[]): number[] {
@@ -230,6 +240,8 @@ export function scoreHarnessTrials(trials: HarnessTrial[]): HarnessScorecard[] {
     const improvementRate = improvements / entries.length;
     const recoveryRate = recovery / entries.length;
     const reproducibilityRate = reproducible / entries.length;
+    const processValues = entries.map((entry) => entry.processQuality).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    const alignmentValues = entries.filter((entry) => entry.executionAlignment !== undefined).map((entry) => entry.executionAlignment ? 1 : 0);
     // Evidence quality is a first-class part of competitiveness. Aggregate by
     // task first so a harness cannot win by running many trials on one easy
     // task. The lower bound is a conservative guard against lucky portfolios.
@@ -249,6 +261,8 @@ export function scoreHarnessTrials(trials: HarnessTrial[]): HarnessScorecard[] {
       competitiveScore,
       taskBalancedScore,
       competitiveScoreLower95: bootstrapLower95(means, harness),
+      meanProcessQuality: processValues.length ? processValues.reduce((sum, value) => sum + Math.max(0, Math.min(1, value)), 0) / processValues.length : null,
+      executionAlignmentRate: alignmentValues.length ? alignmentValues.reduce<number>((sum, value) => sum + value, 0) / alignmentValues.length : null,
     };
   }).sort((a, b) => b.competitiveScore - a.competitiveScore);
 }

@@ -453,8 +453,8 @@ benchmark.command("score")
       return;
     }
     console.log("Harness benchmark · task-balanced evidence score");
-    console.log("Harness                 Tasks  Trials  Score  Lower95  Valid  Improve  Repro");
-    for (const scorecard of scorecards) console.log(`${scorecard.harness.padEnd(23).slice(0, 23)} ${String(scorecard.tasks).padStart(5)} ${String(scorecard.trials).padStart(7)} ${scorecard.competitiveScore.toFixed(1).padStart(6)} ${scorecard.competitiveScoreLower95.toFixed(1).padStart(8)} ${(scorecard.validRunRate * 100).toFixed(0).padStart(5)}% ${(scorecard.improvementRate * 100).toFixed(0).padStart(7)}% ${(scorecard.reproducibilityRate * 100).toFixed(0).padStart(5)}%`);
+    console.log("Harness                 Tasks  Trials  Score  Lower95  Valid  Improve  Repro  Align");
+    for (const scorecard of scorecards) console.log(`${scorecard.harness.padEnd(23).slice(0, 23)} ${String(scorecard.tasks).padStart(5)} ${String(scorecard.trials).padStart(7)} ${scorecard.competitiveScore.toFixed(1).padStart(6)} ${scorecard.competitiveScoreLower95.toFixed(1).padStart(8)} ${(scorecard.validRunRate * 100).toFixed(0).padStart(5)}% ${(scorecard.improvementRate * 100).toFixed(0).padStart(7)}% ${(scorecard.reproducibilityRate * 100).toFixed(0).padStart(5)}% ${scorecard.executionAlignmentRate === null ? "n/a" : `${(scorecard.executionAlignmentRate * 100).toFixed(0)}%`}`);
   });
 benchmark.command("compare")
   .argument("<file>", "JSON file containing a trial array or { trials: [...] }")
@@ -514,6 +514,9 @@ benchmark.command("export")
       const manifest = experiment?.payload as { datasetVersion?: unknown; splitVersion?: unknown; evaluation?: { seeds?: unknown } } | undefined;
       const candidateMetric = payload.metrics?.[adapter.config.metric.name];
       const experimentEvents = events.filter((event) => (event.payload as { experimentId?: unknown }).experimentId === run.experimentId);
+      const trajectory = store.trajectories().find((entry) => entry.runId === run.id || entry.id === `trajectory_${run.id}`);
+      const trajectoryQuality = trajectory?.quality as { overall?: string; executionAlignment?: { verdict?: string }; structural?: { verdict?: string }; goalAttainment?: { verdict?: string }; evidenceConsistency?: { verdict?: string }; errorRecovery?: { verdict?: string }; termination?: { verdict?: string } } | undefined;
+      const qualityVerdicts = trajectoryQuality ? [trajectoryQuality.structural, trajectoryQuality.goalAttainment, trajectoryQuality.evidenceConsistency, trajectoryQuality.errorRecovery, trajectoryQuality.termination].filter(Boolean).map((dimension) => dimension?.verdict === "PASS" ? 1 : dimension?.verdict === "WARN" ? 0.5 : 0) : [];
       trials.push({
         harness: options.harness,
         task: project?.competitionId ?? adapter.id,
@@ -530,6 +533,8 @@ benchmark.command("export")
         // Fold/seed bootstrap evidence is not the same as an independent
         // replication experiment. Only a completed child manifest counts.
         reproducible: independentlyReplicatedParents.has(run.experimentId),
+        ...(qualityVerdicts.length ? { processQuality: qualityVerdicts.reduce<number>((sum, value) => sum + value, 0) / qualityVerdicts.length } : {}),
+        ...(trajectoryQuality?.executionAlignment?.verdict ? { executionAlignment: trajectoryQuality.executionAlignment.verdict === "PASS" } : {}),
       });
     }
     store.close();

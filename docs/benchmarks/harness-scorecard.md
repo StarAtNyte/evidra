@@ -10,6 +10,7 @@ The comparison protocol uses the same task arm for every harness and records:
 - mean metric delta and median time to first valid evidence;
 - recovery rate after a failed tool, worker, or provider route;
 - reproducibility rate across an independent seed or replication;
+- process quality and execution-alignment rates when trajectory evidence is available;
 - a bounded competitive score that weights improvement most heavily, then valid
   evidence, reproducibility, and recovery.
 
@@ -55,6 +56,9 @@ duration, recovery, and reproducibility.
 
 Invalid runs and unverified model claims score zero improvement. This prevents a
 harness from winning by producing persuasive text without a measured artifact.
+When optional trajectory fields are present, process quality and alignment also
+affect the competitive score; older trial files remain readable and fall back to
+their evaluator-backed fields.
 
 ## Initial AIRS-Bench trial
 

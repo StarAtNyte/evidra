@@ -1580,6 +1580,14 @@ test("harness scorecard rewards valid reproducible improvements and rejects narr
   assert.equal(scorecards[1].competitiveScore, 0);
 });
 
+test("harness scorecard incorporates optional process and alignment evidence", () => {
+  const [clean] = scoreHarnessTrials([{ harness: "clean", task: "task", direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 10, recovered: true, reproducible: true, processQuality: 1, executionAlignment: true }]);
+  const [misaligned] = scoreHarnessTrials([{ harness: "misaligned", task: "task", direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 10, recovered: true, reproducible: true, processQuality: 0, executionAlignment: false }]);
+  assert.equal(clean.executionAlignmentRate, 1);
+  assert.equal(misaligned.executionAlignmentRate, 0);
+  assert.ok(clean.competitiveScore > misaligned.competitiveScore);
+});
+
 test("harness scorecard balances tasks instead of rewarding repeated easy arms", () => {
   const scorecards = scoreHarnessTrials([
     ...Array.from({ length: 9 }, () => ({ harness: "repeater", task: "easy", direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 1, recovered: true, reproducible: true })),
