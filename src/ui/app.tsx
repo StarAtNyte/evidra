@@ -1152,6 +1152,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
     let evaluatorOutput: { stdout: string; stderr: string; exitCode: number } | undefined;
+    let verificationOutput: { stdout: string; stderr: string; exitCode: number } | undefined;
     const recordAttemptStarted = (attemptNumber: number): void => {
       const attemptStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
       attemptStore.appendEvent("run.attempt.started", { experimentId: id, attempt: attemptNumber, command, cwd: experimentCwd, executor: manifest.resources.executor });
@@ -1210,6 +1211,20 @@ export function App({ root }: { root: string }): React.JSX.Element {
         ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }),
       };
     }
+    const verificationCommand = manifest.evaluation.verificationCommand;
+    if (result.status === "completed" && verificationCommand) {
+      setProgress(`Experiment ${id} · running verification...`);
+      const checked = await withExecutionHeartbeat(
+        () => runProcess(verificationCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, registerProcess),
+        { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "verification", executor: manifest.resources.executor },
+      );
+      activeProcess.current = null;
+      verificationOutput = { stdout: checked.stdout, stderr: checked.stderr, exitCode: checked.exitCode };
+      const verificationStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      verificationStore.appendEvent(checked.exitCode === 0 ? "experiment.verification.completed" : "experiment.verification.failed", { experimentId: id, runId: result.runId, command: verificationCommand, exitCode: checked.exitCode, stdout: checked.stdout.slice(-4000), stderr: checked.stderr.slice(-4000) });
+      verificationStore.close();
+      result = { ...result, status: checked.exitCode === 0 ? "completed" : "failed", exitCode: checked.exitCode, stdout: `${result.stdout ?? ""}\n[VERIFICATION]\n${checked.stdout}`, stderr: `${result.stderr ?? ""}\n[VERIFICATION]\n${checked.stderr}`, ...(checked.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
+    }
     result = validateRunMetric(result, adapter.config.metric.name);
     executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
     const fullStageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -1226,9 +1241,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
     writeFileSync(metricsPath, `${JSON.stringify(result.metrics, null, 2)}\n`);
     const evaluatorStdoutPath = evaluatorOutput ? join(artifactDir, "evaluator.stdout.log") : undefined;
     const evaluatorStderrPath = evaluatorOutput ? join(artifactDir, "evaluator.stderr.log") : undefined;
+    const verificationStdoutPath = verificationOutput ? join(artifactDir, "verification.stdout.log") : undefined;
+    const verificationStderrPath = verificationOutput ? join(artifactDir, "verification.stderr.log") : undefined;
     if (evaluatorOutput && evaluatorStdoutPath && evaluatorStderrPath) {
       writeFileSync(evaluatorStdoutPath, evaluatorOutput.stdout);
       writeFileSync(evaluatorStderrPath, evaluatorOutput.stderr);
+    }
+    if (verificationOutput && verificationStdoutPath && verificationStderrPath) {
+      writeFileSync(verificationStdoutPath, verificationOutput.stdout);
+      writeFileSync(verificationStderrPath, verificationOutput.stderr);
     }
     const environment = await captureEnvironment(root, result.cwd ?? experimentCwd, result.command ?? command, manifest.resources.executor, manifest.resources.gpu);
     writeFileSync(environmentPath, `${JSON.stringify(environment, null, 2)}\n`);
@@ -1242,6 +1263,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         "metrics.json": metricsPath,
         "environment.json": environmentPath,
         ...(evaluatorStdoutPath && evaluatorStderrPath ? { "evaluator.stdout.log": evaluatorStdoutPath, "evaluator.stderr.log": evaluatorStderrPath } : {}),
+        ...(verificationStdoutPath && verificationStderrPath ? { "verification.stdout.log": verificationStdoutPath, "verification.stderr.log": verificationStderrPath } : {}),
       },
     };
     const resultStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
