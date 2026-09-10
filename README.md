@@ -217,6 +217,7 @@ Useful commands:
     /data                 Audit workspace data
     /validation           Inspect or generate validation policy
     /experiment           Create or run reproducible experiments
+    /ensemble             Inspect diversity or create a durable blend candidate
     /experiment gate      Record leakage or reviewer approval
     /challenge start      Start a fully autonomous challenge campaign
     /challenge pause      Pause challenge workers

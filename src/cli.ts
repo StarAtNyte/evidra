@@ -38,6 +38,7 @@ import { recordBaselineEvidence } from "./core/baseline.js";
 import { redactSecrets } from "./core/redaction.js";
 import { enforceGoalTermination } from "./core/termination.js";
 import { summarizeUsage } from "./core/usage.js";
+import { createBlendCandidate, diversityReport, loadPredictionVector, type PredictionVector } from "./core/ensemble.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
@@ -470,6 +471,39 @@ submission.command("distribution").description("Estimate which local validation 
   console.log(JSON.stringify(estimateDistributionBeliefs(observations), null, 2));
 });
 program.addCommand(submission);
+
+const ensemble = new Command("ensemble").description("Inspect and create durable prediction blend candidates");
+function predictionVectors(store: ResearchStore): PredictionVector[] {
+  return store.artifacts()
+    .filter((entry) => /prediction|oof/i.test(entry.name))
+    .filter((entry) => { const relativePath = relative(resolve(root), resolve(entry.path)); return !relativePath.startsWith("..") && !relativePath.startsWith("/" ); })
+    .flatMap((entry) => { try { return [loadPredictionVector(entry.id, entry.path)]; } catch { return []; } });
+}
+ensemble.command("candidates").action(() => {
+  const store = new ResearchStore(statePath);
+  const vectors = predictionVectors(store);
+  const blends = store.ensembleCandidates(20);
+  store.close();
+  console.log(`${vectors.length ? `Prediction candidates\n${vectors.map((vector) => `- ${vector.id} · ${vector.values.length} values · ${vector.path}`).join("\n")}` : "No valid prediction or OOF artifacts found."}${blends.length ? `\n\nBlend candidates\n${blends.map((blend) => `- ${blend.status} ${blend.id} · ${blend.path} · ${blend.checksum}`).join("\n")}` : ""}`);
+});
+ensemble.command("diversity").action(() => {
+  const store = new ResearchStore(statePath);
+  const vectors = predictionVectors(store);
+  store.close();
+  if (vectors.length < 2) throw new Error("At least two valid prediction artifacts are required for ensemble analysis.");
+  console.log(diversityReport(vectors).map((pair) => `${pair.left} ↔ ${pair.right} · correlation ${pair.correlation.toFixed(4)} · disagreement ${pair.disagreement.toFixed(6)}`).join("\n"));
+});
+ensemble.command("propose").action(() => {
+  const store = new ResearchStore(statePath);
+  const vectors = predictionVectors(store);
+  if (vectors.length < 2) { store.close(); throw new Error("At least two valid prediction artifacts are required to create an ensemble candidate."); }
+  const candidate = createBlendCandidate(root, vectors);
+  store.saveEnsembleCandidate({ id: candidate.id, path: candidate.path, checksum: candidate.checksum, status: candidate.status, payload: candidate });
+  store.appendEvent("ensemble.candidate.created", { id: candidate.id, path: candidate.path, checksum: candidate.checksum, members: candidate.members, diversity: diversityReport(vectors) });
+  store.close();
+  console.log(`Ensemble candidate created\n  id: ${candidate.id}\n  members: ${candidate.members.length}\n  path: ${candidate.path}\n  checksum: ${candidate.checksum}\n  status: ${candidate.status}`);
+});
+program.addCommand(ensemble);
 
 const queue = new Command("queue").description("Inspect the durable research work queue");
 queue.command("status").action(() => {
