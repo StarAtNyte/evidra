@@ -12,6 +12,15 @@ export interface RetrievedSource extends ResearchSource {
 
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
+export const DEFAULT_SOURCE_REFRESH_MS = 6 * 60 * 60 * 1000;
+
+/** Dynamic sources such as discussions and leaderboards should be revisited periodically. */
+export function sourceIsFresh(entry: { payload: unknown; createdAt?: string }, maxAgeMs = DEFAULT_SOURCE_REFRESH_MS, now = Date.now()): boolean {
+  const payload = entry.payload as { retrievedAt?: unknown };
+  const timestamp = typeof payload.retrievedAt === "string" ? payload.retrievedAt : entry.createdAt;
+  const retrievedAt = timestamp ? Date.parse(timestamp) : Number.NaN;
+  return Number.isFinite(retrievedAt) && now - retrievedAt < maxAgeMs;
+}
 
 function privateAddress(address: string): boolean {
   if (isIP(address) === 4) {

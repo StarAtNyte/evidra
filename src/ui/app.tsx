@@ -23,7 +23,7 @@ import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
 import { auditData } from "../core/data-audit.js";
 import { executeResearchTool } from "../core/tools.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
-import { retrieveSource, sourceClaims, sourceSearchText } from "../core/sources.js";
+import { retrieveSource, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
 import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalsForMode } from "../core/phase-goals.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
@@ -568,16 +568,21 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const urls = adapter.config.researchSources ?? [];
     if (!urls.length) return [];
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    const known = new Set(store.sources().map((entry) => (entry.payload as { url?: string }).url).filter(Boolean));
+    const known = new Map<string, { payload: unknown; createdAt: string }>();
+    for (const entry of store.sources()) {
+      const url = (entry.payload as { url?: string }).url;
+      if (url && !known.has(url)) known.set(url, entry);
+    }
     const ingested: string[] = [];
     for (const url of urls) {
-      if (known.has(url)) continue;
+      const prior = known.get(url);
+      if (prior && sourceIsFresh(prior)) continue;
       setProgress(`Challenge research · retrieving ${new URL(url).hostname}...`);
       try {
         const source = await retrieveSource(url);
         const claims = sourceClaims(source.text);
         store.saveSource({ id: source.id, payload: { ...source, claims } });
-        store.appendEvent("challenge.source.ingested", { url, title: source.title, claims: claims.length });
+        store.appendEvent(prior ? "challenge.source.refreshed" : "challenge.source.ingested", { url, title: source.title, claims: claims.length, previousSource: prior ? (prior.payload as { id?: string }).id : undefined });
         ingested.push(source.title);
       } catch (error) {
         store.appendEvent("challenge.source.failed", { url, error: error instanceof Error ? error.message : String(error) });

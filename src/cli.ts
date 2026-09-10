@@ -12,7 +12,7 @@ import { auditData } from "./core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "./core/validation-policy.js";
 import { estimateDistributionBeliefs, type ExternalValidationObservation } from "./core/distribution-beliefs.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "./core/execution-stages.js";
-import { retrieveSource, sourceClaims, sourceSearchText } from "./core/sources.js";
+import { retrieveSource, sourceClaims, sourceSearchText, sourceIsFresh } from "./core/sources.js";
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
 import { submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
@@ -147,13 +147,18 @@ function acquireCliControllerLease(mode: "research" | "challenge"): () => void {
 async function ingestCompetitionSources(adapter: ReturnType<typeof activeCompetition>): Promise<void> {
   if (!adapter.config.researchSources?.length) return;
   const store = new ResearchStore(statePath);
-  const known = new Set(store.sources().map((entry) => (entry.payload as { url?: string }).url).filter(Boolean));
+  const known = new Map<string, { payload: unknown; createdAt: string }>();
+  for (const entry of store.sources()) {
+    const url = (entry.payload as { url?: string }).url;
+    if (url && !known.has(url)) known.set(url, entry);
+  }
   for (const url of adapter.config.researchSources) {
-    if (known.has(url)) continue;
+    const prior = known.get(url);
+    if (prior && sourceIsFresh(prior)) continue;
     try {
       const source = await retrieveSource(url);
       store.saveSource({ id: source.id, payload: { ...source, claims: sourceClaims(source.text) } });
-      store.appendEvent("challenge.source.ingested", { url, title: source.title, claims: sourceClaims(source.text).length });
+      store.appendEvent(prior ? "challenge.source.refreshed" : "challenge.source.ingested", { url, title: source.title, claims: sourceClaims(source.text).length, previousSource: prior ? (prior.payload as { id?: string }).id : undefined });
     } catch (error) {
       store.appendEvent("challenge.source.failed", { url, error: error instanceof Error ? error.message : String(error) });
     }

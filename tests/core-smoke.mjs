@@ -8,7 +8,7 @@ import { compareMetricSeries } from "../dist/core/statistics.js";
 import { recoveryPlan } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
-import { extractPdfText, retrieveSource, sourceClaims } from "../dist/core/sources.js";
+import { DEFAULT_SOURCE_REFRESH_MS, extractPdfText, retrieveSource, sourceClaims, sourceIsFresh } from "../dist/core/sources.js";
 import { diversityReport, greedyBlend } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
@@ -61,6 +61,13 @@ test("durable research state and queue survive store reopen", () => {
     assert.equal(reopened.queueTasks()[0].status, "completed");
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("dynamic research sources refresh after their freshness window", () => {
+  const now = Date.parse("2026-01-01T12:00:00.000Z");
+  assert.equal(sourceIsFresh({ payload: { retrievedAt: "2026-01-01T10:00:00.000Z" } }, DEFAULT_SOURCE_REFRESH_MS, now), true);
+  assert.equal(sourceIsFresh({ payload: { retrievedAt: "2026-01-01T01:00:00.000Z" } }, DEFAULT_SOURCE_REFRESH_MS, now), false);
+  assert.equal(sourceIsFresh({ payload: {}, createdAt: "2026-01-01T11:00:00.000Z" }, DEFAULT_SOURCE_REFRESH_MS, now), true);
 });
 
 test("paused campaign time is excluded from the autonomous budget", () => {
