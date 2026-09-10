@@ -154,6 +154,20 @@ async function implementCampaignHypothesis(
 type ControllerDirective = "run" | "pause" | "stop";
 
 function controllerDirective(): ControllerDirective {
+  // Local controllers are controlled through the durable lease. Modal uses a
+  // small control file because its controller and client have separate
+  // processes/volumes. Read both paths so pause/resume/stop have identical
+  // semantics regardless of where the controller is running.
+  try {
+    const store = new ResearchStore(statePath);
+    const requested = store.controllerLease()?.requestedAction;
+    store.close();
+    if (requested === "stop") return "stop";
+    if (requested === "pause") return "pause";
+  } catch {
+    // The file-based control path remains available if the state volume is
+    // temporarily unavailable.
+  }
   const path = process.env.EVIDRA_CONTROLLER_CONTROL_FILE;
   if (!path || !existsSync(path)) return "run";
   try {
@@ -164,12 +178,21 @@ function controllerDirective(): ControllerDirective {
   }
 }
 
-async function waitForControllerDirective(): Promise<"run" | "stop"> {
+async function waitForControllerDirective(onPause?: () => void, onResume?: () => void): Promise<"run" | "stop"> {
+  let paused = false;
   while (true) {
     const directive = controllerDirective();
     if (directive === "stop") return "stop";
-    if (directive === "run") return "run";
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    if (directive === "pause") {
+      if (!paused) {
+        paused = true;
+        onPause?.();
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      continue;
+    }
+    if (paused) onResume?.();
+    return "run";
   }
 }
 
@@ -744,19 +767,40 @@ research
     const releaseLease = acquireCliControllerLease(mode);
     const started = Date.now();
     const runtime: CampaignRuntimeConfig = { mode, provider: options.provider as CampaignRuntimeConfig["provider"], model: selectedModel, thinking: options.thinking, lanes: laneLimit, autonomy, limitPolicy: options.limitPolicy as CampaignRuntimeConfig["limitPolicy"], executor: options.executor as CampaignRuntimeConfig["executor"] };
-    const campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime: CampaignRuntimeConfig } = options.resume && savedCampaign && savedCampaign.status !== "completed"
+    let campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime: CampaignRuntimeConfig } = options.resume && savedCampaign && savedCampaign.status !== "completed"
       ? { ...resumeCampaign({ goal: savedCampaign.goal ?? options.goal, budgetMinutes: savedCampaign.budgetMinutes ?? budget, stopCondition: savedCampaign.stopCondition ?? options.stop, startedAt: savedCampaign.startedAt ?? new Date(started).toISOString(), status: savedCampaign.status === "paused" ? "paused" : "running", pausedAt: savedCampaign.pausedAt, pausedDurationMinutes: savedCampaign.pausedDurationMinutes, runtime: savedRuntime ?? runtime }), status: "running", runtime }
       : { goal: options.goal, budgetMinutes: budget, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running", runtime };
     if (options.resume) console.log(savedCampaign && savedCampaign.status !== "completed" ? `Resuming durable research campaign from ${savedCampaign.startedAt ?? "saved state"}.` : "No resumable campaign found; starting a new research campaign.");
     const objective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}`;
     let cycle = 0;
     do {
-      const directive = await waitForControllerDirective();
+      const directive = await waitForControllerDirective(
+        () => {
+          if (campaign.status === "paused") return;
+          campaign = pauseCampaign(campaign);
+          const pausedStore = new ResearchStore(statePath);
+          pausedStore.saveCampaign(campaign);
+          pausedStore.setSchedulerState({ status: "paused", mode, currentStep: "controller-paused" });
+          pausedStore.appendEvent("research.controller.paused", { cycle, source: "controller request" });
+          pausedStore.close();
+          console.log("Research controller paused; waiting for a resume request.");
+        },
+        () => {
+          campaign = resumeCampaign(campaign);
+          const resumedStore = new ResearchStore(statePath);
+          resumedStore.saveCampaign(campaign);
+          resumedStore.setSchedulerState({ status: "running", mode, currentStep: "controller-resumed" });
+          resumedStore.appendEvent("research.controller.resumed", { cycle, source: "controller request" });
+          resumedStore.close();
+          console.log("Research controller resumed from the durable pause boundary.");
+        },
+      );
       if (directive === "stop") {
-        campaign.status = "paused";
+        campaign.status = "completed";
         const stoppedStore = new ResearchStore(statePath);
         stoppedStore.saveCampaign(campaign);
         stoppedStore.appendEvent("research.controller.stop", { cycle, reason: "remote controller stop request" });
+        stoppedStore.setSchedulerState({ status: "idle", mode, currentStep: "controller-stopped" });
         stoppedStore.close();
         console.log("Research controller stop requested; stopped at the next safe boundary.");
         break;
