@@ -15,6 +15,13 @@ export interface CrossPollinationBoard {
   agreements: string[];
   tensions: string[];
   complementaryRecommendations: string[];
+  transferCandidates: Array<{
+    recommendation: string;
+    sourceRoles: string[];
+    evidence: string[];
+    independentSupport: number;
+    confidence: number;
+  }>;
   evidence: string[];
   familyCoverage: string[];
   agreementPairs: number;
@@ -46,6 +53,28 @@ export function synthesizeLaneReports(reports: LaneFinding[]): CrossPollinationB
     }
   }
   const recommendations = completed.flatMap((report) => (report.recommendations ?? []).map((recommendation) => `${report.role ?? "lane"}: ${recommendation}`));
+  const recommendationGroups = new Map<string, { recommendation: string; roles: Set<string>; evidence: Set<string>; confidence: number[] }>();
+  for (const report of completed) {
+    for (const recommendation of report.recommendations ?? []) {
+      const key = recommendation.trim().toLowerCase().replace(/\s+/g, " ");
+      if (!key) continue;
+      const group = recommendationGroups.get(key) ?? { recommendation, roles: new Set<string>(), evidence: new Set<string>(), confidence: [] };
+      group.roles.add(report.role ?? "lane");
+      for (const item of report.evidence ?? []) group.evidence.add(item);
+      group.confidence.push(report.confidence ?? 0.5);
+      recommendationGroups.set(key, group);
+    }
+  }
+  const transferCandidates = [...recommendationGroups.values()]
+    .map((group) => ({
+      recommendation: group.recommendation,
+      sourceRoles: [...group.roles].sort(),
+      evidence: [...group.evidence].slice(0, 6),
+      independentSupport: group.roles.size,
+      confidence: group.confidence.length ? group.confidence.reduce((sum, value) => sum + value, 0) / group.confidence.length : 0,
+    }))
+    .sort((left, right) => right.independentSupport - left.independentSupport || right.evidence.length - left.evidence.length || right.confidence - left.confidence || left.recommendation.localeCompare(right.recommendation))
+    .slice(0, 8);
   const tensions = completed.flatMap((report) => (report.uncertainties ?? []).map((uncertainty) => `${report.role ?? "lane"}: ${uncertainty}`));
   const evidence = completed.flatMap((report) => report.evidence ?? []).slice(0, 18);
   const familyCoverage = completed.map((report) => report.role ?? "unknown").filter((role, index, values) => values.indexOf(role) === index);
@@ -59,6 +88,7 @@ export function synthesizeLaneReports(reports: LaneFinding[]): CrossPollinationB
     agreements: unique(agreements).slice(0, 8),
     tensions: unique(tensions).slice(0, 8),
     complementaryRecommendations: dedupeRecommendations(recommendations).slice(0, 12),
+    transferCandidates,
     evidence: unique(evidence).slice(0, 18),
     familyCoverage,
     agreementPairs,

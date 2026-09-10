@@ -2584,6 +2584,10 @@ test("cross-pollination preserves agreement, tension, and evidence provenance", 
   assert.equal(board.independentEvidenceCount, 2);
   assert.equal(board.needsAdversarialReview, true);
   assert.equal(board.complementaryRecommendations.length, 1);
+  assert.equal(board.transferCandidates.length, 1);
+  assert.deepEqual(board.transferCandidates[0].sourceRoles, ["data", "validation"]);
+  assert.equal(board.transferCandidates[0].independentSupport, 2);
+  assert.deepEqual(board.transferCandidates[0].evidence, ["audit.csv", "fold-report.json"]);
   assert.deepEqual(board.evidence, ["audit.csv", "fold-report.json"]);
   assert.ok(board.tensions.some((value) => value.includes("site shift")));
 });
