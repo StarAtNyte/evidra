@@ -25,6 +25,8 @@ The same protocol is available from the CLI:
 
 ```bash
 evidra benchmark run protocol.json --out benchmark-run.json
+# use an external checkout, such as an AIRS-Bench repository:
+evidra benchmark run airs-protocol.json --workspace /path/to/airs-bench
 # optionally select one incumbent; otherwise Evidra is compared with every other arm
 evidra benchmark run protocol.json --challenger evidra --incumbent incumbent
 evidra benchmark validate trials.json

@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 
 export type AirsBenchFamily = "rad" | "mlgym" | "all";
 
@@ -73,7 +73,7 @@ function requiredFiles(taskPath: string): Record<string, string> {
 }
 
 function mlgymFiles(taskPath: string): Record<string, string> {
-  const taskConfig = join(taskPath, "configs", "tasks", `${taskPath.split("/").at(-1)}.yaml`);
+  const taskConfig = join(taskPath, "configs", "tasks", `${basename(taskPath)}.yaml`);
   return {
     metadataPath: taskConfig,
     descriptionPath: taskConfig,

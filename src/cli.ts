@@ -387,10 +387,11 @@ const benchmark = new Command("benchmark").description("Compare research harness
 benchmark.command("run")
   .argument("<file>", "JSON file containing { arms: [...] }")
   .option("--out <file>", "write the run report and scorecards to a JSON file")
+  .option("--workspace <dir>", "explicit benchmark workspace root; defaults to the Evidra project")
   .option("--challenger <harness>", "harness that must beat the incumbents", "evidra")
   .option("--incumbent <harness>", "compare only against this incumbent; by default compare against every other harness")
   .description("Execute matched arms, score the evidence, and verify the challenger beats incumbents")
-  .action(async (file: string, options: { out?: string; challenger: string; incumbent?: string }) => {
+  .action(async (file: string, options: { out?: string; workspace?: string; challenger: string; incumbent?: string }) => {
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
     const raw = parsed && typeof parsed === "object" && Array.isArray((parsed as { arms?: unknown }).arms) ? (parsed as { arms: unknown[] }).arms : undefined;
     if (!raw?.length) throw new Error("Benchmark protocol must contain a non-empty arms array.");
@@ -404,7 +405,8 @@ benchmark.command("run")
     });
     const protocol = validateBenchmarkProtocol(arms.map((arm) => ({ ...arm, validRun: false, durationSeconds: 0, recovered: false, reproducible: false })));
     if (!protocol.valid) throw new Error(`Benchmark protocol is not matched:\n${protocol.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
-    const report = await runBenchmarkArms(arms, root, (message) => console.log(`· ${message}`));
+    const benchmarkWorkspace = options.workspace ? resolve(options.workspace) : root;
+    const report = await runBenchmarkArms(arms, benchmarkWorkspace, (message) => console.log(`· ${message}`));
     const matched = validateBenchmarkProtocol(report.trials);
     if (!matched.valid) throw new Error(`Benchmark results are not matched:\n${matched.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
     const scorecards = scoreHarnessTrials(report.trials);
