@@ -38,7 +38,7 @@ import { recordBaselineEvidence } from "./core/baseline.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
-import { checkProvider, codexLoginStatus, isProviderUsageLimit, listLocalModels, providerRetryAfterMs, runWithUsageLimitWait, runWithLocalFallback } from "./agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, isProviderUsageLimit, listLocalModels, providerRetryAfterMs, resolveLocalFallbackModel, runWithUsageLimitWait, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -624,7 +624,9 @@ research
     const adapter = activeCompetition();
     await ingestCompetitionSources(adapter);
     const budget = durationMinutes(options.budget);
-    const selectedModel = options.provider === "local" && options.model === "default" ? "qwen3.6:27b" : options.model;
+    const selectedModel = options.provider === "local" && options.model === "default"
+      ? await resolveLocalFallbackModel("auto")
+      : options.model;
     const laneLimit = Math.max(1, Math.min(6, Number.parseInt(options.lanes, 10) || 1));
     await checkProvider({ provider: options.provider, model: selectedModel, cwd: root });
     const releaseLease = acquireCliControllerLease(mode);
