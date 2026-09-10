@@ -1556,3 +1556,8 @@ test("specification-gaming guard detects evaluator mutations", () => {
     assert.deepEqual(changedProtectedFiles(snapshot, root), ["eval.py"]);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("experiment manifests preserve multiple independent verifiers", () => {
+  const manifest = createExperimentManifest({ id: "multi-verify", hypothesisId: "hyp-1", gitCommit: "abc123", datasetVersion: "data", verificationCommands: [["python", "check_unit.py"], ["python", "check_reference.py"]] }, { id: "test", name: "Test", taskType: "general", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["python", "eval.py"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["python", "baseline.py"], experimentCommand: ["python", "run.py"] });
+  assert.deepEqual(manifest.evaluation.verificationCommands, [["python", "check_unit.py"], ["python", "check_reference.py"]]);
+});

@@ -1152,7 +1152,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     setProgress(`Experiment ${id} · running ${manifest.resources.executor} executor...`);
     let evaluatorOutput: { stdout: string; stderr: string; exitCode: number } | undefined;
-    let verificationOutput: { stdout: string; stderr: string; exitCode: number } | undefined;
+    const verificationOutputs: Array<{ command: string[]; stdout: string; stderr: string; exitCode: number }> = [];
     const recordAttemptStarted = (attemptNumber: number): void => {
       const attemptStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
       attemptStore.appendEvent("run.attempt.started", { experimentId: id, attempt: attemptNumber, command, cwd: experimentCwd, executor: manifest.resources.executor });
@@ -1211,19 +1211,22 @@ export function App({ root }: { root: string }): React.JSX.Element {
         ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }),
       };
     }
-    const verificationCommand = manifest.evaluation.verificationCommand;
-    if (result.status === "completed" && verificationCommand) {
-      setProgress(`Experiment ${id} · running verification...`);
-      const checked = await withExecutionHeartbeat(
-        () => runProcess(verificationCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, registerProcess),
-        { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "verification", executor: manifest.resources.executor },
-      );
-      activeProcess.current = null;
-      verificationOutput = { stdout: checked.stdout, stderr: checked.stderr, exitCode: checked.exitCode };
-      const verificationStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      verificationStore.appendEvent(checked.exitCode === 0 ? "experiment.verification.completed" : "experiment.verification.failed", { experimentId: id, runId: result.runId, command: verificationCommand, exitCode: checked.exitCode, stdout: checked.stdout.slice(-4000), stderr: checked.stderr.slice(-4000) });
-      verificationStore.close();
-      result = { ...result, status: checked.exitCode === 0 ? "completed" : "failed", exitCode: checked.exitCode, stdout: `${result.stdout ?? ""}\n[VERIFICATION]\n${checked.stdout}`, stderr: `${result.stderr ?? ""}\n[VERIFICATION]\n${checked.stderr}`, ...(checked.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
+    const verificationCommands = [...(manifest.evaluation.verificationCommand ? [manifest.evaluation.verificationCommand] : []), ...(manifest.evaluation.verificationCommands ?? [])];
+    if (result.status === "completed") {
+      for (const verificationCommand of verificationCommands) {
+        setProgress(`Experiment ${id} · running verification ${verificationOutputs.length + 1}/${verificationCommands.length}...`);
+        const checked = await withExecutionHeartbeat(
+          () => runProcess(verificationCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, registerProcess),
+          { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "verification", executor: manifest.resources.executor },
+        );
+        activeProcess.current = null;
+        verificationOutputs.push({ command: verificationCommand, stdout: checked.stdout, stderr: checked.stderr, exitCode: checked.exitCode });
+        const verificationStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        verificationStore.appendEvent(checked.exitCode === 0 ? "experiment.verification.completed" : "experiment.verification.failed", { experimentId: id, runId: result.runId, verifierIndex: verificationOutputs.length, command: verificationCommand, exitCode: checked.exitCode, stdout: checked.stdout.slice(-4000), stderr: checked.stderr.slice(-4000) });
+        verificationStore.close();
+        result = { ...result, status: checked.exitCode === 0 ? "completed" : "failed", exitCode: checked.exitCode, stdout: `${result.stdout ?? ""}\n[VERIFICATION ${verificationOutputs.length}]\n${checked.stdout}`, stderr: `${result.stderr ?? ""}\n[VERIFICATION ${verificationOutputs.length}]\n${checked.stderr}`, ...(checked.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
+        if (checked.exitCode !== 0) break;
+      }
     }
     result = validateRunMetric(result, adapter.config.metric.name);
     executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
@@ -1241,15 +1244,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
     writeFileSync(metricsPath, `${JSON.stringify(result.metrics, null, 2)}\n`);
     const evaluatorStdoutPath = evaluatorOutput ? join(artifactDir, "evaluator.stdout.log") : undefined;
     const evaluatorStderrPath = evaluatorOutput ? join(artifactDir, "evaluator.stderr.log") : undefined;
-    const verificationStdoutPath = verificationOutput ? join(artifactDir, "verification.stdout.log") : undefined;
-    const verificationStderrPath = verificationOutput ? join(artifactDir, "verification.stderr.log") : undefined;
+    const verificationPaths = verificationOutputs.map((verification, index) => ({ verification, stdoutPath: join(artifactDir, `verification-${index + 1}.stdout.log`), stderrPath: join(artifactDir, `verification-${index + 1}.stderr.log`) }));
     if (evaluatorOutput && evaluatorStdoutPath && evaluatorStderrPath) {
       writeFileSync(evaluatorStdoutPath, evaluatorOutput.stdout);
       writeFileSync(evaluatorStderrPath, evaluatorOutput.stderr);
     }
-    if (verificationOutput && verificationStdoutPath && verificationStderrPath) {
-      writeFileSync(verificationStdoutPath, verificationOutput.stdout);
-      writeFileSync(verificationStderrPath, verificationOutput.stderr);
+    for (const { verification, stdoutPath, stderrPath } of verificationPaths) {
+      writeFileSync(stdoutPath, verification.stdout);
+      writeFileSync(stderrPath, verification.stderr);
     }
     const environment = await captureEnvironment(root, result.cwd ?? experimentCwd, result.command ?? command, manifest.resources.executor, manifest.resources.gpu);
     writeFileSync(environmentPath, `${JSON.stringify(environment, null, 2)}\n`);
@@ -1263,7 +1265,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         "metrics.json": metricsPath,
         "environment.json": environmentPath,
         ...(evaluatorStdoutPath && evaluatorStderrPath ? { "evaluator.stdout.log": evaluatorStdoutPath, "evaluator.stderr.log": evaluatorStderrPath } : {}),
-        ...(verificationStdoutPath && verificationStderrPath ? { "verification.stdout.log": verificationStdoutPath, "verification.stderr.log": verificationStderrPath } : {}),
+        ...Object.fromEntries(verificationPaths.flatMap(({ stdoutPath, stderrPath }, index) => [[`verification-${index + 1}.stdout.log`, stdoutPath], [`verification-${index + 1}.stderr.log`, stderrPath]])),
       },
     };
     const resultStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
