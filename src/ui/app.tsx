@@ -34,6 +34,7 @@ import { evaluateTrajectory, type TrajectoryEvent } from "../core/trajectories.j
 import { routeCapability } from "../core/capability-router.js";
 import { allocateNextResearch } from "../core/allocation.js";
 import { rankPriorities } from "../core/scheduler.js";
+import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -1690,7 +1691,20 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (!baseline || !candidate) { append("assistant", "Usage: /experiment compare <baseline-id> <candidate-id> (experiment or run ids accepted)"); return; }
         try {
           const comparison = compareRuns(RunResultSchema.parse(baseline.payload), RunResultSchema.parse(candidate.payload), activeAdapter().config.metric.name);
-          append("assistant", `Run comparison\n  baseline: ${comparison.baselineRunId} · ${comparison.baseline ?? "missing"}\n  candidate: ${comparison.candidateRunId} · ${comparison.candidate ?? "missing"}\n  delta: ${comparison.delta ?? "missing"}\n  result: ${comparison.direction}\n  evidence: ${comparison.evidence}${comparison.probabilityImproved === undefined ? "" : `\n  probability improved: ${(comparison.probabilityImproved * 100).toFixed(1)}%\n  95% CI: [${comparison.confidenceInterval?.[0].toFixed(6)}, ${comparison.confidenceInterval?.[1].toFixed(6)}]`}\n\n${comparison.note}`);
+          const adapter = activeAdapter();
+          const policy = createValidationPolicy(adapter.config);
+          const acceptance = evaluateValidationAcceptance({
+            baseline: RunResultSchema.parse(baseline.payload),
+            candidate: RunResultSchema.parse(candidate.payload),
+            metric: adapter.config.metric.name,
+            direction: adapter.config.metric.direction,
+            minimumDelta: policy.acceptance.minimumDelta,
+            maximumRegressionShift: 0,
+            requireReplication: policy.acceptance.requireReplication,
+            leakageAuditPassed: false,
+            reviewerApproved: false,
+          });
+          append("assistant", `Run comparison\n  baseline: ${comparison.baselineRunId} · ${comparison.baseline ?? "missing"}\n  candidate: ${comparison.candidateRunId} · ${comparison.candidate ?? "missing"}\n  delta: ${comparison.delta ?? "missing"}\n  result: ${comparison.direction}\n  evidence: ${comparison.evidence}${comparison.probabilityImproved === undefined ? "" : `\n  probability improved: ${(comparison.probabilityImproved * 100).toFixed(1)}%\n  95% CI: [${comparison.confidenceInterval?.[0].toFixed(6)}, ${comparison.confidenceInterval?.[1].toFixed(6)}]`}\n  promotion: ${acceptance.accepted ? "eligible" : "blocked by evidence gates"}\n\n${comparison.note}${acceptance.reasons.length ? `\n\nPromotion gates:\n${acceptance.reasons.map((reason) => `- ${reason}`).join("\n")}` : ""}`);
         } catch (error) { appendError(error); }
         return;
       }

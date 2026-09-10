@@ -30,6 +30,7 @@ import { evaluateTrajectory, capabilityGaps } from "../dist/core/trajectories.js
 import { routeCapability } from "../dist/core/capability-router.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
 import { rankPriorities } from "../dist/core/scheduler.js";
+import { evaluateValidationAcceptance } from "../dist/core/validation-engine.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -101,6 +102,17 @@ test("experiment scheduler ranks expected information per cost", () => {
   ]);
   assert.equal(ranked[0].id, "cheap");
   assert.ok(ranked[0].priority > ranked[1].priority);
+});
+
+test("validation acceptance requires replicated evidence and safety gates", () => {
+  const base = { runId: "base", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 0.7 }, metricsByFold: { score: [0.69, 0.70, 0.71] }, artifacts: {} };
+  const candidate = { ...base, runId: "candidate", metrics: { score: 0.71 }, metricsByFold: { score: [0.70, 0.71, 0.72] } };
+  const blocked = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: false, reviewerApproved: false });
+  assert.equal(blocked.comparison.evidence, "replicated");
+  assert.equal(blocked.gates.minimumDelta, true);
+  assert.equal(blocked.accepted, false);
+  const accepted = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true });
+  assert.equal(accepted.accepted, true);
 });
 
 test("workspace root discovery keeps nested CLI invocations on the project state", () => {
