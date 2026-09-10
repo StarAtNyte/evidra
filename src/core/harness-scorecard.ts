@@ -367,15 +367,17 @@ export function evaluateHarnessRetention(before: HarnessTrial[], after: HarnessT
   const pairedLower95 = taskDeltas.length ? bootstrapLower95(taskDeltas, `${harness}:retention`) : null;
   const regressedTasks = taskMeansByName.filter((entry) => entry.delta < -maximumRegression).map((entry) => entry.task).sort();
   const coverage = allKeys.length ? paired.length / allKeys.length : 0;
-  const retained = pairedLower95 !== null && pairedLower95 >= -maximumRegression && coverage >= 0.8 && taskDeltas.length >= 2;
+  // Retention is stricter than a competitive comparison: every previously
+  // evaluated arm must remain measurable after a harness change.
+  const retained = pairedLower95 !== null && pairedLower95 >= -maximumRegression && coverage === 1 && taskDeltas.length >= 2;
   const reason = retained
     ? `retained prior performance across ${taskDeltas.length} tasks with ${(coverage * 100).toFixed(0)}% valid paired coverage`
     : pairedLower95 === null
       ? "no valid paired retention evidence is available"
       : taskDeltas.length < 2
         ? "need at least 2 tasks for a retention claim"
-        : coverage < 0.8
-          ? `retention coverage ${(coverage * 100).toFixed(0)}% is below the 80% threshold`
+        : coverage < 1
+          ? `retention coverage ${(coverage * 100).toFixed(0)}% is below the required 100% prior-arm coverage`
           : `lower 95% retention bound ${pairedLower95.toFixed(6)} is below the allowed regression`;
   return { harness, comparableArms: allKeys.length, validPairedArms: paired.length, tasks: taskDeltas.length, coverage, pairedMeanDelta, pairedLower95, regressedTasks, retained, reason };
 }
