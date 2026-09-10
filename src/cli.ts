@@ -113,6 +113,10 @@ function acquireCliControllerLease(mode: "research" | "challenge"): () => void {
     const lease = acquired.lease;
     throw new Error(`Another Evidra controller is already running (pid ${lease?.pid ?? "unknown"}, step ${lease?.currentStep ?? "unknown"}). Use evidra controller status or pause it before starting another campaign.`);
   }
+  const recoveredStore = new ResearchStore(statePath);
+  const recoveredExperiments = recoveredStore.recoverStaleExperiments();
+  recoveredStore.close();
+  if (recoveredExperiments.length) console.log(`Recovered ${recoveredExperiments.length} stale experiment(s) from a previous controller.`);
   let released = false;
   const heartbeat = setInterval(() => {
     try {

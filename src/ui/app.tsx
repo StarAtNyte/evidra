@@ -341,6 +341,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return false;
     }
     controllerLeaseHeld.current = true;
+    const recoveredStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const recoveredExperiments = recoveredStore.recoverStaleExperiments();
+    recoveredStore.close();
+    if (recoveredExperiments.length) append("assistant", `Recovered ${recoveredExperiments.length} experiment(s) left running by a previous controller; they are available for retry.`);
     if (!controllerHeartbeat.current) controllerHeartbeat.current = setInterval(() => {
       const heartbeatStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
       heartbeatStore.heartbeatControllerLease(controllerLeaseId.current, configRef.current.mode, progressRef.current || "running");

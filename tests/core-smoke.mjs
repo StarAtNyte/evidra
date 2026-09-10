@@ -96,6 +96,19 @@ test("controller leases prevent duplicate workers and trajectories expose capabi
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("stale running experiments are recovered for retry after controller restart", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-stale-experiment-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.saveExperiment({ id: "stale", payload: { id: "stale", status: "running", hypothesisId: "h1" } });
+    assert.deepEqual(store.recoverStaleExperiments(), ["stale"]);
+    assert.equal(store.experiments()[0].payload.status, "failed");
+    assert.equal(store.experiments()[0].payload.stale, true);
+    assert.equal(store.recoverStaleExperiments().length, 0);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("capability routing increases verification pressure after failures", () => {
   const bounded = routeCapability({ objective: "summarize one file", mode: "research", provider: "local", autonomy: "safe" });
   const difficult = routeCapability({ objective: "research and run experiments to optimize and replicate a generalizing challenge solution", mode: "challenge", provider: "codex", autonomy: "fast", recentFailureCount: 2, budgetRemainingMinutes: 5 });

@@ -652,6 +652,20 @@ export class ResearchStore {
     return rows.map((row) => ({ id: row.id, payload: JSON.parse(row.payload_json), createdAt: row.created_at }));
   }
 
+  /** Mark experiments left running by a dead controller as failed and retryable. */
+  recoverStaleExperiments(): string[] {
+    const recovered: string[] = [];
+    for (const experiment of this.experiments()) {
+      const payload = experiment.payload && typeof experiment.payload === "object" ? experiment.payload as Record<string, unknown> : {};
+      if (payload.status !== "running") continue;
+      const updated = { ...payload, status: "failed", failure: "Controller exited before experiment finalization.", recoveredAt: new Date().toISOString(), stale: true };
+      this.saveExperiment({ id: experiment.id, payload: updated });
+      this.appendEvent("experiment.stale.recovered", { experimentId: experiment.id, previousStatus: "running" });
+      recovered.push(experiment.id);
+    }
+    return recovered;
+  }
+
   runs(): Array<{ id: string; experimentId: string; status: string; payload: unknown; updatedAt: string }> {
     const rows = this.db.prepare("SELECT id, experiment_id, status, payload_json, updated_at FROM runs ORDER BY updated_at DESC").all() as Array<{ id: string; experiment_id: string; status: string; payload_json: string; updated_at: string }>;
     return rows.map((row) => ({ id: row.id, experimentId: row.experiment_id, status: row.status, payload: JSON.parse(row.payload_json), updatedAt: row.updated_at }));
