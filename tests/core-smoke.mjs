@@ -55,6 +55,7 @@ import { enforceGoalTermination } from "../dist/core/termination.js";
 import { summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
+import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -1276,6 +1277,19 @@ test("process interruption escalates when a worker ignores SIGTERM", async () =>
   const result = await promise;
   assert.notEqual(result.exitCode, 0);
   assert(Date.now() - started < 5_000);
+});
+
+test("long-running execution emits durable run heartbeats", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-heartbeat-events-"));
+  const db = join(root, ".sota", "database.sqlite");
+  try {
+    await withExecutionHeartbeat(() => new Promise((resolve) => setTimeout(resolve, 650)), { storePath: db, experimentId: "exp-heartbeat", stage: "full_validation", executor: "local", intervalMs: 250 });
+    const store = new ResearchStore(db);
+    const heartbeats = store.recentEvents(10).filter((event) => event.type === "run.heartbeat");
+    assert.ok(heartbeats.length >= 2);
+    assert.equal(heartbeats.at(-1).payload.experimentId, "exp-heartbeat");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("missing process executables reject without retaining the timeout", async () => {

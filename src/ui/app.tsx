@@ -40,6 +40,7 @@ import { rankExperimentCandidates } from "../core/scheduler.js";
 import { evaluateReducedPromotion } from "../core/scheduler.js";
 import { validateCompetitionContract } from "../core/competition-contract.js";
 import { candidateChangePath } from "../core/hypothesis-path.js";
+import { withExecutionHeartbeat } from "../core/execution-heartbeat.js";
 import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "../core/execution-stages.js";
 import { runReducedValidation } from "../core/stage-executor.js";
@@ -1079,7 +1080,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
         failedStore.close();
         throw new Error(`Smoke feasibility check failed:\n${smokeContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
       }
-      const smoke = await runReducedValidation(executor, manifest, experimentCwd, smokeCommand, adapter.config.metric.name, registerProcess);
+      const smoke = await withExecutionHeartbeat(
+        () => runReducedValidation(executor, manifest, experimentCwd, smokeCommand, adapter.config.metric.name, registerProcess),
+        { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, stage: "smoke", executor: manifest.resources.executor },
+      );
       activeProcess.current = null;
       executionPlan = advanceExecutionStage(executionPlan, "smoke", smoke.status === "completed" ? "completed" : "failed");
       const smokeStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -1101,7 +1105,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
         failedStore.close();
         throw new Error(`Reduced validation feasibility check failed:\n${reducedContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
       }
-      const reduced = await runReducedValidation(executor, manifest, experimentCwd, reducedCommand, adapter.config.metric.name, registerProcess);
+      const reduced = await withExecutionHeartbeat(
+        () => runReducedValidation(executor, manifest, experimentCwd, reducedCommand, adapter.config.metric.name, registerProcess),
+        { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, stage: "reduced_validation", executor: manifest.resources.executor },
+      );
       activeProcess.current = null;
       executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", reduced.status === "completed" ? "completed" : "failed");
       const reducedStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -1140,7 +1147,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     };
     let attempt = 1;
     recordAttemptStarted(attempt);
-    let result = await executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name);
+    let result = await withExecutionHeartbeat(
+      () => executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name),
+      { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
+    );
     const recoveryEvents: TrajectoryEvent[] = [];
     while (result.status !== "completed") {
       const plan = recoveryPlan(result.failureClass);
@@ -1154,7 +1164,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
       await new Promise<void>((resolve) => setTimeout(resolve, delay * 1000));
       attempt += 1;
       recordAttemptStarted(attempt);
-      result = await executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name);
+      result = await withExecutionHeartbeat(
+        () => executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name),
+        { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
+      );
     }
     if (result.status !== "completed") {
       const route = recoveryPlan(result.failureClass);
@@ -1167,7 +1180,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const sameCommand = evaluatorCommand.length === command.length && evaluatorCommand.every((part, index) => part === command[index]);
     if (result.status === "completed" && !sameCommand) {
       setProgress(`Experiment ${id} · running canonical evaluator...`);
-      const evaluated = await runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, registerProcess);
+      const evaluated = await withExecutionHeartbeat(
+        () => runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, registerProcess),
+        { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "evaluator", executor: manifest.resources.executor },
+      );
       activeProcess.current = null;
       evaluatorOutput = { stdout: evaluated.stdout, stderr: evaluated.stderr, exitCode: evaluated.exitCode };
       const metrics = parseMetricOutput(evaluated.stdout, adapter.config.metric.name);

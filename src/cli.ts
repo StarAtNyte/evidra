@@ -55,6 +55,7 @@ import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurric
 import { evaluateReducedPromotion } from "./core/scheduler.js";
 import { validateCompetitionContract } from "./core/competition-contract.js";
 import { candidateChangePath } from "./core/hypothesis-path.js";
+import { withExecutionHeartbeat } from "./core/execution-heartbeat.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -1362,7 +1363,10 @@ experiment.command("run")
         failedStore.close();
         throw new Error(`Smoke feasibility check failed:\n${smokeContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
       }
-      const smoke = await runReducedValidation(executor, manifest, experimentCwd, smokeCommand, adapter.config.metric.name);
+      const smoke = await withExecutionHeartbeat(
+        () => runReducedValidation(executor, manifest, experimentCwd, smokeCommand, adapter.config.metric.name),
+        { storePath: statePath, experimentId: id, stage: "smoke", executor: manifest.resources.executor },
+      );
       executionPlan = advanceExecutionStage(executionPlan, "smoke", smoke.status === "completed" ? "completed" : "failed");
       const smokeStore = new ResearchStore(statePath);
       smokeStore.appendEvent(smoke.status === "completed" ? "experiment.stage.smoke.completed" : "experiment.stage.smoke.failed", { experimentId: id, runId: smoke.runId, metric: smoke.metrics[adapter.config.metric.name] ?? null, exitCode: smoke.exitCode, command: smokeCommand });
@@ -1387,7 +1391,10 @@ experiment.command("run")
         failedStore.close();
         throw new Error(`Reduced validation feasibility check failed:\n${reducedContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
       }
-      const reduced = await runReducedValidation(executor, manifest, experimentCwd, reducedCommand, adapter.config.metric.name);
+      const reduced = await withExecutionHeartbeat(
+        () => runReducedValidation(executor, manifest, experimentCwd, reducedCommand, adapter.config.metric.name),
+        { storePath: statePath, experimentId: id, stage: "reduced_validation", executor: manifest.resources.executor },
+      );
       executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", reduced.status === "completed" ? "completed" : "failed");
       const reducedStore = new ResearchStore(statePath);
       reducedStore.appendEvent(reduced.status === "completed" ? "experiment.stage.reduced_validation.completed" : "experiment.stage.reduced_validation.failed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[adapter.config.metric.name] ?? null, exitCode: reduced.exitCode, command: reducedCommand });
@@ -1439,7 +1446,10 @@ experiment.command("run")
       attemptStore.close();
     };
     recordAttemptStarted(attempt);
-    let result = await executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name);
+    let result = await withExecutionHeartbeat(
+      () => executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name),
+      { storePath: statePath, experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
+    );
     recordAttempt(attempt, result);
     while (result.status !== "completed") {
       const plan = recoveryPlan(result.failureClass);
@@ -1452,7 +1462,10 @@ experiment.command("run")
       await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, delay * 1000));
       attempt += 1;
       recordAttemptStarted(attempt);
-      result = await executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name);
+      result = await withExecutionHeartbeat(
+        () => executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name),
+        { storePath: statePath, experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
+      );
       recordAttempt(attempt, result);
     }
     if (result.status !== "completed") {
@@ -1465,7 +1478,10 @@ experiment.command("run")
     const sameCommand = evaluatorCommand.length === command.length && evaluatorCommand.every((part, index) => part === command[index]);
     let evaluator: { stdout: string; stderr: string; exitCode: number } | undefined;
     if (result.status === "completed" && !sameCommand) {
-      const evaluated = await runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000);
+      const evaluated = await withExecutionHeartbeat(
+        () => runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000),
+        { storePath: statePath, experimentId: id, attempt, stage: "evaluator", executor: manifest.resources.executor },
+      );
       evaluator = { stdout: evaluated.stdout, stderr: evaluated.stderr, exitCode: evaluated.exitCode };
       const parsed = parseMetricOutput(evaluated.stdout, adapter.config.metric.name);
       result = { ...result, status: evaluated.exitCode === 0 ? "completed" : "failed", exitCode: evaluated.exitCode, metrics: { ...result.metrics, ...parsed.metrics }, metricsByFold: { ...result.metricsByFold, ...parsed.metricsByFold }, stdout: `${result.stdout ?? ""}\n[EVALUATOR]\n${evaluated.stdout}`, stderr: `${result.stderr ?? ""}\n[EVALUATOR]\n${evaluated.stderr}`, ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
