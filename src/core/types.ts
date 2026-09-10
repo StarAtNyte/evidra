@@ -88,6 +88,7 @@ export const ResearchDecisionSchema = z.object({
   bottleneck: z.string().min(1),
   rationale: z.string().min(1),
   hypotheses: z.array(ResearchHypothesisSchema).max(5),
+  searchOperator: z.enum(["greedy", "ucb_portfolio", "ablation", "combination", "replication", "audit"]).default("ucb_portfolio"),
   selectedHypothesis: z.string().nullable(),
   nextAction: z.string().min(1),
   toolCalls: z.array(z.object({
@@ -186,6 +187,7 @@ export const ExperimentManifestSchema = z.object({
   resources: z.object({ executor: z.enum(["local", "container", "modal"]), image: z.string().min(1).optional(), gpu: z.string().optional(), timeoutMinutes: z.number().positive() }),
   evaluation: z.object({ folds: z.array(z.number().int().nonnegative()), seeds: z.array(z.number().int()), requiredArtifacts: z.array(z.string()) }),
   acceptance: z.object({ minimumPrimaryDelta: z.number(), maximumRegressionShift: z.number(), requireReplication: z.boolean() }),
+  searchOperator: z.string().min(1).default("ucb_portfolio"),
   createdAt: z.string().datetime(),
 });
 

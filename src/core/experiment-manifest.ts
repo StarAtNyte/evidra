@@ -18,6 +18,7 @@ export interface ManifestInput {
   maximumRegressionShift?: number;
   requireReplication?: boolean;
   parent?: string | null;
+  searchOperator?: string;
 }
 
 export function createExperimentManifest(input: ManifestInput, competition: CompetitionConfig): ExperimentManifest {
@@ -46,6 +47,7 @@ export function createExperimentManifest(input: ManifestInput, competition: Comp
       maximumRegressionShift: input.maximumRegressionShift ?? 0,
       requireReplication: input.requireReplication ?? true,
     },
+    searchOperator: input.searchOperator ?? "ucb_portfolio",
     createdAt: new Date().toISOString(),
   });
 }
@@ -80,5 +82,6 @@ export function createReplicationManifest(parent: ExperimentManifest, competitio
     minimumPrimaryDelta: parent.acceptance.minimumPrimaryDelta,
     maximumRegressionShift: parent.acceptance.maximumRegressionShift,
     requireReplication: false,
+    searchOperator: parent.searchOperator,
   }, competition);
 }

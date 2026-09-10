@@ -1116,6 +1116,7 @@ research
               gitCommit: commit.stdout.trim(),
               datasetVersion: adapter.config.datasetRevision,
               executor: options.executor as "local" | "container" | "modal",
+              searchOperator: decision.searchOperator,
               configPatch: { estimatorPath: candidateEstimatorPath(selectedHypothesis) ?? adapter.config.evaluator.estimatorPath },
             }, adapter.config);
             decisionStore.saveExperiment({ id: proposalId, payload: { ...proposal, status: "proposed", executionPlan: createExecutionPlan(proposal) } });
@@ -1145,6 +1146,7 @@ research
               gitCommit: commit.stdout.trim(),
               datasetVersion: adapter.config.datasetRevision,
               executor: options.executor as "local" | "container" | "modal",
+              searchOperator: decision.searchOperator,
               configPatch: { estimatorPath: candidateEstimatorPath(selectedHypothesis) ?? adapter.config.evaluator.estimatorPath },
             }, adapter.config);
             decisionStore.saveExperiment({ id: experimentId, payload: { ...manifest, status: "proposed", executionPlan: createExecutionPlan(manifest) } });
@@ -1595,8 +1597,7 @@ experiment.command("run")
           cwd: baselinePayload?.cwd,
         };
         const comparison = compareRuns(baselineRun, RunResultSchema.parse(recorded), metricName, adapter.config.metric.direction === "minimize");
-        const selectedPolicy = resultStore.recentEvents(500).reverse().find((event) => event.type === "research.search_policy.selected");
-        const operator = (selectedPolicy?.payload as { selected?: { operator?: string } } | undefined)?.selected?.operator ?? "ucb_portfolio";
+        const operator = manifest.searchOperator ?? "ucb_portfolio";
         resultStore.appendEvent("experiment.comparison.completed", { experimentId: id, baselineSource: baselineEvent?.createdAt ?? "baseline", comparison, searchOperator: operator });
         if (operator) {
           const improvementDelta = comparison.delta === null ? undefined : adapter.config.metric.direction === "minimize" ? -comparison.delta : comparison.delta;

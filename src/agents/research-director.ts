@@ -68,6 +68,7 @@ export async function runResearchDirector(
     "dependencies": ["baseline or experiment ids"]
   }],
   "selectedHypothesis": "hypothesis title or null",
+  "searchOperator": "greedy|ucb_portfolio|ablation|combination|replication|audit",
   "nextAction": "the next deterministic action",
   "toolCalls": [{"name": "workspace.files", "arguments": {}}]
 }

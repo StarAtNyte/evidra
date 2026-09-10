@@ -22,7 +22,7 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
   decision.hypotheses.forEach((hypothesis, index) => {
     const hypothesisId = `hyp_${stamp}_${String(index + 1).padStart(2, "0")}_${slug(hypothesis.title)}`;
     hypothesisIds.push(hypothesisId);
-    store.saveHypothesis({ id: hypothesisId, payload: { id: hypothesisId, ...hypothesis, status: "proposed", decisionId } });
+    store.saveHypothesis({ id: hypothesisId, payload: { id: hypothesisId, ...hypothesis, searchOperator: decision.searchOperator, status: "proposed", decisionId } });
     hypothesis.evidence.forEach((statement, evidenceIndex) => {
       const claimId = `claim_${stamp}_${String(index + 1).padStart(2, "0")}_${evidenceIndex + 1}`;
       claimIds.push(claimId);
