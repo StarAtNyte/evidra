@@ -22,6 +22,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const trajectories = store.trajectories(100);
   const ensembles = store.ensembleCandidates(100);
   const events = store.recentEvents(40);
+  const routingEvents = events.filter((event) => event.type === "research.capability_outcome");
   const contradictionEdges = store.edges().filter((edge) => edge.relation === "contradicts");
   const duplicateEvents = events.filter((event) => event.type === "evidence.claim.duplicate_detected");
   const title = kind === "research" ? "Research report" : kind === "challenge" ? "Challenge report" : "Final provenance report";
@@ -54,6 +55,13 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     const dimensions = Object.entries(quality).filter(([key]) => key !== "overall").map(([key, value]) => `${key}=${(value as { verdict?: string }).verdict ?? "unknown"}`).join(", ");
     return `- ${trajectory.id} · ${quality.overall ?? "unknown"}${trajectory.experimentId ? ` · experiment ${trajectory.experimentId}` : ""}${trajectory.runId ? ` · run ${trajectory.runId}` : ""}\n  ${dimensions}`;
   }).join("\n") : "No evaluated trajectories recorded.");
+  sections.push("", "## Capability routing", "", routingEvents.length ? routingEvents.map((event) => {
+    const payload = event.payload as { outcome?: string; predictedTier?: string; quality?: string; served?: { provider?: string; model?: string; parallelLanes?: number }; servedProvider?: string; servedModel?: string };
+    const provider = payload.served?.provider ?? payload.servedProvider ?? "unknown";
+    const model = payload.served?.model ?? payload.servedModel ?? "unknown";
+    const lanes = payload.served?.parallelLanes;
+    return `- ${event.createdAt} · ${payload.outcome ?? "unknown"} · predicted ${payload.predictedTier ?? "?"} · ${provider}/${model}${lanes ? ` · lanes ${lanes}` : ""} · quality ${payload.quality ?? "?"}`;
+  }).join("\n") : "No capability-routing outcomes recorded.");
   sections.push("", "## Sources", "", sources.length ? sources.map((source) => `- ${source.id}: ${line((source.payload as { title?: string; url?: string }).title ?? source.payload)} · ${(source.payload as { url?: string }).url ?? ""}`).join("\n") : "No sources recorded.");
   sections.push("", "## Ensemble candidates", "", ensembles.length ? ensembles.map((candidate) => `- ${candidate.id} · ${candidate.status} · ${candidate.checksum}\n  ${candidate.path}`).join("\n") : "No ensemble candidates recorded.");
   if (kind !== "research") sections.push("", "## Experiments and runs", "", experiments.length ? experiments.map((experiment) => {

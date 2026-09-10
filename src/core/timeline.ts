@@ -27,6 +27,15 @@ export function summarizeTimelineEvent(event: TimelineEvent): string {
   if (event.type === "run.attempt.completed") return `experiment ${text(payload.experimentId, "unknown")} · attempt ${String(payload.attempt ?? "?")} · ${text(payload.status, "unknown")}${payload.metric !== null && payload.metric !== undefined ? ` · metric ${String(payload.metric)}` : ""}`;
   if (event.type === "research.decision") return `research · ${text(payload.phase, "decision")} · ${text(payload.decision, "updated")}`;
   if (event.type === "research.cycle.completed") return `research cycle · ${text(payload.phase, "completed")}`;
+  if (event.type === "research.capability_route") return `routing · predicted ${text(payload.predictedTier, "unknown tier")} · ${text(payload.servedProvider, "provider")}/${text(payload.servedModel, "model")}`;
+  if (event.type === "research.capability_outcome") {
+    const served = payload.served && typeof payload.served === "object" ? payload.served as { provider?: unknown; model?: unknown; parallelLanes?: unknown } : {};
+    return `routing · ${text(payload.outcome, "unknown")} · predicted ${text(payload.predictedTier, "?")} · ${text(served.provider ?? payload.servedProvider, "provider")}/${text(served.model ?? payload.servedModel, "model")} · quality ${text(payload.quality, "unknown")}`;
+  }
+  if (event.type === "research.next_allocation") {
+    const allocation = payload.allocation && typeof payload.allocation === "object" ? payload.allocation as { focus?: unknown; priority?: unknown } : {};
+    return `allocation · ${text(allocation.focus, "breadth")} · ${text(allocation.priority, "normal")}`;
+  }
   if (event.type.startsWith("controller.")) return `controller · ${event.type.slice("controller.".length).replace(/\./g, " ")}${id ? ` · ${id}` : ""}`;
   if (event.type === "submission.external.submitted") return `submission · submitted via ${text(payload.platform, "adapter")}`;
   if (event.type === "submission.score.recorded" || event.type === "submission.score.polled") return `submission · score ${String(payload.score ?? "unknown")}${event.type.endsWith("polled") ? " (polled)" : ""}`;

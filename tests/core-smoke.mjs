@@ -401,10 +401,14 @@ test("reports and timeline expose ensemble lifecycle state", () => {
     const store = new ResearchStore(join(root, "state.sqlite"));
     store.saveEnsembleCandidate({ id: "blend-report", path: join(root, "blend.json"), checksum: "sha256:test", status: "validated", payload: { id: "blend-report", status: "validated" } });
     store.appendEvent("ensemble.candidate.status", { id: "blend-report", status: "validated" });
+    store.appendEvent("research.capability_outcome", { outcome: "success", predictedTier: "C2", served: { provider: "local", model: "qwen-test", parallelLanes: 2 }, quality: "PASS" });
     const report = renderReport(store, "final");
     assert.match(report, /## Ensemble candidates/);
     assert.match(report, /blend-report.*validated/);
+    assert.match(report, /## Capability routing/);
+    assert.match(report, /success.*predicted C2.*local\/qwen-test/);
     assert.match(renderTimeline(store.recentEvents(20)), /ensemble · blend-report · validated/);
+    assert.match(renderTimeline(store.recentEvents(20)), /routing · success · predicted C2 · local\/qwen-test/);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
