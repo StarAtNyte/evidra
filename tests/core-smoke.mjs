@@ -10,7 +10,7 @@ import { recoveryPlan } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { DEFAULT_SOURCE_REFRESH_MS, extractPdfText, retrieveSource, sourceClaims, sourceIsFresh } from "../dist/core/sources.js";
-import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, validateBlendCandidate } from "../dist/core/ensemble.js";
+import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
@@ -961,6 +961,16 @@ test("ensemble candidates are checksummed and durable across store reopen", () =
     assert.throws(() => reopened.updateEnsembleCandidateStatus(candidate.id, "rejected"), /Invalid ensemble transition/);
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("ensemble discovery rejects prediction symlinks that resolve outside the workspace", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-ensemble-path-"));
+  const outside = join(tmpdir(), `evidra-outside-prediction-${Date.now()}.json`);
+  try {
+    writeFileSync(outside, "[0,1]");
+    symlinkSync(outside, join(root, "prediction.json"));
+    assert.equal(safePredictionPath(root, join(root, "prediction.json")), false);
+  } finally { rmSync(outside, { force: true }); rmSync(root, { recursive: true, force: true }); }
 });
 
 test("source claims and submission provenance are auditable", () => {

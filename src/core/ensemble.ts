@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 export interface PredictionVector {
   id: string;
@@ -25,6 +25,16 @@ export interface BlendValidation {
   checksum: string;
   reason: string;
   payload?: { id?: unknown; members?: unknown; memberChecksums?: unknown; values?: unknown; status?: unknown };
+}
+
+/** Accept only prediction files whose resolved path remains inside the workspace. */
+export function safePredictionPath(root: string, path: string): boolean {
+  try {
+    const rootPath = realpathSync(root);
+    const filePath = realpathSync(path);
+    const rel = relative(rootPath, filePath);
+    return !isAbsolute(rel) && !rel.startsWith("..") && statSync(filePath).isFile() && resolve(rootPath, rel) === filePath;
+  } catch { return false; }
 }
 
 export interface DiversityPair {

@@ -38,7 +38,7 @@ import { recordBaselineEvidence } from "./core/baseline.js";
 import { redactSecrets } from "./core/redaction.js";
 import { enforceGoalTermination } from "./core/termination.js";
 import { summarizeUsage } from "./core/usage.js";
-import { createBlendCandidate, diversityReport, loadPredictionVector, validateBlendCandidate, type PredictionVector } from "./core/ensemble.js";
+import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "./core/ensemble.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
@@ -476,7 +476,7 @@ const ensemble = new Command("ensemble").description("Inspect and create durable
 function predictionVectors(store: ResearchStore): PredictionVector[] {
   return store.artifacts()
     .filter((entry) => /prediction|oof/i.test(entry.name))
-    .filter((entry) => { const relativePath = relative(resolve(root), resolve(entry.path)); return !relativePath.startsWith("..") && !relativePath.startsWith("/" ); })
+    .filter((entry) => safePredictionPath(root, entry.path))
     .flatMap((entry) => { try { return [loadPredictionVector(entry.id, entry.path)]; } catch { return []; } });
 }
 ensemble.command("candidates").action(() => {

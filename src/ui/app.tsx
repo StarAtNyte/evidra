@@ -18,7 +18,7 @@ import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../core/c
 import { prepareSubmission, validateSubmissionBundle } from "../core/submissions.js";
 import { pollSubmissionScore, submitApprovedBundle } from "../core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "../core/submission-policy.js";
-import { createBlendCandidate, diversityReport, loadPredictionVector, validateBlendCandidate, type PredictionVector } from "../core/ensemble.js";
+import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "../core/ensemble.js";
 import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
 import { auditData } from "../core/data-audit.js";
 import { executeResearchTool } from "../core/tools.js";
@@ -2290,7 +2290,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
       const vectors: PredictionVector[] = [];
-      for (const artifact of store.artifacts().filter((entry) => /prediction|oof/i.test(entry.name))) {
+      for (const artifact of store.artifacts().filter((entry) => /prediction|oof/i.test(entry.name) && safePredictionPath(root, entry.path))) {
         try { vectors.push(loadPredictionVector(artifact.id, artifact.path)); } catch { /* invalid candidates are reported below */ }
       }
       if (request === "/ensemble" || request === "/ensemble candidates") {
