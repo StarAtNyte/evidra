@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { compareMetricSeries } from "../dist/core/statistics.js";
-import { recoveryPlan } from "../dist/core/recovery.js";
+import { recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseSourceSearchResults, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
@@ -1401,6 +1401,9 @@ test("paired statistics and recovery are deterministic", () => {
   assert.equal(recoveryPlan("cuda_oom").route, "reduce_resources");
   assert.equal(recoveryPlan("unknown").route, "change_hypothesis");
   assert.equal(recoveryPlan("transient_cloud").maxAttempts, 3);
+  assert.equal(recoveryRouteDirective("timeout").routeKey, "timeout:reduce_resources");
+  assert.equal(recoveryRouteDirective("timeout").sameManifestRetryExhausted, true);
+  assert.match(recoveryRouteDirective("timeout").instruction, /lower-resource|split-workload/);
 });
 
 test("metric registry computes common classification, regression, and ranking metrics", () => {

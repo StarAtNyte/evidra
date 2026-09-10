@@ -19,7 +19,7 @@ import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
 import { renderTimeline } from "./core/timeline.js";
 import { latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
 import { detectStagnation } from "./core/stagnation.js";
-import { recoveryDelay, recoveryPlan } from "./core/recovery.js";
+import { recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
 import { campaignElapsedMinutes, pauseCampaign, readCampaignRuntime, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { auditExperiment } from "./core/validation.js";
@@ -1249,6 +1249,12 @@ research
       const recentTrajectories = store.trajectories(20);
       const recentQuality = recentTrajectories.map((entry) => qualityFeedback(entry.quality));
       const failureClasses = store.runs().slice(0, 20).map((entry) => (entry.payload as { failureClass?: unknown }).failureClass).filter((failureClass): failureClass is string => typeof failureClass === "string" && failureClass.length > 0);
+      const recoveryRoutes = durableEvents
+        .filter((event) => event.type === "experiment.recovery.route_changed")
+        .slice(-5)
+        .map((event) => event.payload as { experimentId?: unknown; routeKey?: unknown; failureClass?: unknown; instruction?: unknown; attempts?: unknown })
+        .map((route) => `- experiment ${String(route.experimentId ?? "unknown")}: ${String(route.routeKey ?? route.failureClass ?? "unknown")} after ${String(route.attempts ?? "?")} attempt(s). ${String(route.instruction ?? "Choose an alternate route; do not replay the same manifest.")}`)
+        .join("\n");
       const route = routeCapability({ objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}`, mode, provider: options.provider as "codex" | "local", autonomy, recentFailureCount: recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length, recentQuality, budgetRemainingMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)), requestedParallel: laneLimit });
       const effectiveLaneLimit = route.parallelLanes;
       store.appendEvent("research.capability_route", { route, predictedTier: route.tier, servedProvider: options.provider, servedModel: selectedModel, recentQuality });
@@ -1305,7 +1311,8 @@ research
         ? `\n\nOPEN CRITIC CONSTRAINT (${openCriticConstraint.verdict}):\n${openCriticConstraint.summary}\nObjections: ${openCriticConstraint.objections.join("; ") || "none listed"}\nRequired checks: ${openCriticConstraint.requiredChecks.join("; ") || "produce an independent evidence check"}\nDo not run or stop until these checks are addressed with durable evidence.`
         : "";
       const literatureGuidance = `Literature frontier: ${literatureFrontier.uniqueWorks} unique works discovered across ${literatureFrontier.queryCount} queries; ${literatureFrontier.retrievedWorks} retrieved; ${literatureFrontier.pendingWorks} pending. Treat pending works as search leads, not evidence. Deepen or broaden search when the objective still lacks primary support.`;
-      const allocatedObjective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra search policy:\nPrioritize the '${searchPolicy[0]?.operator ?? "ucb_portfolio"}' operator (${searchPolicy[0]?.rationale ?? "portfolio default"}) while preserving at least one diverse alternative.\n\n${literatureGuidance}\n\n${harnessGuidance}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}\n\nBounded experience replay (use as lessons, not proof):\n${replayGuidance}${criticConstraintGuidance}`;
+      const recoveryGuidance = recoveryRoutes ? `\n\nMANDATORY RECOVERY ROUTES FROM PRIOR FAILURES:\n${recoveryRoutes}\nDo not schedule the same experiment manifest or unchanged command after a terminal recovery directive. The next action must implement the listed alternate route and explain its falsification target.` : "";
+      const allocatedObjective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra search policy:\nPrioritize the '${searchPolicy[0]?.operator ?? "ucb_portfolio"}' operator (${searchPolicy[0]?.rationale ?? "portfolio default"}) while preserving at least one diverse alternative.\n\n${literatureGuidance}\n\n${harnessGuidance}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}\n\nBounded experience replay (use as lessons, not proof):\n${replayGuidance}${recoveryGuidance}${criticConstraintGuidance}`;
       const priorRubricGaps = recentEvents
         .filter((event) => event.type === "research.rubric.assessed")
         .slice(-2)
@@ -2186,9 +2193,9 @@ experiment.command("run")
       recordAttempt(attempt, result);
     }
     if (result.status !== "completed") {
-      const route = recoveryPlan(result.failureClass);
+      const route = recoveryRouteDirective(result.failureClass);
       const routeStore = new ResearchStore(statePath);
-      routeStore.appendEvent("experiment.recovery.route_changed", { experimentId: id, runId: result.runId, failureClass: result.failureClass ?? "unknown", attempts: attempt, route: route.route, nextAction: route.action });
+      routeStore.appendEvent("experiment.recovery.route_changed", { experimentId: id, runId: result.runId, attempts: attempt, ...route });
       routeStore.close();
     }
     const evaluatorCommand = isCandidateEvaluation ? command : adapter.config.evaluator.command;
@@ -2302,7 +2309,8 @@ experiment.command("run")
         resultStore.appendEvent("experiment.comparison.insufficient_data", { experimentId: id, reason: "No finite baseline metric was available." });
       }
     }
-    resultStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: recorded.status === "completed" ? "completed" : "failed", runId: result.runId, worktreePath: experimentCwd, executionPlan } });
+    const terminalRecovery = recorded.status === "completed" ? undefined : recoveryRouteDirective(recorded.failureClass);
+    resultStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: recorded.status === "completed" ? "completed" : "failed", runId: result.runId, worktreePath: experimentCwd, executionPlan, ...(terminalRecovery ? { recoveryRoute: { ...terminalRecovery, attempts: attempt, runId: result.runId, recordedAt: new Date().toISOString() } } : {}) } });
     resultStore.close();
     console.log(`Experiment ${id}: ${recorded.status}`);
     console.log(`Run: ${result.runId}`);

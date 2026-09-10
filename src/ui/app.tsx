@@ -13,7 +13,7 @@ import { auditExperiment } from "../core/validation.js";
 import { sha256File } from "../core/evidence.js";
 import { captureEnvironment } from "../core/environment.js";
 import { compareRuns } from "../core/statistics.js";
-import { recoveryDelay, recoveryPlan } from "../core/recovery.js";
+import { recoveryDelay, recoveryPlan, recoveryRouteDirective } from "../core/recovery.js";
 import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../core/campaign.js";
 import { prepareSubmission, validateSubmissionBundle } from "../core/submissions.js";
 import { pollSubmissionScore, submitApprovedBundle } from "../core/submission-adapters.js";
@@ -1204,9 +1204,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       );
     }
     if (result.status !== "completed") {
-      const route = recoveryPlan(result.failureClass);
+      const route = recoveryRouteDirective(result.failureClass);
       const routeStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      routeStore.appendEvent("experiment.recovery.route_changed", { experimentId: id, runId: result.runId, failureClass: result.failureClass ?? "unknown", attempts: attempt, route: route.route, nextAction: route.action });
+      routeStore.appendEvent("experiment.recovery.route_changed", { experimentId: id, runId: result.runId, attempts: attempt, ...route });
       routeStore.close();
     }
     activeProcess.current = null;
