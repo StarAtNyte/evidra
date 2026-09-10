@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
@@ -37,7 +37,7 @@ import { rankPriorities } from "../dist/core/scheduler.js";
 import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
 import { latestSourceEntries, latestSourcePayloads, researchMemoryContext } from "../dist/core/research-context.js";
-import { extractUnifiedDiff } from "../dist/core/experiment-patches.js";
+import { applyUnifiedDiff, extractUnifiedDiff } from "../dist/core/experiment-patches.js";
 import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js";
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
@@ -82,6 +82,18 @@ test("critic gate converts terminal and execution decisions into inspection", ()
   assert.equal(gated.decision.decision, "inspect");
   assert.match(gated.decision.nextAction, /critic verdict is revise/i);
   assert.equal(applyCriticGate(decision, { verdict: "proceed" }).blocked, false);
+});
+
+test("local engineer patches are checked and applied inside the worktree", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-patch-"));
+  try {
+    await runProcess(["git", "init", "-q"], root);
+    writeFileSync(join(root, "example.txt"), "before\n");
+    await runProcess(["git", "add", "example.txt"], root);
+    await runProcess(["git", "-c", "user.name=Evidra", "-c", "user.email=evidra@example.invalid", "commit", "-q", "-m", "base"], root);
+    await applyUnifiedDiff(root, "diff --git a/example.txt b/example.txt\n--- a/example.txt\n+++ b/example.txt\n@@ -1 +1 @@\n-before\n+after\n");
+    assert.equal(readFileSync(join(root, "example.txt"), "utf8"), "after\n");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("dynamic research sources refresh after their freshness window", () => {

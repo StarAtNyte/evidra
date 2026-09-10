@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
@@ -31,7 +31,7 @@ import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { compareRuns } from "./core/statistics.js";
 import { evaluateTrajectory, type TrajectoryEvent } from "./core/trajectories.js";
-import { extractUnifiedDiff } from "./core/experiment-patches.js";
+import { applyUnifiedDiff, extractUnifiedDiff } from "./core/experiment-patches.js";
 import { applyCriticGate } from "./core/critic-gate.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { runResearchLanes } from "./agents/research-lanes.js";
@@ -141,16 +141,7 @@ async function implementCampaignHypothesis(
   }, undefined, (message) => console.log(`Experiment ${experimentId} · ${message}`));
   const diff = extractUnifiedDiff(String(result.output));
   if (!diff) throw new Error("Local experiment engineer did not return a valid unified diff.");
-  const patchPath = join(worktree, `.evidra-patch-${experimentId}.diff`);
-  writeFileSync(patchPath, `${diff}\n`);
-  try {
-    const check = await runProcess(["git", "apply", "--check", patchPath], worktree, 60_000);
-    if (check.exitCode !== 0) throw new Error(`Local engineer patch failed validation: ${check.stderr || check.stdout}`);
-    const applied = await runProcess(["git", "apply", "--whitespace=nowarn", patchPath], worktree, 60_000);
-    if (applied.exitCode !== 0) throw new Error(`Local engineer patch could not be applied: ${applied.stderr || applied.stdout}`);
-  } finally {
-    try { unlinkSync(patchPath); } catch { /* patch cleanup is best effort */ }
-  }
+  await applyUnifiedDiff(worktree, diff);
 }
 
 type ControllerDirective = "run" | "pause" | "stop";

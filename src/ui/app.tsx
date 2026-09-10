@@ -43,6 +43,7 @@ import { renderTimeline } from "../core/timeline.js";
 import { latestSourceEntries, researchMemoryContext } from "../core/research-context.js";
 import { detectStagnation } from "../core/stagnation.js";
 import { applyCriticGate } from "../core/critic-gate.js";
+import { applyUnifiedDiff, extractUnifiedDiff } from "../core/experiment-patches.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -934,6 +935,19 @@ export function App({ root }: { root: string }): React.JSX.Element {
       executionPlan = advanceExecutionStage(executionPlan, "smoke", "completed");
       const smokeStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
       smokeStore.appendEvent("experiment.stage.smoke.completed", { experimentId: id });
+      smokeStore.close();
+    } else {
+      setProgress(`Experiment ${id} · local model proposing a validated patch...`);
+      const localEngineer = await runWithLocalFallback({
+        role: "experiment engineer",
+        objective: "Implement the selected hypothesis in this isolated worktree. You cannot call tools directly. Return ONLY a unified diff whose first line begins with diff --git. The diff must be applicable from the worktree root. Do not return a plan or prose.",
+        context: { manifest, hypothesis: hypothesis?.payload ?? null, worktree: experimentCwd },
+      }, { provider: "local", model: config.model, cwd: worktree, sandbox: "read-only", limitPolicy: "stop" }, undefined, setProgress, registerProcess);
+      const diff = extractUnifiedDiff(String(localEngineer.output));
+      if (!diff) throw new Error("Local experiment engineer did not return a valid unified diff.");
+      await applyUnifiedDiff(worktree, diff);
+      const smokeStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      smokeStore.appendEvent("experiment.stage.smoke.completed", { experimentId: id, implementation: "local-unified-diff" });
       smokeStore.close();
     }
     const command = candidateExperimentCommand(adapter, hypothesis?.payload);
