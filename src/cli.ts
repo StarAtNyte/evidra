@@ -37,7 +37,8 @@ import { applyUnifiedDiff, extractUnifiedDiff } from "./core/experiment-patches.
 import { applyCriticGate, latestOpenCriticConstraint } from "./core/critic-gate.js";
 import { recordBaselineEvidence } from "./core/baseline.js";
 import { redactSecrets } from "./core/redaction.js";
-import { enforceGoalTermination } from "./core/termination.js";
+import { enforceClaimTermination, enforceGoalTermination } from "./core/termination.js";
+import { auditClaims, type ClaimAuditReport } from "./core/claim-audit.js";
 import { summarizeUsage } from "./core/usage.js";
 import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "./core/ensemble.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
@@ -84,6 +85,35 @@ const activeCompetition = () => {
   store.close();
   return loadCompetitionAdapter(root, project?.competitionId ?? "local-research");
 };
+
+function auditCurrentClaims(store: ResearchStore): ClaimAuditReport {
+  const claims = store.claims();
+  const sources = store.sources();
+  const decisions = store.decisions();
+  const runs = store.runs();
+  const artifacts = store.artifacts();
+  const contradictionEdges = store.edges().filter((edge) => edge.relation === "contradicts");
+  const claimPayloads = claims.map((claim) => claim.payload && typeof claim.payload === "object" ? claim.payload as { sourceId?: unknown; observation?: unknown; findings?: unknown; evidence?: unknown } : {});
+  const selfDescribingEvidenceIds = claimPayloads.flatMap((payload) => {
+    const sourceId = typeof payload.sourceId === "string" ? payload.sourceId : "";
+    const hasDurableObservation = Boolean(payload.observation && typeof payload.observation === "object");
+    const hasDurableLaneReport = Array.isArray(payload.findings) && Array.isArray(payload.evidence);
+    return sourceId && (hasDurableObservation || hasDurableLaneReport) ? [sourceId] : [];
+  });
+  return auditClaims({
+    claims: claims.map((claim) => ({ id: claim.id, payload: claim.payload })),
+    knownEvidenceIds: new Set([
+      ...sources.map((source) => source.id),
+      ...decisions.map((decision) => `decision_${decision.id}`),
+      ...decisions.map((decision) => String(decision.id)),
+      ...runs.map((run) => run.id),
+      ...artifacts.map((artifact) => artifact.id),
+      ...claims.map((claim) => claim.id),
+      ...selfDescribingEvidenceIds,
+    ]),
+    conflictedClaimIds: new Set(contradictionEdges.flatMap((edge) => [edge.fromId, edge.toId])),
+  });
+}
 
 function requireCompetitionContract(adapter: ReturnType<typeof activeCompetition>): void {
   const report = validateCompetitionContract(adapter.config, adapter.workspacePath(root));
@@ -716,6 +746,21 @@ sources.command("adapt")
     console.log(formatResearchDecision(decision));
   });
 program.addCommand(sources);
+
+const evidence = new Command("evidence").description("Inspect and verify durable research evidence");
+evidence.command("audit").option("--json", "emit machine-readable JSON").description("Audit claim provenance and completion blockers").action((options: { json?: boolean }) => {
+  const store = new ResearchStore(statePath);
+  const report = auditCurrentClaims(store);
+  store.close();
+  if (options.json) console.log(JSON.stringify(report, null, 2));
+  else {
+    console.log(`Claim verification · ${report.publishable ? "PUBLISHABLE" : "BLOCKED"}`);
+    console.log(`Total ${report.total} · verified ${report.verified} · provisional ${report.provisional} · literature-only ${report.literatureOnly} · unsupported ${report.unsupported} · conflicted ${report.conflicted}`);
+    for (const entry of report.entries) console.log(`${entry.status === "verified" ? "✓" : "!"} ${entry.id} · ${entry.reasons.join("; ")}`);
+  }
+  if (!report.publishable && report.total > 0) process.exitCode = 2;
+});
+program.addCommand(evidence);
 
 const memory = new Command("memory").description("Search durable research claims, hypotheses, and sources");
 memory.command("search").argument("<query>").action((query: string) => {
@@ -1567,6 +1612,10 @@ research
         gaps: decisionRubric.gaps,
       });
       decision = enforceGoalTermination(decision);
+      const claimAudit = auditCurrentClaims(decisionStore);
+      const claimGateBefore = decision;
+      decision = enforceClaimTermination(decision, claimAudit);
+      if (decision !== claimGateBefore) decisionStore.appendEvent("research.claim_gate.rejected", { ...claimAudit, phase: phaseGoal?.phase ?? null });
       if (phaseGoal && decision.goalStatus === "met") {
         const phaseEvents = decisionStore.recentEvents(500);
         const gate = evaluatePhaseGoalEvidence(phaseGoal, {
@@ -1892,6 +1941,11 @@ research.command("propose")
       researchMemory,
     }, { provider: "codex", model: "default", reasoningEffort: "medium", fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });
     const decisionStore = new ResearchStore(statePath);
+    decision = enforceGoalTermination(decision);
+    const claimAudit = auditCurrentClaims(decisionStore);
+    const claimGateBefore = decision;
+    decision = enforceClaimTermination(decision, claimAudit);
+    if (decision !== claimGateBefore) decisionStore.appendEvent("research.claim_gate.rejected", { ...claimAudit, phase: phaseGoal?.phase ?? null });
     if (phaseGoal && decision.goalStatus === "met") {
       const phaseEvents = decisionStore.recentEvents(500);
       const gate = evaluatePhaseGoalEvidence(phaseGoal, {

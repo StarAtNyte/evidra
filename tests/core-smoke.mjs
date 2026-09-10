@@ -52,7 +52,7 @@ import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment } from "../dist/core/validation.js";
 import { assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactSecrets, redactStructured } from "../dist/core/redaction.js";
-import { enforceGoalTermination } from "../dist/core/termination.js";
+import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
 import { summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
@@ -278,6 +278,15 @@ test("active goals cannot be terminated by a premature model stop", () => {
   assert.equal(guarded.goalStatus, "active");
   assert.match(guarded.nextAction, /cannot stop/i);
   assert.equal(enforceGoalTermination({ phase: "promotion", goalStatus: "met", decision: "stop", bottleneck: "done", rationale: "r", hypotheses: [], selectedHypothesis: null, nextAction: "finish", toolCalls: [] }).decision, "stop");
+});
+
+test("claim verification gate prevents unsupported completion but allows publishable completion", () => {
+  const decision = { phase: "evaluation", goalStatus: "met", decision: "stop", bottleneck: "done", rationale: "r", hypotheses: [], selectedHypothesis: null, nextAction: "finish", toolCalls: [] };
+  const blocked = enforceClaimTermination(decision, { total: 2, verified: 1, provisional: 0, literatureOnly: 0, unsupported: 1, conflicted: 0, publishable: false, entries: [] });
+  assert.equal(blocked.decision, "inspect");
+  assert.equal(blocked.goalStatus, "active");
+  assert.match(blocked.nextAction, /verification gate rejected completion/);
+  assert.equal(enforceClaimTermination(decision, { total: 1, verified: 1, provisional: 0, literatureOnly: 0, unsupported: 0, conflicted: 0, publishable: true, entries: [] }).decision, "stop");
 });
 
 test("local engineer patches are checked and applied inside the worktree", async () => {

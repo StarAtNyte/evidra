@@ -54,6 +54,7 @@ import { applyUnifiedDiff, extractUnifiedDiff } from "../core/experiment-patches
 import { recordBaselineEvidence } from "../core/baseline.js";
 import { redactSecrets } from "../core/redaction.js";
 import { enforceGoalTermination } from "../core/termination.js";
+import { auditClaims } from "../core/claim-audit.js";
 import { summarizeUsage } from "../core/usage.js";
 import { assessResearchDecisionRubric } from "../core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../core/validation-lock.js";
@@ -81,6 +82,29 @@ function candidateExperimentCommand(adapter: ReturnType<typeof loadCompetitionAd
   return command;
 }
 
+function auditEvidenceStore(store: ResearchStore) {
+  const claims = store.claims();
+  const sources = store.sources();
+  const decisions = store.decisions();
+  const runs = store.runs();
+  const artifacts = store.artifacts();
+  const edges = store.edges().filter((edge) => edge.relation === "contradicts");
+  const selfDescribing = claims.flatMap((claim) => {
+    const payload = claim.payload && typeof claim.payload === "object" ? claim.payload as { sourceId?: unknown; observation?: unknown; findings?: unknown; evidence?: unknown } : {};
+    const sourceId = typeof payload.sourceId === "string" ? payload.sourceId : "";
+    return sourceId && ((payload.observation && typeof payload.observation === "object") || (Array.isArray(payload.findings) && Array.isArray(payload.evidence))) ? [sourceId] : [];
+  });
+  return auditClaims({
+    claims: claims.map((claim) => ({ id: claim.id, payload: claim.payload })),
+    knownEvidenceIds: new Set([
+      ...sources.map((entry) => entry.id), ...decisions.map((entry) => entry.id.toString()),
+      ...decisions.map((entry) => `decision_${entry.id}`), ...runs.map((entry) => entry.id),
+      ...artifacts.map((entry) => entry.id), ...claims.map((entry) => entry.id), ...selfDescribing,
+    ]),
+    conflictedClaimIds: new Set(edges.flatMap((edge) => [edge.fromId, edge.toId])),
+  });
+}
+
 const defaultConfig: SessionConfig = { provider: "codex", model: "default", reasoningEffort: "medium", mode: "research", autonomy: "safe", limitPolicy: "auto", fallbackModel: process.env.EVIDRA_FALLBACK_MODEL ?? "auto", experimentExecutor: "local" };
 const COMMANDS = [
   ["/help", "Show commands"],
@@ -93,6 +117,7 @@ const COMMANDS = [
   ["/experience", "Show reusable trajectory experience and curriculum"],
   ["/usage", "Show budget, activity, and campaign usage"],
   ["/sources", "Retrieve and search research sources"],
+  ["/evidence", "Audit claim provenance and completion blockers"],
   ["/memory", "Search durable evidence and research memory"],
   ["/data", "Inspect or audit competition data"],
   ["/validation", "Inspect or generate validation policy"],
@@ -141,6 +166,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
   "/sources": [["/sources list", "List retrieved sources"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources discover", "Search scholarly literature"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
+  "/evidence": [["/evidence audit", "Audit claim provenance and completion blockers"]],
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
@@ -2679,6 +2705,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
       } catch (error) {
         append("assistant", error instanceof Error && error.name === "AbortError" ? "Source retrieval timed out after 20 seconds." : error instanceof Error ? error.message : String(error));
       } finally { clearTimeout(timeout); setBusy(false); setProgress(""); }
+      return;
+    }
+    if (request === "/evidence" || request === "/evidence audit") {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const report = auditEvidenceStore(store);
+      store.close();
+      append("assistant", `Claim verification · ${report.publishable ? "PUBLISHABLE" : "BLOCKED"}\nTotal ${report.total} · verified ${report.verified} · provisional ${report.provisional} · literature-only ${report.literatureOnly} · unsupported ${report.unsupported} · conflicted ${report.conflicted}\n\n${report.entries.length ? report.entries.map((entry) => `${entry.status === "verified" ? "✓" : "!"} ${entry.id} · ${entry.reasons.join("; ")}`).join("\n") : "No claims recorded."}`);
       return;
     }
     if (request === "/memory recent" || request === "/memory") {
