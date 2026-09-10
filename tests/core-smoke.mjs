@@ -60,6 +60,7 @@ import { scoreHarnessTrials } from "../dist/core/harness-scorecard.js";
 import { rankSearchArms, searchReward } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
 import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
+import { learnPromotionPolicy, promotionObservations } from "../dist/core/promotion-learning.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
 
@@ -1516,4 +1517,18 @@ test("cross-pollination preserves agreement, tension, and evidence provenance", 
   assert.equal(board.complementaryRecommendations.length, 1);
   assert.deepEqual(board.evidence, ["audit.csv", "fold-report.json"]);
   assert.ok(board.tensions.some((value) => value.includes("site shift")));
+});
+
+test("promotion learning stays conservative until paired evidence is sufficient", () => {
+  const events = [];
+  for (let index = 0; index < 8; index += 1) {
+    events.push({ type: "experiment.stage.reduced_validation.promoted", payload: { experimentId: `exp-${index}`, delta: 0.01 + index * 0.001 } });
+    events.push({ type: "experiment.comparison.completed", payload: { experimentId: `exp-${index}`, comparison: { delta: index === 0 ? -0.01 : 0.02 } } });
+  }
+  const observations = promotionObservations(events, "maximize");
+  assert.equal(observations.length, 8);
+  const learned = learnPromotionPolicy(observations, 0);
+  assert.equal(learned.learned, true);
+  assert.ok(learned.minimumDelta >= 0.01);
+  assert.equal(learnPromotionPolicy(observations.slice(0, 2), 0).learned, false);
 });

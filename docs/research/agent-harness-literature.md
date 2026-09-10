@@ -75,6 +75,11 @@ The next high-value upgrades are:
 1. run equal-budget AIRS-Bench arms across Evidra, AIRA-dojo, and MLGym;
 2. report confidence intervals and task-balanced scores over repeated seeds;
 3. add formal-verification adapters for non-ML research artifacts;
-4. learn early-metric-to-final-metric promotion thresholds from completed runs;
-5. add a richer operator library (evolutionary and tree-search policies) behind
+4. add a richer operator library (evolutionary and tree-search policies) behind
    the existing manifest and evidence gates.
+
+The early-promotion item is now implemented conservatively: after eight paired
+reduced/full outcomes, Evidra learns a threshold from successful full runs;
+before that, and whenever evidence is one-sided, it uses the manifest's static
+threshold. The learned rule is recorded with each promotion decision and is
+never allowed to lower the configured minimum.

@@ -39,6 +39,7 @@ import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurric
 import { rankExperimentCandidates } from "../core/scheduler.js";
 import { evaluateReducedPromotion } from "../core/scheduler.js";
 import { validateCompetitionContract } from "../core/competition-contract.js";
+import { learnPromotionPolicy, promotionObservations } from "../core/promotion-learning.js";
 import { candidateChangePath } from "../core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../core/execution-heartbeat.js";
 import { evaluateValidationAcceptance } from "../core/validation-engine.js";
@@ -1122,8 +1123,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const baselineEvent = promotionStore.recentEvents(500).reverse().find((event) => event.type === "baseline.completed");
         const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string } | undefined;
         const baselineMetric = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] : undefined;
-        const gate = evaluateReducedPromotion({ candidateMetric: reduced.metrics[adapter.config.metric.name], baselineMetric, direction: adapter.config.metric.direction, minimumDelta: promotionPolicy.minimumDelta, tolerance: promotionPolicy.tolerance });
-        promotionStore.appendEvent(gate.promote ? "experiment.stage.reduced_validation.promoted" : "experiment.stage.reduced_validation.rejected", { experimentId: id, runId: reduced.runId, ...gate, baselineMetric, candidateMetric: reduced.metrics[adapter.config.metric.name] ?? null });
+        const learned = learnPromotionPolicy(promotionObservations(promotionStore.recentEvents(2_000), adapter.config.metric.direction), promotionPolicy.minimumDelta);
+        const gate = evaluateReducedPromotion({ candidateMetric: reduced.metrics[adapter.config.metric.name], baselineMetric, direction: adapter.config.metric.direction, minimumDelta: learned.minimumDelta, tolerance: promotionPolicy.tolerance });
+        promotionStore.appendEvent(gate.promote ? "experiment.stage.reduced_validation.promoted" : "experiment.stage.reduced_validation.rejected", { experimentId: id, runId: reduced.runId, ...gate, configuredMinimumDelta: promotionPolicy.minimumDelta, learnedPromotion: learned, baselineMetric, candidateMetric: reduced.metrics[adapter.config.metric.name] ?? null });
         if (!gate.promote) {
           executionPlan = advanceExecutionStage(executionPlan, "full_validation", "skipped");
           promotionStore.saveExperiment({ id, payload: { ...entryPayload, status: "rejected", rejection: gate.reason, executionPlan } });
