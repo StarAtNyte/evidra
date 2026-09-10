@@ -1833,6 +1833,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
             ? (current.provider === "local" ? current.model : "qwen3.6:27b")
             : (current.provider === "codex" ? current.model : "default"),
         }));
+        setOnboardingComplete(true);
         append("assistant", `Provider selected: ${provider}`);
       }
       return;
@@ -1861,7 +1862,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (wasRaw) process.stdin.setRawMode?.(false);
         process.stdin.resume();
         const status = loginCodex(mode);
-        append("assistant", status === 0 ? "Codex login completed." : "Codex login did not complete.");
+        if (status === 0) {
+          setConfig((current) => ({ ...current, provider: "codex", model: current.provider === "codex" ? current.model : "default" }));
+          setOnboardingComplete(true);
+          append("assistant", "Codex login completed. Evidra is ready.");
+        } else append("assistant", "Codex login did not complete. Setup remains available; run /login codex again when ready.");
       } finally {
         if (wasRaw) process.stdin.setRawMode?.(true);
         setBusy(false); setProgress("");
