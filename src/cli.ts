@@ -42,7 +42,7 @@ import { createBlendCandidate, diversityReport, loadPredictionVector, safePredic
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
-import { checkProvider, codexLoginStatus, isProviderUsageLimit, listLocalModels, providerRetryAfterMs, resolveLocalFallbackModel, runWithUsageLimitWait, runWithLocalFallback } from "./agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, isProviderUsageLimit, isRetryableAgentError, listLocalModels, providerRetryAfterMs, resolveLocalFallbackModel, runWithUsageLimitWait, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -879,10 +879,12 @@ research
       let decision: Awaited<ReturnType<typeof runResearchDirector>>;
       let criticReview: Awaited<ReturnType<typeof runResearchCritic>> | undefined;
       let laneReports: Awaited<ReturnType<typeof runResearchLanes>> = [];
+      let researchAttempt = 0;
+      let agentObjective = allocatedObjective;
       while (true) {
         try {
           console.log("Research · independent lanes are investigating the evidence...");
-          laneReports = await runResearchLanes(allocatedObjective, {
+          laneReports = await runResearchLanes(agentObjective, {
             project: activeProject,
             competition: adapter.config,
             observation,
@@ -908,8 +910,8 @@ research
             executeTool: researchToolExecutor(adapter, autonomy),
           });
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(allocatedObjective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy) });
-          criticReview = await runResearchCritic(allocatedObjective, decision, laneReports, {
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { no_submission: true, no_file_edits: true }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, researchMemory }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, limitPolicy: options.limitPolicy as "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" && options.provider === "codex" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy) });
+          criticReview = await runResearchCritic(agentObjective, decision, laneReports, {
             provider: options.provider,
             model: selectedModel,
             fallbackLocalModel: options.limitPolicy === "fallback" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
@@ -922,13 +924,26 @@ research
           });
           break;
         } catch (error) {
-          if (options.limitPolicy !== "wait" || !isProviderUsageLimit(error)) throw error;
-          const delay = providerRetryAfterMs(error);
-          const remainingMs = budget * 60_000 - (Date.now() - started);
-          if (remainingMs <= 0) throw new Error("Research budget expired while waiting for the provider usage limit to reset.");
-          const waitMs = Math.min(delay, remainingMs);
-          console.log(`Provider usage limit reached; waiting ${Math.ceil(waitMs / 60_000)} minute(s) before retrying. Campaign state is durable.`);
-          await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+          if (isProviderUsageLimit(error)) {
+            if (options.limitPolicy !== "wait") throw error;
+            const delay = providerRetryAfterMs(error);
+            const remainingMs = budget * 60_000 - (Date.now() - started);
+            if (remainingMs <= 0) throw new Error("Research budget expired while waiting for the provider usage limit to reset.");
+            const waitMs = Math.min(delay, remainingMs);
+            console.log(`Provider usage limit reached; waiting ${Math.ceil(waitMs / 60_000)} minute(s) before retrying. Campaign state is durable.`);
+            await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+            continue;
+          }
+          researchAttempt += 1;
+          if (!isRetryableAgentError(error) || researchAttempt >= 3) throw error;
+          const message = error instanceof Error ? error.message : String(error);
+          agentObjective = `${allocatedObjective}\n\nBounded retry ${researchAttempt}: the previous research-agent route failed with '${message}'. Inspect the failure evidence and deliberately choose an alternate route instead of repeating it unchanged.`;
+          const retryStore = new ResearchStore(statePath);
+          retryStore.appendEvent("research.agent.retrying", { attempt: researchAttempt + 1, previousError: message, strategy: "alternate-route" });
+          retryStore.close();
+          const delay = researchAttempt * 1_000;
+          console.log(`Research agent route failed; replanning in ${delay / 1000}s (retry ${researchAttempt}/2)...`);
+          await new Promise<void>((resolve) => setTimeout(resolve, delay));
         }
       }
       let decisionStore = new ResearchStore(statePath);

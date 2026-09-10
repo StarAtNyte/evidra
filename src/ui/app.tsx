@@ -1284,10 +1284,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
       queueStore.enqueueTask({ id: queueTaskId, kind: "research.cycle", priority: campaign ? 10 : 5, payload: { objective, campaign: campaign ?? null } });
       let cycle: Awaited<ReturnType<typeof runResearchCycle>> | undefined;
       const worker = new QueueWorker(queueStore, async (task) => {
-        const payload = task.payload as { objective?: string };
-        cycle = await runResearchCycle(payload.objective ?? objective, campaign);
+        const payload = task.payload as { objective?: string; lastError?: unknown };
+        const retryContext = typeof payload.lastError === "string" && payload.lastError
+          ? `\n\nThis is bounded retry ${task.attempts}. The previous attempt failed with: ${payload.lastError}\nDo not blindly repeat the failed route; inspect the failure evidence and choose a different, lower-risk path if appropriate.`
+          : "";
+        if (retryContext) queueStore.appendEvent("research.cycle.retrying", { taskId: task.id, attempt: task.attempts, error: payload.lastError });
+        cycle = await runResearchCycle(`${payload.objective ?? objective}${retryContext}`, campaign);
         return cycle;
-      }, { concurrency: 1, maxAttempts: 1, kinds: ["research.cycle"] });
+      }, { concurrency: 1, maxAttempts: 3, kinds: ["research.cycle"] });
       await worker.runOnce();
       await worker.stop();
       const queuedResult = queueStore.queueTasks().find((task) => task.id === queueTaskId);
