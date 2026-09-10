@@ -235,6 +235,15 @@ function protocolKey(trial: HarnessTrial): string {
   return [trial.task, trial.arm ?? "", trial.seed ?? "", trial.model ?? "", trial.budgetMinutes ?? ""].join("\u001f");
 }
 
+function fairPair(left: HarnessTrial, right: HarnessTrial): boolean {
+  return left.direction === right.direction &&
+    left.baselineMetric === right.baselineMetric &&
+    left.dataRevision === right.dataRevision &&
+    left.runtimeFingerprint === right.runtimeFingerprint &&
+    left.taskWorstMetric === right.taskWorstMetric &&
+    left.taskBestMetric === right.taskBestMetric;
+}
+
 /**
  * Make a conservative head-to-head claim from the same task arms. The unit of
  * resampling is the task, not the trial, so repeated seeds on one easy task
@@ -257,8 +266,8 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
     const left = challengerArms.get(key)!;
     const right = incumbentArms.get(key)!;
     if (!left.validRun || !right.validRun || !Number.isFinite(left.candidateMetric) || !Number.isFinite(right.candidateMetric)) return [];
+    if (!fairPair(left, right)) return [];
     const direction = left.direction;
-    if (direction !== right.direction) return [];
     const delta = direction === "maximize" ? left.candidateMetric! - right.candidateMetric! : right.candidateMetric! - left.candidateMetric!;
     const leftProcess = processReliability(left);
     const rightProcess = processReliability(right);

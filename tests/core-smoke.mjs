@@ -2390,6 +2390,16 @@ test("harness comparison counts unmatched declared arms against coverage", () =>
   assert.equal(partial.challengerWins, false);
 });
 
+test("direct harness comparison refuses hidden protocol mismatches", () => {
+  const trials = ["task-a", "task-b"].flatMap((task) => [
+    { harness: "evidra", task, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: 0.8, validRun: true, durationSeconds: 1, recovered: false, reproducible: true, dataRevision: "data-a", runtimeFingerprint: "runtime-a" },
+    { harness: "incumbent", task, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: 0.7, validRun: true, durationSeconds: 1, recovered: false, reproducible: true, dataRevision: "data-b", runtimeFingerprint: "runtime-b" },
+  ]);
+  const comparison = compareHarnesses(trials, "evidra", "incumbent");
+  assert.equal(comparison.validPairedArms, 0);
+  assert.equal(comparison.challengerWins, false);
+});
+
 test("cross-pollination preserves agreement, tension, and evidence provenance", () => {
   const board = synthesizeLaneReports([
     { role: "data", status: "completed", findings: ["group leakage affects validation"], recommendations: ["lock grouped folds"], uncertainties: ["site shift is unknown"], evidence: ["audit.csv"] },
