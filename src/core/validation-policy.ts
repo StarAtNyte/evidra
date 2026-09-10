@@ -40,7 +40,9 @@ export function createValidationPolicy(competition: CompetitionConfig): Validati
     folds,
     seeds,
     metric: competition.metric,
-    acceptance: { minimumDelta: competition.metric.direction === "minimize" ? -0.002 : 0.002, requireReplication: true, requireLeakageAudit: true, requireReview: true },
+    // Validation acceptance compares direction-normalized improvement, so a
+    // useful improvement is positive for both maximize and minimize metrics.
+    acceptance: { minimumDelta: 0.002, requireReplication: true, requireLeakageAudit: true, requireReview: true },
     createdAt: new Date().toISOString(),
   });
 }

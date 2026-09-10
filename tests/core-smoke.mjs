@@ -113,6 +113,9 @@ test("validation acceptance requires replicated evidence and safety gates", () =
   assert.equal(blocked.accepted, false);
   const accepted = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true });
   assert.equal(accepted.accepted, true);
+  const lowerIsBetter = evaluateValidationAcceptance({ baseline: { ...base, metrics: { score: 0.8 }, metricsByFold: { score: [0.79, 0.8, 0.81] } }, candidate: { ...candidate, metrics: { score: 0.78 }, metricsByFold: { score: [0.77, 0.78, 0.79] } }, metric: "score", direction: "minimize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true });
+  assert.ok(Math.abs(lowerIsBetter.normalizedDelta - 0.02) < 1e-12);
+  assert.equal(lowerIsBetter.accepted, true);
 });
 
 test("workspace root discovery keeps nested CLI invocations on the project state", () => {
