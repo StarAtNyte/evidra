@@ -418,6 +418,16 @@ test("reduced validation runs with a cheap artifact contract", async () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("reduced validation rejects a successful worker without its primary metric", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-reduced-invalid-metric-"));
+  try {
+    const manifest = { id: "exp-reduced-invalid", resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { requiredArtifacts: ["ignored.json"], folds: [0], seeds: [0] } };
+    const result = await runReducedValidation(new LocalExecutor(), manifest, root, [process.execPath, "-e", "console.log('training completed')"], "macro_f1");
+    assert.equal(result.status, "failed");
+    assert.equal(result.failureClass, "invalid_metric");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("reduced promotion rejection prevents the full executor from starting", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-promotion-gate-"));
   try {
