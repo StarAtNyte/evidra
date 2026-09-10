@@ -18,7 +18,7 @@ import { autonomyPolicy, guardCommand, guardReadOnlyInspection } from "../dist/c
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, RESEARCH_TOOLS } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
-import { LocalExecutor, parseMetricOutput, parseModalWorkerResult } from "../dist/core/executors.js";
+import { LocalExecutor, containerCommand, parseMetricOutput, parseModalWorkerResult } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
@@ -838,6 +838,13 @@ test("Modal result parser ignores progress and rejects malformed worker payloads
   assert.equal(payload?.artifacts["predictions.json"], "e30=");
   assert.equal(parseModalWorkerResult(JSON.stringify({ exitCode: 0, artifacts: { "bad": 42 } })), undefined);
   assert.equal(parseModalWorkerResult("Modal failed before the worker returned"), undefined);
+});
+
+test("container executor command mounts only the isolated worktree", () => {
+  const command = containerCommand("docker", "python:3.11-slim", "/tmp/evidra-worktree", ["python", "run.py"]);
+  assert.deepEqual(command.slice(0, 12), ["docker", "run", "--rm", "--init", "--network", "none", "--volume", "/tmp/evidra-worktree:/workspace:rw", "--workdir", "/workspace", "--user", `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`]);
+  assert.equal(command[12], "python:3.11-slim");
+  assert.deepEqual(command.slice(-2), ["python", "run.py"]);
 });
 
 test("paired statistics and recovery are deterministic", () => {

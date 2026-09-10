@@ -4,7 +4,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { ExperimentManifest, ProcessResult, RunResult } from "./types.js";
 
 export interface ExperimentExecutor {
-  readonly kind: "local" | "modal";
+  readonly kind: "local" | "container" | "modal";
   run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName?: string): Promise<RunResult>;
 }
 
@@ -128,6 +128,35 @@ export class LocalExecutor implements ExperimentExecutor {
   }
 }
 
+export function containerCommand(runtime: "docker" | "podman", image: string, cwd: string, command: string[]): string[] {
+  const args = [runtime, "run", "--rm", "--init", "--network", "none", "--volume", `${cwd}:/workspace:rw`, "--workdir", "/workspace"];
+  if (typeof process.getuid === "function" && typeof process.getgid === "function") args.push("--user", `${process.getuid()}:${process.getgid()}`);
+  return [...args, image, ...command];
+}
+
+export class ContainerExecutor implements ExperimentExecutor {
+  readonly kind = "container" as const;
+
+  constructor(private readonly workspaceRoot?: string) {}
+
+  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse"): Promise<RunResult> {
+    const requestedRuntime = process.env.EVIDRA_CONTAINER_RUNTIME;
+    const candidates: Array<"docker" | "podman"> = requestedRuntime === "podman" ? ["podman"] : requestedRuntime === "docker" ? ["docker"] : ["docker", "podman"];
+    const launchRoot = resolve(this.workspaceRoot ?? cwd);
+    let runtime: "docker" | "podman" | undefined;
+    for (const candidate of candidates) {
+      const available = await runProcess(["which", candidate], launchRoot, 5_000);
+      if (available.exitCode === 0) { runtime = candidate; break; }
+    }
+    const image = manifest.resources.image ?? process.env.EVIDRA_CONTAINER_IMAGE ?? "python:3.11-slim";
+    if (!runtime) {
+      return toRunResult(manifest, { command, cwd, exitCode: 127, durationMs: 0, stdout: "", stderr: "No Docker or Podman runtime was found. Install one or select the local executor." }, metricName);
+    }
+    const result = await runProcess(containerCommand(runtime, image, resolve(cwd), command), launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess);
+    return toRunResult(manifest, { ...result, command, cwd }, metricName);
+  }
+}
+
 export class ModalExecutor implements ExperimentExecutor {
   readonly kind = "modal" as const;
 
@@ -167,5 +196,7 @@ export class ModalExecutor implements ExperimentExecutor {
 }
 
 export function executorFor(kind: ExperimentManifest["resources"]["executor"], workspaceRoot?: string): ExperimentExecutor {
-  return kind === "modal" ? new ModalExecutor(workspaceRoot) : new LocalExecutor();
+  if (kind === "modal") return new ModalExecutor(workspaceRoot);
+  if (kind === "container") return new ContainerExecutor(workspaceRoot);
+  return new LocalExecutor();
 }

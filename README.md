@@ -50,7 +50,7 @@ local TUI/controller ──► local experiment worker
                      └─► Modal GPU experiment worker
 ```
 
-Use `/compute local` or `/compute modal` before proposing an experiment, or use `evidra experiment propose --executor modal`. Modal workers receive the workspace and declared command, return logs and declared artifacts, and are evaluated by the same local evidence gates.
+Use `/compute local`, `/compute container`, or `/compute modal` before proposing an experiment, or use `evidra experiment propose --executor container`. Container workers use Docker or Podman (auto-detected, or selected with `EVIDRA_CONTAINER_RUNTIME`), mount only the isolated experiment worktree, disable network access by default, and use `EVIDRA_CONTAINER_IMAGE` or the manifest image (default `python:3.11-slim`). Modal workers receive the workspace and declared command, return logs and declared artifacts, and are evaluated by the same local evidence gates.
 
 For unattended operation, `modal_controller.py` runs the Node controller headlessly in Modal and stores durable `.sota` state in a Modal Volume:
 
@@ -118,12 +118,13 @@ Implemented today:
 - multi-split validation acceptance, durable leakage/reviewer gates, and conservative external-score split-belief modeling;
 - automatic baseline-to-candidate comparison events after successful challenge evaluations;
 - replication scheduling gated on an observed improvement rather than mere process completion;
-- headless research and challenge campaigns that execute selected hypotheses through the same isolated runner as the TUI, with optional `--executor local|modal` routing;
+- headless research and challenge campaigns that execute selected hypotheses through the same isolated runner as the TUI, with optional `--executor local|container|modal` routing;
 - Codex-backed experiment-engineer implementation in the isolated worktree before evaluation, with failed hypotheses retained as evidence instead of being blindly retried;
 - durable headless research trajectories with structural, goal, evidence, recovery, and termination quality signals feeding future allocation;
 - unattended experiment runs also record the same quality-scored process/evaluator/recovery trajectory used by the interactive workbench;
 - local-model experiment implementation through bounded unified-diff proposals, checked and applied only inside the experiment worktree;
 - Modal execution mounts the exact isolated experiment worktree and accepts either Modal CLI profiles or environment credentials;
+- Docker/Podman execution mounts only the exact isolated experiment worktree, uses a network-disabled container, and keeps the same artifact, metric, retry, and evidence gates;
 - Codex-backed experiment engineers honor entitlement reset windows with bounded retry/wait behavior instead of silently abandoning an authorized campaign;
 - shell and autonomy safety guards.
 

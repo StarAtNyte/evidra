@@ -7,7 +7,8 @@ export interface ManifestInput {
   datasetVersion: string;
   splitVersion?: string;
   configPatch?: Record<string, unknown>;
-  executor?: "local" | "modal";
+  executor?: "local" | "container" | "modal";
+  image?: string;
   gpu?: string;
   timeoutMinutes?: number;
   folds?: number[];
@@ -31,6 +32,7 @@ export function createExperimentManifest(input: ManifestInput, competition: Comp
     change: { configPatch: input.configPatch ?? {} },
     resources: {
       executor: input.executor ?? "local",
+      ...(input.image ? { image: input.image } : {}),
       ...(input.gpu ? { gpu: input.gpu } : {}),
       timeoutMinutes: input.timeoutMinutes ?? 30,
     },
@@ -52,7 +54,7 @@ export function manifestSummary(manifest: ExperimentManifest): string {
   return [
     `${manifest.id} · hypothesis ${manifest.hypothesisId}`,
     `commit ${manifest.gitCommit} · data ${manifest.datasetVersion} · split ${manifest.splitVersion}`,
-    `executor ${manifest.resources.executor} · timeout ${manifest.resources.timeoutMinutes}m`,
+    `executor ${manifest.resources.executor}${manifest.resources.image ? ` (${manifest.resources.image})` : ""} · timeout ${manifest.resources.timeoutMinutes}m`,
     `folds [${manifest.evaluation.folds.join(", ")}] · seeds [${manifest.evaluation.seeds.join(", ")}]`,
     `replication ${manifest.acceptance.requireReplication ? "required" : "not required"}`,
   ].join("\n");
@@ -69,6 +71,7 @@ export function createReplicationManifest(parent: ExperimentManifest, competitio
     splitVersion: parent.splitVersion,
     configPatch: parent.change.configPatch,
     executor: parent.resources.executor,
+    image: parent.resources.image,
     gpu: parent.resources.gpu,
     timeoutMinutes: parent.resources.timeoutMinutes,
     folds: parent.evaluation.folds,

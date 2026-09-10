@@ -176,7 +176,7 @@ export const ExperimentManifestSchema = z.object({
   datasetVersion: z.string().min(1),
   splitVersion: z.string().min(1),
   change: z.object({ configPatch: z.record(z.string(), z.unknown()) }),
-  resources: z.object({ executor: z.enum(["local", "modal"]), gpu: z.string().optional(), timeoutMinutes: z.number().positive() }),
+  resources: z.object({ executor: z.enum(["local", "container", "modal"]), image: z.string().min(1).optional(), gpu: z.string().optional(), timeoutMinutes: z.number().positive() }),
   evaluation: z.object({ folds: z.array(z.number().int().nonnegative()), seeds: z.array(z.number().int()), requiredArtifacts: z.array(z.string()) }),
   acceptance: z.object({ minimumPrimaryDelta: z.number(), maximumRegressionShift: z.number(), requireReplication: z.boolean() }),
   createdAt: z.string().datetime(),

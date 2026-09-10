@@ -84,7 +84,7 @@ def execute(goal: str, budget: str, mode: str = "research", autonomy: str = "saf
     if autonomy not in {"safe", "fast", "yolo"}:
         raise ValueError("Controller autonomy must be safe, fast, or yolo")
     if executor not in {"local", "modal"}:
-        raise ValueError("Controller executor must be local or modal")
+        raise ValueError("The Modal controller supports local or modal experiment workers; use container from a local controller.")
     environment = {
         **os.environ,
         "EVIDRA_STATE_DIR": "/state",

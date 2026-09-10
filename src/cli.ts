@@ -590,7 +590,7 @@ challenge.command("start")
   .option("--lanes <count>", "maximum independent research lanes", "3")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: wait, fallback, or stop", "wait")
-  .option("--executor <executor>", "experiment execution target: local or modal", "local")
+  .option("--executor <executor>", "experiment execution target: local, container, or modal", "local")
   .option("--resume", "resume the saved challenge campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
   .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
@@ -618,7 +618,7 @@ research
   .option("--lanes <count>", "maximum independent research lanes", "3")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: wait, fallback, or stop", "wait")
-  .option("--executor <executor>", "experiment execution target: local or modal", "local")
+  .option("--executor <executor>", "experiment execution target: local, container, or modal", "local")
   .option("--resume", "resume the latest durable non-completed research campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
   .action(async (options: { mode: string; goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
@@ -626,7 +626,7 @@ research
     if (!["wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'wait', 'fallback', or 'stop'.");
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Mode must be 'research' or 'challenge'.");
     if (!["safe", "fast", "yolo"].includes(options.autonomy)) throw new Error("Autonomy must be 'safe', 'fast', or 'yolo'.");
-    if (options.executor !== "local" && options.executor !== "modal") throw new Error("Executor must be 'local' or 'modal'.");
+    if (!["local", "container", "modal"].includes(options.executor)) throw new Error("Executor must be 'local', 'container', or 'modal'.");
     const mode = options.mode as "research" | "challenge";
     const autonomy = options.autonomy as AutonomyLevel;
     const adapter = activeCompetition();
@@ -788,7 +788,7 @@ research
               hypothesisId: selectedHypothesisId,
               gitCommit: commit.stdout.trim(),
               datasetVersion: adapter.config.datasetRevision,
-              executor: options.executor as "local" | "modal",
+              executor: options.executor as "local" | "container" | "modal",
               configPatch: { estimatorPath: candidateEstimatorPath(selectedHypothesis) ?? adapter.config.evaluator.estimatorPath },
             }, adapter.config);
             decisionStore.saveExperiment({ id: proposalId, payload: { ...proposal, status: "proposed", executionPlan: createExecutionPlan(proposal) } });
@@ -817,7 +817,7 @@ research
               hypothesisId: selectedHypothesisId,
               gitCommit: commit.stdout.trim(),
               datasetVersion: adapter.config.datasetRevision,
-              executor: options.executor as "local" | "modal",
+              executor: options.executor as "local" | "container" | "modal",
               configPatch: { estimatorPath: candidateEstimatorPath(selectedHypothesis) ?? adapter.config.evaluator.estimatorPath },
             }, adapter.config);
             decisionStore.saveExperiment({ id: experimentId, payload: { ...manifest, status: "proposed", executionPlan: createExecutionPlan(manifest) } });
@@ -997,9 +997,9 @@ program.command("baseline")
 const experiment = new Command("experiment").description("Manage research experiments");
 experiment.command("propose")
   .argument("[hypothesis]", "hypothesis identifier; defaults to the newest hypothesis")
-  .option("--executor <executor>", "experiment executor: local or modal", "local")
+  .option("--executor <executor>", "experiment executor: local, container, or modal", "local")
   .action(async (hypothesisId: string | undefined, options: { executor: string }) => {
-    if (options.executor !== "local" && options.executor !== "modal") throw new Error("Executor must be 'local' or 'modal'.");
+    if (!["local", "container", "modal"].includes(options.executor)) throw new Error("Executor must be 'local', 'container', or 'modal'.");
     const store = new ResearchStore(statePath);
     const hypothesis = hypothesisId ?? store.hypotheses()[0]?.id;
     if (!hypothesis) {
@@ -1013,7 +1013,7 @@ experiment.command("propose")
     }
     const id = `exp_${Date.now()}_${hypothesis.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
     const adapter = activeCompetition();
-    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: options.executor, configPatch: { estimatorPath: candidateEstimatorPath(store.hypotheses().find((entry) => entry.id === hypothesis)?.payload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
+    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: options.executor as "local" | "container" | "modal", configPatch: { estimatorPath: candidateEstimatorPath(store.hypotheses().find((entry) => entry.id === hypothesis)?.payload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
     store.saveExperiment({ id, payload: { ...manifest, status: "proposed", executionPlan: createExecutionPlan(manifest) } });
     store.close();
     console.log(`Immutable experiment manifest created\n${manifestSummary(manifest)}`);
