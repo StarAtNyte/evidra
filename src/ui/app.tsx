@@ -28,7 +28,7 @@ import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoal
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
-import { checkProvider, codexLoginStatus, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, runWithLocalFallback, runWithUsageLimitWait, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
+import { checkProvider, codexIsLoggedIn, codexLoginStatus, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, runWithLocalFallback, runWithUsageLimitWait, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { boundedPeerBoard, runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
@@ -289,8 +289,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const progressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [selectedModel, setSelectedModel] = useState<AvailableModel | null>(null);
-  const [picker, setPicker] = useState<"model" | "reasoning" | "mode" | "permissions" | null>(null);
+  const [picker, setPicker] = useState<"provider" | "model" | "reasoning" | "mode" | "permissions" | null>(null);
   const [pickerIndex, setPickerIndex] = useState(0);
+  const [firstRun] = useState(() => !existsSync(configPath));
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [setupStep, setSetupStep] = useState<"goal" | "budget" | "stop" | null>(null);
   const [setupDraft, setSetupDraft] = useState<{ goal?: string; budgetMinutes?: number }>({});
@@ -381,6 +382,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         ? COMMANDS.filter(([command]) => command.startsWith(input)).slice(0, 8)
         : [];
   const reasoningChoices = selectedModel?.supportedReasoningEfforts?.length ? selectedModel.supportedReasoningEfforts : REASONING_LEVELS;
+  const providerChoices: readonly AgentProvider[] = ["codex", "local"];
   const modeChoices: readonly WorkbenchMode[] = ["research", "challenge"];
   const permissionChoices: readonly AutonomyLevel[] = ["safe", "fast", "yolo"];
 
@@ -391,6 +393,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
   }, [busy]);
 
   useEffect(() => saveConfig(configPath, config), [config, configPath]);
+
+  useEffect(() => {
+    if (!firstRun) return;
+    append("assistant", "Welcome to Evidra. Before the first conversation, choose how the research director should run. Codex uses your ChatGPT subscription; Local uses an Ollama server on this machine.");
+    setPicker("provider");
+    setPickerIndex(0);
+  }, [firstRun]);
 
   useEffect(() => {
     if (config.campaign) return;
@@ -489,12 +498,29 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (picker) {
-      const choices = picker === "model" ? availableModels : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : permissionChoices;
+      const choices = picker === "provider" ? providerChoices : picker === "model" ? availableModels : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : permissionChoices;
       if (key.escape) { setPicker(null); return; }
       if (key.downArrow) { setPickerIndex((current) => (current + 1) % choices.length); return; }
       if (key.upArrow) { setPickerIndex((current) => (current - 1 + choices.length) % choices.length); return; }
       if (key.return && choices.length > 0) {
-        if (picker === "model") {
+        if (picker === "provider") {
+          const provider = providerChoices[pickerIndex];
+          setConfig((current) => ({
+            ...current,
+            provider,
+            model: provider === "local"
+              ? (current.provider === "local" ? current.model : "qwen3.6:27b")
+              : (current.provider === "codex" ? current.model : "default"),
+          }));
+          setPicker(null);
+          if (provider === "codex") {
+            append("assistant", codexIsLoggedIn()
+              ? "Codex is already connected. Evidra is ready. Use /research or /challenge when you want autonomous work."
+              : "Codex selected, but no login is available yet. Run /login codex to connect your ChatGPT subscription, then continue normally. Evidra will not start model work until authentication succeeds.");
+          } else {
+            append("assistant", "Local provider selected. Evidra will use Ollama when it is running and has a compatible model. Use /doctor to verify the local setup.");
+          }
+        } else if (picker === "model") {
           const chosen = availableModels[pickerIndex];
           setSelectedModel(chosen);
           setConfig((current) => ({ ...current, model: chosen.id }));
@@ -2653,11 +2679,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
       <Text color="magenta" bold>{["⠋", "⠙", "⠹", "⠸"][busyFrame]}  {progress || "Working..."}</Text><Text color="gray">  (esc to interrupt)</Text>
     </Box>}
     {picker && <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column" marginTop={1}>
-      <Text color="cyan" bold>{picker === "model" ? `Select ${config.provider} model` : picker === "reasoning" ? "Select thinking effort" : picker === "mode" ? "Select workbench mode" : "Select permissions"}</Text>
+      <Text color="cyan" bold>{picker === "provider" ? "Choose a provider" : picker === "model" ? `Select ${config.provider} model` : picker === "reasoning" ? "Select thinking effort" : picker === "mode" ? "Select workbench mode" : "Select permissions"}</Text>
       <Text color="gray">↑/↓ navigate · Enter select · Esc cancel</Text>
-      {(picker === "model" ? availableModels : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : permissionChoices).slice(Math.max(0, pickerIndex - 5), pickerIndex + 7).map((entry, index) => {
+      {(picker === "provider" ? providerChoices : picker === "model" ? availableModels : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : permissionChoices).slice(Math.max(0, pickerIndex - 5), pickerIndex + 7).map((entry, index) => {
         const actualIndex = Math.max(0, pickerIndex - 5) + index;
-        const label = typeof entry === "string" ? entry : `${entry.displayName}  ${entry.id}${entry.isDefault ? " · default" : ""}${entry.hidden ? " · hidden" : ""}`;
+        const label = typeof entry === "string"
+          ? entry === "codex" ? "Codex · ChatGPT subscription"
+            : entry === "local" ? "Local · Ollama on this machine" : entry
+          : `${entry.displayName}  ${entry.id}${entry.isDefault ? " · default" : ""}${entry.hidden ? " · hidden" : ""}`;
         return <Text key={typeof entry === "string" ? entry : entry.id} color={actualIndex === pickerIndex ? "yellow" : "white"}>
           {actualIndex === pickerIndex ? "› " : "  "}{label}
         </Text>;
