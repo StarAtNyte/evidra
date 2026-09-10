@@ -1405,7 +1405,17 @@ research
         failureClasses,
         evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
         budgetRemainingMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
-        benchmarkInterventions: harnessEvolutionPlan.map((item) => ({ priority: item.priority >= 8 ? "critical" : item.priority >= 5 ? "high" : "normal" })),
+        benchmarkInterventions: [
+          ...harnessEvolutionPlan.map((item) => ({ kind: item.failureClass, priority: item.priority >= 8 ? "critical" : item.priority >= 5 ? "high" : "normal" })),
+          ...(Array.isArray(harnessAdaptationAgenda?.interventions)
+            ? harnessAdaptationAgenda.interventions
+              .filter((item): item is { kind?: unknown; priority?: unknown } => Boolean(item && typeof item === "object"))
+              .map((item) => ({
+                kind: typeof item.kind === "string" ? item.kind : "benchmark",
+                priority: item.priority === "critical" || item.priority === "high" ? item.priority : "normal",
+              }))
+            : []),
+        ],
       });
       store.appendEvent("research.adaptive_harness.policy", { cycle, policy: adaptiveHarness });
       const searchPolicy = rankSearchArms({
