@@ -920,8 +920,10 @@ research
       const searchPolicy = rankSearchArms({
         arms: [
           ...(["ucb_portfolio", "ablation", "combination", "replication", "audit"] as SearchOperator[]).map((operator, index) => {
-            const rewards = store.recentEvents(500).filter((event) => event.type === "research.search.reward" && (event.payload as { operator?: string }).operator === operator).map((event) => Number((event.payload as { reward?: number }).reward)).filter(Number.isFinite);
-            return { id: operator, operator, attempts: rewards.length, successes: rewards.filter((reward) => reward > 0).length, meanReward: rewards.length ? rewards.reduce((sum, reward) => sum + reward, 0) / rewards.length : 0, cost: [1, 0.5, 1.5, 1, 0.25][index], novelty: [0.8, 0.6, 0.9, 0.2, 0.4][index] };
+            const outcomes = store.recentEvents(500).filter((event) => event.type === "research.search.reward" && (event.payload as { operator?: string }).operator === operator);
+            const rewards = outcomes.map((event) => Number((event.payload as { reward?: number }).reward)).filter(Number.isFinite);
+            const observedCosts = outcomes.map((event) => Number((event.payload as { durationSeconds?: number }).durationSeconds) / 60).filter((minutes) => Number.isFinite(minutes) && minutes > 0);
+            return { id: operator, operator, attempts: rewards.length, successes: rewards.filter((reward) => reward > 0).length, meanReward: rewards.length ? rewards.reduce((sum, reward) => sum + reward, 0) / rewards.length : 0, cost: observedCosts.length ? observedCosts.reduce((sum, minutes) => sum + minutes, 0) / observedCosts.length : [1, 0.5, 1.5, 1, 0.25][index], novelty: [0.8, 0.6, 0.9, 0.2, 0.4][index] };
           }),
         ],
         remainingBudgetMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
@@ -1614,7 +1616,7 @@ experiment.command("run")
         resultStore.appendEvent("experiment.comparison.completed", { experimentId: id, baselineSource: baselineEvent?.createdAt ?? "baseline", comparison, searchOperator: operator });
         if (operator) {
           const improvementDelta = comparison.delta === null ? undefined : adapter.config.metric.direction === "minimize" ? -comparison.delta : comparison.delta;
-          resultStore.appendEvent("research.search.reward", { experimentId: id, operator, reward: searchReward(improvementDelta, recorded.status === "completed", comparison.evidence === "replicated"), valid: recorded.status === "completed", reproducible: comparison.evidence === "replicated", delta: improvementDelta });
+          resultStore.appendEvent("research.search.reward", { experimentId: id, operator, reward: searchReward(improvementDelta, recorded.status === "completed", comparison.evidence === "replicated"), valid: recorded.status === "completed", reproducible: comparison.evidence === "replicated", delta: improvementDelta, durationSeconds: recorded.durationSeconds });
         }
       } else {
         resultStore.appendEvent("experiment.comparison.insufficient_data", { experimentId: id, reason: "No finite baseline metric was available." });
