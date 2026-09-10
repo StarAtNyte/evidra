@@ -22,6 +22,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const trajectories = store.trajectories(100);
   const ensembles = store.ensembleCandidates(100);
   const events = store.recentEvents(40);
+  const harnessBenchmarkEvents = store.recentEvents(200).filter((event) => event.type === "harness.benchmark.completed");
   const routingEvents = events.filter((event) => event.type === "research.capability_outcome");
   const experienceEvents = events.filter((event) => event.type === "research.experience.recorded");
   const contradictionEdges = store.edges().filter((edge) => edge.relation === "contradicts");
@@ -70,6 +71,14 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     const curriculum = latest?.curriculum ?? [];
     return [`Total experiences: ${profile?.total ?? 0} · eligible: ${profile?.eligible ?? 0} · quarantined: ${profile?.quarantined ?? 0}`, `Outcomes: ${Object.entries(profile?.byOutcome ?? {}).map(([key, value]) => `${key}=${value}`).join(" ") || "none"}`, `Gaps: ${Object.entries(profile?.gaps ?? {}).slice(0, 8).map(([key, value]) => `${key}=${value}`).join(" ") || "none"}`, ...curriculum.map((stage) => `- Stage ${stage.stage}: ${stage.trajectoryIds.join(", ") || "none"} · ${stage.rationale}`)].join("\n");
   })() : "No experience curriculum recorded.");
+  sections.push("", "## Harness benchmark feedback", "", harnessBenchmarkEvents.length
+    ? harnessBenchmarkEvents.slice(-5).map((event) => {
+      const payload = event.payload as { challenger?: string; scorecards?: Array<{ harness?: string; competitiveScore?: number; failureProfile?: Record<string, number> }>; comparisons?: Array<{ incumbent?: string; challengerWins?: boolean; reason?: string }> };
+      const scores = (payload.scorecards ?? []).map((scorecard) => `${scorecard.harness ?? "unknown"}=${typeof scorecard.competitiveScore === "number" ? scorecard.competitiveScore.toFixed(1) : "?"}${Object.keys(scorecard.failureProfile ?? {}).length ? ` failures=${JSON.stringify(scorecard.failureProfile)}` : ""}`).join(", ");
+      const comparisons = (payload.comparisons ?? []).map((comparison) => `vs ${comparison.incumbent ?? "unknown"}: ${comparison.challengerWins ? "win" : "not proven"}`).join("; ");
+      return `- ${event.createdAt} · challenger ${payload.challenger ?? "unknown"}\n  Scores: ${scores || "none"}${comparisons ? `\n  Comparisons: ${comparisons}` : ""}`;
+    }).join("\n")
+    : "No matched harness benchmark feedback recorded.");
   sections.push("", "## Sources", "", sources.length ? sources.map((source) => `- ${source.id}: ${line((source.payload as { title?: string; url?: string }).title ?? source.payload)} · ${(source.payload as { url?: string }).url ?? ""}`).join("\n") : "No sources recorded.");
   sections.push("", "## Ensemble candidates", "", ensembles.length ? ensembles.map((candidate) => `- ${candidate.id} · ${candidate.status} · ${candidate.checksum}\n  ${candidate.path}`).join("\n") : "No ensemble candidates recorded.");
   if (kind !== "research") sections.push("", "## Experiments and runs", "", experiments.length ? experiments.map((experiment) => {

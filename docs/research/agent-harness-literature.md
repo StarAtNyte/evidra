@@ -268,5 +268,11 @@ Evidra's durable trajectories, capability gaps, critic constraints, and bounded
 experience replay now provide that feedback loop without silently treating a
 failed rollout as training data or proof.
 
+Matched benchmark runs now close the loop operationally: Evidra persists each
+scorecard and failure profile, surfaces it in reports, and supplies recent
+benchmark feedback to the next research-director cycle. A recurring timeout or
+dependency failure is therefore an explicit harness-repair target followed by a
+same-protocol remeasurement, not just a lower leaderboard number.
+
 Sources: [AutoResearchBench](https://arxiv.org/abs/2604.25256) and
 [Agentic Harness Engineering](https://arxiv.org/abs/2604.25850).
