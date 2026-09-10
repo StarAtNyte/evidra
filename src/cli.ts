@@ -2478,7 +2478,7 @@ experiment.command("run")
       );
       evaluator = { stdout: evaluated.stdout, stderr: evaluated.stderr, exitCode: evaluated.exitCode };
       const parsed = parseMetricOutput(evaluated.stdout, adapter.config.metric.name);
-      result = { ...result, status: evaluated.exitCode === 0 ? "completed" : "failed", exitCode: evaluated.exitCode, metrics: { ...result.metrics, ...parsed.metrics }, metricsByFold: { ...result.metricsByFold, ...parsed.metricsByFold }, stdout: `${result.stdout ?? ""}\n[EVALUATOR]\n${evaluated.stdout}`, stderr: `${result.stderr ?? ""}\n[EVALUATOR]\n${evaluated.stderr}`, ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
+      result = { ...result, status: evaluated.exitCode === 0 ? "completed" : "failed", exitCode: evaluated.exitCode, metrics: { ...result.metrics, ...parsed.metrics }, metricsByFold: { ...result.metricsByFold, ...parsed.metricsByFold }, subgroupDeltas: parsed.subgroupDeltas, stdout: `${result.stdout ?? ""}\n[EVALUATOR]\n${evaluated.stdout}`, stderr: `${result.stderr ?? ""}\n[EVALUATOR]\n${evaluated.stderr}`, ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
     }
     const verificationCommands = [...(manifest.evaluation.verificationCommand ? [manifest.evaluation.verificationCommand] : []), ...(manifest.evaluation.verificationCommands ?? [])];
     if (result.status === "completed") {
@@ -2543,7 +2543,7 @@ experiment.command("run")
       const baselineEvent = resultStore.recentEvents(500).reverse().find((event) => event.type === "baseline.completed");
       const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string; stderr?: string; durationMs?: number; command?: string[]; cwd?: string } | undefined;
       const metricName = adapter.config.metric.name;
-      const parsedBaseline = baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, metricName) : { metrics: {}, metricsByFold: {} };
+      const parsedBaseline = baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, metricName) : { metrics: {} as Record<string, number>, metricsByFold: {} as Record<string, number[]>, subgroupDeltas: [] };
       const baselineMetric = typeof baselinePayload?.metric === "number" && Number.isFinite(baselinePayload.metric)
         ? baselinePayload.metric
         : parsedBaseline.metrics[metricName];
@@ -2555,6 +2555,7 @@ experiment.command("run")
           durationSeconds: (baselinePayload?.durationMs ?? 0) / 1000,
           metrics: { [metricName]: baselineMetric },
           metricsByFold: { [metricName]: baselinePayload?.stdout ? parsedBaseline.metricsByFold[metricName] ?? [] : [] },
+          subgroupDeltas: parsedBaseline.subgroupDeltas,
           artifacts: {},
           stdout: baselinePayload?.stdout,
           stderr: baselinePayload?.stderr,
@@ -2580,6 +2581,7 @@ experiment.command("run")
           reviewerApproved: gates.reviewerApproved,
           independentReplicationObserved: typeof entryPayload.replicationOf === "string" || typeof manifest.parent === "string",
           comparisonCount,
+          subgroupDeltas: recorded.subgroupDeltas,
         });
         resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, comparisonCount, adjustedProbabilityThreshold: acceptance.adjustedProbabilityThreshold, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });
         if (operator) {

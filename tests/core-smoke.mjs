@@ -773,6 +773,9 @@ test("validation acceptance requires replicated evidence and safety gates", () =
   assert.equal(blocked.accepted, false);
   const accepted = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
   assert.equal(accepted.accepted, true);
+  const subgroupBlocked = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, subgroupDeltas: [0.02, -0.01] });
+  assert.equal(subgroupBlocked.gates.subgroupRegression, false);
+  assert.equal(subgroupBlocked.accepted, false);
   assert.equal(accepted.adjustedProbabilityThreshold, 0.95);
   const familyWise = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, probabilityThreshold: 0.5, comparisonCount: 2 });
   assert.equal(familyWise.adjustedProbabilityThreshold, 0.75);
@@ -1645,9 +1648,10 @@ test("completed workers without a finite declared metric become invalid metric f
 });
 
 test("metric parser accepts evaluator JSON and keyed log output", () => {
-  const parsed = parseMetricOutput('{"metrics":{"rmse":0.42},"metricsByFold":{"rmse":[0.4,0.44]}}\nrmse: 0.41\n', "rmse");
+  const parsed = parseMetricOutput('{"metrics":{"rmse":0.42},"metricsByFold":{"rmse":[0.4,0.44]},"subgroupDeltas":[0.1,-0.02]}\nrmse: 0.41\n', "rmse");
   assert.equal(parsed.metrics.rmse, 0.41);
   assert.deepEqual(parsed.metricsByFold.rmse, [0.4, 0.44]);
+  assert.deepEqual(parsed.subgroupDeltas, [0.1, -0.02]);
   const autoresearch = parseMetricOutput("---\nval_bpb:          1.253616\ntraining_seconds: 45.0\n", "val_bpb");
   assert.equal(autoresearch.metrics.val_bpb, 1.253616);
   const pretty = parseMetricOutput('--- EVALUATION RESULT ---\n{\n  "Accuracy": 0.5260905014268243\n}\n', "Accuracy");

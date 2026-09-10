@@ -225,6 +225,7 @@ export const RunResultSchema = z.object({
   durationSeconds: z.number().nonnegative(),
   metrics: z.record(z.string(), z.number().finite()).default({}),
   metricsByFold: z.record(z.string(), z.array(z.number().finite())).default({}),
+  subgroupDeltas: z.array(z.number().finite()).default([]),
   artifacts: z.record(z.string(), z.string()).default({}),
   verification: z.object({ declared: z.number().int().nonnegative(), executed: z.number().int().nonnegative(), passed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), independent: z.boolean() }).superRefine((verification, context) => {
     if (verification.executed > verification.declared) context.addIssue({ code: z.ZodIssueCode.custom, path: ["executed"], message: "executed verifiers cannot exceed declared verifiers" });

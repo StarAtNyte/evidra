@@ -1372,6 +1372,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         exitCode: evaluated.exitCode,
         metrics: { ...result.metrics, ...metrics.metrics },
         metricsByFold: { ...result.metricsByFold, ...metrics.metricsByFold },
+        subgroupDeltas: metrics.subgroupDeltas,
         stdout: `${result.stdout ?? ""}\n[EVALUATOR]\n${evaluated.stdout}`,
         stderr: `${result.stderr ?? ""}\n[EVALUATOR]\n${evaluated.stderr}`,
         ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }),
@@ -1450,7 +1451,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const baselineEvent = resultStore.recentEvents(500).reverse().find((event) => event.type === "baseline.completed");
       const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string; stderr?: string; durationMs?: number; command?: string[]; cwd?: string } | undefined;
       const baselineMetricName = activeAdapter().config.metric.name;
-      const parsedBaseline = baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, baselineMetricName) : { metrics: {}, metricsByFold: {} };
+      const parsedBaseline = baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, baselineMetricName) : { metrics: {} as Record<string, number>, metricsByFold: {} as Record<string, number[]>, subgroupDeltas: [] };
       const baselineMetric = typeof baselinePayload?.metric === "number" && Number.isFinite(baselinePayload.metric)
         ? baselinePayload.metric
         : parsedBaseline.metrics[baselineMetricName];
@@ -1462,6 +1463,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           durationSeconds: (baselinePayload?.durationMs ?? 0) / 1000,
           metrics: { [baselineMetricName]: baselineMetric },
           metricsByFold: { [baselineMetricName]: baselinePayload?.stdout ? parsedBaseline.metricsByFold[baselineMetricName] ?? [] : [] },
+          subgroupDeltas: parsedBaseline.subgroupDeltas,
           artifacts: {},
           stdout: baselinePayload?.stdout,
           stderr: baselinePayload?.stderr,
@@ -2460,6 +2462,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
             leakageAuditPassed: false,
             reviewerApproved: false,
             comparisonCount,
+            subgroupDeltas: RunResultSchema.parse(candidate.payload).subgroupDeltas,
           });
           append("assistant", `Run comparison\n  baseline: ${comparison.baselineRunId} · ${comparison.baseline ?? "missing"}\n  candidate: ${comparison.candidateRunId} · ${comparison.candidate ?? "missing"}\n  delta: ${comparison.delta ?? "missing"}\n  result: ${comparison.direction}\n  evidence: ${comparison.evidence}${comparison.probabilityImproved === undefined ? "" : `\n  probability improved: ${(comparison.probabilityImproved * 100).toFixed(1)}%\n  95% CI: [${comparison.confidenceInterval?.[0].toFixed(6)}, ${comparison.confidenceInterval?.[1].toFixed(6)}]`}\n  promotion: ${acceptance.accepted ? "eligible" : "blocked by evidence gates"}\n\n${comparison.note}${acceptance.reasons.length ? `\n\nPromotion gates:\n${acceptance.reasons.map((reason) => `- ${reason}`).join("\n")}` : ""}`);
         } catch (error) { appendError(error); }

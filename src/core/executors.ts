@@ -68,9 +68,10 @@ function safeArtifactPath(root: string, name: string): string | undefined {
   return destination;
 }
 
-export function parseMetricOutput(stdout: string, metricName: string): { metrics: Record<string, number>; metricsByFold: Record<string, number[]> } {
+export function parseMetricOutput(stdout: string, metricName: string): { metrics: Record<string, number>; metricsByFold: Record<string, number[]>; subgroupDeltas: number[] } {
   const metrics: Record<string, number> = {};
   const metricsByFold: Record<string, number[]> = {};
+  let subgroupDeltas: number[] = [];
   const addObject = (value: unknown): void => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return;
     const object = value as Record<string, unknown>;
@@ -83,6 +84,8 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
       const series = (byFold as Record<string, unknown>)[metricName];
       if (Array.isArray(series)) metricsByFold[metricName] = series.filter((item): item is number => typeof item === "number" && Number.isFinite(item));
     }
+    const subgroup = object.subgroupDeltas ?? object.bySubgroupDelta ?? object.subgroupDelta;
+    if (Array.isArray(subgroup)) subgroupDeltas = subgroup.filter((item): item is number => typeof item === "number" && Number.isFinite(item));
   };
   try { addObject(JSON.parse(stdout)); } catch { /* output may be a log stream */ }
   for (const line of stdout.split("\n")) {
@@ -99,7 +102,7 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
       if (Number.isFinite(value)) metrics[metricName] = value;
     }
   }
-  return { metrics, metricsByFold };
+  return { metrics, metricsByFold, subgroupDeltas };
 }
 
 function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metricName: string, remote = false): RunResult {
@@ -124,6 +127,7 @@ function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metric
     durationSeconds: result.durationMs / 1000,
     metrics: parsed.metrics,
     metricsByFold: parsed.metricsByFold,
+    subgroupDeltas: parsed.subgroupDeltas,
     artifacts,
     stdout: result.stdout,
     stderr,
