@@ -23,7 +23,7 @@ import { recoveryDelay, recoveryPlan } from "./core/recovery.js";
 import { campaignElapsedMinutes, pauseCampaign, readCampaignRuntime, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { auditExperiment } from "./core/validation.js";
-import { evaluateValidationAcceptance } from "./core/validation-engine.js";
+import { comparisonFamilySize, evaluateValidationAcceptance } from "./core/validation-engine.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
@@ -1834,10 +1834,9 @@ experiment.command("run")
         const operator = manifest.searchOperator ?? "ucb_portfolio";
         resultStore.appendEvent("experiment.comparison.completed", { experimentId: id, baselineSource: baselineEvent?.createdAt ?? "baseline", comparison, searchOperator: operator });
         const gates = resultStore.experimentGates(id);
-        const comparisonCount = Math.max(1, resultStore.experiments().filter((candidate) => {
-          const candidateManifest = candidate.payload as { datasetVersion?: unknown; outcomeType?: unknown; status?: unknown };
-          return candidateManifest.datasetVersion === manifest.datasetVersion && candidateManifest.outcomeType === "metric" && (candidateManifest.status === "completed" || candidate.id === id);
-        }).length);
+        // Failed and rejected attempts still consumed a hypothesis slot. Do
+        // not let a campaign hide them by counting only completed winners.
+        const comparisonCount = comparisonFamilySize(resultStore.experiments().map((candidate) => candidate.payload as { datasetVersion?: unknown; outcomeType?: unknown }), manifest.datasetVersion);
         const acceptance = evaluateValidationAcceptance({
           baseline: baselineRun,
           candidate: RunResultSchema.parse(recorded),

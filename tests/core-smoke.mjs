@@ -36,7 +36,7 @@ import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/cor
 import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurriculum } from "../dist/core/experience.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
 import { evaluateReducedPromotion, experimentNovelty, rankExperimentCandidates, rankPriorities } from "../dist/core/scheduler.js";
-import { evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
+import { comparisonFamilySize, evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
 import { renderReport } from "../dist/core/reports.js";
 import { latestSourceEntries, latestSourcePayloads, researchMemoryContext } from "../dist/core/research-context.js";
@@ -438,6 +438,17 @@ test("validation acceptance requires replicated evidence and safety gates", () =
   const lowerIsBetter = evaluateValidationAcceptance({ baseline: { ...base, metrics: { score: 0.8 }, metricsByFold: { score: [0.79, 0.8, 0.81] } }, candidate: { ...candidate, metrics: { score: 0.78 }, metricsByFold: { score: [0.77, 0.78, 0.79] } }, metric: "score", direction: "minimize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true });
   assert.ok(Math.abs(lowerIsBetter.normalizedDelta - 0.02) < 1e-12);
   assert.equal(lowerIsBetter.accepted, true);
+});
+
+test("comparison family size includes failed and legacy metric attempts", () => {
+  assert.equal(comparisonFamilySize([
+    { datasetVersion: "d1", outcomeType: "metric" },
+    { datasetVersion: "d1", outcomeType: "metric" },
+    { datasetVersion: "d1", outcomeType: "proof" },
+    { datasetVersion: "d1" },
+    { datasetVersion: "d2", outcomeType: "metric" },
+  ], "d1"), 3);
+  assert.equal(comparisonFamilySize([], "d1"), 1);
 });
 
 test("multi-split validation rejects a regression hidden by the aggregate", () => {

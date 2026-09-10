@@ -47,6 +47,12 @@ export interface MultiSplitValidation {
   reasons: string[];
 }
 
+/** Count every attempted metric candidate in a dataset family, not only wins. */
+export function comparisonFamilySize(manifests: Array<{ datasetVersion?: unknown; outcomeType?: unknown }>, datasetVersion: string): number {
+  return Math.max(1, manifests.filter((manifest) =>
+    manifest.datasetVersion === datasetVersion && (manifest.outcomeType === undefined || manifest.outcomeType === "metric")).length);
+}
+
 /**
  * Apply the promotion policy to paired run evidence. A scalar improvement is
  * never promoted as replicated evidence, and subgroup regressions are checked
