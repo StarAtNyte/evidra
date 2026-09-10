@@ -537,7 +537,9 @@ test("only independently replicated method events enter transfer memory", () => 
   const method = createTransferableMethod({ id: "method-1", sourceCompetition: "task-a", sourceTaskType: "tabular", title: "Group-aware split", formulationFamily: "validation", mechanism: "keep source groups isolated", proposedChange: "use grouped folds", evidenceIds: ["run-1", "run-2"], tags: ["validation"] });
   const methods = transferableMethodsFromEvents([
     { type: "research.method.transferable", payload: method },
+    { type: "research.method.transferable", payload: method },
     { type: "research.method.transferable", payload: { ...method, id: "bad", replicated: false } },
+    { type: "research.method.transferable", payload: { ...method, id: "malformed", evidenceIds: ["run-1"] } },
   ], "group validation");
   assert.deepEqual(methods.map((entry) => entry.id), ["method-1"]);
 });
@@ -970,6 +972,19 @@ test("research memory ranks relevant claims and hypotheses before merely recent 
     const context = researchMemoryContext(store, 1, "source leakage validation");
     assert.equal(context.claims[0].id, "relevant");
     assert.equal(context.hypotheses[0].id, "h-relevant");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("research memory carries only validated transferable methods into a new objective", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-method-memory-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const method = createTransferableMethod({ id: "method-memory", sourceCompetition: "prior-task", sourceTaskType: "tabular", title: "Grouped validation", formulationFamily: "validation", mechanism: "keep source groups isolated", proposedChange: "use grouped folds", evidenceIds: ["parent-run", "replication-run"], tags: ["validation"] });
+    store.appendEvent("research.method.transferable", method);
+    store.appendEvent("research.method.transferable", { ...method, id: "unreplicated", replicated: false });
+    const context = researchMemoryContext(store, 5, "source leakage validation");
+    assert.deepEqual(context.transferableMethods.map((entry) => entry.id), ["method-memory"]);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
