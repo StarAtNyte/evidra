@@ -585,6 +585,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const source = await retrieveSource(url);
         const claims = sourceClaims(source.text);
         store.saveSource({ id: source.id, payload: { ...source, claims } });
+        for (const [index, statement] of claims.entries()) {
+          const claimId = `${source.id}_claim_${index + 1}`;
+          store.saveClaim({ id: claimId, payload: { id: claimId, statement, scope: source.url, confidence: 0.35, sourceType: "literature", sourceId: source.id, status: "active" } });
+          store.saveEdge({ id: `edge_${claimId}_${source.id}`, fromId: claimId, toId: source.id, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
+        }
         store.appendEvent(prior ? "challenge.source.refreshed" : "challenge.source.ingested", { url, title: source.title, claims: claims.length, previousSource: prior ? (prior.payload as { id?: string }).id : undefined });
         ingested.push(source.title);
       } catch (error) {

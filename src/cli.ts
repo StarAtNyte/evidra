@@ -221,8 +221,14 @@ async function ingestCompetitionSources(adapter: ReturnType<typeof activeCompeti
     if (prior && sourceIsFresh(prior)) continue;
     try {
       const source = await retrieveSource(url);
-      store.saveSource({ id: source.id, payload: { ...source, claims: sourceClaims(source.text) } });
-      store.appendEvent(prior ? "challenge.source.refreshed" : "challenge.source.ingested", { url, title: source.title, claims: sourceClaims(source.text).length, previousSource: prior ? (prior.payload as { id?: string }).id : undefined });
+      const claims = sourceClaims(source.text);
+      store.saveSource({ id: source.id, payload: { ...source, claims } });
+      for (const [index, statement] of claims.entries()) {
+        const claimId = `${source.id}_claim_${index + 1}`;
+        store.saveClaim({ id: claimId, payload: { id: claimId, statement, scope: source.url, confidence: 0.35, sourceType: "literature", sourceId: source.id, status: "active" } });
+        store.saveEdge({ id: `edge_${claimId}_${source.id}`, fromId: claimId, toId: source.id, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
+      }
+      store.appendEvent(prior ? "challenge.source.refreshed" : "challenge.source.ingested", { url, title: source.title, claims: claims.length, previousSource: prior ? (prior.payload as { id?: string }).id : undefined });
     } catch (error) {
       store.appendEvent("challenge.source.failed", { url, error: error instanceof Error ? error.message : String(error) });
     }
