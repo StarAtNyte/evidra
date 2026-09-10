@@ -1181,7 +1181,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
       { id: `${result.runId}-terminal`, kind: "terminal", payload: { status: recordedResult.status, goalAttained: recordedResult.status === "completed" && recordedResult.metrics[activeAdapter().config.metric.name] !== undefined } },
     ];
     const quality = evaluateTrajectory(trajectoryEvents);
-    resultStore.saveTrajectory({ id: `trajectory_${result.runId}`, runId: result.runId, experimentId: id, payload: { goal: hypothesis?.payload ?? null, events: trajectoryEvents }, quality });
+    const experimentTrajectoryId = `trajectory_${result.runId}`;
+    const experimentTrajectoryPayload = { goal: hypothesis?.payload ?? null, events: trajectoryEvents, manifest: entryPayload.manifest ?? null };
+    resultStore.saveTrajectory({ id: experimentTrajectoryId, runId: result.runId, experimentId: id, payload: experimentTrajectoryPayload, quality });
+    const experimentExperience = buildExperienceRecord({ trajectoryId: experimentTrajectoryId, payload: experimentTrajectoryPayload, quality });
+    const priorExperiences = resultStore.trajectories(100).filter((entry) => entry.id !== experimentTrajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
+    resultStore.appendEvent("research.experience.recorded", { experience: experimentExperience, capabilityProfile: capabilityProfile([...priorExperiences, experimentExperience]), curriculum: selectCurriculum([...priorExperiences, experimentExperience]), source: "experiment" });
     if (quality.overall !== "PASS") resultStore.appendEvent("trajectory.capability_gaps", { trajectoryId: `trajectory_${result.runId}`, gaps: Object.entries(quality).filter(([key, value]) => key !== "overall" && (value as { verdict: string }).verdict !== "PASS").map(([key, value]) => ({ dimension: key, verdict: (value as { verdict: string }).verdict, evidence: (value as { evidence: string[] }).evidence })) });
     resultStore.close();
     const metricName = activeAdapter().config.metric.name;

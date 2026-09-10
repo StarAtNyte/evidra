@@ -1396,7 +1396,12 @@ experiment.command("run")
       { id: `${result.runId}-terminal`, kind: "terminal", payload: { status: recorded.status, goalAttained: recorded.status === "completed" && recorded.metrics[adapter.config.metric.name] !== undefined } },
     ];
     const experimentQuality = evaluateTrajectory(experimentTrajectoryEvents);
-    resultStore.saveTrajectory({ id: `trajectory_${result.runId}`, runId: result.runId, experimentId: id, payload: { manifest, hypothesis: hypothesis?.payload ?? null, events: experimentTrajectoryEvents }, quality: experimentQuality });
+    const experimentTrajectoryId = `trajectory_${result.runId}`;
+    const experimentTrajectoryPayload = { manifest, hypothesis: hypothesis?.payload ?? null, events: experimentTrajectoryEvents };
+    resultStore.saveTrajectory({ id: experimentTrajectoryId, runId: result.runId, experimentId: id, payload: experimentTrajectoryPayload, quality: experimentQuality });
+    const experimentExperience = buildExperienceRecord({ trajectoryId: experimentTrajectoryId, payload: experimentTrajectoryPayload, quality: experimentQuality });
+    const priorExperiences = resultStore.trajectories(100).filter((entry) => entry.id !== experimentTrajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
+    resultStore.appendEvent("research.experience.recorded", { experience: experimentExperience, capabilityProfile: capabilityProfile([...priorExperiences, experimentExperience]), curriculum: selectCurriculum([...priorExperiences, experimentExperience]), source: "experiment" });
     if (experimentQuality.overall !== "PASS") resultStore.appendEvent("trajectory.capability_gaps", { trajectoryId: `trajectory_${result.runId}`, gaps: Object.entries(experimentQuality).filter(([key, value]) => key !== "overall" && (value as { verdict: string }).verdict !== "PASS").map(([key, value]) => ({ dimension: key, verdict: (value as { verdict: string }).verdict, evidence: (value as { evidence: string[] }).evidence })) });
     if (recorded.status === "completed") {
       const baselineEvent = resultStore.recentEvents(500).reverse().find((event) => event.type === "baseline.completed");

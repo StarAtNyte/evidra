@@ -69,7 +69,7 @@ export function buildExperienceRecord(input: {
     schemaVersion: 1,
     trajectoryId: input.trajectoryId,
     scene: {
-      task: text(scene.task ?? payload.mode, "research").toLowerCase(),
+      task: text(scene.task ?? payload.mode, payload.manifest ? "experiment" : "research").toLowerCase(),
       domain: text(scene.domain ?? payload.domain, "general"),
       context: text(scene.context, "workbench"),
       askingOrDoing: scene.askingOrDoing === "asking" || scene.askingOrDoing === "doing" ? scene.askingOrDoing : "unknown",
