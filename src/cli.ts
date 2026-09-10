@@ -552,10 +552,18 @@ benchmark.command("export")
       .filter((parentId): parentId is string => typeof parentId === "string"));
     const trials: HarnessTrial[] = [];
     for (const run of store.runs()) {
-      const payload = run.payload as { metrics?: Record<string, number>; durationSeconds?: number; recoveryAttempts?: number; status?: string };
+      const payload = run.payload as { metrics?: Record<string, number>; durationSeconds?: number; recoveryAttempts?: number; status?: string; artifacts?: Record<string, string> };
       const experiment = store.experiments().find((entry) => entry.id === run.experimentId);
       const manifest = experiment?.payload as { datasetVersion?: unknown; splitVersion?: unknown; evaluation?: { seeds?: unknown } } | undefined;
       const candidateMetric = payload.metrics?.[adapter.config.metric.name];
+      let runtimeFingerprint: string | undefined;
+      const environmentPath = payload.artifacts?.["environment.json"];
+      if (environmentPath) {
+        try {
+          const environment = JSON.parse(readFileSync(environmentPath, "utf8")) as { entropyAudit?: { reproducibilityFingerprint?: unknown } };
+          if (typeof environment.entropyAudit?.reproducibilityFingerprint === "string") runtimeFingerprint = environment.entropyAudit.reproducibilityFingerprint;
+        } catch { /* Older exports may not contain a readable environment artifact. */ }
+      }
       const experimentEvents = events.filter((event) => (event.payload as { experimentId?: unknown }).experimentId === run.experimentId);
       const trajectory = store.trajectories().find((entry) => entry.runId === run.id || entry.id === `trajectory_${run.id}`);
       const trajectoryQuality = trajectory?.quality as { overall?: string; executionAlignment?: { verdict?: string }; structural?: { verdict?: string }; goalAttainment?: { verdict?: string }; evidenceConsistency?: { verdict?: string }; errorRecovery?: { verdict?: string }; termination?: { verdict?: string } } | undefined;
@@ -567,6 +575,8 @@ benchmark.command("export")
         seed: Array.isArray(manifest?.evaluation?.seeds) ? manifest.evaluation.seeds.join(",") : "unknown-seed",
         model: typeof campaign?.runtime?.model === "string" ? campaign.runtime.model : "unknown-model",
         budgetMinutes: typeof campaign?.budgetMinutes === "number" ? campaign.budgetMinutes : 0,
+        ...(typeof manifest?.datasetVersion === "string" ? { dataRevision: manifest.datasetVersion } : {}),
+        ...(runtimeFingerprint ? { runtimeFingerprint } : {}),
         direction: adapter.config.metric.direction,
         baselineMetric: baselineMetric as number,
         candidateMetric: Number.isFinite(candidateMetric) ? candidateMetric : undefined,

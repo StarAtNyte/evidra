@@ -57,6 +57,12 @@ evidence—including bounded, redacted stdout/stderr and metric data for every
 attempt—alongside the scorecards. The runner does not claim reproducibility;
 independent repeats must be declared as separate matched arms.
 
+Trials may also declare `dataRevision` and `runtimeFingerprint`. When either is
+present, every harness on the matched arm must agree; a hidden dataset or
+runtime mismatch invalidates the protocol instead of becoming a silent source
+of advantage. `benchmark export` carries the experiment dataset revision and,
+when available, the checksummed environment fingerprint into these fields.
+
 An arm may declare `retries` from 0 to 3. Retries share the arm's total time
 budget, and a later successful attempt is recorded as `recovered: true`; total
 elapsed time includes failed attempts. This makes recovery behavior measurable

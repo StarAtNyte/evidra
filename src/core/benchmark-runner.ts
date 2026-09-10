@@ -14,6 +14,8 @@ export interface BenchmarkArmSpec {
   seed: string | number;
   model: string;
   budgetMinutes: number;
+  dataRevision?: string;
+  runtimeFingerprint?: string;
   direction: ScoreDirection;
   baselineMetric: number;
   taskWorstMetric?: number;
@@ -132,6 +134,8 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       seed: arm.seed,
       model: arm.model,
       budgetMinutes: arm.budgetMinutes,
+      ...(arm.dataRevision ? { dataRevision: arm.dataRevision } : {}),
+      ...(arm.runtimeFingerprint ? { runtimeFingerprint: arm.runtimeFingerprint } : {}),
       direction: arm.direction,
       baselineMetric: arm.baselineMetric,
       ...(arm.taskWorstMetric !== undefined ? { taskWorstMetric: arm.taskWorstMetric } : {}),

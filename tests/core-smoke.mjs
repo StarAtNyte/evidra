@@ -1819,6 +1819,16 @@ test("benchmark protocol prevents per-harness normalization-bound gaming", () =>
   assert.ok(invalid.issues.some((issue) => /finite/.test(issue.message)));
 });
 
+test("benchmark protocol rejects hidden data or runtime mismatches", () => {
+  const base = { task: "task", arm: "arm", seed: 1, model: "codex", budgetMinutes: 10, direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 1, recovered: false, reproducible: false, dataRevision: "data-v1", runtimeFingerprint: "sha256:one" };
+  const mismatched = validateBenchmarkProtocol([
+    { harness: "evidra", ...base },
+    { harness: "other", ...base, runtimeFingerprint: "sha256:two" },
+  ]);
+  assert.equal(mismatched.valid, false);
+  assert.ok(mismatched.issues.some((issue) => issue.field === "runtimeFingerprint"));
+});
+
 test("benchmark protocol rejects duplicate harness trials on one matched arm", () => {
   const trial = { harness: "evidra", task: "task", arm: "arm", seed: 1, model: "codex", budgetMinutes: 10, direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 1, recovered: false, reproducible: false };
   const report = validateBenchmarkProtocol([trial, { ...trial }]);
