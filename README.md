@@ -221,7 +221,7 @@ Useful commands:
     /agents               Show agent lanes and health
     /compute              Show executor and budget health
     /queue                Show durable tasks and recover stale work
-    /submission           Prepare, validate, approve, or submit a bundle
+    /submission           Prepare, validate, approve, submit, or poll a bundle
     /submission distribution  Estimate which local split tracks external scores
     /report               Generate a portable report
     /sessions             List saved sessions
@@ -394,8 +394,11 @@ Other platforms can use an argv-based command adapter. Supported placeholders ar
 
     "submission": {
       "platform": "command",
-      "submitCommand": ["./scripts/submit", "--file", "{file}", "--message", "{message}"]
+      "submitCommand": ["./scripts/submit", "--file", "{file}", "--message", "{message}"],
+      "scoreCommand": ["./scripts/score", "--submission", "{submission}"]
     }
+
+`scoreCommand` is an optional generic read-only polling adapter. It runs inside the project root and accepts `{bundle}`, `{file}`, `{competition}`, and `{submission}` placeholders. Emit JSON such as `{ "publicScore": 0.812 }` or a line such as `score: 0.812`; Evidra validates that the result is finite, redacts captured output, stores the observation as evidence, and marks the bundle scored. Use `/submission poll <bundle-id>` or `evidra submission poll <bundle-id>`. Platforms without a polling API can continue using `/submission record` after a manual leaderboard observation.
 
 ## Provider architecture
 
@@ -426,8 +429,8 @@ The next research-lab layers are:
 4. successive-halving scheduling and compute-normalized hypothesis prioritization;
 5. persistent role agents and independent review lanes;
 6. OOF prediction storage, error correlation, calibration, and ensemble search;
-7. richer HTTP submission and score-polling adapters with approval gates;
-8. optional Modal, container, Slurm, and remote executor backends;
+7. richer first-party HTTP submission adapters and leaderboard integrations;
+8. Slurm and additional remote executor backends;
 9. a local browser dashboard on top of the same event/state model.
 
 These are separate from the core TUI so Evidra remains useful for non-Kaggle research and can be operated entirely from a terminal.

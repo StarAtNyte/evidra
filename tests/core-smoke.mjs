@@ -23,7 +23,7 @@ import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
 import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalsForMode } from "../dist/core/phase-goals.js";
-import { submitApprovedBundle } from "../dist/core/submission-adapters.js";
+import { parseSubmissionScore, pollSubmissionScore, submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
 import { createExperimentManifest, createReplicationManifest } from "../dist/core/experiment-manifest.js";
@@ -956,6 +956,24 @@ test("configured command submission requires a valid approved bundle and preserv
     assert.equal(receipt.receipt.platform, "command");
     assert.match(receipt.receipt.stdout, /prediction\.csv/);
     await assert.rejects(() => submitApprovedBundle(root, bundle.path, { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } }), /Manual submission is configured/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("generic score polling parses JSON and human-readable adapter output", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-score-poll-"));
+  try {
+    const artifact = join(root, "prediction.csv");
+    writeFileSync(artifact, "id,prediction\n1,0.5\n");
+    const manifest = { schemaVersion: 1, id: "exp-score", parent: null, hypothesisId: "hyp-score", gitCommit: "abc", datasetVersion: "data", splitVersion: "split", change: { configPatch: {} }, resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0], seeds: [0], requiredArtifacts: [] }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 0, requireReplication: false }, createdAt: new Date().toISOString() };
+    const run = { runId: "run-score", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 1 }, artifacts: { prediction: artifact } };
+    const bundle = prepareSubmission(root, "exp-score", manifest, run, { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } });
+    const competition = { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" }, submission: { platform: "command", scoreCommand: [process.execPath, "-e", "console.log(JSON.stringify({publicScore: 0.731}))", "{submission}"] } };
+    const observation = await pollSubmissionScore(root, bundle.path, "submission-42", competition);
+    assert.equal(observation.score, 0.731);
+    assert.equal(observation.platform, "command");
+    assert.equal(parseSubmissionScore("score: 0.812"), 0.812);
+    assert.equal(parseSubmissionScore("{\"result\":{\"score\":0.44}}"), 0.44);
+    assert.equal(parseSubmissionScore("no score here"), undefined);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

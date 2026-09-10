@@ -14,7 +14,7 @@ import { estimateDistributionBeliefs, type ExternalValidationObservation } from 
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "./core/execution-stages.js";
 import { retrieveSource, sourceClaims, sourceSearchText, sourceIsFresh } from "./core/sources.js";
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
-import { submitApprovedBundle } from "./core/submission-adapters.js";
+import { pollSubmissionScore, submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
 import { renderTimeline } from "./core/timeline.js";
 import { latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
@@ -422,6 +422,21 @@ submission.command("submit").argument("<bundle>").option("--message <message>", 
     store.updateSubmissionStatus(bundle, "submitted", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), receipt: attempt.receipt });
     store.appendEvent("submission.external.submitted", { id: bundle, platform: attempt.receipt.platform, predictionFile: attempt.receipt.predictionFile, submittedAt: attempt.receipt.submittedAt });
     console.log(`Submitted ${bundle} via ${attempt.receipt.platform}\n${attempt.receipt.stdout.trim()}`);
+  } finally { store.close(); }
+});
+submission.command("poll").argument("<bundle>").description("Poll a configured external score adapter").action(async (bundle: string) => {
+  const store = new ResearchStore(statePath);
+  const entry = store.submissions().find((candidate) => candidate.id === bundle);
+  if (!entry) { store.close(); throw new Error(`Submission bundle ${bundle} is not registered.`); }
+  if (entry.status !== "submitted" && entry.status !== "scored") { store.close(); throw new Error(`Submission ${bundle} is '${entry.status}'. Submit it before polling.`); }
+  const adapter = activeCompetition();
+  try {
+    const observation = await pollSubmissionScore(root, entry.path, bundle, adapter.config);
+    const recordedAt = observation.observedAt;
+    store.updateSubmissionStatus(bundle, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: observation.score, platform: observation.platform, recordedAt, scoreObservation: observation });
+    store.saveClaim({ id: `claim_external_score_${bundle}_${Date.now()}`, payload: { statement: `External ${observation.platform} score for ${bundle}: ${observation.score}`, scope: entry.experimentId, confidence: 1, sourceType: "external_score", sourceId: bundle, status: "active", score: observation.score, platform: observation.platform, recordedAt } });
+    store.appendEvent("submission.score.polled", { id: bundle, score: observation.score, platform: observation.platform, recordedAt });
+    console.log(`Polled ${observation.platform} score ${observation.score} for ${bundle}.`);
   } finally { store.close(); }
 });
 submission.command("record").argument("<bundle>").requiredOption("--public-score <score>", "score returned by the competition platform").option("--platform <name>", "platform or evaluation source", "manual").option("--validation <json>", "local split scores as JSON").action((bundle: string, options: { publicScore: string; platform: string; validation?: string }) => {

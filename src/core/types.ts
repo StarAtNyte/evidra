@@ -25,6 +25,7 @@ export const CompetitionConfigSchema = z.object({
     predictionFile: z.string().optional(),
     workingDirectory: z.string().optional(),
     submitCommand: z.array(z.string()).optional(),
+    scoreCommand: z.array(z.string()).optional(),
   }).optional(),
   submissionPolicy: z.object({
     requireHumanApproval: z.boolean().default(true),

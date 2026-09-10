@@ -16,7 +16,7 @@ import { compareRuns } from "../core/statistics.js";
 import { recoveryDelay, recoveryPlan } from "../core/recovery.js";
 import { campaignElapsedMinutes, pauseCampaign, resumeCampaign } from "../core/campaign.js";
 import { prepareSubmission, validateSubmissionBundle } from "../core/submissions.js";
-import { submitApprovedBundle } from "../core/submission-adapters.js";
+import { pollSubmissionScore, submitApprovedBundle } from "../core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "../core/submission-policy.js";
 import { diversityReport, greedyBlend, loadPredictionVector, type PredictionVector } from "../core/ensemble.js";
 import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
@@ -136,7 +136,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"]],
   "/limits": [["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Switch to local Qwen automatically"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute budget", "Show campaign usage"]],
-  "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
+  "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/resume": [["/resume", "Resume the latest saved session"], ["/resume ", "Resume a selected session"]],
@@ -200,7 +200,7 @@ function help(): string {
     "/compute [local|container|modal|status] Select the experiment execution target",
     "/doctor                     Diagnose local dependencies",
     "!<shell command>            Run a shell command in the project workspace",
-    "/submission [prepare|validate|approve|submit|record] Manage safe bundles and external scores",
+    "/submission [prepare|validate|approve|submit|poll|record] Manage safe bundles and external scores",
     "/queue [status|recover]      Show or recover durable tasks",
     "/sessions                   List saved terminal sessions",
     "/resume [session-id]        Explicitly resume a saved session",
@@ -2087,7 +2087,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Evidra doctor\n${checks.map((check) => `  ${check}`).join("\n")}`);
       return;
     }
-    if (request === "/submission" || request === "/submission status" || request === "/submission distribution" || request.startsWith("/submission prepare") || request.startsWith("/submission validate") || request.startsWith("/submission approve") || request.startsWith("/submission submit") || request.startsWith("/submission record")) {
+    if (request === "/submission" || request === "/submission status" || request === "/submission distribution" || request.startsWith("/submission prepare") || request.startsWith("/submission validate") || request.startsWith("/submission approve") || request.startsWith("/submission submit") || request.startsWith("/submission poll") || request.startsWith("/submission record")) {
       const parts = request.split(/\s+/);
       const action = parts[1] ?? "status";
       const submissionsRoot = join(root, ".sota", "submissions");
@@ -2171,6 +2171,25 @@ export function App({ root }: { root: string }): React.JSX.Element {
           store.updateSubmissionStatus(bundleId, "submitted", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), receipt: attempt.receipt });
           store.appendEvent("submission.external.submitted", { id: bundleId, platform: attempt.receipt.platform, predictionFile: attempt.receipt.predictionFile, submittedAt: attempt.receipt.submittedAt });
           append("assistant", `Submission ${bundleId} submitted via ${attempt.receipt.platform}\n${attempt.receipt.stdout.trim()}`);
+        } catch (error) { appendError(error); }
+        finally { activeProcess.current = null; store.close(); setBusy(false); setProgress(""); }
+        return;
+      }
+      if (action === "poll") {
+        const bundleId = parts[2];
+        if (!bundleId) { append("assistant", "Usage: /submission poll <bundle-id>"); return; }
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        const entry = store.submissions().find((candidate) => candidate.id === bundleId);
+        if (!entry) { store.close(); append("assistant", `Submission bundle ${bundleId} is not registered.`); return; }
+        if (entry.status !== "submitted" && entry.status !== "scored") { store.close(); append("assistant", `Submission ${bundleId} is '${entry.status}'. Submit it before polling.`); return; }
+        setBusy(true); setProgress(`Polling the external score for ${bundleId}...`);
+        try {
+          const observation = await pollSubmissionScore(root, entry.path, bundleId, activeAdapter().config, registerProcess);
+          const recordedAt = observation.observedAt;
+          store.updateSubmissionStatus(bundleId, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: observation.score, platform: observation.platform, recordedAt, scoreObservation: observation });
+          store.saveClaim({ id: `claim_external_score_${bundleId}_${Date.now()}`, payload: { statement: `External ${observation.platform} score for ${bundleId}: ${observation.score}`, scope: entry.experimentId, confidence: 1, sourceType: "external_score", sourceId: bundleId, status: "active", score: observation.score, platform: observation.platform, recordedAt } });
+          store.appendEvent("submission.score.polled", { id: bundleId, score: observation.score, platform: observation.platform, recordedAt });
+          append("assistant", `Polled ${observation.platform} score ${observation.score} for ${bundleId}.`);
         } catch (error) { appendError(error); }
         finally { activeProcess.current = null; store.close(); setBusy(false); setProgress(""); }
         return;
