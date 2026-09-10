@@ -31,6 +31,7 @@ import { formatResearchDecision, runResearchDirector } from "../agents/research-
 import { runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
 import { evaluateTrajectory, type TrajectoryEvent } from "../core/trajectories.js";
+import { routeCapability } from "../core/capability-router.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -639,6 +640,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     const phaseGoal = activePhaseGoal(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)));
     const recentEvents = store.recentEvents(20);
+    const recentFailureCount = store.trajectories(50).filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
+    const campaignRemaining = campaign ? Math.max(0, campaign.budgetMinutes - (Date.now() - Date.parse(campaign.startedAt)) / 60_000) : undefined;
+    const route = routeCapability({ objective, mode, provider: config.provider, autonomy: config.autonomy, recentFailureCount, budgetRemainingMinutes: campaignRemaining, requestedParallel: 3 });
+    store.appendEvent("research.capability_route", { route, objective, recentFailureCount });
     const researchSources = store.sources().slice(0, 12).map((entry) => {
       const payload = entry.payload as { id?: string; title?: string; url?: string; excerpt?: string; claims?: string[] };
       return { id: entry.id, title: payload.title, url: payload.url, excerpt: payload.excerpt, claims: payload.claims?.slice(0, 8) };
@@ -654,7 +659,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     try {
       activeSteer.current = null;
       await checkProvider({ provider: config.provider, model: config.model, cwd: root });
-      setProgress("Research 3/4 · independent lanes are investigating the evidence...");
+      setProgress(`Research 3/4 · route ${route.tier} · ${route.reasoningEffort} reasoning · investigating...`);
       laneReports = await runResearchLanes(objective, {
         mode,
         project,
@@ -670,7 +675,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         reasoningEffort: config.reasoningEffort,
         cwd: root,
         storePath: join(root, ".sota", "database.sqlite"),
-        maxParallel: 6,
+        maxParallel: route.parallelLanes,
         autonomy: config.autonomy,
         onProgress: setProgress,
         onProcess: registerProcess,
@@ -692,7 +697,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }, {
         provider: config.provider,
         model: config.model,
-        reasoningEffort: config.reasoningEffort,
+        reasoningEffort: route.reasoningEffort === "high" ? config.reasoningEffort : route.reasoningEffort,
         limitPolicy: config.limitPolicy,
         cwd: root,
         fallbackLocalModel: config.fallbackModel,

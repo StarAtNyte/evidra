@@ -27,6 +27,7 @@ import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
 import { createExperimentManifest, createReplicationManifest } from "../dist/core/experiment-manifest.js";
 import { evaluateTrajectory, capabilityGaps } from "../dist/core/trajectories.js";
+import { routeCapability } from "../dist/core/capability-router.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -70,6 +71,15 @@ test("controller leases prevent duplicate workers and trajectories expose capabi
     assert.equal(store.trajectories()[0].id, "traj-1");
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("capability routing increases verification pressure after failures", () => {
+  const bounded = routeCapability({ objective: "summarize one file", mode: "research", provider: "local", autonomy: "safe" });
+  const difficult = routeCapability({ objective: "research and run experiments to optimize and replicate a generalizing challenge solution", mode: "challenge", provider: "codex", autonomy: "fast", recentFailureCount: 2, budgetRemainingMinutes: 5 });
+  assert.equal(bounded.tier, "C0");
+  assert.equal(difficult.tier, "C3");
+  assert.equal(difficult.parallelLanes, 1);
+  assert.equal(difficult.reasoningEffort, "high");
 });
 
 test("workspace root discovery keeps nested CLI invocations on the project state", () => {
