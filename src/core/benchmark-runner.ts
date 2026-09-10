@@ -9,6 +9,8 @@ import { redactSecrets } from "./redaction.js";
 
 export interface BenchmarkArmSpec {
   harness: string;
+  /** Explicit search policy provenance, e.g. greedy, ucb_portfolio, or mcts. */
+  policy?: string;
   /** Optional checksummed harness component manifest for ablation attribution. */
   componentIds?: string[];
   task: string;
@@ -76,6 +78,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
   const prepared = arms.map((arm) => {
     if (!arm.command.length || arm.command.some((part) => !part.trim())) throw new Error(`Benchmark arm '${arm.harness}' has an empty command.`);
     if (!Number.isFinite(arm.budgetMinutes) || arm.budgetMinutes <= 0) throw new Error(`Benchmark arm '${arm.harness}' must have a positive budget.`);
+    if (arm.policy !== undefined && (!arm.policy.trim() || arm.policy.length > 80)) throw new Error(`Benchmark arm '${arm.harness}' has an invalid policy label.`);
     if (arm.retries !== undefined && (!Number.isInteger(arm.retries) || arm.retries < 0 || arm.retries > 3)) throw new Error(`Benchmark arm '${arm.harness}' retries must be an integer from 0 to 3.`);
     if (arm.reproducibilityCommand !== undefined && (!Array.isArray(arm.reproducibilityCommand) || !arm.reproducibilityCommand.length || arm.reproducibilityCommand.some((part) => typeof part !== "string" || !part.trim()))) throw new Error(`Benchmark arm '${arm.harness}' has an invalid reproducibility command.`);
     if (arm.reproducibilityTolerance !== undefined && (!Number.isFinite(arm.reproducibilityTolerance) || arm.reproducibilityTolerance < 0)) throw new Error(`Benchmark arm '${arm.harness}' reproducibility tolerance must be finite and non-negative.`);
@@ -132,6 +135,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     const run: BenchmarkRunReport["runs"][number] = { harness: arm.harness, command: arm.command, cwd, result, metric: Number.isFinite(metric) ? metric : undefined, attempts, attemptDetails, ...(finalFailure ? { failureClass: finalFailure } : {}), ...(reproducibility ? { reproducibility } : {}) };
     const trial: HarnessTrial = {
       harness: arm.harness,
+      ...(arm.policy ? { policy: arm.policy } : {}),
       ...(arm.componentIds ? { componentIds: [...new Set(arm.componentIds)].sort() } : {}),
       task: arm.task,
       ...(arm.slice ? { slice: arm.slice } : {}),

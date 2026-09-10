@@ -2340,6 +2340,7 @@ test("benchmark runner executes matched arms and records evaluator-backed metric
   try {
     const arms = ["evidra", "other"].map((harness, index) => ({
       harness, task: "task-a", arm: "default", seed: 1, model: "test-model", budgetMinutes: 1,
+      policy: harness === "evidra" ? "ucb_portfolio" : "greedy",
       componentIds: harness === "evidra" ? ["routing", "verification"] : ["routing"],
       direction: "maximize", baselineMetric: 0.5, metric: "score", cwd: ".",
       command: [process.execPath, "-e", `console.log(JSON.stringify({score:${0.6 - index * 0.05}}))`],
@@ -2353,6 +2354,7 @@ test("benchmark runner executes matched arms and records evaluator-backed metric
     assert.equal(report.runs.every((run) => run.attemptDetails.length === 1), true);
     assert.equal(report.runs[0].attemptDetails[0].metric, 0.6);
     assert.deepEqual(report.trials[0].componentIds, ["routing", "verification"]);
+    assert.equal(report.trials[0].policy, "ucb_portfolio");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

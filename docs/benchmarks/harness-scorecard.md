@@ -57,6 +57,11 @@ evidence—including bounded, redacted stdout/stderr and metric data for every
 attempt—alongside the scorecards. The runner does not claim reproducibility;
 independent repeats must be declared as separate matched arms.
 
+An arm may optionally declare `policy` (for example `greedy`, `ucb_portfolio`,
+`evolutionary`, or `mcts`). The label is copied into the durable trial without
+changing harness identity or fairness keys, allowing policy comparisons to be
+reported explicitly while retaining the same task/seed/model/budget gates.
+
 Parallel arms are serialized automatically when their resolved working
 directories overlap. Parallel execution is retained only for genuinely
 separate workspaces, preventing concurrent harnesses from contaminating one

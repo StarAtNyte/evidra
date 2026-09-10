@@ -2,6 +2,8 @@ export type ScoreDirection = "maximize" | "minimize";
 
 export interface HarnessTrial {
   harness: string;
+  /** Search-policy provenance; harness remains the comparison identity. */
+  policy?: string;
   /** Optional immutable component manifest used for layered harness ablations. */
   componentIds?: string[];
   task: string;
