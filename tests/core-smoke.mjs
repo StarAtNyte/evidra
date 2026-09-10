@@ -54,6 +54,7 @@ import { isSensitiveWorkspacePath, redactSecrets, redactStructured } from "../di
 import { enforceGoalTermination } from "../dist/core/termination.js";
 import { summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
+import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -1055,6 +1056,13 @@ test("competition contract validates generic autoresearch-style workspaces", () 
     assert.equal(validateCompetitionContract(config, root).valid, true);
     assert.equal(validateCompetitionContract({ ...config, evaluator: { ...config.evaluator, estimatorPath: "../secret.py" } }, root).valid, false);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("hypothesis paths support arbitrary languages while rejecting traversal fragments", () => {
+  assert.equal(candidateChangePath("Update `src/solver.ts` and compare the result."), "src/solver.ts");
+  assert.equal(candidateChangePath("Run --estimator=research/model.rs for the candidate."), "research/model.rs");
+  assert.equal(candidateChangePath("Use ../secrets.py instead."), undefined);
+  assert.equal(candidateChangePath("Read https://example.com/paper.pdf for context."), undefined);
 });
 
 test("Modal result parser ignores progress and rejects malformed worker payloads", () => {

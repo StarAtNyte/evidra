@@ -39,6 +39,7 @@ import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurric
 import { rankExperimentCandidates } from "../core/scheduler.js";
 import { evaluateReducedPromotion } from "../core/scheduler.js";
 import { validateCompetitionContract } from "../core/competition-contract.js";
+import { candidateChangePath } from "../core/hypothesis-path.js";
 import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "../core/execution-stages.js";
 import { runReducedValidation } from "../core/stage-executor.js";
@@ -63,8 +64,7 @@ type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: 
 
 function candidateEstimatorPath(payload: unknown): string | undefined {
   const proposedChange = (payload as { proposedChange?: unknown } | null)?.proposedChange;
-  if (typeof proposedChange !== "string") return undefined;
-  return proposedChange.match(/(?:^|\s)((?:examples|src|research)\/[A-Za-z0-9_./-]+\.py)\b/)?.[1];
+  return candidateChangePath(proposedChange);
 }
 
 function candidateExperimentCommand(adapter: ReturnType<typeof loadCompetitionAdapter>, payload: unknown): string[] {

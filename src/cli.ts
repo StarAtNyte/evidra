@@ -54,6 +54,7 @@ import { allocateNextResearch } from "./core/allocation.js";
 import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurriculum } from "./core/experience.js";
 import { evaluateReducedPromotion } from "./core/scheduler.js";
 import { validateCompetitionContract } from "./core/competition-contract.js";
+import { candidateChangePath } from "./core/hypothesis-path.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -90,9 +91,7 @@ function durationMinutes(value: string): number {
 
 function candidateEstimatorPath(payload: unknown): string | undefined {
   const value = payload as { proposedChange?: unknown };
-  if (typeof value.proposedChange !== "string") return undefined;
-  const match = value.proposedChange.match(/(?:^|\s)((?:examples|src|research)\/[A-Za-z0-9_./-]+\.py)\b/);
-  return match?.[1];
+  return candidateChangePath(value.proposedChange);
 }
 
 function experimentCommandFor(adapter: ReturnType<typeof activeCompetition>, hypothesisPayload?: unknown): string[] {
