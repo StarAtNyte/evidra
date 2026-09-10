@@ -94,11 +94,14 @@ export function buildExperienceRecord(input: {
   const objective = text(payload.objective ?? goal.objective, "unspecified objective");
   const status = outcomeFor(input.quality);
   const routing = input.routing ?? storedRouting(payload);
+  const manifest = record(payload.manifest);
+  const acceptance = record(manifest.acceptance);
+  const replicationRequired = acceptance.requireReplication === true && typeof manifest.parent !== "string";
   const verification = storedVerification(payload);
   const weakVerification = Boolean(verification && (verification.failed > 0 || verification.executed !== verification.declared || verification.passed !== verification.executed || (verification.declared >= 2 && !verification.independent)));
   const admission: ExperienceAdmission = structure.status === "quarantined" || input.quality.structural.verdict === "FAIL"
     ? "quarantined"
-    : weakVerification || structure.status === "recoverable" || input.quality.overall === "FAIL"
+    : weakVerification || replicationRequired || structure.status === "recoverable" || input.quality.overall === "FAIL"
       ? "replay-only"
       : "candidate";
   return {
@@ -119,7 +122,7 @@ export function buildExperienceRecord(input: {
     ...(verification ? { verification } : {}),
     quality: input.quality,
     routing,
-    gaps: capabilityGaps(input.quality),
+    gaps: [...capabilityGaps(input.quality), ...(replicationRequired ? ["independent replication required"] : [])],
     admission,
     events,
   };
