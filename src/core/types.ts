@@ -185,6 +185,7 @@ export const ExperimentManifestSchema = z.object({
   id: z.string().min(1),
   parent: z.string().nullable().default(null),
   hypothesisId: z.string().min(1),
+  outcomeType: z.enum(["metric", "artifact", "proof", "behavior", "system", "other"]).default("metric"),
   gitCommit: z.string().min(1),
   datasetVersion: z.string().min(1),
   splitVersion: z.string().min(1),

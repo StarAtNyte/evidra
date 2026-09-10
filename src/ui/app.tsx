@@ -986,7 +986,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const commit = await runProcess(["git", "rev-parse", "HEAD"], root);
     if (commit.exitCode !== 0) { store.close(); throw new Error(`Cannot create manifest: ${commit.stderr || commit.stdout}`); }
     const id = `exp_${Date.now()}_${hypothesis.id.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
-    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis.id, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: config.experimentExecutor, configPatch: { estimatorPath: candidateEstimatorPath(hypothesis.payload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
+    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis.id, outcomeType: (hypothesis.payload as { outcomeType?: "metric" | "artifact" | "proof" | "behavior" | "system" | "other" }).outcomeType, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: config.experimentExecutor, configPatch: { estimatorPath: candidateEstimatorPath(hypothesis.payload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
     store.saveExperiment({ id, payload: { ...manifest, status: "proposed", executionPlan: createExecutionPlan(manifest) } });
     store.appendEvent("experiment.priority.selected", { experimentId: id, hypothesisId: hypothesis.id, priority: ranked[0].priority, novelty: ranked[0].novelty, score: ranked[0] });
     store.close();
@@ -1228,7 +1228,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (checked.exitCode !== 0) break;
       }
     }
-    result = validateRunMetric(result, adapter.config.metric.name);
+    if (manifest.outcomeType === "metric") result = validateRunMetric(result, adapter.config.metric.name);
     executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
     const fullStageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     fullStageStore.appendEvent(result.status === "completed" ? "experiment.stage.full_validation.completed" : "experiment.stage.full_validation.failed", { experimentId: id, runId: result.runId, metric: result.metrics[adapter.config.metric.name] ?? null, exitCode: result.exitCode, attempts: attempt });
@@ -1306,7 +1306,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       { id: `${result.runId}-process`, kind: "process", payload: { status: recordedResult.status, exitCode: recordedResult.exitCode, failureClass: recordedResult.failureClass ?? null } },
       ...recoveryEvents,
       { id: `${result.runId}-evaluator`, kind: "evaluator", payload: { metric: recordedResult.metrics[activeAdapter().config.metric.name] ?? null, evidenceConsistent: recordedResult.status === "completed" } },
-      { id: `${result.runId}-terminal`, kind: "terminal", payload: { status: recordedResult.status, goalAttained: recordedResult.status === "completed" && recordedResult.metrics[activeAdapter().config.metric.name] !== undefined } },
+      { id: `${result.runId}-terminal`, kind: "terminal", payload: { status: recordedResult.status, goalAttained: recordedResult.status === "completed" && (manifest.outcomeType !== "metric" || recordedResult.metrics[activeAdapter().config.metric.name] !== undefined) } },
     ];
     const quality = evaluateTrajectory(trajectoryEvents);
     const experimentTrajectoryId = `trajectory_${result.runId}`;
@@ -2281,7 +2281,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
       const id = `exp_${Date.now()}_${hypothesisId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
       const adapter = activeAdapter();
-      const manifest = createExperimentManifest({ id, hypothesisId, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: config.experimentExecutor }, adapter.config);
+      const selectedHypothesis = store.hypotheses().find((candidate) => candidate.id === hypothesisId);
+      const outcomeType = selectedHypothesis ? (selectedHypothesis.payload as { outcomeType?: "metric" | "artifact" | "proof" | "behavior" | "system" | "other" }).outcomeType : undefined;
+      const manifest = createExperimentManifest({ id, hypothesisId, outcomeType, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: config.experimentExecutor }, adapter.config);
       store.saveExperiment({ id, payload: { ...manifest, status: "proposed", executionPlan: createExecutionPlan(manifest) } });
       store.close();
       append("assistant", `Immutable experiment manifest created\n${manifestSummary(manifest)}\n\nNext: /experiment show ${id}`);

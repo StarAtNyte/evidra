@@ -1595,3 +1595,10 @@ test("research decisions support non-metric outcomes without fabricated GPU esti
   assert.equal(decision.hypotheses[0].computeCostGpuHours, 0);
   assert.equal(decision.hypotheses[0].expectedMetricDelta.median, 0);
 });
+
+test("non-metric experiments can pass evidence audit through verified completion", () => {
+  const competition = { id: "proof", name: "Proof", taskType: "formal", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["true"], experimentCommand: ["true"] };
+  const manifest = createExperimentManifest({ id: "proof-exp", hypothesisId: "hyp-proof", outcomeType: "proof", gitCommit: "abc", datasetVersion: "data" }, competition);
+  const audit = auditExperiment(manifest, { runId: "run-proof", status: "completed", exitCode: 0, durationSeconds: 1, metrics: {}, artifacts: {} }, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true });
+  assert.equal(audit.accepted, true);
+});

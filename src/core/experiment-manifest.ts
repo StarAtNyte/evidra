@@ -3,6 +3,7 @@ import { ExperimentManifestSchema, type CompetitionConfig, type ExperimentManife
 export interface ManifestInput {
   id: string;
   hypothesisId: string;
+  outcomeType?: "metric" | "artifact" | "proof" | "behavior" | "system" | "other";
   gitCommit: string;
   datasetVersion: string;
   splitVersion?: string;
@@ -29,6 +30,7 @@ export function createExperimentManifest(input: ManifestInput, competition: Comp
     id: input.id,
     parent: input.parent ?? null,
     hypothesisId: input.hypothesisId,
+    outcomeType: input.outcomeType ?? "metric",
     gitCommit: input.gitCommit,
     datasetVersion: input.datasetVersion || competition.datasetRevision,
     splitVersion: input.splitVersion ?? `${competition.id}:${competition.datasetRevision}:${competition.validation?.primarySplit ?? "mini"}-v1`,
@@ -72,6 +74,7 @@ export function createReplicationManifest(parent: ExperimentManifest, competitio
     id: `rep_${Date.now()}_${parent.hypothesisId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 28)}`,
     parent: parent.id,
     hypothesisId: parent.hypothesisId,
+    outcomeType: parent.outcomeType,
     gitCommit: parent.gitCommit,
     datasetVersion: parent.datasetVersion,
     splitVersion: parent.splitVersion,

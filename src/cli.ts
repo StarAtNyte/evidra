@@ -1248,6 +1248,7 @@ research
             const proposal = createExperimentManifest({
               id: proposalId,
               hypothesisId: selectedHypothesisId,
+              outcomeType: selectedHypothesis.outcomeType,
               gitCommit: commit.stdout.trim(),
               datasetVersion: adapter.config.datasetRevision,
               executor: options.executor as "local" | "container" | "modal",
@@ -1291,6 +1292,7 @@ research
             const manifest = createExperimentManifest({
               id: experimentId,
               hypothesisId: selectedHypothesisId,
+              outcomeType: selectedHypothesis.outcomeType,
               gitCommit: commit.stdout.trim(),
               datasetVersion: adapter.config.datasetRevision,
               executor: options.executor as "local" | "container" | "modal",
@@ -1505,7 +1507,8 @@ experiment.command("propose")
     }
     const id = `exp_${Date.now()}_${hypothesis.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
     const adapter = activeCompetition();
-    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: options.executor as "local" | "container" | "modal", configPatch: { estimatorPath: candidateEstimatorPath(store.hypotheses().find((entry) => entry.id === hypothesis)?.payload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
+    const hypothesisPayload = store.hypotheses().find((entry) => entry.id === hypothesis)?.payload as { outcomeType?: "metric" | "artifact" | "proof" | "behavior" | "system" | "other" } | undefined;
+    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis, outcomeType: hypothesisPayload?.outcomeType, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: options.executor as "local" | "container" | "modal", configPatch: { estimatorPath: candidateEstimatorPath(hypothesisPayload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
     store.saveExperiment({ id, payload: { ...manifest, status: "proposed", executionPlan: createExecutionPlan(manifest) } });
     store.close();
     console.log(`Immutable experiment manifest created\n${manifestSummary(manifest)}`);
@@ -1716,7 +1719,7 @@ experiment.command("run")
         if (checked.exitCode !== 0) break;
       }
     }
-    result = validateRunMetric(result, adapter.config.metric.name);
+    if (manifest.outcomeType === "metric") result = validateRunMetric(result, adapter.config.metric.name);
     executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
     const fullStageStore = new ResearchStore(statePath);
     fullStageStore.appendEvent(result.status === "completed" ? "experiment.stage.full_validation.completed" : "experiment.stage.full_validation.failed", { experimentId: id, runId: result.runId, metric: result.metrics[adapter.config.metric.name] ?? null, exitCode: result.exitCode, attempts: attempt });
@@ -1739,7 +1742,7 @@ experiment.command("run")
       { id: `${result.runId}-process`, kind: "process", payload: { status: recorded.status, exitCode: recorded.exitCode, failureClass: recorded.failureClass ?? null } },
       ...Array.from({ length: Math.max(0, attempt - 1) }, (_, index) => ({ id: `${result.runId}-recovery-${index + 1}`, kind: "recovery" as const, payload: { attempt: index + 1, status: "completed" } })),
       { id: `${result.runId}-evaluator`, kind: "evaluator", payload: { metric: recorded.metrics[adapter.config.metric.name] ?? null, evidenceConsistent: recorded.status === "completed" } },
-      { id: `${result.runId}-terminal`, kind: "terminal", payload: { status: recorded.status, goalAttained: recorded.status === "completed" && recorded.metrics[adapter.config.metric.name] !== undefined } },
+      { id: `${result.runId}-terminal`, kind: "terminal", payload: { status: recorded.status, goalAttained: recorded.status === "completed" && (manifest.outcomeType !== "metric" || recorded.metrics[adapter.config.metric.name] !== undefined) } },
     ];
     const experimentQuality = evaluateTrajectory(experimentTrajectoryEvents);
     const experimentTrajectoryId = `trajectory_${result.runId}`;

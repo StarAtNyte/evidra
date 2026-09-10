@@ -23,7 +23,7 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
       return !expectedChecksum || sha256File(path) === expectedChecksum;
     }),
     predictionsValid: run.status === "completed" && run.exitCode === 0,
-    metricsRecomputed: Object.keys(run.metrics).length > 0,
+    metricsRecomputed: manifest.outcomeType !== "metric" ? run.status === "completed" : Object.keys(run.metrics).length > 0,
     leakageAuditPassed: context.leakageAuditPassed ?? false,
     reviewerApproved: context.reviewerApproved ?? false,
   };
