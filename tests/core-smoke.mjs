@@ -2427,6 +2427,16 @@ test("cross-pollination preserves agreement, tension, and evidence provenance", 
   assert.ok(board.tensions.some((value) => value.includes("site shift")));
 });
 
+test("cross-pollination does not call generic vocabulary consensus", () => {
+  const board = synthesizeLaneReports([
+    { role: "lane-a", status: "completed", findings: ["the model uses data to improve the result"], recommendations: [], uncertainties: [], evidence: ["a.json"] },
+    { role: "lane-b", status: "completed", findings: ["the model changes data and tests the result"], recommendations: [], uncertainties: [], evidence: ["b.json"] },
+  ]);
+  assert.equal(board.agreementPairs, 0);
+  assert.equal(board.agreements.length, 0);
+  assert.equal(board.needsAdversarialReview, true);
+});
+
 test("promotion learning stays conservative until paired evidence is sufficient", () => {
   const events = [];
   for (let index = 0; index < 8; index += 1) {

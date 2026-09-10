@@ -68,8 +68,12 @@ export function synthesizeLaneReports(reports: LaneFinding[]): CrossPollinationB
   };
 }
 
+const NON_DISCRIMINATIVE_TERMS = new Set([
+  "about", "after", "also", "approach", "based", "better", "change", "code", "data", "different", "does", "each", "error", "experiment", "find", "from", "good", "issue", "method", "model", "more", "need", "only", "result", "score", "should", "show", "task", "test", "their", "these", "this", "through", "under", "using", "with",
+]);
+
 function words(value: string): Set<string> {
-  return new Set(value.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length >= 4));
+  return new Set(value.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length >= 4 && !NON_DISCRIMINATIVE_TERMS.has(word)));
 }
 
 function sharedTerms(left: string, right: string): string[] {
