@@ -392,10 +392,11 @@ benchmark.command("run")
   .argument("<file>", "JSON file containing { arms: [...] }")
   .option("--out <file>", "write the run report and scorecards to a JSON file")
   .option("--workspace <dir>", "explicit benchmark workspace root; defaults to the Evidra project")
+  .option("--parallel <count>", "maximum independent benchmark arms to run concurrently", "1")
   .option("--challenger <harness>", "harness that must beat the incumbents", "evidra")
   .option("--incumbent <harness>", "compare only against this incumbent; by default compare against every other harness")
   .description("Execute matched arms, score the evidence, and verify the challenger beats incumbents")
-  .action(async (file: string, options: { out?: string; workspace?: string; challenger: string; incumbent?: string }) => {
+  .action(async (file: string, options: { out?: string; workspace?: string; challenger: string; incumbent?: string; parallel: string }) => {
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
     const raw = parsed && typeof parsed === "object" && Array.isArray((parsed as { arms?: unknown }).arms) ? (parsed as { arms: unknown[] }).arms : undefined;
     if (!raw?.length) throw new Error("Benchmark protocol must contain a non-empty arms array.");
@@ -410,7 +411,8 @@ benchmark.command("run")
     const protocol = validateBenchmarkProtocol(arms.map((arm) => ({ ...arm, validRun: false, durationSeconds: 0, recovered: false, reproducible: false })));
     if (!protocol.valid) throw new Error(`Benchmark protocol is not matched:\n${protocol.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
     const benchmarkWorkspace = options.workspace ? resolve(options.workspace) : root;
-    const report = await runBenchmarkArms(arms, benchmarkWorkspace, (message) => console.log(`· ${message}`));
+    const maxParallel = Math.max(1, Math.min(32, Number.parseInt(options.parallel, 10) || 1));
+    const report = await runBenchmarkArms(arms, benchmarkWorkspace, (message) => console.log(`· ${message}`), { maxParallel });
     const matched = validateBenchmarkProtocol(report.trials);
     if (!matched.valid) throw new Error(`Benchmark results are not matched:\n${matched.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
     const scorecards = scoreHarnessTrials(report.trials);
@@ -423,6 +425,7 @@ benchmark.command("run")
     benchmarkStore.appendEvent("harness.benchmark.completed", {
       suite: "generic",
       workspace: benchmarkWorkspace,
+      maxParallel,
       challenger: options.challenger,
       incumbents,
       scorecards: scorecards.map((scorecard) => ({ harness: scorecard.harness, competitiveScore: scorecard.competitiveScore, lower95: scorecard.competitiveScoreLower95, validRunRate: scorecard.validRunRate, failureProfile: scorecard.failureProfile })),

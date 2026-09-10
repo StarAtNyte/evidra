@@ -1820,6 +1820,19 @@ test("benchmark runner executes matched arms and records evaluator-backed metric
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("benchmark runner bounds parallel arms while preserving protocol order", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-parallel-"));
+  try {
+    const arms = ["first", "second", "third"].map((harness, index) => ({
+      harness, task: `task-${index}`, arm: "default", seed: 1, model: "test-model", budgetMinutes: 1,
+      direction: "maximize", baselineMetric: 0.5, metric: "score", command: [process.execPath, "-e", `setTimeout(() => console.log(JSON.stringify({score:${0.6 + index / 100}})), 30)`],
+    }));
+    const report = await runBenchmarkArms(arms, root, undefined, { maxParallel: 2 });
+    assert.deepEqual(report.trials.map((trial) => trial.harness), ["first", "second", "third"]);
+    assert.deepEqual(report.trials.map((trial) => trial.candidateMetric), [0.6, 0.61, 0.62]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("benchmark runner records bounded recovery after a failed arm attempt", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-recovery-"));
   try {

@@ -76,7 +76,7 @@ evidra benchmark airs protocol airs-inventory.json \
   --arm '{"harness":"evidra","command":["./run-evidra.sh","{taskId}"]}' \
   --arm '{"harness":"mlgym","command":["./run-mlgym.sh","{taskId}"]}' \
   --out airs-protocol.json
-evidra benchmark run airs-protocol.json --workspace /path/to/airs-bench
+evidra benchmark run airs-protocol.json --workspace /path/to/airs-bench --parallel 4
 ```
 
 The command templates are the only harness-specific part; Evidra fixes task

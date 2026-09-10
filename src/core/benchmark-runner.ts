@@ -45,6 +45,11 @@ export interface BenchmarkAttemptRecord {
   failureClass?: string;
 }
 
+export interface BenchmarkRunOptions {
+  /** Maximum number of independent task arms to execute concurrently. */
+  maxParallel?: number;
+}
+
 function benchmarkCwd(root: string, requested: string | undefined, harness: string): string {
   const rootPath = realpathSync(resolve(root));
   const candidate = resolve(rootPath, requested ?? ".");
@@ -59,7 +64,7 @@ function benchmarkCwd(root: string, requested: string | undefined, harness: stri
 }
 
 /** Execute declared benchmark arms with identical metadata and bounded time. */
-export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, onProgress?: (message: string) => void): Promise<BenchmarkRunReport> {
+export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, onProgress?: (message: string) => void, options: BenchmarkRunOptions = {}): Promise<BenchmarkRunReport> {
   if (!arms.length) throw new Error("Benchmark protocol contains no arms.");
   // Validate every arm before starting any process, so one malformed arm
   // cannot leave a partially executed benchmark protocol behind.
@@ -72,9 +77,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     return { arm, cwd: benchmarkCwd(root, arm.cwd, arm.harness) };
   });
   const startedAt = new Date().toISOString();
-  const trials: HarnessTrial[] = [];
-  const runs: BenchmarkRunReport["runs"] = [];
-  for (const { arm, cwd } of prepared) {
+  const runOne = async ({ arm, cwd }: (typeof prepared)[number]): Promise<{ trial: HarnessTrial; run: BenchmarkRunReport["runs"][number] }> => {
     onProgress?.(`Benchmark · ${arm.harness} · ${arm.task} · ${arm.budgetMinutes}m`);
     const deadline = Date.now() + arm.budgetMinutes * 60_000;
     const maxAttempts = 1 + Math.min(3, Math.max(0, Math.floor(arm.retries ?? 0)));
@@ -121,8 +124,8 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       }
     }
     const finalFailure = attemptDetails.at(-1)?.failureClass;
-    runs.push({ harness: arm.harness, command: arm.command, cwd, result, metric: Number.isFinite(metric) ? metric : undefined, attempts, attemptDetails, ...(finalFailure ? { failureClass: finalFailure } : {}), ...(reproducibility ? { reproducibility } : {}) });
-    trials.push({
+    const run: BenchmarkRunReport["runs"][number] = { harness: arm.harness, command: arm.command, cwd, result, metric: Number.isFinite(metric) ? metric : undefined, attempts, attemptDetails, ...(finalFailure ? { failureClass: finalFailure } : {}), ...(reproducibility ? { reproducibility } : {}) };
+    const trial: HarnessTrial = {
       harness: arm.harness,
       task: arm.task,
       arm: arm.arm,
@@ -139,7 +142,19 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       recovered: validRun && attempts > 1,
       ...(finalFailure ? { failureClass: finalFailure } : {}),
       reproducible,
-    });
-  }
-  return { schemaVersion: 1, startedAt, trials, runs };
+    };
+    return { trial, run };
+  };
+  const results: Array<{ trial: HarnessTrial; run: BenchmarkRunReport["runs"][number] } | undefined> = Array.from({ length: prepared.length });
+  let next = 0;
+  const concurrency = Math.max(1, Math.min(prepared.length, Math.floor(options.maxParallel ?? 1)));
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const index = next++;
+      if (index >= prepared.length) return;
+      results[index] = await runOne(prepared[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  return { schemaVersion: 1, startedAt, trials: results.map((result) => result!.trial), runs: results.map((result) => result!.run) };
 }
