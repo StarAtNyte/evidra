@@ -190,6 +190,7 @@ program.command("usage").description("Show research, experiment, and campaign us
   console.log(`Experiments   ${counts.experiments}`);
   console.log(`Runs          ${counts.runs}`);
   console.log(`Artifacts     ${counts.artifacts}`);
+  console.log(`Trajectories  ${counts.trajectories}`);
   store.close();
 });
 
@@ -354,7 +355,8 @@ challenge.command("status").action(() => {
   const active = store.project();
   const adapter = activeCompetition();
   const campaign = store.campaign() as { status?: string; goal?: string; budgetMinutes?: number; autoExecuteExperiments?: boolean } | undefined;
-  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}${campaign ? `\nCampaign: ${campaign.status ?? "unknown"}\nGoal: ${campaign.goal ?? "(none)"}\nBudget: ${campaign.budgetMinutes ?? "?"} minutes\nAutonomous experiments: ${campaign.autoExecuteExperiments ? "enabled" : "approval-gated"}` : "\nCampaign: none"}`);
+  const lease = store.liveControllerLease();
+  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}${campaign ? `\nCampaign: ${campaign.status ?? "unknown"}\nGoal: ${campaign.goal ?? "(none)"}\nBudget: ${campaign.budgetMinutes ?? "?"} minutes\nAutonomous experiments: ${campaign.autoExecuteExperiments ? "enabled" : "approval-gated"}` : "\nCampaign: none"}${lease ? `\nController: running (pid ${lease.pid}, step ${lease.currentStep ?? "unknown"})` : "\nController: idle"}`);
   store.close();
 });
 for (const action of ["pause", "resume", "stop"] as const) {
@@ -362,6 +364,14 @@ for (const action of ["pause", "resume", "stop"] as const) {
     const store = new ResearchStore(statePath);
     const campaign = store.campaign() as Record<string, unknown> | undefined;
     if (!campaign) { store.close(); throw new Error("No challenge campaign exists. Start one in the Evidra TUI with /challenge start."); }
+    const lease = store.liveControllerLease();
+    if (lease && action !== "resume") {
+      store.requestControllerAction(action);
+      store.setSchedulerState({ status: "draining", mode: "challenge", currentStep: `requested-${action}` });
+      store.close();
+      console.log(`Challenge ${action} requested; active controller pid ${lease.pid} will apply it at the next safe boundary.`);
+      return;
+    }
     const status = action === "resume" ? "running" : action === "pause" ? "paused" : "completed";
     const updated = { ...campaign, status };
     store.saveCampaign(updated);

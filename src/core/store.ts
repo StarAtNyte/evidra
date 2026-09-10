@@ -15,6 +15,19 @@ export interface QueuedTask {
   updatedAt: string;
 }
 
+export type ControllerAction = "pause" | "resume" | "stop";
+export interface ControllerLease {
+  controllerId: string;
+  pid: number;
+  mode: string;
+  currentStep: string | null;
+  status: "running" | "released" | "stale";
+  requestedAction: ControllerAction | null;
+  startedAt: string;
+  heartbeatAt: string;
+  updatedAt: string;
+}
+
 export class ResearchStore {
   private readonly db: Database.Database;
   private memoryFtsAvailable = false;
@@ -151,6 +164,27 @@ export class ResearchStore {
         ended_at TEXT,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS controller_leases (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        controller_id TEXT NOT NULL,
+        pid INTEGER NOT NULL,
+        mode TEXT NOT NULL,
+        current_step TEXT,
+        status TEXT NOT NULL,
+        requested_action TEXT,
+        started_at TEXT NOT NULL,
+        heartbeat_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS trajectories (
+        id TEXT PRIMARY KEY,
+        run_id TEXT,
+        experiment_id TEXT,
+        payload_json TEXT NOT NULL,
+        quality_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
     try {
       this.db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(kind UNINDEXED, item_id UNINDEXED, content, created_at UNINDEXED)");
@@ -260,6 +294,91 @@ export class ResearchStore {
   campaign(): unknown | undefined {
     const row = this.db.prepare("SELECT payload_json FROM research_campaigns WHERE id = 1").get() as { payload_json: string } | undefined;
     return row ? JSON.parse(row.payload_json) : undefined;
+  }
+
+  saveTrajectory(trajectory: { id: string; runId?: string | null; experimentId?: string | null; payload: unknown; quality: unknown }): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO trajectories (id, run_id, experiment_id, payload_json, quality_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM trajectories WHERE id = ?), ?), ?)
+      ON CONFLICT(id) DO UPDATE SET run_id = excluded.run_id, experiment_id = excluded.experiment_id,
+        payload_json = excluded.payload_json, quality_json = excluded.quality_json, updated_at = excluded.updated_at
+    `).run(trajectory.id, trajectory.runId ?? null, trajectory.experimentId ?? null, JSON.stringify(trajectory.payload), JSON.stringify(trajectory.quality), trajectory.id, now, now);
+    this.appendEvent("trajectory.recorded", { id: trajectory.id, runId: trajectory.runId, experimentId: trajectory.experimentId });
+  }
+
+  trajectories(limit = 100): Array<{ id: string; runId: string | null; experimentId: string | null; payload: unknown; quality: unknown; createdAt: string; updatedAt: string }> {
+    const rows = this.db.prepare("SELECT id, run_id, experiment_id, payload_json, quality_json, created_at, updated_at FROM trajectories ORDER BY updated_at DESC LIMIT ?").all(Math.max(1, Math.min(limit, 1000))) as Array<{ id: string; run_id: string | null; experiment_id: string | null; payload_json: string; quality_json: string; created_at: string; updated_at: string }>;
+    return rows.map((row) => ({ id: row.id, runId: row.run_id, experimentId: row.experiment_id, payload: JSON.parse(row.payload_json), quality: JSON.parse(row.quality_json), createdAt: row.created_at, updatedAt: row.updated_at }));
+  }
+
+  private readControllerLease(): ControllerLease | undefined {
+    const row = this.db.prepare("SELECT controller_id, pid, mode, current_step, status, requested_action, started_at, heartbeat_at, updated_at FROM controller_leases WHERE id = 1").get() as {
+      controller_id: string; pid: number; mode: string; current_step: string | null; status: ControllerLease["status"];
+      requested_action: ControllerAction | null; started_at: string; heartbeat_at: string; updated_at: string;
+    } | undefined;
+    return row ? {
+      controllerId: row.controller_id, pid: row.pid, mode: row.mode, currentStep: row.current_step,
+      status: row.status, requestedAction: row.requested_action, startedAt: row.started_at,
+      heartbeatAt: row.heartbeat_at, updatedAt: row.updated_at,
+    } : undefined;
+  }
+
+  private pidAlive(pid: number): boolean {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  }
+
+  controllerLease(): ControllerLease | undefined { return this.readControllerLease(); }
+
+  liveControllerLease(staleAfterMs = 30_000): ControllerLease | undefined {
+    const lease = this.readControllerLease();
+    if (!lease || lease.status !== "running") return undefined;
+    const fresh = Date.now() - Date.parse(lease.heartbeatAt) <= staleAfterMs;
+    return fresh && this.pidAlive(lease.pid) ? lease : undefined;
+  }
+
+  acquireControllerLease(controllerId: string, pid: number, mode: string, currentStep: string | null = null, staleAfterMs = 30_000): { acquired: boolean; lease?: ControllerLease } {
+    const now = new Date().toISOString();
+    const transaction = this.db.transaction(() => {
+      const existing = this.readControllerLease();
+      if (existing && existing.controllerId !== controllerId && existing.status === "running") {
+        const fresh = Date.now() - Date.parse(existing.heartbeatAt) <= staleAfterMs;
+        if (fresh && this.pidAlive(existing.pid)) return { acquired: false, lease: existing };
+        this.appendEvent("controller.lease.stale", existing);
+      }
+      this.db.prepare(`
+        INSERT INTO controller_leases (id, controller_id, pid, mode, current_step, status, requested_action, started_at, heartbeat_at, updated_at)
+        VALUES (1, ?, ?, ?, ?, 'running', NULL, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET controller_id = excluded.controller_id, pid = excluded.pid, mode = excluded.mode,
+          current_step = excluded.current_step, status = 'running', requested_action = NULL, started_at = excluded.started_at,
+          heartbeat_at = excluded.heartbeat_at, updated_at = excluded.updated_at
+      `).run(controllerId, pid, mode, currentStep, now, now, now);
+      this.appendEvent("controller.lease.acquired", { controllerId, pid, mode, currentStep });
+      return { acquired: true, lease: this.readControllerLease() };
+    });
+    return transaction() as { acquired: boolean; lease?: ControllerLease };
+  }
+
+  heartbeatControllerLease(controllerId: string, mode: string, currentStep: string | null = null): boolean {
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE controller_leases SET mode = ?, current_step = ?, heartbeat_at = ?, updated_at = ? WHERE id = 1 AND controller_id = ? AND status = 'running'").run(mode, currentStep, now, now, controllerId);
+    return result.changes === 1;
+  }
+
+  requestControllerAction(action: ControllerAction): ControllerLease | undefined {
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE controller_leases SET requested_action = ?, updated_at = ? WHERE id = 1 AND status = 'running'").run(action, now);
+    const lease = this.readControllerLease();
+    if (lease?.status === "running") this.appendEvent("controller.action.requested", { action, controllerId: lease.controllerId, pid: lease.pid });
+    return lease;
+  }
+
+  releaseControllerLease(controllerId: string, status: "released" | "stale" = "released"): boolean {
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE controller_leases SET status = ?, requested_action = NULL, updated_at = ? WHERE id = 1 AND controller_id = ? AND status = 'running'").run(status, now, controllerId);
+    if (result.changes === 1) this.appendEvent(`controller.lease.${status}`, { controllerId });
+    return result.changes === 1;
   }
 
   updateAgentLane(lane: { role: string; status: "idle" | "running" | "blocked" | "failed"; provider: string; model: string; task?: string | null; error?: string | null }): void {
@@ -491,9 +610,9 @@ export class ResearchStore {
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, Math.max(1, Math.min(limit, 200)));
   }
 
-  counts(): { hypotheses: number; experiments: number; runs: number; artifacts: number; decisions: number; claims: number; edges: number; sources: number } {
+  counts(): { hypotheses: number; experiments: number; runs: number; artifacts: number; trajectories: number; decisions: number; claims: number; edges: number; sources: number } {
     const count = (table: string): number => (this.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
-    return { hypotheses: count("hypotheses"), experiments: count("experiments"), runs: count("runs"), artifacts: count("artifacts"), decisions: count("decisions"), claims: count("evidence_claims"), edges: count("research_edges"), sources: count("research_sources") };
+    return { hypotheses: count("hypotheses"), experiments: count("experiments"), runs: count("runs"), artifacts: count("artifacts"), trajectories: count("trajectories"), decisions: count("decisions"), claims: count("evidence_claims"), edges: count("research_edges"), sources: count("research_sources") };
   }
 
   experiments(): Array<{ id: string; payload: unknown; createdAt: string }> {

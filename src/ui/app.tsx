@@ -30,6 +30,7 @@ import { checkProvider, codexLoginStatus, isProviderUsageLimit, listCodexModels,
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
+import { evaluateTrajectory, type TrajectoryEvent } from "../core/trajectories.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -282,6 +283,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const activeProcesses = useRef(new Set<ProcessControl>());
   const activeSteer = useRef<((message: string) => boolean) | null>(null);
   const interruptedProcess = useRef(false);
+  const controllerLeaseId = useRef(`controller_${sessionId.current}`);
+  const controllerLeaseHeld = useRef(false);
+  const controllerHeartbeat = useRef<ReturnType<typeof setInterval> | null>(null);
   const registerProcess = (control: ProcessControl): void => {
     activeProcesses.current.add(control);
     activeProcess.current = control;
@@ -305,6 +309,36 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const paint = (): void => { progressLastPaint.current = Date.now(); setProgressState(progressRef.current); };
     if (!value || Date.now() - progressLastPaint.current >= 120) paint();
     else progressTimer.current = setTimeout(paint, 120);
+  };
+  const releaseControllerLease = (): void => {
+    if (controllerHeartbeat.current) { clearInterval(controllerHeartbeat.current); controllerHeartbeat.current = null; }
+    if (!controllerLeaseHeld.current) return;
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.releaseControllerLease(controllerLeaseId.current);
+    store.close();
+    controllerLeaseHeld.current = false;
+  };
+  const acquireControllerLease = (mode: WorkbenchMode, currentStep: string): boolean => {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const result = store.acquireControllerLease(controllerLeaseId.current, process.pid, mode, currentStep);
+    store.close();
+    if (!result.acquired) {
+        append("assistant", `Another Evidra controller is active (pid ${result.lease?.pid ?? "unknown"}, step ${result.lease?.currentStep ?? "unknown"}). Use /${result.lease?.mode ?? mode} status or stop that controller before starting another.`);
+      return false;
+    }
+    controllerLeaseHeld.current = true;
+    if (!controllerHeartbeat.current) controllerHeartbeat.current = setInterval(() => {
+      const heartbeatStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      heartbeatStore.heartbeatControllerLease(controllerLeaseId.current, configRef.current.mode, progressRef.current || "running");
+      heartbeatStore.close();
+    }, 10_000);
+    return true;
+  };
+  const updateControllerStep = (step: string): void => {
+    if (!controllerLeaseHeld.current) return;
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.heartbeatControllerLease(controllerLeaseId.current, configRef.current.mode, step);
+    store.close();
   };
   const firstToken = input.split(/\s+/)[0];
   const suggestions: readonly (readonly [string, string])[] = input.startsWith("/ ") ? [] : input.startsWith("/model ")
@@ -335,9 +369,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const saved = store.campaign();
     if (saved && typeof saved === "object" && "goal" in saved && "budgetMinutes" in saved) {
       const campaign = saved as ResearchCampaign;
-      // A campaign from a previous process is resumable state, never a live worker.
-      const recovered = campaign.status === "running" ? { ...campaign, status: "paused" as const } : campaign;
-      if (campaign.status === "running") {
+      // Only recover a running campaign when its controller lease is absent or stale.
+      // A fresh process must never overwrite a live controller's state.
+      const liveController = store.liveControllerLease();
+      const recovered = campaign.status === "running" && !liveController ? { ...campaign, status: "paused" as const } : campaign;
+      if (campaign.status === "running" && !liveController) {
         store.saveCampaign(recovered);
         store.setSchedulerState({ status: "paused", mode: "research", currentStep: "recovered-after-process-exit" });
       }
@@ -358,6 +394,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
     store.startSession(sessionId.current, { pid: process.pid, config, messages });
     store.close();
     return () => {
+      if (controllerHeartbeat.current) clearInterval(controllerHeartbeat.current);
+      if (controllerLeaseHeld.current) {
+        const closingLease = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        closingLease.releaseControllerLease(controllerLeaseId.current);
+        closingLease.close();
+      }
       const closing = new ResearchStore(join(root, ".sota", "database.sqlite"));
       closing.saveSession(sessionId.current, { pid: process.pid, config: configRef.current, messages: messagesRef.current });
       closing.closeSession(sessionId.current, "interrupted");
@@ -836,6 +878,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
       resultStore.saveArtifact({ id: `${result.runId}-${name}`, runId: result.runId, name, path, checksum: sha256File(path) });
     }
     resultStore.saveExperiment({ id, payload: { ...entryPayload, status: recordedResult.status === "completed" ? "completed" : "failed", runId: result.runId, worktreePath: experimentCwd } });
+    const trajectoryEvents: TrajectoryEvent[] = [
+      { id: `${result.runId}-process`, kind: "process", payload: { status: recordedResult.status, exitCode: recordedResult.exitCode, failureClass: recordedResult.failureClass ?? null } },
+      { id: `${result.runId}-evaluator`, kind: "evaluator", payload: { metric: recordedResult.metrics[activeAdapter().config.metric.name] ?? null, evidenceConsistent: recordedResult.status === "completed" } },
+      { id: `${result.runId}-terminal`, kind: "terminal", payload: { status: recordedResult.status, goalAttained: recordedResult.status === "completed" && recordedResult.metrics[activeAdapter().config.metric.name] !== undefined } },
+    ];
+    const quality = evaluateTrajectory(trajectoryEvents);
+    resultStore.saveTrajectory({ id: `trajectory_${result.runId}`, runId: result.runId, experimentId: id, payload: { goal: hypothesis?.payload ?? null, events: trajectoryEvents }, quality });
+    if (quality.overall !== "PASS") resultStore.appendEvent("trajectory.capability_gaps", { trajectoryId: `trajectory_${result.runId}`, gaps: Object.entries(quality).filter(([key, value]) => key !== "overall" && (value as { verdict: string }).verdict !== "PASS").map(([key, value]) => ({ dimension: key, verdict: (value as { verdict: string }).verdict, evidence: (value as { evidence: string[] }).evidence })) });
     resultStore.close();
     const metricName = activeAdapter().config.metric.name;
     return `\n\nExperiment ${id} ${recordedResult.status}\nRun: ${recordedResult.runId}\nExit code: ${recordedResult.exitCode}\nDuration: ${recordedResult.durationSeconds.toFixed(1)}s\nMetric (${metricName}): ${recordedResult.metrics[metricName] ?? "not parsed"}\nArtifacts: ${Object.keys(recordedResult.artifacts).join(", ")}\nFailure: ${recordedResult.failureClass ?? "none"}`;
@@ -847,11 +897,26 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const pendingCampaign = campaignOverride ?? config.campaign;
     if (pendingCampaign?.nextAttemptAt && Date.parse(pendingCampaign.nextAttemptAt) > Date.now()) return;
     ensureActiveProject();
+    if (!acquireControllerLease(mode, "research")) return;
     loopBusy.current = true;
     setBusy(true); setProgress("Autonomous loop: choosing the next highest-information decision...");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.requeueStaleTasks();
     store.setSchedulerState({ status: "running", mode, currentStep: "research" });
+    const requestedAction = store.controllerLease()?.requestedAction;
+    if (requestedAction === "pause" || requestedAction === "stop") {
+      const saved = (campaignOverride ?? config.campaign) as ResearchCampaign | undefined;
+      if (saved) {
+        const updated = { ...saved, status: requestedAction === "stop" ? "completed" as const : "paused" as const };
+        store.saveCampaign(updated);
+        setConfig((current) => ({ ...current, campaign: updated }));
+      }
+      store.setSchedulerState({ status: requestedAction === "stop" ? "idle" : "paused", mode, currentStep: `requested-${requestedAction}` });
+      store.close();
+      releaseControllerLease();
+      append("assistant", `Controller request applied: ${requestedAction}.`);
+      return;
+    }
     store.close();
     let queueTaskId: string | undefined;
     try {
@@ -959,10 +1024,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", error instanceof Error ? error.message : String(error));
       if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
     } finally {
+      const finalCampaign = configRef.current.campaign;
+      if (!autoContinue || !finalCampaign || finalCampaign.status !== "running" || !loopTimer.current) releaseControllerLease();
       loopBusy.current = false;
       setBusy(false); setProgress("");
     }
-  };
+    };
 
   const submit = async (value: string, fromQueue = false): Promise<void> => {
     if (suppressNextSubmit.current) {
@@ -1101,8 +1168,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const saved = store.campaign() as ResearchCampaign | undefined;
       if (action === "status") {
         const scheduler = store.schedulerState();
+        const lease = store.liveControllerLease();
         store.close();
         append("assistant", saved ? `${lifecycleMode === "challenge" ? "Challenge" : "Research"} campaign\n  status: ${saved.status}\n  goal: ${saved.goal}\n  budget: ${saved.budgetMinutes} minutes\n  autonomous experiments: ${saved.autoExecuteExperiments ? "enabled" : "approval-gated"}\n  scheduler: ${scheduler.status}\n  step: ${scheduler.currentStep ?? "idle"}` : `No ${lifecycleMode} campaign exists. Use /${lifecycleMode} start.`);
+        if (lease) append("assistant", `Controller: running · pid ${lease.pid} · step ${lease.currentStep ?? "unknown"}`);
         return;
       }
       if (!saved) { store.close(); append("assistant", `No ${lifecycleMode} campaign exists. Use /${lifecycleMode} start.`); return; }
@@ -1111,6 +1180,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
         const paused = { ...saved, status: "paused" as const };
         store.saveCampaign(paused); store.setSchedulerState({ status: "paused", mode: lifecycleMode, currentStep: "paused" }); store.close();
+        releaseControllerLease();
         setConfig((current) => ({ ...current, mode: lifecycleMode, campaign: paused }));
         append("assistant", `${lifecycleMode === "challenge" ? "Challenge" : "Research"} paused. Active workers are paused and the campaign is resumable.`);
         return;
@@ -1120,6 +1190,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
         const stopped = { ...saved, status: "completed" as const };
         store.saveCampaign(stopped); store.setSchedulerState({ status: "idle", mode: lifecycleMode, currentStep: "stopped" }); store.close();
+        releaseControllerLease();
         setConfig((current) => ({ ...current, mode: lifecycleMode, campaign: stopped }));
         append("assistant", `${lifecycleMode === "challenge" ? "Challenge" : "Research"} stopped. It remains saved for inspection, but will not resume automatically.`);
         return;

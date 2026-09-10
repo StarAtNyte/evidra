@@ -1,0 +1,103 @@
+export type TrajectoryEventKind =
+  | "user"
+  | "assistant"
+  | "tool_call"
+  | "tool_result"
+  | "process"
+  | "evaluator"
+  | "recovery"
+  | "terminal";
+
+export type QualityVerdict = "PASS" | "WARN" | "FAIL" | "NOT_EVALUATED";
+
+export interface TrajectoryEvent {
+  id: string;
+  kind: TrajectoryEventKind;
+  at?: string;
+  payload: Record<string, unknown>;
+  callId?: string;
+}
+
+export interface QualityDimension {
+  verdict: QualityVerdict;
+  coverage: "observed" | "partial" | "missing";
+  evidence: string[];
+}
+
+export interface TrajectoryQuality {
+  structural: QualityDimension;
+  goalAttainment: QualityDimension;
+  instructionAdherence: QualityDimension;
+  toolUse: QualityDimension;
+  evidenceConsistency: QualityDimension;
+  errorRecovery: QualityDimension;
+  termination: QualityDimension;
+  overall: QualityVerdict;
+}
+
+const dimension = (verdict: QualityVerdict, coverage: QualityDimension["coverage"], ...evidence: string[]): QualityDimension => ({ verdict, coverage, evidence });
+
+/**
+ * Deterministic first-pass trajectory evaluation. Model judges may enrich this
+ * later, but they must not overwrite facts established by this evaluator.
+ */
+export function evaluateTrajectory(events: TrajectoryEvent[]): TrajectoryQuality {
+  const calls = events.filter((event) => event.kind === "tool_call");
+  const results = new Set(events.filter((event) => event.kind === "tool_result").map((event) => event.callId).filter(Boolean));
+  const unresolved = calls.filter((event) => !event.callId || !results.has(event.callId));
+  const terminals = events.filter((event) => event.kind === "terminal");
+  const processEvents = events.filter((event) => event.kind === "process");
+  const evaluatorEvents = events.filter((event) => event.kind === "evaluator");
+  const failures = events.filter((event) => event.payload.error || event.payload.status === "failed");
+  const recoveries = events.filter((event) => event.kind === "recovery");
+  const completed = events.some((event) => event.kind === "terminal" && event.payload.status === "completed");
+  const goalMet = events.some((event) => event.payload.goalAttained === true || event.payload.goalStatus === "met");
+  const instructionFailure = events.some((event) => event.payload.instructionAdherence === false);
+  const evidenceFailure = events.some((event) => event.payload.evidenceConsistent === false);
+
+  const structural = unresolved.length
+    ? dimension("FAIL", "observed", `${unresolved.length} tool call(s) have no matching result`)
+    : dimension("PASS", "observed", `event stream is causally closed (${events.length} events)`);
+  const goalAttainment = goalMet
+    ? dimension("PASS", "observed", "trajectory records explicit goal attainment")
+    : completed
+      ? dimension("WARN", "partial", "execution completed without an explicit goal-attainment verdict")
+      : dimension("NOT_EVALUATED", "missing", "no terminal success or goal verdict recorded");
+  const instructionAdherence = instructionFailure
+    ? dimension("FAIL", "observed", "trajectory records an instruction-adherence failure")
+    : dimension("NOT_EVALUATED", "missing", "no explicit instruction-adherence verdict recorded");
+  const toolUse = calls.length === 0
+    ? dimension("NOT_EVALUATED", "missing", "no tool calls in trajectory")
+    : unresolved.length
+      ? dimension("FAIL", "observed", "at least one tool call was not closed")
+      : dimension("PASS", "observed", `${calls.length} tool call(s) closed with results`);
+  const evidenceConsistency = evidenceFailure
+    ? dimension("FAIL", "observed", "trajectory records inconsistent evidence")
+    : evaluatorEvents.length
+      ? dimension("PASS", "observed", "evaluator event recorded")
+      : dimension("NOT_EVALUATED", "missing", "no evaluator evidence recorded");
+  const errorRecovery = failures.length === 0
+    ? dimension("PASS", "observed", "no execution failures recorded")
+    : recoveries.length >= failures.length
+      ? dimension("PASS", "observed", `${recoveries.length} recovery event(s) for ${failures.length} failure(s)`)
+      : dimension("WARN", "partial", `${failures.length - recoveries.length} failure(s) lacked recovery`);
+  const termination = terminals.length === 0
+    ? dimension("FAIL", "missing", "trajectory has no terminal event")
+    : terminals.length > 1
+      ? dimension("FAIL", "observed", "trajectory has multiple terminal events")
+      : dimension("PASS", "observed", "trajectory has one terminal event");
+
+  const dimensions = [structural, goalAttainment, instructionAdherence, toolUse, evidenceConsistency, errorRecovery, termination];
+  const overall: QualityVerdict = dimensions.some((item) => item.verdict === "FAIL")
+    ? "FAIL"
+    : dimensions.some((item) => item.verdict === "WARN" || item.verdict === "NOT_EVALUATED")
+      ? "WARN"
+      : "PASS";
+  return { structural, goalAttainment, instructionAdherence, toolUse, evidenceConsistency, errorRecovery, termination, overall };
+}
+
+export function capabilityGaps(quality: TrajectoryQuality): string[] {
+  return Object.entries(quality)
+    .filter(([key, value]) => key !== "overall" && ["FAIL", "WARN"].includes((value as QualityDimension).verdict))
+    .map(([key, value]) => `${key}: ${(value as QualityDimension).evidence.join("; ")}`);
+}

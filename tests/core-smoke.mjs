@@ -26,6 +26,7 @@ import { submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
 import { createExperimentManifest, createReplicationManifest } from "../dist/core/experiment-manifest.js";
+import { evaluateTrajectory, capabilityGaps } from "../dist/core/trajectories.js";
 
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
@@ -45,6 +46,29 @@ test("durable research state and queue survive store reopen", () => {
     assert.equal(reopened.agentLanes()[0].status, "running");
     assert.equal(reopened.queueTasks()[0].status, "completed");
     reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("controller leases prevent duplicate workers and trajectories expose capability gaps", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-lease-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    assert.equal(store.acquireControllerLease("a", process.pid, "challenge", "research").acquired, true);
+    assert.equal(store.acquireControllerLease("b", process.pid, "challenge", "research").acquired, false);
+    assert.equal(store.requestControllerAction("pause")?.requestedAction, "pause");
+    store.releaseControllerLease("a");
+    assert.equal(store.acquireControllerLease("b", process.pid, "challenge", "experiment").acquired, true);
+    const events = [
+      { id: "call", kind: "tool_call", callId: "missing-result", payload: { tool: "shell" } },
+      { id: "p", kind: "process", payload: { status: "failed", error: "timeout" } },
+      { id: "t", kind: "terminal", payload: { status: "failed" } },
+    ];
+    const quality = evaluateTrajectory(events);
+    assert.equal(quality.overall, "FAIL");
+    assert.ok(capabilityGaps(quality).length > 0);
+    store.saveTrajectory({ id: "traj-1", runId: "run-1", payload: { events }, quality });
+    assert.equal(store.trajectories()[0].id, "traj-1");
+    store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
