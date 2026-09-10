@@ -74,7 +74,9 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
         if (!has("research.observation")) missing.push("reference observation");
         break;
       }
-      const baseline = payloads("baseline.completed").find((payload) => (payload as { exitCode?: unknown }).exitCode === 0);
+      // A project can contain legacy and retried baselines. Evaluate the newest
+      // successful record so a valid rerun can repair an older incomplete one.
+      const baseline = payloads("baseline.completed").reverse().find((payload) => (payload as { exitCode?: unknown }).exitCode === 0);
       if (!baseline) missing.push("successful baseline");
       else if (typeof (baseline as { metric?: unknown }).metric !== "number" || !Number.isFinite((baseline as { metric?: number }).metric)) missing.push("parsed primary baseline metric");
       else if (!Object.keys((baseline as { artifactChecksums?: Record<string, unknown> }).artifactChecksums ?? {}).length) missing.push("checksummed baseline artifacts");

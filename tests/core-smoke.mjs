@@ -488,6 +488,11 @@ test("phase completion requires durable evidence instead of model status alone",
   assert.deepEqual(incomplete.missing, ["parsed primary baseline metric"]);
   const complete = evaluatePhaseGoalEvidence(goal, { eventTypes: ["baseline.completed"], eventPayloads: [{ type: "baseline.completed", payload: { exitCode: 0, metric: 0.42, artifactChecksums: { "stdout.log": "sha256:test" } } }], hypotheses: 0, experiments: 0, runs: 0, artifacts: 2 });
   assert.equal(complete.met, true);
+  const repaired = evaluatePhaseGoalEvidence(goal, { eventTypes: ["baseline.completed"], eventPayloads: [
+    { type: "baseline.completed", payload: { exitCode: 0, metric: 0.4 } },
+    { type: "baseline.completed", payload: { exitCode: 0, metric: 0.42, artifactChecksums: { "stdout.log": "sha256:test" } } },
+  ], hypotheses: 0, experiments: 0, runs: 0, artifacts: 2 });
+  assert.equal(repaired.met, true);
   const researchGoal = definePhaseGoals("investigate a general research question", "research").find((entry) => entry.phase === "baseline");
   assert.equal(researchGoal.title, "Establish a trusted reference");
   assert.equal(evaluatePhaseGoalEvidence(researchGoal, { mode: "research", eventTypes: ["research.observation"], eventPayloads: [], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, true);
