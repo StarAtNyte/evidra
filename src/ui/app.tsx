@@ -777,7 +777,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const recentFailureCount = recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
     const recentQuality = recentTrajectories.slice(0, 20).map((entry) => qualityFeedback(entry.quality));
     const campaignRemaining = campaign ? Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)) : undefined;
-    const route = routeCapability({ objective, mode, provider: config.provider, autonomy: config.autonomy, recentFailureCount, recentQuality, budgetRemainingMinutes: campaignRemaining, requestedParallel: 3 });
+    const route = routeCapability({ objective, mode, provider: config.provider, autonomy: config.autonomy, recentFailureCount, recentQuality, recentOutcomes: store.recentEvents(500).filter((event) => event.type === "research.capability_outcome").slice(-12).map((event) => {
+      const payload = event.payload as { mode?: unknown; servedProvider?: unknown; servedModel?: unknown; outcome?: unknown; quality?: unknown };
+      return { mode: typeof payload.mode === "string" ? payload.mode : undefined, provider: typeof payload.servedProvider === "string" ? payload.servedProvider : undefined, model: typeof payload.servedModel === "string" ? payload.servedModel : undefined, outcome: typeof payload.outcome === "string" ? payload.outcome : undefined, quality: typeof payload.quality === "string" ? payload.quality : undefined };
+    }), budgetRemainingMinutes: campaignRemaining, requestedParallel: 3 });
     store.appendEvent("research.capability_route", { route, objective, recentFailureCount, recentQuality, predictedTier: route.tier, servedProvider: config.provider, servedModel: config.model });
     const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts });
     store.appendEvent("research.next_allocation", { allocation, objective });

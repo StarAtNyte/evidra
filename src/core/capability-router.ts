@@ -10,6 +10,8 @@ export interface CapabilityRouteInput {
   recentFailureCount?: number;
   /** Quality feedback from prior trajectories; this is the harness feedback signal. */
   recentQuality?: Array<{ overall?: string; gaps?: string[] }>;
+  /** Prior route outcomes, used only when they match the current mode/provider. */
+  recentOutcomes?: Array<{ mode?: string; provider?: string; model?: string; outcome?: string; quality?: string }>;
   budgetRemainingMinutes?: number;
   requestedParallel?: number;
 }
@@ -96,6 +98,11 @@ export function routeCapability(input: CapabilityRouteInput): CapabilityRoute {
   if (warnedQuality > 0) { score += Math.min(2, warnedQuality); rationale.push(`${warnedQuality} prior trajectory warning(s) require stronger verification`); }
   const recurringGaps = new Set(quality.flatMap((item) => item.gaps ?? [])).size;
   if (recurringGaps >= 2) { score += 1; rationale.push(`${recurringGaps} distinct capability gaps were observed in prior trajectories`); }
+  const matchingOutcomes = (input.recentOutcomes ?? []).filter((outcome) => outcome.mode === input.mode && outcome.provider === input.provider);
+  const matchingFailures = matchingOutcomes.filter((outcome) => outcome.outcome === "failure" || outcome.quality === "FAIL").length;
+  const matchingSuccesses = matchingOutcomes.filter((outcome) => outcome.outcome === "success" || outcome.quality === "PASS").length;
+  if (matchingFailures > 0) { score += Math.min(2, matchingFailures); rationale.push(`${matchingFailures} prior failure(s) on this provider/mode route increase scrutiny`); }
+  if (matchingSuccesses >= 2 && matchingFailures === 0) { score = Math.max(0, score - 1); rationale.push(`${matchingSuccesses} prior successful outcomes on this provider/mode route reduce unnecessary fan-out`); }
   if (input.budgetRemainingMinutes !== undefined && input.budgetRemainingMinutes < 10) { score += 1; rationale.push("budget pressure increases the cost of another failed attempt"); }
   if (input.provider === "local") rationale.push("local provider capacity is conservatively bounded");
   const tier: CapabilityTier = score >= 6 ? "C3" : score >= 4 ? "C2" : score >= 2 ? "C1" : "C0";
