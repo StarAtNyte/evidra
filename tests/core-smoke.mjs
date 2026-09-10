@@ -242,6 +242,7 @@ test("stale running experiments are recovered for retry after controller restart
     assert.deepEqual(store.recoverStaleExperiments(), ["stale"]);
     assert.equal(store.experiments()[0].payload.status, "failed");
     assert.equal(store.experiments()[0].payload.stale, true);
+    assert.equal(store.experiments()[0].payload.recoveryAttempted, false);
     assert.equal(store.recoverStaleExperiments().length, 0);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }

@@ -703,7 +703,7 @@ export class ResearchStore {
     for (const experiment of this.experiments()) {
       const payload = experiment.payload && typeof experiment.payload === "object" ? experiment.payload as Record<string, unknown> : {};
       if (payload.status !== "running") continue;
-      const updated = { ...payload, status: "failed", failure: "Controller exited before experiment finalization.", recoveredAt: new Date().toISOString(), stale: true };
+      const updated = { ...payload, status: "failed", failure: "Controller exited before experiment finalization.", recoveredAt: new Date().toISOString(), stale: true, recoveryAttempted: false };
       this.saveExperiment({ id: experiment.id, payload: updated });
       this.appendEvent("experiment.stale.recovered", { experimentId: experiment.id, previousStatus: "running" });
       recovered.push(experiment.id);

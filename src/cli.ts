@@ -812,6 +812,29 @@ research
       if (!store.project()) store.createProject({ id: `evidra-${adapter.id}`, name: adapter.config.name, competitionId: adapter.id, config: adapter.config });
       store.saveCampaign(campaign);
       if (!store.phaseGoals().length) for (const goal of definePhaseGoals(objective, mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
+      const staleExperiment = store.experiments().find((entry) => {
+        const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { status?: unknown; stale?: unknown; recoveryAttempted?: unknown } : {};
+        return payload.status === "failed" && payload.stale === true && payload.recoveryAttempted !== true;
+      });
+      if (staleExperiment) {
+        const stalePayload = staleExperiment.payload && typeof staleExperiment.payload === "object" ? staleExperiment.payload as Record<string, unknown> : {};
+        store.saveExperiment({ id: staleExperiment.id, payload: { ...stalePayload, status: "scheduled", recoveryAttempted: true, recoveryAttemptedAt: new Date().toISOString() } });
+        store.appendEvent("experiment.recovery.scheduled", { experimentId: staleExperiment.id, reason: "controller restart", attempt: Number(stalePayload.recoveryAttempts ?? 0) + 1, policy: "one bounded retry of the immutable manifest" });
+        store.close();
+        console.log(`Recovering stale experiment ${staleExperiment.id} once before choosing a new research action...`);
+        const recovery = await runCampaignExperiment(root, staleExperiment.id);
+        const recoveryStore = new ResearchStore(statePath);
+        if (recovery.exitCode !== 0) {
+          const recoveredEntry = recoveryStore.experiments().find((entry) => entry.id === staleExperiment.id);
+          if (recoveredEntry) {
+            const recoveredPayload = recoveredEntry.payload && typeof recoveredEntry.payload === "object" ? recoveredEntry.payload as Record<string, unknown> : {};
+            recoveryStore.saveExperiment({ id: staleExperiment.id, payload: { ...recoveredPayload, status: "failed", stale: false, recoveryAttempted: true, recoveryError: recovery.stderr || recovery.stdout || `exit code ${recovery.exitCode}` } });
+          }
+        }
+        recoveryStore.appendEvent(recovery.exitCode === 0 ? "experiment.recovery.completed" : "experiment.recovery.failed", { experimentId: staleExperiment.id, exitCode: recovery.exitCode, stdout: recovery.stdout.slice(-2000), stderr: recovery.stderr.slice(-2000) });
+        recoveryStore.close();
+        continue;
+      }
       const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode));
       const recentEvents = store.recentEvents(20);
       const recentTrajectories = store.trajectories(20);
