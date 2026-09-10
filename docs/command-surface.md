@@ -95,6 +95,7 @@ The initial adapter is `whestbench`. Future adapters include Kaggle, AIcrowd, ma
                               Require paired, task-balanced evidence for a win claim
 /benchmark export             Export durable Evidra runs as benchmark JSON
 /sources discover <query>     Search scholarly literature for candidates
+/sources frontier             Show deduplicated discovery and retrieval coverage
 /sources search <query>       Search approved research sources
 /sources add <url>            Cache a source for later retrieval
 /sources show <id>            Show source metadata and extracted claims

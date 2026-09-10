@@ -215,3 +215,66 @@ export function sourceSearchText(source: { payload: unknown }): string {
   const payload = source.payload as { title?: string; url?: string; excerpt?: string; text?: string; claims?: string[] };
   return [payload.title, payload.url, payload.excerpt, payload.text, ...(payload.claims ?? [])].filter(Boolean).join(" ").toLowerCase();
 }
+
+export interface SourceFrontierCandidate extends SourceSearchResult {
+  key: string;
+  queries: string[];
+  retrieved: boolean;
+}
+
+export interface SourceFrontierReport {
+  candidates: SourceFrontierCandidate[];
+  queryCount: number;
+  uniqueWorks: number;
+  retrievedWorks: number;
+  pendingWorks: number;
+}
+
+function sourceWorkKey(result: { url: string; doi?: string }): string {
+  return (result.doi?.trim().toLowerCase() || result.url.trim().replace(/[#?].*$/, "").replace(/\/$/, "")).toLowerCase();
+}
+
+/** Build a bounded, deduplicated literature-search frontier from durable events. */
+export function sourceFrontier(events: Array<{ type: string; payload: unknown }>, limit = 200): SourceFrontierReport {
+  const byKey = new Map<string, SourceFrontierCandidate>();
+  const queries = new Set<string>();
+  const retrieved = new Set<string>();
+  for (const event of events) {
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    if (event.type === "research.source.search.completed") {
+      const query = typeof payload.query === "string" ? payload.query.trim() : "";
+      if (query) queries.add(query.toLowerCase());
+      const results = Array.isArray(payload.results) ? payload.results : [];
+      for (const value of results) {
+        if (!value || typeof value !== "object") continue;
+        const result = value as Partial<SourceSearchResult>;
+        if (typeof result.title !== "string" || typeof result.url !== "string") continue;
+        const key = sourceWorkKey({ url: result.url, doi: typeof result.doi === "string" ? result.doi : undefined });
+        const prior = byKey.get(key);
+        byKey.set(key, {
+          title: prior?.title ?? result.title,
+          url: prior?.url ?? result.url,
+          ...(prior?.doi ?? result.doi ? { doi: prior?.doi ?? result.doi } : {}),
+          ...(prior?.venue ?? result.venue ? { venue: prior?.venue ?? result.venue } : {}),
+          ...(prior?.publicationDate ?? result.publicationDate ? { publicationDate: prior?.publicationDate ?? result.publicationDate } : {}),
+          authors: prior?.authors?.length ? prior.authors : Array.isArray(result.authors) ? result.authors.filter((author): author is string => typeof author === "string").slice(0, 8) : [],
+          ...(prior?.abstract ?? result.abstract ? { abstract: prior?.abstract ?? result.abstract } : {}),
+          key,
+          queries: [...new Set([...(prior?.queries ?? []), ...(query ? [query] : [])])].slice(0, 12),
+          retrieved: prior?.retrieved ?? false,
+        });
+      }
+    } else if (event.type === "research.source.retrieved") {
+      const url = typeof payload.url === "string" ? payload.url : "";
+      if (url) retrieved.add(sourceWorkKey({ url }));
+    }
+  }
+  const candidates = [...byKey.values()].map((candidate) => ({ ...candidate, retrieved: candidate.retrieved || retrieved.has(candidate.key) || retrieved.has(sourceWorkKey({ url: candidate.url })) })).slice(0, Math.max(1, limit));
+  return {
+    candidates,
+    queryCount: queries.size,
+    uniqueWorks: candidates.length,
+    retrievedWorks: candidates.filter((candidate) => candidate.retrieved).length,
+    pendingWorks: candidates.filter((candidate) => !candidate.retrieved).length,
+  };
+}

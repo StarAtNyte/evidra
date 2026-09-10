@@ -9,7 +9,7 @@ import { compareMetricSeries } from "../dist/core/statistics.js";
 import { recoveryPlan } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
-import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseSourceSearchResults, retrieveSource, sourceClaims, sourceIsFresh } from "../dist/core/sources.js";
+import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseSourceSearchResults, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
@@ -1203,6 +1203,19 @@ test("scholarly source discovery returns candidates without trusting them", () =
   assert.equal(parsed[0].title, "Adaptive research agents");
   assert.equal(parsed[0].abstract, "Adaptive agents improve");
   assert.equal(parsed[0].authors[0], "A. Researcher");
+});
+
+test("literature search frontier deduplicates works and reports retrieval coverage", () => {
+  const report = sourceFrontier([
+    { type: "research.source.search.completed", payload: { query: "agent harness", results: [{ title: "Paper A", url: "https://example.org/a", doi: "10.1/a", authors: [] }, { title: "Paper B", url: "https://example.org/b", authors: [] }] } },
+    { type: "research.source.search.completed", payload: { query: "scientific harness", results: [{ title: "Paper A revised", url: "https://other.example/a", doi: "10.1/a", authors: [] }] } },
+    { type: "research.source.retrieved", payload: { url: "https://example.org/a" } },
+  ]);
+  assert.equal(report.queryCount, 2);
+  assert.equal(report.uniqueWorks, 2);
+  assert.equal(report.retrievedWorks, 1);
+  assert.equal(report.pendingWorks, 1);
+  assert.deepEqual(report.candidates.find((candidate) => candidate.key === "10.1/a")?.queries, ["agent harness", "scientific harness"]);
 });
 
 test("tool source retrieval preserves the SSRF safety boundary", async () => {

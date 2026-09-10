@@ -246,6 +246,7 @@ Useful commands:
     /thinking             Select reasoning effort
     /permissions          Select safe, fast, or YOLO automation
     /sources              Retrieve/search durable research sources
+    /sources frontier     Inspect deduplicated literature-search coverage
     /memory               Search durable evidence and research memory
     /experience           Inspect the capability profile and next curriculum
     /experience export    Export admissible trajectories as JSONL for replay or analysis

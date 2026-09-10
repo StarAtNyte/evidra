@@ -12,7 +12,7 @@ import { auditData, dataAuditFingerprint } from "./core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "./core/validation-policy.js";
 import { estimateDistributionBeliefs, type ExternalValidationObservation } from "./core/distribution-beliefs.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "./core/execution-stages.js";
-import { retrieveSource, searchResearchSources, sourceClaims, sourceSearchText, sourceIsFresh } from "./core/sources.js";
+import { retrieveSource, searchResearchSources, sourceClaims, sourceFrontier, sourceSearchText, sourceIsFresh } from "./core/sources.js";
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
 import { pollSubmissionScore, submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
@@ -572,9 +572,19 @@ sources.command("search").argument("<query>").action((query: string) => {
   console.log(entries.length ? entries.map((entry) => `${entry.id} · ${String((entry.payload as { title?: string }).title ?? "Untitled")}`).join("\n") : "No matching research sources.");
   store.close();
 });
-sources.command("discover").argument("<query>").option("--limit <count>", "maximum scholarly candidates", "8").description("Search scholarly sources without automatically trusting or storing them").action(async (query: string, options: { limit: string }) => {
+sources.command("frontier").description("Show the durable literature-search frontier and retrieval coverage").action(() => {
+  const store = new ResearchStore(statePath);
+  const report = sourceFrontier(store.recentEvents(2_000));
+  store.close();
+  console.log(JSON.stringify({ ...report, candidates: report.candidates.slice(0, 40) }, null, 2));
+});
+sources.command("discover").argument("<query>").option("--limit <count>", "maximum scholarly candidates", "8").description("Search scholarly sources and persist a deduplicated frontier without trusting claims").action(async (query: string, options: { limit: string }) => {
   const results = await searchResearchSources(query, Number.parseInt(options.limit, 10) || 8);
-  console.log(results.length ? results.map((result, index) => `${index + 1}. ${result.title}\n   ${result.url}${result.venue ? ` · ${result.venue}` : ""}${result.publicationDate ? ` · ${result.publicationDate}` : ""}${result.authors.length ? `\n   authors: ${result.authors.join(", ")}` : ""}`).join("\n") : "No scholarly sources found.");
+  const store = new ResearchStore(statePath);
+  store.appendEvent("research.source.search.completed", { query, results, source: "openalex" });
+  const frontier = sourceFrontier(store.recentEvents(2_000));
+  store.close();
+  console.log(`${results.length ? results.map((result, index) => `${index + 1}. ${result.title}\n   ${result.url}${result.venue ? ` · ${result.venue}` : ""}${result.publicationDate ? ` · ${result.publicationDate}` : ""}${result.authors.length ? `\n   authors: ${result.authors.join(", ")}` : ""}`).join("\n") : "No scholarly sources found."}\n\nFrontier: ${frontier.uniqueWorks} unique works · ${frontier.retrievedWorks} retrieved · ${frontier.pendingWorks} pending across ${frontier.queryCount} queries`);
 });
 sources.command("add").argument("<url>").action(async (url: string) => {
   const retrieved = await retrieveSource(url);

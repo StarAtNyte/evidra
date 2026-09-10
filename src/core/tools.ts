@@ -6,7 +6,7 @@ import { runProcess, type ProcessControl } from "./process.js";
 import { splitCommandLine } from "./process.js";
 import { renderReport, writeReport, type ReportKind } from "./reports.js";
 import { createValidationPolicy, writeValidationPolicy } from "./validation-policy.js";
-import { retrieveSource, searchResearchSources, sourceClaims } from "./sources.js";
+import { retrieveSource, searchResearchSources, sourceClaims, sourceFrontier } from "./sources.js";
 import { ResearchStore } from "./store.js";
 import type { CompetitionConfig } from "./types.js";
 import { isSensitiveWorkspacePath, redactSecrets } from "./redaction.js";
@@ -167,7 +167,12 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       case "source.search": {
         const query = stringArg(args, "query");
         const limit = typeof args.limit === "number" ? Math.max(1, Math.min(20, Math.floor(args.limit))) : 8;
-        output = { query, results: await searchResearchSources(query, limit) };
+        const results = await searchResearchSources(query, limit);
+        const store = new ResearchStore(context.storePath);
+        store.appendEvent("research.source.search.completed", { query, results, source: "openalex" });
+        const frontier = sourceFrontier(store.recentEvents(2_000));
+        store.close();
+        output = { query, results, frontier: { uniqueWorks: frontier.uniqueWorks, retrievedWorks: frontier.retrievedWorks, pendingWorks: frontier.pendingWorks, queryCount: frontier.queryCount } };
         break;
       }
       case "data.audit": {
