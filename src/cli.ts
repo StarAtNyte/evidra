@@ -396,7 +396,9 @@ benchmark.command("run")
     const arms = raw.map((value, index) => {
       if (!value || typeof value !== "object") throw new Error(`Benchmark arm ${index + 1} is not an object.`);
       const arm = value as Partial<BenchmarkArmSpec>;
-      if (typeof arm.harness !== "string" || typeof arm.task !== "string" || typeof arm.arm !== "string" || arm.seed === undefined || typeof arm.model !== "string" || typeof arm.budgetMinutes !== "number" || (arm.direction !== "maximize" && arm.direction !== "minimize") || typeof arm.baselineMetric !== "number" || (arm.retries !== undefined && (!Number.isInteger(arm.retries) || arm.retries < 0 || arm.retries > 3)) || typeof arm.metric !== "string" || !Array.isArray(arm.command) || !arm.command.every((part) => typeof part === "string")) throw new Error(`Benchmark arm ${index + 1} is missing a required field or has invalid retries.`);
+      const invalidReproducibility = arm.reproducibilityCommand !== undefined && (!Array.isArray(arm.reproducibilityCommand) || !arm.reproducibilityCommand.length || !arm.reproducibilityCommand.every((part) => typeof part === "string"));
+      const invalidTolerance = arm.reproducibilityTolerance !== undefined && (typeof arm.reproducibilityTolerance !== "number" || !Number.isFinite(arm.reproducibilityTolerance) || arm.reproducibilityTolerance < 0);
+      if (typeof arm.harness !== "string" || typeof arm.task !== "string" || typeof arm.arm !== "string" || arm.seed === undefined || typeof arm.model !== "string" || typeof arm.budgetMinutes !== "number" || (arm.retries !== undefined && (!Number.isInteger(arm.retries) || arm.retries < 0 || arm.retries > 3)) || typeof arm.metric !== "string" || !Array.isArray(arm.command) || !arm.command.every((part) => typeof part === "string") || invalidReproducibility || invalidTolerance) throw new Error(`Benchmark arm ${index + 1} is missing a required field or has invalid retry/reproducibility settings.`);
       return arm as BenchmarkArmSpec;
     });
     const protocol = validateBenchmarkProtocol(arms.map((arm) => ({ ...arm, validRun: false, durationSeconds: 0, recovered: false, reproducible: false })));

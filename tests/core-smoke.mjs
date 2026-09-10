@@ -1817,6 +1817,16 @@ test("benchmark runner measures an explicit independent reproducibility command"
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("benchmark runner rejects malformed reproducibility settings at its boundary", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-repro-invalid-"));
+  try {
+    await assert.rejects(
+      runBenchmarkArms([{ harness: "invalid", task: "task-a", arm: "default", seed: 1, model: "test-model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, metric: "score", command: [process.execPath, "-e", "console.log(JSON.stringify({score:0.8}))"], reproducibilityCommand: "not-an-argv" }], root),
+      /invalid reproducibility command/,
+    );
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("benchmark runner rejects arms that escape the benchmark workspace before execution", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-boundary-"));
   try {

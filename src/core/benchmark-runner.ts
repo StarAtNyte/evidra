@@ -65,7 +65,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     if (!arm.command.length || arm.command.some((part) => !part.trim())) throw new Error(`Benchmark arm '${arm.harness}' has an empty command.`);
     if (!Number.isFinite(arm.budgetMinutes) || arm.budgetMinutes <= 0) throw new Error(`Benchmark arm '${arm.harness}' must have a positive budget.`);
     if (arm.retries !== undefined && (!Number.isInteger(arm.retries) || arm.retries < 0 || arm.retries > 3)) throw new Error(`Benchmark arm '${arm.harness}' retries must be an integer from 0 to 3.`);
-    if (arm.reproducibilityCommand !== undefined && (!arm.reproducibilityCommand.length || arm.reproducibilityCommand.some((part) => !part.trim()))) throw new Error(`Benchmark arm '${arm.harness}' has an empty reproducibility command.`);
+    if (arm.reproducibilityCommand !== undefined && (!Array.isArray(arm.reproducibilityCommand) || !arm.reproducibilityCommand.length || arm.reproducibilityCommand.some((part) => typeof part !== "string" || !part.trim()))) throw new Error(`Benchmark arm '${arm.harness}' has an invalid reproducibility command.`);
     if (arm.reproducibilityTolerance !== undefined && (!Number.isFinite(arm.reproducibilityTolerance) || arm.reproducibilityTolerance < 0)) throw new Error(`Benchmark arm '${arm.harness}' reproducibility tolerance must be finite and non-negative.`);
     return { arm, cwd: benchmarkCwd(root, arm.cwd, arm.harness) };
   });
