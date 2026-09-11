@@ -1373,6 +1373,18 @@ research
       });
       if (staleExperiment) {
         const stalePayload = staleExperiment.payload && typeof staleExperiment.payload === "object" ? staleExperiment.payload as Record<string, unknown> : {};
+        // Older Evidra versions could leave a partial experiment shell behind
+        // before the immutable manifest was written. It is not safe to replay
+        // such a record: there is no dataset, change, resource, or acceptance
+        // contract to recover. Quarantine it and let the director select a
+        // fresh hypothesis instead of emitting schema noise every cycle.
+        const recoveryFields = ["gitCommit", "datasetVersion", "splitVersion", "change", "resources", "evaluation", "acceptance"];
+        if (!recoveryFields.every((field) => stalePayload[field] !== undefined)) {
+          store.saveExperiment({ id: staleExperiment.id, payload: { ...stalePayload, status: "failed", stale: false, recoverySkipped: true, recoveryError: "partial legacy experiment record; immutable recovery manifest is unavailable" } });
+          store.appendEvent("experiment.recovery.skipped", { experimentId: staleExperiment.id, reason: "partial legacy record; preserved without replay" });
+          store.close();
+          continue;
+        }
         store.saveExperiment({ id: staleExperiment.id, payload: { ...stalePayload, status: "scheduled", recoveryAttempted: true, recoveryAttemptedAt: new Date().toISOString() } });
         store.appendEvent("experiment.recovery.scheduled", { experimentId: staleExperiment.id, reason: "controller restart", attempt: Number(stalePayload.recoveryAttempts ?? 0) + 1, policy: "one bounded retry of the immutable manifest" });
         store.close();
