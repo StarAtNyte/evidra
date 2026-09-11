@@ -8,6 +8,8 @@
  */
 
 export interface AdaptiveHarnessInput {
+  /** Operator-selected autonomy controls the initial deliberation ceiling. */
+  autonomy?: "safe" | "fast" | "yolo";
   phase?: string;
   quality: Array<{ overall?: string; toolUse?: { verdict?: string }; evidenceConsistency?: { verdict?: string }; errorRecovery?: { verdict?: string }; termination?: { verdict?: string } }>;
   failureClasses?: string[];
@@ -63,7 +65,7 @@ export function deriveAdaptiveHarnessPolicy(input: AdaptiveHarnessInput): Adapti
   const benchmarkPriority = input.benchmarkInterventions?.some((item) => item.priority === "critical" || item.priority === "high") ?? false;
   const benchmarkRegression = input.benchmarkRegression === true;
 
-  let maxToolRounds = 6;
+  let maxToolRounds = input.autonomy === "yolo" ? 12 : input.autonomy === "fast" ? 9 : 6;
   let maxToolAttempts = 3;
   let peerReview = false;
   let independentCritic = true;

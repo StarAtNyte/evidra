@@ -1488,6 +1488,7 @@ research
       store.appendEvent("research.next_allocation", { allocation, objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}` });
       const priorStagnation = detectStagnation(store.decisions().map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3));
       const adaptiveHarness = deriveAdaptiveHarnessPolicy({
+        autonomy,
         phase: phaseGoal?.phase,
         quality: recentQuality as Array<{ overall?: string; toolUse?: { verdict?: string }; evidenceConsistency?: { verdict?: string }; errorRecovery?: { verdict?: string }; termination?: { verdict?: string } }>,
         failureClasses,
