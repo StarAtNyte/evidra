@@ -47,7 +47,11 @@ export async function runResearchDirector(
     objective,
     context,
   };
-  const maxToolRounds = Math.max(0, Math.min(options.maxToolRounds ?? 6, 8));
+  // Keep a hard ceiling, but honor the autonomy-derived controller budget.
+  // The previous unconditional cap of eight silently overrode yolo's
+  // twelve-round policy and caused otherwise healthy campaigns to fail at
+  // the exact boundary they had been configured to tolerate.
+  const maxToolRounds = Math.max(0, Math.min(options.maxToolRounds ?? 6, 16));
   const maxToolAttempts = Math.max(1, Math.min(options.maxToolAttempts ?? 3, 3));
   const contract = `Return ONLY valid JSON matching this exact shape:
 {
