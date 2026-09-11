@@ -1585,7 +1585,11 @@ research
       console.log(`${mode === "challenge" ? "Challenge" : "Research"} ${cycle} · inspecting workspace${mode === "challenge" ? " and baseline" : ""} (budget ${campaign.budgetMinutes}m)...`);
       const gitStatus = await runProcess(["git", "status", "--short"], root);
       const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
-      const priorBaseline = mode === "challenge" ? store.recentEvents(100).reverse().find((event) => event.type === "baseline.completed") : undefined;
+      // Baseline provenance must remain reusable after a long campaign has
+      // emitted more than 100 research/tool events. The event store is bounded
+      // at a much larger durable horizon, so do not accidentally rerun a
+      // 20-minute baseline just because it moved outside a short UI window.
+      const priorBaseline = mode === "challenge" ? store.recentEvents(5_000).reverse().find((event) => event.type === "baseline.completed") : undefined;
       let baseline: { command: string[]; cwd: string; exitCode: number; durationMs: number; stdout: string; stderr: string } | undefined;
       if (mode === "challenge" && options.skipBaseline && priorBaseline) {
         const payload = priorBaseline.payload as { command?: string[]; cwd?: string; exitCode?: number; durationMs?: number; stdout?: string; stderr?: string };
