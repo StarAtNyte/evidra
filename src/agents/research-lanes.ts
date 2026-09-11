@@ -330,7 +330,12 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         lastError = error;
         if (options.isCancelled?.()) throw error;
         if (!isRetryableAgentError(error) || attempt === 3 || (isProviderUsageLimit(error) && options.limitPolicy === "wait")) throw error;
-        if (attempt === 1 && provider === "codex" && options.fallbackLocalModel && (options.limitPolicy === "fallback" || options.limitPolicy === "auto") && !isProviderUsageLimit(error)) {
+        // A network/SDK failure is not evidence that a local model is healthy.
+        // Only provider-entitlement exhaustion may switch routes; the fallback
+        // helper handles that path and validates local availability. Blindly
+        // switching on every retryable error can turn one Codex outage into
+        // several opaque Ollama failures and poison the whole campaign.
+        if (attempt === 1 && provider === "codex" && options.fallbackLocalModel && (options.limitPolicy === "fallback" || options.limitPolicy === "auto") && isProviderUsageLimit(error)) {
           model = await resolveLocalFallbackModel(options.fallbackLocalModel);
           provider = "local";
           options.onProgress?.(`Research lane · ${role} · changing route to local/${model}...`);
