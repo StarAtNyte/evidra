@@ -196,6 +196,15 @@ export async function checkProvider(options: ExecAgentOptions): Promise<void> {
     const available = models.map((entry) => entry.name ?? entry.model).filter(Boolean).join(", ");
     throw new Error(`Local model '${options.model}' is not installed. Available models: ${available || "none"}.`);
   }
+  // `/api/tags` only proves that Ollama has a registry entry. Probe model
+  // metadata too so corrupt/missing blobs are rejected before an autonomous
+  // campaign commits to the local route.
+  const probe = await fetch(`${process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434"}/api/show`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: options.model }),
+  });
+  if (!probe.ok) throw new Error(`Local model '${options.model}' failed its health check (${probe.status}): ${await probe.text()}`);
 }
 
 export class CodexExecAgent {
@@ -338,8 +347,15 @@ export async function runWithLocalFallback(
       return runWithUsageLimitWait(task, { ...options, limitPolicy: "wait" }, onProgress, onProcess);
     }
     onProgress?.(`Codex limit reached; switching to local/${localModel}...`);
-    await checkProvider({ provider: "local", model: localModel, cwd: options.cwd });
-    return new CodexExecAgent({ provider: "local", model: localModel, cwd: options.cwd }).run(task, onProgress, onProcess);
+    try {
+      await checkProvider({ provider: "local", model: localModel, cwd: options.cwd });
+      return await new CodexExecAgent({ provider: "local", model: localModel, cwd: options.cwd }).run(task, onProgress, onProcess);
+    } catch (localError) {
+      if (options.limitPolicy !== "auto") throw localError;
+      const detail = localError instanceof Error ? localError.message : String(localError);
+      onProgress?.(`Local fallback is unhealthy (${detail}); preserving the task and waiting for Codex to reset...`);
+      return runWithUsageLimitWait(task, { ...options, limitPolicy: "wait" }, onProgress, onProcess);
+    }
   }
 }
 
