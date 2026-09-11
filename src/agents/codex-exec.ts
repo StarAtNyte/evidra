@@ -343,8 +343,11 @@ export async function runWithLocalFallback(
       localModel = await resolveLocalFallbackModel(fallbackModel);
     } catch (fallbackError) {
       if (options.limitPolicy !== "auto") throw fallbackError;
-      onProgress?.("No local fallback is available; waiting for the Codex usage window to reset...");
-      return runWithUsageLimitWait(task, { ...options, limitPolicy: "wait" }, onProgress, onProcess);
+      onProgress?.("No healthy local fallback is available; returning to the durable Codex reset policy...");
+      // Let the outer campaign controller own the wait. It knows the
+      // remaining campaign budget and can persist/stop at the correct
+      // boundary; an inner six-hour wait could outlive the campaign.
+      throw error;
     }
     onProgress?.(`Codex limit reached; switching to local/${localModel}...`);
     try {
@@ -353,8 +356,8 @@ export async function runWithLocalFallback(
     } catch (localError) {
       if (options.limitPolicy !== "auto") throw localError;
       const detail = localError instanceof Error ? localError.message : String(localError);
-      onProgress?.(`Local fallback is unhealthy (${detail}); preserving the task and waiting for Codex to reset...`);
-      return runWithUsageLimitWait(task, { ...options, limitPolicy: "wait" }, onProgress, onProcess);
+      onProgress?.(`Local fallback is unhealthy (${detail}); returning to the durable Codex reset policy...`);
+      throw error;
     }
   }
 }
