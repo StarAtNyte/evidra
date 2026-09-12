@@ -1732,11 +1732,25 @@ research
           if (isProviderUsageLimit(error)) {
             if (options.limitPolicy !== "wait" && options.limitPolicy !== "auto") throw error;
             const delay = providerRetryAfterMs(error);
-            const remainingMs = budget * 60_000 - (Date.now() - started);
-            if (remainingMs <= 0) throw new Error("Research budget expired while waiting for the provider usage limit to reset.");
-            const waitMs = Math.min(delay, remainingMs);
-            console.log(`Provider usage limit reached; waiting ${Math.ceil(waitMs / 60_000)} minute(s) before retrying. Campaign state is durable.`);
+            // Provider entitlement time is not research time. Pause the
+            // durable campaign around the wait so its active budget is not
+            // consumed, and resume the same cycle boundary instead of
+            // restarting all lanes after every retry window.
+            campaign = pauseCampaign(campaign);
+            const waitStore = new ResearchStore(statePath);
+            waitStore.saveCampaign(campaign);
+            waitStore.setSchedulerState({ status: "paused", mode, currentStep: "provider-wait" });
+            waitStore.appendEvent("research.provider.waiting", { cycle, delayMs: delay, reason: "provider usage limit", resume: "same research cycle" });
+            waitStore.close();
+            const waitMs = delay;
+            console.log(`Provider usage limit reached; pausing campaign budget and waiting ${Math.ceil(waitMs / 60_000)} minute(s) before retrying the same cycle.`);
             await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+            campaign = resumeCampaign(campaign);
+            const resumeStore = new ResearchStore(statePath);
+            resumeStore.saveCampaign(campaign);
+            resumeStore.setSchedulerState({ status: "running", mode, currentStep: "research-cycle" });
+            resumeStore.appendEvent("research.provider.resumed", { cycle, reason: "provider wait elapsed" });
+            resumeStore.close();
             continue;
           }
           const routeError = error instanceof Error ? error.message : String(error);
