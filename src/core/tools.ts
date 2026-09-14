@@ -186,6 +186,21 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       case "source.search": {
         const query = stringArg(args, "query");
         const limit = typeof args.limit === "number" ? Math.max(1, Math.min(20, Math.floor(args.limit))) : 8;
+        const searchStore = new ResearchStore(context.storePath);
+        const cachedSearch = searchStore.recentEvents(2_000).reverse().find((event) => {
+          if (event.type !== "research.source.search.completed") return false;
+          const payload = event.payload && typeof event.payload === "object" ? event.payload as { query?: unknown; results?: unknown } : {};
+          return payload.query === query && Array.isArray(payload.results) && Date.now() - Date.parse(event.createdAt) < DEFAULT_SOURCE_REFRESH_MS;
+        });
+        if (cachedSearch) {
+          const payload = cachedSearch.payload as { results: unknown[] };
+          const frontier = sourceFrontier(searchStore.recentEvents(2_000));
+          searchStore.appendEvent("research.source.search.cache_hit", { query, resultCount: payload.results.length, freshnessMs: DEFAULT_SOURCE_REFRESH_MS });
+          searchStore.close();
+          output = { query, results: payload.results.slice(0, limit), cached: true, frontier: { uniqueWorks: frontier.uniqueWorks, retrievedWorks: frontier.retrievedWorks, pendingWorks: frontier.pendingWorks, queryCount: frontier.queryCount } };
+          break;
+        }
+        searchStore.close();
         const results = await searchResearchSources(query, limit);
         const store = new ResearchStore(context.storePath);
         store.appendEvent("research.source.search.completed", { query, results, source: "openalex" });
