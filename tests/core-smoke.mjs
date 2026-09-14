@@ -60,7 +60,7 @@ import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, ScientificTaskSchema } from "../dist/core/scientific-tasks.js";
 import { runSafetyBenchmark } from "../dist/core/safety-bench.js";
-import { loadScientificTaskDirectory, runScientificTaskSuite } from "../dist/core/scientific-suite.js";
+import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "../dist/core/scientific-suite.js";
 
 test("search policies receive independent matched scorecards and comparisons", () => {
   const trial = (policy, task, candidateMetric) => ({ harness: `evidra-${policy}`, policy, task, arm: "default", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: false, reproducible: true });
@@ -3438,6 +3438,9 @@ test("scientific task suite preserves task-balanced results and per-task resume"
     assert.equal(first.validTasks, 2);
     assert.equal(first.validityRate, 1);
     assert.deepEqual(checkpoints, ["alpha", "beta"]);
+    const checkpointPath = join(root, "state", "alpha.json");
+    writeScientificTaskCheckpoint(checkpointPath, first.tasks[0]);
+    assert.equal(JSON.parse(readFileSync(checkpointPath, "utf8")).taskId, "alpha");
     const previous = Object.fromEntries(first.tasks.map((item) => [item.taskId, item.run]));
     const resumed = await runScientificTaskSuite(tasks, root, { previous });
     assert.deepEqual(resumed.tasks.map((item) => item.run.stages[0].status), ["resumed", "resumed"]);

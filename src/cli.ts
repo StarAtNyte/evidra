@@ -88,7 +88,7 @@ import { createAblationPlan, evaluateAblationEvidence } from "./core/ablation.js
 import { deriveReferenceCurve, type LearningPoint } from "./core/early-stopping.js";
 import { buildMlflowRunExports } from "./core/mlflow.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema } from "./core/scientific-tasks.js";
-import { loadScientificTaskDirectory, runScientificTaskSuite } from "./core/scientific-suite.js";
+import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "./core/scientific-suite.js";
 import { runSafetyBenchmark } from "./core/safety-bench.js";
 
 const root = findWorkspaceRoot();
@@ -774,7 +774,7 @@ benchmark.command("scientific-suite")
     const suite = await runScientificTaskSuite(taskFiles.map((entry) => entry.task), options.workspace ? resolve(options.workspace) : root, {
       previous,
       onProgress: (message) => console.log(`· ${message}`),
-      onTaskComplete: checkpointDir ? (result) => writeFileSync(join(checkpointDir, `${result.taskId}.json`), `${JSON.stringify(result, null, 2)}\n`) : undefined,
+      onTaskComplete: checkpointDir ? (result) => writeScientificTaskCheckpoint(join(checkpointDir, `${result.taskId}.json`), result) : undefined,
     });
     const output = `${JSON.stringify({ tasks: taskFiles.map((entry) => ({ path: entry.path, taskId: entry.task.id })), suite }, null, 2)}\n`;
     if (options.out) { mkdirSync(dirname(resolve(options.out)), { recursive: true }); writeFileSync(resolve(options.out), output); }

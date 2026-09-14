@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskSchema, type ScientificTask, type ScientificTaskEvaluation, type ScientificTaskRun, type ScientificTaskRunOptions } from "./scientific-tasks.js";
 
 export interface ScientificSuiteTaskResult {
@@ -25,6 +25,14 @@ export interface ScientificSuiteOptions {
   onProcess?: ScientificTaskRunOptions["onProcess"];
   isCancelled?: ScientificTaskRunOptions["isCancelled"];
   onTaskComplete?: (result: ScientificSuiteTaskResult) => void | Promise<void>;
+}
+
+/** Write a completed task checkpoint so readers see either the old or new report, never a partial JSON file. */
+export function writeScientificTaskCheckpoint(path: string, result: ScientificSuiteTaskResult): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.tmp-${process.pid}-${Date.now()}`;
+  writeFileSync(temporary, `${JSON.stringify(result, null, 2)}\n`);
+  renameSync(temporary, path);
 }
 
 /**
