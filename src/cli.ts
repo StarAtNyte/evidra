@@ -42,6 +42,7 @@ import { applyUnifiedDiff, extractUnifiedDiff } from "./core/experiment-patches.
 import { applyCriticGate, latestOpenCriticConstraint } from "./core/critic-gate.js";
 import { recordBaselineEvidence } from "./core/baseline.js";
 import { redactSecrets } from "./core/redaction.js";
+import { evaluateGpuBudget } from "./core/compute-budget.js";
 import { enforceClaimTermination, enforceGoalTermination } from "./core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds, type ClaimAuditReport } from "./core/claim-audit.js";
 import { analyzePredictionRows, parsePredictionRows } from "./core/error-analysis.js";
@@ -1471,6 +1472,7 @@ challenge.command("start")
   .description("Start a fully autonomous headless challenge campaign")
   .option("--goal <goal>", "ultimate challenge goal", "Win the active challenge with robust, reproducible evidence")
   .option("--budget <duration>", "autonomous budget, e.g. 90m or 4h", "60m")
+  .option("--gpu-budget <hours>", "maximum GPU-hours for this campaign; 0 means unlimited", "0")
   .option("--stop <condition>", "campaign stopping condition", "stop after a replicated improvement or when evidence is exhausted")
   .option("--provider <provider>", "agent provider: codex or local", "codex")
   .option("--model <model>", "provider model", DEFAULT_CODEX_MODEL)
@@ -1481,10 +1483,10 @@ challenge.command("start")
   .option("--executor <executor>", "experiment execution target: local, container, or modal", "local")
   .option("--resume", "resume the saved challenge campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
+  .action(async (options: { goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
     const script = process.argv[1];
     if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
-    const args = ["research", "--mode", "challenge", "--goal", options.goal, "--budget", options.budget, "--stop", options.stop, "--provider", options.provider, "--model", options.model, "--thinking", options.thinking, "--lanes", options.lanes, "--autonomy", options.autonomy, "--limit-policy", options.limitPolicy, "--executor", options.executor];
+    const args = ["research", "--mode", "challenge", "--goal", options.goal, "--budget", options.budget, "--gpu-budget", options.gpuBudget, "--stop", options.stop, "--provider", options.provider, "--model", options.model, "--thinking", options.thinking, "--lanes", options.lanes, "--autonomy", options.autonomy, "--limit-policy", options.limitPolicy, "--executor", options.executor];
     if (options.resume) args.push("--resume");
     if (options.skipBaseline) args.push("--skip-baseline");
     const result = await runProcess([process.execPath, script, ...args], root, 7 * 24 * 60 * 60_000, (stream, chunk) => {
@@ -1508,6 +1510,7 @@ research
   .option("--mode <mode>", "campaign mode: research or challenge", "research")
   .option("--goal <goal>", "ultimate research goal", "Improve the current workspace or research problem with robust, reproducible evidence")
   .option("--budget <duration>", "autonomous budget, e.g. 90m or 4h", "60m")
+  .option("--gpu-budget <hours>", "maximum GPU-hours for this campaign; 0 means unlimited", "0")
   .option("--stop <condition>", "campaign stopping condition", "stop when the research director has sufficient evidence for the stated goal")
   .option("--provider <provider>", "agent provider: codex or local", "codex")
   .option("--model <model>", "provider model", DEFAULT_CODEX_MODEL)
@@ -1518,9 +1521,9 @@ research
   .option("--executor <executor>", "experiment execution target: local, container, or modal", "local")
   .option("--resume", "resume the latest durable non-completed research campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { mode: string; goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
+  .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
     const savedStore = new ResearchStore(statePath);
-    const savedCampaign = savedStore.campaign() as { goal?: string; budgetMinutes?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime?: unknown; runtimeFingerprint?: string; autoExecuteExperiments?: boolean } | undefined;
+    const savedCampaign = savedStore.campaign() as { goal?: string; budgetMinutes?: number; gpuBudgetHours?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime?: unknown; runtimeFingerprint?: string; autoExecuteExperiments?: boolean } | undefined;
     savedStore.close();
     // A resume is a continuation of the durable campaign, not a new run with
     // whichever defaults the current terminal happens to have. Legacy
@@ -1552,6 +1555,9 @@ research
     requireCompetitionContract(adapter);
     await ingestCompetitionSources(adapter);
     const budget = durationMinutes(options.budget);
+    const parsedGpuBudget = Number(options.gpuBudget);
+    if (!Number.isFinite(parsedGpuBudget) || parsedGpuBudget < 0) throw new Error("GPU budget must be a non-negative number of hours; use 0 for unlimited.");
+    const gpuBudgetHours = options.resume && savedCampaign?.gpuBudgetHours !== undefined ? savedCampaign.gpuBudgetHours : parsedGpuBudget;
     let selectedModel: string;
     if (options.provider === "local" && options.model === "default") {
       selectedModel = await resolveLocalFallbackModel("auto");
@@ -1589,9 +1595,9 @@ research
       throw new Error("Resumed campaign route differs from its saved runtime policy. Evidra will not silently switch provider, model, effort, autonomy, lanes, limit policy, or executor during resume.");
     }
     const releaseLease = await acquireCliControllerLease(mode);
-    let campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime: CampaignRuntimeConfig; runtimeFingerprint: string; autoExecuteExperiments: boolean } = options.resume && savedCampaign && savedCampaign.status !== "completed"
-      ? { ...resumeCampaign({ goal: savedCampaign.goal ?? options.goal, budgetMinutes: savedCampaign.budgetMinutes ?? budget, stopCondition: savedCampaign.stopCondition ?? options.stop, startedAt: savedCampaign.startedAt ?? new Date(started).toISOString(), status: savedCampaign.status === "paused" ? "paused" : "running", pausedAt: savedCampaign.pausedAt, pausedDurationMinutes: savedCampaign.pausedDurationMinutes, runtime: savedRuntime ?? runtime, runtimeFingerprint: savedCampaign.runtimeFingerprint ?? campaignRuntimeFingerprint(savedRuntime ?? runtime) }), status: "running", runtime, autoExecuteExperiments: savedCampaign.autoExecuteExperiments === true || autonomy !== "safe" }
-      : { goal: options.goal, budgetMinutes: budget, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running", runtime, runtimeFingerprint: campaignRuntimeFingerprint(runtime), autoExecuteExperiments: autonomy !== "safe" };
+    let campaign: { goal: string; budgetMinutes: number; gpuBudgetHours: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime: CampaignRuntimeConfig; runtimeFingerprint: string; autoExecuteExperiments: boolean } = options.resume && savedCampaign && savedCampaign.status !== "completed"
+      ? { ...resumeCampaign({ goal: savedCampaign.goal ?? options.goal, budgetMinutes: savedCampaign.budgetMinutes ?? budget, stopCondition: savedCampaign.stopCondition ?? options.stop, startedAt: savedCampaign.startedAt ?? new Date(started).toISOString(), status: savedCampaign.status === "paused" ? "paused" : "running", pausedAt: savedCampaign.pausedAt, pausedDurationMinutes: savedCampaign.pausedDurationMinutes, runtime: savedRuntime ?? runtime, runtimeFingerprint: savedCampaign.runtimeFingerprint ?? campaignRuntimeFingerprint(savedRuntime ?? runtime) }), gpuBudgetHours, status: "running", runtime, autoExecuteExperiments: savedCampaign.autoExecuteExperiments === true || autonomy !== "safe" }
+      : { goal: options.goal, budgetMinutes: budget, gpuBudgetHours, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running", runtime, runtimeFingerprint: campaignRuntimeFingerprint(runtime), autoExecuteExperiments: autonomy !== "safe" };
     if (options.resume) console.log(savedCampaign && savedCampaign.status !== "completed" ? `Resuming durable research campaign from ${savedCampaign.startedAt ?? "saved state"}.` : "No resumable campaign found; starting a new research campaign.");
     const objective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}`;
     let cycle = 0;
@@ -2751,6 +2757,25 @@ experiment.command("run")
       ? (entry.payload as { executionPlan: ExecutionStage[] }).executionPlan
       : createExecutionPlan(manifest);
     const hypothesis = store.hypotheses().find((candidate) => candidate.id === manifest.hypothesisId);
+    const campaignBudget = store.campaign() as { gpuBudgetHours?: unknown } | undefined;
+    const gpuBudget = typeof campaignBudget?.gpuBudgetHours === "number" ? campaignBudget.gpuBudgetHours : 0;
+    if (gpuBudget > 0 && manifest.resources.gpu) {
+      const experiments = store.experiments();
+      const usedGpuHours = store.runAttempts().reduce((total, attempt) => {
+        const experiment = experiments.find((candidate) => candidate.id === attempt.experimentId);
+        const payload = experiment?.payload as { resources?: { gpu?: unknown } } | undefined;
+        return total + (payload?.resources?.gpu ? Math.max(0, attempt.durationSeconds ?? 0) / 3_600 : 0);
+      }, 0);
+      const hypothesisPayload = hypothesis?.payload as { computeCostGpuHours?: unknown } | undefined;
+      const requestedGpuHours = typeof hypothesisPayload?.computeCostGpuHours === "number" ? hypothesisPayload.computeCostGpuHours : 0;
+      const budgetDecision = evaluateGpuBudget({ budgetGpuHours: gpuBudget, usedGpuHours, requestedGpuHours, executor: manifest.resources.executor, gpu: manifest.resources.gpu });
+      store.appendEvent("compute.budget.checked", { experimentId: id, ...budgetDecision });
+      if (!budgetDecision.allowed) {
+        store.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "blocked", executionPlan, computeBudget: budgetDecision } });
+        store.close();
+        throw new Error(`Experiment ${id} blocked by the campaign GPU budget: ${budgetDecision.reason}. Increase --gpu-budget or choose a CPU/reduced-cost route.`);
+      }
+    }
     store.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "running" } });
     store.close();
     const worktreePath = await ensureWorktree(root, root, id);

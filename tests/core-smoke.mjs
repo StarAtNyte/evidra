@@ -62,6 +62,7 @@ import { compareHarnesses, compareSearchPolicies, evaluateHarnessComponentAblati
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, ScientificTaskSchema } from "../dist/core/scientific-tasks.js";
 import { runSafetyBenchmark } from "../dist/core/safety-bench.js";
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "../dist/core/scientific-suite.js";
+import { evaluateGpuBudget } from "../dist/core/compute-budget.js";
 
 test("search policies receive independent matched scorecards and comparisons", () => {
   const trial = (policy, task, candidateMetric) => ({ harness: `evidra-${policy}`, policy, task, arm: "default", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: false, reproducible: true });
@@ -70,6 +71,15 @@ test("search policies receive independent matched scorecards and comparisons", (
   const comparison = compareSearchPolicies(trials, "ucb_portfolio", "greedy");
   assert.equal(comparison.challenger, "ucb_portfolio");
   assert.equal(comparison.challengerWins, true);
+});
+
+test("GPU budget decisions protect bounded campaigns without blocking CPU work", () => {
+  assert.equal(evaluateGpuBudget({ budgetGpuHours: 10, usedGpuHours: 4, requestedGpuHours: 5, executor: "modal", gpu: "A100" }).allowed, true);
+  const blocked = evaluateGpuBudget({ budgetGpuHours: 10, usedGpuHours: 7, requestedGpuHours: 4, executor: "modal", gpu: "A100" });
+  assert.equal(blocked.allowed, false);
+  assert.match(blocked.reason, /remaining/);
+  assert.equal(evaluateGpuBudget({ budgetGpuHours: 1, usedGpuHours: 99, requestedGpuHours: 0, executor: "local" }).allowed, true);
+  assert.equal(evaluateGpuBudget({ budgetGpuHours: 1, usedGpuHours: 99, requestedGpuHours: 10, executor: "local" }).allowed, true);
 });
 
 test("stagnation widens search before the campaign can pause", () => {
