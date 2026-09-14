@@ -109,6 +109,10 @@ const PROMOTION_LEARNING_EVENT_TYPES = [
   "experiment.stage.reduced_validation.promoted",
   "experiment.comparison.completed",
 ] as const;
+const CRITIC_EVENT_TYPES = [
+  "research.critic.completed",
+  "research.critic.gate",
+] as const;
 import { assessCodeHealth, assessCodeHealthTrend, snapshotCodeHealth, type CodeHealthAssessment, type CodeHealthFile } from "./core/code-health.js";
 
 const root = findWorkspaceRoot();
@@ -1812,7 +1816,7 @@ research
       // history used for convergence decisions in a long-running campaign.
       const searchRewardEvents = store.eventsByType("research.search.reward");
       const recentEvents = durableEvents.slice(-20);
-      const openCriticConstraint = latestOpenCriticConstraint(durableEvents);
+      const openCriticConstraint = latestOpenCriticConstraint(store.eventsByTypes([...CRITIC_EVENT_TYPES]));
       const literatureFrontier = sourceFrontier(store.eventsByTypes([...SOURCE_FRONTIER_EVENT_TYPES]));
       const literatureBenchmarkEvidence = durableEvents
         .filter((event) => event.type === "literature.benchmark.completed")
