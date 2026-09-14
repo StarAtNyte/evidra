@@ -532,6 +532,7 @@ program.command("usage").description("Show research, experiment, and campaign us
   console.log(`Trajectories  ${counts.trajectories}`);
   console.log(`Wall time     ${usage.wallMinutes.toFixed(1)} minutes`);
   console.log(`GPU-tagged    ${usage.gpuWallHours.toFixed(3)} hours`);
+  console.log(`GPU reserved  ${store.reservedComputeGpuHours().toFixed(3)} hours`);
   for (const [executor, bucket] of Object.entries(usage.byExecutor)) console.log(`  ${executor.padEnd(11)} ${bucket.runs} runs · ${bucket.wallMinutes.toFixed(1)}m · ${bucket.gpuWallHours.toFixed(3)} GPU-h`);
   store.close();
 });
@@ -1526,9 +1527,10 @@ challenge.command("status").action(() => {
   const adapter = activeCompetition();
   const campaign = store.campaign() as { status?: string; goal?: string; budgetMinutes?: number; gpuBudgetHours?: number; autoExecuteExperiments?: boolean; runtime?: { autonomy?: string } } | undefined;
   const gpuUsed = observedGpuHours(store.runAttempts(), store.experiments(), store.hypotheses());
+  const gpuReserved = store.reservedComputeGpuHours();
   const autonomous = campaign?.autoExecuteExperiments === true || campaign?.runtime?.autonomy === "fast" || campaign?.runtime?.autonomy === "yolo";
   const lease = store.liveControllerLease();
-  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}${campaign ? `\nCampaign: ${campaign.status ?? "unknown"}\nGoal: ${campaign.goal ?? "(none)"}\nBudget: ${campaign.budgetMinutes ?? "?"} minutes\nGPU usage: ${gpuUsed.toFixed(3)} / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed).toFixed(3)} remaining)` : ""}\nAutonomous experiments: ${autonomous ? "enabled" : "approval-gated"}` : "\nCampaign: none"}${lease ? `\nController: running (pid ${lease.pid}, step ${lease.currentStep ?? "unknown"})` : "\nController: idle"}`);
+  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}${campaign ? `\nCampaign: ${campaign.status ?? "unknown"}\nGoal: ${campaign.goal ?? "(none)"}\nBudget: ${campaign.budgetMinutes ?? "?"} minutes\nGPU usage: ${gpuUsed.toFixed(3)} observed + ${gpuReserved.toFixed(3)} reserved / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed - gpuReserved).toFixed(3)} available)` : ""}\nAutonomous experiments: ${autonomous ? "enabled" : "approval-gated"}` : "\nCampaign: none"}${lease ? `\nController: running (pid ${lease.pid}, step ${lease.currentStep ?? "unknown"})` : "\nController: idle"}`);
   store.close();
 });
 for (const action of ["pause", "resume", "stop"] as const) {

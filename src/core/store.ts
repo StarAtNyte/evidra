@@ -441,6 +441,10 @@ export class ResearchStore {
     return result.changes === 1;
   }
 
+  reservedComputeGpuHours(): number {
+    return (this.db.prepare("SELECT COALESCE(SUM(requested_gpu_hours), 0) AS hours FROM compute_reservations WHERE status = 'reserved'").get() as { hours: number }).hours;
+  }
+
   saveExperiment(experiment: { id: string; payload: unknown }): void {
     const existing = this.db.prepare("SELECT 1 AS present FROM experiments WHERE id = ?").get(experiment.id) as { present: number } | undefined;
     const now = new Date().toISOString();
