@@ -247,8 +247,9 @@ roughly 200 interactive tasks and InnovatorBench's ResearchGym both reinforce
 that final answers are insufficient: the environment must expose intermediate
 verification, asynchronous execution, snapshots, and process-level outcomes.
 Evidra now provides `benchmark scientific-suite` for stable directory loading,
-per-task resumability, and task-balanced aggregation; the remaining work is
-running matched external suites rather than another prompt-only benchmark.
+per-task resumability, immediate crash-safe checkpoints, and task-balanced
+aggregation; the remaining work is running matched external suites rather than
+another prompt-only benchmark.
 
 Sources: [SciAgentArena](https://arxiv.org/abs/2606.12736) and
 [InnovatorBench](https://arxiv.org/abs/2510.27598).

@@ -24,6 +24,7 @@ export interface ScientificSuiteOptions {
   onProgress?: (message: string) => void;
   onProcess?: ScientificTaskRunOptions["onProcess"];
   isCancelled?: ScientificTaskRunOptions["isCancelled"];
+  onTaskComplete?: (result: ScientificSuiteTaskResult) => void | Promise<void>;
 }
 
 /**
@@ -38,7 +39,9 @@ export async function runScientificTaskSuite(values: unknown[], root: string, op
     if (options.isCancelled?.()) break;
     options.onProgress?.(`Scientific suite · ${task.id} · starting`);
     const run = await runScientificTask(task, root, { previous: options.previous?.[task.id], onProgress: options.onProgress, onProcess: options.onProcess, isCancelled: options.isCancelled });
-    results.push({ taskId: task.id, run, evaluation: evaluateScientificTaskRun(task, run) });
+    const result = { taskId: task.id, run, evaluation: evaluateScientificTaskRun(task, run) };
+    results.push(result);
+    await options.onTaskComplete?.(result);
   }
   const validTasks = results.filter((item) => item.evaluation.valid).length;
   const mean = (values: number[]): number => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;

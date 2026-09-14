@@ -43,6 +43,16 @@ record; Evidra rechecks their snapshot identity before skipping them. This
 makes asynchronous or crash-recovered agents measurable while keeping the task
 contract independent of Codex, a particular model, or an ML leaderboard.
 
+For a task-balanced suite, run:
+
+```bash
+evidra benchmark scientific-suite ./contracts --workspace ./task --checkpoint-dir ./suite-state --resume-dir ./suite-state --out suite.json
+```
+
+The runner writes one report immediately after each completed task. A later
+invocation reuses only that task's verified stages, so a controller crash does
+not discard completed work or turn the suite into a single opaque score.
+
 The CLI also records a compact `scientific.task.completed` event containing the
 same stage statuses, verifier counts, artifact checksums, snapshot IDs, and
 route attempts. Full logs remain in the optional report file, while scheduling

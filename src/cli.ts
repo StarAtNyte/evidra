@@ -751,8 +751,9 @@ benchmark.command("scientific-suite")
   .option("--workspace <dir>", "task workspace root; defaults to the Evidra project")
   .option("--out <file>", "write the aggregate suite report")
   .option("--resume-dir <dir>", "directory containing prior per-task reports named <task-id>.json")
+  .option("--checkpoint-dir <dir>", "write each completed task report immediately for crash-safe resume")
   .description("Run a task-balanced suite of stepwise scientific tasks with independent evidence and resume state")
-  .action(async (directory: string, options: { workspace?: string; out?: string; resumeDir?: string }) => {
+  .action(async (directory: string, options: { workspace?: string; out?: string; resumeDir?: string; checkpointDir?: string }) => {
     const taskFiles = loadScientificTaskDirectory(resolve(directory));
     if (!taskFiles.length) throw new Error(`No JSON scientific-task contracts found in ${resolve(directory)}.`);
     const previous: Record<string, import("./core/scientific-tasks.js").ScientificTaskRun> = {};
@@ -768,7 +769,13 @@ benchmark.command("scientific-suite")
         } catch { /* Ignore an incomplete task report; that task runs from its last valid stage. */ }
       }
     }
-    const suite = await runScientificTaskSuite(taskFiles.map((entry) => entry.task), options.workspace ? resolve(options.workspace) : root, { previous, onProgress: (message) => console.log(`· ${message}`) });
+    const checkpointDir = options.checkpointDir ? resolve(options.checkpointDir) : undefined;
+    if (checkpointDir) mkdirSync(checkpointDir, { recursive: true });
+    const suite = await runScientificTaskSuite(taskFiles.map((entry) => entry.task), options.workspace ? resolve(options.workspace) : root, {
+      previous,
+      onProgress: (message) => console.log(`· ${message}`),
+      onTaskComplete: checkpointDir ? (result) => writeFileSync(join(checkpointDir, `${result.taskId}.json`), `${JSON.stringify(result, null, 2)}\n`) : undefined,
+    });
     const output = `${JSON.stringify({ tasks: taskFiles.map((entry) => ({ path: entry.path, taskId: entry.task.id })), suite }, null, 2)}\n`;
     if (options.out) { mkdirSync(dirname(resolve(options.out)), { recursive: true }); writeFileSync(resolve(options.out), output); }
     const store = new ResearchStore(statePath);

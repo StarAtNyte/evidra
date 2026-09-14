@@ -3432,10 +3432,12 @@ test("scientific task suite preserves task-balanced results and per-task resume"
   const root = mkdtempSync(join(tmpdir(), "evidra-scientific-suite-"));
   try {
     const tasks = ["alpha", "beta"].map((id) => ({ id, title: id, description: "suite task", stages: [{ id: "check", title: "Check", objective: "Run a bounded check", command: [process.execPath, "--version"], timeoutMinutes: 1 }] }));
-    const first = await runScientificTaskSuite(tasks, root);
+    const checkpoints = [];
+    const first = await runScientificTaskSuite(tasks, root, { onTaskComplete: (result) => { checkpoints.push(result.taskId); } });
     assert.equal(first.taskCount, 2);
     assert.equal(first.validTasks, 2);
     assert.equal(first.validityRate, 1);
+    assert.deepEqual(checkpoints, ["alpha", "beta"]);
     const previous = Object.fromEntries(first.tasks.map((item) => [item.taskId, item.run]));
     const resumed = await runScientificTaskSuite(tasks, root, { previous });
     assert.deepEqual(resumed.tasks.map((item) => item.run.stages[0].status), ["resumed", "resumed"]);
