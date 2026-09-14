@@ -206,6 +206,26 @@ test("durable research state and queue survive store reopen", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("external action intents prevent restart-time replay and support explicit reconciliation", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-action-intent-"));
+  try {
+    const db = join(root, "state.sqlite");
+    const first = new ResearchStore(db);
+    const reserved = first.beginExternalAction({ id: "submission:one", kind: "competition_submission", fingerprint: "fp-1", payload: { bundle: "one" } });
+    assert.equal(reserved.status, "in_flight");
+    first.close();
+    const reopened = new ResearchStore(db);
+    assert.equal(reopened.externalAction("submission:one")?.status, "in_flight");
+    assert.equal(reopened.beginExternalAction({ id: "submission:one", kind: "competition_submission", fingerprint: "fp-1" }).status, "in_flight");
+    assert.equal(reopened.reconcileExternalAction("submission:one", "retryable", { operatorStatus: "not-submitted" }), true);
+    assert.equal(reopened.beginExternalAction({ id: "submission:one", kind: "competition_submission", fingerprint: "fp-1" }).status, "in_flight");
+    assert.equal(reopened.completeExternalAction("submission:one", { receipt: "r1" }), true);
+    assert.equal(reopened.beginExternalAction({ id: "submission:one", kind: "competition_submission", fingerprint: "fp-1" }).status, "completed");
+    assert.throws(() => reopened.beginExternalAction({ id: "submission:one", kind: "competition_submission", fingerprint: "different" }), /different fingerprint/i);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("Codex sandbox remains safe by default and supports an explicit benchmark override", () => {
   const previous = process.env.EVIDRA_CODEX_SANDBOX;
   delete process.env.EVIDRA_CODEX_SANDBOX;

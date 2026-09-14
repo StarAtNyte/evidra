@@ -157,6 +157,13 @@ bypasses or unauthorized external actions fail the trajectory. Legacy traces
 without lifecycle signals remain compatible and are marked not evaluated rather
 than being awarded an unsupported safety pass.
 
+External actions also use a durable idempotency ledger. Evidra reserves a
+submission intent before invoking a competition adapter; a resumed process will
+not replay an `in_flight` or completed action automatically. If the provider
+outcome is ambiguous, an operator must reconcile it explicitly before retrying,
+which closes the restart-time action-replay path without pretending that a
+network failure proves the remote action did not happen.
+
 Source: [HarnessRisk: A Lifecycle-Oriented Benchmark for Agent Harness Safety](https://arxiv.org/abs/2608.17597).
 
 ## Scientific usefulness requires judgment plus external acceptance

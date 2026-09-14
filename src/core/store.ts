@@ -42,6 +42,17 @@ export interface ControllerLease {
   updatedAt: string;
 }
 
+export type ExternalActionStatus = "in_flight" | "completed" | "unknown" | "retryable";
+export interface ExternalActionIntent {
+  id: string;
+  kind: string;
+  fingerprint: string;
+  status: ExternalActionStatus;
+  payload: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export class ResearchStore {
   private readonly db: Database.Database;
   private memoryFtsAvailable = false;
@@ -204,6 +215,15 @@ export class ResearchStore {
         message TEXT NOT NULL,
         created_at TEXT NOT NULL,
         applied_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS external_action_intents (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        status TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS trajectories (
         id TEXT PRIMARY KEY,
@@ -496,6 +516,62 @@ export class ResearchStore {
   submissions(): Array<{ id: string; experimentId: string; path: string; status: string; payload: unknown; createdAt: string; updatedAt: string }> {
     const rows = this.db.prepare("SELECT * FROM submissions ORDER BY created_at DESC").all() as Array<{ id: string; experiment_id: string; path: string; status: string; payload_json: string; created_at: string; updated_at: string }>;
     return rows.map((row) => ({ id: row.id, experimentId: row.experiment_id, path: row.path, status: row.status, payload: JSON.parse(row.payload_json), createdAt: row.created_at, updatedAt: row.updated_at }));
+  }
+
+  externalAction(id: string): ExternalActionIntent | undefined {
+    const row = this.db.prepare("SELECT id, kind, fingerprint, status, payload_json, created_at, updated_at FROM external_action_intents WHERE id = ?").get(id) as { id: string; kind: string; fingerprint: string; status: ExternalActionStatus; payload_json: string; created_at: string; updated_at: string } | undefined;
+    return row ? { id: row.id, kind: row.kind, fingerprint: row.fingerprint, status: row.status, payload: JSON.parse(row.payload_json), createdAt: row.created_at, updatedAt: row.updated_at } : undefined;
+  }
+
+  /**
+   * Atomically reserve an external action before invoking an outside system.
+   * An in-flight action is intentionally not replayable: a crash may have
+   * happened after the remote system accepted it but before Evidra persisted
+   * the receipt.
+   */
+  beginExternalAction(input: { id: string; kind: string; fingerprint: string; payload?: unknown }): ExternalActionIntent {
+    const now = new Date().toISOString();
+    const transaction = this.db.transaction(() => {
+      const existing = this.externalAction(input.id);
+      if (existing) {
+        if (existing.fingerprint !== input.fingerprint) throw new Error(`External action ${input.id} has a different fingerprint; refusing replay.`);
+        if (existing.status === "retryable") {
+          this.db.prepare("UPDATE external_action_intents SET status = 'in_flight', updated_at = ? WHERE id = ? AND status = 'retryable'").run(now, input.id);
+          return this.externalAction(input.id) as ExternalActionIntent;
+        }
+        return existing;
+      }
+      this.db.prepare("INSERT INTO external_action_intents (id, kind, fingerprint, status, payload_json, created_at, updated_at) VALUES (?, ?, ?, 'in_flight', ?, ?, ?)")
+        .run(input.id, input.kind, input.fingerprint, safeJson(input.payload ?? {}), now, now);
+      return this.externalAction(input.id) as ExternalActionIntent;
+    });
+    const intent = transaction() as ExternalActionIntent;
+    if (intent.status === "in_flight" && intent.createdAt === now) this.appendEvent("external.action.reserved", { id: intent.id, kind: intent.kind, fingerprint: intent.fingerprint });
+    return intent;
+  }
+
+  completeExternalAction(id: string, payload?: unknown): boolean {
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE external_action_intents SET status = 'completed', payload_json = COALESCE(?, payload_json), updated_at = ? WHERE id = ? AND status = 'in_flight'")
+      .run(payload === undefined ? null : safeJson(payload), now, id);
+    if (result.changes === 1) this.appendEvent("external.action.completed", { id, payload });
+    return result.changes === 1;
+  }
+
+  markExternalActionUnknown(id: string, payload?: unknown): boolean {
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE external_action_intents SET status = 'unknown', payload_json = COALESCE(?, payload_json), updated_at = ? WHERE id = ? AND status = 'in_flight'")
+      .run(payload === undefined ? null : safeJson(payload), now, id);
+    if (result.changes === 1) this.appendEvent("external.action.unknown", { id, payload });
+    return result.changes === 1;
+  }
+
+  reconcileExternalAction(id: string, status: "completed" | "retryable", payload?: unknown): boolean {
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE external_action_intents SET status = ?, payload_json = COALESCE(?, payload_json), updated_at = ? WHERE id = ? AND status IN ('unknown', 'in_flight')")
+      .run(status, payload === undefined ? null : safeJson(payload), now, id);
+    if (result.changes === 1) this.appendEvent("external.action.reconciled", { id, status, payload });
+    return result.changes === 1;
   }
 
   agentLanes(): Array<{ role: string; status: string; provider: string; model: string; task: string | null; error: string | null; updatedAt: string }> {

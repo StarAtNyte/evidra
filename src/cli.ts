@@ -1086,12 +1086,45 @@ submission.command("submit").argument("<bundle>").option("--message <message>", 
   const localConfidence = options.localConfidence === undefined ? (typeof payload.localConfidence === "number" ? payload.localConfidence : undefined) : Number(options.localConfidence);
   const policyDecision = evaluateSubmissionPolicy(policy, { submittedAt: priorSubmittedAt, informationValue, localConfidence, leakageFlagged: !gates.leakageAuditPassed, isFinalEnsemble: options.final || payload.isFinalEnsemble === true });
   if (!policyDecision.allowed) { store.close(); throw new Error(`Submission policy blocked ${bundle}: ${policyDecision.reasons.join("; ")}`); }
+  const actionId = `submission:${bundle}`;
+  const actionFingerprint = JSON.stringify({ bundle, path: entry.path, platform: adapter.config.submission?.platform ?? "manual", message: options.message });
+  const priorIntent = store.externalAction(actionId);
+  const intent = store.beginExternalAction({ id: actionId, kind: "competition_submission", fingerprint: actionFingerprint, payload: { bundle, platform: adapter.config.submission?.platform ?? "manual" } });
+  if (intent.status === "completed") {
+    store.close();
+    console.log(`Submission ${bundle} was already completed; refusing to replay the external action.`);
+    return;
+  }
+  if (intent.status === "in_flight" && priorIntent) {
+    store.close();
+    throw new Error(`Submission ${bundle} has an unresolved external action from a prior process. Reconcile it before retrying.`);
+  }
+  if (intent.status === "unknown") {
+    store.close();
+    throw new Error(`Submission ${bundle} has an ambiguous external outcome. Run 'evidra submission reconcile ${bundle} --status submitted|not-submitted'.`);
+  }
   try {
     const attempt = await submitApprovedBundle(root, entry.path, adapter.config, options.message);
     store.updateSubmissionStatus(bundle, "submitted", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), receipt: attempt.receipt });
+    store.completeExternalAction(actionId, { receipt: attempt.receipt });
     store.appendEvent("submission.external.submitted", { id: bundle, platform: attempt.receipt.platform, predictionFile: attempt.receipt.predictionFile, submittedAt: attempt.receipt.submittedAt });
     console.log(`Submitted ${bundle} via ${attempt.receipt.platform}\n${attempt.receipt.stdout.trim()}`);
+  } catch (error) {
+    store.markExternalActionUnknown(actionId, { error: error instanceof Error ? error.message : String(error) });
+    throw error;
   } finally { store.close(); }
+});
+submission.command("reconcile").argument("<bundle>").requiredOption("--status <status>", "submitted or not-submitted").description("Reconcile an external submission after a crash or ambiguous provider response").action((bundle: string, options: { status: string }) => {
+  if (options.status !== "submitted" && options.status !== "not-submitted") throw new Error("Reconciliation status must be 'submitted' or 'not-submitted'.");
+  const store = new ResearchStore(statePath);
+  const actionId = `submission:${bundle}`;
+  const intent = store.externalAction(actionId);
+  if (!intent || (intent.status !== "unknown" && intent.status !== "in_flight")) { store.close(); throw new Error(`Submission ${bundle} has no unresolved external action to reconcile.`); }
+  const next = options.status === "submitted" ? "completed" : "retryable";
+  if (!store.reconcileExternalAction(actionId, next, { operatorStatus: options.status, reconciledAt: new Date().toISOString() })) { store.close(); throw new Error(`Unable to reconcile external action for ${bundle}.`); }
+  if (options.status === "submitted") store.updateSubmissionStatus(bundle, "submitted", { reconciledAt: new Date().toISOString(), reconciliation: "operator-confirmed" });
+  store.close();
+  console.log(options.status === "submitted" ? `Marked ${bundle} submitted; no replay will occur.` : `Marked ${bundle} safe to retry; the next submit will create a fresh in-flight reservation.`);
 });
 submission.command("poll").argument("<bundle>").description("Poll a configured external score adapter").action(async (bundle: string) => {
   const store = new ResearchStore(statePath);
