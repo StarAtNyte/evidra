@@ -3250,6 +3250,10 @@ test("literature-derived hypotheses preserve explicit adaptation context", () =>
     toolCalls: [],
   });
   assert.equal(decision.hypotheses[0].sourceAdaptation?.competitionDifference, "Long-tailed tabular data");
+  assert.throws(() => ResearchDecisionSchema.parse({
+    ...decision,
+    hypotheses: [{ ...decision.hypotheses[0], evidenceSourceIds: [] }],
+  }), /sourceAdaptation requires at least one durable evidenceSourceId/);
 });
 
 test("research decision rubric exposes actionable evidence gaps", () => {

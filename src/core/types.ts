@@ -103,6 +103,14 @@ export const ResearchHypothesisSchema = z.object({
     label: z.string().min(1).max(160),
     disabledValue: z.unknown(),
   })).max(8).default([]),
+}).superRefine((hypothesis, context) => {
+  if (hypothesis.sourceAdaptation && hypothesis.evidenceSourceIds.length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["evidenceSourceIds"],
+      message: "sourceAdaptation requires at least one durable evidenceSourceId",
+    });
+  }
 });
 
 export const ResearchDecisionSchema = z.object({
