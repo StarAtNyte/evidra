@@ -159,7 +159,7 @@ Source retrieval records URL, retrieval time, content hash, license, claims, and
 /agents cancel <run>         Cancel a running agent task
 ```
 
-Roles are director, data detective, validation scientist, model researcher, experiment engineer, ensemble scientist, critic, and repair agent.
+Roles are director, domain researcher, method researcher, data detective, validation scientist, model researcher, ensemble scientist, reproducibility engineer, experiment engineer, critic, and repair agent.
 
 ## Data and validation
 
