@@ -49,6 +49,8 @@ An explicit autonomous campaign owns the full local loop: research lanes, implem
 /challenge resume             Resume the saved challenge campaign
 /challenge stop               Stop the challenge campaign safely
 /challenge status             Show challenge campaign state
+
+/benchmark literature-score <file>  Score deep/wide literature discovery and grounding
 ```
 
 These commands never authorize external submission. A stopped or interrupted campaign is saved and must be explicitly resumed.

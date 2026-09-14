@@ -13,6 +13,7 @@ import { createValidationPolicy, writeValidationPolicy } from "./core/validation
 import { estimateDistributionBeliefs, type ExternalValidationObservation } from "./core/distribution-beliefs.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "./core/execution-stages.js";
 import { retrieveSource, searchResearchSources, sourceClaims, sourceFrontier, sourceSearchText, sourceIsFresh } from "./core/sources.js";
+import { scoreLiteratureBenchmark, type LiteratureBenchmarkObservation, type LiteratureBenchmarkTask } from "./core/literature-bench.js";
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
 import { pollSubmissionScore, submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
@@ -620,6 +621,34 @@ benchmark.command("score")
     console.log("Harness benchmark · task-balanced evidence score");
     console.log("Harness                 Tasks  Trials  Score  Lower95  Valid  Improve  Repro  Align  TimeEff  Failures");
     for (const scorecard of scorecards) console.log(`${scorecard.harness.padEnd(23).slice(0, 23)} ${String(scorecard.tasks).padStart(5)} ${String(scorecard.trials).padStart(7)} ${scorecard.competitiveScore.toFixed(1).padStart(6)} ${scorecard.competitiveScoreLower95.toFixed(1).padStart(8)} ${(scorecard.validRunRate * 100).toFixed(0).padStart(5)}% ${(scorecard.improvementRate * 100).toFixed(0).padStart(7)}% ${(scorecard.reproducibilityRate * 100).toFixed(0).padStart(5)}% ${scorecard.executionAlignmentRate === null ? "n/a" : `${(scorecard.executionAlignmentRate * 100).toFixed(0)}%`.padStart(5)} ${scorecard.meanTimeEfficiency === null ? "n/a" : `${(scorecard.meanTimeEfficiency * 100).toFixed(0)}%`.padStart(7)} ${Object.entries(scorecard.failureProfile).map(([name, count]) => `${name}=${count}`).join(",") || "-"}`);
+  });
+benchmark.command("literature-score")
+  .argument("<file>", "JSON file containing { tasks: [...], observations: [...] }")
+  .option("--json", "emit machine-readable literature scorecard")
+  .description("Score deep/wide literature discovery, grounding, and query efficiency")
+  .action((file: string, options: { json?: boolean }) => {
+    const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
+    if (!parsed || typeof parsed !== "object") throw new Error("Literature benchmark input must be an object.");
+    const tasks = (parsed as { tasks?: unknown }).tasks;
+    const observations = (parsed as { observations?: unknown }).observations;
+    if (!Array.isArray(tasks) || !tasks.length || !Array.isArray(observations)) throw new Error("Literature benchmark input must contain non-empty tasks and an observations array.");
+    const report = scoreLiteratureBenchmark(tasks as LiteratureBenchmarkTask[], observations as LiteratureBenchmarkObservation[]);
+    const store = new ResearchStore(statePath);
+    store.appendEvent("literature.benchmark.completed", { source: resolve(file), report });
+    store.close();
+    if (options.json) {
+      console.log(JSON.stringify(report, null, 2));
+      if (!report.valid) process.exitCode = 2;
+      return;
+    }
+    console.log(`Literature benchmark · ${report.valid ? "VALID" : "INCOMPLETE"}`);
+    console.log(`Mean score        ${report.meanScore === null ? "n/a" : report.meanScore.toFixed(3)}`);
+    console.log(`Deep recall       ${report.deepRecall === null ? "n/a" : `${(report.deepRecall * 100).toFixed(1)}%`}`);
+    console.log(`Wide recall       ${report.wideRecall === null ? "n/a" : `${(report.wideRecall * 100).toFixed(1)}%`}`);
+    console.log(`Grounding         ${report.meanGroundingRate === null ? "n/a" : `${(report.meanGroundingRate * 100).toFixed(1)}%`}`);
+    console.log(`Query efficiency  ${report.meanQueryEfficiency === null ? "n/a" : report.meanQueryEfficiency.toFixed(3)}`);
+    for (const task of report.tasks) if (task.reasons.length) console.log(`- ${task.taskId}: ${task.reasons.join("; ")}`);
+    if (!report.valid) process.exitCode = 2;
   });
 benchmark.command("compare")
   .argument("<file>", "JSON file containing a trial array or { trials: [...] }")
