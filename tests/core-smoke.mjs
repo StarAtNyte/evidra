@@ -1252,6 +1252,9 @@ test("validation acceptance requires replicated evidence and safety gates", () =
   assert.match(suspiciousGain.reasons.join(" "), /unexpectedly large/i);
   const configuredScrutiny = evaluateValidationAcceptance({ baseline: base, candidate: { ...base, runId: "configured-large", metrics: { score: 0.72 }, metricsByFold: { score: [0.71, 0.72, 0.73] } }, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: false, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: false, largeGainThreshold: 0.01 });
   assert.equal(configuredScrutiny.gates.unexpectedGainReview, false);
+  const incompleteMatrix = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: false, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, evaluationCoverage: false });
+  assert.equal(incompleteMatrix.gates.evaluationCoverage, false);
+  assert.match(incompleteMatrix.reasons.join(" "), /fold\/seed evaluation matrix/i);
   const permutationBlocked = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, requirePermutationTest: true });
   assert.equal(permutationBlocked.gates.permutationConfidence, false);
   assert.equal(permutationBlocked.accepted, false);

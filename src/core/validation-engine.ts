@@ -23,6 +23,8 @@ export interface ValidationAcceptanceInput {
   requirePermutationTest?: boolean;
   /** Absolute normalized-gain threshold that triggers the extra scrutiny gate. */
   largeGainThreshold?: number;
+  /** Result of the manifest's optional strict fold/seed coverage contract. */
+  evaluationCoverage?: boolean;
 }
 
 export interface ValidationAcceptance {
@@ -107,6 +109,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
     leakageAudit: input.leakageAuditPassed,
     review: input.reviewerApproved,
     unexpectedGainReview: !unexpectedGain || (input.independentReplicationObserved === true && input.reviewerApproved),
+    evaluationCoverage: input.evaluationCoverage !== false,
   };
   const worstSubgroupDelta = input.subgroupDeltas?.length ? Math.min(...input.subgroupDeltas) : null;
   const reasons: string[] = [];
@@ -119,6 +122,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   if (!gates.leakageAudit) reasons.push("leakage audit has not passed");
   if (!gates.review) reasons.push("independent reviewer approval is missing");
   if (!gates.unexpectedGainReview) reasons.push(`unexpectedly large normalized gain ${normalizedDelta?.toFixed(6) ?? "missing"} exceeds scrutiny threshold ${scrutinyThreshold.toFixed(6)}; require independent replication and review`);
+  if (!gates.evaluationCoverage) reasons.push("declared fold/seed evaluation matrix is incomplete or missing the primary metric");
   return { accepted: Object.values(gates).every(Boolean), comparison, gates, reasons, normalizedDelta, worstSubgroupDelta, adjustedProbabilityThreshold };
 }
 

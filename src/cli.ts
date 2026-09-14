@@ -27,7 +27,7 @@ import { detectRouteDrift } from "./core/drift-detection.js";
 import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
 import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, pauseCampaign, readCampaignRuntime, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
-import { auditExperiment } from "./core/validation.js";
+import { auditExperiment, validateEvaluationMatrix } from "./core/validation.js";
 import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance } from "./core/validation-engine.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
@@ -3349,6 +3349,7 @@ experiment.command("run")
           maximumRegressionShift: manifest.acceptance.maximumRegressionShift,
           requireReplication: manifest.acceptance.requireReplication,
           largeGainThreshold: manifest.acceptance.largeGainThreshold,
+          evaluationCoverage: validateEvaluationMatrix(manifest, recorded, metricName).valid,
           leakageAuditPassed: gates.leakageAuditPassed,
           reviewerApproved: gates.reviewerApproved,
           independentReplicationObserved: typeof entryPayload.replicationOf === "string" || typeof manifest.parent === "string",

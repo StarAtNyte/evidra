@@ -9,7 +9,7 @@ import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
 import { executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetric } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
-import { auditExperiment } from "../core/validation.js";
+import { auditExperiment, validateEvaluationMatrix } from "../core/validation.js";
 import { sha256File } from "../core/evidence.js";
 import { captureEnvironment } from "../core/environment.js";
 import { compareRuns } from "../core/statistics.js";
@@ -2505,6 +2505,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         };
         const baseline = resolveRun(left);
         const candidate = resolveRun(right);
+        const candidateExperiment = candidate ? store.experiments().find((entry) => entry.id === candidate.experimentId) : undefined;
+        const candidateManifest = candidateExperiment ? ExperimentManifestSchema.safeParse(candidateExperiment.payload) : undefined;
         const comparisonCount = Math.max(1, store.experiments().length);
         store.close();
         if (!baseline || !candidate) { append("assistant", "Usage: /experiment compare <baseline-id> <candidate-id> (experiment or run ids accepted)"); return; }
@@ -2520,7 +2522,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
             minimumDelta: policy.acceptance.minimumDelta,
             maximumRegressionShift: 0,
             requireReplication: policy.acceptance.requireReplication,
-            largeGainThreshold: undefined,
+            largeGainThreshold: candidateManifest?.success ? candidateManifest.data.acceptance.largeGainThreshold : undefined,
+            evaluationCoverage: candidateManifest?.success ? validateEvaluationMatrix(candidateManifest.data, RunResultSchema.parse(candidate.payload), adapter.config.metric.name).valid : true,
             leakageAuditPassed: false,
             reviewerApproved: false,
             comparisonCount,
