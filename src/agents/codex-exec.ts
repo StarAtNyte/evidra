@@ -8,6 +8,9 @@ import type { ProcessControl } from "../core/process.js";
 
 export type AgentProvider = "codex" | "local";
 
+/** Cost-conscious Codex default used by the CLI, TUI, and autonomous tests. */
+export const DEFAULT_CODEX_MODEL = "gpt-5.6-luna";
+
 export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
 export function effectiveCodexSandbox(requested?: CodexSandboxMode): CodexSandboxMode {
@@ -158,8 +161,9 @@ export function listCodexModels(): Promise<AvailableModel[]> {
 export async function resolveCodexModel(preferred = "default"): Promise<string> {
   if (preferred !== "default") return preferred;
   const models = await listCodexModels();
-  const selected = models.find((model) => model.isDefault) ?? models.find((model) => !model.hidden) ?? models[0];
-  if (!selected?.id) throw new Error("Codex returned no usable models. Use /model to select an available model.");
+  const selected = models.find((model) => model.id === DEFAULT_CODEX_MODEL);
+  if (!selected) throw new Error(`The configured default Codex model '${DEFAULT_CODEX_MODEL}' is unavailable. Use /model to select an available model explicitly.`);
+  if (!selected.id) throw new Error("Codex returned no usable models. Use /model to select an available model.");
   return selected.id;
 }
 

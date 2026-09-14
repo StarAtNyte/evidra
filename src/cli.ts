@@ -48,7 +48,7 @@ import { createBlendCandidate, diversityReport, loadPredictionVector, safePredic
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
-import { checkProvider, codexLoginStatus, isProviderUsageLimit, isRetryableAgentError, listLocalModels, providerRetryAfterMs, resolveCodexModel, resolveLocalFallbackModel, runWithUsageLimitWait, runWithLocalFallback } from "./agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderUsageLimit, isRetryableAgentError, listLocalModels, providerRetryAfterMs, resolveCodexModel, resolveLocalFallbackModel, runWithUsageLimitWait, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -831,7 +831,7 @@ sources.command("adapt")
       recentEvents,
       researchMemory,
       ultimateGoal: adaptationObjective,
-    }, { provider: "codex", model: "default", reasoningEffort: "high", fallbackLocalModel: process.env.EVIDRA_FALLBACK_MODEL ?? "auto", cwd: root, executeTool: researchToolExecutor(adapter) });
+    }, { provider: "codex", model: DEFAULT_CODEX_MODEL, reasoningEffort: "medium", fallbackLocalModel: process.env.EVIDRA_FALLBACK_MODEL ?? "auto", cwd: root, executeTool: researchToolExecutor(adapter) });
     const adapted = new ResearchStore(statePath);
     materializeResearchDecision(adapted, decision, { evidenceSourceId: id, evidenceScope: typeof source.url === "string" ? source.url : id });
     adapted.appendEvent("research.source.adapted", { sourceId: id, objective: adaptationObjective, decision });
@@ -1226,8 +1226,8 @@ challenge.command("start")
   .option("--budget <duration>", "autonomous budget, e.g. 90m or 4h", "60m")
   .option("--stop <condition>", "campaign stopping condition", "stop after a replicated improvement or when evidence is exhausted")
   .option("--provider <provider>", "agent provider: codex or local", "codex")
-  .option("--model <model>", "provider model; use default for Codex", "default")
-  .option("--thinking <effort>", "reasoning effort", "high")
+  .option("--model <model>", "provider model", DEFAULT_CODEX_MODEL)
+  .option("--thinking <effort>", "reasoning effort", "medium")
   .option("--lanes <count>", "maximum independent research lanes", "3")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: auto, wait, fallback, or stop", "auto")
@@ -1263,8 +1263,8 @@ research
   .option("--budget <duration>", "autonomous budget, e.g. 90m or 4h", "60m")
   .option("--stop <condition>", "campaign stopping condition", "stop when the research director has sufficient evidence for the stated goal")
   .option("--provider <provider>", "agent provider: codex or local", "codex")
-  .option("--model <model>", "provider model; use default for Codex", "default")
-  .option("--thinking <effort>", "reasoning effort", "high")
+  .option("--model <model>", "provider model", DEFAULT_CODEX_MODEL)
+  .option("--thinking <effort>", "reasoning effort", "medium")
   .option("--lanes <count>", "maximum independent research lanes", "3")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: auto, wait, fallback, or stop", "auto")
@@ -1291,6 +1291,9 @@ research
       options.limitPolicy = savedRuntime.limitPolicy;
       options.executor = savedRuntime.executor;
     }
+    // Never resume an older campaign onto the expensive Astra route after the
+    // cost-conscious default has changed.
+    if (options.provider === "codex" && (options.model === "default" || /gpt-6.*astra/i.test(options.model))) options.model = DEFAULT_CODEX_MODEL;
     if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
     if (!["auto", "wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'auto', 'wait', 'fallback', or 'stop'.");
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Mode must be 'research' or 'challenge'.");
@@ -2260,7 +2263,7 @@ research.command("propose")
       ultimateGoal: objective,
       phaseGoal: phaseGoal ?? null,
       researchMemory,
-    }, { provider: "codex", model: "default", reasoningEffort: "medium", fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });
+    }, { provider: "codex", model: DEFAULT_CODEX_MODEL, reasoningEffort: "medium", fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });
     const decisionStore = new ResearchStore(statePath);
     decision = enforceGoalTermination(decision);
     const claimAudit = auditCurrentClaims(decisionStore);

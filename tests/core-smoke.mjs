@@ -118,7 +118,7 @@ import { ResearchDecisionSchema, RunResultSchema } from "../dist/core/types.js";
 import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../dist/core/validation-lock.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
-import { createIsolatedCodexWorkspace, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
+import { createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexSandbox, resolveCodexModel } from "../dist/agents/codex-exec.js";
 import { evaluateHarnessChange, inventoryHarnessComponents, planHarnessInterventions } from "../dist/core/harness-evolution.js";
 import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
 import { assessStopPolicy } from "../dist/core/stop-policy.js";
@@ -211,6 +211,7 @@ test("Codex sandbox remains safe by default and supports an explicit benchmark o
 });
 
 test("Codex model resolution preserves explicit selections", async () => {
+  assert.equal(DEFAULT_CODEX_MODEL, "gpt-5.6-luna");
   assert.equal(await resolveCodexModel("gpt-5.6-luna"), "gpt-5.6-luna");
 });
 

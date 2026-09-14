@@ -28,7 +28,7 @@ import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoal
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
-import { checkProvider, codexIsLoggedIn, codexLoginStatus, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, runWithLocalFallback, runWithUsageLimitWait, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
+import { checkProvider, codexIsLoggedIn, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, runWithLocalFallback, runWithUsageLimitWait, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { boundedPeerBoard, runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
@@ -106,7 +106,7 @@ function auditEvidenceStore(store: ResearchStore) {
   });
 }
 
-const defaultConfig: SessionConfig = { provider: "codex", model: "default", reasoningEffort: "medium", mode: "research", autonomy: "safe", limitPolicy: "auto", fallbackModel: process.env.EVIDRA_FALLBACK_MODEL ?? "auto", experimentExecutor: "local" };
+const defaultConfig: SessionConfig = { provider: "codex", model: DEFAULT_CODEX_MODEL, reasoningEffort: "medium", mode: "research", autonomy: "safe", limitPolicy: "auto", fallbackModel: process.env.EVIDRA_FALLBACK_MODEL ?? "auto", experimentExecutor: "local" };
 const COMMANDS = [
   ["/help", "Show commands"],
   ["/mode", "Show or switch active mode"],
@@ -192,7 +192,7 @@ function loadConfig(path: string): SessionConfig {
     // Permissions are intentionally session-scoped. Never inherit fast/YOLO from a prior terminal.
     config.autonomy = defaultConfig.autonomy;
     // Older Evidra sessions used a model name that ChatGPT-account Codex does not accept.
-    if (config.provider === "codex" && config.model === "gpt-5.3-codex") config.model = "default";
+    if (config.provider === "codex" && (config.model === "default" || config.model === "gpt-5.3-codex" || /gpt-6.*astra/i.test(config.model))) config.model = DEFAULT_CODEX_MODEL;
     if (config.provider === "local" && /^(gpt|codex)/i.test(config.model)) config.model = "unconfigured";
     if (!["auto", "wait", "fallback", "stop"].includes(config.limitPolicy)) config.limitPolicy = defaultConfig.limitPolicy;
     if (!config.fallbackModel) config.fallbackModel = defaultConfig.fallbackModel;
@@ -249,7 +249,7 @@ function help(): string {
     "/report [research|challenge|final] Generate a portable report",
     "/timeline [limit]            Show recent autonomous progress",
     "/provider [codex|local]      Select ChatGPT Codex or local Ollama",
-    "/model [name]                Show or select the model (use default for Codex)",
+    `/model [name]                Show or select the model (default: ${DEFAULT_CODEX_MODEL})`,
     "/thinking [level]            Select model thinking effort",
     "/login [codex|status]        Authenticate or check provider access",
     "/autonomy [safe|fast|yolo]   Set autonomous execution policy",
