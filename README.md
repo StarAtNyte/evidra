@@ -297,6 +297,7 @@ Useful commands:
     /help                 Show commands and shortcuts
     /status               Show project, graph, queue, and execution state
     /timeline             Show a readable autonomous execution timeline
+    /integrity            Verify the durable event history for tampering/corruption
     /usage                Show durable activity and counts
     /research             Start or run an evidence-gathering cycle
     /research start       Start a fully autonomous research campaign
@@ -606,6 +607,10 @@ The separate [Autoresearch Bench](https://www.autoresearch-bench.com/) is an ext
 For agent-agnostic scientific evaluation, `evidra benchmark scientific task.json` runs an ordered task contract with intermediate verifiers, required artifact checksums, snapshot boundaries, bounded logs, and resumable stage state. `evidra benchmark scientific-suite contracts/ --checkpoint-dir suite-state/` runs a stable, task-balanced directory of contracts and checkpoints each task immediately for crash-safe resume via `--resume-dir suite-state/`. It reports per-task validity, mean stage score, process quality, and resumable task results. See the [stepwise scientific-task protocol](docs/benchmarks/scientific-task-protocol.md).
 
 Run `evidra benchmark safety` to execute Evidra's local lifecycle safety regression suite. It must pass before treating a harness change as benchmarkable; `--json` emits the machine-readable probe report for CI. This is an internal boundary regression suite, not an external HarnessRisk score.
+
+Durable events are now hash-chained. `evidra integrity events` verifies event payloads and
+ordering after restarts or recovery. Stores created by older Evidra versions are reported as
+`LEGACY` until their historical prefix is replaced; newly appended events remain verifiable.
 
 ## Contribution
 

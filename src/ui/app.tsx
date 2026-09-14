@@ -136,6 +136,7 @@ const COMMANDS = [
   ["/ensemble", "Analyze prediction diversity and blends"],
   ["/report", "Generate portable research reports"],
   ["/timeline", "Show readable autonomous progress"],
+  ["/integrity", "Verify durable event history"],
   ["/doctor", "Diagnose local research dependencies"],
   ["/contract", "Validate workspace and experiment contract"],
   ["/provider", "Select codex or local provider"],
@@ -253,6 +254,7 @@ function help(): string {
     "/ensemble [candidates|diversity|propose|validate|promote|reject] Analyze prediction artifacts",
     "/report [research|challenge|final] Generate a portable report",
     "/timeline [limit]            Show recent autonomous progress",
+    "/integrity                   Verify durable event history",
     "/provider [codex|local]      Select ChatGPT Codex or local Ollama",
     `/model [name]                Show or select the model (default: ${DEFAULT_CODEX_MODEL})`,
     "/thinking [level]            Select model thinking effort",
@@ -2852,6 +2854,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const timeline = renderTimeline(store.recentEvents(limit), limit);
       store.close();
       append("assistant", `Autonomous timeline\n${timeline}`);
+      return;
+    }
+    if (request === "/integrity" || request === "/integrity events") {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const report = store.verifyEventChain();
+      store.close();
+      const label = report.status === "valid" ? "VALID" : report.status === "legacy" ? "LEGACY (older events are unchained)" : "INVALID";
+      append("assistant", `Event integrity · ${label}\n  checked: ${report.checked}\n  legacy events: ${report.legacy}${report.brokenAt ? `\n  broken at event: ${report.brokenAt}` : ""}${report.reason ? `\n  reason: ${report.reason}` : ""}`);
       return;
     }
     if (request === "/sources discover" || request.startsWith("/sources discover ")) {

@@ -73,7 +73,9 @@ export class ResearchStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
         payload_json TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        previous_hash TEXT,
+        event_hash TEXT
       );
       CREATE TABLE IF NOT EXISTS hypotheses (
         id TEXT PRIMARY KEY,
@@ -235,6 +237,11 @@ export class ResearchStore {
         updated_at TEXT NOT NULL
       );
     `);
+    // Existing stores predate event integrity. Keep them readable and mark their
+    // history as legacy; all newly appended events are chained and verifiable.
+    for (const column of ["previous_hash", "event_hash"]) {
+      try { this.db.exec(`ALTER TABLE events ADD COLUMN ${column} TEXT`); } catch { /* already migrated */ }
+    }
     try {
       this.db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(kind UNINDEXED, item_id UNINDEXED, content, created_at UNINDEXED)");
       this.memoryFtsAvailable = true;
@@ -282,18 +289,44 @@ export class ResearchStore {
 
   appendEvent(type: string, payload: unknown): void {
     const safePayload = redactStructured(payload);
+    const payloadJson = JSON.stringify(safePayload);
+    const createdAt = new Date().toISOString();
+    const previousHash = (this.db.prepare("SELECT event_hash AS eventHash FROM events ORDER BY id DESC LIMIT 1").get() as { eventHash: string | null } | undefined)?.eventHash ?? null;
+    const eventHash = createHash("sha256").update(`${type}\0${payloadJson}\0${createdAt}\0${previousHash ?? ""}`).digest("hex");
     this.db.prepare(`
-      INSERT INTO events (type, payload_json, created_at) VALUES (?, ?, ?)
-    `).run(type, JSON.stringify(safePayload), new Date().toISOString());
+      INSERT INTO events (type, payload_json, created_at, previous_hash, event_hash) VALUES (?, ?, ?, ?, ?)
+    `).run(type, payloadJson, createdAt, previousHash, eventHash);
+  }
+
+  verifyEventChain(): { status: "valid" | "legacy" | "invalid"; checked: number; legacy: number; brokenAt?: number; reason?: string } {
+    const rows = this.db.prepare("SELECT id, type, payload_json, created_at, previous_hash, event_hash FROM events ORDER BY id ASC").all() as Array<{ id: number; type: string; payload_json: string; created_at: string; previous_hash: string | null; event_hash: string | null }>;
+    let previousHash: string | null = null;
+    let legacy = 0;
+    for (const row of rows) {
+      if (!row.event_hash) {
+        legacy += 1;
+        previousHash = null;
+        continue;
+      }
+      if (row.previous_hash !== previousHash && !(legacy > 0 && previousHash === null && row.previous_hash === null)) {
+        return { status: "invalid", checked: rows.length, legacy, brokenAt: row.id, reason: "previous hash does not match the preceding event" };
+      }
+      const expected: string = createHash("sha256").update(`${row.type}\0${row.payload_json}\0${row.created_at}\0${row.previous_hash ?? ""}`).digest("hex");
+      if (expected !== row.event_hash) {
+        return { status: "invalid", checked: rows.length, legacy, brokenAt: row.id, reason: "event payload or metadata was modified" };
+      }
+      previousHash = row.event_hash;
+    }
+    return { status: legacy > 0 ? "legacy" : "valid", checked: rows.length, legacy };
   }
 
   eventCount(): number {
     return (this.db.prepare("SELECT COUNT(*) AS count FROM events").get() as { count: number }).count;
   }
 
-  recentEvents(limit = 20): Array<{ type: string; payload: unknown; createdAt: string }> {
-    const rows = this.db.prepare("SELECT type, payload_json, created_at FROM events ORDER BY id DESC LIMIT ?").all(limit) as Array<{ type: string; payload_json: string; created_at: string }>;
-    return rows.reverse().map((row) => ({ type: row.type, payload: JSON.parse(row.payload_json), createdAt: row.created_at }));
+  recentEvents(limit = 20): Array<{ type: string; payload: unknown; createdAt: string; eventHash?: string | null }> {
+    const rows = this.db.prepare("SELECT type, payload_json, created_at, event_hash FROM events ORDER BY id DESC LIMIT ?").all(limit) as Array<{ type: string; payload_json: string; created_at: string; event_hash: string | null }>;
+    return rows.reverse().map((row) => ({ type: row.type, payload: JSON.parse(row.payload_json), createdAt: row.created_at, eventHash: row.event_hash }));
   }
 
   saveExperiment(experiment: { id: string; payload: unknown }): void {

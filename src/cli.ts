@@ -1285,6 +1285,17 @@ queue.command("recover").action(() => {
 });
 program.addCommand(queue);
 
+const integrity = new Command("integrity").description("Verify durable Evidra state integrity");
+integrity.command("events").description("Verify the tamper-evident event chain").action(() => {
+  const store = new ResearchStore(statePath);
+  const report = store.verifyEventChain();
+  store.close();
+  const label = report.status === "valid" ? "VALID" : report.status === "legacy" ? "LEGACY (older events are unchained)" : "INVALID";
+  console.log(`Event integrity: ${label}\nChecked: ${report.checked}\nLegacy events: ${report.legacy}${report.brokenAt ? `\nBroken at event: ${report.brokenAt}` : ""}${report.reason ? `\nReason: ${report.reason}` : ""}`);
+  if (report.status === "invalid") process.exitCode = 2;
+});
+program.addCommand(integrity);
+
 program.command("timeline")
   .option("--limit <count>", "number of recent events", "30")
   .action((options: { limit: string }) => {

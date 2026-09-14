@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import Database from "better-sqlite3";
 import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../dist/core/statistics.js";
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
@@ -203,6 +204,26 @@ test("durable research state and queue survive store reopen", () => {
     assert.equal(reopened.campaign()?.goal, "test");
     assert.equal(reopened.agentLanes()[0].status, "running");
     assert.equal(reopened.queueTasks()[0].status, "completed");
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("event history is tamper-evident and survives reopen", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-event-integrity-"));
+  try {
+    const db = join(root, "state.sqlite");
+    const store = new ResearchStore(db);
+    store.appendEvent("audit.one", { value: 1 });
+    store.appendEvent("audit.two", { value: 2 });
+    assert.equal(store.verifyEventChain().status, "valid");
+    store.close();
+    const raw = new Database(db);
+    raw.prepare("UPDATE events SET payload_json = ? WHERE type = ?").run(JSON.stringify({ value: 99 }), "audit.one");
+    raw.close();
+    const reopened = new ResearchStore(db);
+    const report = reopened.verifyEventChain();
+    assert.equal(report.status, "invalid");
+    assert.equal(report.brokenAt, 1);
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
