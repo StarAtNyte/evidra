@@ -1,8 +1,16 @@
-import type { ResearchDecision } from "./types.js";
+import type { ResearchDecision, ResearchPhase } from "./types.js";
 import type { ClaimAuditReport } from "./claim-audit.js";
 
 /** Prevent a model from terminating an active campaign without evidence. */
-export function enforceGoalTermination(decision: ResearchDecision): ResearchDecision {
+export function enforceGoalTermination(decision: ResearchDecision, context: { currentPhase?: ResearchPhase } = {}): ResearchDecision {
+  if (decision.decision === "stop" && decision.goalStatus === "met" && context.currentPhase && context.currentPhase !== "promotion") {
+    return {
+      ...decision,
+      decision: "inspect",
+      goalStatus: "active",
+      nextAction: `${decision.nextAction} The campaign cannot terminate before the promotion phase has passed its evidence gates; continue the current phase first.`,
+    };
+  }
   if (decision.decision !== "stop" || decision.goalStatus === "met") return decision;
   return {
     ...decision,

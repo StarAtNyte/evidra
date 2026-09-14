@@ -2335,7 +2335,7 @@ research
         criteria: decisionRubric.criteria,
         gaps: decisionRubric.gaps,
       });
-      decision = enforceGoalTermination(decision);
+      decision = enforceGoalTermination(decision, { currentPhase: phaseGoal?.phase });
       const claimAudit = auditCurrentClaims(decisionStore);
       const claimGateBefore = decision;
       decision = enforceClaimTermination(decision, claimAudit);
@@ -2862,7 +2862,7 @@ research.command("propose")
       researchMemory,
     }, { provider: "codex", model: DEFAULT_CODEX_MODEL, reasoningEffort: "medium", fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });
     const decisionStore = new ResearchStore(statePath);
-    decision = enforceGoalTermination(decision);
+    decision = enforceGoalTermination(decision, { currentPhase: phaseGoal?.phase });
     const claimAudit = auditCurrentClaims(decisionStore);
     const claimGateBefore = decision;
     decision = enforceClaimTermination(decision, claimAudit);

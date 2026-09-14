@@ -941,7 +941,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       criticGateStore.appendEvent("research.critic.gate", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks });
       criticGateStore.close();
     }
-    decision = enforceGoalTermination(decision);
+    decision = enforceGoalTermination(decision, { currentPhase: phaseGoal?.phase });
     const decisionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const claimAudit = auditEvidenceStore(decisionStore);
     const claimGateBefore = decision;

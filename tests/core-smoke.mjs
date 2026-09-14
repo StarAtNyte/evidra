@@ -627,6 +627,10 @@ test("active goals cannot be terminated by a premature model stop", () => {
   assert.equal(guarded.decision, "inspect");
   assert.equal(guarded.goalStatus, "active");
   assert.match(guarded.nextAction, /cannot stop/i);
+  const prematureMet = enforceGoalTermination({ phase: "evaluation", goalStatus: "met", decision: "stop", bottleneck: "done", rationale: "r", hypotheses: [], selectedHypothesis: null, nextAction: "finish", toolCalls: [] }, { currentPhase: "evaluation" });
+  assert.equal(prematureMet.decision, "inspect");
+  assert.equal(prematureMet.goalStatus, "active");
+  assert.match(prematureMet.nextAction, /promotion phase/i);
   assert.equal(enforceGoalTermination({ phase: "promotion", goalStatus: "met", decision: "stop", bottleneck: "done", rationale: "r", hypotheses: [], selectedHypothesis: null, nextAction: "finish", toolCalls: [] }).decision, "stop");
 });
 
