@@ -104,7 +104,9 @@ export function parseEvaluationMatrix(stdout: string, metricName: string): Evalu
     const metrics = Object.fromEntries(Object.entries(rawMetrics).filter(([, metric]) => typeof metric === "number" && Number.isFinite(metric))) as Record<string, number>;
     if (Object.keys(metrics).length) cells.push({ fold: Number(value.fold), seed: Number(value.seed), metrics });
   }
-  return cells;
+  // Canonical ordering makes paired comparisons independent of worker log
+  // order while intentionally retaining duplicate cells for the validator.
+  return cells.sort((left, right) => left.fold - right.fold || left.seed - right.seed);
 }
 
 /** Parse the final JSON emitted by modal_app.py without trusting progress logs. */

@@ -2578,6 +2578,8 @@ test("evaluation matrix protocol requires exact fold-seed coverage", () => {
   ] } });
   const matrix = parseEvaluationMatrix(stdout, "score");
   assert.equal(matrix.length, 4);
+  const reordered = parseEvaluationMatrix(JSON.stringify({ matrix: [matrix[3], matrix[1], matrix[2], matrix[0]] }), "score");
+  assert.deepEqual(reordered.map((cell) => `${cell.fold}:${cell.seed}`), ["0:17", "0:41", "1:17", "1:41"]);
   assert.equal(validateEvaluationMatrix(manifest, { matrix }, "score").valid, true);
   const incomplete = validateEvaluationMatrix(manifest, { matrix: matrix.slice(0, 3) }, "score");
   assert.equal(incomplete.valid, false);
