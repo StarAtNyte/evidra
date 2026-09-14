@@ -664,7 +664,7 @@ benchmark.command("retest")
       const incumbents = harnesses.filter((harness) => harness !== challenger);
       const comparisons = incumbents.map((incumbent) => compareHarnesses(report.trials, challenger, incumbent));
       const adaptation = planHarnessAdaptation(report.trials, scorecards, comparisons, challenger);
-      const result = { retestOf: taskId, challenger, scorecards, comparisons, adaptation, trials: report.trials, startedAt: report.startedAt };
+      const result = { retestOf: taskId, challenger, maxParallel: Math.max(1, Math.min(32, Math.floor(maxParallel))), protocol: arms, scorecards, comparisons, adaptation, trials: report.trials, startedAt: report.startedAt };
       retestStore.updateTask(taskId, "completed", result);
       retestStore.appendEvent("harness.benchmark.retest.completed", result);
       console.log(`Harness retest complete · task ${taskId}\n${scorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})`).join("\n")}`);
@@ -1750,12 +1750,12 @@ research
         .slice(-3)
         .map((event) => event.payload);
       const harnessBenchmarkEvidence = durableEvents
-        .filter((event) => event.type === "harness.benchmark.completed")
+        .filter((event) => event.type === "harness.benchmark.completed" || event.type === "harness.benchmark.retest.completed")
         .slice(-3)
         .map((event) => event.payload)
         .slice(-3);
       const latestHarnessBenchmarkEvent = durableEvents
-        .filter((event) => event.type === "harness.benchmark.completed")
+        .filter((event) => event.type === "harness.benchmark.completed" || event.type === "harness.benchmark.retest.completed")
         .at(-1);
       const latestHarnessBenchmark = harnessBenchmarkEvidence.at(-1) as { comparisons?: unknown } | undefined;
       const benchmarkRegression = Array.isArray(latestHarnessBenchmark?.comparisons)
