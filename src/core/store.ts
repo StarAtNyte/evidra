@@ -95,6 +95,7 @@ export class ResearchStore {
         previous_hash TEXT,
         event_hash TEXT
       );
+      CREATE INDEX IF NOT EXISTS idx_events_type_id ON events(type, id);
       CREATE TABLE IF NOT EXISTS event_chain_state (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         head_hash TEXT,
