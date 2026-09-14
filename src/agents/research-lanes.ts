@@ -310,6 +310,7 @@ export async function runResearchCritic(
       model: options.model,
       limitPolicy: options.limitPolicy,
       reasoningEffort: options.reasoningEffort,
+      timeoutMs: options.timeoutMs,
       cwd: options.cwd,
       sandbox: "read-only",
     }, options.provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
@@ -323,9 +324,16 @@ export async function runResearchCritic(
     evidenceStore.close();
     const review = normalizeResearchReview({ ...ResearchReviewSchema.parse(parseJson(result.output)), status: "completed" }, evidenceAnchors);
     const completed = new ResearchStore(options.storePath);
-    completed.appendEvent("research.critic.completed", { review, objective });
+    completed.appendEvent("research.critic.completed", {
+      review,
+      objective,
+      requestedProvider: options.provider,
+      requestedModel: options.model,
+      servedProvider: result.provider,
+      servedModel: result.model ?? options.model,
+    });
     const claimId = `claim_critic_${Date.now()}`;
-    completed.saveClaim({ id: claimId, payload: { id: claimId, statement: `[critic:${review.verdict}] ${review.summary}`, scope: "research decision review", confidence: review.confidence, sourceType: "review", sourceId: claimId, status: "active", objections: review.objections, requiredChecks: review.requiredChecks, evidence: review.evidence } });
+    completed.saveClaim({ id: claimId, payload: { id: claimId, statement: `[critic:${review.verdict}] ${review.summary}`, scope: "research decision review", confidence: review.confidence, sourceType: "review", sourceId: claimId, status: "active", objections: review.objections, requiredChecks: review.requiredChecks, evidence: review.evidence, servedProvider: result.provider, servedModel: result.model ?? options.model } });
     completed.updateAgentLane({ role: "critic", status: "idle", provider: options.provider, model: options.model, task: null, error: null });
     completed.close();
     return review;
