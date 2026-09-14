@@ -38,7 +38,7 @@ export class PiResearchAgent implements ResearchAgent {
         model,
         systemPrompt: `You are the ${task.role} for Evidra, an autonomous ML research system.\n\n` +
           "You must propose falsifiable work, respect experiment boundaries, and return concise evidence-oriented output.",
-        thinkingLevel: "high",
+        thinkingLevel: "medium",
       },
       streamFn: this.models.streamSimple.bind(this.models),
     });
