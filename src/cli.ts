@@ -301,6 +301,11 @@ async function waitForControllerDirective(onPause?: () => void, onResume?: () =>
 function acquireCliControllerLease(mode: "research" | "challenge"): () => void {
   const controllerId = `cli-${process.pid}-${Date.now()}`;
   const initial = new ResearchStore(statePath);
+  const integrity = initial.verifyEventChain();
+  if (integrity.status === "invalid") {
+    initial.close();
+    throw new Error(`Durable event history failed integrity verification at event ${integrity.brokenAt ?? "unknown"}: ${integrity.reason ?? "unknown integrity failure"}. Run 'evidra integrity events' and repair or restore the state before resuming autonomy.`);
+  }
   const acquired = initial.acquireControllerLease(controllerId, process.pid, mode, "starting");
   initial.close();
   if (!acquired.acquired) {
