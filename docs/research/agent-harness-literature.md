@@ -351,6 +351,12 @@ coverage, retrieval coverage, and claim-extraction coverage so the director can
 prioritize pending retrieval or weakly grounded sources instead of treating
 candidate count as research progress.
 
+The source tool now also supports an explicit `depth: "deep"` route. It issues
+up to three deterministic lexical probes, interleaves their results, deduplicates
+works, and records every probe in the durable frontier. The default remains one
+fast probe; deep search therefore spends extra network work only when the
+director requests progressive coverage.
+
 The Agentic Harness Engineering work frames harness improvement as an
 observability-driven evolution loop: freeze failures, measure them under fixed
 budgets, and let later harness versions target the observed failure classes.

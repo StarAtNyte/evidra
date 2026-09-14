@@ -6,7 +6,7 @@ import { runProcess, type ProcessControl } from "./process.js";
 import { splitCommandLine } from "./process.js";
 import { renderReport, writeReport, type ReportKind } from "./reports.js";
 import { createValidationPolicy, writeValidationPolicy } from "./validation-policy.js";
-import { DEFAULT_SOURCE_REFRESH_MS, retrieveSource, searchResearchRepositories, searchResearchSources, sourceClaims, sourceFrontier, sourceIsFresh } from "./sources.js";
+import { DEFAULT_SOURCE_REFRESH_MS, researchSearchQueries, retrieveSource, searchResearchRepositories, searchResearchSources, sourceClaims, sourceFrontier, sourceIsFresh } from "./sources.js";
 import { ResearchStore } from "./store.js";
 import type { CompetitionConfig } from "./types.js";
 import { isSensitiveWorkspacePath, redactSecrets } from "./redaction.js";
@@ -67,7 +67,7 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   // Retrieval writes only durable local evidence; it does not mutate the
   // workspace or perform an external action, so safe research may use it.
   { name: "source.retrieve", description: "Retrieve, hash, excerpt, and store a research source with extracted claims; reuse a fresh cached copy unless refresh is requested.", input: { url: "HTTP(S) URL", refresh: "optional boolean to bypass the fresh-source cache" }, readOnly: true },
-  { name: "source.search", description: "Search scholarly works and return ranked candidates for later retrieval.", input: { query: "research question or keywords", limit: "optional result count" }, readOnly: true },
+  { name: "source.search", description: "Search scholarly works and return ranked candidates for later retrieval; use deep depth for bounded progressive query probing.", input: { query: "research question or keywords", limit: "optional result count", depth: "optional shallow|deep" }, readOnly: true },
   { name: "repository.search", description: "Search public implementation repositories for reproducible method leads; repository metadata is not experimental evidence.", input: { query: "method, paper, or implementation keywords", limit: "optional result count" }, readOnly: true },
   { name: "data.audit", description: "Audit workspace files for size, duplicates, and suspicious data issues.", input: { path: "optional relative path" }, readOnly: true },
   { name: "artifact.audit", description: "Audit bounded research artifacts for safe containment, regular-file integrity, size, checksum, and optional JSON validity.", input: { paths: "relative artifact paths array", maxBytes: "optional per-file size limit" }, readOnly: true },
@@ -187,11 +187,12 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       case "source.search": {
         const query = stringArg(args, "query");
         const limit = typeof args.limit === "number" ? Math.max(1, Math.min(20, Math.floor(args.limit))) : 8;
+        const depth = args.depth === "deep" ? "deep" : "shallow";
         const searchStore = new ResearchStore(context.storePath);
         const cachedSearch = searchStore.recentEvents(2_000).reverse().find((event) => {
           if (event.type !== "research.source.search.completed") return false;
-          const payload = event.payload && typeof event.payload === "object" ? event.payload as { query?: unknown; results?: unknown } : {};
-          return payload.query === query && Array.isArray(payload.results) && Date.now() - Date.parse(event.createdAt) < DEFAULT_SOURCE_REFRESH_MS;
+          const payload = event.payload && typeof event.payload === "object" ? event.payload as { query?: unknown; depth?: unknown; results?: unknown } : {};
+          return payload.query === query && (depth === "shallow" || payload.depth === "deep") && Array.isArray(payload.results) && Date.now() - Date.parse(event.createdAt) < DEFAULT_SOURCE_REFRESH_MS;
         });
         if (cachedSearch) {
           const payload = cachedSearch.payload as { results: unknown[] };
@@ -202,9 +203,9 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
           break;
         }
         searchStore.close();
-        const results = await searchResearchSources(query, limit);
+        const results = await searchResearchSources(query, limit, undefined, depth);
         const store = new ResearchStore(context.storePath);
-        store.appendEvent("research.source.search.completed", { query, results, sources: [...new Set(results.map((result) => result.provider ?? "unknown"))] });
+        store.appendEvent("research.source.search.completed", { query, depth, queries: researchSearchQueries(query, depth), probes: depth === "deep" ? 3 : 1, results, sources: [...new Set(results.map((result) => result.provider ?? "unknown"))] });
         const frontier = sourceFrontier(store.recentEvents(2_000));
         store.close();
         output = { query, results, frontier: { uniqueWorks: frontier.uniqueWorks, retrievedWorks: frontier.retrievedWorks, pendingWorks: frontier.pendingWorks, queryCount: frontier.queryCount } };

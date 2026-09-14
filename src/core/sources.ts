@@ -21,6 +21,22 @@ export interface SourceSearchResult {
   abstract?: string;
 }
 
+export type SourceSearchDepth = "shallow" | "deep";
+
+/** Build bounded, deterministic probes for deep literature search. */
+export function researchSearchQueries(query: string, depth: SourceSearchDepth = "shallow"): string[] {
+  const normalized = query.trim().replace(/\s+/g, " ").slice(0, 300);
+  if (!normalized) return [];
+  if (depth === "shallow") return [normalized];
+  const terms = normalized.split(/\s+/).filter(Boolean);
+  const probes = [
+    normalized,
+    `${terms.slice(0, 8).join(" ")} methods evaluation`,
+    `${terms.slice(Math.max(0, terms.length - 8)).join(" ")} evidence replication`,
+  ];
+  return [...new Set(probes.map((probe) => probe.trim().slice(0, 300)).filter((probe) => probe.length >= 3))].slice(0, 3);
+}
+
 export interface RepositorySearchResult {
   name: string;
   url: string;
@@ -105,25 +121,36 @@ async function searchArxivSources(query: string, limit: number, signal?: AbortSi
 }
 
 /** Search scholarly works; retrieval and claim extraction remain a separate step. */
-export async function searchResearchSources(query: string, limit = 8, signal?: AbortSignal): Promise<SourceSearchResult[]> {
+export async function searchResearchSources(query: string, limit = 8, signal?: AbortSignal, depth: SourceSearchDepth = "shallow"): Promise<SourceSearchResult[]> {
   if (!query.trim()) throw new Error("Source search query must not be empty.");
-  const endpoint = new URL("https://api.openalex.org/works");
-  endpoint.searchParams.set("search", query.trim().slice(0, 300));
-  endpoint.searchParams.set("per-page", String(Math.max(1, Math.min(limit, 20))));
-  await assertPublicUrl(endpoint);
-  const timeoutSignal = AbortSignal.timeout(SOURCE_REQUEST_TIMEOUT_MS);
-  const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-  const openAlex = fetch(endpoint, { signal: requestSignal, headers: { "user-agent": "Evidra/0.1 research-workbench" } }).then(async (response) => {
-    if (!response.ok) throw new Error(`Source search failed (${response.status} ${response.statusText}).`);
-    return parseSourceSearchResults(await response.json(), limit);
+  const queries = researchSearchQueries(query, depth);
+  const searches = queries.map(async (probe) => {
+    const endpoint = new URL("https://api.openalex.org/works");
+    endpoint.searchParams.set("search", probe);
+    endpoint.searchParams.set("per-page", String(Math.max(1, Math.min(limit, 20))));
+    await assertPublicUrl(endpoint);
+    const timeoutSignal = AbortSignal.timeout(SOURCE_REQUEST_TIMEOUT_MS);
+    const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+    const openAlex = fetch(endpoint, { signal: requestSignal, headers: { "user-agent": "Evidra/0.1 research-workbench" } }).then(async (response) => {
+      if (!response.ok) throw new Error(`Source search failed (${response.status} ${response.statusText}).`);
+      return parseSourceSearchResults(await response.json(), limit);
+    });
+    const [openAlexResult, arxivResult] = await Promise.allSettled([openAlex, searchArxivSources(probe, limit, signal)]);
+    return [
+      ...(openAlexResult.status === "fulfilled" ? openAlexResult.value : []),
+      ...(arxivResult.status === "fulfilled" ? arxivResult.value : []),
+    ];
   });
-  const [openAlexResult, arxivResult] = await Promise.allSettled([openAlex, searchArxivSources(query, limit, signal)]);
-  const combined = [
-    ...(openAlexResult.status === "fulfilled" ? openAlexResult.value : []),
-    ...(arxivResult.status === "fulfilled" ? arxivResult.value : []),
-  ];
+  const results = await Promise.allSettled(searches);
+  // Interleave probes so a deep search cannot be dominated by the first
+  // formulation; this gives the frontier genuine breadth before truncation.
+  const batches = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+  const combined: SourceSearchResult[] = [];
+  for (let index = 0; index < Math.max(0, ...batches.map((batch) => batch.length)); index += 1) {
+    for (const batch of batches) if (batch[index]) combined.push(batch[index]);
+  }
   if (!combined.length) {
-    const failure = openAlexResult.status === "rejected" ? openAlexResult.reason : arxivResult.status === "rejected" ? arxivResult.reason : undefined;
+    const failure = results.find((result) => result.status === "rejected")?.reason;
     throw failure instanceof Error ? failure : new Error("Scholarly source search returned no candidates.");
   }
   const seen = new Set<string>();
@@ -353,7 +380,8 @@ export function sourceFrontier(events: Array<{ type: string; payload: unknown }>
     const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
     if (event.type === "research.source.search.completed") {
       const query = typeof payload.query === "string" ? payload.query.trim() : "";
-      if (query) queries.add(query.toLowerCase());
+      const eventQueries = Array.isArray(payload.queries) ? payload.queries.filter((value): value is string => typeof value === "string" && value.trim().length > 0) : [];
+      for (const eventQuery of (eventQueries.length ? eventQueries : query ? [query] : [])) queries.add(eventQuery.toLowerCase());
       const results = Array.isArray(payload.results) ? payload.results : [];
       for (const value of results) {
         if (!value || typeof value !== "object") continue;
@@ -370,7 +398,7 @@ export function sourceFrontier(events: Array<{ type: string; payload: unknown }>
           authors: prior?.authors?.length ? prior.authors : Array.isArray(result.authors) ? result.authors.filter((author): author is string => typeof author === "string").slice(0, 8) : [],
           ...(prior?.abstract ?? result.abstract ? { abstract: prior?.abstract ?? result.abstract } : {}),
           key,
-          queries: [...new Set([...(prior?.queries ?? []), ...(query ? [query] : [])])].slice(0, 12),
+          queries: [...new Set([...(prior?.queries ?? []), ...(eventQueries.length ? eventQueries : query ? [query] : [])])].slice(0, 12),
           retrieved: prior?.retrieved ?? false,
         });
       }

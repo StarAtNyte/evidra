@@ -9,7 +9,7 @@ import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../di
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
-import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseRepositorySearchResults, parseSourceSearchResults, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
+import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseRepositorySearchResults, parseSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
@@ -1753,6 +1753,15 @@ test("arXiv search parsing preserves primary paper metadata", () => {
   assert.match(parsed[0].abstract, /improves robust validation/);
 });
 
+test("deep literature search creates bounded deterministic progressive probes", () => {
+  assert.deepEqual(researchSearchQueries("agent harness validation", "shallow"), ["agent harness validation"]);
+  const probes = researchSearchQueries("agent harness validation benchmark reproducibility experiments", "deep");
+  assert.equal(probes.length, 3);
+  assert.equal(new Set(probes).size, probes.length);
+  assert.ok(probes.every((probe) => probe.length <= 300));
+  assert.deepEqual(probes, researchSearchQueries("agent harness validation benchmark reproducibility experiments", "deep"));
+});
+
 test("repository search parsing preserves implementation leads without trusting metadata", () => {
   const parsed = parseRepositorySearchResults({ items: [{ full_name: "research/method", html_url: "https://github.com/research/method", description: "Reference implementation", stargazers_count: 12, updated_at: "2026-01-01T00:00:00Z", language: "Python" }, { full_name: "unsafe", html_url: "http://example.org/unsafe" }] }, 4);
   assert.equal(parsed.length, 1);
@@ -1777,6 +1786,15 @@ test("literature search frontier deduplicates works and reports retrieval covera
   assert.equal(report.retrievedWithClaims, 1);
   assert.equal(report.claimCoverage, 1);
   assert.deepEqual(report.candidates.find((candidate) => candidate.key === "10.1/a")?.queries, ["agent harness", "scientific harness"]);
+});
+
+test("literature frontier accounts for deep-search probes", () => {
+  const report = sourceFrontier([
+    { type: "research.source.search.completed", payload: { query: "agent harness", queries: ["agent harness", "agent harness evaluation", "harness evaluation"], depth: "deep", results: [{ title: "Paper", url: "https://example.org/paper", authors: [] }] } },
+  ]);
+  assert.equal(report.queryCount, 3);
+  assert.equal(report.queriesWithCandidates, 3);
+  assert.equal(report.queryCoverage, 1);
 });
 
 test("tool source retrieval preserves the SSRF safety boundary", async () => {
