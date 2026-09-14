@@ -192,6 +192,18 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
 function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metricName: string, remote = false): RunResult {
   const parsed = parseMetricOutput(result.stdout, metricName);
   const matrix = parseEvaluationMatrix(result.stdout, metricName);
+  const metrics = { ...parsed.metrics };
+  const matrixValues = matrix.map((cell) => cell.metrics[metricName]).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (metrics[metricName] === undefined && matrixValues.length) metrics[metricName] = matrixValues.reduce((sum, value) => sum + value, 0) / matrixValues.length;
+  const metricsByFold = { ...parsed.metricsByFold };
+  if (metricsByFold[metricName] === undefined && matrixValues.length) {
+    const byFold = new Map<number, number[]>();
+    for (const cell of matrix) {
+      const value = cell.metrics[metricName];
+      if (typeof value === "number" && Number.isFinite(value)) byFold.set(cell.fold, [...(byFold.get(cell.fold) ?? []), value]);
+    }
+    metricsByFold[metricName] = [...byFold.entries()].sort(([left], [right]) => left - right).flatMap(([, values]) => values);
+  }
   const learningCurve = parseLearningCurve(result.stdout, metricName);
   const artifacts: Record<string, string> = {};
   const missing: string[] = [];
@@ -211,8 +223,8 @@ function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metric
     status: result.exitCode === 0 && !artifactFailure ? "completed" : "failed",
     exitCode: artifactFailure ? 65 : result.exitCode,
     durationSeconds: result.durationMs / 1000,
-    metrics: parsed.metrics,
-    metricsByFold: parsed.metricsByFold,
+    metrics,
+    metricsByFold,
     learningCurve,
     subgroupDeltas: parsed.subgroupDeltas,
     ...(matrix.length ? { matrix } : {}),
