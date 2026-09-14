@@ -633,6 +633,7 @@ benchmark.command("run")
       suite: "generic",
       workspace: benchmarkWorkspace,
       maxParallel,
+      protocolFingerprint: report.protocolFingerprint,
       protocol: arms,
       componentSnapshot: inventoryHarnessComponents(benchmarkWorkspace).map((component) => ({ path: component.path, checksum: component.checksum })),
       challenger: options.challenger,
@@ -685,7 +686,7 @@ benchmark.command("retest")
     if (!queued) { retestStore.close(); throw new Error(`Harness retest task '${taskId}' was not found.`); }
     const claimed = retestStore.claimTask(taskId, ["harness.retest"]);
     if (!claimed) { retestStore.close(); throw new Error(`Harness retest task '${taskId}' is not available; another controller may own it.`); }
-    const payload = claimed.payload && typeof claimed.payload === "object" ? claimed.payload as { challenger?: unknown; benchmarkProtocol?: unknown; baselineComponents?: Array<{ path: string; checksum: string }>; benchmarkEvidence?: { protocol?: unknown; maxParallel?: unknown; change?: unknown } } : {};
+    const payload = claimed.payload && typeof claimed.payload === "object" ? claimed.payload as { challenger?: unknown; benchmarkProtocol?: unknown; baselineComponents?: Array<{ path: string; checksum: string }>; benchmarkEvidence?: { protocol?: unknown; protocolFingerprint?: unknown; maxParallel?: unknown; change?: unknown } } : {};
     const rawProtocol = Array.isArray(payload.benchmarkProtocol) ? payload.benchmarkProtocol : payload.benchmarkEvidence && Array.isArray(payload.benchmarkEvidence.protocol) ? payload.benchmarkEvidence.protocol : undefined;
     const challenger = typeof payload.challenger === "string" ? payload.challenger : "evidra";
     if (!rawProtocol?.length) {
@@ -721,6 +722,9 @@ benchmark.command("retest")
       const originalParallel = payload.benchmarkEvidence?.maxParallel;
       const maxParallel = typeof originalParallel === "number" && Number.isFinite(originalParallel) ? originalParallel : 1;
       const report = await runBenchmarkArms(arms, benchmarkWorkspace, (message) => console.log(`· ${message}`), { maxParallel: Math.max(1, Math.min(32, Math.floor(maxParallel))) });
+      if (typeof payload.benchmarkEvidence?.protocolFingerprint === "string" && report.protocolFingerprint !== payload.benchmarkEvidence.protocolFingerprint) {
+        throw new Error(`Retest rejected: stored protocol fingerprint ${payload.benchmarkEvidence.protocolFingerprint} does not match current ${report.protocolFingerprint}.`);
+      }
       const matched = validateBenchmarkProtocol(report.trials);
       if (!matched.valid) throw new Error(`Retest results are not matched:\n${matched.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
       const scorecards = scoreHarnessTrials(report.trials);
@@ -734,7 +738,7 @@ benchmark.command("retest")
       const changeOutcomes = validChange
         ? comparisons.map((comparison) => ({ incumbent: comparison.incumbent, outcome: evaluateHarnessChange(validChange, { baselineScore: validChange.baselineScore, candidateScore: comparison.pairedMeanDelta === null ? undefined : (validChange.baselineScore ?? 0) + comparison.pairedMeanDelta, valid: comparison.validPairedArms > 0 && comparison.pairedLower95 !== null }) }))
         : undefined;
-      const result = { retestOf: taskId, challenger, maxParallel: Math.max(1, Math.min(32, Math.floor(maxParallel))), protocol: arms, changePresence: assessHarnessChangePresence(payload.baselineComponents, inventoryHarnessComponents(benchmarkWorkspace), targetComponentIds), scorecards, comparisons, adaptation, ...(validChange ? { change: validChange } : {}), ...(changeOutcomes ? { changeOutcomes } : {}), trials: report.trials, startedAt: report.startedAt };
+      const result = { retestOf: taskId, challenger, maxParallel: Math.max(1, Math.min(32, Math.floor(maxParallel))), protocolFingerprint: report.protocolFingerprint, protocol: arms, changePresence: assessHarnessChangePresence(payload.baselineComponents, inventoryHarnessComponents(benchmarkWorkspace), targetComponentIds), scorecards, comparisons, adaptation, ...(validChange ? { change: validChange } : {}), ...(changeOutcomes ? { changeOutcomes } : {}), trials: report.trials, startedAt: report.startedAt };
       retestStore.updateTask(taskId, "completed", result);
       retestStore.appendEvent("harness.benchmark.retest.completed", result);
       console.log(`Harness retest complete · task ${taskId}\n${scorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})`).join("\n")}`);

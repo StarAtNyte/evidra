@@ -3281,6 +3281,12 @@ test("benchmark runner executes matched arms and records evaluator-backed metric
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("benchmark protocol fingerprints ignore harness commands but detect fairness changes", () => {
+  const base = { harness: "a", task: "task", arm: "default", seed: 1, model: "gpt-5.6-luna", budgetMinutes: 10, direction: "maximize", baselineMetric: 0.5, metric: "score", command: ["run-a"] };
+  assert.equal(benchmarkProtocolFingerprint([base]), benchmarkProtocolFingerprint([{ ...base, harness: "b", command: ["run-b"] }]));
+  assert.notEqual(benchmarkProtocolFingerprint([base]), benchmarkProtocolFingerprint([{ ...base, reasoningEffort: "high" }]));
+});
+
 test("benchmark runner bounds parallel arms while preserving protocol order", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-parallel-"));
   try {
