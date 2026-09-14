@@ -2334,6 +2334,7 @@ research
           const replication = createReplicationManifest(parentManifest.data, adapter.config);
           const replicationSetupStore = new ResearchStore(statePath);
           replicationSetupStore.saveExperiment({ id: replication.id, payload: { ...replication, status: "proposed", replicationOf: experimentId, automatic: true, executionPlan: createExecutionPlan(replication) } });
+          replicationSetupStore.saveEdge({ id: `edge_${replication.id}_${experimentId}`, fromId: replication.id, toId: experimentId, relation: "replicates", confidence: 1, evidenceIds: [] });
           replicationSetupStore.appendEvent("replication.manifest.created", { parentId: experimentId, replicationId: replication.id, automatic: true });
           console.log(`Independent replication scheduled: ${replication.id}\n${manifestSummary(replication)}`);
           replicationSetupStore.close();

@@ -1337,6 +1337,16 @@ test("replication manifests preserve provenance while changing the independent s
   assert.equal(child.acceptance.requireReplication, false);
 });
 
+test("replication lineage is represented explicitly in the research graph", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-replication-lineage-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.saveEdge({ id: "edge-child-parent", fromId: "exp-child", toId: "exp-parent", relation: "replicates", confidence: 1, evidenceIds: [] });
+    assert.equal(store.edges().find((edge) => edge.id === "edge-child-parent")?.relation, "replicates");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("generic experiment manifests do not assume ML-specific artifacts", () => {
   const manifest = createExperimentManifest({ id: "generic", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "workspace" }, {
     id: "general", name: "General", taskType: "scientific", datasetRevision: "workspace",
