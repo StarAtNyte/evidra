@@ -322,7 +322,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
         options.onProgress?.(`Research lane · ${role} · ${call.name}...`);
         const callId = options.onToolCall?.(`lane:${role}`, call) ?? `${role}-${call.name}-${toolResults.length + 1}`;
-        let result: ResearchToolResult = { name: call.name, ok: false, error: "Tool did not return a result." };
+        let result: ResearchToolResult = { name: call.name, ok: false, error: "Tool did not return a result.", trust: "permission_boundary" };
         for (let attempt = 1; attempt <= 2; attempt += 1) {
           try {
             result = boundLaneToolResult(await options.executeTool(call));

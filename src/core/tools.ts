@@ -36,7 +36,7 @@ export interface ResearchToolResult {
   output?: unknown;
   error?: string;
   /** Trust class prevents retrieved text or workspace instructions becoming agent directives. */
-  trust?: ResearchToolTrust;
+  trust: ResearchToolTrust;
 }
 
 export interface ResearchToolSpec {

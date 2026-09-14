@@ -314,8 +314,8 @@ test("exhausted research-agent failures close a resumable failed trajectory", ()
 
 test("tool trace recorder preserves causal call/result pairs and redacts secrets", () => {
   const trace = createToolTraceRecorder("smoke");
-  const callId = trace.onToolCall("director", { name: "workspace.search", arguments: { token: "sk-test_12345678901234567890" } });
-  trace.onToolResult("director", callId, { name: "workspace.search", ok: true, output: { value: "token=sk-test_12345678901234567890" } });
+    const callId = trace.onToolCall("director", { name: "workspace.search", arguments: { token: "sk-test_12345678901234567890" } });
+  trace.onToolResult("director", callId, { name: "workspace.search", ok: true, output: { value: "token=sk-test_12345678901234567890" }, trust: "untrusted_content" });
   trace.events.push({ id: "terminal", kind: "terminal", payload: { status: "completed" } });
   assert.equal(validateTrajectoryStructure(trace.events).status, "complete");
   assert.equal(trace.events[1].payload.output.value, "token=[REDACTED]");
