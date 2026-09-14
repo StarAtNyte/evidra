@@ -2026,7 +2026,7 @@ research
       // emitted more than 100 research/tool events. The event store is bounded
       // at a much larger durable horizon, so do not accidentally rerun a
       // 20-minute baseline just because it moved outside a short UI window.
-      const priorBaseline = mode === "challenge" ? store.recentEvents(5_000).reverse().find((event) => event.type === "baseline.completed") : undefined;
+      const priorBaseline = mode === "challenge" ? store.eventsByType("baseline.completed").at(-1) : undefined;
       let baseline: { command: string[]; cwd: string; exitCode: number; durationMs: number; stdout: string; stderr: string } | undefined;
       if (mode === "challenge" && options.skipBaseline && priorBaseline) {
         const payload = priorBaseline.payload as { command?: string[]; cwd?: string; exitCode?: number; durationMs?: number; stdout?: string; stderr?: string };
@@ -2427,7 +2427,7 @@ research
       const finalizeAutonomousRun = async (experimentId: string, run: { exitCode: number; stdout: string; stderr: string }): Promise<void> => {
         const completionStore = new ResearchStore(statePath);
         completionStore.appendEvent(run.exitCode === 0 ? "experiment.autonomous.completed" : "experiment.autonomous.failed", { experimentId, exitCode: run.exitCode, stdout: run.stdout.slice(-4000), stderr: run.stderr.slice(-4000) });
-        const comparisonEvent = completionStore.recentEvents(500).reverse().find((event) => event.type === "experiment.comparison.completed" && (event.payload as { experimentId?: unknown }).experimentId === experimentId);
+        const comparisonEvent = completionStore.eventsByType("experiment.comparison.completed").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === experimentId);
         const comparison = comparisonEvent?.payload as { comparison?: { direction?: string } } | undefined;
         const parent = completionStore.experiments().find((entry) => entry.id === experimentId);
         const parentManifest = parent ? ExperimentManifestSchema.safeParse(parent.payload) : undefined;
@@ -2508,7 +2508,7 @@ research
           const replicationRun = await runCampaignExperiment(root, replication.id, "all", campaignRemainingMs(campaign));
           const replicationStore = new ResearchStore(statePath);
           replicationStore.appendEvent(replicationRun.exitCode === 0 ? "experiment.autonomous.replication.completed" : "experiment.autonomous.replication.failed", { parentId: experimentId, replicationId: replication.id, exitCode: replicationRun.exitCode, stdout: replicationRun.stdout.slice(-4000), stderr: replicationRun.stderr.slice(-4000) });
-          const replicationComparisonEvent = replicationStore.recentEvents(500).reverse().find((event) => event.type === "experiment.comparison.completed" && (event.payload as { experimentId?: unknown }).experimentId === replication.id);
+          const replicationComparisonEvent = replicationStore.eventsByType("experiment.comparison.completed").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === replication.id);
           const replicationComparison = replicationComparisonEvent?.payload as { comparison?: { direction?: unknown } } | undefined;
           const replicationHypothesisPayload = parentManifest.data.hypothesisId
             ? replicationStore.hypotheses().find((entry) => entry.id === parentManifest.data.hypothesisId)?.payload as { title?: unknown; formulationFamily?: unknown; mechanism?: unknown; proposedChange?: unknown } | undefined
@@ -2601,7 +2601,7 @@ research
               if (halvingEnabled) {
                 run = await runCampaignExperiment(root, experimentId, "reduced", campaignRemainingMs(campaign));
                 const screenStore = new ResearchStore(statePath);
-                const screenEvent = screenStore.recentEvents(500).reverse().find((event) => event.type === "experiment.screening.completed" && (event.payload as { experimentId?: unknown }).experimentId === experimentId);
+                const screenEvent = screenStore.eventsByType("experiment.screening.completed").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === experimentId);
                 const screenPayload = screenEvent?.payload as { metric?: unknown } | undefined;
                 const metric = typeof screenPayload?.metric === "number" && Number.isFinite(screenPayload.metric) ? screenPayload.metric : undefined;
                 screenedCandidates.push({ experimentId, metric, valid: run.exitCode === 0 && metric !== undefined });
@@ -2638,7 +2638,7 @@ research
         }
       }
       if (portfolioPlan.evolution.enabled && executedPortfolioExperiments.length) {
-        const evolutionEvents = decisionStore.recentEvents(2_000);
+        const evolutionEvents = decisionStore.eventsByType("experiment.comparison.completed");
         const evaluations = executedPortfolioExperiments.map(({ candidateId, experimentId }) => {
           const comparisonEvent = evolutionEvents.slice().reverse().find((event) => event.type === "experiment.comparison.completed" && (event.payload as { experimentId?: unknown }).experimentId === experimentId);
           const comparison = comparisonEvent?.payload as { comparison?: { candidate?: unknown; evidence?: unknown } } | undefined;
@@ -3215,7 +3215,7 @@ experiment.command("run")
     resultStore.appendEvent("research.experience.recorded", { experience: experimentExperience, capabilityProfile: capabilityProfile([...priorExperiences, experimentExperience]), curriculum: selectCurriculum([...priorExperiences, experimentExperience]), source: "experiment" });
     if (experimentQuality.overall !== "PASS") resultStore.appendEvent("trajectory.capability_gaps", { trajectoryId: `trajectory_${result.runId}`, gaps: Object.entries(experimentQuality).filter(([key, value]) => key !== "overall" && (value as { verdict: string }).verdict !== "PASS").map(([key, value]) => ({ dimension: key, verdict: (value as { verdict: string }).verdict, evidence: (value as { evidence: string[] }).evidence })) });
     if (recorded.status === "completed") {
-      const baselineEvent = resultStore.recentEvents(500).reverse().find((event) => event.type === "baseline.completed");
+      const baselineEvent = resultStore.eventsByType("baseline.completed").at(-1);
       const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string; stderr?: string; durationMs?: number; command?: string[]; cwd?: string } | undefined;
       const metricName = adapter.config.metric.name;
       const parsedBaseline = baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, metricName) : { metrics: {} as Record<string, number>, metricsByFold: {} as Record<string, number[]>, subgroupDeltas: [] };

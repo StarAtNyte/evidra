@@ -14,6 +14,12 @@ import { readValidationPolicyLock } from "./validation-lock.js";
 import { sha256File } from "./evidence.js";
 import { analyzePredictionRows, parsePredictionRows } from "./error-analysis.js";
 
+const SOURCE_FRONTIER_EVENT_TYPES = [
+  "research.source.search.completed",
+  "research.web.search.completed",
+  "research.source.retrieved",
+] as const;
+
 export interface ResearchToolContext {
   root: string;
   storePath: string;
@@ -228,14 +234,13 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         const limit = typeof args.limit === "number" ? Math.max(1, Math.min(20, Math.floor(args.limit))) : 8;
         const depth = args.depth === "deep" ? "deep" : "shallow";
         const searchStore = new ResearchStore(context.storePath);
-        const cachedSearch = searchStore.recentEvents(2_000).reverse().find((event) => {
-          if (event.type !== "research.source.search.completed") return false;
+        const cachedSearch = searchStore.eventsByType("research.source.search.completed").reverse().find((event) => {
           const payload = event.payload && typeof event.payload === "object" ? event.payload as { query?: unknown; depth?: unknown; results?: unknown } : {};
           return payload.query === query && (depth === "shallow" || payload.depth === "deep") && Array.isArray(payload.results) && Date.now() - Date.parse(event.createdAt) < DEFAULT_SOURCE_REFRESH_MS;
         });
         if (cachedSearch) {
           const payload = cachedSearch.payload as { results: unknown[] };
-          const frontier = sourceFrontier(searchStore.recentEvents(2_000));
+          const frontier = sourceFrontier(searchStore.eventsByTypes([...SOURCE_FRONTIER_EVENT_TYPES]));
           searchStore.appendEvent("research.source.search.cache_hit", { query, resultCount: payload.results.length, freshnessMs: DEFAULT_SOURCE_REFRESH_MS });
           searchStore.close();
           output = { query, results: payload.results.slice(0, limit), cached: true, frontier: { uniqueWorks: frontier.uniqueWorks, retrievedWorks: frontier.retrievedWorks, pendingWorks: frontier.pendingWorks, queryCount: frontier.queryCount } };
@@ -245,7 +250,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         const results = await searchResearchSources(query, limit, undefined, depth);
         const store = new ResearchStore(context.storePath);
         store.appendEvent("research.source.search.completed", { query, depth, queries: researchSearchQueries(query, depth), probes: depth === "deep" ? 3 : 1, results, sources: [...new Set(results.map((result) => result.provider ?? "unknown"))] });
-        const frontier = sourceFrontier(store.recentEvents(2_000));
+        const frontier = sourceFrontier(store.eventsByTypes([...SOURCE_FRONTIER_EVENT_TYPES]));
         store.close();
         output = { query, results, frontier: { uniqueWorks: frontier.uniqueWorks, retrievedWorks: frontier.retrievedWorks, pendingWorks: frontier.pendingWorks, queryCount: frontier.queryCount } };
         break;
@@ -265,8 +270,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         const query = stringArg(args, "query");
         const limit = typeof args.limit === "number" ? Math.max(1, Math.min(20, Math.floor(args.limit))) : 8;
         const repositoryStore = new ResearchStore(context.storePath);
-        const cachedSearch = repositoryStore.recentEvents(2_000).reverse().find((event) => {
-          if (event.type !== "research.repository.search.completed") return false;
+        const cachedSearch = repositoryStore.eventsByType("research.repository.search.completed").reverse().find((event) => {
           const payload = event.payload && typeof event.payload === "object" ? event.payload as { query?: unknown; results?: unknown } : {};
           return payload.query === query && Array.isArray(payload.results) && Date.now() - Date.parse(event.createdAt) < DEFAULT_SOURCE_REFRESH_MS;
         });
