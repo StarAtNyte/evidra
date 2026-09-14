@@ -110,6 +110,7 @@ import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearch
 import { planPortfolio } from "../dist/core/portfolio.js";
 import { advanceEvolutionaryGeneration, planEvolutionaryIslands } from "../dist/core/evolution.js";
 import { literatureWorkKey, parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "../dist/core/literature-bench.js";
+import { parseAutoResearchBenchEvaluation, parseAutoResearchBenchInput } from "../dist/core/autoresearch-bench.js";
 import { planSuccessiveHalving, promoteHalvingStage } from "../dist/core/successive-halving.js";
 import { estimateCost } from "../dist/core/cost-model.js";
 import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
@@ -1783,6 +1784,22 @@ test("literature benchmark input validation rejects malformed or orphaned observ
   assert.throws(() => parseLiteratureBenchmarkInput({ tasks: [{ id: "x", kind: "deep", requiredWorks: [], queryBudget: 1 }], observations: [] }), /at least 1/);
   assert.throws(() => parseLiteratureBenchmarkInput({ tasks: [{ id: "x", kind: "deep", requiredWorks: ["doi:1/x"], queryBudget: 1 }, { id: "x", kind: "wide", requiredWorks: ["doi:1/y"], queryBudget: 1 }], observations: [] }), /duplicate task/);
   assert.throws(() => parseLiteratureBenchmarkInput({ tasks: [{ id: "x", kind: "deep", requiredWorks: ["doi:1/x"], queryBudget: 1 }], observations: [{ taskId: "missing", queries: 1, candidates: [] }] }), /unknown task/);
+});
+
+test("AutoResearchBench adapter parses official task JSONL and deep evaluation summaries", () => {
+  const tasks = parseAutoResearchBenchInput(JSON.stringify({ question: "find the paper", type: "deep", answer: ["Target paper"], arxiv_id: ["2601.12345"] }));
+  assert.deepEqual(tasks[0], { question: "find the paper", type: "deep", answer: ["Target paper"], arxivId: ["2601.12345"] });
+  const report = parseAutoResearchBenchEvaluation({ summary: { total_items: 4, k: 2, overall_metrics: { Accuracy_at_1: "25.00%", pass_at_2: "50.00%" } } });
+  assert.equal(report.source, "deep");
+  assert.equal(report.records, 4);
+  assert.equal(report.metrics.Accuracy_at_1, 0.25);
+});
+
+test("AutoResearchBench adapter parses official wide aggregate summaries and rejects unknown formats", () => {
+  const report = parseAutoResearchBenchEvaluation({ aggregate_stats: { total_records: 3, avg_iou: 0.4, avg_recall: 0.6 } });
+  assert.equal(report.source, "wide");
+  assert.equal(report.metrics.avg_iou, 0.4);
+  assert.throws(() => parseAutoResearchBenchEvaluation({ nope: true }), /Unrecognized AutoResearchBench/);
 });
 
 test("repository search parsing preserves implementation leads without trusting metadata", () => {

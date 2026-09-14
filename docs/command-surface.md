@@ -51,6 +51,7 @@ An explicit autonomous campaign owns the full local loop: research lanes, implem
 /challenge status             Show challenge campaign state
 
 /benchmark literature-score <file>  Score deep/wide literature discovery and grounding
+/benchmark autoresearch <file>     Import official AutoResearchBench deep/wide evaluation JSON
 
 The same command is available in the full-screen TUI through `/` completion.
 Its JSON input is schema-validated before any benchmark result is persisted.

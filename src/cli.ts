@@ -14,6 +14,7 @@ import { estimateDistributionBeliefs, type ExternalValidationObservation } from 
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "./core/execution-stages.js";
 import { retrieveSource, searchResearchSources, sourceClaims, sourceFrontier, sourceSearchText, sourceIsFresh } from "./core/sources.js";
 import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "./core/literature-bench.js";
+import { parseAutoResearchBenchEvaluation } from "./core/autoresearch-bench.js";
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
 import { pollSubmissionScore, submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
@@ -646,6 +647,25 @@ benchmark.command("literature-score")
     console.log(`Query efficiency  ${report.meanQueryEfficiency === null ? "n/a" : report.meanQueryEfficiency.toFixed(3)}`);
     for (const task of report.tasks) if (task.reasons.length) console.log(`- ${task.taskId}: ${task.reasons.join("; ")}`);
     if (!report.valid) process.exitCode = 2;
+  });
+benchmark.command("autoresearch")
+  .argument("<file>", "official AutoResearchBench evaluation JSON produced by its evaluator")
+  .option("--json", "emit machine-readable summary")
+  .description("Import an official AutoResearchBench deep or wide evaluation result")
+  .action((file: string, options: { json?: boolean }) => {
+    const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
+    const report = parseAutoResearchBenchEvaluation(parsed);
+    const store = new ResearchStore(statePath);
+    store.appendEvent("literature.autoresearchbench.completed", { source: resolve(file), report });
+    store.close();
+    if (options.json) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(`AutoResearchBench · ${report.source.toUpperCase()} · ${report.records} records`);
+    if (report.passes !== undefined) console.log(`Passes            ${report.passes}`);
+    for (const [name, score] of Object.entries(report.metrics)) console.log(`${name.padEnd(20)} ${score < 1 ? score.toFixed(4) : score.toFixed(2)}`);
+    console.log("Imported as diagnostic benchmark evidence; it does not replace workspace evaluator proof.");
   });
 benchmark.command("compare")
   .argument("<file>", "JSON file containing a trial array or { trials: [...] }")

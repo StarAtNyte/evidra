@@ -57,6 +57,7 @@ import { enforceClaimTermination, enforceGoalTermination } from "../core/termina
 import { auditClaims, selfDescribingClaimEvidenceIds } from "../core/claim-audit.js";
 import { summarizeUsage } from "../core/usage.js";
 import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "../core/literature-bench.js";
+import { parseAutoResearchBenchEvaluation } from "../core/autoresearch-bench.js";
 import { assessResearchDecisionRubric } from "../core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../core/validation-lock.js";
 import { deriveAdaptiveHarnessPolicy } from "../core/adaptive-harness.js";
@@ -170,7 +171,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge steer ", "Guide the active campaign at the next safe boundary"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
   "/sources": [["/sources list", "List retrieved sources"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources discover", "Search scholarly literature"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
-  "/benchmark": [["/benchmark literature-score ", "Score deep/wide literature discovery"]],
+  "/benchmark": [["/benchmark literature-score ", "Score Evidra literature discovery"], ["/benchmark autoresearch ", "Import official AutoResearchBench evaluation"]],
   "/evidence": [["/evidence audit", "Audit claim provenance and completion blockers"], ["/evidence analyze", "Analyze prediction errors and worst groups"]],
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
@@ -2205,6 +2206,19 @@ export function App({ root }: { root: string }): React.JSX.Element {
         store.appendEvent("literature.benchmark.completed", { source: resolve(root, file), report });
         store.close();
         append("assistant", `Literature benchmark · ${report.valid ? "VALID" : "INCOMPLETE"}\nMean score: ${report.meanScore === null ? "n/a" : report.meanScore.toFixed(3)}\nDeep recall: ${report.deepRecall === null ? "n/a" : `${(report.deepRecall * 100).toFixed(1)}%`}\nWide recall: ${report.wideRecall === null ? "n/a" : `${(report.wideRecall * 100).toFixed(1)}%`}\nGrounding: ${report.meanGroundingRate === null ? "n/a" : `${(report.meanGroundingRate * 100).toFixed(1)}%`}\nQuery efficiency: ${report.meanQueryEfficiency === null ? "n/a" : report.meanQueryEfficiency.toFixed(3)}${report.tasks.some((task) => task.reasons.length) ? `\n\n${report.tasks.filter((task) => task.reasons.length).map((task) => `- ${task.taskId}: ${task.reasons.join("; ")}`).join("\n")}` : ""}`);
+      } catch (error) { appendError(error); }
+      return;
+    }
+    if (request.startsWith("/benchmark autoresearch")) {
+      const file = request.replace(/^\/benchmark autoresearch\s*/, "").trim();
+      if (!file) { append("assistant", "Usage: /benchmark autoresearch <evaluation-json>"); return; }
+      try {
+        const parsed: unknown = JSON.parse(readFileSync(resolve(root, file), "utf8"));
+        const report = parseAutoResearchBenchEvaluation(parsed);
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        store.appendEvent("literature.autoresearchbench.completed", { source: resolve(root, file), report });
+        store.close();
+        append("assistant", `AutoResearchBench · ${report.source.toUpperCase()} · ${report.records} records\n${Object.entries(report.metrics).map(([name, score]) => `${name}: ${score < 1 ? score.toFixed(4) : score.toFixed(2)}`).join("\n")}\n\nImported as diagnostic benchmark evidence; it does not replace workspace evaluator proof.`);
       } catch (error) { appendError(error); }
       return;
     }
