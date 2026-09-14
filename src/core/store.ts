@@ -386,6 +386,18 @@ export class ResearchStore {
     return rows.reverse().map((row) => ({ type: row.type, payload: JSON.parse(row.payload_json), createdAt: row.created_at, eventHash: row.event_hash }));
   }
 
+  /**
+   * Read the durable history for one event family. This is intentionally
+   * separate from recentEvents(): bounded UI timelines must not be used for
+   * correctness decisions such as validation ratchets or recovery.
+   */
+  eventsByType(type: string, limit?: number): Array<{ type: string; payload: unknown; createdAt: string; eventHash?: string | null }> {
+    const rows = limit === undefined
+      ? this.db.prepare("SELECT type, payload_json, created_at, event_hash FROM events WHERE type = ? ORDER BY id ASC").all(type)
+      : this.db.prepare("SELECT type, payload_json, created_at, event_hash FROM events WHERE type = ? ORDER BY id DESC LIMIT ?").all(type, Math.max(1, Math.floor(limit))).reverse();
+    return (rows as Array<{ type: string; payload_json: string; created_at: string; event_hash: string | null }>).map((row) => ({ type: row.type, payload: JSON.parse(row.payload_json), createdAt: row.created_at, eventHash: row.event_hash }));
+  }
+
   saveExperiment(experiment: { id: string; payload: unknown }): void {
     const existing = this.db.prepare("SELECT 1 AS present FROM experiments WHERE id = ?").get(experiment.id) as { present: number } | undefined;
     const now = new Date().toISOString();

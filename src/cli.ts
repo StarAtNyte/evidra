@@ -2492,7 +2492,7 @@ research
             ? replicationStore.hypotheses().find((entry) => entry.id === parentManifest.data.hypothesisId)?.payload as { title?: unknown; formulationFamily?: unknown; mechanism?: unknown; proposedChange?: unknown } | undefined
             : undefined;
           if (replicationRun.exitCode === 0 && replicationComparison?.comparison?.direction === "improved" && replicationHypothesisPayload && ablationEvidence.complete) {
-            const priorAssessmentEvent = replicationStore.recentEvents(2_000).reverse().find((event) => event.type === "experiment.validation.assessed" && (event.payload as { experimentId?: unknown }).experimentId === experimentId);
+            const priorAssessmentEvent = replicationStore.eventsByType("experiment.validation.assessed").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === experimentId);
             const priorAssessment = priorAssessmentEvent?.payload as { experimentId?: string; acceptance?: import("./core/validation-engine.js").ValidationAcceptance } | undefined;
             if (priorAssessment?.acceptance) {
               const acceptance = applyIndependentReplicationEvidence(priorAssessment.acceptance, true);
@@ -3216,8 +3216,7 @@ experiment.command("run")
           cwd: baselinePayload?.cwd,
         };
         const comparison = compareRuns(baselineRun, RunResultSchema.parse(recorded), metricName, adapter.config.metric.direction === "minimize");
-        const acceptedExperimentIds = new Set(resultStore.recentEvents(2_000)
-          .filter((event) => event.type === "experiment.validation.assessed")
+        const acceptedExperimentIds = new Set(resultStore.eventsByType("experiment.validation.assessed")
           .filter((event) => Boolean((event.payload as { acceptance?: { accepted?: unknown } }).acceptance?.accepted))
           .map((event) => (event.payload as { experimentId?: unknown }).experimentId)
           .filter((experimentId): experimentId is string => typeof experimentId === "string" && experimentId !== id));

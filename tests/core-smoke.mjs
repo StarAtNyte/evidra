@@ -230,6 +230,22 @@ test("durable research state and queue survive store reopen", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("event-family history remains durable beyond the bounded UI timeline", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-event-history-"));
+  try {
+    const db = join(root, "state.sqlite");
+    const store = new ResearchStore(db);
+    store.appendEvent("experiment.validation.assessed", { experimentId: "old", acceptance: { accepted: true } });
+    for (let index = 0; index < 2_100; index += 1) store.appendEvent("telemetry.noise", { index });
+    assert.equal(store.recentEvents(2_000).some((event) => event.type === "experiment.validation.assessed"), false);
+    assert.equal(store.eventsByType("experiment.validation.assessed")[0].payload.experimentId, "old");
+    store.close();
+    const reopened = new ResearchStore(db);
+    assert.equal(reopened.eventsByType("experiment.validation.assessed").length, 1);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("durable queue can claim one specific retest without stealing another task", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-claim-"));
   try {
