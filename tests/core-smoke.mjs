@@ -3285,6 +3285,21 @@ test("benchmark runner executes matched arms and records evaluator-backed metric
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("benchmark workers do not inherit controller credentials", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-env-"));
+  const previous = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "controller-secret";
+  try {
+    const command = [process.execPath, "-e", "console.log(JSON.stringify({score:process.env.OPENAI_API_KEY ? 1 : 0}))"];
+    const report = await runBenchmarkArms([{ harness: "isolated", task: "task-a", arm: "default", seed: 1, model: "test-model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0, metric: "score", command }], root);
+    assert.equal(report.trials[0].candidateMetric, 0);
+  } finally {
+    if (previous === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previous;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("benchmark protocol fingerprints ignore harness commands but detect fairness changes", () => {
   const base = { harness: "a", task: "task", arm: "default", seed: 1, model: "gpt-5.6-luna", budgetMinutes: 10, direction: "maximize", baselineMetric: 0.5, metric: "score", command: ["run-a"] };
   assert.equal(benchmarkProtocolFingerprint([base]), benchmarkProtocolFingerprint([{ ...base, harness: "b", command: ["run-b"] }]));

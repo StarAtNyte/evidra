@@ -1,7 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve } from "node:path";
-import { parseMetricOutput } from "./executors.js";
+import { parseMetricOutput, safeWorkerEnvironment } from "./executors.js";
 import { classifyProcessFailure } from "./executors.js";
 import { runProcess } from "./process.js";
 import type { HarnessTrial, ScoreDirection } from "./harness-scorecard.js";
@@ -111,6 +111,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     return { arm, cwd: benchmarkCwd(root, arm.cwd, arm.harness) };
   });
   const startedAt = new Date().toISOString();
+  const workerEnvironment = safeWorkerEnvironment();
   const runOne = async ({ arm, cwd }: (typeof prepared)[number]): Promise<{ trial: HarnessTrial; run: BenchmarkRunReport["runs"][number] }> => {
     onProgress?.(`Benchmark · ${arm.harness} · ${arm.task} · ${arm.budgetMinutes}m`);
     const deadline = Date.now() + arm.budgetMinutes * 60_000;
@@ -135,7 +136,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
         outputBuffer = `${outputBuffer}${chunk}`.slice(-128_000);
         const observed = parseMetricOutput(outputBuffer, arm.metric).metrics[arm.metric];
         if (Number.isFinite(observed)) attemptEvidenceMs = Date.now() - attemptStartedAt;
-      });
+      }, undefined, workerEnvironment);
       totalDurationMs += result.durationMs;
       const parsed = parseMetricOutput(result.stdout, arm.metric);
       metric = parsed.metrics[arm.metric];
@@ -159,7 +160,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       const remainingMs = deadline - Date.now();
       if (remainingMs >= 1_000) {
         onProgress?.(`Benchmark · ${arm.harness} · independent reproducibility check`);
-        const checkResult = await runProcess(arm.reproducibilityCommand, cwd, remainingMs);
+        const checkResult = await runProcess(arm.reproducibilityCommand, cwd, remainingMs, undefined, undefined, workerEnvironment);
         totalDurationMs += checkResult.durationMs;
         const checkMetric = parseMetricOutput(checkResult.stdout, arm.metric).metrics[arm.metric];
         const tolerance = arm.reproducibilityTolerance ?? 0;
