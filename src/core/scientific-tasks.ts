@@ -13,6 +13,8 @@ export const ScientificTaskStageSchema = z.object({
   command: z.array(z.string().min(1)).min(1),
   cwd: z.string().default("."),
   timeoutMinutes: z.number().positive().max(24 * 60).default(15),
+  retries: z.number().int().nonnegative().max(3).default(1),
+  alternateCommands: z.array(z.array(z.string().min(1)).min(1)).max(3).default([]),
   requiredArtifacts: z.array(z.string().min(1)).max(32).default([]),
   verificationCommands: z.array(z.array(z.string().min(1)).min(1)).max(16).default([]),
   snapshotPaths: z.array(z.string().min(1)).max(32).default([]),
@@ -45,6 +47,7 @@ export interface ScientificStageObservation {
   snapshot: { id: string; files: Record<string, string> };
   stdoutTail: string;
   stderrTail: string;
+  attempts?: Array<{ attempt: number; route: "primary" | "alternate"; command: string[]; exitCode: number; durationMs: number; verification: { declared: number; executed: number; passed: number; failed: number }; stdoutTail: string; stderrTail: string }>;
 }
 
 export interface ScientificTaskRun {
@@ -142,6 +145,45 @@ export interface ScientificTaskRunOptions {
   previous?: ScientificTaskRun;
 }
 
+async function executeScientificStage(stage: ScientificTaskStage, cwd: string, options: ScientificTaskRunOptions): Promise<ScientificStageObservation> {
+  const deadline = Date.now() + stage.timeoutMinutes * 60_000;
+  const commands = [stage.command, ...stage.alternateCommands];
+  const attempts: NonNullable<ScientificStageObservation["attempts"]> = [];
+  let finalObservation: ScientificStageObservation | undefined;
+  const maxAttempts = 1 + stage.retries;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const command = commands[Math.min(attempt, commands.length - 1)] ?? stage.command;
+    const route: "primary" | "alternate" = attempt === 0 || commands.length === 1 ? "primary" : "alternate";
+    const result = await runProcessObserved(command, cwd, Math.max(1, deadline - Date.now()), options.onProcess);
+    const artifacts: Record<string, string> = {};
+    for (const artifact of stage.requiredArtifacts) {
+      const path = containedPath(cwd, artifact, `stage '${stage.id}' artifact`);
+      if (existsSync(path) && statSync(path).isFile() && !lstatSync(path).isSymbolicLink()) artifacts[artifact] = sha256File(path);
+    }
+    let executed = 0;
+    let passed = 0;
+    let failed = 0;
+    for (const verificationCommand of stage.verificationCommands) {
+      const remaining = deadline - Date.now();
+      if (remaining < 1) break;
+      executed += 1;
+      const verification = await runProcessObserved(verificationCommand, cwd, remaining, undefined);
+      if (verification.exitCode === 0) passed += 1; else failed += 1;
+    }
+    let files: Record<string, string> = {};
+    let snapshotError: string | undefined;
+    try { files = fileSnapshot(cwd, stage.snapshotPaths, `stage '${stage.id}' snapshot`); } catch (error) { snapshotError = error instanceof Error ? error.message : String(error); }
+    const stageFailed = result.exitCode !== 0 || failed > 0 || artifactsMissing(stage, artifacts) || Boolean(snapshotError);
+    const attemptObservation = { attempt: attempt + 1, route, command: [...command], exitCode: result.exitCode, durationMs: result.durationMs, verification: { declared: stage.verificationCommands.length, executed, passed, failed }, stdoutTail: result.stdout.slice(-4_000), stderrTail: `${result.stderr}${snapshotError ? `\nSnapshot failed: ${snapshotError}` : ""}`.slice(-4_000) };
+    attempts.push(attemptObservation);
+    finalObservation = { stageId: stage.id, status: !stageFailed ? "completed" : "failed", exitCode: result.exitCode, durationMs: attempts.reduce((sum, item) => sum + item.durationMs, 0), verification: attemptObservation.verification, artifacts, snapshot: { id: snapshotId(files), files }, stdoutTail: attemptObservation.stdoutTail, stderrTail: attemptObservation.stderrTail };
+    if (!stageFailed || options.isCancelled?.()) break;
+    if (attempt + 1 < maxAttempts) options.onProgress?.(`Scientific task · ${stage.id} failed on ${route}; trying ${attempt + 2}/${maxAttempts}`);
+  }
+  if (!finalObservation) throw new Error(`Scientific stage '${stage.id}' produced no observation.`);
+  return attempts.length > 1 ? { ...finalObservation, attempts } : finalObservation;
+}
+
 /** Execute stages in order, verifying and snapshotting every boundary for restart/resume. */
 export async function runScientificTask(taskValue: unknown, root: string, options: ScientificTaskRunOptions = {}): Promise<ScientificTaskRun> {
   const task = ScientificTaskSchema.parse(taskValue);
@@ -157,28 +199,9 @@ export async function runScientificTask(taskValue: unknown, root: string, option
     }
     if (options.isCancelled?.()) return { schemaVersion: 1, taskId: task.id, startedAt, status: "interrupted", stages };
     options.onProgress?.(`Scientific task · ${stage.id} · ${stage.title}`);
-    const stageDeadline = Date.now() + stage.timeoutMinutes * 60_000;
-    const result = await runProcessObserved(stage.command, cwd, stage.timeoutMinutes * 60_000, options.onProcess);
-    const artifacts: Record<string, string> = {};
-    for (const artifact of stage.requiredArtifacts) {
-      const path = containedPath(cwd, artifact, `stage '${stage.id}' artifact`);
-      if (existsSync(path) && statSync(path).isFile() && !lstatSync(path).isSymbolicLink()) artifacts[artifact] = sha256File(path);
-    }
-    let executed = 0;
-    let passed = 0;
-    let failed = 0;
-    for (const command of stage.verificationCommands) {
-      if (Date.now() >= stageDeadline) break;
-      executed += 1;
-      const verification = await runProcessObserved(command, cwd, Math.max(1_000, stageDeadline - Date.now()));
-      if (verification.exitCode === 0) passed += 1; else failed += 1;
-    }
-    let files: Record<string, string> = {};
-    let snapshotError: string | undefined;
-    try { files = fileSnapshot(cwd, stage.snapshotPaths, `stage '${stage.id}' snapshot`); } catch (error) { snapshotError = error instanceof Error ? error.message : String(error); }
-    const stageFailed = result.exitCode !== 0 || failed > 0 || artifactsMissing(stage, artifacts) || Boolean(snapshotError);
-    stages.push({ stageId: stage.id, status: !stageFailed ? "completed" : "failed", exitCode: result.exitCode, durationMs: result.durationMs, verification: { declared: stage.verificationCommands.length, executed, passed, failed }, artifacts, snapshot: { id: snapshotId(files), files }, stdoutTail: result.stdout.slice(-4_000), stderrTail: `${result.stderr}${snapshotError ? `\nSnapshot failed: ${snapshotError}` : ""}`.slice(-4_000) });
-    if (stageFailed || options.isCancelled?.()) break;
+    const observation = await executeScientificStage(stage, cwd, options);
+    stages.push(observation);
+    if (observation.status === "failed" || options.isCancelled?.()) break;
   }
   const status = stages.length === task.stages.length && stages.every((stage) => !verifyObservation(task, stage)) ? "completed" : options.isCancelled?.() ? "interrupted" : "failed";
   return { schemaVersion: 1, taskId: task.id, startedAt, ...(status === "completed" ? { completedAt: new Date().toISOString() } : {}), status, stages };

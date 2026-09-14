@@ -20,7 +20,9 @@ and every required artifact succeed.
       "requiredArtifacts": ["inputs.json"],
       "verificationCommands": [["python", "verify_inputs.py"]],
       "snapshotPaths": ["inputs.json"],
-      "timeoutMinutes": 10
+      "timeoutMinutes": 10,
+      "retries": 1,
+      "alternateCommands": [["python", "prepare_fallback.py"]]
     }
   ]
 }
@@ -40,3 +42,9 @@ stages from a prior report can be supplied to the library runner as a resume
 record; Evidra rechecks their snapshot identity before skipping them. This
 makes asynchronous or crash-recovered agents measurable while keeping the task
 contract independent of Codex, a particular model, or an ML leaderboard.
+
+Each stage gets a bounded retry budget. After the primary command fails, declared
+alternate commands are attempted in order; if no alternate is available, the
+primary route is retried. Every attempt is retained in the report, and a stage
+cannot pass unless its final command, verifiers, artifacts, and snapshot all
+pass.

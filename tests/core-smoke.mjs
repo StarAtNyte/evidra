@@ -3326,6 +3326,9 @@ test("scientific task runner verifies intermediate stages and resumes verified s
     const unavailableCommand = await runScientificTask({ ...task, id: "unavailable-command", stages: [{ ...task.stages[0], command: ["evidra-command-that-does-not-exist"] }] }, root);
     assert.equal(unavailableCommand.status, "failed");
     assert.match(unavailableCommand.stages[0].stderrTail, /Process could not start/);
+    const recovered = await runScientificTask({ ...task, id: "alternate-route", stages: [{ ...task.stages[0], command: [process.execPath, "-e", "process.exit(3)"], alternateCommands: [[process.execPath, "-e", "require('node:fs').writeFileSync('recovered.json','{}')"]], requiredArtifacts: ["recovered.json"], verificationCommands: [[process.execPath, "-e", "if(!require('node:fs').existsSync('recovered.json')) process.exit(1)"]], snapshotPaths: ["recovered.json"] }] }, root);
+    assert.equal(recovered.status, "completed");
+    assert.deepEqual(recovered.stages[0].attempts?.map((attempt) => attempt.route), ["primary", "alternate"]);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
