@@ -2037,7 +2037,7 @@ research
             storePath: statePath,
             maxParallel: effectiveLaneLimit,
             autonomy,
-            laneFocus: allocation.focus,
+            laneFocus: `${allocation.focus} ${allocation.strategy}`,
             laneRotation: cycle,
             executeTool: researchToolExecutor(adapter, autonomy),
             onToolCall: toolTrace.onToolCall,

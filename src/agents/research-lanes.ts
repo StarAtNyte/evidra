@@ -166,8 +166,10 @@ export function selectResearchLaneRoles(objective: string, requested: number, op
   const pool = mlOrCompetition ? RESEARCH_LANE_ROLES : GENERAL_RESEARCH_LANE_ROLES;
   const count = Math.max(1, Math.min(requested, pool.length));
   const focus = options.focus?.toLowerCase() ?? "";
-  const focusRole = focus.includes("evidence") || focus.includes("validation") || focus.includes("data")
-    ? "validation scientist"
+  const focusRole = focus.includes("data")
+    ? "data detective"
+    : focus.includes("evidence") || focus.includes("validation")
+      ? "validation scientist"
     : focus.includes("recovery") || focus.includes("reproduc") || focus.includes("tool")
       ? "reproducibility engineer"
       : focus.includes("goal") || focus.includes("termination")

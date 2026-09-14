@@ -1359,6 +1359,10 @@ test("research lane pools expose ensemble and reproducibility specialties when c
     "validation scientist",
     "model researcher",
   ]);
+  assert.deepEqual(selectResearchLaneRoles("win a dataset competition with a robust model", 2, { focus: "evidence-validation data contract" }), [
+    "data detective",
+    "validation scientist",
+  ]);
   assert.deepEqual(selectResearchLaneRoles("win a dataset competition with a robust model", 2, { focus: "recovery", rotation: 1 }), [
     "reproducibility engineer",
     "validation scientist",
