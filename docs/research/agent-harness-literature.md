@@ -535,3 +535,14 @@ one matching observation toward the global prior and retains the conservative
 global upper tail for admission decisions. This makes budget allocation
 adaptive immediately while preventing a lucky or anomalous first run from
 silently overspending a campaign.
+
+Long-horizon repository evolution adds a separate risk: a passing latest
+checkpoint can coexist with accumulated verbosity and structural erosion.
+SlopCodeBench evaluates agents over repeated evolving changes rather than a
+single task, making this degradation measurable across languages. Evidra's
+code-health snapshot is a lightweight runtime adaptation of that lesson: it
+tracks source/test growth, test-file deletion, and TODO-like debt between an
+experiment worktree's pre-edit and post-edit states. It is intentionally a
+guardrail, not a substitute for tests or AST analysis; severe regressions are
+blocked and smaller drift remains durable evidence for later harness
+adaptation. Source: [SlopCodeBench](https://arxiv.org/abs/2603.24755).
