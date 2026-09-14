@@ -285,6 +285,13 @@ export class ResearchStore {
         updated_at TEXT NOT NULL
       );
     `);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_experiments_created_at ON experiments(created_at);
+      CREATE INDEX IF NOT EXISTS idx_runs_updated_at ON runs(updated_at);
+      CREATE INDEX IF NOT EXISTS idx_runs_experiment_id ON runs(experiment_id);
+      CREATE INDEX IF NOT EXISTS idx_trajectories_updated_at ON trajectories(updated_at);
+      CREATE INDEX IF NOT EXISTS idx_attempts_experiment_id ON run_attempts(experiment_id);
+    `);
     // Existing stores predate event integrity. Keep them readable and mark their
     // history as legacy; all newly appended events are chained and verifiable.
     for (const column of ["previous_hash", "event_hash"]) {
