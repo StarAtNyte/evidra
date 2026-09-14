@@ -3300,6 +3300,17 @@ test("benchmark workers do not inherit controller credentials", async () => {
   }
 });
 
+test("benchmark reports redact nested worker process output", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-redaction-"));
+  try {
+    const command = [process.execPath, "-e", "console.log(JSON.stringify({score:0.5, token:'sk-report-secret-12345678901234567890'}))"];
+    const report = await runBenchmarkArms([{ harness: "redacted", task: "task-a", arm: "default", seed: 1, model: "test-model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0, metric: "score", command }], root);
+    assert.equal(report.trials[0].candidateMetric, 0.5);
+    assert.doesNotMatch(report.runs[0].result.stdout, /sk-report-secret/);
+    assert.match(report.runs[0].result.stdout, /REDACTED_TOKEN/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("benchmark protocol fingerprints ignore harness commands but detect fairness changes", () => {
   const base = { harness: "a", task: "task", arm: "default", seed: 1, model: "gpt-5.6-luna", budgetMinutes: 10, direction: "maximize", baselineMetric: 0.5, metric: "score", command: ["run-a"] };
   assert.equal(benchmarkProtocolFingerprint([base]), benchmarkProtocolFingerprint([{ ...base, harness: "b", command: ["run-b"] }]));

@@ -169,7 +169,13 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       }
     }
     const finalFailure = attemptDetails.at(-1)?.failureClass;
-    const run: BenchmarkRunReport["runs"][number] = { harness: arm.harness, command: arm.command, cwd, result, metric: Number.isFinite(metric) ? metric : undefined, attempts, attemptDetails, ...(finalFailure ? { failureClass: finalFailure } : {}), ...(reproducibility ? { reproducibility } : {}) };
+    // Metric parsing above intentionally uses the in-memory process result;
+    // persisted benchmark reports must not carry raw worker output.
+    const reportResult = { ...result, stdout: redactSecrets(result.stdout), stderr: redactSecrets(result.stderr) };
+    const reportReproducibility = reproducibility
+      ? { ...reproducibility, result: { ...reproducibility.result, stdout: redactSecrets(reproducibility.result.stdout), stderr: redactSecrets(reproducibility.result.stderr) } }
+      : undefined;
+    const run: BenchmarkRunReport["runs"][number] = { harness: arm.harness, command: arm.command, cwd, result: reportResult, metric: Number.isFinite(metric) ? metric : undefined, attempts, attemptDetails, ...(finalFailure ? { failureClass: finalFailure } : {}), ...(reportReproducibility ? { reproducibility: reportReproducibility } : {}) };
     const trial: HarnessTrial = {
       harness: arm.harness,
       ...(arm.policy ? { policy: arm.policy } : {}),
