@@ -2580,6 +2580,29 @@ test("research director executes typed tools and reasons over returned evidence"
   }
 });
 
+test("research director honors the bounded provider-attempt policy", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-director-attempts-"));
+  const previousHost = process.env.OLLAMA_HOST;
+  let calls = 0;
+  const server = createServer((_request, response) => {
+    calls += 1;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ message: { content: "not valid research JSON" } }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${address.port}`;
+  try {
+    await assert.rejects(() => runResearchDirector("Test bounded retries", {}, { provider: "local", model: "test", cwd: root, maxAgentAttempts: 1 }), /Research director did not return JSON|invalid decision/);
+    assert.equal(calls, 1);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("experiment executor parses the declared metric instead of a competition-specific metric", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-metric-"));
   try {

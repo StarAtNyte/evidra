@@ -31,6 +31,8 @@ export interface ResearchDirectorOptions {
   consumeSteering?: () => string[];
   maxToolRounds?: number;
   maxToolAttempts?: number;
+  /** Bounded retries for the director provider call itself. */
+  maxAgentAttempts?: number;
 }
 
 function isRetryableResearchToolFailure(result: ResearchToolResult): boolean {
@@ -55,6 +57,7 @@ export async function runResearchDirector(
   // the exact boundary they had been configured to tolerate.
   const maxToolRounds = Math.max(0, Math.min(options.maxToolRounds ?? 6, 16));
   const maxToolAttempts = Math.max(1, Math.min(options.maxToolAttempts ?? 3, 3));
+  const maxAgentAttempts = Math.max(1, Math.min(options.maxAgentAttempts ?? 3, 3));
   const contract = `Return ONLY valid JSON matching this exact shape:
 {
   "phase": "orientation|baseline|data_audit|validation|hypothesis|implementation|evaluation|replication|promotion",
@@ -97,7 +100,7 @@ export async function runResearchDirector(
   for (let round = 0; round <= maxToolRounds; round += 1) {
     let parsed: ReturnType<typeof ResearchDecisionSchema.safeParse> | undefined;
     let lastError: unknown;
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    for (let attempt = 1; attempt <= maxAgentAttempts; attempt += 1) {
       try {
         const result: AgentResult = await runWithLocalFallback({
           ...task,
@@ -109,9 +112,9 @@ export async function runResearchDirector(
         throw new Error(`Research director returned invalid decision: ${parsed.error.issues.map((issue) => issue.path.join(".") + " " + issue.message).join("; ")}`);
       } catch (error) {
         lastError = error;
-        if (!isRetryableAgentError(error) || attempt === 3 || (isProviderUsageLimit(error) && options.limitPolicy === "wait")) throw error;
+        if (!isRetryableAgentError(error) || attempt === maxAgentAttempts || (isProviderUsageLimit(error) && options.limitPolicy === "wait")) throw error;
         const delayMs = attempt * 1_000;
-        onProgress?.(`Director retry ${attempt}/2 in ${delayMs / 1000}s...`);
+        onProgress?.(`Director retry ${attempt}/${maxAgentAttempts - 1} in ${delayMs / 1000}s...`);
         await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
       }
     }
