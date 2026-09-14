@@ -12,6 +12,17 @@ function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 36) || "hypothesis";
 }
 
+/**
+ * Fingerprint the executable idea, not its supporting prose. Evidence can
+ * legitimately change between cycles; repeating the same intervention cannot
+ * create a new search direction unless the intervention itself changes.
+ */
+function hypothesisFingerprint(hypothesis: ResearchDecision["hypotheses"][number]): string {
+  return [hypothesis.title, hypothesis.mechanism, hypothesis.proposedChange, hypothesis.falsificationTest]
+    .map((value) => value.trim().toLowerCase().replace(/\s+/g, " "))
+    .join("\u001f");
+}
+
 /** Turn a validated director decision into durable graph entities. */
 export function materializeResearchDecision(store: ResearchStore, value: ResearchDecision, options: { evidenceSourceId?: string; evidenceScope?: string } = {}): MaterializedDecision {
   const decision = ResearchDecisionSchema.parse(value);
@@ -24,12 +35,28 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
   const stamp = `${Date.now()}_${decisionId}`;
   const hypothesisIds: string[] = [];
   const claimIds: string[] = [];
+  const priorHypotheses = store.hypotheses();
+  const fingerprints = new Map<string, string>();
+  for (const entry of priorHypotheses) {
+    const payload = entry.payload as { fingerprint?: unknown; title?: unknown; mechanism?: unknown; proposedChange?: unknown; falsificationTest?: unknown };
+    if (typeof payload.fingerprint === "string") fingerprints.set(payload.fingerprint, entry.id);
+    else if ([payload.title, payload.mechanism, payload.proposedChange, payload.falsificationTest].every((value) => typeof value === "string")) {
+      fingerprints.set(hypothesisFingerprint({ title: payload.title as string, mechanism: payload.mechanism as string, proposedChange: payload.proposedChange as string, falsificationTest: payload.falsificationTest as string } as ResearchDecision["hypotheses"][number]), entry.id);
+    }
+  }
 
   decision.hypotheses.forEach((hypothesis, index) => {
-    const hypothesisId = `hyp_${stamp}_${String(index + 1).padStart(2, "0")}_${slug(hypothesis.title)}`;
+    const fingerprint = hypothesisFingerprint(hypothesis);
+    const duplicateOf = fingerprints.get(fingerprint);
+    const hypothesisId = duplicateOf ?? `hyp_${stamp}_${String(index + 1).padStart(2, "0")}_${slug(hypothesis.title)}`;
     hypothesisIds.push(hypothesisId);
-    store.saveHypothesis({ id: hypothesisId, payload: { id: hypothesisId, ...hypothesis, searchOperator: decision.searchOperator, status: "proposed", decisionId } });
-    if (hypothesis.ablationFactors.length > 0) {
+    if (duplicateOf) {
+      store.appendEvent("research.hypothesis.deduplicated", { decisionId, hypothesisId, duplicateOf, fingerprint, title: hypothesis.title });
+    } else {
+      fingerprints.set(fingerprint, hypothesisId);
+      store.saveHypothesis({ id: hypothesisId, payload: { id: hypothesisId, ...hypothesis, fingerprint, searchOperator: decision.searchOperator, status: "proposed", decisionId } });
+    }
+    if (!duplicateOf && hypothesis.ablationFactors.length > 0) {
       store.appendEvent("research.ablation.plan", createAblationPlan({ hypothesisId, factors: hypothesis.ablationFactors }));
     }
     const linkedSourceIds = [

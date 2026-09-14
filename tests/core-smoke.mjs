@@ -1681,6 +1681,26 @@ test("source adaptation preserves literature provenance through the research gra
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("research graph deduplicates repeated executable hypotheses while preserving the new decision", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-hypothesis-dedup-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const decision = {
+      phase: "hypothesis", goalStatus: "active", decision: "propose", bottleneck: "Need a controlled test",
+      rationale: "Test one mechanism under the locked evaluator.",
+      hypotheses: [{ title: "Use calibrated residual weighting", mechanism: "Residual weighting emphasizes the hardest validated slices.", evidence: [], proposedChange: "Add residual weights from the training split only.", falsificationTest: "The locked evaluator does not improve after independent replication.", expectedMetricDelta: { low: 0, median: 0, high: 0 }, computeCostGpuHours: 0, implementationRisk: "low", leakageRisk: "low", dependencies: [], ablationFactors: [] }],
+      searchOperator: "greedy", selectedHypothesis: "Use calibrated residual weighting", nextAction: "Run the controlled test", toolCalls: [],
+    };
+    const first = materializeResearchDecision(store, decision);
+    const second = materializeResearchDecision(store, { ...decision, rationale: "Reconsider the same mechanism after a new observation." });
+    assert.equal(second.hypothesisIds[0], first.hypothesisIds[0]);
+    assert.equal(store.hypotheses().length, 1);
+    assert.equal(store.decisions().length, 2);
+    assert.equal(store.eventsByType("research.hypothesis.deduplicated").length, 1);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("claim consistency surfaces duplicates and only explicit contradictions", () => {
   const base = { id: "a", sourceType: "observation", confidence: 0.8 };
   assert.equal(compareClaims({ ...base, statement: "Group holdout reduces leakage risk" }, { ...base, id: "b", statement: "Group holdout reduces leakage risk" }).relation, "duplicate");
