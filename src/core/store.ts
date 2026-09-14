@@ -888,9 +888,16 @@ export class ResearchStore {
   saveSource(source: { id: string; payload: unknown }): void {
     const createdAt = new Date().toISOString();
     const payload = safeJson(source.payload);
+    const sourceUrl = source.payload && typeof source.payload === "object" && !Array.isArray(source.payload) && typeof (source.payload as { url?: unknown }).url === "string"
+      ? (source.payload as { url: string }).url
+      : undefined;
+    const prior = sourceUrl
+      ? this.sources().find((entry) => entry.id !== source.id && (entry.payload as { url?: unknown }).url === sourceUrl)
+      : undefined;
     this.db.prepare(`INSERT OR REPLACE INTO research_sources (id, payload_json, created_at) VALUES (?, ?, ?)`).run(source.id, payload, createdAt);
     this.indexMemory("source", source.id, payload, createdAt);
     this.appendEvent("research.source.created", source.payload);
+    if (prior) this.saveEdge({ id: `edge_${source.id}_${prior.id}_supersedes`, fromId: source.id, toId: prior.id, relation: "supersedes", confidence: 1, evidenceIds: [] });
   }
 
   hypotheses(): Array<{ id: string; payload: unknown; createdAt: string }> {

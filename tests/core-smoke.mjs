@@ -1428,6 +1428,8 @@ test("source adaptation preserves literature provenance through the research gra
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.saveSource({ id: "paper-adapt", payload: { title: "Paper", url: "https://example.com/paper", claims: ["test claim"] } });
+    store.saveSource({ id: "paper-adapt-v2", payload: { title: "Paper", url: "https://example.com/paper", claims: ["updated claim"] } });
+    assert.ok(store.edges().some((edge) => edge.fromId === "paper-adapt-v2" && edge.toId === "paper-adapt" && edge.relation === "supersedes"));
     assert.throws(() => materializeResearchDecision(store, {
       phase: "hypothesis", goalStatus: "active", decision: "propose", bottleneck: "Need grounded evidence", rationale: "This source was not retrieved.",
       hypotheses: [{ title: "Ungrounded adaptation", mechanism: "unknown", evidence: ["paper claim"], evidenceSourceIds: ["missing-paper"], sourceAdaptation: { sourceTitle: "Missing paper", originalSetting: "unknown", competitionDifference: "unknown", expectedFailureModes: ["unknown"] }, proposedChange: "test", falsificationTest: "fail", expectedMetricDelta: { low: 0, median: 0, high: 0 } }],
