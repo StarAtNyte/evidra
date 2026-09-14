@@ -96,7 +96,13 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
       }
       break;
     }
-    case "validation": if (!has("validation.policy.created")) missing.push("versioned validation policy"); break;
+    case "validation": {
+      if (!has("validation.policy.created")) missing.push("versioned validation policy");
+      const policyLifecycle = evidence.eventPayloads.filter((event) => ["validation.policy.created", "validation.policy.locked", "validation.policy.unlocked"].includes(event.type));
+      const latestPolicyEvent = policyLifecycle.at(-1)?.type;
+      if (latestPolicyEvent !== "validation.policy.locked") missing.push("validation policy locked");
+      break;
+    }
     case "hypothesis": if ((evidence.hypotheses + (evidence.candidateHypotheses ?? 0)) < 1) missing.push("durable hypothesis"); if (evidence.experiments < 1 && !has("experiment.created")) missing.push("experiment manifest"); break;
     case "implementation": if (!has("experiment.stage.smoke.completed") && !has("experiment.stage.full_validation.completed")) missing.push("completed implementation or smoke stage"); break;
     case "evaluation": {

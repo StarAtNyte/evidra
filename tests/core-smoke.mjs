@@ -1813,6 +1813,18 @@ test("phase completion requires durable evidence instead of model status alone",
   assert.equal(evaluatePhaseGoalEvidence(researchGoal, { mode: "research", eventTypes: [], eventPayloads: [], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, false);
 });
 
+test("validation phase completion requires the latest policy lifecycle event to be a lock", () => {
+  const goal = definePhaseGoals("lock a trustworthy split", "challenge").find((entry) => entry.phase === "validation");
+  const created = { type: "validation.policy.created", payload: { checksum: "sha256:policy" } };
+  const locked = { type: "validation.policy.locked", payload: { checksum: "sha256:policy" } };
+  const unlocked = { type: "validation.policy.unlocked", payload: { reason: "repair" } };
+  const notLocked = evaluatePhaseGoalEvidence(goal, { eventTypes: [created.type], eventPayloads: [created], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
+  assert.deepEqual(notLocked.missing, ["validation policy locked"]);
+  assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [created.type, locked.type], eventPayloads: [created, locked], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, true);
+  const reopened = evaluatePhaseGoalEvidence(goal, { eventTypes: [created.type, locked.type, unlocked.type], eventPayloads: [created, locked, unlocked], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
+  assert.deepEqual(reopened.missing, ["validation policy locked"]);
+});
+
 test("baseline evidence is persisted as checksummed artifacts", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-baseline-"));
   try {

@@ -95,7 +95,7 @@ import { selectRatchetReference } from "./core/ratchet.js";
 
 const PHASE_GATE_EVENT_TYPES = [
   "research.observation", "project.created", "baseline.completed", "data.audit.completed", "data.audit.accepted",
-  "validation.policy.created", "hypothesis.created", "experiment.created", "experiment.stage.smoke.completed",
+  "validation.policy.created", "validation.policy.locked", "validation.policy.unlocked", "hypothesis.created", "experiment.created", "experiment.stage.smoke.completed",
   "experiment.stage.full_validation.completed", "run.completed", "experiment.comparison.completed",
   "replication.manifest.created", "experiment.autonomous.replication.completed", "experiment.gates.updated",
   "experiment.validation.assessed", "research.ablation.plan", "research.ablation.evidence",
