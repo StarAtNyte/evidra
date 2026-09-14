@@ -91,7 +91,7 @@ import { buildMlflowRunExports } from "./core/mlflow.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema } from "./core/scientific-tasks.js";
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "./core/scientific-suite.js";
 import { runSafetyBenchmark } from "./core/safety-bench.js";
-import { assessCodeHealth, snapshotCodeHealth, type CodeHealthFile } from "./core/code-health.js";
+import { assessCodeHealth, assessCodeHealthTrend, snapshotCodeHealth, type CodeHealthAssessment, type CodeHealthFile } from "./core/code-health.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -267,9 +267,14 @@ async function implementCampaignHypothesis(
   const healthAfter = await captureCodeHealth();
   const health = assessCodeHealth(healthBefore, healthAfter);
   const healthStore = new ResearchStore(statePath);
-  healthStore.appendEvent("experiment.code_health.assessed", { experimentId, worktree, before: healthBefore, after: healthAfter, assessment: health });
+  const priorAssessments = healthStore.recentEvents(500)
+    .filter((event) => event.type === "experiment.code_health.assessed")
+    .map((event) => event.payload && typeof event.payload === "object" ? (event.payload as { assessment?: unknown }).assessment : undefined)
+    .filter((assessment): assessment is CodeHealthAssessment => Boolean(assessment && typeof assessment === "object" && ["pass", "warn", "fail"].includes((assessment as { status?: unknown }).status as string)));
+  const trend = assessCodeHealthTrend([...priorAssessments, health]);
+  healthStore.appendEvent("experiment.code_health.assessed", { experimentId, worktree, before: healthBefore, after: healthAfter, assessment: health, trend });
   healthStore.close();
-  if (health.status === "fail") throw new Error(`Code-health guard rejected ${experimentId}: ${health.reasons.join("; ")}`);
+  if (health.status === "fail" || trend.status === "fail") throw new Error(`Code-health guard rejected ${experimentId}: ${[...health.reasons, ...trend.reasons].join("; ")}`);
   const changed = changedProtectedFiles(integrity, worktree);
   if (changed.length) throw new Error(`Specification-gaming guard rejected ${experimentId}: protected evaluator files changed: ${changed.join(", ")}`);
 }

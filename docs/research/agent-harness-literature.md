@@ -546,3 +546,5 @@ experiment worktree's pre-edit and post-edit states. It is intentionally a
 guardrail, not a substitute for tests or AST analysis; severe regressions are
 blocked and smaller drift remains durable evidence for later harness
 adaptation. Source: [SlopCodeBench](https://arxiv.org/abs/2603.24755).
+The trend detector also retains recent assessments, because degradation can
+accumulate even when no individual change crosses a severe threshold.

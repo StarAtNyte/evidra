@@ -21,6 +21,16 @@ export interface CodeHealthAssessment {
   reasons: string[];
 }
 
+export interface CodeHealthTrend {
+  samples: number;
+  cumulativeSourceLineDelta: number;
+  cumulativeTestLineDelta: number;
+  cumulativeTodoDelta: number;
+  untestedGrowthStreak: number;
+  status: "pass" | "warn" | "fail";
+  reasons: string[];
+}
+
 const TEST_PATH = /(^|\/)(test|tests|spec|specs)(\/|$)|(?:^|[._-])(test|spec)\.[^.]+$/i;
 
 /** Build a small structural snapshot without parsing a language-specific AST. */
@@ -52,4 +62,23 @@ export function assessCodeHealth(before: CodeHealthSnapshot, after: CodeHealthSn
   if (largeUntestedGrowth) reasons.push(`source grew by ${sourceLineDelta} line(s) without test growth`);
   const status: CodeHealthAssessment["status"] = removedTestFiles > 0 || (largeUntestedGrowth && sourceLineDelta >= 500) ? "fail" : reasons.length ? "warn" : "pass";
   return { status, sourceLineDelta, testLineDelta, todoDelta, removedTestFiles, reasons };
+}
+
+/** Assess accumulated drift across recent autonomous edits, not only one edit. */
+export function assessCodeHealthTrend(assessments: CodeHealthAssessment[]): CodeHealthTrend {
+  const recent = assessments.slice(-12);
+  const cumulativeSourceLineDelta = recent.reduce((sum, item) => sum + item.sourceLineDelta, 0);
+  const cumulativeTestLineDelta = recent.reduce((sum, item) => sum + item.testLineDelta, 0);
+  const cumulativeTodoDelta = recent.reduce((sum, item) => sum + item.todoDelta, 0);
+  let untestedGrowthStreak = 0;
+  for (const item of recent.slice().reverse()) {
+    if (item.sourceLineDelta > 0 && item.testLineDelta <= 0) untestedGrowthStreak++;
+    else break;
+  }
+  const reasons: string[] = [];
+  if (untestedGrowthStreak >= 3) reasons.push(untestedGrowthStreak + " consecutive edits grew source without growing tests");
+  if (cumulativeTodoDelta > 0) reasons.push("recent edits accumulated " + cumulativeTodoDelta + " TODO/FIXME/HACK marker(s)");
+  const severe = recent.some((item) => item.status === "fail") || (untestedGrowthStreak >= 4 && cumulativeSourceLineDelta >= 500) || cumulativeTodoDelta >= 25;
+  const status: CodeHealthTrend["status"] = severe ? "fail" : reasons.length ? "warn" : "pass";
+  return { samples: recent.length, cumulativeSourceLineDelta, cumulativeTestLineDelta, cumulativeTodoDelta, untestedGrowthStreak, status, reasons };
 }

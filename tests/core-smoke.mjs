@@ -64,7 +64,7 @@ import { runSafetyBenchmark } from "../dist/core/safety-bench.js";
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "../dist/core/scientific-suite.js";
 import { evaluateGpuBudget, observedGpuHours } from "../dist/core/compute-budget.js";
 import { collaborationUtility } from "../dist/core/adaptive-harness.js";
-import { assessCodeHealth, snapshotCodeHealth } from "../dist/core/code-health.js";
+import { assessCodeHealth, assessCodeHealthTrend, snapshotCodeHealth } from "../dist/core/code-health.js";
 
 test("search policies receive independent matched scorecards and comparisons", () => {
   const trial = (policy, task, candidateMetric) => ({ harness: `evidra-${policy}`, policy, task, arm: "default", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: false, reproducible: true });
@@ -1011,6 +1011,11 @@ test("code health detects severe test deletion and untested structural growth", 
   const growth = assessCodeHealth(growthBefore, growthAfter);
   assert.equal(growth.status, "warn");
   assert.match(growth.reasons.join(" "), /without test growth/);
+  const trend = assessCodeHealthTrend([growth, growth, growth]);
+  assert.equal(trend.status, "warn");
+  assert.equal(trend.untestedGrowthStreak, 3);
+  const severeTrend = assessCodeHealthTrend([growth, growth, growth, growth]);
+  assert.equal(severeTrend.status, "fail");
 });
 
 test("prediction error analysis turns aggregate outcomes into actionable failures", () => {
