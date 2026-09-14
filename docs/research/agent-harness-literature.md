@@ -120,6 +120,44 @@ the final metric cannot erase a broken or unclosed process trace.
 
 Source: [Harness-Bench](https://arxiv.org/abs/2605.27922).
 
+## Safety is a lifecycle property
+
+[HarnessRisk](https://arxiv.org/abs/2608.17597) evaluates safety across six
+operational phases: harness configuration, capability extension, runtime
+operation, state persistence, action control, and incident recovery. Its central
+warning is that recognizing a risk in text does not reliably produce a safe
+action; therefore safety must be enforced by the runtime and measured across a
+complete trajectory. Evidra applies this directly: autonomous commands pass
+through a hard guard even in YOLO mode, external submissions remain approval
+gated, state and controller actions are durable, and recovery/alternate-route
+attempts remain in the evidence record. The stepwise scientific-task protocol
+also applies the same guard to verifier commands, preventing a task contract
+from bypassing the controller boundary.
+
+This is a safety control, not a safety benchmark result. Evidra still needs
+matched HarnessRisk-style adversarial cases before claiming a measured safety
+advantage. In particular, future cases should cover persisted policy mutation,
+untrusted task artifacts, restart-time action replay, and recovery paths that
+attempt to escalate permissions.
+
+Source: [HarnessRisk: A Lifecycle-Oriented Benchmark for Agent Harness Safety](https://arxiv.org/abs/2608.17597).
+
+## Scientific usefulness requires judgment plus external acceptance
+
+[GeneBench-Pro](https://openai.com/index/introducing-genebench-pro/) and
+[LifeSciBench](https://openai.com/index/introducing-life-sci-bench/) emphasize
+that research agents must decide what an incomplete dataset can support, how
+to revise an analysis when evidence conflicts, and what downstream action is
+justified; a final answer alone is not enough. [Scientific computing in the age
+of agentic AI](https://openai.com/index/scientific-computing-agentic-ai/) makes
+the operational counterpart explicit: agents can accelerate implementation,
+but researchers remain responsible for defining acceptance targets and
+verifying scientific validity. Evidra’s general outcome types, phase goals,
+intermediate verifiers, artifact snapshots, critic gates, and evidence audit
+implement this separation. The remaining empirical question is whether these
+gates improve replicated scientific outcomes under equal model and time
+budgets, rather than merely increasing trace volume.
+
 ## Diligence is a research capability
 
 AARRI-Bench finds that current agents often miss subtle details that human
