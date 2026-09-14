@@ -15,11 +15,15 @@ function slug(value: string): string {
 /** Turn a validated director decision into durable graph entities. */
 export function materializeResearchDecision(store: ResearchStore, value: ResearchDecision, options: { evidenceSourceId?: string; evidenceScope?: string } = {}): MaterializedDecision {
   const decision = ResearchDecisionSchema.parse(value);
+  const durableSourceIds = new Set(store.sources().map((source) => source.id));
+  for (const hypothesis of decision.hypotheses) {
+    const missingSourceIds = (hypothesis.evidenceSourceIds ?? []).filter((sourceId) => !durableSourceIds.has(sourceId));
+    if (missingSourceIds.length > 0) throw new Error(`Hypothesis '${hypothesis.title}' cites unknown durable research source(s): ${missingSourceIds.join(", ")}`);
+  }
   const decisionId = store.saveDecision(decision);
   const stamp = `${Date.now()}_${decisionId}`;
   const hypothesisIds: string[] = [];
   const claimIds: string[] = [];
-  const durableSourceIds = new Set(store.sources().map((source) => source.id));
 
   decision.hypotheses.forEach((hypothesis, index) => {
     const hypothesisId = `hyp_${stamp}_${String(index + 1).padStart(2, "0")}_${slug(hypothesis.title)}`;
