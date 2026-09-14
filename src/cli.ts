@@ -2441,6 +2441,26 @@ research
         }
         decisionStore = new ResearchStore(statePath);
       };
+      const executeQueuedHarnessRetest = async (experimentId: string): Promise<void> => {
+        const retestState = new ResearchStore(statePath);
+        const task = retestState.queueTasks("queued").find((entry) => entry.kind === "harness.retest");
+        if (!task) { retestState.close(); return; }
+        const experiment = retestState.experiments().find((entry) => entry.id === experimentId);
+        const experimentPayload = experiment?.payload && typeof experiment.payload === "object" ? experiment.payload as { worktreePath?: unknown } : {};
+        const worktree = typeof experimentPayload.worktreePath === "string" && experimentPayload.worktreePath.length > 0 ? experimentPayload.worktreePath : root;
+        retestState.close();
+        const script = process.argv[1];
+        if (!script) return;
+        console.log(`Harness · automatically replaying queued retest ${task.id} in ${worktree}`);
+        try {
+          const result = await runProcess([process.execPath, script, "benchmark", "retest", task.id, "--workspace", worktree], root, campaignRemainingMs(campaign), (stream, chunk) => {
+            (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
+          });
+          if (result.exitCode !== 0) console.log(`Harness · retest ${task.id} failed; failure is recorded and the campaign will replan from it.`);
+        } catch (error) {
+          console.log(`Harness · retest ${task.id} could not start: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      };
       for (const portfolioCandidate of executionCandidates) {
         const selectedIndex = materialized.hypothesisIds.indexOf(portfolioCandidate.id);
         const selectedHypothesisId = selectedIndex >= 0 ? materialized.hypothesisIds[selectedIndex] : undefined;
@@ -2504,6 +2524,7 @@ research
               run = { exitCode: 1, stdout: "", stderr: message };
             }
             await finalizeAutonomousRun(experimentId, run);
+            if (run.exitCode === 0) await executeQueuedHarnessRetest(experimentId);
           }
         }
       }
@@ -2516,6 +2537,7 @@ research
         for (const candidate of screenedCandidates.filter((entry) => promoted.includes(entry.experimentId))) {
           const fullRun = await runCampaignExperiment(root, candidate.experimentId, "full-after-screen", campaignRemainingMs(campaign));
           await finalizeAutonomousRun(candidate.experimentId, fullRun);
+          if (fullRun.exitCode === 0) await executeQueuedHarnessRetest(candidate.experimentId);
         }
       }
       if (portfolioPlan.evolution.enabled && executedPortfolioExperiments.length) {
