@@ -586,6 +586,7 @@ benchmark.command("run")
       suite: "generic",
       workspace: benchmarkWorkspace,
       maxParallel,
+      protocol: arms,
       challenger: options.challenger,
       incumbents,
       scorecards: scorecards.map((scorecard) => ({ harness: scorecard.harness, competitiveScore: scorecard.competitiveScore, lower95: scorecard.competitiveScoreLower95, sliceBalancedScore: scorecard.sliceBalancedScore, sliceScores: scorecard.sliceScores, validRunRate: scorecard.validRunRate, failureProfile: scorecard.failureProfile })),

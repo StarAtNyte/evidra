@@ -39,6 +39,7 @@ export interface HarnessRetestTask {
     benchmarkRevision: string;
     challenger: string;
     benchmarkEvidence?: unknown;
+    benchmarkProtocol?: unknown[];
     interventions: HarnessIntervention[];
     retest: HarnessRetestContract;
     executionRule: "controller-owned";
@@ -57,6 +58,9 @@ export function materializeHarnessRetestTask(plan: HarnessAdaptationPlan, benchm
   if (plan.claimStatus === "win_proven" || plan.interventions.length === 0 || !benchmarkRevision.trim()) return undefined;
   const revision = createHash("sha256").update(benchmarkRevision).digest("hex").slice(0, 16);
   const highestPriority = plan.interventions[0]?.priority;
+  const benchmarkProtocol = benchmarkEvidence && typeof benchmarkEvidence === "object" && Array.isArray((benchmarkEvidence as { protocol?: unknown }).protocol)
+    ? (benchmarkEvidence as { protocol: unknown[] }).protocol
+    : undefined;
   return {
     id: `harness-retest:${plan.challenger}:${revision}`,
     kind: "harness.retest",
@@ -65,6 +69,7 @@ export function materializeHarnessRetestTask(plan: HarnessAdaptationPlan, benchm
       benchmarkRevision,
       challenger: plan.challenger,
       ...(benchmarkEvidence === undefined ? {} : { benchmarkEvidence }),
+      ...(benchmarkProtocol ? { benchmarkProtocol } : {}),
       interventions: plan.interventions,
       retest: plan.retest,
       executionRule: "controller-owned",
