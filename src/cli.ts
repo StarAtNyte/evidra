@@ -1803,11 +1803,21 @@ research
         };
         decisionStore.appendEvent("research.autonomous.execution_promoted", { reason: "single concrete proposal with non-rejecting critic", hypothesis: selected.title, autonomy });
       }
+      const requestedExecutionBeforeCritic = decision.decision === "run" && Boolean(decision.selectedHypothesis);
+      const autonomousValidationRun = autonomyPolicy(autonomy).canRunIsolatedExperiments
+        && requestedExecutionBeforeCritic
+        && criticReview?.verdict === "revise";
       const criticGate = applyCriticGate(decision, criticReview);
-      const criticBlocks = criticGate.blocked;
+      // A revise verdict often means “run the missing bounded check,” not
+      // “never execute.” In autonomous modes, permit that isolated validation
+      // run while preserving the critic objections in durable events. Reject
+      // remains a veto, and SAFE mode remains approval-gated.
+      const criticBlocks = criticGate.blocked && !autonomousValidationRun;
       if (criticBlocks) {
         decisionStore.appendEvent("research.critic.gate", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks });
         decision = criticGate.decision;
+      } else if (autonomousValidationRun) {
+        decisionStore.appendEvent("research.critic.validation_deferred", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks, action: "bounded isolated validation run" });
       }
       const decisionRubric = assessResearchDecisionRubric(decision, {
         baselineAvailable: Boolean(observation.baseline?.exitCode === 0),
