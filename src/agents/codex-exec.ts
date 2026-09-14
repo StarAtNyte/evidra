@@ -71,6 +71,13 @@ export function isProviderUsageLimit(error: unknown): boolean {
   return error instanceof ProviderUsageLimitError || /rate limit|usage limit|quota|too many requests|not enough credits/i.test(error instanceof Error ? error.message : String(error));
 }
 
+/** Errors for which an automatic local route is a truthful startup substitute. */
+export function isProviderFallbackEligible(error: unknown): boolean {
+  if (isProviderUsageLimit(error)) return true;
+  const text = error instanceof Error ? error.message : String(error);
+  return /not logged in|unreachable|network|connection|temporarily unavailable|failed its health check/i.test(text);
+}
+
 export function isRetryableAgentError(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error);
   return isProviderUsageLimit(error) || /network|unreachable|timed out|timeout|stream disconnected|connection termination|temporarily|did not return|invalid decision|returned invalid|turn failed|econnreset|ePIPE|503|502|504/i.test(text);
@@ -209,6 +216,19 @@ export async function checkProvider(options: ExecAgentOptions): Promise<void> {
     body: JSON.stringify({ name: options.model }),
   });
   if (!probe.ok) throw new Error(`Local model '${options.model}' failed its health check (${probe.status}): ${await probe.text()}`);
+}
+
+/** Validate the requested route, falling back before work starts when policy permits. */
+export async function resolveStartupProvider(options: ExecAgentOptions, fallbackModel = "auto"): Promise<{ provider: AgentProvider; model: string; fallback: boolean; reason?: string }> {
+  try {
+    await checkProvider(options);
+    return { provider: options.provider, model: options.model, fallback: false };
+  } catch (error) {
+    if (options.provider !== "codex" || !options.limitPolicy || !["auto", "fallback"].includes(options.limitPolicy) || !isProviderFallbackEligible(error)) throw error;
+    const model = await resolveLocalFallbackModel(fallbackModel);
+    await checkProvider({ ...options, provider: "local", model });
+    return { provider: "local", model, fallback: true, reason: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export class CodexExecAgent {

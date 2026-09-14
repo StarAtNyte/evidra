@@ -50,7 +50,7 @@ import { createBlendCandidate, diversityReport, loadPredictionVector, safePredic
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
-import { checkProvider, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderUsageLimit, isRetryableAgentError, listLocalModels, providerRetryAfterMs, resolveCodexModel, resolveLocalFallbackModel, runWithUsageLimitWait, runWithLocalFallback } from "./agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listLocalModels, providerRetryAfterMs, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithUsageLimitWait, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -1352,11 +1352,20 @@ research
     requireCompetitionContract(adapter);
     await ingestCompetitionSources(adapter);
     const budget = durationMinutes(options.budget);
-    const selectedModel = options.provider === "local" && options.model === "default"
-      ? await resolveLocalFallbackModel("auto")
-      : options.provider === "codex"
-        ? await resolveCodexModel(options.model)
-        : options.model;
+    let selectedModel: string;
+    if (options.provider === "local" && options.model === "default") {
+      selectedModel = await resolveLocalFallbackModel("auto");
+    } else if (options.provider === "codex") {
+      try {
+        selectedModel = await resolveCodexModel(options.model);
+      } catch (error) {
+        if (options.limitPolicy !== "auto" && options.limitPolicy !== "fallback") throw error;
+        if (!isProviderFallbackEligible(error)) throw error;
+        selectedModel = options.model === "default" ? DEFAULT_CODEX_MODEL : options.model;
+      }
+    } else {
+      selectedModel = options.model;
+    }
     let researchModelPool: Array<{ provider: "codex" | "local"; model: string }> = [{ provider: options.provider as "codex" | "local", model: selectedModel }];
     if (options.provider === "local") {
       try {
@@ -1365,7 +1374,12 @@ research
       } catch { /* The already-validated primary model remains usable if discovery briefly fails. */ }
     }
     const laneLimit = Math.max(1, Math.min(6, Number.parseInt(options.lanes, 10) || 1));
-    await checkProvider({ provider: options.provider, model: selectedModel, cwd: root });
+    const startupRoute = await resolveStartupProvider({ provider: options.provider as "codex" | "local", model: selectedModel, cwd: root, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop" }, options.limitPolicy === "auto" || options.limitPolicy === "fallback" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : "auto");
+    if (startupRoute.fallback) {
+      options.provider = startupRoute.provider;
+      selectedModel = startupRoute.model;
+      console.log(`Codex startup unavailable; using local/${selectedModel} before beginning the campaign.`);
+    }
     const releaseLease = acquireCliControllerLease(mode);
     const started = Date.now();
     const runtime: CampaignRuntimeConfig = { mode, provider: options.provider as CampaignRuntimeConfig["provider"], model: selectedModel, thinking: options.thinking, lanes: laneLimit, autonomy, limitPolicy: options.limitPolicy as CampaignRuntimeConfig["limitPolicy"], executor: options.executor as CampaignRuntimeConfig["executor"] };
@@ -1705,7 +1719,7 @@ research
             openCriticConstraint,
             peerLaneBoard,
           }, {
-            provider: options.provider,
+            provider: options.provider as "codex" | "local",
             model: selectedModel,
             modelPool: researchModelPool,
             fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
@@ -1745,7 +1759,7 @@ research
                 priorLaneReports: laneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
               },
               {
-                provider: options.provider,
+                provider: options.provider as "codex" | "local",
                 model: selectedModel,
                 modelPool: researchModelPool,
                 fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
@@ -1776,9 +1790,9 @@ research
           crossPollinationStore.appendEvent("research.cross_pollination.completed", { cycle, board: crossPollination });
           crossPollinationStore.close();
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness }, { provider: options.provider, model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness }, { provider: options.provider as "codex" | "local", model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult });
           criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
-            provider: options.provider,
+            provider: options.provider as "codex" | "local",
             model: selectedModel,
             fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
             limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop",
