@@ -21,16 +21,16 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const runs = store.runs();
   const attempts = store.runAttempts();
   const artifacts = store.artifacts();
-  const trajectories = store.trajectories(100);
+  const trajectories = store.trajectoryHistory();
   const ensembles = store.ensembleCandidates(100);
   const events = store.recentEvents(40);
   const eventIntegrity = store.verifyEventChain();
-  const harnessBenchmarkEvents = store.recentEvents(200).filter((event) => event.type === "harness.benchmark.completed");
-  const harnessEvolutionEvents = store.recentEvents(200).filter((event) => event.type === "harness.evolution.plan");
-  const routingEvents = events.filter((event) => event.type === "research.capability_outcome");
-  const experienceEvents = events.filter((event) => event.type === "research.experience.recorded");
+  const harnessBenchmarkEvents = store.eventsByType("harness.benchmark.completed");
+  const harnessEvolutionEvents = store.eventsByType("harness.evolution.plan");
+  const routingEvents = store.eventsByType("research.capability_outcome");
+  const experienceEvents = store.eventsByType("research.experience.recorded");
   const contradictionEdges = store.edges().filter((edge) => edge.relation === "contradicts");
-  const duplicateEvents = events.filter((event) => event.type === "evidence.claim.duplicate_detected");
+  const duplicateEvents = store.eventsByType("evidence.claim.duplicate_detected");
   const conflictedClaimIds = new Set(contradictionEdges.flatMap((edge) => [edge.fromId, edge.toId]));
   const claimAudit = auditClaims({
     claims: claims.map((claim) => ({ id: claim.id, payload: claim.payload })),
