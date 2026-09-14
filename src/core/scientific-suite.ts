@@ -1,11 +1,13 @@
 import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { evaluateScientificTaskRun, runScientificTask, ScientificTaskSchema, type ScientificTask, type ScientificTaskEvaluation, type ScientificTaskRun, type ScientificTaskRunOptions } from "./scientific-tasks.js";
+import { evaluateScientificTaskRun, runScientificTask, scientificTaskFingerprint, ScientificTaskSchema, type ScientificTask, type ScientificTaskEvaluation, type ScientificTaskRun, type ScientificTaskRunOptions } from "./scientific-tasks.js";
 
 export interface ScientificSuiteTaskResult {
   taskId: string;
   run: ScientificTaskRun;
   evaluation: ScientificTaskEvaluation;
+  /** Controller-level failure that prevented the task runner from producing observations. */
+  error?: string;
 }
 
 export interface ScientificSuiteReport {
@@ -78,8 +80,16 @@ export async function runScientificTaskSuite(values: unknown[], root: string, op
       if (!task) return;
       if (options.isCancelled?.()) return;
       options.onProgress?.(`Scientific suite · ${task.id} · starting`);
-      const run = await runScientificTask(task, root, { previous: options.previous?.[task.id], onProgress: options.onProgress, onProcess: options.onProcess, isCancelled: options.isCancelled });
-      const result = { taskId: task.id, run, evaluation: evaluateScientificTaskRun(task, run) };
+      let result: ScientificSuiteTaskResult;
+      try {
+        const run = await runScientificTask(task, root, { previous: options.previous?.[task.id], onProgress: options.onProgress, onProcess: options.onProcess, isCancelled: options.isCancelled });
+        result = { taskId: task.id, run, evaluation: evaluateScientificTaskRun(task, run) };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const run: ScientificTaskRun = { schemaVersion: 1, taskId: task.id, taskFingerprint: scientificTaskFingerprint(task), startedAt: new Date().toISOString(), status: "failed", stages: [] };
+        result = { taskId: task.id, run, evaluation: evaluateScientificTaskRun(task, run), error: message };
+        options.onProgress?.(`Scientific suite · ${task.id} · failed before task observations: ${message}`);
+      }
       results[index] = result;
       await options.onTaskComplete?.(result);
     }

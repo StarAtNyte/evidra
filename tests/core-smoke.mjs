@@ -3784,6 +3784,12 @@ test("scientific task suite preserves task-balanced results and per-task resume"
     const parallel = await runScientificTaskSuite(parallelTasks, root, { maxParallel: 2 });
     assert.equal(parallel.validTasks, 2);
     assert.deepEqual(parallel.tasks.map((item) => item.taskId), ["alpha-parallel", "beta-parallel"]);
+    const staleResume = { ...first.tasks[0].run, taskFingerprint: `sha256:${"0".repeat(64)}` };
+    const recoveredSuite = await runScientificTaskSuite(tasks, root, { previous: { alpha: staleResume } });
+    assert.equal(recoveredSuite.taskCount, 2);
+    assert.equal(recoveredSuite.validTasks, 1);
+    assert.match(recoveredSuite.tasks.find((item) => item.taskId === "alpha")?.error ?? "", /does not match task contract/);
+    assert.equal(recoveredSuite.tasks.find((item) => item.taskId === "beta")?.evaluation.valid, true);
     const taskDir = join(root, "contracts");
     mkdirSync(taskDir);
     writeFileSync(join(taskDir, "b.json"), JSON.stringify(tasks[1]));

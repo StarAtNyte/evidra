@@ -941,7 +941,7 @@ benchmark.command("scientific-suite")
     console.log(`Validity            ${(suite.validityRate * 100).toFixed(1)}%`);
     console.log(`Mean stage score    ${(suite.meanStageScore * 100).toFixed(1)}%`);
     console.log(`Mean process quality ${(suite.meanProcessQuality * 100).toFixed(1)}%`);
-    for (const result of suite.tasks) console.log(`${result.evaluation.valid ? "✓" : "✗"} ${result.taskId} · ${(result.evaluation.stageScore * 100).toFixed(0)}% · ${result.evaluation.reason}`);
+    for (const result of suite.tasks) console.log(`${result.evaluation.valid ? "✓" : "✗"} ${result.taskId} · ${(result.evaluation.stageScore * 100).toFixed(0)}% · ${result.error ?? result.evaluation.reason}`);
     if (suite.validTasks !== suite.taskCount) process.exitCode = 2;
   });
 benchmark.command("compare")

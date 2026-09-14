@@ -41,7 +41,7 @@ export const ScientificTaskSchema = z.object({
 export type ScientificTask = z.infer<typeof ScientificTaskSchema>;
 export type ScientificTaskStage = z.infer<typeof ScientificTaskStageSchema>;
 
-function taskFingerprint(task: ScientificTask): string {
+export function scientificTaskFingerprint(task: ScientificTask): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(task)).digest("hex")}`;
 }
 
@@ -245,7 +245,7 @@ async function executeScientificStage(stage: ScientificTaskStage, cwd: string, o
 /** Execute stages in order, verifying and snapshotting every boundary for restart/resume. */
 export async function runScientificTask(taskValue: unknown, root: string, options: ScientificTaskRunOptions = {}): Promise<ScientificTaskRun> {
   const task = ScientificTaskSchema.parse(taskValue);
-  const fingerprint = taskFingerprint(task);
+  const fingerprint = scientificTaskFingerprint(task);
   const previous = options.previous ? ScientificTaskRunSchema.parse(options.previous) : undefined;
   if (previous && (previous.taskId !== task.id || previous.taskFingerprint !== fingerprint)) throw new Error(`Previous scientific task report does not match task contract '${task.id}'.`);
   const startedAt = new Date().toISOString();
