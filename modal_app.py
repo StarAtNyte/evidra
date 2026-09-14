@@ -32,8 +32,13 @@ def contained_path(root: Path, candidate: Path) -> Path:
 
 
 def include_workspace_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").lstrip("./")
+    # Controller state is excluded, but the isolated worker config is part of
+    # the experiment contract and is safe to copy into the remote workspace.
+    if normalized.endswith("/.sota/experiment-config.json") or normalized == ".sota/experiment-config.json":
+        return True
     excluded = {".git", ".sota", "node_modules", ".venv", "__pycache__", ".mypy_cache"}
-    return not any(part in excluded for part in Path(path).parts)
+    return not any(part in excluded for part in Path(normalized).parts)
 
 
 def ignore_workspace_path(path: Path) -> bool:
@@ -59,7 +64,11 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]") -> dict[str
     working_directory = contained_path(REMOTE_WORKSPACE, REMOTE_WORKSPACE / relative_cwd)
     if not working_directory.is_dir():
         raise FileNotFoundError(f"Modal working directory does not exist: {working_directory}")
-    completed = subprocess.run(command, cwd=working_directory, capture_output=True, text=True, check=False)
+    environment = os.environ.copy()
+    config_path = REMOTE_WORKSPACE / ".sota" / "experiment-config.json"
+    if config_path.is_file():
+        environment["EVIDRA_EXPERIMENT_CONFIG"] = str(config_path)
+    completed = subprocess.run(command, cwd=working_directory, capture_output=True, text=True, check=False, env=environment)
     artifact_payload: dict[str, str] = {}
     for artifact in json.loads(artifacts_json):
         relative_artifact = Path(artifact)

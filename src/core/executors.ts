@@ -1,12 +1,34 @@
 import { runProcess, type ProcessControl } from "./process.js";
 import { parseLearningCurve } from "./early-stopping.js";
+import { redactStructured } from "./redaction.js";
 import { existsSync, lstatSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { ExperimentManifest, ProcessResult, RunResult } from "./types.js";
 
 export interface ExperimentExecutor {
   readonly kind: "local" | "container" | "modal";
-  run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName?: string): Promise<RunResult>;
+  run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName?: string, environment?: NodeJS.ProcessEnv): Promise<RunResult>;
+}
+
+/**
+ * Give every experiment the same generic, competition-independent config
+ * contract. The file lives in the isolated worktree, never in controller
+ * state, and is redacted before a model-supplied patch reaches a worker.
+ */
+function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: string): NodeJS.ProcessEnv {
+  const configPath = `${cwd}/.sota/experiment-config.json`;
+  mkdirSync(dirname(configPath), { recursive: true });
+  const payload = redactStructured({
+    schemaVersion: 1,
+    experimentId: manifest.id,
+    configPatch: manifest.change?.configPatch ?? {},
+  });
+  writeFileSync(configPath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
+  return {
+    ...process.env,
+    EVIDRA_EXPERIMENT_ID: manifest.id,
+    EVIDRA_EXPERIMENT_CONFIG: configPath,
+  };
 }
 
 export function classifyProcessFailure(result: ProcessResult, remote = false): RunResult["failureClass"] {
@@ -166,15 +188,20 @@ export function validateRunMetric(result: RunResult, metricName: string): RunRes
 export class LocalExecutor implements ExperimentExecutor {
   readonly kind = "local" as const;
 
-  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse"): Promise<RunResult> {
-    return toRunResult(manifest, await runProcess(command, cwd, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, undefined, manifest.resources.earlyStopping), metricName);
+  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
+    const experimentEnvironment = { ...prepareExperimentEnvironment(manifest, cwd), ...environment };
+    return toRunResult(manifest, await runProcess(command, cwd, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, experimentEnvironment, manifest.resources.earlyStopping), metricName);
   }
 }
 
-export function containerCommand(runtime: "docker" | "podman", image: string, cwd: string, command: string[]): string[] {
+export function containerCommand(runtime: "docker" | "podman", image: string, cwd: string, command: string[], environment: Record<string, string> = {}): string[] {
   if (!/^[A-Za-z0-9][A-Za-z0-9._/@:-]*$/.test(image)) throw new Error("Container image must be a plain image reference, not a runtime option or shell expression.");
   const args = [runtime, "run", "--rm", "--init", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "512", "--network", "none", "--tmpfs", "/tmp:rw,nosuid,nodev", "--volume", `${cwd}:/workspace:rw`, "--workdir", "/workspace"];
   if (typeof process.getuid === "function" && typeof process.getgid === "function") args.push("--user", `${process.getuid()}:${process.getgid()}`);
+  for (const [key, value] of Object.entries(environment)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || /[\r\n]/.test(value)) throw new Error("Invalid container environment entry.");
+    args.push("--env", `${key}=${value}`);
+  }
   return [...args, image, ...command];
 }
 
@@ -183,7 +210,8 @@ export class ContainerExecutor implements ExperimentExecutor {
 
   constructor(private readonly workspaceRoot?: string) {}
 
-  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse"): Promise<RunResult> {
+  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
+    const experimentEnvironment = { ...prepareExperimentEnvironment(manifest, cwd), ...environment };
     const requestedRuntime = process.env.EVIDRA_CONTAINER_RUNTIME;
     const candidates: Array<"docker" | "podman"> = requestedRuntime === "podman" ? ["podman"] : requestedRuntime === "docker" ? ["docker"] : requestedRuntime ? [] : ["docker", "podman"];
     const launchRoot = resolve(this.workspaceRoot ?? cwd);
@@ -199,7 +227,10 @@ export class ContainerExecutor implements ExperimentExecutor {
       return toRunResult(manifest, { command, cwd, exitCode: 127, durationMs: 0, stdout: "", stderr: "No Docker or Podman runtime was found. Install one or select the local executor." }, metricName);
     }
     try {
-      const result = await runProcess(containerCommand(runtime, image, resolve(cwd), command), launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, undefined, manifest.resources.earlyStopping);
+      const result = await runProcess(containerCommand(runtime, image, resolve(cwd), command, {
+        EVIDRA_EXPERIMENT_ID: manifest.id,
+        EVIDRA_EXPERIMENT_CONFIG: "/workspace/.sota/experiment-config.json",
+      }), launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, experimentEnvironment, manifest.resources.earlyStopping);
       return toRunResult(manifest, { ...result, command, cwd }, metricName);
     } catch (error) {
       return toRunResult(manifest, { command, cwd, exitCode: 126, durationMs: 0, stdout: "", stderr: error instanceof Error ? error.message : String(error) }, metricName);
@@ -212,7 +243,8 @@ export class ModalExecutor implements ExperimentExecutor {
 
   constructor(private readonly workspaceRoot?: string) {}
 
-  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse"): Promise<RunResult> {
+  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
+    const experimentEnvironment = { ...prepareExperimentEnvironment(manifest, cwd), ...environment };
     // Modal CLI profiles (created by `modal token set`) are valid credentials
     // too; do not require secrets to be duplicated into Evidra's environment.
     const launchRoot = resolve(this.workspaceRoot ?? cwd);
@@ -228,6 +260,7 @@ export class ModalExecutor implements ExperimentExecutor {
       EVIDRA_MODAL_WORKSPACE: experimentWorkspace,
       ...(manifest.resources.gpu ? { EVIDRA_MODAL_GPU: manifest.resources.gpu } : {}),
       EVIDRA_MODAL_TIMEOUT_SECONDS: String(timeoutSeconds),
+      EVIDRA_EXPERIMENT_ID: manifest.id,
     }, manifest.resources.earlyStopping);
     const payload = parseModalWorkerResult(result.stdout);
     if (!payload) return toRunResult(manifest, { ...result, command, cwd }, metricName, true);
