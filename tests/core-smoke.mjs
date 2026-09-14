@@ -2577,6 +2577,7 @@ test("evaluation matrix protocol requires exact fold-seed coverage", () => {
   assert.equal(incomplete.valid, false);
   assert.deepEqual(incomplete.missing, ["1:41"]);
   assert.equal(validateEvaluationMatrix(manifest, { matrix: [{ ...matrix[0], metrics: { other: 1 } }, ...matrix.slice(1)] }, "score").valid, false);
+  assert.equal(validateEvaluationMatrix(manifest, { matrix: [...matrix, matrix[0]] }, "score").valid, false);
 });
 
 test("competition contract validates generic autoresearch-style workspaces", () => {

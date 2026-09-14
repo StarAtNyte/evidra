@@ -85,8 +85,12 @@ export function parseEvaluationMatrix(stdout: string, metricName: string): Evalu
     const source = object.matrix ?? object.results ?? (object.evaluation && typeof object.evaluation === "object" ? (object.evaluation as Record<string, unknown>).results : undefined);
     if (Array.isArray(source)) candidates.push(...source);
   };
-  try { collect(JSON.parse(stdout)); } catch { /* inspect JSONL below */ }
-  for (const line of stdout.split("\n")) {
+  let wholeDocument = false;
+  try {
+    collect(JSON.parse(stdout));
+    wholeDocument = true;
+  } catch { /* inspect JSONL below */ }
+  if (!wholeDocument) for (const line of stdout.split("\n")) {
     try { collect(JSON.parse(line)); } catch { /* ordinary worker log */ }
   }
   const cells: EvaluationMatrixCell[] = [];
@@ -98,13 +102,7 @@ export function parseEvaluationMatrix(stdout: string, metricName: string): Evalu
     const metrics = Object.fromEntries(Object.entries(rawMetrics).filter(([, metric]) => typeof metric === "number" && Number.isFinite(metric))) as Record<string, number>;
     if (Object.keys(metrics).length) cells.push({ fold: Number(value.fold), seed: Number(value.seed), metrics });
   }
-  const seen = new Set<string>();
-  return cells.filter((cell) => {
-    const key = `${cell.fold}:${cell.seed}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  return cells;
 }
 
 /** Parse the final JSON emitted by modal_app.py without trusting progress logs. */

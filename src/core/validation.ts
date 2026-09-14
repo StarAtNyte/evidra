@@ -20,7 +20,7 @@ export function validateEvaluationMatrix(manifest: Pick<ExperimentManifest, "eva
   const expectedCells = manifest.evaluation.folds.flatMap((fold) => manifest.evaluation.seeds.map((seed) => `${fold}:${seed}`));
   const missing = expectedCells.filter((key) => !observed.has(key));
   const invalidMetric = cells.filter((cell) => typeof cell.metrics[metricName] !== "number" || !Number.isFinite(cell.metrics[metricName])).map((cell) => `${cell.fold}:${cell.seed}`);
-  return { valid: missing.length === 0 && invalidMetric.length === 0 && observed.size === expectedCells.length, expected: expectedCells.length, observed: observed.size, missing, invalidMetric };
+  return { valid: missing.length === 0 && invalidMetric.length === 0 && cells.length === observed.size && observed.size === expectedCells.length, expected: expectedCells.length, observed: observed.size, missing, invalidMetric };
 }
 
 export function auditExperiment(manifest: ExperimentManifest, run: RunResult, context: ValidationContext): { accepted: boolean; reasons: string[]; gates: Record<string, boolean> } {
