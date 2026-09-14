@@ -38,6 +38,47 @@ export const ScientificTaskSchema = z.object({
 export type ScientificTask = z.infer<typeof ScientificTaskSchema>;
 export type ScientificTaskStage = z.infer<typeof ScientificTaskStageSchema>;
 
+const ScientificVerificationSchema = z.object({
+  declared: z.number().int().nonnegative(),
+  executed: z.number().int().nonnegative(),
+  passed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+}).superRefine((verification, context) => {
+  if (verification.executed > verification.declared) context.addIssue({ code: z.ZodIssueCode.custom, path: ["executed"], message: "executed verifiers cannot exceed declared verifiers" });
+  if (verification.passed + verification.failed > verification.executed) context.addIssue({ code: z.ZodIssueCode.custom, path: ["passed"], message: "passed and failed verifiers cannot exceed executed verifiers" });
+});
+
+export const ScientificStageObservationSchema = z.object({
+  stageId: z.string().min(1),
+  status: z.enum(["completed", "failed", "interrupted", "resumed"]),
+  exitCode: z.number().int(),
+  durationMs: z.number().nonnegative(),
+  verification: ScientificVerificationSchema,
+  artifacts: z.record(z.string(), z.string()),
+  snapshot: z.object({ id: z.string().min(1), files: z.record(z.string(), z.string()) }),
+  stdoutTail: z.string(),
+  stderrTail: z.string(),
+  attempts: z.array(z.object({
+    attempt: z.number().int().positive(),
+    route: z.enum(["primary", "alternate"]),
+    command: z.array(z.string().min(1)).min(1),
+    exitCode: z.number().int(),
+    durationMs: z.number().nonnegative(),
+    verification: ScientificVerificationSchema,
+    stdoutTail: z.string(),
+    stderrTail: z.string(),
+  })).max(4).optional(),
+});
+
+export const ScientificTaskRunSchema = z.object({
+  schemaVersion: z.literal(1),
+  taskId: z.string().min(1),
+  startedAt: z.string().datetime(),
+  completedAt: z.string().datetime().optional(),
+  status: z.enum(["completed", "failed", "interrupted"]),
+  stages: z.array(ScientificStageObservationSchema).max(32),
+});
+
 export interface ScientificStageObservation {
   stageId: string;
   status: "completed" | "failed" | "interrupted" | "resumed";
@@ -188,13 +229,14 @@ async function executeScientificStage(stage: ScientificTaskStage, cwd: string, o
 /** Execute stages in order, verifying and snapshotting every boundary for restart/resume. */
 export async function runScientificTask(taskValue: unknown, root: string, options: ScientificTaskRunOptions = {}): Promise<ScientificTaskRun> {
   const task = ScientificTaskSchema.parse(taskValue);
+  const previous = options.previous ? ScientificTaskRunSchema.parse(options.previous) : undefined;
   const startedAt = new Date().toISOString();
   const stages: ScientificStageObservation[] = [];
   for (const stage of task.stages) {
     const cwd = containedPath(root, stage.cwd, `stage '${stage.id}' cwd`);
-    const previous = options.previous?.stages.find((observation) => observation.stageId === stage.id);
-    if (previous && resumableObservation(task, stage, cwd, previous)) {
-      stages.push({ ...previous, status: "resumed" });
+    const previousStage = previous?.stages.find((observation) => observation.stageId === stage.id);
+    if (previousStage && resumableObservation(task, stage, cwd, previousStage)) {
+      stages.push({ ...previousStage, status: "resumed" });
       options.onProgress?.(`Scientific task · ${stage.id} · resumed from verified snapshot`);
       continue;
     }

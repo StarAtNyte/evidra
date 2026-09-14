@@ -87,7 +87,7 @@ import { createTransferableMethod } from "./core/method-transfer.js";
 import { createAblationPlan, evaluateAblationEvidence } from "./core/ablation.js";
 import { deriveReferenceCurve, type LearningPoint } from "./core/early-stopping.js";
 import { buildMlflowRunExports } from "./core/mlflow.js";
-import { evaluateScientificTaskRun, runScientificTask } from "./core/scientific-tasks.js";
+import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema } from "./core/scientific-tasks.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -694,7 +694,7 @@ benchmark.command("scientific")
   .action(async (file: string, options: { workspace?: string; out?: string; resume?: string }) => {
     const task = JSON.parse(readFileSync(resolve(file), "utf8")) as unknown;
     const workspace = options.workspace ? resolve(options.workspace) : root;
-    const previous = options.resume ? (JSON.parse(readFileSync(resolve(options.resume), "utf8")) as { run?: Parameters<typeof evaluateScientificTaskRun>[1] }).run : undefined;
+    const previous = options.resume ? ScientificTaskRunSchema.parse((JSON.parse(readFileSync(resolve(options.resume), "utf8")) as { run?: unknown }).run) : undefined;
     const run = await runScientificTask(task, workspace, { previous, onProgress: (message) => console.log(`· ${message}`) });
     const evaluation = evaluateScientificTaskRun(task, run);
     const report = { task, run, evaluation };
