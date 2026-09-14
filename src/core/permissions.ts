@@ -9,17 +9,42 @@ export interface CommandGuard {
 
 const blockedCommands = new Set(["sudo", "rm", "rmdir", "mkfs", "shutdown", "reboot", "poweroff", "dd"]);
 
+/** Resolve transparent launcher wrappers before applying autonomous guards. */
+function unwrapCommand(command: string[]): string[] {
+  let current = [...command];
+  for (let depth = 0; depth < 4; depth += 1) {
+    const executable = basename(current[0] ?? "").toLowerCase();
+    if (executable === "env") {
+      let index = 1;
+      while (index < current.length) {
+        const argument = current[index] ?? "";
+        if (argument === "-i" || argument === "--ignore-environment") { index += 1; continue; }
+        if (argument === "-u" || argument === "--unset") { index += 2; continue; }
+        if (argument.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(argument)) { index += 1; continue; }
+        break;
+      }
+      current = current.slice(index);
+      continue;
+    }
+    if (executable === "busybox" || executable === "command" || executable === "exec" || executable === "nohup" || executable === "nice" || executable === "stdbuf") {
+      const index = current.findIndex((argument, position) => position > 0 && !argument.startsWith("-"));
+      if (index > 0) { current = current.slice(index); continue; }
+    }
+    if (executable === "timeout") {
+      const index = current.findIndex((argument, position) => position > 0 && !argument.startsWith("-") && !/^\d/.test(argument));
+      if (index > 0) { current = current.slice(index); continue; }
+    }
+    break;
+  }
+  return current;
+}
+
 /** Hard safety boundary applied even when the user selects YOLO. */
 export function guardCommand(command: string[]): CommandGuard {
-  const executable = basename(command[0] ?? "").toLowerCase();
+  const normalized = unwrapCommand(command);
+  const executable = basename(normalized[0] ?? "").toLowerCase();
   const joined = command.join(" ").toLowerCase();
   if (!executable) return { allowed: false, reason: "No command was supplied." };
-  // Resolve common command-wrapper forms before applying the hard deny list.
-  // This keeps `env rm ...` and `busybox rm ...` from bypassing the boundary.
-  if (executable === "env" || executable === "busybox") {
-    const nestedIndex = command.findIndex((argument, index) => index > 0 && !argument.startsWith("-"));
-    if (nestedIndex > 0) return guardCommand(command.slice(nestedIndex));
-  }
   if (blockedCommands.has(executable)) return { allowed: false, reason: `Refusing dangerous command '${executable}'.` };
   if (joined.includes("git reset --hard") || joined.includes("git clean -fd") || joined.includes("git clean -xdf")) {
     return { allowed: false, reason: "Refusing destructive Git cleanup." };
@@ -41,7 +66,8 @@ export function guardCommand(command: string[]): CommandGuard {
 export function guardAutonomousCommand(command: string[]): CommandGuard {
   const base = guardCommand(command);
   if (!base.allowed) return base;
-  const executable = basename(command[0] ?? "").toLowerCase();
+  const normalized = unwrapCommand(command);
+  const executable = basename(normalized[0] ?? "").toLowerCase();
   const joined = command.join(" ").toLowerCase();
   if (/\bgit\s+push\b/.test(joined) || /\bgh\s+(pr|issue)\s+(create|edit)\b/.test(joined)) {
     return { allowed: false, reason: "Refusing autonomous external GitHub or repository changes; use an explicit operator command." };

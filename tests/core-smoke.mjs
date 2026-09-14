@@ -1553,6 +1553,13 @@ test("shell parsing and safety guard handle quoted and wrapped commands", () => 
   assert.equal(guardCommand(["rg", "-n", "hello world", "src"]).allowed, true);
 });
 
+test("autonomous safety guards cannot be bypassed with environment or launcher wrappers", () => {
+  assert.equal(guardAutonomousCommand(["env", "MODAL_TOKEN=redacted", "modal", "run", "worker.py"]).allowed, false);
+  assert.equal(guardAutonomousCommand(["env", "curl", "https://example.invalid/data"]).allowed, false);
+  assert.equal(guardAutonomousCommand(["timeout", "30", "aicrowd", "submit", "bundle.zip"]).allowed, false);
+  assert.equal(guardAutonomousCommand(["env", "busybox", "rm", "-rf", "scratch"]).allowed, false);
+});
+
 test("research lanes use bounded role-specific workspace observations", () => {
   const dataCalls = laneToolCalls("data detective");
   const validationCalls = laneToolCalls("validation scientist");
