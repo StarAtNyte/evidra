@@ -1929,8 +1929,7 @@ research
         arms: [
           ...DEFAULT_SEARCH_OPERATORS.map((operator, index) => {
             const activeCompetitionId = store.project()?.competitionId;
-            const outcomes = store.recentEvents(500).filter((event) => {
-              if (event.type !== "research.search.reward") return false;
+            const outcomes = store.eventsByType("research.search.reward").filter((event) => {
               const payload = event.payload as { operator?: string; competitionId?: string };
               // Legacy rewards without a competition id remain usable for a
               // fresh project, but once a reward is scoped it must not leak
@@ -2727,7 +2726,7 @@ research.command("policy")
   .action(() => {
     const store = new ResearchStore(statePath);
     const project = store.project();
-    const report = summarizeSearchPolicyEvidence(store.recentEvents(5000), project?.competitionId);
+    const report = summarizeSearchPolicyEvidence(store.eventsByType("research.search.reward"), project?.competitionId);
     store.close();
     console.log(JSON.stringify(report, null, 2));
   });

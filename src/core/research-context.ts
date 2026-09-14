@@ -90,7 +90,14 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
     return typeof value.title === "string" ? [{ id: entry.id, title: value.title, status: typeof value.status === "string" ? value.status : "proposed", ...(typeof value.mechanism === "string" ? { mechanism: value.mechanism.slice(0, 500) } : {}) }] : [];
   });
   const contradictions = store.edges().filter((edge) => edge.relation === "contradicts").slice(0, bounded).map((edge) => ({ fromId: edge.fromId, toId: edge.toId, confidence: edge.confidence }));
-  const events = store.recentEvents(5_000);
+  // Learning memory is durable; only the final ranked context is bounded.
+  // recentEvents() is a UI timeline and must not silently erase old transfer
+  // methods or repository discoveries from long campaigns.
+  const events = store.eventsByTypes([
+    "research.method.transferable",
+    "research.repository.search.completed",
+    "research.ablation.plan",
+  ]);
   const transferableMethods = transferableMethodsFromEvents(events, query, Math.min(8, bounded));
   const repositoryLeads = repositoryLeadsFromEvents(events, query, Math.min(8, bounded));
   const ablationPlans = ablationPlansFromEvents(events, Math.min(8, bounded));
