@@ -96,6 +96,13 @@ export class ResearchStore {
         event_hash TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_events_type_id ON events(type, id);
+      CREATE TABLE IF NOT EXISTS compute_reservations (
+        experiment_id TEXT PRIMARY KEY,
+        requested_gpu_hours REAL NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS event_chain_state (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         head_hash TEXT,
@@ -407,6 +414,33 @@ export class ResearchStore {
     return rows.map((row) => ({ type: row.type, payload: JSON.parse(row.payload_json), createdAt: row.created_at, eventHash: row.event_hash }));
   }
 
+  /** Atomically reserve remaining campaign GPU budget for one worker. */
+  reserveComputeBudget(input: { experimentId: string; budgetGpuHours: number; usedGpuHours: number; requestedGpuHours: number; gpu?: string }): { allowed: boolean; reservedGpuHours: number; remainingGpuHours: number; reason: string } {
+    const requested = Math.max(0, Number.isFinite(input.requestedGpuHours) ? input.requestedGpuHours : 0);
+    const budget = Math.max(0, Number.isFinite(input.budgetGpuHours) ? input.budgetGpuHours : 0);
+    const used = Math.max(0, Number.isFinite(input.usedGpuHours) ? input.usedGpuHours : 0);
+    if (!input.gpu || requested === 0 || budget === 0) return { allowed: true, reservedGpuHours: 0, remainingGpuHours: Math.max(0, budget - used), reason: "no bounded GPU reservation is required" };
+    const now = new Date().toISOString();
+    const result = this.db.transaction(() => {
+      const active = (this.db.prepare("SELECT COALESCE(SUM(requested_gpu_hours), 0) AS hours FROM compute_reservations WHERE status = 'reserved'").get() as { hours: number }).hours;
+      const existing = this.db.prepare("SELECT status, requested_gpu_hours FROM compute_reservations WHERE experiment_id = ?").get(input.experimentId) as { status: string; requested_gpu_hours: number } | undefined;
+      if (existing?.status === "reserved") return { allowed: true, reservedGpuHours: active, remainingGpuHours: Math.max(0, budget - used - active), reason: "GPU budget was already reserved for this experiment" };
+      const remaining = Math.max(0, budget - used - active);
+      if (requested > remaining + 1e-9) return { allowed: false, reservedGpuHours: active, remainingGpuHours: remaining, reason: `requested ${requested} GPU-hours exceeds the ${remaining} GPU-hours available after active reservations` };
+      this.db.prepare("INSERT OR REPLACE INTO compute_reservations (experiment_id, requested_gpu_hours, status, created_at, updated_at) VALUES (?, ?, 'reserved', COALESCE((SELECT created_at FROM compute_reservations WHERE experiment_id = ?), ?), ?)").run(input.experimentId, requested, input.experimentId, now, now);
+      return { allowed: true, reservedGpuHours: active + requested, remainingGpuHours: Math.max(0, remaining - requested), reason: "GPU budget atomically reserved" };
+    })() as { allowed: boolean; reservedGpuHours: number; remainingGpuHours: number; reason: string };
+    this.appendEvent(result.allowed ? "compute.budget.reserved" : "compute.budget.rejected", { experimentId: input.experimentId, requestedGpuHours: requested, ...result });
+    return result;
+  }
+
+  releaseComputeReservation(experimentId: string, reason = "experiment terminal"): boolean {
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE compute_reservations SET status = 'released', updated_at = ? WHERE experiment_id = ? AND status = 'reserved'").run(now, experimentId);
+    if (result.changes === 1) this.appendEvent("compute.budget.released", { experimentId, reason });
+    return result.changes === 1;
+  }
+
   saveExperiment(experiment: { id: string; payload: unknown }): void {
     const existing = this.db.prepare("SELECT 1 AS present FROM experiments WHERE id = ?").get(experiment.id) as { present: number } | undefined;
     const now = new Date().toISOString();
@@ -416,6 +450,8 @@ export class ResearchStore {
       VALUES (?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET payload_json = excluded.payload_json
     `).run(experiment.id, JSON.stringify(safePayload), now);
+    const status = (safePayload as { status?: unknown }).status;
+    if (["completed", "failed", "invalid", "rejected", "cancelled", "blocked"].includes(String(status))) this.releaseComputeReservation(experiment.id, `experiment status ${String(status)}`);
     this.appendEvent(existing ? "experiment.updated" : "experiment.created", { id: experiment.id, payload: safePayload });
   }
 

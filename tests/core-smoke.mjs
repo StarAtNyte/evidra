@@ -230,6 +230,18 @@ test("durable research state and queue survive store reopen", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("GPU reservations prevent concurrent workers from oversubscribing a campaign", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-gpu-reservation-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    assert.equal(store.reserveComputeBudget({ experimentId: "gpu-a", budgetGpuHours: 10, usedGpuHours: 0, requestedGpuHours: 6, gpu: "A100" }).allowed, true);
+    assert.equal(store.reserveComputeBudget({ experimentId: "gpu-b", budgetGpuHours: 10, usedGpuHours: 0, requestedGpuHours: 5, gpu: "A100" }).allowed, false);
+    assert.equal(store.releaseComputeReservation("gpu-a", "test release"), true);
+    assert.equal(store.reserveComputeBudget({ experimentId: "gpu-b", budgetGpuHours: 10, usedGpuHours: 0, requestedGpuHours: 5, gpu: "A100" }).allowed, true);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("event-family history remains durable beyond the bounded UI timeline", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-event-history-"));
   try {

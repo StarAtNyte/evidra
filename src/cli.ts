@@ -42,7 +42,7 @@ import { applyUnifiedDiff, extractUnifiedDiff } from "./core/experiment-patches.
 import { applyCriticGate, latestOpenCriticConstraint } from "./core/critic-gate.js";
 import { recordBaselineEvidence } from "./core/baseline.js";
 import { redactSecrets } from "./core/redaction.js";
-import { evaluateGpuBudget, observedGpuHours } from "./core/compute-budget.js";
+import { observedGpuHours } from "./core/compute-budget.js";
 import { enforceClaimTermination, enforceGoalTermination } from "./core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds, type ClaimAuditReport } from "./core/claim-audit.js";
 import { analyzePredictionRows, parsePredictionRows } from "./core/error-analysis.js";
@@ -2987,7 +2987,8 @@ experiment.command("run")
     const currentGpuLabel = manifest.resources.gpu ?? (manifest.resources.executor === "modal" && currentRequestedGpuHours > 0 ? "modal-default" : undefined);
     if (gpuBudget > 0 && currentGpuLabel) {
       const usedGpuHours = observedGpuHours(store.runAttempts(), store.experiments(), store.hypotheses());
-      const budgetDecision = evaluateGpuBudget({ budgetGpuHours: gpuBudget, usedGpuHours, requestedGpuHours: currentRequestedGpuHours, executor: manifest.resources.executor, gpu: currentGpuLabel });
+      const reservation = store.reserveComputeBudget({ experimentId: id, budgetGpuHours: gpuBudget, usedGpuHours, requestedGpuHours: currentRequestedGpuHours, gpu: currentGpuLabel });
+      const budgetDecision = { allowed: reservation.allowed, limited: true, budgetGpuHours: gpuBudget, usedGpuHours, requestedGpuHours: currentRequestedGpuHours, remainingGpuHours: reservation.remainingGpuHours, reason: reservation.reason };
       store.appendEvent("compute.budget.checked", { experimentId: id, ...budgetDecision });
       if (!budgetDecision.allowed) {
         store.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "blocked", executionPlan, computeBudget: budgetDecision } });
