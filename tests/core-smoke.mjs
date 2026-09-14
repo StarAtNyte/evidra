@@ -1355,6 +1355,14 @@ test("research lane pools expose ensemble and reproducibility specialties when c
     "method researcher",
     "reproducibility engineer",
   ]);
+  assert.deepEqual(selectResearchLaneRoles("win a dataset competition with a robust model", 2, { rotation: 1 }), [
+    "validation scientist",
+    "model researcher",
+  ]);
+  assert.deepEqual(selectResearchLaneRoles("win a dataset competition with a robust model", 2, { focus: "recovery", rotation: 1 }), [
+    "reproducibility engineer",
+    "validation scientist",
+  ]);
 });
 
 test("peer research board is bounded and keeps provenance-shaped evidence", () => {

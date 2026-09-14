@@ -2037,6 +2037,8 @@ research
             storePath: statePath,
             maxParallel: effectiveLaneLimit,
             autonomy,
+            laneFocus: allocation.focus,
+            laneRotation: cycle,
             executeTool: researchToolExecutor(adapter, autonomy),
             onToolCall: toolTrace.onToolCall,
             onToolResult: toolTrace.onToolResult,
@@ -2077,6 +2079,8 @@ research
                 storePath: statePath,
                 maxParallel: effectiveLaneLimit,
                 autonomy,
+                laneFocus: "evidence-validation",
+                laneRotation: cycle + 1,
                 // The first pass already collected bounded workspace evidence;
                 // the peer pass reasons over that evidence rather than
                 // multiplying shell calls.

@@ -97,6 +97,8 @@ export interface ResearchLanesOptions {
   storePath: string;
   maxParallel?: number;
   autonomy?: AutonomyLevel;
+  laneFocus?: string;
+  laneRotation?: number;
   onProgress?: (message: string) => void;
   onProcess?: (control: ProcessControl) => void;
   isCancelled?: () => boolean;
@@ -152,10 +154,39 @@ export function laneToolCalls(role: ResearchLaneRole, objective = ""): ResearchT
 }
 
 /** Choose an appropriate research team without assuming every task is ML. */
-export function selectResearchLaneRoles(objective: string, requested: number): ResearchLaneRole[] {
+export interface ResearchLaneSelectionOptions {
+  /** A measured deficiency can pull its specialist to the front of the team. */
+  focus?: string;
+  /** Rotate otherwise equivalent specialists across autonomous cycles. */
+  rotation?: number;
+}
+
+export function selectResearchLaneRoles(objective: string, requested: number, options: ResearchLaneSelectionOptions = {}): ResearchLaneRole[] {
   const mlOrCompetition = /\b(dataset|training|train|model|estimator|competition|leaderboard|metric|fold|gpu|prediction|baseline)\b/i.test(objective);
   const pool = mlOrCompetition ? RESEARCH_LANE_ROLES : GENERAL_RESEARCH_LANE_ROLES;
-  return pool.slice(0, Math.max(1, Math.min(requested, pool.length)));
+  const count = Math.max(1, Math.min(requested, pool.length));
+  const focus = options.focus?.toLowerCase() ?? "";
+  const focusRole = focus.includes("evidence") || focus.includes("validation") || focus.includes("data")
+    ? "validation scientist"
+    : focus.includes("recovery") || focus.includes("reproduc") || focus.includes("tool")
+      ? "reproducibility engineer"
+      : focus.includes("goal") || focus.includes("termination")
+        ? "validation scientist"
+        : focus.includes("breadth") || focus.includes("search")
+          ? "method researcher"
+          : undefined;
+  const prioritized = focusRole && pool.some((role) => role === focusRole)
+    ? [focusRole as ResearchLaneRole, ...pool.filter((role) => role !== focusRole)]
+    : [...pool];
+  // Rotation is applied only to the non-specialist portfolio. A measured
+  // failure must keep its repair lane first, while the remaining seats rotate
+  // to prevent a low-concurrency campaign from seeing one fixed slice of the
+  // research team forever.
+  const head = prioritized[0] === focusRole ? [prioritized[0]] : [];
+  const tail = prioritized.slice(head.length);
+  const offset = tail.length ? Math.abs(Math.trunc(options.rotation ?? 0)) % tail.length : 0;
+  const rotated = [...tail.slice(offset), ...tail.slice(0, offset)];
+  return [...head, ...rotated].slice(0, count);
 }
 
 const MAX_LANE_TOOL_RESULT_BYTES = 12_000;
@@ -415,7 +446,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
 /** Run independent research lanes with an explicit concurrency bound. */
 export async function runResearchLanes(objective: string, context: Record<string, unknown>, options: ResearchLanesOptions): Promise<ResearchLaneReport[]> {
   const concurrency = researchLaneConcurrency({ autonomy: options.autonomy, provider: options.provider, requested: options.maxParallel });
-  const roles = selectResearchLaneRoles(objective, concurrency);
+  const roles = selectResearchLaneRoles(objective, concurrency, { focus: options.laneFocus, rotation: options.laneRotation });
   const routes = assignResearchLaneRoutes(roles, options);
   const reports: ResearchLaneReport[] = [];
   let next = 0;
