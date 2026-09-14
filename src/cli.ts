@@ -1720,7 +1720,7 @@ research
         ? harnessAdaptationAgenda as unknown as HarnessAdaptationPlan
         : undefined;
       const harnessRetestTask = harnessRetestPlan && latestHarnessBenchmarkEvent
-        ? materializeHarnessRetestTask(harnessRetestPlan, latestHarnessBenchmarkEvent.createdAt)
+        ? materializeHarnessRetestTask(harnessRetestPlan, latestHarnessBenchmarkEvent.createdAt, latestHarnessBenchmarkEvent.payload)
         : undefined;
       if (harnessRetestTask && !store.queueTasks().some((task) => task.id === harnessRetestTask.id)) {
         store.enqueueTask(harnessRetestTask);

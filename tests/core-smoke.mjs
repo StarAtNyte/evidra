@@ -828,10 +828,11 @@ test("adaptive planning remains compatible with pre-slice benchmark records", ()
 
 test("benchmark adaptation materializes one deterministic durable retest task", () => {
   const plan = planHarnessAdaptation([], [], [], "evidra");
-  const task = materializeHarnessRetestTask(plan, "2026-09-15T12:00:00.000Z");
+  const task = materializeHarnessRetestTask(plan, "2026-09-15T12:00:00.000Z", { comparisons: [{ incumbent: "baseline", challengerWins: false }] });
   assert.equal(task?.kind, "harness.retest");
   assert.match(task?.id ?? "", /^harness-retest:evidra:/);
   assert.equal(task?.payload.retest.noMetricOrBudgetChanges, true);
+  assert.deepEqual(task?.payload.benchmarkEvidence, { comparisons: [{ incumbent: "baseline", challengerWins: false }] });
   assert.equal(materializeHarnessRetestTask(plan, "2026-09-15T12:00:00.000Z")?.id, task?.id);
   assert.notEqual(materializeHarnessRetestTask(plan, "2026-09-15T12:00:01.000Z")?.id, task?.id);
   const proven = { ...plan, claimStatus: "win_proven" };
