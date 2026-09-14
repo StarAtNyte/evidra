@@ -6,7 +6,7 @@ import { runProcess, type ProcessControl } from "./process.js";
 import { splitCommandLine } from "./process.js";
 import { renderReport, writeReport, type ReportKind } from "./reports.js";
 import { createValidationPolicy, writeValidationPolicy } from "./validation-policy.js";
-import { DEFAULT_SOURCE_REFRESH_MS, researchSearchQueries, retrieveSource, searchResearchRepositories, searchResearchSources, searchResearchWeb, sourceClaims, sourceFrontier, sourceIsFresh } from "./sources.js";
+import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, researchSearchQueries, retrieveSource, searchResearchRepositories, searchResearchSources, searchResearchWeb, sourceClaims, sourceFrontier, sourceIsFresh } from "./sources.js";
 import { ResearchStore } from "./store.js";
 import type { CompetitionConfig } from "./types.js";
 import { isSensitiveWorkspacePath, redactSecrets } from "./redaction.js";
@@ -242,7 +242,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
           const cacheStore = new ResearchStore(context.storePath);
           const cached = cacheStore.sources().find((entry) => {
             const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { url?: unknown } : {};
-            return payload.url === url && sourceIsFresh(entry, DEFAULT_SOURCE_REFRESH_MS);
+            return typeof payload.url === "string" && canonicalSourceUrl(payload.url) === canonicalSourceUrl(url) && sourceIsFresh(entry, DEFAULT_SOURCE_REFRESH_MS);
           });
           if (cached) {
             cacheStore.appendEvent("research.source.cache_hit", { id: cached.id, url, freshnessMs: DEFAULT_SOURCE_REFRESH_MS });

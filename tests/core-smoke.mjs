@@ -10,7 +10,7 @@ import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../di
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
-import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, researchSearchQueries, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
+import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, researchSearchQueries, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
@@ -2349,6 +2349,12 @@ test("source frontier includes durable web candidates and tracks their retrieval
   assert.equal(report.uniqueWorks, 1);
   assert.equal(report.retrievedWorks, 1);
   assert.equal(report.claimCoverage, 1);
+});
+
+test("source identity canonicalizes fragments, host casing, default ports, and trailing slashes", () => {
+  assert.equal(canonicalSourceUrl("HTTPS://Example.ORG:443/paper/#results"), "https://example.org/paper");
+  assert.equal(canonicalSourceUrl("https://example.org/paper"), canonicalSourceUrl("https://EXAMPLE.org:443/paper/"));
+  assert.notEqual(canonicalSourceUrl("https://example.org/paper?version=1"), canonicalSourceUrl("https://example.org/paper?version=2"));
 });
 
 test("deep literature search creates bounded deterministic progressive probes", () => {

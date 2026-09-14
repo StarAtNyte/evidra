@@ -321,8 +321,23 @@ async function assertPublicUrl(url: URL): Promise<void> {
   if (!addresses.length || addresses.some(privateAddress)) throw new Error(`Refusing private or loopback research source host: ${url.hostname}`);
 }
 
+/** Canonicalize equivalent HTTP source references without changing query semantics. */
+export function canonicalSourceUrl(value: string): string {
+  const raw = value.trim();
+  try {
+    const parsed = new URL(raw);
+    parsed.hash = "";
+    parsed.hostname = parsed.hostname.toLowerCase();
+    if ((parsed.protocol === "https:" && parsed.port === "443") || (parsed.protocol === "http:" && parsed.port === "80")) parsed.port = "";
+    parsed.pathname = parsed.pathname.replace(/\/{2,}/g, "/").replace(/\/$/, "") || "/";
+    return parsed.href;
+  } catch {
+    return raw.replace(/#.*$/, "").replace(/\/$/, "");
+  }
+}
+
 function sourceId(url: string, contentHash: string): string {
-  return `src_${createHash("sha256").update(`${url}\n${contentHash}`).digest("hex").slice(0, 20)}`;
+  return `src_${createHash("sha256").update(`${canonicalSourceUrl(url)}\n${contentHash}`).digest("hex").slice(0, 20)}`;
 }
 
 function stripMarkup(input: string): string {
@@ -460,7 +475,7 @@ export interface SourceFrontierReport {
 }
 
 function sourceWorkKey(result: { url: string; doi?: string }): string {
-  return (result.doi?.trim().toLowerCase() || result.url.trim().replace(/[#?].*$/, "").replace(/\/$/, "")).toLowerCase();
+  return (result.doi?.trim().toLowerCase() || canonicalSourceUrl(result.url)).toLowerCase();
 }
 
 /** Build a bounded, deduplicated literature-search frontier from durable events. */

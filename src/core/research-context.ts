@@ -1,7 +1,7 @@
 import type { ResearchStore } from "./store.js";
 import { transferableMethodsFromEvents, type TransferableMethod } from "./method-transfer.js";
 import { ablationPlansFromEvents, type AblationPlan } from "./ablation.js";
-import type { RepositorySearchResult } from "./sources.js";
+import { canonicalSourceUrl, type RepositorySearchResult } from "./sources.js";
 
 export type ResearchRepositoryLead = RepositorySearchResult;
 
@@ -20,7 +20,7 @@ export function latestSourceEntries<T extends { id: string; payload: unknown; cr
   const result: T[] = [];
   for (const entry of entries) {
     const payload = entry.payload as { url?: unknown };
-    const key = typeof payload.url === "string" && payload.url ? payload.url : entry.id;
+    const key = typeof payload.url === "string" && payload.url ? canonicalSourceUrl(payload.url) : entry.id;
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(entry);

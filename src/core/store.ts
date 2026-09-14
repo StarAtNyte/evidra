@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { EvidenceClaimSchema } from "./types.js";
 import { compareClaims } from "./claim-consistency.js";
 import { redactStructured } from "./redaction.js";
+import { canonicalSourceUrl } from "./sources.js";
 
 function safeJson(value: unknown): string {
   return JSON.stringify(redactStructured(value));
@@ -997,7 +998,7 @@ export class ResearchStore {
       ? (source.payload as { url: string }).url
       : undefined;
     const prior = sourceUrl
-      ? this.sources().find((entry) => entry.id !== source.id && (entry.payload as { url?: unknown }).url === sourceUrl)
+      ? this.sources().find((entry) => entry.id !== source.id && typeof (entry.payload as { url?: unknown }).url === "string" && canonicalSourceUrl((entry.payload as { url: string }).url) === canonicalSourceUrl(sourceUrl))
       : undefined;
     this.db.prepare(`INSERT OR REPLACE INTO research_sources (id, payload_json, created_at) VALUES (?, ?, ?)`).run(source.id, payload, createdAt);
     this.indexMemory("source", source.id, payload, createdAt);
