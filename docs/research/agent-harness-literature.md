@@ -360,6 +360,9 @@ director requests progressive coverage.
 Literature-bearing research lanes use this deep route and retrieve at most two
 top candidates per lane. Search metadata remains a lead; only the bounded
 retrieval path creates hashed source records and claim edges for the director.
+Each returned work also retains the exact probe(s) that found it, preventing
+deep-search coverage metrics from counting a result against queries that did
+not actually produce it.
 
 The Agentic Harness Engineering work frames harness improvement as an
 observability-driven evolution loop: freeze failures, measure them under fixed

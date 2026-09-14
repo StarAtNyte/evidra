@@ -1790,11 +1790,11 @@ test("literature search frontier deduplicates works and reports retrieval covera
 
 test("literature frontier accounts for deep-search probes", () => {
   const report = sourceFrontier([
-    { type: "research.source.search.completed", payload: { query: "agent harness", queries: ["agent harness", "agent harness evaluation", "harness evaluation"], depth: "deep", results: [{ title: "Paper", url: "https://example.org/paper", authors: [] }] } },
+    { type: "research.source.search.completed", payload: { query: "agent harness", queries: ["agent harness", "agent harness evaluation", "harness evaluation"], depth: "deep", results: [{ title: "Paper", url: "https://example.org/paper", queries: ["agent harness"], authors: [] }] } },
   ]);
   assert.equal(report.queryCount, 3);
-  assert.equal(report.queriesWithCandidates, 3);
-  assert.equal(report.queryCoverage, 1);
+  assert.equal(report.queriesWithCandidates, 1);
+  assert.equal(report.queryCoverage, 1 / 3);
 });
 
 test("tool source retrieval preserves the SSRF safety boundary", async () => {

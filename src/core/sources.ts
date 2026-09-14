@@ -19,6 +19,8 @@ export interface SourceSearchResult {
   publicationDate?: string;
   authors: string[];
   abstract?: string;
+  /** Probe(s) that returned this work during a deep search. */
+  queries?: string[];
 }
 
 export type SourceSearchDepth = "shallow" | "deep";
@@ -139,7 +141,7 @@ export async function searchResearchSources(query: string, limit = 8, signal?: A
     return [
       ...(openAlexResult.status === "fulfilled" ? openAlexResult.value : []),
       ...(arxivResult.status === "fulfilled" ? arxivResult.value : []),
-    ];
+    ].map((result) => ({ ...result, queries: [probe] }));
   });
   const results = await Promise.allSettled(searches);
   // Interleave probes so a deep search cannot be dominated by the first
@@ -153,13 +155,20 @@ export async function searchResearchSources(query: string, limit = 8, signal?: A
     const failure = results.find((result) => result.status === "rejected")?.reason;
     throw failure instanceof Error ? failure : new Error("Scholarly source search returned no candidates.");
   }
-  const seen = new Set<string>();
-  return combined.filter((result) => {
+  const deduplicated: SourceSearchResult[] = [];
+  const byKey = new Map<string, SourceSearchResult>();
+  for (const result of combined) {
     const key = (result.doi ?? result.url).toLowerCase().replace(/[?#].*$/, "").replace(/\/$/, "");
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }).slice(0, Math.max(1, Math.min(limit, 20)));
+    const prior = byKey.get(key);
+    if (prior) {
+      prior.queries = [...new Set([...(prior.queries ?? []), ...(result.queries ?? [])])].slice(0, 12);
+      continue;
+    }
+    const normalized = { ...result, ...(result.queries?.length ? { queries: [...new Set(result.queries)].slice(0, 12) } : {}) };
+    byKey.set(key, normalized);
+    deduplicated.push(normalized);
+  }
+  return deduplicated.slice(0, Math.max(1, Math.min(limit, 20)));
 }
 
 /** Parse GitHub repository search output as implementation leads, not evidence. */
@@ -398,7 +407,7 @@ export function sourceFrontier(events: Array<{ type: string; payload: unknown }>
           authors: prior?.authors?.length ? prior.authors : Array.isArray(result.authors) ? result.authors.filter((author): author is string => typeof author === "string").slice(0, 8) : [],
           ...(prior?.abstract ?? result.abstract ? { abstract: prior?.abstract ?? result.abstract } : {}),
           key,
-          queries: [...new Set([...(prior?.queries ?? []), ...(eventQueries.length ? eventQueries : query ? [query] : [])])].slice(0, 12),
+          queries: [...new Set([...(prior?.queries ?? []), ...(Array.isArray(result.queries) ? result.queries.filter((value): value is string => typeof value === "string" && value.trim().length > 0) : query ? [query] : [])])].slice(0, 12),
           retrieved: prior?.retrieved ?? false,
         });
       }
