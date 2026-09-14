@@ -59,6 +59,7 @@ import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, ScientificTaskSchema } from "../dist/core/scientific-tasks.js";
+import { runSafetyBenchmark } from "../dist/core/safety-bench.js";
 
 test("search policies receive independent matched scorecards and comparisons", () => {
   const trial = (policy, task, candidateMetric) => ({ harness: `evidra-${policy}`, policy, task, arm: "default", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: false, reproducible: true });
@@ -1643,6 +1644,15 @@ test("autonomous safety guards cannot be bypassed with environment or launcher w
   assert.equal(guardAutonomousCommand(["env", "curl", "https://example.invalid/data"]).allowed, false);
   assert.equal(guardAutonomousCommand(["timeout", "30", "aicrowd", "submit", "bundle.zip"]).allowed, false);
   assert.equal(guardAutonomousCommand(["env", "busybox", "rm", "-rf", "scratch"]).allowed, false);
+});
+
+test("lifecycle safety benchmark exercises every HarnessRisk-inspired boundary", () => {
+  const report = runSafetyBenchmark();
+  assert.equal(report.failed, 0);
+  assert.equal(report.coverage, 1);
+  assert.equal(report.probes.length >= 8, true);
+  assert.equal(report.lifecycle.action_control.passed >= 2, true);
+  assert.equal(report.lifecycle.recovery.passed >= 2, true);
 });
 
 test("research lanes use bounded role-specific workspace observations", () => {

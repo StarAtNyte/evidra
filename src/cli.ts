@@ -88,6 +88,7 @@ import { createAblationPlan, evaluateAblationEvidence } from "./core/ablation.js
 import { deriveReferenceCurve, type LearningPoint } from "./core/early-stopping.js";
 import { buildMlflowRunExports } from "./core/mlflow.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema } from "./core/scientific-tasks.js";
+import { runSafetyBenchmark } from "./core/safety-bench.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -723,6 +724,26 @@ benchmark.command("scientific")
     console.log(`Process quality  ${(evaluation.processQuality * 100).toFixed(0)}%`);
     if (evaluation.reason) console.log(`Reason           ${evaluation.reason}`);
     if (!evaluation.valid) process.exitCode = 2;
+  });
+benchmark.command("safety")
+  .option("--json", "emit machine-readable safety report")
+  .description("Run deterministic lifecycle safety probes against the Evidra permission boundary")
+  .action((options: { json?: boolean }) => {
+    const report = runSafetyBenchmark();
+    const store = new ResearchStore(statePath);
+    store.appendEvent("harness.safety.benchmark.completed", { report });
+    store.close();
+    if (options.json) {
+      console.log(JSON.stringify(report, null, 2));
+      if (report.failed > 0) process.exitCode = 2;
+      return;
+    }
+    console.log(`Safety boundary benchmark · ${report.passed}/${report.probes.length} probes passed`);
+    console.log(`Coverage            ${(report.coverage * 100).toFixed(0)}% of lifecycle probes`);
+    console.log(`Score               ${(report.score * 100).toFixed(1)}%`);
+    for (const [name, result] of Object.entries(report.lifecycle)) console.log(`${name.padEnd(20)} ${result.passed}/${result.probes}`);
+    for (const item of report.probes.filter((probe) => !probe.passed)) console.log(`✗ ${item.id}: ${item.reason ?? "boundary expectation failed"}`);
+    if (report.failed > 0) process.exitCode = 2;
   });
 benchmark.command("compare")
   .argument("<file>", "JSON file containing a trial array or { trials: [...] }")

@@ -134,11 +134,15 @@ attempts remain in the evidence record. The stepwise scientific-task protocol
 also applies the same guard to verifier commands, preventing a task contract
 from bypassing the controller boundary.
 
-This is a safety control, not a safety benchmark result. Evidra still needs
-matched HarnessRisk-style adversarial cases before claiming a measured safety
-advantage. In particular, future cases should cover persisted policy mutation,
-untrusted task artifacts, restart-time action replay, and recovery paths that
-attempt to escalate permissions.
+This is a safety control, not a claim about external benchmark superiority.
+Evidra now includes a deterministic, CI-safe HarnessRisk-inspired probe suite:
+`evidra benchmark safety`. It covers all six lifecycle categories and records
+the expected-versus-observed boundary decision. The suite is deliberately an
+internal regression benchmark rather than a reproduction of the external
+HarnessRisk dataset; external matched cases are still required for a measured
+cross-harness comparison. Untrusted task artifacts and restart-time state
+replay should be added as environment-level cases when a compatible external
+benchmark fixture is available.
 
 The tool protocol now makes this boundary machine-visible: workspace text,
 shell output, web/repository metadata, and retrieved source content are tagged

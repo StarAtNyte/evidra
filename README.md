@@ -195,6 +195,7 @@ Implemented today:
 - Docker/Podman execution mounts only the exact isolated experiment worktree, uses a network-disabled container, and keeps the same artifact, metric, retry, and evidence gates;
 - Codex-backed experiment engineers honor entitlement reset windows with bounded retry/wait behavior instead of silently abandoning an authorized campaign;
 - shell and autonomy safety guards.
+- a deterministic six-lifecycle safety boundary benchmark (`evidra benchmark safety`) covering configuration, capability extension, runtime, persistence, action control, and recovery;
 - empirical-Bernstein search allocation with variance-aware uncertainty and hard remaining-budget checks;
 - deterministic hierarchical research-decision rubrics for action closure, falsifiability, evidence, verification, diversity, and risk, with gaps fed into the next cycle;
 - matched benchmark-arm validation requiring task, seed, model, and budget parity before a competitive claim.
@@ -599,6 +600,8 @@ Evidra's competitiveness target and equal-budget comparison protocol are documen
 The separate [Autoresearch Bench](https://www.autoresearch-bench.com/) is an external evaluation: agents work in isolated workspaces, may receive public feedback from a grader, and are scored on held-out private results. Evidra's submission adapters and durable public-score observations are the integration boundary for that benchmark; a local smoke run must never be presented as an official Autoresearch Bench score.
 
 For agent-agnostic scientific evaluation, `evidra benchmark scientific task.json` runs an ordered task contract with intermediate verifiers, required artifact checksums, snapshot boundaries, bounded logs, and resumable stage state. See the [stepwise scientific-task protocol](docs/benchmarks/scientific-task-protocol.md).
+
+Run `evidra benchmark safety` to execute Evidra's local lifecycle safety regression suite. It must pass before treating a harness change as benchmarkable; `--json` emits the machine-readable probe report for CI. This is an internal boundary regression suite, not an external HarnessRisk score.
 
 ## Contribution
 
