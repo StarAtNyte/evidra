@@ -13,6 +13,16 @@ export interface ValidationContext {
   artifactChecksums?: Record<string, string>;
 }
 
+export function validateEvaluationMatrix(manifest: Pick<ExperimentManifest, "evaluation">, run: Pick<RunResult, "matrix">, metricName: string): { valid: boolean; expected: number; observed: number; missing: string[]; invalidMetric: string[] } {
+  if (!manifest.evaluation.matrixRequired) return { valid: true, expected: 0, observed: run.matrix?.length ?? 0, missing: [], invalidMetric: [] };
+  const cells = run.matrix ?? [];
+  const observed = new Set(cells.map((cell) => `${cell.fold}:${cell.seed}`));
+  const expectedCells = manifest.evaluation.folds.flatMap((fold) => manifest.evaluation.seeds.map((seed) => `${fold}:${seed}`));
+  const missing = expectedCells.filter((key) => !observed.has(key));
+  const invalidMetric = cells.filter((cell) => typeof cell.metrics[metricName] !== "number" || !Number.isFinite(cell.metrics[metricName])).map((cell) => `${cell.fold}:${cell.seed}`);
+  return { valid: missing.length === 0 && invalidMetric.length === 0 && observed.size === expectedCells.length, expected: expectedCells.length, observed: observed.size, missing, invalidMetric };
+}
+
 export function auditExperiment(manifest: ExperimentManifest, run: RunResult, context: ValidationContext): { accepted: boolean; reasons: string[]; gates: Record<string, boolean> } {
   const declaredVerifiers = (manifest.evaluation.verificationCommand ? 1 : 0) + (manifest.evaluation.verificationCommands?.length ?? 0);
   const verification = run.verification;
@@ -23,6 +33,7 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
       && verification.passed === declaredVerifiers
       && verification.failed === 0
       && (declaredVerifiers < 2 || verification.independent === true);
+  const matrix = validateEvaluationMatrix(manifest, run, context.metricName ?? "");
   const gates = {
     validCommit: manifest.gitCommit === context.currentCommit,
     datasetMatch: manifest.datasetVersion === context.datasetVersion,
@@ -40,6 +51,7 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
     leakageAuditPassed: context.leakageAuditPassed ?? false,
     reviewerApproved: context.reviewerApproved ?? false,
     verifiersPassed,
+    evaluationCoverage: matrix.valid,
   };
   const result = evaluateEvidenceGate(manifest, gates);
   return { ...result, gates };

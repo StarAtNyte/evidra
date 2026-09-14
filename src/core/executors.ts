@@ -70,6 +70,43 @@ export interface ModalWorkerResult {
   artifacts: Record<string, string>;
 }
 
+export interface EvaluationMatrixCell {
+  fold: number;
+  seed: number;
+  metrics: Record<string, number>;
+}
+
+/** Parse an optional worker-emitted fold/seed matrix from JSON or JSONL. */
+export function parseEvaluationMatrix(stdout: string, metricName: string): EvaluationMatrixCell[] {
+  const candidates: unknown[] = [];
+  const collect = (value: unknown): void => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const object = value as Record<string, unknown>;
+    const source = object.matrix ?? object.results ?? (object.evaluation && typeof object.evaluation === "object" ? (object.evaluation as Record<string, unknown>).results : undefined);
+    if (Array.isArray(source)) candidates.push(...source);
+  };
+  try { collect(JSON.parse(stdout)); } catch { /* inspect JSONL below */ }
+  for (const line of stdout.split("\n")) {
+    try { collect(JSON.parse(line)); } catch { /* ordinary worker log */ }
+  }
+  const cells: EvaluationMatrixCell[] = [];
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const value = candidate as Record<string, unknown>;
+    if (!Number.isInteger(value.fold) || Number(value.fold) < 0 || !Number.isInteger(value.seed)) continue;
+    const rawMetrics = value.metrics && typeof value.metrics === "object" && !Array.isArray(value.metrics) ? value.metrics as Record<string, unknown> : typeof value.metric === "number" ? { [metricName]: value.metric } : {};
+    const metrics = Object.fromEntries(Object.entries(rawMetrics).filter(([, metric]) => typeof metric === "number" && Number.isFinite(metric))) as Record<string, number>;
+    if (Object.keys(metrics).length) cells.push({ fold: Number(value.fold), seed: Number(value.seed), metrics });
+  }
+  const seen = new Set<string>();
+  return cells.filter((cell) => {
+    const key = `${cell.fold}:${cell.seed}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Parse the final JSON emitted by modal_app.py without trusting progress logs. */
 export function parseModalWorkerResult(output: string): ModalWorkerResult | undefined {
   for (const line of output.trim().split("\n").reverse()) {
@@ -156,6 +193,7 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
 
 function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metricName: string, remote = false): RunResult {
   const parsed = parseMetricOutput(result.stdout, metricName);
+  const matrix = parseEvaluationMatrix(result.stdout, metricName);
   const learningCurve = parseLearningCurve(result.stdout, metricName);
   const artifacts: Record<string, string> = {};
   const missing: string[] = [];
@@ -179,6 +217,7 @@ function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metric
     metricsByFold: parsed.metricsByFold,
     learningCurve,
     subgroupDeltas: parsed.subgroupDeltas,
+    ...(matrix.length ? { matrix } : {}),
     artifacts,
     stdout: result.stdout,
     stderr,

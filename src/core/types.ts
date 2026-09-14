@@ -219,7 +219,7 @@ export const ExperimentManifestSchema = z.object({
   splitVersion: z.string().min(1),
   change: z.object({ configPatch: z.record(z.string(), z.unknown()) }),
   resources: z.object({ executor: z.enum(["local", "container", "modal"]), image: z.string().min(1).optional(), gpu: z.string().optional(), timeoutMinutes: z.number().positive(), earlyStopping: z.object({ enabled: z.boolean(), metric: z.string().min(1), direction: z.enum(["maximize", "minimize"]), warmupSteps: z.number().int().nonnegative(), patience: z.number().int().positive(), minimumImprovement: z.number().nonnegative(), reference: z.array(z.object({ step: z.number().finite(), metric: z.number().finite() })).default([]) }).optional() }),
-  evaluation: z.object({ folds: z.array(z.number().int().nonnegative()), seeds: z.array(z.number().int()), requiredArtifacts: z.array(z.string()), verificationCommand: z.array(z.string()).min(1).optional(), verificationCommands: z.array(z.array(z.string()).min(1)).min(1).optional() }).superRefine((evaluation, context) => {
+  evaluation: z.object({ folds: z.array(z.number().int().nonnegative()), seeds: z.array(z.number().int()), requiredArtifacts: z.array(z.string()), matrixRequired: z.boolean().default(false), verificationCommand: z.array(z.string()).min(1).optional(), verificationCommands: z.array(z.array(z.string()).min(1)).min(1).optional() }).superRefine((evaluation, context) => {
     const commands = [
       ...(evaluation.verificationCommand ? [evaluation.verificationCommand] : []),
       ...(evaluation.verificationCommands ?? []),
@@ -249,6 +249,7 @@ export const RunResultSchema = z.object({
   metricsByFold: z.record(z.string(), z.array(z.number().finite())).default({}),
   learningCurve: z.array(z.object({ step: z.number().finite(), metric: z.number().finite() })).optional(),
   subgroupDeltas: z.array(z.number().finite()).default([]),
+  matrix: z.array(z.object({ fold: z.number().int().nonnegative(), seed: z.number().int(), metrics: z.record(z.string(), z.number().finite()) })).optional(),
   artifacts: z.record(z.string(), z.string()).default({}),
   verification: z.object({ declared: z.number().int().nonnegative(), executed: z.number().int().nonnegative(), passed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), independent: z.boolean(), formalDeclared: z.number().int().nonnegative().optional(), formalPassed: z.number().int().nonnegative().optional(), details: z.array(z.object({ kind: z.string(), evidence: z.string(), summary: z.string(), semanticMarker: z.string().optional() })).optional() }).superRefine((verification, context) => {
     if (verification.executed > verification.declared) context.addIssue({ code: z.ZodIssueCode.custom, path: ["executed"], message: "executed verifiers cannot exceed declared verifiers" });
@@ -274,6 +275,7 @@ export const EvidenceGateSchema = z.object({
   leakageAuditPassed: z.boolean(),
   reviewerApproved: z.boolean(),
   verifiersPassed: z.boolean().default(true),
+  evaluationCoverage: z.boolean().default(true),
 });
 
 export type EvidenceGate = z.infer<typeof EvidenceGateSchema>;

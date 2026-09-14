@@ -15,6 +15,7 @@ export interface ManifestInput {
   timeoutMinutes?: number;
   folds?: number[];
   seeds?: number[];
+  matrixRequired?: boolean;
   requiredArtifacts?: string[];
   verificationCommand?: string[];
   verificationCommands?: string[][];
@@ -48,6 +49,7 @@ export function createExperimentManifest(input: ManifestInput, competition: Comp
     evaluation: {
       folds: input.folds ?? [0],
       seeds: input.seeds ?? [0],
+      matrixRequired: input.matrixRequired ?? false,
       requiredArtifacts: input.requiredArtifacts ?? competition.execution?.requiredArtifacts ?? [],
       ...(input.verificationCommand ?? competition.execution?.verificationCommand ? { verificationCommand: input.verificationCommand ?? competition.execution?.verificationCommand } : {}),
       ...(input.verificationCommands ?? competition.execution?.verificationCommands ? { verificationCommands: input.verificationCommands ?? competition.execution?.verificationCommands } : {}),

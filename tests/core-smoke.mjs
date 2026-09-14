@@ -19,7 +19,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
-import { LocalExecutor, containerCommand, parseMetricOutput, parseModalWorkerResult, validateRunMetric } from "../dist/core/executors.js";
+import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, validateRunMetric } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
@@ -50,7 +50,7 @@ import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
-import { auditExperiment } from "../dist/core/validation.js";
+import { auditExperiment, validateEvaluationMatrix } from "../dist/core/validation.js";
 import { assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, ResearchLaneReportSchema, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
@@ -2560,6 +2560,23 @@ test("metric parser accepts evaluator JSON and keyed log output", () => {
   assert.equal(whest.metrics.final_layer_mse, 2.22e-4);
   const pretty = parseMetricOutput('--- EVALUATION RESULT ---\n{\n  "Accuracy": 0.5260905014268243\n}\n', "Accuracy");
   assert.equal(pretty.metrics.Accuracy, 0.5260905014268243);
+});
+
+test("evaluation matrix protocol requires exact fold-seed coverage", () => {
+  const manifest = { evaluation: { folds: [0, 1], seeds: [17, 41], matrixRequired: true } };
+  const stdout = JSON.stringify({ evaluation: { results: [
+    { fold: 0, seed: 17, metrics: { score: 0.8 } },
+    { fold: 0, seed: 41, metrics: { score: 0.81 } },
+    { fold: 1, seed: 17, metrics: { score: 0.82 } },
+    { fold: 1, seed: 41, metrics: { score: 0.83 } },
+  ] } });
+  const matrix = parseEvaluationMatrix(stdout, "score");
+  assert.equal(matrix.length, 4);
+  assert.equal(validateEvaluationMatrix(manifest, { matrix }, "score").valid, true);
+  const incomplete = validateEvaluationMatrix(manifest, { matrix: matrix.slice(0, 3) }, "score");
+  assert.equal(incomplete.valid, false);
+  assert.deepEqual(incomplete.missing, ["1:41"]);
+  assert.equal(validateEvaluationMatrix(manifest, { matrix: [{ ...matrix[0], metrics: { other: 1 } }, ...matrix.slice(1)] }, "score").valid, false);
 });
 
 test("competition contract validates generic autoresearch-style workspaces", () => {

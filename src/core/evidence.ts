@@ -25,5 +25,6 @@ export function evaluateEvidenceGate(manifest: ExperimentManifest, gate: Evidenc
   if (!parsed.leakageAuditPassed) reasons.push("leakage audit did not pass");
   if (!parsed.reviewerApproved) reasons.push("independent review is missing");
   if (!parsed.verifiersPassed) reasons.push("declared verifiers did not all pass with complete independent evidence");
+  if (!parsed.evaluationCoverage) reasons.push("declared fold/seed evaluation matrix is incomplete or missing the primary metric");
   return { accepted: reasons.length === 0, reasons };
 }
