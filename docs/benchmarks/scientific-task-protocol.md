@@ -43,6 +43,12 @@ record; Evidra rechecks their snapshot identity before skipping them. This
 makes asynchronous or crash-recovered agents measurable while keeping the task
 contract independent of Codex, a particular model, or an ML leaderboard.
 
+The CLI also records a compact `scientific.task.completed` event containing the
+same stage statuses, verifier counts, artifact checksums, snapshot IDs, and
+route attempts. Full logs remain in the optional report file, while scheduling
+and recovery logic can learn from durable evidence without replaying the entire
+transcript.
+
 Each stage gets a bounded retry budget. After the primary command fails, declared
 alternate commands are attempted in order; if no alternate is available, the
 primary route is retried. Every attempt is retained in the report, and a stage

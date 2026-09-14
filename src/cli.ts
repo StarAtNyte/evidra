@@ -701,7 +701,22 @@ benchmark.command("scientific")
     const output = JSON.stringify(report, null, 2);
     if (options.out) { mkdirSync(dirname(resolve(options.out)), { recursive: true }); writeFileSync(resolve(options.out), `${output}\n`); }
     const store = new ResearchStore(statePath);
-    store.appendEvent("scientific.task.completed", { taskId: run.taskId, status: run.status, evaluation, ...(options.out ? { reportPath: resolve(options.out) } : {}) });
+    store.appendEvent("scientific.task.completed", {
+      taskId: run.taskId,
+      status: run.status,
+      evaluation,
+      stages: run.stages.map((stage) => ({
+        stageId: stage.stageId,
+        status: stage.status,
+        exitCode: stage.exitCode,
+        durationMs: stage.durationMs,
+        verification: stage.verification,
+        artifacts: stage.artifacts,
+        snapshotId: stage.snapshot.id,
+        attempts: stage.attempts?.map((attempt) => ({ attempt: attempt.attempt, route: attempt.route, command: attempt.command, exitCode: attempt.exitCode, durationMs: attempt.durationMs, verification: attempt.verification })),
+      })),
+      ...(options.out ? { reportPath: resolve(options.out) } : {}),
+    });
     store.close();
     console.log(`Scientific task · ${evaluation.valid ? "VALID" : "INCOMPLETE"} · ${run.taskId}`);
     console.log(`Stages           ${(evaluation.stageScore * 100).toFixed(0)}%`);
