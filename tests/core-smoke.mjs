@@ -27,7 +27,7 @@ import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoal
 import { parseSubmissionScore, pollSubmissionScore, submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
-import { createExperimentManifest, createReplicationManifest } from "../dist/core/experiment-manifest.js";
+import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../dist/core/experiment-manifest.js";
 import { estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.js";
 import { auditData, dataAuditFingerprint } from "../dist/core/data-audit.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
@@ -1569,6 +1569,16 @@ test("generic experiment manifests do not assume ML-specific artifacts", () => {
   });
   assert.deepEqual(configured.evaluation.requiredArtifacts, ["metrics.json"]);
   assert.deepEqual(configured.evaluation.verificationCommand, ["python", "verify.py"]);
+});
+
+test("competition matrix policy propagates into generated experiment manifests", () => {
+  const manifest = createExperimentManifest({ id: "matrix-policy", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "data" }, {
+    id: "matrix", name: "Matrix", taskType: "general", datasetRevision: "data",
+    metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" },
+    execution: { matrixRequired: true }, validation: { folds: [0, 1], seeds: [17, 41] },
+  });
+  assert.equal(manifest.evaluation.matrixRequired, true);
+  assert.match(manifestSummary(manifest), /matrix required/);
 });
 
 test("terminal sessions are fresh by default and explicitly resumable", () => {
