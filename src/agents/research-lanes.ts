@@ -12,12 +12,15 @@ export const RESEARCH_LANE_ROLES = [
   "data detective",
   "validation scientist",
   "model researcher",
+  "ensemble scientist",
+  "reproducibility engineer",
 ] as const;
 
 export const GENERAL_RESEARCH_LANE_ROLES = [
   "domain researcher",
   "validation scientist",
   "method researcher",
+  "reproducibility engineer",
 ] as const;
 
 export type ResearchLaneRole = typeof RESEARCH_LANE_ROLES[number] | typeof GENERAL_RESEARCH_LANE_ROLES[number];
@@ -122,7 +125,11 @@ export function laneToolCalls(role: ResearchLaneRole, objective = ""): ResearchT
       ? "split|fold|valid|metric|evaluator|seed|test"
       : role === "model researcher"
         ? "train|model|estimator|baseline|experiment|config"
-        : role === "domain researcher"
+        : role === "ensemble scientist"
+          ? "prediction|oof|ensemble|blend|correlation|diversity|error"
+          : role === "reproducibility engineer"
+            ? "reproduce|replicate|seed|environment|dependency|artifact|determin"
+      : role === "domain researcher"
           ? "theorem|definition|assumption|proof|method|result|literature|paper"
           : "algorithm|method|approach|experiment|procedure|implementation|benchmark";
   const calls: ResearchToolCall[] = [
@@ -192,6 +199,10 @@ function lanePrompt(role: ResearchLaneRole, objective: string): string {
       ? "Inspect evaluation design, split validity, metric reliability, uncertainty, and replication requirements."
       : role === "model researcher"
         ? "Inspect the implementation and research space, identify promising general methods, and propose falsifiable experiments."
+        : role === "ensemble scientist"
+          ? "Inspect prediction artifacts, out-of-fold coverage, error correlation, diversity, and stable ensemble opportunities."
+          : role === "reproducibility engineer"
+            ? "Inspect reproducibility, environment capture, seeds, artifact contracts, independent reruns, and failure recovery."
         : role === "domain researcher"
           ? "Investigate the domain, definitions, assumptions, relevant literature, competing explanations, and unresolved questions."
           : "Investigate alternative methods, mechanisms, procedures, and implementation paths; propose falsifiable comparisons.";

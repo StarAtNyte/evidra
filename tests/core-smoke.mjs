@@ -1142,6 +1142,22 @@ test("research lanes assign a bounded heterogeneous model pool deterministically
   assert.deepEqual(assignResearchLaneRoutes(roles, { provider: "codex", model: "default" }).map((route) => route.model), ["default", "default", "default"]);
 });
 
+test("research lane pools expose ensemble and reproducibility specialties when capacity allows", () => {
+  assert.deepEqual(selectResearchLaneRoles("win a dataset competition with a robust model", 5), [
+    "data detective",
+    "validation scientist",
+    "model researcher",
+    "ensemble scientist",
+    "reproducibility engineer",
+  ]);
+  assert.deepEqual(selectResearchLaneRoles("prove a new theorem", 4), [
+    "domain researcher",
+    "validation scientist",
+    "method researcher",
+    "reproducibility engineer",
+  ]);
+});
+
 test("peer research board is bounded and keeps provenance-shaped evidence", () => {
   const board = boundedPeerBoard([
     { type: "research.lane.completed", payload: { report: { role: "data detective", summary: "A".repeat(2_000), findings: ["f1", "f2", "f3", "f4", "f5", "f6"], uncertainties: ["u1"], evidence: ["e1"] } } },
