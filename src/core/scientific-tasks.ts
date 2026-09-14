@@ -3,6 +3,7 @@ import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { z } from "zod";
 import { sha256File } from "./evidence.js";
+import { guardAutonomousCommand } from "./permissions.js";
 import { runProcess, type ProcessControl } from "./process.js";
 
 /** A stepwise, agent-agnostic task contract for scientific and engineering work. */
@@ -212,6 +213,17 @@ function artifactsMissing(stage: ScientificTaskStage, artifacts: Record<string, 
 }
 
 async function runProcessObserved(command: string[], cwd: string, timeoutMs: number, onProcess?: (control: ProcessControl) => void): Promise<ProcessResultLike> {
+  const guard = guardAutonomousCommand(command);
+  if (!guard.allowed) {
+    return {
+      command,
+      cwd,
+      exitCode: 126,
+      durationMs: 0,
+      stdout: "",
+      stderr: `Permission denied by Evidra: ${guard.reason ?? "command is not permitted"}`,
+    };
+  }
   try {
     return await runProcess(command, cwd, timeoutMs, undefined, onProcess);
   } catch (error) {

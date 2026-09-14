@@ -47,4 +47,6 @@ Each stage gets a bounded retry budget. After the primary command fails, declare
 alternate commands are attempted in order; if no alternate is available, the
 primary route is retried. Every attempt is retained in the report, and a stage
 cannot pass unless its final command, verifiers, artifacts, and snapshot all
-pass.
+pass. Stage and verifier commands also pass through Evidra's autonomous safety
+guard, so submissions, direct uploads/downloads, dependency installation, and
+destructive commands are recorded as permission failures rather than executed.
