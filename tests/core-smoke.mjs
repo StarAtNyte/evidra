@@ -58,7 +58,7 @@ import { validateCompetitionContract } from "../dist/core/competition-contract.j
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
-import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema } from "../dist/core/scientific-tasks.js";
+import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, ScientificTaskSchema } from "../dist/core/scientific-tasks.js";
 
 test("search policies receive independent matched scorecards and comparisons", () => {
   const trial = (policy, task, candidateMetric) => ({ harness: `evidra-${policy}`, policy, task, arm: "default", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: false, reproducible: true });
@@ -3316,6 +3316,7 @@ test("scientific task runner verifies intermediate stages and resumes verified s
     assert.equal(resumed.status, "completed");
     assert.deepEqual(resumed.stages.map((stage) => stage.status), ["resumed", "resumed"]);
     assert.throws(() => ScientificTaskRunSchema.parse({ ...first, stages: [{ ...first.stages[0], verification: { declared: 1, executed: 2, passed: 2, failed: 0 } }] }), /executed verifiers cannot exceed declared verifiers/);
+    assert.throws(() => ScientificTaskSchema.parse({ ...task, stages: [{ ...task.stages[0], verificationCommands: [task.stages[0].verificationCommands[0], task.stages[0].verificationCommands[0]] }] }), /verificationCommands must contain unique entries/);
     writeFileSync(join(root, "input.json"), "{\"mutated\":true}");
     const repaired = await runScientificTask(task, root, { previous: first });
     assert.equal(repaired.status, "completed");

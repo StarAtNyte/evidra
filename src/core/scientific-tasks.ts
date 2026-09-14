@@ -32,6 +32,9 @@ export const ScientificTaskSchema = z.object({
   for (const [index, stage] of task.stages.entries()) {
     if (ids.has(stage.id)) context.addIssue({ code: z.ZodIssueCode.custom, path: ["stages", index, "id"], message: "stage IDs must be unique" });
     ids.add(stage.id);
+    for (const [field, values] of [["requiredArtifacts", stage.requiredArtifacts], ["snapshotPaths", stage.snapshotPaths], ["verificationCommands", stage.verificationCommands.map((command) => JSON.stringify(command))]] as const) {
+      if (new Set(values).size !== values.length) context.addIssue({ code: z.ZodIssueCode.custom, path: ["stages", index, field], message: `${field} must contain unique entries` });
+    }
   }
 });
 
