@@ -780,10 +780,10 @@ sources.command("frontier").description("Show the durable literature-search fron
 sources.command("discover").argument("<query>").option("--limit <count>", "maximum scholarly candidates", "8").description("Search scholarly sources and persist a deduplicated frontier without trusting claims").action(async (query: string, options: { limit: string }) => {
   const results = await searchResearchSources(query, Number.parseInt(options.limit, 10) || 8);
   const store = new ResearchStore(statePath);
-  store.appendEvent("research.source.search.completed", { query, results, source: "openalex" });
+  store.appendEvent("research.source.search.completed", { query, results, sources: [...new Set(results.map((result) => result.provider ?? "unknown"))] });
   const frontier = sourceFrontier(store.recentEvents(2_000));
   store.close();
-  console.log(`${results.length ? results.map((result, index) => `${index + 1}. ${result.title}\n   ${result.url}${result.venue ? ` · ${result.venue}` : ""}${result.publicationDate ? ` · ${result.publicationDate}` : ""}${result.authors.length ? `\n   authors: ${result.authors.join(", ")}` : ""}`).join("\n") : "No scholarly sources found."}\n\nFrontier: ${frontier.uniqueWorks} unique works · ${frontier.retrievedWorks} retrieved · ${frontier.pendingWorks} pending across ${frontier.queryCount} queries · query coverage ${(frontier.queryCoverage * 100).toFixed(0)}% · claim coverage ${(frontier.claimCoverage * 100).toFixed(0)}%`);
+  console.log(`${results.length ? results.map((result, index) => `${index + 1}. ${result.title}\n   ${result.url}${result.provider ? ` · ${result.provider}` : ""}${result.venue ? ` · ${result.venue}` : ""}${result.publicationDate ? ` · ${result.publicationDate}` : ""}${result.authors.length ? `\n   authors: ${result.authors.join(", ")}` : ""}`).join("\n") : "No scholarly sources found."}\n\nFrontier: ${frontier.uniqueWorks} unique works · ${frontier.retrievedWorks} retrieved · ${frontier.pendingWorks} pending across ${frontier.queryCount} queries · query coverage ${(frontier.queryCoverage * 100).toFixed(0)}% · claim coverage ${(frontier.claimCoverage * 100).toFixed(0)}%`);
 });
 sources.command("add").argument("<url>").action(async (url: string) => {
   const retrieved = await retrieveSource(url);
