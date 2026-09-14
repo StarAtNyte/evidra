@@ -93,7 +93,10 @@ export const ResearchHypothesisSchema = z.object({
   }).optional(),
   proposedChange: z.string().min(1),
   falsificationTest: z.string().min(1),
-  expectedMetricDelta: z.object({ low: z.number(), median: z.number(), high: z.number() }).default({ low: 0, median: 0, high: 0 }),
+  expectedMetricDelta: z.object({ low: z.number(), median: z.number(), high: z.number() }).default({ low: 0, median: 0, high: 0 }).superRefine((forecast, context) => {
+    if (forecast.low > forecast.median) context.addIssue({ code: z.ZodIssueCode.custom, path: ["low"], message: "must be less than or equal to median" });
+    if (forecast.median > forecast.high) context.addIssue({ code: z.ZodIssueCode.custom, path: ["high"], message: "must be greater than or equal to median" });
+  }),
   computeCostGpuHours: z.number().nonnegative().default(0),
   implementationRisk: z.enum(["low", "medium", "high"]).default("medium"),
   leakageRisk: z.enum(["low", "medium", "high"]).default("low"),

@@ -3995,6 +3995,10 @@ test("research decisions support non-metric outcomes without fabricated GPU esti
   assert.equal(decision.hypotheses[0].outcomeType, "proof");
   assert.equal(decision.hypotheses[0].computeCostGpuHours, 0);
   assert.equal(decision.hypotheses[0].expectedMetricDelta.median, 0);
+  assert.throws(() => ResearchDecisionSchema.parse({
+    ...decision,
+    hypotheses: [{ ...decision.hypotheses[0], expectedMetricDelta: { low: 0.4, median: 0.2, high: 0.3 } }],
+  }), /less than or equal to median|greater than or equal to median/);
 });
 
 test("literature-derived hypotheses preserve explicit adaptation context", () => {
