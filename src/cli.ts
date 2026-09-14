@@ -32,7 +32,7 @@ import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateVali
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
-import { executorFor, parseMetricOutput, validateRunMetric } from "./core/executors.js";
+import { executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetric } from "./core/executors.js";
 import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
@@ -3040,6 +3040,7 @@ experiment.command("run")
     store.close();
     const worktreePath = await ensureWorktree(root, root, id);
     const experimentCwd = join(worktreePath, relative(root, adapter.workspacePath(root)));
+    const experimentEnvironment = prepareExperimentEnvironment(manifest, experimentCwd);
     const protectedReference = captureProtectedFiles(adapter.workspacePath(root), [adapter.config.evaluator.command]);
     const changedProtected = changedProtectedFiles(protectedReference, experimentCwd);
     if (changedProtected.length) {
@@ -3217,7 +3218,7 @@ experiment.command("run")
     const verifications: Array<{ command: string[]; stdout: string; stderr: string; exitCode: number; formal: ReturnType<typeof classifyVerifier> }> = [];
     if (result.status === "completed" && !sameCommand) {
       const evaluated = await withExecutionHeartbeat(
-        () => runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000),
+        () => runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, undefined, experimentEnvironment),
         { storePath: statePath, experimentId: id, attempt, stage: "evaluator", executor: manifest.resources.executor },
       );
       evaluator = { stdout: evaluated.stdout, stderr: evaluated.stderr, exitCode: evaluated.exitCode };
@@ -3228,7 +3229,7 @@ experiment.command("run")
     if (result.status === "completed") {
       for (const verificationCommand of verificationCommands) {
         const checked = await withExecutionHeartbeat(
-          () => runProcess(verificationCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000),
+          () => runProcess(verificationCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, undefined, experimentEnvironment),
           { storePath: statePath, experimentId: id, attempt, stage: "verification", executor: manifest.resources.executor },
         );
         const formal = classifyVerifier(verificationCommand, checked.exitCode, checked.stdout, checked.stderr);

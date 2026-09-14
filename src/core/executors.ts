@@ -15,7 +15,7 @@ export interface ExperimentExecutor {
  * contract. The file lives in the isolated worktree, never in controller
  * state, and is redacted before a model-supplied patch reaches a worker.
  */
-function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: string): NodeJS.ProcessEnv {
+export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: string): NodeJS.ProcessEnv {
   const configPath = `${cwd}/.sota/experiment-config.json`;
   mkdirSync(dirname(configPath), { recursive: true });
   const payload = redactStructured({

@@ -7,7 +7,7 @@ import { ResearchStore } from "../core/store.js";
 import { runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
-import { executorFor, parseMetricOutput, validateRunMetric } from "../core/executors.js";
+import { executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetric } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
 import { auditExperiment } from "../core/validation.js";
 import { sha256File } from "../core/evidence.js";
@@ -1219,6 +1219,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     setProgress(`Experiment ${id} · creating isolated worktree...`);
     const worktree = await ensureWorktree(root, root, id);
     const experimentCwd = join(worktree, relative(root, adapter.workspacePath(root)));
+    const experimentEnvironment = prepareExperimentEnvironment(manifest, experimentCwd);
     if (config.provider === "codex") {
       setProgress(`Experiment ${id} · experiment engineer implementing the hypothesis...`);
       activeSteer.current = null;
@@ -1382,7 +1383,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (result.status === "completed" && !sameCommand) {
       setProgress(`Experiment ${id} · running canonical evaluator...`);
       const evaluated = await withExecutionHeartbeat(
-        () => runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, registerProcess),
+        () => runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, registerProcess, experimentEnvironment),
         { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "evaluator", executor: manifest.resources.executor },
       );
       activeProcess.current = null;
@@ -1405,7 +1406,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       for (const verificationCommand of verificationCommands) {
         setProgress(`Experiment ${id} · running verification ${verificationOutputs.length + 1}/${verificationCommands.length}...`);
         const checked = await withExecutionHeartbeat(
-          () => runProcess(verificationCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, registerProcess),
+          () => runProcess(verificationCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, registerProcess, experimentEnvironment),
           { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "verification", executor: manifest.resources.executor },
         );
         activeProcess.current = null;
