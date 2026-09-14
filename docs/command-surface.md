@@ -59,6 +59,11 @@ Its JSON input is schema-validated before any benchmark result is persisted.
 Literature benchmark reports are durable and are supplied to later autonomous
 research cycles as diagnostic allocation evidence; they do not count as
 workspace experiment proof.
+
+Research lanes can also use an internal `web.search` tool for official
+documentation, challenge discussions, dataset pages, and implementation leads.
+Search results are candidates only; `source.retrieve` must fetch and checksum a
+page before literature-derived claims can cite it.
 ```
 
 These commands never authorize external submission. A stopped or interrupted campaign is saved and must be explicitly resumed.

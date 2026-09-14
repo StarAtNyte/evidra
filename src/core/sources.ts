@@ -13,7 +13,7 @@ export interface RetrievedSource extends ResearchSource {
 export interface SourceSearchResult {
   title: string;
   url: string;
-  provider?: "openalex" | "arxiv" | "crossref";
+  provider?: "openalex" | "arxiv" | "crossref" | "web";
   doi?: string;
   venue?: string;
   publicationDate?: string;
@@ -85,6 +85,33 @@ function xmlText(value: string): string {
   return value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/<[^>]+>/g, " ")
     .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/\s+/g, " ").trim();
+}
+
+function htmlText(value: string): string {
+  return value.replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"').replace(/&#x27;|&#39;|&apos;/gi, "'")
+    .replace(/&#x2f;|&#47;/gi, "/").replace(/\s+/g, " ").trim();
+}
+
+/** Parse DuckDuckGo-style result markup as untrusted web candidates. */
+export function parseWebSearchResults(html: string, limit = 8): SourceSearchResult[] {
+  const results: SourceSearchResult[] = [];
+  const pattern = /<a[^>]+class=["'][^"']*result__a[^"']*["'][^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  for (const match of html.matchAll(pattern)) {
+    let url = htmlText(match[1]);
+    try {
+      const parsed = new URL(url, "https://duckduckgo.com");
+      const redirected = parsed.searchParams.get("uddg");
+      url = redirected ? decodeURIComponent(redirected) : parsed.href;
+    } catch { continue; }
+    if (!/^https?:\/\//i.test(url) || /(^|\.)duckduckgo\.com$/i.test(new URL(url).hostname)) continue;
+    const title = htmlText(match[2]).slice(0, 300);
+    if (!title || results.some((result) => result.url === url)) continue;
+    results.push({ title, url, provider: "web", authors: [] });
+    if (results.length >= Math.max(1, Math.min(limit, 20))) break;
+  }
+  return results;
 }
 
 /** Parse the public arXiv Atom response without adding an XML dependency. */
@@ -161,6 +188,21 @@ async function searchCrossrefSources(query: string, limit: number, signal?: Abor
   const response = await fetch(endpoint, { signal: requestSignal, headers: { "user-agent": "Evidra/0.1 research-workbench (mailto:evidra@example.invalid)" } });
   if (!response.ok) throw new Error(`Crossref search failed (${response.status} ${response.statusText}).`);
   return parseCrossrefSearchResults(await response.json(), limit);
+}
+
+/** Search public web pages for official guidance, discussions, datasets, and implementations. */
+export async function searchResearchWeb(query: string, limit = 8, signal?: AbortSignal): Promise<SourceSearchResult[]> {
+  if (!query.trim()) throw new Error("Web search query must not be empty.");
+  const endpoint = new URL("https://html.duckduckgo.com/html/");
+  endpoint.searchParams.set("q", query.trim().slice(0, 256));
+  await assertPublicUrl(endpoint);
+  const timeoutSignal = AbortSignal.timeout(SOURCE_REQUEST_TIMEOUT_MS);
+  const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  const response = await fetch(endpoint, { signal: requestSignal, headers: { accept: "text/html", "user-agent": "Evidra/0.1 research-workbench" } });
+  if (!response.ok) throw new Error(`Web search failed (${response.status} ${response.statusText}).`);
+  const results = parseWebSearchResults(await response.text(), limit);
+  if (!results.length) throw new Error("Web search returned no candidates.");
+  return results;
 }
 
 /** Search scholarly works; retrieval and claim extraction remain a separate step. */

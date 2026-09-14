@@ -9,7 +9,7 @@ import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../di
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
-import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
+import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, researchSearchQueries, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
@@ -1622,7 +1622,8 @@ test("research lanes use bounded role-specific workspace observations", () => {
   assert.match(String(modelCalls[1].arguments.query), /model|estimator/i);
   const domainCalls = laneToolCalls("domain researcher", "derive a stable theorem-informed method for fluid dynamics");
   const methodCalls = laneToolCalls("method researcher", "compare optimization methods for robust generalization");
-  assert.equal(domainCalls.at(-1).name, "source.search");
+  assert.equal(domainCalls.at(-2).name, "source.search");
+  assert.equal(domainCalls.at(-1).name, "web.search");
   assert.equal(methodCalls.some((call) => call.name === "source.search"), true);
   assert.match(String(domainCalls.at(-1).arguments.query), /theorem-informed/);
   assert.equal(methodCalls.some((call) => call.name === "repository.search"), true);
@@ -1779,6 +1780,14 @@ test("Crossref search parsing preserves DOI, venue, authors, and publication dat
   assert.equal(parsed[0].venue, "Journal of Evidence");
   assert.equal(parsed[0].publicationDate, "2026-4-1");
   assert.deepEqual(parsed[0].authors, ["Ada Researcher"]);
+});
+
+test("web search parsing unwraps redirect URLs and rejects search-engine links", () => {
+  const parsed = parseWebSearchResults('<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Fguide">Official Guide</a><a class="result__a" href="https://duckduckgo.com/about">Search</a>');
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].provider, "web");
+  assert.equal(parsed[0].url, "https://example.org/guide");
+  assert.equal(parsed[0].title, "Official Guide");
 });
 
 test("deep literature search creates bounded deterministic progressive probes", () => {
