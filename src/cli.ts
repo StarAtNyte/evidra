@@ -45,7 +45,7 @@ import { redactSecrets } from "./core/redaction.js";
 import { observedGpuHours } from "./core/compute-budget.js";
 import { enforceClaimTermination, enforceGoalTermination } from "./core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds, type ClaimAuditReport } from "./core/claim-audit.js";
-import { analyzePredictionRows, parsePredictionRows } from "./core/error-analysis.js";
+import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "./core/error-analysis.js";
 import { summarizeUsage } from "./core/usage.js";
 import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "./core/ensemble.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
@@ -1177,7 +1177,7 @@ evidence.command("audit").option("--json", "emit machine-readable JSON").descrip
   }
   if (!report.publishable && report.total > 0) process.exitCode = 2;
 });
-evidence.command("analyze").argument("<file>", "JSON array, {predictions: [...]}, or JSONL prediction artifact").option("--max-rows <count>", "bounded rows to inspect", "100000").description("Analyze prediction errors and worst groups").action((file: string, options: { maxRows: string }) => {
+evidence.command("analyze").argument("<file>", "JSON array, {predictions: [...]}, or JSONL prediction artifact").option("--baseline <file>", "compare against a baseline prediction artifact").option("--max-rows <count>", "bounded rows to inspect", "100000").description("Analyze prediction errors and worst groups").action((file: string, options: { baseline?: string; maxRows: string }) => {
   const path = resolve(file);
   const text = readFileSync(path, "utf8");
   let parsed: unknown = text;
@@ -1185,10 +1185,16 @@ evidence.command("analyze").argument("<file>", "JSON array, {predictions: [...]}
   const maxRows = Math.max(1, Math.min(100_000, Number.parseInt(options.maxRows, 10) || 100_000));
   const rows = parsePredictionRows(parsed, maxRows);
   const analysis = analyzePredictionRows(rows);
+  const comparison = options.baseline ? (() => {
+    const baselineText = readFileSync(resolve(options.baseline!), "utf8");
+    let baselineParsed: unknown = baselineText;
+    try { baselineParsed = JSON.parse(baselineText); } catch { /* JSONL is parsed row-by-row. */ }
+    return comparePredictionRows(parsePredictionRows(baselineParsed, maxRows), rows);
+  })() : undefined;
   const analysisStore = new ResearchStore(statePath);
-  analysisStore.appendEvent("prediction.analysis.completed", { path, rows: rows.length, analysis });
+  analysisStore.appendEvent("prediction.analysis.completed", { path, rows: rows.length, analysis, ...(comparison ? { comparison } : {}) });
   analysisStore.close();
-  console.log(JSON.stringify({ path, rows: rows.length, analysis }, null, 2));
+  console.log(JSON.stringify({ path, rows: rows.length, analysis, ...(comparison ? { comparison } : {}) }, null, 2));
 });
 program.addCommand(evidence);
 

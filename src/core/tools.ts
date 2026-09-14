@@ -12,7 +12,7 @@ import type { CompetitionConfig } from "./types.js";
 import { isSensitiveWorkspacePath, redactSecrets } from "./redaction.js";
 import { readValidationPolicyLock } from "./validation-lock.js";
 import { sha256File } from "./evidence.js";
-import { analyzePredictionRows, parsePredictionRows } from "./error-analysis.js";
+import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "./error-analysis.js";
 
 const SOURCE_FRONTIER_EVENT_TYPES = [
   "research.source.search.completed",
@@ -116,7 +116,7 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   { name: "repository.search", description: "Search public implementation repositories for reproducible method leads; repository metadata is not experimental evidence.", input: { query: "method, paper, or implementation keywords", limit: "optional result count" }, readOnly: true },
   { name: "data.audit", description: "Audit workspace files for size, duplicates, and suspicious data issues.", input: { path: "optional relative path" }, readOnly: true },
   { name: "artifact.audit", description: "Audit bounded research artifacts for safe containment, regular-file integrity, size, checksum, and optional JSON validity.", input: { paths: "relative artifact paths array", maxBytes: "optional per-file size limit" }, readOnly: true },
-  { name: "prediction.analyze", description: "Analyze a bounded JSON/JSONL prediction artifact for classification errors, regression residuals, metadata-defined worst slices, and binary calibration gaps.", input: { path: "relative JSON or JSONL prediction artifact", maxRows: "optional row limit" }, readOnly: true },
+  { name: "prediction.analyze", description: "Analyze a bounded JSON/JSONL prediction artifact; optionally compare it with a baseline to identify fixed and regressed groups.", input: { path: "relative JSON or JSONL prediction artifact", baseline: "optional relative baseline artifact", maxRows: "optional row limit" }, readOnly: true },
   { name: "validation.generate", description: "Create a versioned validation policy for the active workspace.", input: {}, readOnly: false },
   { name: "report.generate", description: "Write a durable research, challenge, or final report.", input: { kind: "research|challenge|final" }, readOnly: false },
 ];
@@ -325,10 +325,19 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         try { parsed = JSON.parse(text); } catch { /* JSONL is parsed row-by-row. */ }
         const rows = parsePredictionRows(parsed, maxRows);
         const analysis = analyzePredictionRows(rows);
+        let comparison: ReturnType<typeof comparePredictionRows> | undefined;
+        if (typeof args.baseline === "string" && args.baseline.trim()) {
+          const baselinePath = inside(context.root, args.baseline);
+          if (!existsSync(baselinePath) || !statSync(baselinePath).isFile()) throw new Error(`Prediction baseline does not exist: ${args.baseline}`);
+          const baselineText = readFileSync(baselinePath, "utf8");
+          let baselineParsed: unknown = baselineText;
+          try { baselineParsed = JSON.parse(baselineText); } catch { /* JSONL is parsed row-by-row. */ }
+          comparison = comparePredictionRows(parsePredictionRows(baselineParsed, maxRows), rows);
+        }
         const analysisStore = new ResearchStore(context.storePath);
-        analysisStore.appendEvent("prediction.analysis.completed", { path: relative(context.root, path), rows: rows.length, analysis });
+        analysisStore.appendEvent("prediction.analysis.completed", { path: relative(context.root, path), rows: rows.length, analysis, ...(comparison ? { comparison } : {}) });
         analysisStore.close();
-        output = { path: relative(context.root, path), rows: rows.length, ignoredRows: Math.max(0, text.split(/\r?\n/).filter(Boolean).length - rows.length), analysis };
+        output = { path: relative(context.root, path), rows: rows.length, ignoredRows: Math.max(0, text.split(/\r?\n/).filter(Boolean).length - rows.length), analysis, ...(comparison ? { comparison } : {}) };
         break;
       }
       case "validation.generate": {
