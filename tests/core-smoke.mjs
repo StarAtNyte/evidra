@@ -228,6 +228,25 @@ test("event history is tamper-evident and survives reopen", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("event head anchor detects truncation of the final event", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-event-tail-"));
+  try {
+    const db = join(root, "state.sqlite");
+    const store = new ResearchStore(db);
+    store.appendEvent("audit.one", { value: 1 });
+    store.appendEvent("audit.two", { value: 2 });
+    store.close();
+    const raw = new Database(db);
+    raw.prepare("DELETE FROM events WHERE type = ?").run("audit.two");
+    raw.close();
+    const reopened = new ResearchStore(db);
+    const report = reopened.verifyEventChain();
+    assert.equal(report.status, "invalid");
+    assert.match(report.reason, /anchor/i);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("external action intents prevent restart-time replay and support explicit reconciliation", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-action-intent-"));
   try {

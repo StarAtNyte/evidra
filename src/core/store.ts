@@ -77,6 +77,11 @@ export class ResearchStore {
         previous_hash TEXT,
         event_hash TEXT
       );
+      CREATE TABLE IF NOT EXISTS event_chain_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        head_hash TEXT,
+        event_count INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS hypotheses (
         id TEXT PRIMARY KEY,
         payload_json TEXT NOT NULL,
@@ -242,6 +247,10 @@ export class ResearchStore {
     for (const column of ["previous_hash", "event_hash"]) {
       try { this.db.exec(`ALTER TABLE events ADD COLUMN ${column} TEXT`); } catch { /* already migrated */ }
     }
+    this.db.prepare(`
+      INSERT OR IGNORE INTO event_chain_state (id, head_hash, event_count)
+      VALUES (1, (SELECT event_hash FROM events ORDER BY id DESC LIMIT 1), (SELECT COUNT(*) FROM events))
+    `).run();
     try {
       this.db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(kind UNINDEXED, item_id UNINDEXED, content, created_at UNINDEXED)");
       this.memoryFtsAvailable = true;
@@ -288,18 +297,25 @@ export class ResearchStore {
   }
 
   appendEvent(type: string, payload: unknown): void {
-    const safePayload = redactStructured(payload);
-    const payloadJson = JSON.stringify(safePayload);
-    const createdAt = new Date().toISOString();
-    const previousHash = (this.db.prepare("SELECT event_hash AS eventHash FROM events ORDER BY id DESC LIMIT 1").get() as { eventHash: string | null } | undefined)?.eventHash ?? null;
-    const eventHash = createHash("sha256").update(`${type}\0${payloadJson}\0${createdAt}\0${previousHash ?? ""}`).digest("hex");
-    this.db.prepare(`
-      INSERT INTO events (type, payload_json, created_at, previous_hash, event_hash) VALUES (?, ?, ?, ?, ?)
-    `).run(type, payloadJson, createdAt, previousHash, eventHash);
+    this.db.transaction(() => {
+      const safePayload = redactStructured(payload);
+      const payloadJson = JSON.stringify(safePayload);
+      const createdAt = new Date().toISOString();
+      const previousHash = (this.db.prepare("SELECT event_hash AS eventHash FROM events ORDER BY id DESC LIMIT 1").get() as { eventHash: string | null } | undefined)?.eventHash ?? null;
+      const eventHash = createHash("sha256").update(`${type}\0${payloadJson}\0${createdAt}\0${previousHash ?? ""}`).digest("hex");
+      this.db.prepare(`
+        INSERT INTO events (type, payload_json, created_at, previous_hash, event_hash) VALUES (?, ?, ?, ?, ?)
+      `).run(type, payloadJson, createdAt, previousHash, eventHash);
+      this.db.prepare("UPDATE event_chain_state SET head_hash = ?, event_count = event_count + 1 WHERE id = 1").run(eventHash);
+    })();
   }
 
   verifyEventChain(): { status: "valid" | "legacy" | "invalid"; checked: number; legacy: number; brokenAt?: number; reason?: string } {
     const rows = this.db.prepare("SELECT id, type, payload_json, created_at, previous_hash, event_hash FROM events ORDER BY id ASC").all() as Array<{ id: number; type: string; payload_json: string; created_at: string; previous_hash: string | null; event_hash: string | null }>;
+    const anchor = this.db.prepare("SELECT head_hash AS headHash, event_count AS eventCount FROM event_chain_state WHERE id = 1").get() as { headHash: string | null; eventCount: number } | undefined;
+    if (anchor && anchor.eventCount !== rows.length) return { status: "invalid", checked: rows.length, legacy: rows.filter((row) => !row.event_hash).length, reason: "event count differs from the integrity anchor" };
+    const lastHash = rows.at(-1)?.event_hash ?? null;
+    if (anchor && anchor.headHash !== lastHash) return { status: "invalid", checked: rows.length, legacy: rows.filter((row) => !row.event_hash).length, reason: "event-chain head differs from the integrity anchor" };
     let previousHash: string | null = null;
     let legacy = 0;
     for (const row of rows) {
