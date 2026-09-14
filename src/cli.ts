@@ -2108,6 +2108,11 @@ research
       let criticReview: Awaited<ReturnType<typeof runResearchCritic>> | undefined;
       let laneReports: Awaited<ReturnType<typeof runResearchLanes>> = [];
       const toolTrace = createToolTraceRecorder(`research-${cycle}`);
+      const recordAgentUsage = (usage: { inputTokens?: number; outputTokens?: number } | undefined, provider: string, model: string, role: string): void => {
+        const usageStore = new ResearchStore(statePath);
+        usageStore.appendEvent("research.agent.usage", { cycle, role, provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens });
+        usageStore.close();
+      };
       let researchAttempt = 0;
       // Keep the complete cycle guidance on the first attempt. Retries replace
       // this objective with an explicit alternate-route instruction so a
@@ -2154,6 +2159,7 @@ research
             executeTool: researchToolExecutor(adapter, autonomy),
             onToolCall: toolTrace.onToolCall,
             onToolResult: toolTrace.onToolResult,
+            onUsage: recordAgentUsage,
           });
           let crossPollination = synthesizeLaneReports(laneReports);
           // Independent groups should be able to challenge one another before
@@ -2201,6 +2207,7 @@ research
                 // multiplying shell calls.
                 onToolCall: toolTrace.onToolCall,
                 onToolResult: toolTrace.onToolResult,
+                onUsage: recordAgentUsage,
               },
             );
             laneReports = [
@@ -2216,11 +2223,7 @@ research
           crossPollinationStore.appendEvent("research.cross_pollination.completed", { cycle, board: crossPollination });
           crossPollinationStore.close();
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness }, { provider: options.provider as "codex" | "local", model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onUsage: (usage, provider, model) => {
-            const usageStore = new ResearchStore(statePath);
-            usageStore.appendEvent("research.agent.usage", { cycle, role: "director", provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens });
-            usageStore.close();
-          }, consumeSteering: () => {
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness }, { provider: options.provider as "codex" | "local", model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onUsage: recordAgentUsage, consumeSteering: () => {
             const steeringStore = new ResearchStore(statePath);
             const messages = steeringStore.consumeControllerSteers().map((item) => item.message);
             steeringStore.close();
@@ -2237,6 +2240,7 @@ research
             storePath: statePath,
             maxParallel: 1,
             autonomy,
+            onUsage: recordAgentUsage,
           });
           if (shouldPeerReview) {
             const collaborationStore = new ResearchStore(statePath);

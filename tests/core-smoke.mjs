@@ -2544,6 +2544,7 @@ test("research director executes typed tools and reasons over returned evidence"
   const previousHost = process.env.OLLAMA_HOST;
   let calls = 0;
   let toolAttempts = 0;
+  const usageRoles = [];
   let observedSteering = false;
   const server = createServer((request, response) => {
     calls += 1;
@@ -2566,9 +2567,10 @@ test("research director executes typed tools and reasons over returned evidence"
       toolAttempts += 1;
       if (toolAttempts === 1) return { name: call.name, ok: false, error: "temporary network unavailable" };
       return { name: call.name, ok: true, output: { files: ["notes.txt"] } };
-    }, consumeSteering: () => calls === 1 ? ["focus on falsification"] : [] });
+    }, onUsage: (_usage, _provider, _model, role) => usageRoles.push(role), consumeSteering: () => calls === 1 ? ["focus on falsification"] : [] });
     assert.equal(calls, 2);
     assert.equal(toolAttempts, 2);
+    assert.deepEqual(usageRoles, ["director", "director"]);
     assert.equal(observedSteering, true);
     assert.equal(decision.decision, "propose");
     assert.equal(decision.toolCalls.length, 0);

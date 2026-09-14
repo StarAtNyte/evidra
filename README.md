@@ -323,7 +323,7 @@ Useful commands:
     /timeline             Show a readable autonomous execution timeline
     /integrity            Verify the durable event history for tampering/corruption
     /backup [path]        Create a consistent durable state backup
-    /usage                Show durable activity and counts
+    /usage                Show durable activity, experiment time, and agent tokens
     /research             Start or run an evidence-gathering cycle
     /research start       Start a fully autonomous research campaign
     /research pause       Pause workers and preserve the campaign
