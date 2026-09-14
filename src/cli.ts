@@ -458,6 +458,7 @@ program.command("usage").description("Show research, experiment, and campaign us
   console.log(`Decisions     ${counts.decisions}`);
   console.log(`Experiments   ${counts.experiments}`);
   console.log(`Runs          ${counts.runs}`);
+  console.log(`Run attempts  ${store.runAttempts().length}`);
   console.log(`Artifacts     ${counts.artifacts}`);
   console.log(`Trajectories  ${counts.trajectories}`);
   console.log(`Wall time     ${usage.wallMinutes.toFixed(1)} minutes`);

@@ -19,6 +19,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const sources = store.sources();
   const experiments = store.experiments();
   const runs = store.runs();
+  const attempts = store.runAttempts();
   const artifacts = store.artifacts();
   const trajectories = store.trajectories(100);
   const ensembles = store.ensembleCandidates(100);
@@ -54,6 +55,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     "## Counts",
     "",
     Object.entries(counts).map(([key, value]) => `- ${key}: ${value}`).join("\n"),
+    `- run_attempts: ${attempts.length}`,
     "",
     "## State integrity",
     "",
@@ -118,6 +120,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     const plan = payload.executionPlan?.map((stage) => `${stage.id}=${stage.status}`).join(", ");
     return `- ${experiment.id}: ${line(payload.status ?? experiment.payload)}${plan ? `\n  stages: ${plan}` : ""}`;
   }).join("\n") : "No experiments recorded.", "", runs.length ? runs.map((run) => `- ${run.id} · ${run.status} · experiment ${run.experimentId}`).join("\n") : "No runs recorded.", "", `Artifacts recorded: ${artifacts.length}`);
+  sections.push("", "## Run attempts", "", attempts.length ? attempts.map((attempt) => `- ${attempt.experimentId} · attempt ${attempt.attempt} · ${attempt.status} · ${attempt.executor}${attempt.failureClass ? ` · ${attempt.failureClass}` : ""}${attempt.metric !== null ? ` · metric ${attempt.metric}` : ""}`).join("\n") : "No run attempts recorded.");
   sections.push("", "## Recent event log", "", events.length ? events.map((event) => `- ${event.createdAt} · ${event.type}`).join("\n") : "No events recorded.");
   return `${sections.join("\n")}\n`;
 }
