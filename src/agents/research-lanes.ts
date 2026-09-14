@@ -295,7 +295,10 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
   try {
     const toolResults: ResearchToolResult[] = [];
     if (options.executeTool) {
-      for (const call of laneToolCalls(role, objective)) {
+      const calls = laneToolCalls(role, objective);
+      let primarySourceQueued = false;
+      for (let callIndex = 0; callIndex < calls.length; callIndex += 1) {
+        const call = calls[callIndex];
         if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
         options.onProgress?.(`Research lane · ${role} · ${call.name}...`);
         const callId = options.onToolCall?.(`lane:${role}`, call) ?? `${role}-${call.name}-${toolResults.length + 1}`;
@@ -315,6 +318,19 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         // select a different route; one unavailable tool must not erase an
         // otherwise independent research perspective.
         toolResults.push(result);
+        if (call.name === "source.search" && result.ok && !primarySourceQueued) {
+          const output = result.output && typeof result.output === "object" ? result.output as { results?: unknown } : {};
+          const candidate = Array.isArray(output.results)
+            ? output.results.find((entry): entry is { url: string } => Boolean(entry && typeof entry === "object" && typeof (entry as { url?: unknown }).url === "string" && /^https?:\/\//i.test((entry as { url: string }).url)))
+            : undefined;
+          if (candidate) {
+            // Search results are candidates, not evidence. Retrieve exactly
+            // one top result per lane to bound network and context cost while
+            // ensuring the useful path produces a durable hashed source.
+            calls.push({ name: "source.retrieve", arguments: { url: candidate.url } });
+            primarySourceQueued = true;
+          }
+        }
       }
     }
     let provider = laneRoute.provider;
