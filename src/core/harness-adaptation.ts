@@ -47,6 +47,27 @@ export interface HarnessRetestTask {
   };
 }
 
+export interface HarnessRetestProtocolCheck {
+  valid: boolean;
+  uniqueTasks: number;
+  independentRepetitions: number;
+  issues: string[];
+}
+
+/** Enforce the task and independent-repetition requirements of a retest plan. */
+export function validateHarnessRetestProtocol(
+  plan: HarnessAdaptationPlan,
+  arms: Array<{ task?: unknown; seed?: unknown }>,
+): HarnessRetestProtocolCheck {
+  const tasks = new Set(arms.map((arm) => typeof arm.task === "string" ? arm.task : "").filter(Boolean));
+  const repetitions = new Set(arms.map((arm) => typeof arm.task === "string" && arm.task && arm.seed !== undefined ? `${arm.task}\u001f${String(arm.seed)}` : "").filter(Boolean));
+  const independentRepetitions = tasks.size ? Math.floor(repetitions.size / tasks.size) : 0;
+  const issues: string[] = [];
+  if (tasks.size < plan.retest.requiredTasks) issues.push(`requires at least ${plan.retest.requiredTasks} distinct tasks, found ${tasks.size}`);
+  if (independentRepetitions < plan.retest.independentRepetitions) issues.push(`requires at least ${plan.retest.independentRepetitions} independent repetitions per task, found ${independentRepetitions}`);
+  return { valid: issues.length === 0, uniqueTasks: tasks.size, independentRepetitions, issues };
+}
+
 /** Materialize benchmark feedback as durable controller work.
  *
  * The retest constraints and triggering benchmark evidence are copied into the

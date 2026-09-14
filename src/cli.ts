@@ -82,7 +82,7 @@ import { assessHarnessChangePresence, evaluateHarnessChange, type HarnessChangeC
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, type AirsBenchFamily, type AirsBenchDiscovery, type AirsHarnessTemplate } from "./core/airs-bench.js";
 import { inventoryHarnessComponents, planHarnessInterventions } from "./core/harness-evolution.js";
 import { advanceEvolutionaryGeneration } from "./core/evolution.js";
-import { materializeHarnessRetestTask, planHarnessAdaptation, type HarnessAdaptationPlan } from "./core/harness-adaptation.js";
+import { materializeHarnessRetestTask, planHarnessAdaptation, validateHarnessRetestProtocol, type HarnessAdaptationPlan } from "./core/harness-adaptation.js";
 import { deriveAdaptiveHarnessPolicy } from "./core/adaptive-harness.js";
 import { createTransferableMethod } from "./core/method-transfer.js";
 import { createAblationPlan, evaluateAblationEvidence } from "./core/ablation.js";
@@ -652,6 +652,18 @@ benchmark.command("retest")
       retestStore.updateTask(taskId, "failed", { error: "Stored retest protocol is no longer matched.", issues: protocol.issues });
       retestStore.close();
       throw new Error(`Stored harness retest protocol is invalid:\n${protocol.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
+    }
+    const retestPlan = claimed.payload && typeof claimed.payload === "object" ? claimed.payload as { retest?: Parameters<typeof validateHarnessRetestProtocol>[0] } : {};
+    if (!retestPlan.retest) {
+      retestStore.updateTask(taskId, "failed", { error: "Retest task does not contain a replication contract." });
+      retestStore.close();
+      throw new Error(`Harness retest task '${taskId}' has no replication contract.`);
+    }
+    const retestCoverage = validateHarnessRetestProtocol(retestPlan.retest, arms);
+    if (!retestCoverage.valid) {
+      retestStore.updateTask(taskId, "failed", { error: "Stored retest protocol does not satisfy its replication contract.", coverage: retestCoverage });
+      retestStore.close();
+      throw new Error(`Stored harness retest protocol has insufficient independent coverage:\n${retestCoverage.issues.map((issue) => `- ${issue}`).join("\n")}`);
     }
     const benchmarkWorkspace = options.workspace ? resolve(options.workspace) : root;
     try {
