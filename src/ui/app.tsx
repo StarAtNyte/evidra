@@ -71,7 +71,7 @@ type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "me
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
 type WorkbenchMode = "research" | "challenge";
 type AutonomyLevel = "safe" | "fast" | "yolo";
-type ResearchCampaign = { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean };
+type ResearchCampaign = { goal: string; budgetMinutes: number; gpuBudgetHours?: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean };
 type LimitPolicy = "auto" | "wait" | "fallback" | "stop";
 type ExperimentExecutorKind = "local" | "container" | "modal";
 type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; limitPolicy: LimitPolicy; fallbackModel: string; experimentExecutor: ExperimentExecutorKind; campaign?: ResearchCampaign };
@@ -2251,7 +2251,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const campaign = config.campaign;
       const integrity = store.verifyEventChain();
       const eventCount = store.eventCount();
-      append("assistant", project ? `Project: ${project.name}\nWorkspace: ${project.competitionId}\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\nEvents: ${eventCount}\nIntegrity: ${integrity.status.toUpperCase()}${integrity.legacy ? ` (${integrity.legacy} legacy)` : ""}${campaign ? `\nCampaign: ${campaign.status}\nGoal: ${campaign.goal}\nBudget: ${campaign.budgetMinutes} minutes\nStop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\nProvider retry: ${campaign.nextAttemptAt}` : ""}` : ""}` : "No Evidra project initialized. Start with /research to configure an autonomous campaign.");
+      append("assistant", project ? `Project: ${project.name}\nWorkspace: ${project.competitionId}\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\nEvents: ${eventCount}\nIntegrity: ${integrity.status.toUpperCase()}${integrity.legacy ? ` (${integrity.legacy} legacy)` : ""}${campaign ? `\nCampaign: ${campaign.status}\nGoal: ${campaign.goal}\nBudget: ${campaign.budgetMinutes} minutes\nGPU budget: ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}\nStop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\nProvider retry: ${campaign.nextAttemptAt}` : ""}` : ""}` : "No Evidra project initialized. Start with /research to configure an autonomous campaign.");
       store.close();
       return;
     }

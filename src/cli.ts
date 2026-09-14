@@ -1402,10 +1402,10 @@ challenge.command("status").action(() => {
   const store = new ResearchStore(statePath);
   const active = store.project();
   const adapter = activeCompetition();
-  const campaign = store.campaign() as { status?: string; goal?: string; budgetMinutes?: number; autoExecuteExperiments?: boolean; runtime?: { autonomy?: string } } | undefined;
+  const campaign = store.campaign() as { status?: string; goal?: string; budgetMinutes?: number; gpuBudgetHours?: number; autoExecuteExperiments?: boolean; runtime?: { autonomy?: string } } | undefined;
   const autonomous = campaign?.autoExecuteExperiments === true || campaign?.runtime?.autonomy === "fast" || campaign?.runtime?.autonomy === "yolo";
   const lease = store.liveControllerLease();
-  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}${campaign ? `\nCampaign: ${campaign.status ?? "unknown"}\nGoal: ${campaign.goal ?? "(none)"}\nBudget: ${campaign.budgetMinutes ?? "?"} minutes\nAutonomous experiments: ${autonomous ? "enabled" : "approval-gated"}` : "\nCampaign: none"}${lease ? `\nController: running (pid ${lease.pid}, step ${lease.currentStep ?? "unknown"})` : "\nController: idle"}`);
+  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}${campaign ? `\nCampaign: ${campaign.status ?? "unknown"}\nGoal: ${campaign.goal ?? "(none)"}\nBudget: ${campaign.budgetMinutes ?? "?"} minutes\nGPU budget: ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}\nAutonomous experiments: ${autonomous ? "enabled" : "approval-gated"}` : "\nCampaign: none"}${lease ? `\nController: running (pid ${lease.pid}, step ${lease.currentStep ?? "unknown"})` : "\nController: idle"}`);
   store.close();
 });
 for (const action of ["pause", "resume", "stop"] as const) {
