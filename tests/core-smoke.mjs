@@ -1701,6 +1701,26 @@ test("research graph deduplicates repeated executable hypotheses while preservin
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("research graph preserves formulation-family diversity between hypotheses", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-diverse-hypotheses-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const result = materializeResearchDecision(store, {
+      phase: "hypothesis", goalStatus: "active", decision: "propose", bottleneck: "Need independent directions", rationale: "Keep distinct mechanisms in the portfolio.",
+      hypotheses: [
+        { title: "Temporal direction", formulationFamily: "sequence-model", mechanism: "Use ordering information.", evidence: [], proposedChange: "Add a temporal encoder.", falsificationTest: "The sequence-aware variant does not improve.", expectedMetricDelta: { low: 0, median: 0, high: 0 }, computeCostGpuHours: 0, implementationRisk: "low", leakageRisk: "low", dependencies: [], ablationFactors: [] },
+        { title: "Invariant direction", formulationFamily: "augmentation", mechanism: "Use invariance to nuisance variation.", evidence: [], proposedChange: "Add a validated augmentation.", falsificationTest: "The invariant variant does not improve.", expectedMetricDelta: { low: 0, median: 0, high: 0 }, computeCostGpuHours: 0, implementationRisk: "low", leakageRisk: "low", dependencies: [], ablationFactors: [] },
+      ],
+      searchOperator: "ucb_portfolio", selectedHypothesis: null, nextAction: "Compare both directions", toolCalls: [],
+    });
+    const diverse = store.edges().filter((edge) => edge.relation === "diverse_from");
+    assert.equal(diverse.length, 1);
+    assert.equal(diverse[0].fromId, result.hypothesisIds[0]);
+    assert.equal(diverse[0].toId, result.hypothesisIds[1]);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("claim consistency surfaces duplicates and only explicit contradictions", () => {
   const base = { id: "a", sourceType: "observation", confidence: 0.8 };
   assert.equal(compareClaims({ ...base, statement: "Group holdout reduces leakage risk" }, { ...base, id: "b", statement: "Group holdout reduces leakage risk" }).relation, "duplicate");

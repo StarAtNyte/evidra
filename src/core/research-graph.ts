@@ -73,6 +73,30 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
     });
   });
 
+  // Preserve deliberate search diversity as graph evidence. This is not a
+  // claim that two ideas are incompatible; it records that they explore
+  // different formulation families and should not be collapsed into one
+  // portfolio slot by downstream schedulers.
+  for (let left = 0; left < decision.hypotheses.length; left += 1) {
+    const leftFamily = decision.hypotheses[left]?.formulationFamily?.trim();
+    if (!leftFamily) continue;
+    for (let right = left + 1; right < decision.hypotheses.length; right += 1) {
+      const rightFamily = decision.hypotheses[right]?.formulationFamily?.trim();
+      if (!rightFamily || rightFamily.toLowerCase() === leftFamily.toLowerCase()) continue;
+      const leftId = hypothesisIds[left];
+      const rightId = hypothesisIds[right];
+      if (leftId === rightId) continue;
+      store.saveEdge({
+        id: `edge_${decisionId}_${leftId}_${rightId}_diverse`,
+        fromId: leftId,
+        toId: rightId,
+        relation: "diverse_from",
+        confidence: 0.8,
+        evidenceIds: [],
+      });
+    }
+  }
+
   // Evolutionary offspring must point only to hypotheses materialized in this
   // decision or an earlier durable decision. Unknown IDs are ignored rather
   // than allowing model text to manufacture graph ancestry.
