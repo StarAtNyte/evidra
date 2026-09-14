@@ -93,6 +93,7 @@ export function inventoryHarnessComponents(root: string, maxFiles = 500): Harnes
 export function assessHarnessChangePresence(
   baseline: Array<{ path: string; checksum: string }> | undefined,
   current: HarnessComponent[],
+  targetComponentIds: string[] = [],
 ): HarnessChangePresence {
   if (!baseline) return { status: "unavailable", changedPaths: [], addedPaths: [], removedPaths: [], reason: "No baseline component snapshot was recorded." };
   const before = new Map(baseline.map((component) => [component.path, component.checksum]));
@@ -100,10 +101,13 @@ export function assessHarnessChangePresence(
   const changedPaths = [...after.keys()].filter((path) => before.has(path) && before.get(path) !== after.get(path)).sort();
   const addedPaths = [...after.keys()].filter((path) => !before.has(path)).sort();
   const removedPaths = [...before.keys()].filter((path) => !after.has(path)).sort();
-  const allChanges = [...new Set([...changedPaths, ...addedPaths, ...removedPaths])].filter((path) => path.startsWith("src/")).sort();
+  const allChanges = [...new Set([...changedPaths, ...addedPaths, ...removedPaths])]
+    .filter((path) => path.startsWith("src/"))
+    .filter((path) => !targetComponentIds.length || targetComponentIds.includes(`component:${path}`))
+    .sort();
   return allChanges.length
-    ? { status: "changed", changedPaths: allChanges, addedPaths: addedPaths.filter((path) => path.startsWith("src/")), removedPaths: removedPaths.filter((path) => path.startsWith("src/")), reason: `${allChanges.length} source component path(s) changed.` }
-    : { status: "unchanged", changedPaths: [], addedPaths: [], removedPaths: [], reason: "No src/ component changed since the benchmark snapshot." };
+    ? { status: "changed", changedPaths: allChanges, addedPaths: addedPaths.filter((path) => allChanges.includes(path)), removedPaths: removedPaths.filter((path) => allChanges.includes(path)), reason: `${allChanges.length} targeted source component path(s) changed.` }
+    : { status: "unchanged", changedPaths: [], addedPaths: [], removedPaths: [], reason: targetComponentIds.length ? "None of the declared harness components changed since the benchmark snapshot." : "No src/ component changed since the benchmark snapshot." };
 }
 
 function componentsOf(inventory: HarnessComponent[], patterns: RegExp[]): string[] {

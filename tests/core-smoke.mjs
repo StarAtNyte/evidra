@@ -2727,6 +2727,8 @@ test("harness evolution inventories editable components and enforces prediction 
     assert.equal(evaluateHarnessChange(contract, { candidateScore: 0.9, valid: false }).status, "unobserved");
     const snapshot = inventory.map((component) => ({ path: component.path, checksum: component.checksum }));
     assert.equal(assessHarnessChangePresence(snapshot, inventory).status, "unchanged");
+    assert.equal(assessHarnessChangePresence([{ path: "src/core/executors.ts", checksum: "old" }, { path: "src/agents/codex-exec.ts", checksum: inventory.find((component) => component.path.endsWith("codex-exec.ts")).checksum }], inventory, ["component:src/agents/codex-exec.ts"]).status, "unchanged");
+    assert.equal(assessHarnessChangePresence([{ path: "src/core/executors.ts", checksum: "old" }], inventory, ["component:src/core/executors.ts"]).status, "changed");
     assert.equal(assessHarnessChangePresence([{ path: "src/core/executors.ts", checksum: "old" }], inventory).status, "changed");
     assert.equal(assessHarnessChangePresence([{ path: "src/core/executors.ts", checksum: "sha256:test" }], inventory).status, "changed");
     assert.equal(assessHarnessChangePresence([{ path: "src/core/executors.ts", checksum: "sha256:test" }, { path: "src/agents/codex-exec.ts", checksum: "sha256:test" }], inventory).status, "changed");

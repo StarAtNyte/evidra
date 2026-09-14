@@ -667,7 +667,8 @@ benchmark.command("retest")
     }
     const benchmarkWorkspace = options.workspace ? resolve(options.workspace) : root;
     try {
-      const changePresence = assessHarnessChangePresence(payload.baselineComponents, inventoryHarnessComponents(benchmarkWorkspace));
+      const targetComponentIds = [...new Set(arms.filter((arm) => arm.harness === challenger).flatMap((arm) => arm.componentIds ?? []))];
+      const changePresence = assessHarnessChangePresence(payload.baselineComponents, inventoryHarnessComponents(benchmarkWorkspace), targetComponentIds);
       if (changePresence.status === "unchanged") throw new Error(`Retest rejected: ${changePresence.reason}`);
       const originalParallel = payload.benchmarkEvidence?.maxParallel;
       const maxParallel = typeof originalParallel === "number" && Number.isFinite(originalParallel) ? originalParallel : 1;
@@ -685,7 +686,7 @@ benchmark.command("retest")
       const changeOutcomes = validChange
         ? comparisons.map((comparison) => ({ incumbent: comparison.incumbent, outcome: evaluateHarnessChange(validChange, { baselineScore: validChange.baselineScore, candidateScore: comparison.pairedMeanDelta === null ? undefined : (validChange.baselineScore ?? 0) + comparison.pairedMeanDelta, valid: comparison.validPairedArms > 0 && comparison.pairedLower95 !== null }) }))
         : undefined;
-      const result = { retestOf: taskId, challenger, maxParallel: Math.max(1, Math.min(32, Math.floor(maxParallel))), protocol: arms, changePresence: assessHarnessChangePresence(payload.baselineComponents, inventoryHarnessComponents(benchmarkWorkspace)), scorecards, comparisons, adaptation, ...(validChange ? { change: validChange } : {}), ...(changeOutcomes ? { changeOutcomes } : {}), trials: report.trials, startedAt: report.startedAt };
+      const result = { retestOf: taskId, challenger, maxParallel: Math.max(1, Math.min(32, Math.floor(maxParallel))), protocol: arms, changePresence: assessHarnessChangePresence(payload.baselineComponents, inventoryHarnessComponents(benchmarkWorkspace), targetComponentIds), scorecards, comparisons, adaptation, ...(validChange ? { change: validChange } : {}), ...(changeOutcomes ? { changeOutcomes } : {}), trials: report.trials, startedAt: report.startedAt };
       retestStore.updateTask(taskId, "completed", result);
       retestStore.appendEvent("harness.benchmark.retest.completed", result);
       console.log(`Harness retest complete · task ${taskId}\n${scorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})`).join("\n")}`);
