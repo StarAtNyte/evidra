@@ -52,6 +52,8 @@ An explicit autonomous campaign owns the full local loop: research lanes, implem
 
 /benchmark literature-score <file>  Score deep/wide literature discovery and grounding
 
+The same command is available in the full-screen TUI through `/` completion.
+
 Literature benchmark reports are durable and are supplied to later autonomous
 research cycles as diagnostic allocation evidence; they do not count as
 workspace experiment proof.

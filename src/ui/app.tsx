@@ -56,6 +56,7 @@ import { redactSecrets } from "../core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "../core/claim-audit.js";
 import { summarizeUsage } from "../core/usage.js";
+import { scoreLiteratureBenchmark, type LiteratureBenchmarkObservation, type LiteratureBenchmarkTask } from "../core/literature-bench.js";
 import { assessResearchDecisionRubric } from "../core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../core/validation-lock.js";
 import { deriveAdaptiveHarnessPolicy } from "../core/adaptive-harness.js";
@@ -169,6 +170,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge steer ", "Guide the active campaign at the next safe boundary"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
   "/sources": [["/sources list", "List retrieved sources"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources discover", "Search scholarly literature"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
+  "/benchmark": [["/benchmark literature-score ", "Score deep/wide literature discovery"]],
   "/evidence": [["/evidence audit", "Audit claim provenance and completion blockers"], ["/evidence analyze", "Analyze prediction errors and worst groups"]],
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
@@ -2190,6 +2192,23 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const elapsed = campaign ? campaignElapsedMinutes(campaign) : 0;
       const executorUsage = Object.entries(usage.byExecutor).map(([executor, bucket]) => `  ${executor}: ${bucket.runs} runs · ${bucket.wallMinutes.toFixed(1)}m · ${bucket.gpuWallHours.toFixed(3)} GPU-h`).join("\n");
       append("assistant", `Usage\n  provider: ${config.provider}\n  model: ${config.model}\n  thinking: ${config.reasoningEffort}\n  scheduler: ${state.status}\n  events: ${events}\n  hypotheses: ${counts.hypotheses} · claims: ${counts.claims} · decisions: ${counts.decisions}\n  experiments: ${counts.experiments} · runs: ${counts.runs} · artifacts: ${counts.artifacts}\n  run wall time: ${usage.wallMinutes.toFixed(1)} minutes\n  GPU-tagged wall time: ${usage.gpuWallHours.toFixed(3)} hours${executorUsage ? `\n${executorUsage}` : ""}\n${campaign ? `\nCampaign\n  status: ${campaign.status}\n  elapsed: ${elapsed.toFixed(1)} / ${campaign.budgetMinutes} minutes\n  remaining: ${Math.max(0, campaign.budgetMinutes - elapsed).toFixed(1)} minutes\n  goal: ${campaign.goal}\n  stop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\n  provider retry: ${campaign.nextAttemptAt}` : ""}` : "\nNo autonomous campaign configured. Start one with /research."}`);
+      return;
+    }
+    if (request.startsWith("/benchmark literature-score")) {
+      const file = request.replace(/^\/benchmark literature-score\s*/, "").trim();
+      if (!file) { append("assistant", "Usage: /benchmark literature-score <json-file>"); return; }
+      try {
+        const parsed: unknown = JSON.parse(readFileSync(resolve(root, file), "utf8"));
+        if (!parsed || typeof parsed !== "object") throw new Error("Literature benchmark input must be an object.");
+        const tasks = (parsed as { tasks?: unknown }).tasks;
+        const observations = (parsed as { observations?: unknown }).observations;
+        if (!Array.isArray(tasks) || !tasks.length || !Array.isArray(observations)) throw new Error("Input must contain non-empty tasks and an observations array.");
+        const report = scoreLiteratureBenchmark(tasks as LiteratureBenchmarkTask[], observations as LiteratureBenchmarkObservation[]);
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        store.appendEvent("literature.benchmark.completed", { source: resolve(root, file), report });
+        store.close();
+        append("assistant", `Literature benchmark · ${report.valid ? "VALID" : "INCOMPLETE"}\nMean score: ${report.meanScore === null ? "n/a" : report.meanScore.toFixed(3)}\nDeep recall: ${report.deepRecall === null ? "n/a" : `${(report.deepRecall * 100).toFixed(1)}%`}\nWide recall: ${report.wideRecall === null ? "n/a" : `${(report.wideRecall * 100).toFixed(1)}%`}\nGrounding: ${report.meanGroundingRate === null ? "n/a" : `${(report.meanGroundingRate * 100).toFixed(1)}%`}\nQuery efficiency: ${report.meanQueryEfficiency === null ? "n/a" : report.meanQueryEfficiency.toFixed(3)}${report.tasks.some((task) => task.reasons.length) ? `\n\n${report.tasks.filter((task) => task.reasons.length).map((task) => `- ${task.taskId}: ${task.reasons.join("; ")}`).join("\n")}` : ""}`);
+      } catch (error) { appendError(error); }
       return;
     }
     if (request === "/status" || request === "/project status") {
