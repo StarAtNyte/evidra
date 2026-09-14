@@ -30,10 +30,12 @@ const WORKER_ENV_KEYS = new Set([
  */
 export function safeWorkerEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const merged = { ...process.env, ...overrides };
+  const explicitlyDeclared = new Set(Object.keys(overrides));
   const safe: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(merged)) {
     if (value === undefined || WORKER_SECRET_KEY.test(key)) continue;
-    if (WORKER_ENV_KEYS.has(key) || key.startsWith("LC_") || key.startsWith("PYTHON") || key.startsWith("CONDA_") || key.startsWith("CUDA_") || key.startsWith("NVIDIA_") || key.startsWith("OMP_") || key.startsWith("MKL_")) {
+    const validName = /^[A-Za-z_][A-Za-z0-9_]*$/.test(key);
+    if (explicitlyDeclared.has(key) && validName || WORKER_ENV_KEYS.has(key) || key.startsWith("LC_") || key.startsWith("PYTHON") || key.startsWith("CONDA_") || key.startsWith("CUDA_") || key.startsWith("NVIDIA_") || key.startsWith("OMP_") || key.startsWith("MKL_")) {
       safe[key] = value;
     }
   }

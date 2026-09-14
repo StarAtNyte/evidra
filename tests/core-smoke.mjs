@@ -2561,14 +2561,15 @@ test("experiment workers do not inherit controller credentials", () => {
     OPENAI_API_KEY: "sk-controller-secret",
     MODAL_TOKEN_ID: "ak-controller-secret",
     CUSTOM_PASSWORD: "controller-secret",
-    SAFE_WORKER_FLAG: "should-not-be-ambient",
+    SAFE_WORKER_FLAG: "explicit-runtime-setting",
   });
   assert.equal(safe.PATH, "/usr/bin");
   assert.equal(safe.CUDA_VISIBLE_DEVICES, "0");
   assert.equal(safe.OPENAI_API_KEY, undefined);
   assert.equal(safe.MODAL_TOKEN_ID, undefined);
   assert.equal(safe.CUSTOM_PASSWORD, undefined);
-  assert.equal(safe.SAFE_WORKER_FLAG, undefined);
+  assert.equal(safe.SAFE_WORKER_FLAG, "explicit-runtime-setting");
+  assert.equal(safe.UNDECLARED_WORKER_FLAG, undefined);
 });
 
 test("experiment executor rejects successful processes with missing declared artifacts", async () => {
