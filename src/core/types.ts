@@ -81,6 +81,15 @@ export const ResearchHypothesisSchema = z.object({
   evidenceSourceIds: z.array(z.string().min(1)).max(8).default([]),
   /** Exact durable hypothesis IDs used as parents for an evolutionary offspring. */
   parentHypothesisIds: z.array(z.string().min(1)).max(2).default([]),
+  /** Context required when a hypothesis adapts a literature-derived method. */
+  sourceAdaptation: z.object({
+    sourceTitle: z.string().min(1).max(300),
+    section: z.string().min(1).max(300).optional(),
+    repository: z.string().url().optional(),
+    originalSetting: z.string().min(1).max(1_000),
+    competitionDifference: z.string().min(1).max(1_000),
+    expectedFailureModes: z.array(z.string().min(1).max(300)).min(1).max(8),
+  }).optional(),
   proposedChange: z.string().min(1),
   falsificationTest: z.string().min(1),
   expectedMetricDelta: z.object({ low: z.number(), median: z.number(), high: z.number() }).default({ low: 0, median: 0, high: 0 }),

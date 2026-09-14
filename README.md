@@ -111,6 +111,8 @@ Evidra also speaks the official [AutoResearchBench](https://github.com/CherYou/A
 
 Literature retrieval combines OpenAlex, arXiv, Crossref, public repository search, and bounded web search. The web route is used for official documentation, challenge discussions, dataset pages, and implementation leads; every result remains untrusted until the source is retrieved, hashed, and claim-extracted into the evidence store.
 
+When a hypothesis adapts a published method, its decision record can include `sourceAdaptation`: the original setting, the concrete difference in the current task, and expected failure modes. This keeps transfer claims falsifiable and makes the next validation specific to the gap between the paper and the workbench.
+
 Run telemetry is exportable with `evidra telemetry export --out mlflow.json` or `/telemetry export` in the TUI. The export contains run status, timing, finite metrics, experiment parameters, failure tags, and checksummed artifact references in an MLflow-shaped JSON envelope. It is local-only and secret-free; connecting it to a tracking server remains an explicit operator action.
 
 Benchmark runs can also enforce retention with `benchmark run --retention previous-report.json`: the same task-balanced, paired evidence gate checks that a harness change did not forget previously solved tasks, and retention requires 100% coverage of the prior report’s arms. This protects against the harness-evolution failure mode described by [EVOHARNESSBENCH](https://arxiv.org/abs/2609.04280), where expanding capabilities can degrade prior competence.

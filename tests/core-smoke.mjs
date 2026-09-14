@@ -3223,6 +3223,35 @@ test("research decisions support non-metric outcomes without fabricated GPU esti
   assert.equal(decision.hypotheses[0].expectedMetricDelta.median, 0);
 });
 
+test("literature-derived hypotheses preserve explicit adaptation context", () => {
+  const decision = ResearchDecisionSchema.parse({
+    phase: "hypothesis",
+    goalStatus: "active",
+    decision: "propose",
+    bottleneck: "source-backed lead",
+    rationale: "A published method is promising, but its transfer assumptions must be explicit.",
+    hypotheses: [{
+      title: "adapted method",
+      mechanism: "The source method may address the observed failure mode.",
+      proposedChange: "Adapt the method to the current task.",
+      falsificationTest: "Reject it if held-out validation does not improve.",
+      evidence: ["source paper"],
+      evidenceSourceIds: ["src-1"],
+      expectedMetricDelta: { low: 0, median: 0, high: 1 },
+      sourceAdaptation: {
+        sourceTitle: "A paper",
+        originalSetting: "Image classification",
+        competitionDifference: "Long-tailed tabular data",
+        expectedFailureModes: ["distribution shift"],
+      },
+    }],
+    selectedHypothesis: null,
+    nextAction: "Retrieve the source and run a reduced validation.",
+    toolCalls: [],
+  });
+  assert.equal(decision.hypotheses[0].sourceAdaptation?.competitionDifference, "Long-tailed tabular data");
+});
+
 test("research decision rubric exposes actionable evidence gaps", () => {
   const strong = ResearchDecisionSchema.parse({
     phase: "hypothesis", decision: "run", bottleneck: "choose a validated direction",
