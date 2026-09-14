@@ -865,6 +865,13 @@ test("harness retest protocol enforces task and independent repetition coverage"
   ]);
   assert.equal(sufficient.valid, true);
   assert.equal(sufficient.independentRepetitions, 2);
+  const uneven = validateHarnessRetestProtocol(plan, [
+    { task: "a", seed: 1 }, { task: "a", seed: 2 }, { task: "a", seed: 3 },
+    { task: "b", seed: 1 },
+  ]);
+  assert.equal(uneven.valid, false);
+  assert.equal(uneven.independentRepetitions, 1);
+  assert.deepEqual(uneven.perTaskRepetitions, { a: 3, b: 1 });
 });
 
 test("claim audit separates measured, literature, unsupported, and conflicted evidence", () => {

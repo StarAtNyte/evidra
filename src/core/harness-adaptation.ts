@@ -51,6 +51,7 @@ export interface HarnessRetestProtocolCheck {
   valid: boolean;
   uniqueTasks: number;
   independentRepetitions: number;
+  perTaskRepetitions: Record<string, number>;
   issues: string[];
 }
 
@@ -60,12 +61,19 @@ export function validateHarnessRetestProtocol(
   arms: Array<{ task?: unknown; seed?: unknown }>,
 ): HarnessRetestProtocolCheck {
   const tasks = new Set(arms.map((arm) => typeof arm.task === "string" ? arm.task : "").filter(Boolean));
-  const repetitions = new Set(arms.map((arm) => typeof arm.task === "string" && arm.task && arm.seed !== undefined ? `${arm.task}\u001f${String(arm.seed)}` : "").filter(Boolean));
-  const independentRepetitions = tasks.size ? Math.floor(repetitions.size / tasks.size) : 0;
+  const repetitionsByTask = new Map<string, Set<string>>();
+  for (const arm of arms) {
+    if (typeof arm.task !== "string" || !arm.task || arm.seed === undefined) continue;
+    const repetitions = repetitionsByTask.get(arm.task) ?? new Set<string>();
+    repetitions.add(String(arm.seed));
+    repetitionsByTask.set(arm.task, repetitions);
+  }
+  const perTaskRepetitions = Object.fromEntries([...tasks].sort().map((task) => [task, repetitionsByTask.get(task)?.size ?? 0]));
+  const independentRepetitions = tasks.size ? Math.min(...Object.values(perTaskRepetitions)) : 0;
   const issues: string[] = [];
   if (tasks.size < plan.retest.requiredTasks) issues.push(`requires at least ${plan.retest.requiredTasks} distinct tasks, found ${tasks.size}`);
   if (independentRepetitions < plan.retest.independentRepetitions) issues.push(`requires at least ${plan.retest.independentRepetitions} independent repetitions per task, found ${independentRepetitions}`);
-  return { valid: issues.length === 0, uniqueTasks: tasks.size, independentRepetitions, issues };
+  return { valid: issues.length === 0, uniqueTasks: tasks.size, independentRepetitions, perTaskRepetitions, issues };
 }
 
 /** Materialize benchmark feedback as durable controller work.
