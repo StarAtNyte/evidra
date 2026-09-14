@@ -1948,6 +1948,18 @@ research
         .filter((payload): payload is { useful: boolean; criticVerdict?: "proceed" | "revise" | "reject"; evidenceAnchors?: number } => Boolean(payload && typeof payload === "object" && typeof (payload as { useful?: unknown }).useful === "boolean"));
       const collaboration = collaborationUtility(collaborationHistory);
       store.appendEvent("research.collaboration.policy", { cycle, utility: collaboration, hardEvidencePressure: adaptiveHarness.peerReview });
+      // Team size is an empirical resource decision. If recent peer review
+      // repeatedly added no actionable value, keep the next cycle focused;
+      // evidence pressure and early history retain the full bounded team.
+      const researchLaneLimit = adaptiveHarness.peerReview || collaboration.recommendTeam
+        ? effectiveLaneLimit
+        : Math.min(1, effectiveLaneLimit);
+      store.appendEvent("research.lane.scale", {
+        cycle,
+        requested: effectiveLaneLimit,
+        selected: researchLaneLimit,
+        reason: adaptiveHarness.peerReview ? "hard evidence pressure" : collaboration.rationale,
+      });
       const searchPolicy = rankSearchArms({
         arms: [
           ...DEFAULT_SEARCH_OPERATORS.map((operator, index) => {
@@ -2097,7 +2109,7 @@ research
             timeoutMs: agentTimeoutMs,
             cwd: root,
             storePath: statePath,
-            maxParallel: effectiveLaneLimit,
+            maxParallel: researchLaneLimit,
             autonomy,
             laneFocus: `${allocation.focus} ${allocation.strategy}`,
             laneRotation: cycle,
@@ -2142,7 +2154,7 @@ research
                 timeoutMs: agentTimeoutMs,
                 cwd: root,
                 storePath: statePath,
-                maxParallel: effectiveLaneLimit,
+                maxParallel: researchLaneLimit,
                 autonomy,
                 laneFocus: "evidence-validation",
                 laneRotation: cycle + 1,

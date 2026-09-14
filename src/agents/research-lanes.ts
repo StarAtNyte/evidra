@@ -236,10 +236,8 @@ function lanePrompt(role: ResearchLaneRole, objective: string): string {
       ? "Inspect evaluation design, split validity, metric reliability, uncertainty, and replication requirements."
       : role === "model researcher"
         ? "Inspect the implementation and research space, identify promising general methods, and propose falsifiable experiments."
-        : role === "ensemble scientist"
-          ? "Inspect prediction artifacts, out-of-fold coverage, error correlation, diversity, and stable ensemble opportunities."
-          : role === "reproducibility engineer"
-            ? "Inspect reproducibility, environment capture, seeds, artifact contracts, independent reruns, and failure recovery."
+        : role === "reproducibility engineer"
+          ? "Inspect reproducibility, environment capture, seeds, artifact contracts, independent reruns, and failure recovery."
         : role === "domain researcher"
           ? "Investigate the domain, definitions, assumptions, relevant literature, competing explanations, and unresolved questions."
           : "Investigate alternative methods, mechanisms, procedures, and implementation paths; propose falsifiable comparisons.";
