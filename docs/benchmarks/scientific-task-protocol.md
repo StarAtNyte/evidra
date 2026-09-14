@@ -1,5 +1,15 @@
 # Stepwise scientific-task protocol
 
+## Suite execution
+
+`benchmark scientific-suite` is serial by default because most contracts use a
+shared project workspace. Pass `--parallel N` only when contracts declare
+pairwise-disjoint stage `cwd` roots. The runner checks those roots before
+starting work: shared or nested roots are automatically serialized, while
+independent tasks run concurrently. Each completed task is still checkpointed
+atomically, so a crash or interruption cannot turn partial output into a valid
+task result.
+
 Evidra can evaluate research agents on intermediate, verifiable progress instead
 of judging only a final response. A task is a JSON object with ordered stages;
 each stage has a command, required artifacts, verification commands, and files

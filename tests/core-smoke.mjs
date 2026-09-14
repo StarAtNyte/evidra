@@ -3778,6 +3778,12 @@ test("scientific task suite preserves task-balanced results and per-task resume"
     const previous = Object.fromEntries(first.tasks.map((item) => [item.taskId, item.run]));
     const resumed = await runScientificTaskSuite(tasks, root, { previous });
     assert.deepEqual(resumed.tasks.map((item) => item.run.stages[0].status), ["resumed", "resumed"]);
+    mkdirSync(join(root, "alpha-work"));
+    mkdirSync(join(root, "beta-work"));
+    const parallelTasks = ["alpha", "beta"].map((id) => ({ id: `${id}-parallel`, title: id, description: "isolated suite task", stages: [{ id: "check", title: "Check", objective: "Run a bounded check", cwd: `${id}-work`, command: [process.execPath, "--version"], timeoutMinutes: 1 }] }));
+    const parallel = await runScientificTaskSuite(parallelTasks, root, { maxParallel: 2 });
+    assert.equal(parallel.validTasks, 2);
+    assert.deepEqual(parallel.tasks.map((item) => item.taskId), ["alpha-parallel", "beta-parallel"]);
     const taskDir = join(root, "contracts");
     mkdirSync(taskDir);
     writeFileSync(join(taskDir, "b.json"), JSON.stringify(tasks[1]));

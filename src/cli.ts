@@ -906,8 +906,9 @@ benchmark.command("scientific-suite")
   .option("--out <file>", "write the aggregate suite report")
   .option("--resume-dir <dir>", "directory containing prior per-task reports named <task-id>.json")
   .option("--checkpoint-dir <dir>", "write each completed task report immediately for crash-safe resume")
+  .option("--parallel <count>", "maximum independent scientific tasks to run concurrently", "1")
   .description("Run a task-balanced suite of stepwise scientific tasks with independent evidence and resume state")
-  .action(async (directory: string, options: { workspace?: string; out?: string; resumeDir?: string; checkpointDir?: string }) => {
+  .action(async (directory: string, options: { workspace?: string; out?: string; resumeDir?: string; checkpointDir?: string; parallel: string }) => {
     const taskFiles = loadScientificTaskDirectory(resolve(directory));
     if (!taskFiles.length) throw new Error(`No JSON scientific-task contracts found in ${resolve(directory)}.`);
     const previous: Record<string, import("./core/scientific-tasks.js").ScientificTaskRun> = {};
@@ -927,6 +928,7 @@ benchmark.command("scientific-suite")
     if (checkpointDir) mkdirSync(checkpointDir, { recursive: true });
     const suite = await runScientificTaskSuite(taskFiles.map((entry) => entry.task), options.workspace ? resolve(options.workspace) : root, {
       previous,
+      maxParallel: Math.max(1, Math.min(16, Number.parseInt(options.parallel, 10) || 1)),
       onProgress: (message) => console.log(`· ${message}`),
       onTaskComplete: checkpointDir ? (result) => writeScientificTaskCheckpoint(join(checkpointDir, `${result.taskId}.json`), result) : undefined,
     });

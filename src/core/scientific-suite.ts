@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskSchema, type ScientificTask, type ScientificTaskEvaluation, type ScientificTaskRun, type ScientificTaskRunOptions } from "./scientific-tasks.js";
 
 export interface ScientificSuiteTaskResult {
@@ -25,6 +25,31 @@ export interface ScientificSuiteOptions {
   onProcess?: ScientificTaskRunOptions["onProcess"];
   isCancelled?: ScientificTaskRunOptions["isCancelled"];
   onTaskComplete?: (result: ScientificSuiteTaskResult) => void | Promise<void>;
+  /** Maximum independent tasks to run concurrently. Shared workspaces remain serialized. */
+  maxParallel?: number;
+}
+
+function taskWorkspacePaths(tasks: ScientificTask[], root: string): string[] {
+  return tasks.flatMap((task) => task.stages.map((stage) => resolve(root, stage.cwd)));
+}
+
+function workspacesOverlap(left: string, right: string): boolean {
+  const relation = relative(left, right);
+  return relation === "" || (!isAbsolute(relation) && !relation.startsWith(".."));
+}
+
+function suiteConcurrency(tasks: ScientificTask[], root: string, requested: number): number {
+  const paths = taskWorkspacePaths(tasks, root);
+  // A task contract may mutate files outside its cwd through its command. The
+  // only safe parallel contract is therefore one whose declared stage roots
+  // are pairwise disjoint and explicit; the normal `.` workspace stays serial.
+  if (paths.some((path) => path === resolve(root, "."))) return 1;
+  for (let left = 0; left < paths.length; left += 1) {
+    for (let right = left + 1; right < paths.length; right += 1) {
+      if (workspacesOverlap(paths[left]!, paths[right]!) || workspacesOverlap(paths[right]!, paths[left]!)) return 1;
+    }
+  }
+  return Math.max(1, Math.min(tasks.length, Math.floor(requested) || 1));
 }
 
 /** Write a completed task checkpoint so readers see either the old or new report, never a partial JSON file. */
@@ -42,16 +67,26 @@ export function writeScientificTaskCheckpoint(path: string, result: ScientificSu
  */
 export async function runScientificTaskSuite(values: unknown[], root: string, options: ScientificSuiteOptions = {}): Promise<ScientificSuiteReport> {
   const tasks = values.map((value) => ScientificTaskSchema.parse(value));
-  const results: ScientificSuiteTaskResult[] = [];
-  for (const task of tasks) {
-    if (options.isCancelled?.()) break;
-    options.onProgress?.(`Scientific suite · ${task.id} · starting`);
-    const run = await runScientificTask(task, root, { previous: options.previous?.[task.id], onProgress: options.onProgress, onProcess: options.onProcess, isCancelled: options.isCancelled });
-    const result = { taskId: task.id, run, evaluation: evaluateScientificTaskRun(task, run) };
-    results.push(result);
-    await options.onTaskComplete?.(result);
-  }
-  const validTasks = results.filter((item) => item.evaluation.valid).length;
+  const results: Array<ScientificSuiteTaskResult | undefined> = Array.from({ length: tasks.length });
+  const concurrency = suiteConcurrency(tasks, root, options.maxParallel ?? 1);
+  if (concurrency === 1 && (options.maxParallel ?? 1) > 1) options.onProgress?.("Scientific suite · shared or overlapping workspace detected; serializing tasks");
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const index = next++;
+      const task = tasks[index];
+      if (!task) return;
+      if (options.isCancelled?.()) return;
+      options.onProgress?.(`Scientific suite · ${task.id} · starting`);
+      const run = await runScientificTask(task, root, { previous: options.previous?.[task.id], onProgress: options.onProgress, onProcess: options.onProcess, isCancelled: options.isCancelled });
+      const result = { taskId: task.id, run, evaluation: evaluateScientificTaskRun(task, run) };
+      results[index] = result;
+      await options.onTaskComplete?.(result);
+    }
+  };
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  const completedResults = results.filter((result): result is ScientificSuiteTaskResult => Boolean(result));
+  const validTasks = completedResults.filter((item) => item.evaluation.valid).length;
   const mean = (values: number[]): number => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
   return {
     schemaVersion: 1,
@@ -59,9 +94,9 @@ export async function runScientificTaskSuite(values: unknown[], root: string, op
     taskCount: tasks.length,
     validTasks,
     validityRate: tasks.length ? validTasks / tasks.length : 0,
-    meanStageScore: mean(results.map((item) => item.evaluation.stageScore)),
-    meanProcessQuality: mean(results.map((item) => item.evaluation.processQuality)),
-    tasks: results,
+    meanStageScore: mean(completedResults.map((item) => item.evaluation.stageScore)),
+    meanProcessQuality: mean(completedResults.map((item) => item.evaluation.processQuality)),
+    tasks: completedResults,
   };
 }
 
