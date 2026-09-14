@@ -778,7 +778,16 @@ export class ResearchStore {
     const now = new Date().toISOString();
     const result = this.db.transaction(() => {
       const requeued = this.db.prepare("UPDATE work_queue SET status = 'queued', claimed_at = NULL, updated_at = ? WHERE status = 'running' AND updated_at < ? AND attempts < ?").run(now, cutoff, limit).changes;
-      const exhausted = this.db.prepare("UPDATE work_queue SET status = 'failed', claimed_at = NULL, updated_at = ? WHERE status = 'running' AND updated_at < ? AND attempts >= ?").run(now, cutoff, limit).changes;
+      const exhaustedRows = this.db.prepare("SELECT id, payload_json, attempts FROM work_queue WHERE status = 'running' AND updated_at < ? AND attempts >= ?").all(cutoff, limit) as Array<{ id: string; payload_json: string; attempts: number }>;
+      for (const row of exhaustedRows) {
+        let payload: Record<string, unknown> = {};
+        try {
+          const parsed = JSON.parse(row.payload_json);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) payload = parsed as Record<string, unknown>;
+        } catch { /* Preserve the queue record even if an older payload was malformed. */ }
+        this.db.prepare("UPDATE work_queue SET status = 'failed', payload_json = ?, claimed_at = NULL, updated_at = ? WHERE id = ?").run(safeJson({ ...payload, error: "stale task exceeded bounded attempts", attempts: row.attempts, failedAt: now }), now, row.id);
+      }
+      const exhausted = exhaustedRows.length;
       return { requeued, exhausted };
     })();
     if (result.requeued) this.appendEvent("queue.stale_requeued", { count: result.requeued, cutoff, maxAttempts: limit });
