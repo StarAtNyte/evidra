@@ -3799,3 +3799,13 @@ test("compiled CLI boots and exposes scientific benchmark command", async () => 
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /scientific/);
 });
+
+test("benchmark protocol rejects mismatched reasoning effort", () => {
+  const base = { task: "task", arm: "default", seed: 1, model: "gpt-5.6-luna", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, validRun: true, durationSeconds: 1, recovered: false, reproducible: true };
+  const report = validateBenchmarkProtocol([
+    { harness: "evidra", ...base, reasoningEffort: "medium" },
+    { harness: "incumbent", ...base, reasoningEffort: "high" },
+  ]);
+  assert.equal(report.valid, false);
+  assert.ok(report.issues.some((issue) => issue.field === "reasoningEffort"));
+});

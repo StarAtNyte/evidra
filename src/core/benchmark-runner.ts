@@ -18,6 +18,8 @@ export interface BenchmarkArmSpec {
   arm: string;
   seed: string | number;
   model: string;
+  /** Fixed reasoning/thinking effort; defaults to Evidra's medium setting. */
+  reasoningEffort?: string;
   budgetMinutes: number;
   dataRevision?: string;
   runtimeFingerprint?: string;
@@ -152,6 +154,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       arm: arm.arm,
       seed: arm.seed,
       model: arm.model,
+      reasoningEffort: arm.reasoningEffort ?? "medium",
       budgetMinutes: arm.budgetMinutes,
       ...(arm.dataRevision ? { dataRevision: arm.dataRevision } : {}),
       ...(arm.runtimeFingerprint ? { runtimeFingerprint: arm.runtimeFingerprint } : {}),

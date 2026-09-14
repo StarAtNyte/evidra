@@ -13,6 +13,8 @@ export interface HarnessTrial {
   arm?: string;
   seed?: string | number;
   model?: string;
+  /** Optional matched reasoning effort; legacy reports may omit it. */
+  reasoningEffort?: string;
   budgetMinutes?: number;
   /** Optional fairness metadata; when supplied it must match across harnesses. */
   dataRevision?: string;
@@ -41,7 +43,7 @@ export interface HarnessTrial {
 
 export interface BenchmarkProtocolIssue {
   key: string;
-  field: "task" | "slice" | "arm" | "seed" | "model" | "budgetMinutes" | "dataRevision" | "runtimeFingerprint" | "direction" | "baselineMetric" | "taskWorstMetric" | "taskBestMetric";
+  field: "task" | "slice" | "arm" | "seed" | "model" | "reasoningEffort" | "budgetMinutes" | "dataRevision" | "runtimeFingerprint" | "direction" | "baselineMetric" | "taskWorstMetric" | "taskBestMetric";
   values: string[];
   message: string;
 }
@@ -102,6 +104,7 @@ export function validateBenchmarkProtocol(trials: HarnessTrial[]): BenchmarkProt
       ["arm", (trial) => trial.arm === undefined ? "<missing>" : String(trial.arm)],
       ["seed", (trial) => trial.seed === undefined ? "<missing>" : String(trial.seed)],
       ["model", (trial) => trial.model ?? "<missing>"],
+      ["reasoningEffort", (trial) => trial.reasoningEffort ?? "<default-medium>"],
       ["budgetMinutes", (trial) => trial.budgetMinutes === undefined ? "<missing>" : String(trial.budgetMinutes)],
       ["dataRevision", (trial) => trial.dataRevision ?? "<missing>"],
       ["runtimeFingerprint", (trial) => trial.runtimeFingerprint ?? "<missing>"],

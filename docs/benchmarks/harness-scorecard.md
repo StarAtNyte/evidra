@@ -39,7 +39,7 @@ evidra benchmark export --out evidra-trials.json
 ```
 
 `benchmark validate` is the required preflight for a competitive claim. Each
-trial must declare a task arm, seed, model, and budget; every harness must be
+trial must declare a task arm, seed, model, reasoning effort, and budget; every harness must be
 present on every matched arm, with the same metric direction and baseline
 metric. Historical trial
 exports can still be scored for diagnostics, but incomplete or mismatched files
@@ -62,7 +62,7 @@ independent repeats must be declared as separate matched arms.
 An arm may optionally declare `policy` (for example `greedy`, `ucb_portfolio`,
 `evolutionary`, or `mcts`). The label is copied into the durable trial without
 changing harness identity or fairness keys, allowing policy comparisons to be
-reported explicitly while retaining the same task/seed/model/budget gates.
+reported explicitly while retaining the same task/seed/model/reasoning-effort/budget gates.
 When at least two policy labels are present, `benchmark run` also emits policy
 scorecards and all pairwise policy comparisons using the same conservative
 task-balanced gates.

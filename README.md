@@ -216,7 +216,7 @@ Implemented today:
 - deterministic injection-signal warnings on untrusted workspace, web, repository, and source observations, retained in director context and trajectory traces without rewriting evidence;
 - empirical-Bernstein search allocation with variance-aware uncertainty and hard remaining-budget checks;
 - deterministic hierarchical research-decision rubrics for action closure, falsifiability, evidence, verification, diversity, and risk, with gaps fed into the next cycle;
-- matched benchmark-arm validation requiring task, seed, model, and budget parity before a competitive claim.
+- matched benchmark-arm validation requiring task, seed, model, reasoning-effort, and budget parity before a competitive claim.
 - post-replication validation reassessment: a parent experiment’s replication gate is reopened only after a valid improved child (and required ablations) is observed; unrelated or merely successful runs cannot satisfy it;
 - executable matched-arm benchmark protocols that capture raw process evidence before scoring harnesses.
 - paired, task-balanced benchmark comparisons that refuse a win claim without positive lower-bound evidence and sufficient coverage.

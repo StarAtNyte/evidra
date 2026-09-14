@@ -580,7 +580,7 @@ benchmark.command("run")
       const invalidReproducibility = arm.reproducibilityCommand !== undefined && (!Array.isArray(arm.reproducibilityCommand) || !arm.reproducibilityCommand.length || !arm.reproducibilityCommand.every((part) => typeof part === "string"));
       const invalidTolerance = arm.reproducibilityTolerance !== undefined && (typeof arm.reproducibilityTolerance !== "number" || !Number.isFinite(arm.reproducibilityTolerance) || arm.reproducibilityTolerance < 0);
       if (typeof arm.harness !== "string" || typeof arm.task !== "string" || typeof arm.arm !== "string" || arm.seed === undefined || typeof arm.model !== "string" || typeof arm.budgetMinutes !== "number" || (arm.retries !== undefined && (!Number.isInteger(arm.retries) || arm.retries < 0 || arm.retries > 3)) || typeof arm.metric !== "string" || !Array.isArray(arm.command) || !arm.command.every((part) => typeof part === "string") || invalidReproducibility || invalidTolerance) throw new Error(`Benchmark arm ${index + 1} is missing a required field or has invalid retry/reproducibility settings.`);
-      return arm as BenchmarkArmSpec;
+      return { ...arm, reasoningEffort: arm.reasoningEffort ?? "medium" } as BenchmarkArmSpec;
     });
     const protocol = validateBenchmarkProtocol(arms.map((arm) => ({ ...arm, validRun: false, durationSeconds: 0, recovered: false, reproducible: false })));
     if (!protocol.valid) throw new Error(`Benchmark protocol is not matched:\n${protocol.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
@@ -1057,7 +1057,7 @@ airsBenchmark.command("discover")
 airsBenchmark.command("protocol")
   .argument("<inventory>", "JSON inventory produced by benchmark airs discover")
   .option("--arm <json>", "harness template JSON; repeat for every matched harness", (value: string, previous: string[] = []) => [...previous, value], [])
-  .requiredOption("--model <model>", "fixed model identifier for every harness arm")
+  .option("--model <model>", "fixed model identifier for every harness arm", DEFAULT_CODEX_MODEL)
   .requiredOption("--seed <seed>", "fixed seed for every harness arm")
   .requiredOption("--budget <minutes>", "fixed per-arm wall-clock budget in minutes")
   .option("--baseline <metric>", "explicit fallback baseline metric for every task")

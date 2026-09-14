@@ -84,7 +84,7 @@ cat > airs-baselines.json <<'JSON'
 JSON
 
 evidra benchmark airs protocol airs-inventory.json \
-  --model gpt-5.6-codex --seed 0 --budget 30 --baseline-map airs-baselines.json \
+  --model gpt-5.6-luna --seed 0 --budget 30 --baseline-map airs-baselines.json \
   --arm '{"harness":"evidra","command":["./run-evidra.sh","{taskId}"]}' \
   --arm '{"harness":"mlgym","command":["./run-mlgym.sh","{taskId}"]}' \
   --out airs-protocol.json
