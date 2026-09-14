@@ -772,11 +772,18 @@ export class ResearchStore {
     this.appendEvent("queue.retry_scheduled", { id, availableAt, payload });
   }
 
-  requeueStaleTasks(maxAgeMs = 15 * 60_000): number {
+  requeueStaleTasks(maxAgeMs = 15 * 60_000, maxAttempts = 3): number {
     const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
-    const result = this.db.prepare("UPDATE work_queue SET status = 'queued', claimed_at = NULL, updated_at = ? WHERE status = 'running' AND updated_at < ?").run(new Date().toISOString(), cutoff);
-    if (result.changes) this.appendEvent("queue.stale_requeued", { count: result.changes, cutoff });
-    return result.changes;
+    const limit = Math.max(1, Math.floor(maxAttempts));
+    const now = new Date().toISOString();
+    const result = this.db.transaction(() => {
+      const requeued = this.db.prepare("UPDATE work_queue SET status = 'queued', claimed_at = NULL, updated_at = ? WHERE status = 'running' AND updated_at < ? AND attempts < ?").run(now, cutoff, limit).changes;
+      const exhausted = this.db.prepare("UPDATE work_queue SET status = 'failed', claimed_at = NULL, updated_at = ? WHERE status = 'running' AND updated_at < ? AND attempts >= ?").run(now, cutoff, limit).changes;
+      return { requeued, exhausted };
+    })();
+    if (result.requeued) this.appendEvent("queue.stale_requeued", { count: result.requeued, cutoff, maxAttempts: limit });
+    if (result.exhausted) this.appendEvent("queue.stale_failed", { count: result.exhausted, cutoff, maxAttempts: limit, reason: "stale task exceeded bounded attempts" });
+    return result.requeued;
   }
 
   startSession(id: string, payload: unknown): void {

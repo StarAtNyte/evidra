@@ -1934,6 +1934,25 @@ test("queue heartbeats prevent live long-running work from being requeued", asyn
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("stale queue recovery stops retrying a task after its attempt budget", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-stale-queue-limit-"));
+  const dbPath = join(root, ".sota", "database.sqlite");
+  try {
+    const store = new ResearchStore(dbPath);
+    store.enqueueTask({ id: "exhausted", kind: "smoke", priority: 1, payload: {} });
+    assert.equal(store.claimTask("exhausted")?.attempts, 1);
+    store.close();
+    const raw = new Database(dbPath);
+    raw.prepare("UPDATE work_queue SET updated_at = ?, claimed_at = ? WHERE id = ?").run(new Date(Date.now() - 10_000).toISOString(), new Date(Date.now() - 10_000).toISOString(), "exhausted");
+    raw.close();
+    const reopened = new ResearchStore(dbPath);
+    assert.equal(reopened.requeueStaleTasks(1_000, 1), 0);
+    assert.equal(reopened.queueTasks().find((task) => task.id === "exhausted")?.status, "failed");
+    assert.equal(reopened.recentEvents(10).some((event) => event.type === "queue.stale_failed"), true);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("research tool registry exposes safe workspace tools", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-tools-"));
   try {

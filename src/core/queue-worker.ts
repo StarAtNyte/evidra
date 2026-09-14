@@ -39,7 +39,7 @@ export class QueueWorker {
   async runOnce(): Promise<void> {
     if (this.stopping) return;
     do {
-      this.store.requeueStaleTasks(this.staleAfterMs);
+      this.store.requeueStaleTasks(this.staleAfterMs, this.maxAttempts);
       while (!this.stopping && this.active.size < this.concurrency) {
         const task = this.store.claimNextTask(this.kinds);
         if (!task) break;
