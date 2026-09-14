@@ -92,6 +92,14 @@ import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema }
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "./core/scientific-suite.js";
 import { runSafetyBenchmark } from "./core/safety-bench.js";
 import { selectRatchetReference } from "./core/ratchet.js";
+
+const PHASE_GATE_EVENT_TYPES = [
+  "research.observation", "project.created", "baseline.completed", "data.audit.completed", "data.audit.accepted",
+  "validation.policy.created", "hypothesis.created", "experiment.created", "experiment.stage.smoke.completed",
+  "experiment.stage.full_validation.completed", "run.completed", "experiment.comparison.completed",
+  "replication.manifest.created", "experiment.autonomous.replication.completed", "experiment.gates.updated",
+  "experiment.validation.assessed", "research.ablation.plan", "research.ablation.evidence",
+] as const;
 import { assessCodeHealth, assessCodeHealthTrend, snapshotCodeHealth, type CodeHealthAssessment, type CodeHealthFile } from "./core/code-health.js";
 
 const root = findWorkspaceRoot();
@@ -2269,7 +2277,7 @@ research
       decision = enforceClaimTermination(decision, claimAudit);
       if (decision !== claimGateBefore) decisionStore.appendEvent("research.claim_gate.rejected", { ...claimAudit, phase: phaseGoal?.phase ?? null });
       if (phaseGoal && decision.goalStatus === "met") {
-        const phaseEvents = decisionStore.recentEvents(500);
+        const phaseEvents = decisionStore.eventsByTypes([...PHASE_GATE_EVENT_TYPES]);
         const gate = evaluatePhaseGoalEvidence(phaseGoal, {
           mode,
           eventTypes: phaseEvents.map((event) => event.type),
@@ -2770,7 +2778,7 @@ research.command("propose")
     decision = enforceClaimTermination(decision, claimAudit);
     if (decision !== claimGateBefore) decisionStore.appendEvent("research.claim_gate.rejected", { ...claimAudit, phase: phaseGoal?.phase ?? null });
     if (phaseGoal && decision.goalStatus === "met") {
-      const phaseEvents = decisionStore.recentEvents(500);
+      const phaseEvents = decisionStore.eventsByTypes([...PHASE_GATE_EVENT_TYPES]);
       const gate = evaluatePhaseGoalEvidence(phaseGoal, {
         mode: "research",
         eventTypes: phaseEvents.map((event) => event.type),

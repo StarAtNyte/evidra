@@ -246,6 +246,18 @@ test("event-family history remains durable beyond the bounded UI timeline", () =
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("phase-gate event families are queryable without unrelated telemetry", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-event-families-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.appendEvent("baseline.completed", { exitCode: 0, metric: 0.5, artifactChecksums: { model: "abc" } });
+    for (let index = 0; index < 2_100; index += 1) store.appendEvent("telemetry.noise", { index });
+    const events = store.eventsByTypes(["baseline.completed", "data.audit.completed"]);
+    assert.deepEqual(events.map((event) => event.type), ["baseline.completed"]);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("durable queue can claim one specific retest without stealing another task", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-claim-"));
   try {

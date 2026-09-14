@@ -398,6 +398,14 @@ export class ResearchStore {
     return (rows as Array<{ type: string; payload_json: string; created_at: string; event_hash: string | null }>).map((row) => ({ type: row.type, payload: JSON.parse(row.payload_json), createdAt: row.created_at, eventHash: row.event_hash }));
   }
 
+  eventsByTypes(types: string[]): Array<{ type: string; payload: unknown; createdAt: string; eventHash?: string | null }> {
+    const uniqueTypes = [...new Set(types.filter((type) => type.trim()))];
+    if (!uniqueTypes.length) return [];
+    const placeholders = uniqueTypes.map(() => "?").join(", ");
+    const rows = this.db.prepare(`SELECT type, payload_json, created_at, event_hash FROM events WHERE type IN (${placeholders}) ORDER BY id ASC`).all(...uniqueTypes) as Array<{ type: string; payload_json: string; created_at: string; event_hash: string | null }>;
+    return rows.map((row) => ({ type: row.type, payload: JSON.parse(row.payload_json), createdAt: row.created_at, eventHash: row.event_hash }));
+  }
+
   saveExperiment(experiment: { id: string; payload: unknown }): void {
     const existing = this.db.prepare("SELECT 1 AS present FROM experiments WHERE id = ?").get(experiment.id) as { present: number } | undefined;
     const now = new Date().toISOString();
