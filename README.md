@@ -298,6 +298,7 @@ Useful commands:
     /status               Show project, graph, queue, and execution state
     /timeline             Show a readable autonomous execution timeline
     /integrity            Verify the durable event history for tampering/corruption
+    /backup [path]        Create a consistent durable state backup
     /usage                Show durable activity and counts
     /research             Start or run an evidence-gathering cycle
     /research start       Start a fully autonomous research campaign
@@ -611,6 +612,11 @@ Run `evidra benchmark safety` to execute Evidra's local lifecycle safety regress
 Durable events are now hash-chained. `evidra integrity events` (or `--json` for CI) verifies event payloads and
 ordering after restarts or recovery. Stores created by older Evidra versions are reported as
 `LEGACY` until their historical prefix is replaced; newly appended events remain verifiable.
+
+Use `evidra backup [workspace-relative-path]` or `/backup [path]` before risky maintenance,
+environment changes, or long campaigns. The backup is created through SQLite's consistent
+backup API while the live controller remains open, and can be reopened as an independent
+Evidra store for recovery verification.
 
 ## Contribution
 
