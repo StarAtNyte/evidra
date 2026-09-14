@@ -64,6 +64,7 @@ import { runSafetyBenchmark } from "../dist/core/safety-bench.js";
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "../dist/core/scientific-suite.js";
 import { evaluateGpuBudget, observedGpuHours } from "../dist/core/compute-budget.js";
 import { collaborationUtility } from "../dist/core/adaptive-harness.js";
+import { assessCodeHealth, snapshotCodeHealth } from "../dist/core/code-health.js";
 
 test("search policies receive independent matched scorecards and comparisons", () => {
   const trial = (policy, task, candidateMetric) => ({ harness: `evidra-${policy}`, policy, task, arm: "default", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: false, reproducible: true });
@@ -988,6 +989,28 @@ test("collaboration utility gates repeated no-value peer review but preserves ha
   const forced = collaborationUtility([{ useful: false }, { useful: false }, { useful: false }], true);
   assert.equal(forced.recommendTeam, true);
   assert.match(forced.rationale, /hard evidence pressure/);
+});
+
+test("code health detects severe test deletion and untested structural growth", () => {
+  const before = snapshotCodeHealth([
+    { path: "src/app.ts", content: "export const app = true;\\n" },
+    { path: "tests/app.test.ts", content: "test('app', () => {});\\n" },
+  ]);
+  const pass = assessCodeHealth(before, snapshotCodeHealth([
+    { path: "src/app.ts", content: "export const app = true;\\n" },
+    { path: "tests/app.test.ts", content: "test('app', () => {});\\n" },
+  ]));
+  assert.equal(pass.status, "pass");
+  const removed = assessCodeHealth(before, snapshotCodeHealth([
+    { path: "src/app.ts", content: "export const app = false;\\n" },
+  ]));
+  assert.equal(removed.status, "fail");
+  assert.match(removed.reasons.join(" "), /test file/);
+  const growthBefore = snapshotCodeHealth([{ path: "src/app.ts", content: "x\n".repeat(400) }]);
+  const growthAfter = snapshotCodeHealth([{ path: "src/app.ts", content: "x\n".repeat(650) }]);
+  const growth = assessCodeHealth(growthBefore, growthAfter);
+  assert.equal(growth.status, "warn");
+  assert.match(growth.reasons.join(" "), /without test growth/);
 });
 
 test("prediction error analysis turns aggregate outcomes into actionable failures", () => {

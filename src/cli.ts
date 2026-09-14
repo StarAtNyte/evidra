@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
@@ -91,6 +91,7 @@ import { buildMlflowRunExports } from "./core/mlflow.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema } from "./core/scientific-tasks.js";
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "./core/scientific-suite.js";
 import { runSafetyBenchmark } from "./core/safety-bench.js";
+import { assessCodeHealth, snapshotCodeHealth, type CodeHealthFile } from "./core/code-health.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -209,6 +210,19 @@ async function implementCampaignHypothesis(
   options: { provider: "codex" | "local"; model: string; thinking: string; protectedCommands?: string[][] },
 ): Promise<void> {
   const worktree = await ensureWorktree(rootPath, rootPath, experimentId);
+  const captureCodeHealth = async (): Promise<ReturnType<typeof snapshotCodeHealth>> => {
+    const inventory = await runProcess(["rg", "--files", "-g", "!.git/**", "-g", "!.sota/**", "-g", "!node_modules/**"], worktree, 60_000);
+    const files: CodeHealthFile[] = [];
+    for (const path of inventory.stdout.split("\n").filter((entry) => /\.(?:ts|tsx|js|mjs|cjs|py|rs|go|java|cpp|c|h|hpp|sh|ya?ml|json)$/i.test(entry)).slice(0, 2_000)) {
+      try {
+        const absolute = join(worktree, path);
+        if (statSync(absolute).size > 1_000_000) continue;
+        files.push({ path, content: readFileSync(absolute, "utf8") });
+      } catch { /* binary or concurrently removed */ }
+    }
+    return snapshotCodeHealth(files);
+  };
+  const healthBefore = await captureCodeHealth();
   const integrity = captureProtectedFiles(worktree, options.protectedCommands ?? []);
   const manifestValue = manifest as { change?: { configPatch?: { estimatorPath?: unknown } } };
   const target = typeof manifestValue.change?.configPatch?.estimatorPath === "string" ? manifestValue.change.configPatch.estimatorPath : undefined;
@@ -250,6 +264,12 @@ async function implementCampaignHypothesis(
     if (!diff) throw new Error("Local experiment engineer did not return a valid unified diff.");
     await applyUnifiedDiff(worktree, diff);
   }
+  const healthAfter = await captureCodeHealth();
+  const health = assessCodeHealth(healthBefore, healthAfter);
+  const healthStore = new ResearchStore(statePath);
+  healthStore.appendEvent("experiment.code_health.assessed", { experimentId, worktree, before: healthBefore, after: healthAfter, assessment: health });
+  healthStore.close();
+  if (health.status === "fail") throw new Error(`Code-health guard rejected ${experimentId}: ${health.reasons.join("; ")}`);
   const changed = changedProtectedFiles(integrity, worktree);
   if (changed.length) throw new Error(`Specification-gaming guard rejected ${experimentId}: protected evaluator files changed: ${changed.join(", ")}`);
 }
