@@ -27,6 +27,7 @@ export interface ResearchDirectorOptions {
   executeTool?: (call: ResearchToolCall) => Promise<ResearchToolResult>;
   onToolCall?: (source: string, call: ResearchToolCall) => string;
   onToolResult?: (source: string, callId: string, result: ResearchToolResult) => void;
+  onUsage?: (usage: AgentResult["usage"], provider: string, model: string) => void;
   /** Consume operator steering after each completed tool, before replanning. */
   consumeSteering?: () => string[];
   maxToolRounds?: number;
@@ -112,6 +113,7 @@ export async function runResearchDirector(
           context: workingContext,
           objective: `${objective}\n\n${contract}\n\n${contractGuidance}`,
         }, options, options.fallbackLocalModel, onProgress, options.onProcess);
+        options.onUsage?.(result.usage, result.provider, result.model ?? options.model);
         parsed = ResearchDecisionSchema.safeParse(extractJson(result.output));
         if (parsed.success) break;
         throw new Error(`Research director returned invalid decision: ${parsed.error.issues.map((issue) => issue.path.join(".") + " " + issue.message).join("; ")}`);
