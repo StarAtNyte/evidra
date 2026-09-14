@@ -13,7 +13,7 @@ export interface RetrievedSource extends ResearchSource {
 export interface SourceSearchResult {
   title: string;
   url: string;
-  provider?: "openalex" | "arxiv";
+  provider?: "openalex" | "arxiv" | "crossref";
   doi?: string;
   venue?: string;
   publicationDate?: string;
@@ -109,6 +109,34 @@ export function parseArxivSearchResults(xml: string, limit = 8): SourceSearchRes
   }).slice(0, Math.max(1, Math.min(limit, 20)));
 }
 
+/** Parse Crossref works while retaining DOI and publisher metadata as candidates. */
+export function parseCrossrefSearchResults(value: unknown, limit = 8): SourceSearchResult[] {
+  if (!value || typeof value !== "object") return [];
+  const message = (value as { message?: unknown }).message;
+  if (!message || typeof message !== "object" || !Array.isArray((message as { items?: unknown }).items)) return [];
+  return ((message as { items: unknown[] }).items).flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry as { title?: unknown; DOI?: unknown; URL?: unknown; published?: { dateParts?: unknown }; author?: unknown; "container-title"?: unknown };
+    const title = Array.isArray(item.title) && typeof item.title[0] === "string" ? item.title[0].trim() : "";
+    const doi = typeof item.DOI === "string" && item.DOI.trim() ? `https://doi.org/${item.DOI.trim()}` : "";
+    const url = typeof item.URL === "string" && /^https?:\/\//i.test(item.URL) ? item.URL : doi;
+    if (!title || !url) return [];
+    const authors = Array.isArray(item.author) ? item.author.flatMap((author) => {
+      if (!author || typeof author !== "object") return [];
+      const given = typeof (author as { given?: unknown }).given === "string" ? (author as { given: string }).given : "";
+      const family = typeof (author as { family?: unknown }).family === "string" ? (author as { family: string }).family : "";
+      const name = `${given} ${family}`.trim();
+      return name ? [name] : [];
+    }).slice(0, 8) : [];
+    const dateParts = item.published?.dateParts;
+    const publicationDate = Array.isArray(dateParts) && Array.isArray(dateParts[0]) && typeof dateParts[0][0] === "number"
+      ? dateParts[0].map((part) => String(part)).join("-")
+      : undefined;
+    const venue = Array.isArray(item["container-title"]) && typeof item["container-title"][0] === "string" ? item["container-title"][0] : undefined;
+    return [{ title, url, provider: "crossref" as const, ...(doi ? { doi } : {}), ...(venue ? { venue } : {}), ...(publicationDate ? { publicationDate } : {}), authors }];
+  }).slice(0, Math.max(1, Math.min(limit, 20)));
+}
+
 async function searchArxivSources(query: string, limit: number, signal?: AbortSignal): Promise<SourceSearchResult[]> {
   const endpoint = new URL("https://export.arxiv.org/api/query");
   endpoint.searchParams.set("search_query", `all:${query.trim().slice(0, 200)}`);
@@ -120,6 +148,19 @@ async function searchArxivSources(query: string, limit: number, signal?: AbortSi
   const response = await fetch(endpoint, { signal: requestSignal, headers: { "user-agent": "Evidra/0.1 research-workbench" } });
   if (!response.ok) throw new Error(`arXiv search failed (${response.status} ${response.statusText}).`);
   return parseArxivSearchResults(await response.text(), limit);
+}
+
+async function searchCrossrefSources(query: string, limit: number, signal?: AbortSignal): Promise<SourceSearchResult[]> {
+  const endpoint = new URL("https://api.crossref.org/works");
+  endpoint.searchParams.set("query", query.trim().slice(0, 200));
+  endpoint.searchParams.set("rows", String(Math.max(1, Math.min(limit, 20))));
+  endpoint.searchParams.set("select", "title,DOI,URL,author,published,container-title");
+  await assertPublicUrl(endpoint);
+  const timeoutSignal = AbortSignal.timeout(SOURCE_REQUEST_TIMEOUT_MS);
+  const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  const response = await fetch(endpoint, { signal: requestSignal, headers: { "user-agent": "Evidra/0.1 research-workbench (mailto:evidra@example.invalid)" } });
+  if (!response.ok) throw new Error(`Crossref search failed (${response.status} ${response.statusText}).`);
+  return parseCrossrefSearchResults(await response.json(), limit);
 }
 
 /** Search scholarly works; retrieval and claim extraction remain a separate step. */
@@ -137,10 +178,11 @@ export async function searchResearchSources(query: string, limit = 8, signal?: A
       if (!response.ok) throw new Error(`Source search failed (${response.status} ${response.statusText}).`);
       return parseSourceSearchResults(await response.json(), limit);
     });
-    const [openAlexResult, arxivResult] = await Promise.allSettled([openAlex, searchArxivSources(probe, limit, signal)]);
+    const [openAlexResult, arxivResult, crossrefResult] = await Promise.allSettled([openAlex, searchArxivSources(probe, limit, signal), searchCrossrefSources(probe, limit, signal)]);
     return [
       ...(openAlexResult.status === "fulfilled" ? openAlexResult.value : []),
       ...(arxivResult.status === "fulfilled" ? arxivResult.value : []),
+      ...(crossrefResult.status === "fulfilled" ? crossrefResult.value : []),
     ].map((result) => ({ ...result, queries: [probe] }));
   });
   const results = await Promise.allSettled(searches);

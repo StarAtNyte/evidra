@@ -9,7 +9,7 @@ import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../di
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
-import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseRepositorySearchResults, parseSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
+import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
@@ -1769,6 +1769,16 @@ test("arXiv search parsing preserves primary paper metadata", () => {
   assert.equal(parsed[0].url, "https://arxiv.org/abs/2601.12345v2");
   assert.equal(parsed[0].authors[0], "A. Author");
   assert.match(parsed[0].abstract, /improves robust validation/);
+});
+
+test("Crossref search parsing preserves DOI, venue, authors, and publication date", () => {
+  const parsed = parseCrossrefSearchResults({ message: { items: [{ title: ["A reproducible method"], DOI: "10.1234/example", URL: "https://publisher.example/paper", author: [{ given: "Ada", family: "Researcher" }], published: { dateParts: [[2026, 4, 1]] }, "container-title": ["Journal of Evidence"] }] } }, 4);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].provider, "crossref");
+  assert.equal(parsed[0].doi, "https://doi.org/10.1234/example");
+  assert.equal(parsed[0].venue, "Journal of Evidence");
+  assert.equal(parsed[0].publicationDate, "2026-4-1");
+  assert.deepEqual(parsed[0].authors, ["Ada Researcher"]);
 });
 
 test("deep literature search creates bounded deterministic progressive probes", () => {
