@@ -100,6 +100,11 @@ const PHASE_GATE_EVENT_TYPES = [
   "replication.manifest.created", "experiment.autonomous.replication.completed", "experiment.gates.updated",
   "experiment.validation.assessed", "research.ablation.plan", "research.ablation.evidence",
 ] as const;
+const SOURCE_FRONTIER_EVENT_TYPES = [
+  "research.source.search.completed",
+  "research.web.search.completed",
+  "research.source.retrieved",
+] as const;
 import { assessCodeHealth, assessCodeHealthTrend, snapshotCodeHealth, type CodeHealthAssessment, type CodeHealthFile } from "./core/code-health.js";
 
 const root = findWorkspaceRoot();
@@ -1082,7 +1087,7 @@ sources.command("search").argument("<query>").action((query: string) => {
 });
 sources.command("frontier").description("Show the durable literature-search frontier and retrieval coverage").action(() => {
   const store = new ResearchStore(statePath);
-  const report = sourceFrontier(store.recentEvents(2_000));
+  const report = sourceFrontier(store.eventsByTypes([...SOURCE_FRONTIER_EVENT_TYPES]));
   store.close();
   console.log(JSON.stringify({ ...report, candidates: report.candidates.slice(0, 40) }, null, 2));
 });
@@ -1090,7 +1095,7 @@ sources.command("discover").argument("<query>").option("--limit <count>", "maxim
   const results = await searchResearchSources(query, Number.parseInt(options.limit, 10) || 8);
   const store = new ResearchStore(statePath);
   store.appendEvent("research.source.search.completed", { query, results, sources: [...new Set(results.map((result) => result.provider ?? "unknown"))] });
-  const frontier = sourceFrontier(store.recentEvents(2_000));
+  const frontier = sourceFrontier(store.eventsByTypes([...SOURCE_FRONTIER_EVENT_TYPES]));
   store.close();
   console.log(`${results.length ? results.map((result, index) => `${index + 1}. ${result.title}\n   ${result.url}${result.provider ? ` · ${result.provider}` : ""}${result.venue ? ` · ${result.venue}` : ""}${result.publicationDate ? ` · ${result.publicationDate}` : ""}${result.authors.length ? `\n   authors: ${result.authors.join(", ")}` : ""}`).join("\n") : "No scholarly sources found."}\n\nFrontier: ${frontier.uniqueWorks} unique works · ${frontier.retrievedWorks} retrieved · ${frontier.pendingWorks} pending across ${frontier.queryCount} queries · query coverage ${(frontier.queryCoverage * 100).toFixed(0)}% · claim coverage ${(frontier.claimCoverage * 100).toFixed(0)}%`);
 });
@@ -1805,7 +1810,7 @@ research
       const searchRewardEvents = store.eventsByType("research.search.reward");
       const recentEvents = durableEvents.slice(-20);
       const openCriticConstraint = latestOpenCriticConstraint(durableEvents);
-      const literatureFrontier = sourceFrontier(durableEvents);
+      const literatureFrontier = sourceFrontier(store.eventsByTypes([...SOURCE_FRONTIER_EVENT_TYPES]));
       const literatureBenchmarkEvidence = durableEvents
         .filter((event) => event.type === "literature.benchmark.completed")
         .slice(-3)
