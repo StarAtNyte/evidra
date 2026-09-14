@@ -324,7 +324,11 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         let parsed: unknown = text;
         try { parsed = JSON.parse(text); } catch { /* JSONL is parsed row-by-row. */ }
         const rows = parsePredictionRows(parsed, maxRows);
-        output = { path: relative(context.root, path), rows: rows.length, ignoredRows: Math.max(0, text.split(/\r?\n/).filter(Boolean).length - rows.length), analysis: analyzePredictionRows(rows) };
+        const analysis = analyzePredictionRows(rows);
+        const analysisStore = new ResearchStore(context.storePath);
+        analysisStore.appendEvent("prediction.analysis.completed", { path: relative(context.root, path), rows: rows.length, analysis });
+        analysisStore.close();
+        output = { path: relative(context.root, path), rows: rows.length, ignoredRows: Math.max(0, text.split(/\r?\n/).filter(Boolean).length - rows.length), analysis };
         break;
       }
       case "validation.generate": {

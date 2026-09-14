@@ -847,6 +847,13 @@ test("executor failures change the next research allocation into a specific repa
   assert.match(allocation.reasons[0], /2 recent run/);
 });
 
+test("prediction error analysis changes the next allocation to targeted slice validation", () => {
+  const allocation = allocateNextResearch({ trajectories: [], predictionAnalysis: { errorRate: 0.31, worstSlices: 3, worstGroups: 1 } });
+  assert.equal(allocation.focus, "evidence-validation");
+  assert.equal(allocation.priority, "critical");
+  assert.match(allocation.strategy, /prediction slices|subgroup/i);
+});
+
 test("harness comparison failures become a locked adaptive retest agenda", () => {
   const trials = [
     { harness: "evidra", task: "a", arm: "x", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 500, recovered: true, reproducible: false, failureClass: "timeout" },

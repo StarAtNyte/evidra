@@ -1184,7 +1184,11 @@ evidence.command("analyze").argument("<file>", "JSON array, {predictions: [...]}
   try { parsed = JSON.parse(text); } catch { /* JSONL is parsed row-by-row. */ }
   const maxRows = Math.max(1, Math.min(100_000, Number.parseInt(options.maxRows, 10) || 100_000));
   const rows = parsePredictionRows(parsed, maxRows);
-  console.log(JSON.stringify({ path, rows: rows.length, analysis: analyzePredictionRows(rows) }, null, 2));
+  const analysis = analyzePredictionRows(rows);
+  const analysisStore = new ResearchStore(statePath);
+  analysisStore.appendEvent("prediction.analysis.completed", { path, rows: rows.length, analysis });
+  analysisStore.close();
+  console.log(JSON.stringify({ path, rows: rows.length, analysis }, null, 2));
 });
 program.addCommand(evidence);
 
@@ -1918,7 +1922,14 @@ research
         contradictions: store.edges().filter((edge) => edge.relation === "contradicts").length,
         duplicates: store.recentEvents(200).filter((event) => event.type === "evidence.claim.duplicate_detected").length,
       };
-      const allocation = allocateNextResearch({ trajectories: recentTrajectories, phase: phaseGoal?.phase, evidenceConflicts, failureClasses });
+      const predictionEvent = store.eventsByType("prediction.analysis.completed").at(-1);
+      const predictionPayload = predictionEvent?.payload && typeof predictionEvent.payload === "object" ? predictionEvent.payload as { analysis?: { errorRate?: unknown; worstSlices?: unknown[]; worstGroups?: unknown[] } } : undefined;
+      const predictionAnalysis = predictionPayload?.analysis ? {
+        ...(typeof predictionPayload.analysis.errorRate === "number" ? { errorRate: predictionPayload.analysis.errorRate } : {}),
+        ...(Array.isArray(predictionPayload.analysis.worstSlices) ? { worstSlices: predictionPayload.analysis.worstSlices.length } : {}),
+        ...(Array.isArray(predictionPayload.analysis.worstGroups) ? { worstGroups: predictionPayload.analysis.worstGroups.length } : {}),
+      } : undefined;
+      const allocation = allocateNextResearch({ trajectories: recentTrajectories, phase: phaseGoal?.phase, evidenceConflicts, failureClasses, predictionAnalysis });
       store.appendEvent("research.next_allocation", { allocation, objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}` });
       const priorStagnation = detectStagnation(store.decisions().map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3));
       const adaptiveHarness = deriveAdaptiveHarnessPolicy({

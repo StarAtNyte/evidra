@@ -8,6 +8,8 @@ export interface AllocationInput {
   evidenceConflicts?: { contradictions: number; duplicates: number };
   /** Recent executor failures, kept separate from trajectory quality so the controller can choose a repair route. */
   failureClasses?: string[];
+  /** Latest deterministic prediction analysis, when an artifact exposed a concrete failure slice. */
+  predictionAnalysis?: { errorRate?: number; worstSlices?: number; worstGroups?: number };
 }
 
 export interface ResearchAllocation {
@@ -52,6 +54,19 @@ export function allocateNextResearch(input: AllocationInput): ResearchAllocation
     failedTrajectories: input.trajectories.filter((entry) => (entry.quality as { overall?: string } | null)?.overall === "FAIL").length,
     strategy: "Resolve conflicting or duplicate evidence with source-level review and an independent falsification check before selecting another expensive experiment.",
     reasons: [`${contradictions} contradiction(s) and ${duplicates} duplicate claim(s) require review`, ...(input.phase ? [`active phase: ${input.phase}`] : [])],
+  };
+  const predictionAnalysis = input.predictionAnalysis;
+  const hasTargetedPredictionFailure = (predictionAnalysis?.worstSlices ?? 0) > 0 || (predictionAnalysis?.worstGroups ?? 0) > 0;
+  if (hasTargetedPredictionFailure) return {
+    focus: "evidence-validation",
+    priority: (predictionAnalysis?.errorRate ?? 0) >= 0.25 ? "critical" : "high",
+    failedTrajectories: input.trajectories.filter((entry) => (entry.quality as { overall?: string } | null)?.overall === "FAIL").length,
+    strategy: "Target the highest-error prediction slices with a controlled diagnostic or subgroup experiment before changing the global method.",
+    reasons: [
+      `${predictionAnalysis?.worstSlices ?? 0} worst prediction slice(s) and ${predictionAnalysis?.worstGroups ?? 0} worst group(s) are available`,
+      ...(Number.isFinite(predictionAnalysis?.errorRate) ? [`observed error rate ${(predictionAnalysis?.errorRate ?? 0) * 100}%`] : []),
+      ...(input.phase ? [`active phase: ${input.phase}`] : []),
+    ],
   };
   const quality = input.trajectories.map((entry) => entry.quality);
   const failed = quality.filter((item) => (item as { overall?: string } | null)?.overall === "FAIL").length;
