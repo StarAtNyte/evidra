@@ -309,6 +309,12 @@ export class ResearchStore {
     this.db.close();
   }
 
+  /** Create a consistent SQLite backup while keeping the live store open. */
+  async backup(destination: string): Promise<void> {
+    mkdirSync(dirname(destination), { recursive: true });
+    await this.db.backup(destination);
+  }
+
   createProject(project: { id: string; name: string; competitionId: string; config: unknown }): void {
     this.db.prepare(`
       INSERT INTO projects (id, name, competition_id, config_json, created_at)

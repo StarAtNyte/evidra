@@ -411,6 +411,20 @@ program.command("status").action(() => {
   store.close();
 });
 
+program.command("backup")
+  .argument("[destination]", "workspace-relative SQLite backup path")
+  .description("Create a consistent backup of durable research state")
+  .action(async (destination: string | undefined) => {
+    const path = resolve(root, destination ?? join(".sota", "backups", `database-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`));
+    const workspacePrefix = root.endsWith("/") ? root : `${root}/`;
+    if (path === resolve(statePath) || !path.startsWith(workspacePrefix)) throw new Error("Backup destination must be inside the Evidra workspace and must not overwrite the live database.");
+    const store = new ResearchStore(statePath);
+    await store.backup(path);
+    store.appendEvent("state.backup.created", { path: relative(root, path) });
+    store.close();
+    console.log(`State backup created\n${path}`);
+  });
+
 program.command("doctor").description("Check local providers, runtimes, and execution backends").action(async () => {
   const checks: string[] = [`workspace     ${root}`, `node          ${process.versions.node}`];
   for (const command of ["git", "uv", "codex", "ollama", "modal", "docker", "podman"]) {

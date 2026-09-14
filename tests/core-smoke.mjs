@@ -264,6 +264,22 @@ test("run attempts remain separately queryable across retries and reopen", () =>
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("SQLite state backups preserve verifiable research state", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-state-backup-"));
+  try {
+    const db = join(root, "state.sqlite");
+    const backup = join(root, "backups", "state.sqlite");
+    const store = new ResearchStore(db);
+    store.appendEvent("backup.source", { stable: true });
+    await store.backup(backup);
+    store.close();
+    const copy = new ResearchStore(backup);
+    assert.equal(copy.recentEvents(10).some((event) => event.type === "backup.source"), true);
+    assert.equal(copy.verifyEventChain().status, "valid");
+    copy.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("external action intents prevent restart-time replay and support explicit reconciliation", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-action-intent-"));
   try {

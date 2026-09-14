@@ -137,6 +137,7 @@ const COMMANDS = [
   ["/report", "Generate portable research reports"],
   ["/timeline", "Show readable autonomous progress"],
   ["/integrity", "Verify durable event history"],
+  ["/backup", "Create a durable state backup"],
   ["/doctor", "Diagnose local research dependencies"],
   ["/contract", "Validate workspace and experiment contract"],
   ["/provider", "Select codex or local provider"],
@@ -255,6 +256,7 @@ function help(): string {
     "/report [research|challenge|final] Generate a portable report",
     "/timeline [limit]            Show recent autonomous progress",
     "/integrity                   Verify durable event history",
+    "/backup [path]              Create a durable state backup",
     "/provider [codex|local]      Select ChatGPT Codex or local Ollama",
     `/model [name]                Show or select the model (default: ${DEFAULT_CODEX_MODEL})`,
     "/thinking [level]            Select model thinking effort",
@@ -2864,6 +2866,22 @@ export function App({ root }: { root: string }): React.JSX.Element {
       store.close();
       const label = report.status === "valid" ? "VALID" : report.status === "legacy" ? "LEGACY (older events are unchained)" : "INVALID";
       append("assistant", `Event integrity · ${label}\n  checked: ${report.checked}\n  legacy events: ${report.legacy}${report.brokenAt ? `\n  broken at event: ${report.brokenAt}` : ""}${report.reason ? `\n  reason: ${report.reason}` : ""}`);
+      return;
+    }
+    if (request === "/backup" || request.startsWith("/backup ")) {
+      const requested = request.slice("/backup".length).trim();
+      const path = resolve(root, requested || join(".sota", "backups", `database-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`));
+      const workspacePrefix = root.endsWith("/") ? root : `${root}/`;
+      if (path === resolve(join(root, ".sota", "database.sqlite")) || !path.startsWith(workspacePrefix)) { append("assistant", "Backup destination must stay inside the workspace and cannot overwrite the live database."); return; }
+      setBusy(true); setProgress("Creating a consistent state backup...");
+      try {
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        await store.backup(path);
+        store.appendEvent("state.backup.created", { path: relative(root, path) });
+        store.close();
+        append("assistant", `State backup created\n  ${path}`);
+      } catch (error) { appendError(error); }
+      finally { setBusy(false); setProgress(""); }
       return;
     }
     if (request === "/sources discover" || request.startsWith("/sources discover ")) {
