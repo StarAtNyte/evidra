@@ -105,6 +105,10 @@ const SOURCE_FRONTIER_EVENT_TYPES = [
   "research.web.search.completed",
   "research.source.retrieved",
 ] as const;
+const PROMOTION_LEARNING_EVENT_TYPES = [
+  "experiment.stage.reduced_validation.promoted",
+  "experiment.comparison.completed",
+] as const;
 import { assessCodeHealth, assessCodeHealthTrend, snapshotCodeHealth, type CodeHealthAssessment, type CodeHealthFile } from "./core/code-health.js";
 
 const root = findWorkspaceRoot();
@@ -2311,8 +2315,7 @@ research
       }));
       decisionStore.appendEvent("research.hypothesis_quality.assessed", { cycle, hypotheses: decision.hypotheses.map((hypothesis, index) => ({ title: hypothesis.title, ...hypothesisQuality[index] })) });
       const portfolioBudget = Math.max(1, campaign.budgetMinutes - campaignElapsedMinutes(campaign));
-      const costHistory: CostObservation[] = decisionStore.recentEvents(2_000).flatMap((event) => {
-        if (event.type !== "research.search.reward") return [];
+      const costHistory: CostObservation[] = decisionStore.eventsByType("research.search.reward").flatMap((event) => {
         const payload = event.payload as { operator?: unknown; durationSeconds?: unknown; valid?: unknown };
         if (typeof payload.operator !== "string" || typeof payload.durationSeconds !== "number" || !Number.isFinite(payload.durationSeconds) || payload.durationSeconds <= 0) return [];
         return [{ operator: payload.operator, actualMinutes: payload.durationSeconds / 60, status: payload.valid === true ? "completed" : "failed", context: { executor: typeof (payload as { executor?: unknown }).executor === "string" ? (payload as { executor: string }).executor : undefined, gpu: typeof (payload as { gpu?: unknown }).gpu === "string" ? (payload as { gpu: string }).gpu : undefined, provider: typeof (payload as { provider?: unknown }).provider === "string" ? (payload as { provider: string }).provider : undefined, model: typeof (payload as { model?: unknown }).model === "string" ? (payload as { model: string }).model : undefined } }];
@@ -3042,10 +3045,10 @@ experiment.command("run")
       const promotionPolicy = adapter.config.execution?.reducedPromotion;
       if (promotionPolicy?.enabled) {
         const promotionStore = new ResearchStore(statePath);
-        const baselineEvent = promotionStore.recentEvents(500).reverse().find((event) => event.type === "baseline.completed");
+        const baselineEvent = promotionStore.eventsByType("baseline.completed").at(-1);
         const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string } | undefined;
         const baselineMetric = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] : undefined;
-        const learned = learnPromotionPolicy(promotionObservations(promotionStore.recentEvents(2_000), adapter.config.metric.direction), promotionPolicy.minimumDelta);
+        const learned = learnPromotionPolicy(promotionObservations(promotionStore.eventsByTypes([...PROMOTION_LEARNING_EVENT_TYPES]), adapter.config.metric.direction), promotionPolicy.minimumDelta);
         const gate = evaluateReducedPromotion({ candidateMetric: reduced.metrics[adapter.config.metric.name], baselineMetric, direction: adapter.config.metric.direction, minimumDelta: learned.minimumDelta, tolerance: promotionPolicy.tolerance });
         promotionStore.appendEvent(gate.promote ? "experiment.stage.reduced_validation.promoted" : "experiment.stage.reduced_validation.rejected", { experimentId: id, runId: reduced.runId, ...gate, configuredMinimumDelta: promotionPolicy.minimumDelta, learnedPromotion: learned, baselineMetric, candidateMetric: reduced.metrics[adapter.config.metric.name] ?? null });
         if (!gate.promote) {
