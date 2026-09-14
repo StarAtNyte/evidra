@@ -1,12 +1,16 @@
 import type { ResearchStore } from "./store.js";
 import { transferableMethodsFromEvents, type TransferableMethod } from "./method-transfer.js";
 import { ablationPlansFromEvents, type AblationPlan } from "./ablation.js";
+import type { RepositorySearchResult } from "./sources.js";
+
+export type ResearchRepositoryLead = RepositorySearchResult;
 
 export interface ResearchMemoryContext {
   claims: Array<{ id: string; statement: string; scope: string; confidence: number; sourceType: string; sourceId: string; status: string }>;
   hypotheses: Array<{ id: string; title: string; status: string; mechanism?: string }>;
   contradictions: Array<{ fromId: string; toId: string; confidence: number }>;
   transferableMethods: TransferableMethod[];
+  repositoryLeads: ResearchRepositoryLead[];
   ablationPlans: AblationPlan[];
 }
 
@@ -53,6 +57,25 @@ function ranked<T>(entries: T[], query: string | undefined, text: (entry: T) => 
     .map((entry) => entry.entry);
 }
 
+/** Read and rank durable repository discoveries for later research cycles. */
+export function repositoryLeadsFromEvents(events: Array<{ type: string; payload: unknown }>, query?: string, limit = 8): ResearchRepositoryLead[] {
+  const seen = new Set<string>();
+  const leads: ResearchRepositoryLead[] = [];
+  for (const event of events) {
+    if (event.type !== "research.repository.search.completed" || !event.payload || typeof event.payload !== "object") continue;
+    const results = (event.payload as { results?: unknown }).results;
+    if (!Array.isArray(results)) continue;
+    for (const result of results) {
+      if (!result || typeof result !== "object") continue;
+      const value = result as Partial<ResearchRepositoryLead>;
+      if (typeof value.name !== "string" || typeof value.url !== "string" || !/^https:\/\/github\.com\//i.test(value.url) || seen.has(value.url)) continue;
+      seen.add(value.url);
+      leads.push({ name: value.name, url: value.url, ...(typeof value.description === "string" ? { description: value.description } : {}), stars: typeof value.stars === "number" && Number.isFinite(value.stars) ? value.stars : 0, ...(typeof value.updatedAt === "string" ? { updatedAt: value.updatedAt } : {}), ...(typeof value.language === "string" ? { language: value.language } : {}) });
+    }
+  }
+  return ranked(leads, query, (lead) => JSON.stringify(lead)).slice(0, Math.max(1, Math.min(limit, 50)));
+}
+
 /** Build a bounded, structured memory snapshot for autonomous research context. */
 export function researchMemoryContext(store: ResearchStore, limit = 30, query?: string): ResearchMemoryContext {
   const bounded = Math.max(1, Math.min(limit, 100));
@@ -67,7 +90,9 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
     return typeof value.title === "string" ? [{ id: entry.id, title: value.title, status: typeof value.status === "string" ? value.status : "proposed", ...(typeof value.mechanism === "string" ? { mechanism: value.mechanism.slice(0, 500) } : {}) }] : [];
   });
   const contradictions = store.edges().filter((edge) => edge.relation === "contradicts").slice(0, bounded).map((edge) => ({ fromId: edge.fromId, toId: edge.toId, confidence: edge.confidence }));
-  const transferableMethods = transferableMethodsFromEvents(store.recentEvents(5_000), query, Math.min(8, bounded));
-  const ablationPlans = ablationPlansFromEvents(store.recentEvents(5_000), Math.min(8, bounded));
-  return { claims, hypotheses, contradictions, transferableMethods, ablationPlans };
+  const events = store.recentEvents(5_000);
+  const transferableMethods = transferableMethodsFromEvents(events, query, Math.min(8, bounded));
+  const repositoryLeads = repositoryLeadsFromEvents(events, query, Math.min(8, bounded));
+  const ablationPlans = ablationPlansFromEvents(events, Math.min(8, bounded));
+  return { claims, hypotheses, contradictions, transferableMethods, repositoryLeads, ablationPlans };
 }

@@ -39,7 +39,7 @@ import { evaluateReducedPromotion, experimentNovelty, rankExperimentCandidates, 
 import { comparisonFamilySize, evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
 import { renderReport } from "../dist/core/reports.js";
-import { latestSourceEntries, latestSourcePayloads, researchMemoryContext } from "../dist/core/research-context.js";
+import { latestSourceEntries, latestSourcePayloads, repositoryLeadsFromEvents, researchMemoryContext } from "../dist/core/research-context.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "../dist/core/experiment-patches.js";
 import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js";
 import { compareClaims } from "../dist/core/claim-consistency.js";
@@ -1337,6 +1337,15 @@ test("research memory carries only validated transferable methods into a new obj
     assert.deepEqual(context.transferableMethods.map((entry) => entry.id), ["method-memory"]);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("research memory carries durable repository leads across cycles", () => {
+  const leads = repositoryLeadsFromEvents([
+    { type: "research.repository.search.completed", payload: { query: "validation", results: [{ name: "org/validation", url: "https://github.com/org/validation", stars: 20, language: "Python" }, { name: "org/other", url: "https://github.com/org/other", stars: 30 }] } },
+  ], "validation", 4);
+  assert.equal(leads.length, 2);
+  assert.equal(leads[0].name, "org/validation");
+  assert.equal(leads[0].language, "Python");
 });
 
 test("autonomous loop detects repeated unresolved decisions", () => {
