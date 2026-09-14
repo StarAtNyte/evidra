@@ -1291,10 +1291,15 @@ queue.command("recover").action(() => {
 program.addCommand(queue);
 
 const integrity = new Command("integrity").description("Verify durable Evidra state integrity");
-integrity.command("events").description("Verify the tamper-evident event chain").action(() => {
+integrity.command("events").description("Verify the tamper-evident event chain").option("--json", "emit machine-readable output").action((options: { json?: boolean }) => {
   const store = new ResearchStore(statePath);
   const report = store.verifyEventChain();
   store.close();
+  if (options.json) {
+    console.log(JSON.stringify(report));
+    if (report.status === "invalid") process.exitCode = 2;
+    return;
+  }
   const label = report.status === "valid" ? "VALID" : report.status === "legacy" ? "LEGACY (older events are unchained)" : "INVALID";
   console.log(`Event integrity: ${label}\nChecked: ${report.checked}\nLegacy events: ${report.legacy}${report.brokenAt ? `\nBroken at event: ${report.brokenAt}` : ""}${report.reason ? `\nReason: ${report.reason}` : ""}`);
   if (report.status === "invalid") process.exitCode = 2;

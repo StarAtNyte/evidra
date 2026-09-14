@@ -608,7 +608,7 @@ For agent-agnostic scientific evaluation, `evidra benchmark scientific task.json
 
 Run `evidra benchmark safety` to execute Evidra's local lifecycle safety regression suite. It must pass before treating a harness change as benchmarkable; `--json` emits the machine-readable probe report for CI. This is an internal boundary regression suite, not an external HarnessRisk score.
 
-Durable events are now hash-chained. `evidra integrity events` verifies event payloads and
+Durable events are now hash-chained. `evidra integrity events` (or `--json` for CI) verifies event payloads and
 ordering after restarts or recovery. Stores created by older Evidra versions are reported as
 `LEGACY` until their historical prefix is replaced; newly appended events remain verifiable.
 

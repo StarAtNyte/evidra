@@ -1127,6 +1127,8 @@ test("reports and timeline expose ensemble lifecycle state", () => {
     store.appendEvent("harness.benchmark.completed", { challenger: "evidra", scorecards: [{ harness: "evidra", competitiveScore: 72.5, failureProfile: { timeout: 2 } }], comparisons: [{ incumbent: "mlgym", challengerWins: false }] });
     const report = renderReport(store, "final");
     assert.match(report, /## Ensemble candidates/);
+    assert.match(report, /## State integrity/);
+    assert.match(report, /Event history: VALID/);
     assert.match(report, /blend-report.*validated/);
     assert.match(report, /## Capability routing/);
     assert.match(report, /success.*predicted C2.*local\/qwen-test/);

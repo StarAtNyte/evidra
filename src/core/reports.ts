@@ -23,6 +23,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const trajectories = store.trajectories(100);
   const ensembles = store.ensembleCandidates(100);
   const events = store.recentEvents(40);
+  const eventIntegrity = store.verifyEventChain();
   const harnessBenchmarkEvents = store.recentEvents(200).filter((event) => event.type === "harness.benchmark.completed");
   const harnessEvolutionEvents = store.recentEvents(200).filter((event) => event.type === "harness.evolution.plan");
   const routingEvents = events.filter((event) => event.type === "research.capability_outcome");
@@ -53,6 +54,13 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     "## Counts",
     "",
     Object.entries(counts).map(([key, value]) => `- ${key}: ${value}`).join("\n"),
+    "",
+    "## State integrity",
+    "",
+    `Event history: ${eventIntegrity.status.toUpperCase()}`,
+    `Checked: ${eventIntegrity.checked} · legacy events: ${eventIntegrity.legacy}${eventIntegrity.brokenAt ? ` · broken at ${eventIntegrity.brokenAt}` : ""}`,
+    eventIntegrity.reason ? `Reason: ${eventIntegrity.reason}` : "No event-chain violations detected.",
+    eventIntegrity.status === "invalid" ? "This report is not suitable for publication until the state is restored and integrity passes." : "",
     "",
     "## Phase goals",
     "",
