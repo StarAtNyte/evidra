@@ -41,6 +41,7 @@ export function runProcess(
     let processExited = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let forceTimer: ReturnType<typeof setTimeout> | undefined;
+    let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
     const signalGroup = (signal: NodeJS.Signals): void => {
       if (!child.pid) return;
       try { process.kill(-child.pid, signal); } catch { try { child.kill(signal); } catch { /* already exited */ } }
@@ -80,6 +81,7 @@ export function runProcess(
       settled = true;
       if (timer) clearTimeout(timer);
       if (forceTimer) clearTimeout(forceTimer);
+      if (cleanupTimer) clearTimeout(cleanupTimer);
       reject(error);
     };
 
@@ -95,6 +97,16 @@ export function runProcess(
     child.on("close", (exitCode) => {
       processExited = true;
       if (forceTimer) clearTimeout(forceTimer);
+      // A launcher such as uv, npm, or a shell can exit before descendants
+      // have finished. They inherit this detached process group, so clean up
+      // the group after the leader closes instead of returning while workers
+      // continue consuming CPU or holding experiment resources.
+      signalGroup("SIGTERM");
+      cleanupTimer = setTimeout(() => {
+        cleanupTimer = undefined;
+        signalGroup("SIGKILL");
+      }, 500);
+      cleanupTimer.unref();
       finish({
         command,
         cwd,

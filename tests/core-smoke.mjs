@@ -2057,6 +2057,24 @@ test("process interruption escalates when a worker ignores SIGTERM", async () =>
   assert(Date.now() - started < 5_000);
 });
 
+test("normal process completion cleans up launcher descendants", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-process-cleanup-"));
+  const pidFile = join(root, "worker.pid");
+  try {
+    const childScript = "const { spawn } = require('node:child_process'); const { writeFileSync } = require('node:fs'); const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 30000)'], { stdio: 'ignore' }); writeFileSync(process.argv[1], String(child.pid)); process.exit(0);";
+    const result = await runProcess([process.execPath, "-e", childScript, pidFile], root, 5_000);
+    assert.equal(result.exitCode, 0);
+    const workerPid = Number(readFileSync(pidFile, "utf8").trim());
+    assert.ok(workerPid > 0);
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      try { process.kill(workerPid, 0); } catch { break; }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.throws(() => process.kill(workerPid, 0));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("long-running execution emits durable run heartbeats", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-heartbeat-events-"));
   const db = join(root, ".sota", "database.sqlite");
