@@ -3315,6 +3315,7 @@ test("scientific task runner verifies intermediate stages and resumes verified s
     const resumed = await runScientificTask(task, root, { previous: first });
     assert.equal(resumed.status, "completed");
     assert.deepEqual(resumed.stages.map((stage) => stage.status), ["resumed", "resumed"]);
+    await assert.rejects(() => runScientificTask({ ...task, title: "Changed contract" }, root, { previous: first }), /does not match task contract/);
     assert.throws(() => ScientificTaskRunSchema.parse({ ...first, stages: [{ ...first.stages[0], verification: { declared: 1, executed: 2, passed: 2, failed: 0 } }] }), /executed verifiers cannot exceed declared verifiers/);
     assert.throws(() => ScientificTaskRunSchema.parse({ ...first, stages: [first.stages[0], first.stages[0]] }), /stage observations must be unique/);
     assert.equal(evaluateScientificTaskRun(task, { ...first, taskId: "different-task" }).valid, false);

@@ -41,6 +41,10 @@ export const ScientificTaskSchema = z.object({
 export type ScientificTask = z.infer<typeof ScientificTaskSchema>;
 export type ScientificTaskStage = z.infer<typeof ScientificTaskStageSchema>;
 
+function taskFingerprint(task: ScientificTask): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify(task)).digest("hex")}`;
+}
+
 const ScientificVerificationSchema = z.object({
   declared: z.number().int().nonnegative(),
   executed: z.number().int().nonnegative(),
@@ -76,6 +80,7 @@ export const ScientificStageObservationSchema = z.object({
 export const ScientificTaskRunSchema = z.object({
   schemaVersion: z.literal(1),
   taskId: z.string().min(1),
+  taskFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   startedAt: z.string().datetime(),
   completedAt: z.string().datetime().optional(),
   status: z.enum(["completed", "failed", "interrupted"]),
@@ -101,6 +106,7 @@ export interface ScientificStageObservation {
 export interface ScientificTaskRun {
   schemaVersion: 1;
   taskId: string;
+  taskFingerprint: string;
   startedAt: string;
   completedAt?: string;
   status: "completed" | "failed" | "interrupted";
@@ -239,7 +245,9 @@ async function executeScientificStage(stage: ScientificTaskStage, cwd: string, o
 /** Execute stages in order, verifying and snapshotting every boundary for restart/resume. */
 export async function runScientificTask(taskValue: unknown, root: string, options: ScientificTaskRunOptions = {}): Promise<ScientificTaskRun> {
   const task = ScientificTaskSchema.parse(taskValue);
+  const fingerprint = taskFingerprint(task);
   const previous = options.previous ? ScientificTaskRunSchema.parse(options.previous) : undefined;
+  if (previous && (previous.taskId !== task.id || previous.taskFingerprint !== fingerprint)) throw new Error(`Previous scientific task report does not match task contract '${task.id}'.`);
   const startedAt = new Date().toISOString();
   const stages: ScientificStageObservation[] = [];
   for (const stage of task.stages) {
@@ -250,14 +258,14 @@ export async function runScientificTask(taskValue: unknown, root: string, option
       options.onProgress?.(`Scientific task · ${stage.id} · resumed from verified snapshot`);
       continue;
     }
-    if (options.isCancelled?.()) return { schemaVersion: 1, taskId: task.id, startedAt, status: "interrupted", stages };
+    if (options.isCancelled?.()) return { schemaVersion: 1, taskId: task.id, taskFingerprint: fingerprint, startedAt, status: "interrupted", stages };
     options.onProgress?.(`Scientific task · ${stage.id} · ${stage.title}`);
     const observation = await executeScientificStage(stage, cwd, options);
     stages.push(observation);
     if (observation.status === "failed" || options.isCancelled?.()) break;
   }
   const status = stages.length === task.stages.length && stages.every((stage) => !verifyObservation(task, stage)) ? "completed" : options.isCancelled?.() ? "interrupted" : "failed";
-  return { schemaVersion: 1, taskId: task.id, startedAt, ...(status === "completed" ? { completedAt: new Date().toISOString() } : {}), status, stages };
+  return { schemaVersion: 1, taskId: task.id, taskFingerprint: fingerprint, startedAt, ...(status === "completed" ? { completedAt: new Date().toISOString() } : {}), status, stages };
 }
 
 function artifactsMissing(stage: ScientificTaskStage, artifacts: Record<string, string>): boolean {
