@@ -10,6 +10,8 @@ export interface AllocationInput {
   failureClasses?: string[];
   /** Latest deterministic prediction analysis, when an artifact exposed a concrete failure slice. */
   predictionAnalysis?: { errorRate?: number; worstSlices?: number; worstGroups?: number };
+  /** Latest ensemble diagnostic, when multiple safe prediction artifacts are available. */
+  ensembleAnalysis?: { eligible?: boolean; pairCount?: number; maxDisagreement?: number };
 }
 
 export interface ResearchAllocation {
@@ -67,6 +69,14 @@ export function allocateNextResearch(input: AllocationInput): ResearchAllocation
       ...(Number.isFinite(predictionAnalysis?.errorRate) ? [`observed error rate ${(predictionAnalysis?.errorRate ?? 0) * 100}%`] : []),
       ...(input.phase ? [`active phase: ${input.phase}`] : []),
     ],
+  };
+  const ensembleAnalysis = input.ensembleAnalysis;
+  if (ensembleAnalysis?.eligible === true && (ensembleAnalysis.pairCount ?? 0) > 0) return {
+    focus: "breadth",
+    priority: (ensembleAnalysis.maxDisagreement ?? 0) > 0 ? "high" : "normal",
+    failedTrajectories: input.trajectories.filter((entry) => (entry.quality as { overall?: string } | null)?.overall === "FAIL").length,
+    strategy: "Run a controlled OOF/blend comparison using the most diverse valid prediction artifacts, then verify the blend independently before promotion.",
+    reasons: [`${ensembleAnalysis.pairCount} prediction-artifact pair(s) have measurable diversity`, ...(input.phase ? [`active phase: ${input.phase}`] : [])],
   };
   const quality = input.trajectories.map((entry) => entry.quality);
   const failed = quality.filter((item) => (item as { overall?: string } | null)?.overall === "FAIL").length;

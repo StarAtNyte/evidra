@@ -1935,7 +1935,14 @@ research
         ...(Array.isArray(predictionPayload.analysis.worstSlices) ? { worstSlices: predictionPayload.analysis.worstSlices.length } : {}),
         ...(Array.isArray(predictionPayload.analysis.worstGroups) ? { worstGroups: predictionPayload.analysis.worstGroups.length } : {}),
       } : undefined;
-      const allocation = allocateNextResearch({ trajectories: recentTrajectories, phase: phaseGoal?.phase, evidenceConflicts, failureClasses, predictionAnalysis });
+      const ensembleEvent = store.eventsByType("ensemble.analysis.completed").at(-1);
+      const ensemblePayload = ensembleEvent?.payload && typeof ensembleEvent.payload === "object" ? ensembleEvent.payload as { eligible?: unknown; diversity?: unknown[] } : undefined;
+      const diversity = ensemblePayload?.diversity;
+      const ensembleAnalysis = ensemblePayload ? {
+        eligible: ensemblePayload.eligible === true,
+        ...(Array.isArray(diversity) ? { pairCount: diversity.length, maxDisagreement: Math.max(0, ...diversity.map((pair) => pair && typeof pair === "object" && typeof (pair as { disagreement?: unknown }).disagreement === "number" ? (pair as { disagreement: number }).disagreement : 0)) } : {}),
+      } : undefined;
+      const allocation = allocateNextResearch({ trajectories: recentTrajectories, phase: phaseGoal?.phase, evidenceConflicts, failureClasses, predictionAnalysis, ensembleAnalysis });
       store.appendEvent("research.next_allocation", { allocation, objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}` });
       const priorStagnation = detectStagnation(store.decisions().map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3));
       const adaptiveHarness = deriveAdaptiveHarnessPolicy({
