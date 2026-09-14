@@ -626,6 +626,57 @@ benchmark.command("run")
     if (retention) console.log(`\nRetention gate · ${retention.retained ? "RETAINED" : "REGRESSION DETECTED"} · ${retention.reason}`);
     if (retention && !retention.retained) process.exitCode = 2;
   });
+
+benchmark.command("retest")
+  .argument("<task>", "queued harness.retest task id")
+  .option("--workspace <dir>", "benchmark workspace root; defaults to the Evidra project")
+  .description("Execute one durable harness retest task under its original matched protocol")
+  .action(async (taskId: string, options: { workspace?: string }) => {
+    const retestStore = new ResearchStore(statePath);
+    const queued = retestStore.queueTasks().find((task) => task.id === taskId && task.kind === "harness.retest");
+    if (!queued) { retestStore.close(); throw new Error(`Harness retest task '${taskId}' was not found.`); }
+    const claimed = retestStore.claimTask(taskId, ["harness.retest"]);
+    if (!claimed) { retestStore.close(); throw new Error(`Harness retest task '${taskId}' is not available; another controller may own it.`); }
+    const payload = claimed.payload && typeof claimed.payload === "object" ? claimed.payload as { challenger?: unknown; benchmarkProtocol?: unknown; benchmarkEvidence?: { protocol?: unknown; maxParallel?: unknown } } : {};
+    const rawProtocol = Array.isArray(payload.benchmarkProtocol) ? payload.benchmarkProtocol : payload.benchmarkEvidence && Array.isArray(payload.benchmarkEvidence.protocol) ? payload.benchmarkEvidence.protocol : undefined;
+    const challenger = typeof payload.challenger === "string" ? payload.challenger : "evidra";
+    if (!rawProtocol?.length) {
+      retestStore.updateTask(taskId, "failed", { error: "Retest task does not contain a matched benchmark protocol." });
+      retestStore.close();
+      throw new Error(`Harness retest task '${taskId}' has no stored benchmark protocol.`);
+    }
+    const arms = rawProtocol as BenchmarkArmSpec[];
+    const protocol = validateBenchmarkProtocol(arms.map((arm) => ({ ...arm, validRun: false, durationSeconds: 0, recovered: false, reproducible: false })));
+    if (!protocol.valid) {
+      retestStore.updateTask(taskId, "failed", { error: "Stored retest protocol is no longer matched.", issues: protocol.issues });
+      retestStore.close();
+      throw new Error(`Stored harness retest protocol is invalid:\n${protocol.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
+    }
+    const benchmarkWorkspace = options.workspace ? resolve(options.workspace) : root;
+    try {
+      const originalParallel = payload.benchmarkEvidence?.maxParallel;
+      const maxParallel = typeof originalParallel === "number" && Number.isFinite(originalParallel) ? originalParallel : 1;
+      const report = await runBenchmarkArms(arms, benchmarkWorkspace, (message) => console.log(`· ${message}`), { maxParallel: Math.max(1, Math.min(32, Math.floor(maxParallel))) });
+      const matched = validateBenchmarkProtocol(report.trials);
+      if (!matched.valid) throw new Error(`Retest results are not matched:\n${matched.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
+      const scorecards = scoreHarnessTrials(report.trials);
+      const harnesses = [...new Set(report.trials.map((trial) => trial.harness))];
+      const incumbents = harnesses.filter((harness) => harness !== challenger);
+      const comparisons = incumbents.map((incumbent) => compareHarnesses(report.trials, challenger, incumbent));
+      const adaptation = planHarnessAdaptation(report.trials, scorecards, comparisons, challenger);
+      const result = { retestOf: taskId, challenger, scorecards, comparisons, adaptation, trials: report.trials, startedAt: report.startedAt };
+      retestStore.updateTask(taskId, "completed", result);
+      retestStore.appendEvent("harness.benchmark.retest.completed", result);
+      console.log(`Harness retest complete · task ${taskId}\n${scorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})`).join("\n")}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      retestStore.updateTask(taskId, "failed", { error: message, attempts: claimed.attempts });
+      retestStore.appendEvent("harness.benchmark.retest.failed", { taskId, error: message, attempts: claimed.attempts });
+      throw error;
+    } finally {
+      retestStore.close();
+    }
+  });
 benchmark.command("validate")
   .argument("<file>", "JSON file containing a trial array or { trials: [...] }")
   .option("--json", "emit machine-readable validation")

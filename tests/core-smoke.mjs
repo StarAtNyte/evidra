@@ -227,6 +227,20 @@ test("durable research state and queue survive store reopen", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("durable queue can claim one specific retest without stealing another task", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-claim-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.enqueueTask({ id: "retest-a", kind: "harness.retest", priority: 10, payload: { a: true } });
+    store.enqueueTask({ id: "retest-b", kind: "harness.retest", priority: 5, payload: { b: true } });
+    const claimed = store.claimTask("retest-b", ["harness.retest"]);
+    assert.equal(claimed?.id, "retest-b");
+    assert.equal(store.queueTasks().find((task) => task.id === "retest-a")?.status, "queued");
+    assert.equal(store.claimTask("retest-b", ["harness.retest"]), undefined);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("event history is tamper-evident and survives reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-event-integrity-"));
   try {

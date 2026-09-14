@@ -738,6 +738,21 @@ export class ResearchStore {
     return task;
   }
 
+  /** Atomically claim one known task, preserving queue ownership across controllers. */
+  claimTask(id: string, kinds?: string[]): QueuedTask | undefined {
+    const now = new Date().toISOString();
+    const transaction = this.db.transaction(() => {
+      const kindClause = kinds?.length ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
+      const result = this.db.prepare(`UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, updated_at = ? WHERE id = ? AND status = 'queued' AND available_at <= ?${kindClause}`)
+        .run(now, now, id, now, ...(kinds ?? []));
+      if (result.changes !== 1) return undefined;
+      return this.queueTasks().find((task) => task.id === id);
+    });
+    const task = transaction();
+    if (task) this.appendEvent("queue.claimed", { id: task.id, kind: task.kind, attempts: task.attempts });
+    return task;
+  }
+
   updateTask(id: string, status: QueueTaskStatus, payload?: unknown): void {
     const now = new Date().toISOString();
     this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), updated_at = ? WHERE id = ?").run(status, payload === undefined ? null : safeJson(payload), now, id);
