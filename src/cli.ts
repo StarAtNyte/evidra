@@ -2075,7 +2075,12 @@ research
           ? decisionStore.experiments().some((entry) => {
             const payload = entry.payload as { hypothesisId?: string; status?: string };
             const hypothesis = payload.hypothesisId ? decisionStore.hypotheses().find((candidate) => candidate.id === payload.hypothesisId) : undefined;
-            return hypothesis && (hypothesis.payload as { title?: unknown }).title === selectedHypothesis.title;
+            // Failed attempts are evidence for recovery, not a permanent
+            // deduplication lock. Permit a fresh immutable manifest after a
+            // failed/invalid run, while avoiding duplicate active or completed
+            // work for the same hypothesis title.
+            const terminalRetryable = payload.status === "failed" || payload.status === "rejected" || payload.status === "cancelled";
+            return hypothesis && (hypothesis.payload as { title?: unknown }).title === selectedHypothesis.title && !terminalRetryable;
           })
           : false;
         if (selectedHypothesisId && selectedHypothesis && !hypothesisAlreadyScheduled) {
