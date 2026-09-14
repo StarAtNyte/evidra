@@ -196,6 +196,7 @@ Implemented today:
 - durable headless research trajectories with structural, goal, evidence, recovery, and termination quality signals feeding future allocation;
 - unattended experiment runs also record the same quality-scored process/evaluator/recovery trajectory used by the interactive workbench;
 - capability routing learns from prior trajectory quality: failed or warning-heavy cycles raise verification pressure, bound lane fan-out, and persist predicted tier versus served provider/model and observed outcome;
+- bounded research teams are focus-aware and cycle-rotated: a measured evidence or recovery gap keeps its specialist first, while the remaining seats rotate across independent data, method, model, ensemble, domain, and reproducibility perspectives;
 - every research cycle now emits a durable experience record: validated trajectory events, scene/goal/outcome metadata, independent quality verdicts, C0-C3 demand scores, admission status, capability-gap profile, and a three-stage curriculum for subsequent cycles;
 - local research lanes can use a bounded heterogeneous Ollama pool: installed local models are discovered at campaign start, assigned deterministically across independent roles, and the actual model used by every lane is recorded for replay and routing analysis;
 - experiment proposals receive an explainable novelty score against prior directions, reducing redundant hypothesis families while preserving probability-of-success, information-value, risk, and compute-cost ranking;
