@@ -285,8 +285,7 @@ async function implementCampaignHypothesis(
   const healthAfter = await captureCodeHealth();
   const health = assessCodeHealth(healthBefore, healthAfter);
   const healthStore = new ResearchStore(statePath);
-  const priorAssessments = healthStore.recentEvents(500)
-    .filter((event) => event.type === "experiment.code_health.assessed")
+  const priorAssessments = healthStore.eventsByType("experiment.code_health.assessed")
     .map((event) => event.payload && typeof event.payload === "object" ? (event.payload as { assessment?: unknown }).assessment : undefined)
     .filter((assessment): assessment is CodeHealthAssessment => Boolean(assessment && typeof assessment === "object" && ["pass", "warn", "fail"].includes((assessment as { status?: unknown }).status as string)));
   const trend = assessCodeHealthTrend([...priorAssessments, health]);
@@ -981,11 +980,11 @@ benchmark.command("export")
     const store = new ResearchStore(statePath);
     const adapter = activeCompetition();
     const project = store.project();
-    const baselineEvent = store.recentEvents(5_000).reverse().find((event) => event.type === "baseline.completed");
+    const baselineEvent = store.eventsByType("baseline.completed").at(-1);
     const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string } | undefined;
     const baselineMetric = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] : undefined;
     if (!Number.isFinite(baselineMetric)) { store.close(); throw new Error("No finite baseline.completed metric is available for benchmark export."); }
-    const events = store.recentEvents(5_000);
+    const events = store.eventsByTypes(["experiment.autonomous.replication.completed", "run.retry.scheduled"]);
     const campaign = store.campaign() as { budgetMinutes?: unknown; runtime?: { model?: unknown } } | undefined;
     const independentlyReplicatedParents = new Set(events
       .filter((event) => event.type === "experiment.autonomous.replication.completed")
