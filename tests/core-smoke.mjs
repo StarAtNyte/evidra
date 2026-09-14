@@ -1247,6 +1247,9 @@ test("validation acceptance requires replicated evidence and safety gates", () =
   assert.deepEqual(applyIndependentReplicationEvidence(blocked, false), blocked);
   const accepted = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
   assert.equal(accepted.accepted, true);
+  const suspiciousGain = evaluateValidationAcceptance({ baseline: base, candidate: { ...base, runId: "large-candidate", metrics: { score: 0.95 }, metricsByFold: { score: [0.94, 0.95, 0.96] } }, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: false, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: false });
+  assert.equal(suspiciousGain.gates.unexpectedGainReview, false);
+  assert.match(suspiciousGain.reasons.join(" "), /unexpectedly large/i);
   const permutationBlocked = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, requirePermutationTest: true });
   assert.equal(permutationBlocked.gates.permutationConfidence, false);
   assert.equal(permutationBlocked.accepted, false);

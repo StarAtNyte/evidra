@@ -32,8 +32,10 @@ export interface ValidationAcceptance {
     permutationConfidence: boolean;
     replication: boolean;
     subgroupRegression: boolean;
+    subgroupAnalysis?: boolean;
     leakageAudit: boolean;
     review: boolean;
+    unexpectedGainReview: boolean;
   };
   reasons: string[];
   normalizedDelta: number | null;
@@ -49,8 +51,8 @@ export interface SplitRunPair {
 
 /** Re-open only the replication gate after a verified child confirms the improvement. */
 export function applyIndependentReplicationEvidence(acceptance: ValidationAcceptance, observed: boolean): ValidationAcceptance {
-  if (!observed || acceptance.gates.replication) return acceptance;
-  const gates = { ...acceptance.gates, replication: true };
+  if (!observed) return acceptance;
+  const gates = { ...acceptance.gates, replication: true, unexpectedGainReview: acceptance.gates.unexpectedGainReview || acceptance.gates.review };
   return {
     ...acceptance,
     accepted: Object.values(gates).every(Boolean),
@@ -81,6 +83,13 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   const lowerIsBetter = input.direction === "minimize";
   const comparison = compareRuns(input.baseline, input.candidate, input.metric, lowerIsBetter);
   const normalizedDelta = comparison.delta === null ? null : lowerIsBetter ? -comparison.delta : comparison.delta;
+  // A large relative jump is valuable evidence, but also a common signature
+  // of leakage, split mismatch, or evaluator mistakes. Require the stronger
+  // independent-review path for such results even when ordinary replication
+  // was disabled for a small probe.
+  const baselineScale = Math.abs(comparison.baseline ?? 0);
+  const largeGainThreshold = Math.max(0.05, baselineScale * 0.25);
+  const unexpectedGain = normalizedDelta !== null && normalizedDelta >= largeGainThreshold;
   const probabilityThreshold = input.probabilityThreshold ?? 0.95;
   const comparisonCount = Math.max(1, Math.floor(input.comparisonCount ?? 1));
   // Bonferroni-style family-wise correction prevents a campaign from treating
@@ -95,6 +104,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
     subgroupAnalysis: !input.requiresSubgroupAnalysis || input.subgroupAnalysisObserved === true,
     leakageAudit: input.leakageAuditPassed,
     review: input.reviewerApproved,
+    unexpectedGainReview: !unexpectedGain || (input.independentReplicationObserved === true && input.reviewerApproved),
   };
   const worstSubgroupDelta = input.subgroupDeltas?.length ? Math.min(...input.subgroupDeltas) : null;
   const reasons: string[] = [];
@@ -106,6 +116,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   if (!gates.subgroupAnalysis) reasons.push("declared secondary splits have no subgroup evidence");
   if (!gates.leakageAudit) reasons.push("leakage audit has not passed");
   if (!gates.review) reasons.push("independent reviewer approval is missing");
+  if (!gates.unexpectedGainReview) reasons.push(`unexpectedly large normalized gain ${normalizedDelta?.toFixed(6) ?? "missing"} exceeds scrutiny threshold ${largeGainThreshold.toFixed(6)}; require independent replication and review`);
   return { accepted: Object.values(gates).every(Boolean), comparison, gates, reasons, normalizedDelta, worstSubgroupDelta, adjustedProbabilityThreshold };
 }
 
