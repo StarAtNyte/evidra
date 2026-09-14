@@ -584,17 +584,14 @@ The test suite covers durable state reopen, fresh/resumable sessions, generic ma
 
 ## Roadmap
 
-The next research-lab layers are:
+The current implementation already includes items 1–6: versioned validation and metrics,
+data/leakage audits, a typed worker protocol with heartbeats and artifact checks, reduced
+screening and cost-aware scheduling, persistent lane state with independent critics, and
+OOF/prediction analysis with ensemble candidates. The remaining research-lab layers are:
 
-1. versioned split and metric registries with constrained evaluator subprocesses;
-2. richer leakage, duplicate, shift, and subgroup audits;
-3. Python worker protocol with heartbeats, expected-artifact validation, and environment hashes;
-4. successive-halving scheduling and compute-normalized hypothesis prioritization;
-5. persistent role agents and independent review lanes;
-6. OOF prediction storage, error correlation, calibration, and ensemble search;
-7. richer first-party HTTP submission adapters and leaderboard integrations;
-8. Slurm and additional remote executor backends;
-9. a local browser dashboard on top of the same event/state model.
+1. richer first-party HTTP submission adapters and leaderboard integrations;
+2. Slurm and additional remote executor backends;
+3. a local browser dashboard on top of the same event/state model.
 
 These are separate from the core TUI so Evidra remains useful for non-Kaggle research and can be operated entirely from a terminal.
 
