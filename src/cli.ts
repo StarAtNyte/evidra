@@ -1904,6 +1904,11 @@ research
       const environmentDrift = detectRouteDrift(routeOutcomes).drifted;
       if (environmentDrift) store.appendEvent("research.environment_drift.detected", { cycle, report: detectRouteDrift(routeOutcomes) });
       const effectiveLaneLimit = route.parallelLanes;
+      // Agent lanes and compute lanes are different resources. Keep local
+      // and container execution conservative by default; Modal is the
+      // explicit scale-out backend for independent experiment workers.
+      const executorParallelCeiling = options.executor === "modal" ? 3 : 1;
+      const experimentParallelism = Math.max(1, Math.min(effectiveLaneLimit, executorParallelCeiling));
       store.appendEvent("research.capability_route", { route, predictedTier: route.tier, servedProvider: options.provider, servedModel: selectedModel, recentQuality });
       const evidenceConflicts = {
         contradictions: store.edges().filter((edge) => edge.relation === "contradicts").length,
@@ -2340,7 +2345,7 @@ research
         quality: hypothesisQuality[index]?.score,
       })), {
         maxCandidates: autonomy === "yolo" ? 3 : autonomy === "fast" ? 2 : 1,
-        maxParallel: effectiveLaneLimit,
+        maxParallel: experimentParallelism,
         budgetMinutes: portfolioBudget,
         reserveMinutes: Math.min(5, portfolioBudget * 0.1),
         costHistory,
@@ -2352,6 +2357,7 @@ research
         rejected: portfolioPlan.rejected,
         reservedMinutes: portfolioPlan.reservedMinutes,
         parallelism: portfolioPlan.parallelism,
+        resourceCeiling: executorParallelCeiling,
         successiveHalving: portfolioPlan.halving,
         evolution: portfolioPlan.evolution,
         costEstimates: portfolioPlan.costEstimates,
