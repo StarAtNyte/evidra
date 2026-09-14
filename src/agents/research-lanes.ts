@@ -137,6 +137,7 @@ export function laneToolCalls(role: ResearchLaneRole, objective = ""): ResearchT
     const literatureQuery = objective.trim().slice(0, 600) || `${role} methods and evidence`;
     calls.push({ name: "source.search", arguments: { query: literatureQuery, limit: 6 } });
   }
+  if (role === "method researcher") calls.push({ name: "repository.search", arguments: { query: objective.trim().slice(0, 300) || "research method implementation", limit: 6 } });
   return calls;
 }
 

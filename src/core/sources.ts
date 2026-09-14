@@ -21,6 +21,15 @@ export interface SourceSearchResult {
   abstract?: string;
 }
 
+export interface RepositorySearchResult {
+  name: string;
+  url: string;
+  description?: string;
+  stars: number;
+  updatedAt?: string;
+  language?: string;
+}
+
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
 export const SOURCE_REQUEST_TIMEOUT_MS = 30_000;
@@ -124,6 +133,42 @@ export async function searchResearchSources(query: string, limit = 8, signal?: A
     seen.add(key);
     return true;
   }).slice(0, Math.max(1, Math.min(limit, 20)));
+}
+
+/** Parse GitHub repository search output as implementation leads, not evidence. */
+export function parseRepositorySearchResults(value: unknown, limit = 8): RepositorySearchResult[] {
+  if (!value || typeof value !== "object" || !Array.isArray((value as { items?: unknown }).items)) return [];
+  return ((value as { items: unknown[] }).items).flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry as { full_name?: unknown; html_url?: unknown; description?: unknown; stargazers_count?: unknown; updated_at?: unknown; language?: unknown };
+    if (typeof item.full_name !== "string" || !item.full_name.trim() || typeof item.html_url !== "string" || !/^https:\/\/github\.com\//i.test(item.html_url)) return [];
+    return [{
+      name: item.full_name.trim(),
+      url: item.html_url,
+      ...(typeof item.description === "string" && item.description.trim() ? { description: item.description.trim().slice(0, 500) } : {}),
+      stars: typeof item.stargazers_count === "number" && Number.isFinite(item.stargazers_count) ? Math.max(0, Math.floor(item.stargazers_count)) : 0,
+      ...(typeof item.updated_at === "string" ? { updatedAt: item.updated_at } : {}),
+      ...(typeof item.language === "string" && item.language ? { language: item.language } : {}),
+    }];
+  }).slice(0, Math.max(1, Math.min(limit, 20)));
+}
+
+/** Search public GitHub repositories with optional operator-provided auth. */
+export async function searchResearchRepositories(query: string, limit = 8, signal?: AbortSignal): Promise<RepositorySearchResult[]> {
+  if (!query.trim()) throw new Error("Repository search query must not be empty.");
+  const endpoint = new URL("https://api.github.com/search/repositories");
+  endpoint.searchParams.set("q", query.trim().slice(0, 256));
+  endpoint.searchParams.set("sort", "stars");
+  endpoint.searchParams.set("order", "desc");
+  endpoint.searchParams.set("per_page", String(Math.max(1, Math.min(limit, 20))));
+  await assertPublicUrl(endpoint);
+  const timeoutSignal = AbortSignal.timeout(SOURCE_REQUEST_TIMEOUT_MS);
+  const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  const headers: Record<string, string> = { accept: "application/vnd.github+json", "user-agent": "Evidra/0.1 research-workbench" };
+  if (process.env.GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const response = await fetch(endpoint, { signal: requestSignal, headers });
+  if (!response.ok) throw new Error(`Repository search failed (${response.status} ${response.statusText}).`);
+  return parseRepositorySearchResults(await response.json(), limit);
 }
 
 /** Dynamic sources such as discussions and leaderboards should be revisited periodically. */

@@ -6,7 +6,7 @@ import { runProcess, type ProcessControl } from "./process.js";
 import { splitCommandLine } from "./process.js";
 import { renderReport, writeReport, type ReportKind } from "./reports.js";
 import { createValidationPolicy, writeValidationPolicy } from "./validation-policy.js";
-import { DEFAULT_SOURCE_REFRESH_MS, retrieveSource, searchResearchSources, sourceClaims, sourceFrontier, sourceIsFresh } from "./sources.js";
+import { DEFAULT_SOURCE_REFRESH_MS, retrieveSource, searchResearchRepositories, searchResearchSources, sourceClaims, sourceFrontier, sourceIsFresh } from "./sources.js";
 import { ResearchStore } from "./store.js";
 import type { CompetitionConfig } from "./types.js";
 import { isSensitiveWorkspacePath, redactSecrets } from "./redaction.js";
@@ -68,6 +68,7 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   // workspace or perform an external action, so safe research may use it.
   { name: "source.retrieve", description: "Retrieve, hash, excerpt, and store a research source with extracted claims; reuse a fresh cached copy unless refresh is requested.", input: { url: "HTTP(S) URL", refresh: "optional boolean to bypass the fresh-source cache" }, readOnly: true },
   { name: "source.search", description: "Search scholarly works and return ranked candidates for later retrieval.", input: { query: "research question or keywords", limit: "optional result count" }, readOnly: true },
+  { name: "repository.search", description: "Search public implementation repositories for reproducible method leads; repository metadata is not experimental evidence.", input: { query: "method, paper, or implementation keywords", limit: "optional result count" }, readOnly: true },
   { name: "data.audit", description: "Audit workspace files for size, duplicates, and suspicious data issues.", input: { path: "optional relative path" }, readOnly: true },
   { name: "artifact.audit", description: "Audit bounded research artifacts for safe containment, regular-file integrity, size, checksum, and optional JSON validity.", input: { paths: "relative artifact paths array", maxBytes: "optional per-file size limit" }, readOnly: true },
   { name: "prediction.analyze", description: "Analyze a bounded JSON/JSONL prediction artifact for classification errors, regression residuals, metadata-defined worst slices, and binary calibration gaps.", input: { path: "relative JSON or JSONL prediction artifact", maxRows: "optional row limit" }, readOnly: true },
@@ -207,6 +208,13 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         const frontier = sourceFrontier(store.recentEvents(2_000));
         store.close();
         output = { query, results, frontier: { uniqueWorks: frontier.uniqueWorks, retrievedWorks: frontier.retrievedWorks, pendingWorks: frontier.pendingWorks, queryCount: frontier.queryCount } };
+        break;
+      }
+      case "repository.search": {
+        const query = stringArg(args, "query");
+        const limit = typeof args.limit === "number" ? Math.max(1, Math.min(20, Math.floor(args.limit))) : 8;
+        const results = await searchResearchRepositories(query, limit);
+        output = { query, results, warning: "Repository matches are research leads; inspect and reproduce their methods before treating them as evidence." };
         break;
       }
       case "data.audit": {

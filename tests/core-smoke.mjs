@@ -9,7 +9,7 @@ import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../di
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
-import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseSourceSearchResults, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
+import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseRepositorySearchResults, parseSourceSearchResults, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
@@ -1586,8 +1586,9 @@ test("research lanes use bounded role-specific workspace observations", () => {
   const domainCalls = laneToolCalls("domain researcher", "derive a stable theorem-informed method for fluid dynamics");
   const methodCalls = laneToolCalls("method researcher", "compare optimization methods for robust generalization");
   assert.equal(domainCalls.at(-1).name, "source.search");
-  assert.equal(methodCalls.at(-1).name, "source.search");
+  assert.equal(methodCalls.some((call) => call.name === "source.search"), true);
   assert.match(String(domainCalls.at(-1).arguments.query), /theorem-informed/);
+  assert.equal(methodCalls.some((call) => call.name === "repository.search"), true);
   assert.equal(domainCalls.filter((call) => call.name === "source.retrieve").length, 0, "retrieval is queued only after a successful search result");
   assert.deepEqual(selectResearchLaneRoles("prove a new theorem about fluid dynamics", 3), ["domain researcher", "validation scientist", "method researcher"]);
   assert.deepEqual(selectResearchLaneRoles("win a dataset competition with a robust model", 3), ["data detective", "validation scientist", "model researcher"]);
@@ -1731,6 +1732,14 @@ test("arXiv search parsing preserves primary paper metadata", () => {
   assert.equal(parsed[0].url, "https://arxiv.org/abs/2601.12345v2");
   assert.equal(parsed[0].authors[0], "A. Author");
   assert.match(parsed[0].abstract, /improves robust validation/);
+});
+
+test("repository search parsing preserves implementation leads without trusting metadata", () => {
+  const parsed = parseRepositorySearchResults({ items: [{ full_name: "research/method", html_url: "https://github.com/research/method", description: "Reference implementation", stargazers_count: 12, updated_at: "2026-01-01T00:00:00Z", language: "Python" }, { full_name: "unsafe", html_url: "http://example.org/unsafe" }] }, 4);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].name, "research/method");
+  assert.equal(parsed[0].stars, 12);
+  assert.equal(parsed[0].language, "Python");
 });
 
 test("literature search frontier deduplicates works and reports retrieval coverage", () => {
