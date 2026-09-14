@@ -2559,6 +2559,9 @@ research
         }
       };
       const executePortfolioCandidate = async (portfolioCandidate: (typeof executionCandidates)[number]): Promise<void> => {
+        // Every worker owns its SQLite handle. Parallel candidates must never
+        // close or mutate the controller's shared cycle handle.
+        const decisionStore = new ResearchStore(statePath);
         const selectedIndex = materialized.hypothesisIds.indexOf(portfolioCandidate.id);
         const selectedHypothesisId = selectedIndex >= 0 ? materialized.hypothesisIds[selectedIndex] : undefined;
         const selectedHypothesis = selectedIndex >= 0 ? decision.hypotheses[selectedIndex] : undefined;
@@ -2607,7 +2610,6 @@ research
                 screenedCandidates.push({ experimentId, metric, valid: run.exitCode === 0 && metric !== undefined });
                 screenStore.appendEvent(run.exitCode === 0 ? "experiment.autonomous.screened" : "experiment.autonomous.screening_failed", { experimentId, metric: metric ?? null, exitCode: run.exitCode });
                 screenStore.close();
-                decisionStore = new ResearchStore(statePath);
                 return;
               }
               run = await runCampaignExperiment(root, experimentId, "all", campaignRemainingMs(campaign));
