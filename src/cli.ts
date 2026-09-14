@@ -25,7 +25,7 @@ import { assessStopPolicy } from "./core/stop-policy.js";
 import { classifyVerifier } from "./core/formal-verification.js";
 import { detectRouteDrift } from "./core/drift-detection.js";
 import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
-import { campaignElapsedMinutes, campaignRemainingMs, pauseCampaign, readCampaignRuntime, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
+import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, pauseCampaign, readCampaignRuntime, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { auditExperiment } from "./core/validation.js";
 import { comparisonFamilySize, evaluateValidationAcceptance } from "./core/validation-engine.js";
@@ -1431,7 +1431,7 @@ research
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
   .action(async (options: { mode: string; goal: string; budget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
     const savedStore = new ResearchStore(statePath);
-    const savedCampaign = savedStore.campaign() as { goal?: string; budgetMinutes?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime?: unknown; autoExecuteExperiments?: boolean } | undefined;
+    const savedCampaign = savedStore.campaign() as { goal?: string; budgetMinutes?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime?: unknown; runtimeFingerprint?: string; autoExecuteExperiments?: boolean } | undefined;
     savedStore.close();
     // A resume is a continuation of the durable campaign, not a new run with
     // whichever defaults the current terminal happens to have. Legacy
@@ -1491,12 +1491,18 @@ research
       selectedModel = startupRoute.model;
       console.log(`Codex startup unavailable; using local/${selectedModel} before beginning the campaign.`);
     }
-    const releaseLease = acquireCliControllerLease(mode);
     const started = Date.now();
     const runtime: CampaignRuntimeConfig = { mode, provider: options.provider as CampaignRuntimeConfig["provider"], model: selectedModel, thinking: options.thinking, lanes: laneLimit, autonomy, limitPolicy: options.limitPolicy as CampaignRuntimeConfig["limitPolicy"], executor: options.executor as CampaignRuntimeConfig["executor"] };
-    let campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime: CampaignRuntimeConfig; autoExecuteExperiments: boolean } = options.resume && savedCampaign && savedCampaign.status !== "completed"
-      ? { ...resumeCampaign({ goal: savedCampaign.goal ?? options.goal, budgetMinutes: savedCampaign.budgetMinutes ?? budget, stopCondition: savedCampaign.stopCondition ?? options.stop, startedAt: savedCampaign.startedAt ?? new Date(started).toISOString(), status: savedCampaign.status === "paused" ? "paused" : "running", pausedAt: savedCampaign.pausedAt, pausedDurationMinutes: savedCampaign.pausedDurationMinutes, runtime: savedRuntime ?? runtime }), status: "running", runtime, autoExecuteExperiments: savedCampaign.autoExecuteExperiments === true || autonomy !== "safe" }
-      : { goal: options.goal, budgetMinutes: budget, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running", runtime, autoExecuteExperiments: autonomy !== "safe" };
+    if (options.resume && savedRuntime && savedCampaign?.runtimeFingerprint && savedCampaign.runtimeFingerprint !== campaignRuntimeFingerprint(savedRuntime)) {
+      throw new Error("Saved campaign runtime integrity check failed; its provider, model, effort, autonomy, lane, limit, or executor policy was modified. Start a new campaign or restore the original campaign state.");
+    }
+    if (options.resume && savedRuntime && campaignRuntimeFingerprint(savedRuntime) !== campaignRuntimeFingerprint(runtime)) {
+      throw new Error("Resumed campaign route differs from its saved runtime policy. Evidra will not silently switch provider, model, effort, autonomy, lanes, limit policy, or executor during resume.");
+    }
+    const releaseLease = acquireCliControllerLease(mode);
+    let campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime: CampaignRuntimeConfig; runtimeFingerprint: string; autoExecuteExperiments: boolean } = options.resume && savedCampaign && savedCampaign.status !== "completed"
+      ? { ...resumeCampaign({ goal: savedCampaign.goal ?? options.goal, budgetMinutes: savedCampaign.budgetMinutes ?? budget, stopCondition: savedCampaign.stopCondition ?? options.stop, startedAt: savedCampaign.startedAt ?? new Date(started).toISOString(), status: savedCampaign.status === "paused" ? "paused" : "running", pausedAt: savedCampaign.pausedAt, pausedDurationMinutes: savedCampaign.pausedDurationMinutes, runtime: savedRuntime ?? runtime, runtimeFingerprint: savedCampaign.runtimeFingerprint ?? campaignRuntimeFingerprint(savedRuntime ?? runtime) }), status: "running", runtime, autoExecuteExperiments: savedCampaign.autoExecuteExperiments === true || autonomy !== "safe" }
+      : { goal: options.goal, budgetMinutes: budget, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running", runtime, runtimeFingerprint: campaignRuntimeFingerprint(runtime), autoExecuteExperiments: autonomy !== "safe" };
     if (options.resume) console.log(savedCampaign && savedCampaign.status !== "completed" ? `Resuming durable research campaign from ${savedCampaign.startedAt ?? "saved state"}.` : "No resumable campaign found; starting a new research campaign.");
     const objective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}`;
     let cycle = 0;

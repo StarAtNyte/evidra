@@ -45,7 +45,7 @@ import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js"
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { materializeResearchDecision } from "../dist/core/research-graph.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
-import { campaignElapsedMinutes, campaignRemainingMs, pauseCampaign, resumeCampaign } from "../dist/core/campaign.js";
+import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, pauseCampaign, resumeCampaign } from "../dist/core/campaign.js";
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
@@ -535,6 +535,8 @@ test("durable campaign runtime settings are validated before resume", () => {
   assert.equal(readCampaignRuntime({ runtime: { ...runtime, lanes: 0 } }), undefined);
   assert.equal(readCampaignRuntime({ runtime: { ...runtime, provider: "unknown" } }), undefined);
   assert.equal(readCampaignRuntime({ goal: "legacy campaign" }), undefined);
+  assert.equal(campaignRuntimeFingerprint(runtime), campaignRuntimeFingerprint({ ...runtime }));
+  assert.notEqual(campaignRuntimeFingerprint(runtime), campaignRuntimeFingerprint({ ...runtime, autonomy: "yolo" }));
 });
 
 test("controller leases prevent duplicate workers and trajectories expose capability gaps", () => {

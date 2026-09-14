@@ -164,6 +164,14 @@ outcome is ambiguous, an operator must reconcile it explicitly before retrying,
 which closes the restart-time action-replay path without pretending that a
 network failure proves the remote action did not happen.
 
+Campaign safety settings are integrity-bound as well. A SHA-256 fingerprint of
+the persisted provider/model, reasoning effort, lane count, autonomy, limit
+policy, and executor is checked before resume; a changed record or an implicit
+startup fallback is rejected rather than silently widening or changing the
+route. Legacy campaigns without a fingerprint can still be resumed using their
+validated stored runtime and are bound when rewritten, preserving compatibility
+without claiming historical tamper evidence.
+
 Source: [HarnessRisk: A Lifecycle-Oriented Benchmark for Agent Harness Safety](https://arxiv.org/abs/2608.17597).
 
 ## Scientific usefulness requires judgment plus external acceptance

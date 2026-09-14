@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export interface CampaignTimeState {
   startedAt: string;
   status: string;
@@ -20,6 +22,21 @@ export interface CampaignRuntimeConfig {
   autonomy: "safe" | "fast" | "yolo";
   limitPolicy: "auto" | "wait" | "fallback" | "stop";
   executor: "local" | "container" | "modal";
+}
+
+/** Stable integrity binding for the safety-relevant campaign route. */
+export function campaignRuntimeFingerprint(runtime: CampaignRuntimeConfig): string {
+  const canonical = JSON.stringify({
+    mode: runtime.mode,
+    provider: runtime.provider,
+    model: runtime.model,
+    thinking: runtime.thinking,
+    lanes: runtime.lanes,
+    autonomy: runtime.autonomy,
+    limitPolicy: runtime.limitPolicy,
+    executor: runtime.executor,
+  });
+  return createHash("sha256").update(canonical).digest("hex");
 }
 
 export function readCampaignRuntime(value: unknown): CampaignRuntimeConfig | undefined {
