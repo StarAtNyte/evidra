@@ -4,7 +4,7 @@ import { auditData } from "./data-audit.js";
 import { guardAutonomousCommand, guardReadOnlyInspection, guardWorkspaceCommand, type AutonomyLevel } from "./permissions.js";
 import { runProcess, type ProcessControl } from "./process.js";
 import { splitCommandLine } from "./process.js";
-import { safeWorkerEnvironment } from "./executors.js";
+import { prepareWorkerHome, safeWorkerEnvironment } from "./executors.js";
 import { renderReport, writeReport, type ReportKind } from "./reports.js";
 import { createValidationPolicy, writeValidationPolicy } from "./validation-policy.js";
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, researchSearchQueries, retrieveSource, searchResearchRepositories, searchResearchSources, searchResearchWeb, sourceClaims, sourceFrontier, sourceIsFresh } from "./sources.js";
@@ -193,7 +193,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       throw new Error(`SAFE mode permits inspection tools only; '${call.name}' requires fast or yolo autonomy.`);
     }
     const args = validateToolArguments(call.name, call.arguments);
-    const workerEnvironment = safeWorkerEnvironment();
+    const workerEnvironment = safeWorkerEnvironment({ HOME: prepareWorkerHome(context.root) });
     let output: unknown;
     switch (call.name) {
       case "workspace.files": {

@@ -2683,6 +2683,28 @@ test("experiment workers do not inherit controller credentials", () => {
   assert.equal(safe.UNDECLARED_WORKER_FLAG, undefined);
 });
 
+test("local experiment workers receive a workspace-scoped home", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-worker-home-"));
+  const previousHome = process.env.HOME;
+  const previousKey = process.env.OPENAI_API_KEY;
+  process.env.HOME = "/controller-home";
+  process.env.OPENAI_API_KEY = "controller-secret";
+  try {
+    const manifest = { id: "home-isolation", resources: { executor: "local", timeoutMinutes: 1 } };
+    const result = await new LocalExecutor().run(manifest, root, [process.execPath, "-e", "console.log(JSON.stringify({home:process.env.HOME,secret:process.env.OPENAI_API_KEY ?? null,score:0.5}))"], undefined, "score");
+    assert.equal(result.status, "completed");
+    assert.match(result.stdout, /evidra-worker-home-.*[\\/]\.sota[\\/]worker-home/);
+    assert.match(result.stdout, /"secret":null/);
+    assert.doesNotMatch(result.stdout, /controller-home/);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("experiment executor rejects successful processes with missing declared artifacts", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-artifacts-"));
   try {

@@ -1,7 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve } from "node:path";
-import { parseMetricOutput, safeWorkerEnvironment } from "./executors.js";
+import { parseMetricOutput, prepareWorkerHome, safeWorkerEnvironment } from "./executors.js";
 import { classifyProcessFailure } from "./executors.js";
 import { runProcess } from "./process.js";
 import type { HarnessTrial, ScoreDirection } from "./harness-scorecard.js";
@@ -111,7 +111,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     return { arm, cwd: benchmarkCwd(root, arm.cwd, arm.harness) };
   });
   const startedAt = new Date().toISOString();
-  const workerEnvironment = safeWorkerEnvironment();
+  const workerEnvironment = safeWorkerEnvironment({ HOME: prepareWorkerHome(root) });
   const runOne = async ({ arm, cwd }: (typeof prepared)[number]): Promise<{ trial: HarnessTrial; run: BenchmarkRunReport["runs"][number] }> => {
     onProgress?.(`Benchmark · ${arm.harness} · ${arm.task} · ${arm.budgetMinutes}m`);
     const deadline = Date.now() + arm.budgetMinutes * 60_000;

@@ -84,6 +84,10 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]") -> dict[str
     if not working_directory.is_dir():
         raise FileNotFoundError(f"Modal working directory does not exist: {working_directory}")
     environment = worker_environment()
+    # Never expose the image's default home (or a controller-provided home) to
+    # model-supplied experiment code; /tmp is an ephemeral Modal filesystem.
+    environment["HOME"] = "/tmp/evidra-worker-home"
+    Path(environment["HOME"]).mkdir(parents=True, exist_ok=True)
     config_path = REMOTE_WORKSPACE / ".sota" / "experiment-config.json"
     if config_path.is_file():
         environment["EVIDRA_EXPERIMENT_CONFIG"] = str(config_path)

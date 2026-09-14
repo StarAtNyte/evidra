@@ -2,7 +2,7 @@ import { runProcess, type ProcessControl } from "./process.js";
 import { parseLearningCurve } from "./early-stopping.js";
 import { redactStructured } from "./redaction.js";
 import { existsSync, lstatSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ExperimentManifest, ProcessResult, RunResult } from "./types.js";
 
 export interface ExperimentExecutor {
@@ -42,6 +42,13 @@ export function safeWorkerEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS
   return safe;
 }
 
+/** Create a worker-only home so subprocesses cannot read controller dotfiles. */
+export function prepareWorkerHome(root: string): string {
+  const home = join(resolve(root), ".sota", "worker-home");
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  return home;
+}
+
 export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: string, overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const configPath = `${cwd}/.sota/experiment-config.json`;
   mkdirSync(dirname(configPath), { recursive: true });
@@ -49,6 +56,7 @@ export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: 
   const splitVersion = manifest.splitVersion ?? "unknown";
   const folds = manifest.evaluation?.folds ?? [0];
   const seeds = manifest.evaluation?.seeds ?? [0];
+  const workerHome = prepareWorkerHome(cwd);
   const payload = redactStructured({
     schemaVersion: 1,
     experimentId: manifest.id,
@@ -68,7 +76,7 @@ export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: 
   });
   writeFileSync(configPath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
   return {
-    ...safeWorkerEnvironment(overrides),
+    ...safeWorkerEnvironment({ ...overrides, HOME: workerHome }),
     EVIDRA_EXPERIMENT_ID: manifest.id,
     EVIDRA_EXPERIMENT_CONFIG: configPath,
     EVIDRA_DATASET_VERSION: datasetVersion,
