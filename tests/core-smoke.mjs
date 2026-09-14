@@ -108,7 +108,7 @@ import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks } from "../dist/core/airs-bench.js";
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
-import { planEvolutionaryIslands } from "../dist/core/evolution.js";
+import { advanceEvolutionaryGeneration, planEvolutionaryIslands } from "../dist/core/evolution.js";
 import { planSuccessiveHalving, promoteHalvingStage } from "../dist/core/successive-halving.js";
 import { estimateCost } from "../dist/core/cost-model.js";
 import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
@@ -2707,6 +2707,14 @@ test("evolution planner creates bounded deterministic islands and safe crossover
   assert.equal(plan.crossoverProposals[0].executable, false);
   assert.deepEqual(plan, planEvolutionaryIslands(candidates, 2));
   assert.equal(planEvolutionaryIslands([{ ...candidates[0], operator: "greedy" }], 2).enabled, false);
+  const generation = advanceEvolutionaryGeneration(plan, [
+    { candidateId: "seed-a", metric: 0.8, valid: true, reproducible: true },
+    { candidateId: "seed-b", metric: 0.9, valid: true, reproducible: true },
+  ], "maximize");
+  assert.deepEqual(generation.survivors, ["seed-b", "seed-a"]);
+  assert.deepEqual(generation.rejected, []);
+  assert.equal(generation.crossoverProposals.length, 1);
+  assert.equal(advanceEvolutionaryGeneration(plan, [{ candidateId: "seed-a", metric: 0.8, valid: true }], "maximize").crossoverProposals.length, 0);
 });
 
 test("search policy evidence reports rankings, rewards, cost, and reproducibility", () => {

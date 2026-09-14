@@ -26,6 +26,20 @@ export interface EvolutionPlan {
   policy: "bounded_islands_v1";
 }
 
+export interface EvolutionEvaluation {
+  candidateId: string;
+  metric: number;
+  valid: boolean;
+  reproducible?: boolean;
+}
+
+export interface EvolutionGeneration {
+  survivors: string[];
+  rejected: string[];
+  crossoverProposals: EvolutionCrossoverProposal[];
+  evidencePolicy: "valid_measured_parent_only";
+}
+
 /** Propose bounded evolutionary work without inventing patches or running trials. */
 export function planEvolutionaryIslands(candidates: PortfolioCandidate[], maxIslands: number): EvolutionPlan {
   const limit = Math.max(0, Math.floor(maxIslands));
@@ -45,6 +59,21 @@ export function planEvolutionaryIslands(candidates: PortfolioCandidate[], maxIsl
     crossoverProposals.push({ id: `cross_${stableToken(left.id)}_${stableToken(right.id)}`, parentCandidateIds: [left.id, right.id], targetIslandId: islands[index].id, rationale: left.operator === right.operator ? "family_diversity" : "operator_diversity", requiresMatchedEvaluation: true, executable: false });
   }
   return { enabled: islands.length > 0, maxIslands: limit, islands, crossoverProposals, policy: "bounded_islands_v1" };
+}
+
+/** Advance one generation from evaluator-backed outcomes only. */
+export function advanceEvolutionaryGeneration(plan: EvolutionPlan, evaluations: EvolutionEvaluation[], direction: "minimize" | "maximize"): EvolutionGeneration {
+  const byId = new Map(evaluations.filter((entry) => entry.valid && Number.isFinite(entry.metric)).map((entry) => [entry.candidateId, entry]));
+  const ordered = plan.islands
+    .map((island) => ({ island, evaluation: byId.get(island.seedCandidateId) }))
+    .filter((entry): entry is { island: EvolutionIsland; evaluation: EvolutionEvaluation } => Boolean(entry.evaluation))
+    .sort((left, right) => direction === "minimize" ? left.evaluation.metric - right.evaluation.metric : right.evaluation.metric - left.evaluation.metric);
+  const survivors = ordered.map((entry) => entry.island.seedCandidateId);
+  const selected = new Set(survivors);
+  const rejected = plan.islands.map((island) => island.seedCandidateId).filter((id) => !selected.has(id));
+  const validParents = new Set(survivors);
+  const crossoverProposals = plan.crossoverProposals.filter((proposal) => proposal.parentCandidateIds.every((id) => validParents.has(id)));
+  return { survivors, rejected, crossoverProposals, evidencePolicy: "valid_measured_parent_only" };
 }
 
 function stableToken(value: string): string {

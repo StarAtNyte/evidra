@@ -78,6 +78,7 @@ import { runBenchmarkArms, type BenchmarkArmSpec } from "./core/benchmark-runner
 import { evaluateHarnessChange, type HarnessChangeContract } from "./core/harness-evolution.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, type AirsBenchFamily, type AirsBenchDiscovery, type AirsHarnessTemplate } from "./core/airs-bench.js";
 import { inventoryHarnessComponents, planHarnessInterventions } from "./core/harness-evolution.js";
+import { advanceEvolutionaryGeneration } from "./core/evolution.js";
 import { planHarnessAdaptation } from "./core/harness-adaptation.js";
 import { deriveAdaptiveHarnessPolicy } from "./core/adaptive-harness.js";
 import { createTransferableMethod } from "./core/method-transfer.js";
@@ -1969,6 +1970,7 @@ research
         && portfolioPlan.halving.feasible
         && portfolioPlan.halving.stages.length > 1;
       const screenedCandidates: Array<{ experimentId: string; metric?: number; valid: boolean }> = [];
+      const executedPortfolioExperiments: Array<{ candidateId: string; experimentId: string }> = [];
       const finalizeAutonomousRun = async (experimentId: string, run: { exitCode: number; stdout: string; stderr: string }): Promise<void> => {
         const completionStore = new ResearchStore(statePath);
         completionStore.appendEvent(run.exitCode === 0 ? "experiment.autonomous.completed" : "experiment.autonomous.failed", { experimentId, exitCode: run.exitCode, stdout: run.stdout.slice(-4000), stderr: run.stderr.slice(-4000) });
@@ -2107,6 +2109,7 @@ research
               configPatch: { estimatorPath: candidateEstimatorPath(selectedHypothesis) ?? adapter.config.evaluator.estimatorPath },
             }, adapter.config);
             decisionStore.saveExperiment({ id: experimentId, payload: { ...manifest, status: "proposed", runtimeContext: { provider: options.provider, model: selectedModel, phase: phaseGoal?.phase ?? "unknown" }, executionPlan: createExecutionPlan(manifest) } });
+            executedPortfolioExperiments.push({ candidateId: portfolioCandidate.id, experimentId });
             decisionStore.appendEvent("experiment.autonomous.scheduled", { experimentId, hypothesisId: selectedHypothesisId, decision: decision.decision, executor: options.executor });
             console.log(`Autonomous experiment scheduled: ${experimentId}\n${manifestSummary(manifest)}`);
             decisionStore.close();
@@ -2149,6 +2152,17 @@ research
           const fullRun = await runCampaignExperiment(root, candidate.experimentId, "full-after-screen", campaignRemainingMs(campaign));
           await finalizeAutonomousRun(candidate.experimentId, fullRun);
         }
+      }
+      if (portfolioPlan.evolution.enabled && executedPortfolioExperiments.length) {
+        const evolutionEvents = decisionStore.recentEvents(2_000);
+        const evaluations = executedPortfolioExperiments.map(({ candidateId, experimentId }) => {
+          const comparisonEvent = evolutionEvents.slice().reverse().find((event) => event.type === "experiment.comparison.completed" && (event.payload as { experimentId?: unknown }).experimentId === experimentId);
+          const comparison = comparisonEvent?.payload as { comparison?: { candidate?: unknown; evidence?: unknown } } | undefined;
+          const metric = comparison?.comparison?.candidate;
+          return { candidateId, metric: typeof metric === "number" ? metric : Number.NaN, valid: typeof metric === "number" && Number.isFinite(metric), reproducible: comparison?.comparison?.evidence === "replicated" };
+        });
+        const generation = advanceEvolutionaryGeneration(portfolioPlan.evolution, evaluations, adapter.config.metric.direction);
+        decisionStore.appendEvent("research.evolution.generation.completed", { cycle, plan: portfolioPlan.evolution, evaluations, generation });
       }
       const trajectoryStamp = `research-${Date.now()}`;
       const researchTrajectoryEvents: TrajectoryEvent[] = [
