@@ -1568,6 +1568,11 @@ test("research lanes use bounded role-specific workspace observations", () => {
   assert.match(String(dataCalls[1].arguments.query), /leak|duplicate/i);
   assert.match(String(validationCalls[1].arguments.query), /split|metric/i);
   assert.match(String(modelCalls[1].arguments.query), /model|estimator/i);
+  const domainCalls = laneToolCalls("domain researcher", "derive a stable theorem-informed method for fluid dynamics");
+  const methodCalls = laneToolCalls("method researcher", "compare optimization methods for robust generalization");
+  assert.equal(domainCalls.at(-1).name, "source.search");
+  assert.equal(methodCalls.at(-1).name, "source.search");
+  assert.match(String(domainCalls.at(-1).arguments.query), /theorem-informed/);
   assert.deepEqual(selectResearchLaneRoles("prove a new theorem about fluid dynamics", 3), ["domain researcher", "validation scientist", "method researcher"]);
   assert.deepEqual(selectResearchLaneRoles("win a dataset competition with a robust model", 3), ["data detective", "validation scientist", "model researcher"]);
   const bounded = boundLaneToolResult({ name: "workspace.search", ok: true, output: "x".repeat(20_000) });

@@ -114,7 +114,7 @@ export function assignResearchLaneRoutes(roles: ResearchLaneRole[], options: Pic
 }
 
 /** Keep lane observations bounded and role-specific before model synthesis. */
-export function laneToolCalls(role: ResearchLaneRole): ResearchToolCall[] {
+export function laneToolCalls(role: ResearchLaneRole, objective = ""): ResearchToolCall[] {
   const focus = role === "data detective"
     ? "duplicate|leak|missing|shift|group|target|label"
     : role === "validation scientist"
@@ -124,10 +124,19 @@ export function laneToolCalls(role: ResearchLaneRole): ResearchToolCall[] {
         : role === "domain researcher"
           ? "theorem|definition|assumption|proof|method|result|literature|paper"
           : "algorithm|method|approach|experiment|procedure|implementation|benchmark";
-  return [
+  const calls: ResearchToolCall[] = [
     { name: "workspace.files", arguments: {} },
     { name: "workspace.search", arguments: { query: focus } },
   ];
+  // Literature-aware lanes should discover primary work before the director
+  // commits to a method. Search is deliberately bounded and remains only a
+  // candidate frontier; retrieval and claim verification still happen through
+  // the evidence-aware source workflow.
+  if (role === "domain researcher" || role === "method researcher") {
+    const literatureQuery = objective.trim().slice(0, 600) || `${role} methods and evidence`;
+    calls.push({ name: "source.search", arguments: { query: literatureQuery, limit: 6 } });
+  }
+  return calls;
 }
 
 /** Choose an appropriate research team without assuming every task is ML. */
@@ -286,7 +295,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
   try {
     const toolResults: ResearchToolResult[] = [];
     if (options.executeTool) {
-      for (const call of laneToolCalls(role)) {
+      for (const call of laneToolCalls(role, objective)) {
         if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
         options.onProgress?.(`Research lane · ${role} · ${call.name}...`);
         const callId = options.onToolCall?.(`lane:${role}`, call) ?? `${role}-${call.name}-${toolResults.length + 1}`;
