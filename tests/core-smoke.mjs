@@ -2724,6 +2724,13 @@ test("evolution planner creates bounded deterministic islands and safe crossover
   assert.deepEqual(generation.rejected, []);
   assert.equal(generation.crossoverProposals.length, 1);
   assert.equal(advanceEvolutionaryGeneration(plan, [{ candidateId: "seed-a", metric: 0.8, valid: true }], "maximize").crossoverProposals.length, 0);
+  const weakGeneration = advanceEvolutionaryGeneration(plan, [
+    { candidateId: "seed-a", metric: 0.8, valid: true, reproducible: false },
+    { candidateId: "seed-b", metric: 0.9, valid: true, reproducible: true },
+  ], "maximize");
+  assert.deepEqual(weakGeneration.survivors, ["seed-b"]);
+  assert.deepEqual(weakGeneration.rejected, ["seed-a"]);
+  assert.equal(weakGeneration.crossoverProposals.length, 0);
 });
 
 test("search policy evidence reports rankings, rewards, cost, and reproducibility", () => {

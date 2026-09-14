@@ -30,6 +30,7 @@ export interface EvolutionEvaluation {
   candidateId: string;
   metric: number;
   valid: boolean;
+  /** True only when the comparison has the declared paired evidence. */
   reproducible?: boolean;
 }
 
@@ -63,7 +64,7 @@ export function planEvolutionaryIslands(candidates: PortfolioCandidate[], maxIsl
 
 /** Advance one generation from evaluator-backed outcomes only. */
 export function advanceEvolutionaryGeneration(plan: EvolutionPlan, evaluations: EvolutionEvaluation[], direction: "minimize" | "maximize"): EvolutionGeneration {
-  const byId = new Map(evaluations.filter((entry) => entry.valid && Number.isFinite(entry.metric)).map((entry) => [entry.candidateId, entry]));
+  const byId = new Map(evaluations.filter((entry) => entry.valid && entry.reproducible === true && Number.isFinite(entry.metric)).map((entry) => [entry.candidateId, entry]));
   const ordered = plan.islands
     .map((island) => ({ island, evaluation: byId.get(island.seedCandidateId) }))
     .filter((entry): entry is { island: EvolutionIsland; evaluation: EvolutionEvaluation } => Boolean(entry.evaluation))
