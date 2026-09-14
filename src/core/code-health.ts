@@ -32,10 +32,11 @@ export interface CodeHealthTrend {
 }
 
 const TEST_PATH = /(^|\/)(test|tests|spec|specs)(\/|$)|(?:^|[._-])(test|spec)\.[^.]+$/i;
+const CODE_PATH = /\.(?:ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|cpp|cc|cxx|c|h|hpp|rb|php|swift|sh)$/i;
 
 /** Build a small structural snapshot without parsing a language-specific AST. */
 export function snapshotCodeHealth(files: CodeHealthFile[]): CodeHealthSnapshot {
-  const valid = files.filter((file) => file.path.trim().length > 0);
+  const valid = files.filter((file) => file.path.trim().length > 0 && CODE_PATH.test(file.path));
   const source = valid.filter((file) => !TEST_PATH.test(file.path));
   const tests = valid.filter((file) => TEST_PATH.test(file.path));
   const countLines = (items: CodeHealthFile[]): number => items.reduce((sum, file) => sum + (file.content.match(/\r?\n/g)?.length ?? 0) + (file.content.length ? 1 : 0), 0);

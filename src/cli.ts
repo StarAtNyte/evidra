@@ -213,7 +213,7 @@ async function implementCampaignHypothesis(
   const captureCodeHealth = async (): Promise<ReturnType<typeof snapshotCodeHealth>> => {
     const inventory = await runProcess(["rg", "--files", "-g", "!.git/**", "-g", "!.sota/**", "-g", "!node_modules/**"], worktree, 60_000);
     const files: CodeHealthFile[] = [];
-    for (const path of inventory.stdout.split("\n").filter((entry) => /\.(?:ts|tsx|js|mjs|cjs|py|rs|go|java|cpp|c|h|hpp|sh|ya?ml|json)$/i.test(entry)).slice(0, 2_000)) {
+    for (const path of inventory.stdout.split("\n").filter((entry) => /\.(?:ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|cpp|cc|cxx|c|h|hpp|rb|php|swift|sh)$/i.test(entry)).slice(0, 2_000)) {
       try {
         const absolute = join(worktree, path);
         if (statSync(absolute).size > 1_000_000) continue;

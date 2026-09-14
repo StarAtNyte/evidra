@@ -1011,6 +1011,9 @@ test("code health detects severe test deletion and untested structural growth", 
   const growth = assessCodeHealth(growthBefore, growthAfter);
   assert.equal(growth.status, "warn");
   assert.match(growth.reasons.join(" "), /without test growth/);
+  const configOnly = snapshotCodeHealth([{ path: "configs/generated.json", content: "x\\n".repeat(2_000) }]);
+  assert.equal(configOnly.sourceFiles, 0);
+  assert.equal(configOnly.sourceLines, 0);
   const trend = assessCodeHealthTrend([growth, growth, growth]);
   assert.equal(trend.status, "warn");
   assert.equal(trend.untestedGrowthStreak, 3);
