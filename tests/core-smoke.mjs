@@ -3316,6 +3316,8 @@ test("scientific task runner verifies intermediate stages and resumes verified s
     assert.equal(resumed.status, "completed");
     assert.deepEqual(resumed.stages.map((stage) => stage.status), ["resumed", "resumed"]);
     assert.throws(() => ScientificTaskRunSchema.parse({ ...first, stages: [{ ...first.stages[0], verification: { declared: 1, executed: 2, passed: 2, failed: 0 } }] }), /executed verifiers cannot exceed declared verifiers/);
+    assert.throws(() => ScientificTaskRunSchema.parse({ ...first, stages: [first.stages[0], first.stages[0]] }), /stage observations must be unique/);
+    assert.equal(evaluateScientificTaskRun(task, { ...first, taskId: "different-task" }).valid, false);
     assert.throws(() => ScientificTaskSchema.parse({ ...task, stages: [{ ...task.stages[0], verificationCommands: [task.stages[0].verificationCommands[0], task.stages[0].verificationCommands[0]] }] }), /verificationCommands must contain unique entries/);
     writeFileSync(join(root, "input.json"), "{\"mutated\":true}");
     const repaired = await runScientificTask(task, root, { previous: first });

@@ -80,6 +80,9 @@ export const ScientificTaskRunSchema = z.object({
   completedAt: z.string().datetime().optional(),
   status: z.enum(["completed", "failed", "interrupted"]),
   stages: z.array(ScientificStageObservationSchema).max(32),
+}).superRefine((run, context) => {
+  const ids = run.stages.map((stage) => stage.stageId);
+  if (new Set(ids).size !== ids.length) context.addIssue({ code: z.ZodIssueCode.custom, path: ["stages"], message: "stage observations must be unique" });
 });
 
 export interface ScientificStageObservation {
@@ -168,18 +171,22 @@ function resumableObservation(task: ScientificTask, stage: ScientificTaskStage, 
 /** Score intermediate progress without collapsing a multi-stage task into one final answer. */
 export function evaluateScientificTaskRun(taskValue: unknown, run: ScientificTaskRun): ScientificTaskEvaluation {
   const task = ScientificTaskSchema.parse(taskValue);
-  const byId = new Map(run.stages.map((stage) => [stage.stageId, stage]));
+  const parsedRun = ScientificTaskRunSchema.parse(run);
+  const byId = new Map(parsedRun.stages.map((stage) => [stage.stageId, stage]));
   const missingStages = task.stages.filter((stage) => !byId.has(stage.id)).map((stage) => stage.id);
+  const orderMismatch = parsedRun.stages.some((stage, index) => task.stages[index]?.id !== stage.stageId);
   const invalidStages = task.stages.flatMap((stage) => {
     const observation = byId.get(stage.id);
     const reason = observation ? verifyObservation(task, observation) : undefined;
     return reason ? [`${stage.id}: ${reason}`] : [];
   });
+  if (orderMismatch) invalidStages.push("stage observations are out of task order");
   const validStages = task.stages.length - missingStages.length - invalidStages.length;
   const stageScore = validStages / task.stages.length;
-  const processQuality = Math.min(1, Math.max(0, (stageScore * 0.7) + (run.stages.length === task.stages.length ? 0.2 : 0) + (run.status === "completed" ? 0.1 : 0)));
-  const valid = missingStages.length === 0 && invalidStages.length === 0 && run.status === "completed";
-  return { valid, completed: valid, stageScore, processQuality, missingStages, invalidStages, reason: valid ? "all stages and verifiers completed" : [...missingStages.map((id) => `missing stage: ${id}`), ...invalidStages].join("; ") || `run status is ${run.status}` };
+  if (parsedRun.taskId !== task.id) invalidStages.push(`run task ID '${parsedRun.taskId}' does not match task '${task.id}'`);
+  const processQuality = Math.min(1, Math.max(0, (stageScore * 0.7) + (parsedRun.stages.length === task.stages.length ? 0.2 : 0) + (parsedRun.status === "completed" ? 0.1 : 0)));
+  const valid = missingStages.length === 0 && invalidStages.length === 0 && parsedRun.status === "completed";
+  return { valid, completed: valid, stageScore, processQuality, missingStages, invalidStages, reason: valid ? "all stages and verifiers completed" : [...missingStages.map((id) => `missing stage: ${id}`), ...invalidStages].join("; ") || `run status is ${parsedRun.status}` };
 }
 
 export interface ScientificTaskRunOptions {
