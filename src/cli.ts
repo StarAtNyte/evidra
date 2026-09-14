@@ -298,13 +298,21 @@ async function waitForControllerDirective(onPause?: () => void, onResume?: () =>
   }
 }
 
-function acquireCliControllerLease(mode: "research" | "challenge"): () => void {
+async function acquireCliControllerLease(mode: "research" | "challenge"): Promise<() => void> {
   const controllerId = `cli-${process.pid}-${Date.now()}`;
   const initial = new ResearchStore(statePath);
   const integrity = initial.verifyEventChain();
   if (integrity.status === "invalid") {
     initial.close();
     throw new Error(`Durable event history failed integrity verification at event ${integrity.brokenAt ?? "unknown"}: ${integrity.reason ?? "unknown integrity failure"}. Run 'evidra integrity events' and repair or restore the state before resuming autonomy.`);
+  }
+  const backupPath = join(root, ".sota", "backups", `controller-start-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`);
+  try {
+    await initial.backup(backupPath);
+    initial.appendEvent("state.backup.created", { path: relative(root, backupPath), reason: "controller-start" });
+  } catch (error) {
+    initial.close();
+    throw new Error(`Unable to create the autonomous startup backup: ${error instanceof Error ? error.message : String(error)}`);
   }
   const acquired = initial.acquireControllerLease(controllerId, process.pid, mode, "starting");
   initial.close();
@@ -1580,7 +1588,7 @@ research
     if (options.resume && savedRuntime && campaignRuntimeFingerprint(savedRuntime) !== campaignRuntimeFingerprint(runtime)) {
       throw new Error("Resumed campaign route differs from its saved runtime policy. Evidra will not silently switch provider, model, effort, autonomy, lanes, limit policy, or executor during resume.");
     }
-    const releaseLease = acquireCliControllerLease(mode);
+    const releaseLease = await acquireCliControllerLease(mode);
     let campaign: { goal: string; budgetMinutes: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime: CampaignRuntimeConfig; runtimeFingerprint: string; autoExecuteExperiments: boolean } = options.resume && savedCampaign && savedCampaign.status !== "completed"
       ? { ...resumeCampaign({ goal: savedCampaign.goal ?? options.goal, budgetMinutes: savedCampaign.budgetMinutes ?? budget, stopCondition: savedCampaign.stopCondition ?? options.stop, startedAt: savedCampaign.startedAt ?? new Date(started).toISOString(), status: savedCampaign.status === "paused" ? "paused" : "running", pausedAt: savedCampaign.pausedAt, pausedDurationMinutes: savedCampaign.pausedDurationMinutes, runtime: savedRuntime ?? runtime, runtimeFingerprint: savedCampaign.runtimeFingerprint ?? campaignRuntimeFingerprint(savedRuntime ?? runtime) }), status: "running", runtime, autoExecuteExperiments: savedCampaign.autoExecuteExperiments === true || autonomy !== "safe" }
       : { goal: options.goal, budgetMinutes: budget, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running", runtime, runtimeFingerprint: campaignRuntimeFingerprint(runtime), autoExecuteExperiments: autonomy !== "safe" };
