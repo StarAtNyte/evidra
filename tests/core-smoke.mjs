@@ -2603,6 +2603,38 @@ test("research director honors the bounded provider-attempt policy", async () =>
   }
 });
 
+test("research director reuses successful read-only observations within a turn", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-director-cache-"));
+  const previousHost = process.env.OLLAMA_HOST;
+  let calls = 0;
+  let toolCalls = 0;
+  const server = createServer((_request, response) => {
+    calls += 1;
+    const decision = calls === 1
+      ? { phase: "orientation", goalStatus: "active", decision: "inspect", bottleneck: "Need evidence", rationale: "Inspect once.", hypotheses: [], selectedHypothesis: null, nextAction: "Inspect files", toolCalls: [{ name: "workspace.files", arguments: {} }, { name: "workspace.files", arguments: {} }] }
+      : { phase: "orientation", goalStatus: "active", decision: "inspect", bottleneck: "Evidence collected", rationale: "The cached observation is sufficient.", hypotheses: [], selectedHypothesis: null, nextAction: "Continue", toolCalls: [] };
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${address.port}`;
+  try {
+    const decision = await runResearchDirector("Cache read-only evidence", {}, { provider: "local", model: "test", cwd: root, executeTool: async () => {
+      toolCalls += 1;
+      return { name: "workspace.files", ok: true, output: { files: ["notes.txt"] }, trust: "controller_observation" };
+    } });
+    assert.equal(decision.decision, "inspect");
+    assert.equal(calls, 2);
+    assert.equal(toolCalls, 1);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("experiment executor parses the declared metric instead of a competition-specific metric", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-metric-"));
   try {

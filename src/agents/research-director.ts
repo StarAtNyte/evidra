@@ -40,6 +40,10 @@ function isRetryableResearchToolFailure(result: ResearchToolResult): boolean {
   return /network|unreachable|timed out|timeout|temporarily|connection|econnreset|ePIPE|rate limit|quota|429|502|503|504|worker|busy|try again/i.test(text);
 }
 
+function toolCacheKey(call: ResearchToolCall): string {
+  return `${call.name}:${JSON.stringify(call.arguments ?? {})}`;
+}
+
 export async function runResearchDirector(
   objective: string,
   context: Record<string, unknown>,
@@ -97,6 +101,7 @@ export async function runResearchDirector(
     availableTools: options.executeTool ? RESEARCH_TOOLS : [],
   }).context;
   const steering: string[] = [];
+  const readOnlyToolCache = new Map<string, ResearchToolResult>();
   for (let round = 0; round <= maxToolRounds; round += 1) {
     let parsed: ReturnType<typeof ResearchDecisionSchema.safeParse> | undefined;
     let lastError: unknown;
@@ -126,22 +131,29 @@ export async function runResearchDirector(
     for (const call of decision.toolCalls) {
       onProgress?.(`Research tool · ${call.name}`);
       const callId = options.onToolCall?.("director", call) ?? `director-${call.name}-${results.length + 1}`;
-      let result: ResearchToolResult | undefined;
-      for (let attempt = 1; attempt <= maxToolAttempts; attempt += 1) {
-        try {
-          result = normalizeResearchToolResult(await options.executeTool(call));
-        } catch (error) {
-          result = {
-            name: call.name,
-            ok: false,
-            error: error instanceof Error ? error.message : String(error),
-            trust: toolFailureTrust(error instanceof Error ? error.message : String(error)),
-          };
+      const toolSpec = RESEARCH_TOOLS.find((tool) => tool.name === call.name);
+      const cacheKey = toolCacheKey(call);
+      let result: ResearchToolResult | undefined = toolSpec?.readOnly ? readOnlyToolCache.get(cacheKey) : undefined;
+      if (result) {
+        onProgress?.(`Research tool · ${call.name} reused the read-only observation from this turn.`);
+      } else {
+        for (let attempt = 1; attempt <= maxToolAttempts; attempt += 1) {
+          try {
+            result = normalizeResearchToolResult(await options.executeTool(call));
+          } catch (error) {
+            result = {
+              name: call.name,
+              ok: false,
+              error: error instanceof Error ? error.message : String(error),
+              trust: toolFailureTrust(error instanceof Error ? error.message : String(error)),
+            };
+          }
+          if (result.ok || !isRetryableResearchToolFailure(result) || attempt === maxToolAttempts) break;
+          const delayMs = attempt * 500;
+          onProgress?.(`Tool ${call.name} failed transiently; retrying ${attempt}/${maxToolAttempts - 1} in ${delayMs}ms...`);
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
         }
-        if (result.ok || !isRetryableResearchToolFailure(result) || attempt === maxToolAttempts) break;
-        const delayMs = attempt * 500;
-        onProgress?.(`Tool ${call.name} failed transiently; retrying ${attempt}/${maxToolAttempts - 1} in ${delayMs}ms...`);
-        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        if (result?.ok && toolSpec?.readOnly) readOnlyToolCache.set(cacheKey, result);
       }
       if (!result) throw new Error(`Research tool ${call.name} returned no result.`);
       options.onToolResult?.("director", callId, result);
