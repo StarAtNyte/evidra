@@ -91,6 +91,7 @@ import { buildMlflowRunExports } from "./core/mlflow.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema } from "./core/scientific-tasks.js";
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "./core/scientific-suite.js";
 import { runSafetyBenchmark } from "./core/safety-bench.js";
+import { selectRatchetReference } from "./core/ratchet.js";
 import { assessCodeHealth, assessCodeHealthTrend, snapshotCodeHealth, type CodeHealthAssessment, type CodeHealthFile } from "./core/code-health.js";
 
 const root = findWorkspaceRoot();
@@ -3215,6 +3216,29 @@ experiment.command("run")
           cwd: baselinePayload?.cwd,
         };
         const comparison = compareRuns(baselineRun, RunResultSchema.parse(recorded), metricName, adapter.config.metric.direction === "minimize");
+        const acceptedExperimentIds = new Set(resultStore.recentEvents(2_000)
+          .filter((event) => event.type === "experiment.validation.assessed")
+          .filter((event) => Boolean((event.payload as { acceptance?: { accepted?: unknown } }).acceptance?.accepted))
+          .map((event) => (event.payload as { experimentId?: unknown }).experimentId)
+          .filter((experimentId): experimentId is string => typeof experimentId === "string" && experimentId !== id));
+        const historicalRuns = resultStore.experiments().flatMap((candidate) => {
+          if (!acceptedExperimentIds.has(candidate.id)) return [];
+          const candidateManifest = ExperimentManifestSchema.safeParse(candidate.payload);
+          if (!candidateManifest.success || candidateManifest.data.datasetVersion !== manifest.datasetVersion || candidateManifest.data.splitVersion !== manifest.splitVersion) return [];
+          const runId = (candidate.payload as { runId?: unknown }).runId;
+          const run = typeof runId === "string" ? resultStore.runs().find((entry) => entry.id === runId) : undefined;
+          const metric = run ? Number((run.payload as { metrics?: Record<string, unknown> }).metrics?.[metricName]) : Number.NaN;
+          if (!run || !Number.isFinite(metric)) return [];
+          return [{ id: run.id, metric, run: RunResultSchema.parse(run.payload) }];
+        });
+        const ratchet = selectRatchetReference(
+          { id: baselineRun.runId, metric: baselineMetric },
+          historicalRuns.map(({ id: historicalId, metric }) => ({ id: historicalId, metric, accepted: true })),
+          adapter.config.metric.direction,
+        );
+        const ratchetBaselineRun = historicalRuns.find((entry) => entry.id === ratchet.sourceId)?.run ?? baselineRun;
+        const ratchetComparison = ratchet.sourceId === baselineRun.runId ? comparison : compareRuns(ratchetBaselineRun, RunResultSchema.parse(recorded), metricName, adapter.config.metric.direction === "minimize");
+        resultStore.appendEvent("experiment.ratchet.checked", { experimentId: id, originalBaseline: baselineMetric, reference: ratchet, referenceRunId: ratchet.sourceId, referenceMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, comparison: ratchetComparison });
         const operator = manifest.searchOperator ?? "ucb_portfolio";
         resultStore.appendEvent("experiment.comparison.completed", { experimentId: id, baselineSource: baselineEvent?.createdAt ?? "baseline", comparison, searchOperator: operator });
         const gates = resultStore.experimentGates(id);
@@ -3222,7 +3246,7 @@ experiment.command("run")
         // not let a campaign hide them by counting only completed winners.
         const comparisonCount = comparisonFamilySize(resultStore.experiments().map((candidate) => candidate.payload as { datasetVersion?: unknown; outcomeType?: unknown }), manifest.datasetVersion);
         const acceptance = evaluateValidationAcceptance({
-          baseline: baselineRun,
+          baseline: ratchetBaselineRun,
           candidate: RunResultSchema.parse(recorded),
           metric: metricName,
           direction: adapter.config.metric.direction,
@@ -3240,7 +3264,7 @@ experiment.command("run")
         });
         resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, comparisonCount, adjustedProbabilityThreshold: acceptance.adjustedProbabilityThreshold, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });
         if (operator) {
-          const improvementDelta = comparison.delta === null ? undefined : adapter.config.metric.direction === "minimize" ? -comparison.delta : comparison.delta;
+          const improvementDelta = ratchetComparison.delta === null ? undefined : adapter.config.metric.direction === "minimize" ? -ratchetComparison.delta : ratchetComparison.delta;
           const runtimeContext = entryPayload.runtimeContext && typeof entryPayload.runtimeContext === "object" ? entryPayload.runtimeContext as { provider?: string; model?: string; phase?: string } : {};
           resultStore.appendEvent("research.search.reward", { experimentId: id, competitionId: adapter.id, datasetRevision: manifest.datasetVersion, operator, reward: searchReward(improvementDelta, recorded.status === "completed", comparison.evidence === "replicated"), valid: recorded.status === "completed", reproducible: comparison.evidence === "replicated", delta: improvementDelta, durationSeconds: recorded.durationSeconds, executor: manifest.resources.executor, provider: runtimeContext.provider, model: runtimeContext.model, phase: runtimeContext.phase, gpu: manifest.resources.gpu ?? undefined });
         }

@@ -65,6 +65,7 @@ import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTas
 import { evaluateGpuBudget, observedGpuHours } from "../dist/core/compute-budget.js";
 import { collaborationUtility } from "../dist/core/adaptive-harness.js";
 import { assessCodeHealth, assessCodeHealthTrend, snapshotCodeHealth } from "../dist/core/code-health.js";
+import { selectRatchetReference } from "../dist/core/ratchet.js";
 
 test("search policies receive independent matched scorecards and comparisons", () => {
   const trial = (policy, task, candidateMetric) => ({ harness: `evidra-${policy}`, policy, task, arm: "default", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: false, reproducible: true });
@@ -1019,6 +1020,22 @@ test("code health detects severe test deletion and untested structural growth", 
   assert.equal(trend.untestedGrowthStreak, 3);
   const severeTrend = assessCodeHealthTrend([growth, growth, growth, growth]);
   assert.equal(severeTrend.status, "fail");
+});
+
+test("accepted experiment evidence forms a monotonic best-so-far ratchet", () => {
+  const maximize = selectRatchetReference(
+    { id: "baseline", metric: 0.70 },
+    [{ id: "accepted-1", metric: 0.74, accepted: true }, { id: "rejected", metric: 0.90, accepted: false }],
+    "maximize",
+  );
+  assert.deepEqual(maximize, { sourceId: "accepted-1", metric: 0.74, acceptedCount: 1 });
+  const minimize = selectRatchetReference(
+    { id: "baseline", metric: 0.70 },
+    [{ id: "accepted-1", metric: 0.66, accepted: true }],
+    "minimize",
+  );
+  assert.equal(minimize.sourceId, "accepted-1");
+  assert.equal(selectRatchetReference({ id: "baseline", metric: 0.70 }, [{ id: "worse", metric: 0.60, accepted: true }], "maximize").sourceId, "baseline");
 });
 
 test("prediction error analysis turns aggregate outcomes into actionable failures", () => {
