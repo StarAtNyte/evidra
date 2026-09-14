@@ -30,6 +30,7 @@ export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: 
     evaluation: {
       folds,
       seeds,
+      matrixRequired: manifest.evaluation?.matrixRequired ?? false,
     },
     resources: {
       executor: manifest.resources.executor,
@@ -45,6 +46,7 @@ export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: 
     EVIDRA_EXPERIMENT_CONFIG: configPath,
     EVIDRA_DATASET_VERSION: datasetVersion,
     EVIDRA_SPLIT_VERSION: splitVersion,
+    EVIDRA_MATRIX_REQUIRED: manifest.evaluation?.matrixRequired ? "1" : "0",
   };
 }
 
