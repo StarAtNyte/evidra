@@ -1800,6 +1800,9 @@ research
       }
       const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode));
       const durableEvents = store.recentEvents(500);
+      // Keep the prompt/event window bounded, but never truncate the reward
+      // history used for convergence decisions in a long-running campaign.
+      const searchRewardEvents = store.eventsByType("research.search.reward");
       const recentEvents = durableEvents.slice(-20);
       const openCriticConstraint = latestOpenCriticConstraint(durableEvents);
       const literatureFrontier = sourceFrontier(durableEvents);
@@ -2664,7 +2667,7 @@ research
       const stagnation = detectStagnation(recentDecisions);
       const stopPolicy = assessStopPolicy({
         stopCondition: campaign.stopCondition,
-        rewards: durableEvents.filter((event) => event.type === "research.search.reward").map((event) => {
+        rewards: searchRewardEvents.map((event) => {
           const payload = event.payload as { reward?: unknown; durationSeconds?: unknown; valid?: unknown; reproducible?: unknown };
           return { reward: Number(payload.reward), durationSeconds: Number(payload.durationSeconds), valid: payload.valid !== false, reproducible: payload.reproducible === true };
         }).filter((observation) => Number.isFinite(observation.reward)),
