@@ -81,6 +81,21 @@ yardstick or silently discarding failed branches.
 Sources: [AlphaEvolve](https://arxiv.org/abs/2506.13131) and
 [AI Scientist-v2](https://github.com/SakanaAI/AI-Scientist-v2).
 
+[EvoScientist](https://arxiv.org/abs/2603.08127) makes the memory boundary more
+explicit: ideation memory should retain both feasible directions and failed
+directions, while experimentation memory should preserve effective execution
+strategies. Evidra's durable claims, hypotheses, failure trajectories,
+transferable methods, literature sources, and repository leads implement this
+separation. The important remaining test is not whether memory grows, but
+whether retrieval improves replicated outcomes without increasing stale-route
+repetition or context cost.
+
+[CodeEvolve](https://arxiv.org/abs/2510.14150) motivates island-style populations
+and inspiration-based crossover. Evidra currently approximates the safety
+invariant through formulation-family diversity and bounded portfolios; an
+island/crossover policy must be introduced as a matched benchmark arm before it
+can replace the current policy.
+
 ## Benchmark the harness, not just the model
 
 AIRS-Bench provides task specifications for multiple research-agent frameworks
