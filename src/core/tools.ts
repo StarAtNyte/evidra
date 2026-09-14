@@ -4,6 +4,7 @@ import { auditData } from "./data-audit.js";
 import { guardAutonomousCommand, guardReadOnlyInspection, guardWorkspaceCommand, type AutonomyLevel } from "./permissions.js";
 import { runProcess, type ProcessControl } from "./process.js";
 import { splitCommandLine } from "./process.js";
+import { safeWorkerEnvironment } from "./executors.js";
 import { renderReport, writeReport, type ReportKind } from "./reports.js";
 import { createValidationPolicy, writeValidationPolicy } from "./validation-policy.js";
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, researchSearchQueries, retrieveSource, searchResearchRepositories, searchResearchSources, searchResearchWeb, sourceClaims, sourceFrontier, sourceIsFresh } from "./sources.js";
@@ -192,17 +193,18 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       throw new Error(`SAFE mode permits inspection tools only; '${call.name}' requires fast or yolo autonomy.`);
     }
     const args = validateToolArguments(call.name, call.arguments);
+    const workerEnvironment = safeWorkerEnvironment();
     let output: unknown;
     switch (call.name) {
       case "workspace.files": {
-        const result = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], context.root, 30_000, undefined, context.onProcess);
+        const result = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], context.root, 30_000, undefined, context.onProcess, workerEnvironment);
         output = { exitCode: result.exitCode, files: result.stdout.split("\n").filter(Boolean).slice(0, 2_000) };
         break;
       }
       case "workspace.search": {
         const query = stringArg(args, "query");
         const target = typeof args.path === "string" ? inside(context.root, args.path) : context.root;
-        const result = await runProcess(["rg", "-n", "--hidden", "-g", "!.sota/**", "-g", "!node_modules/**", query, target], context.root, 30_000, undefined, context.onProcess);
+        const result = await runProcess(["rg", "-n", "--hidden", "-g", "!.sota/**", "-g", "!node_modules/**", query, target], context.root, 30_000, undefined, context.onProcess, workerEnvironment);
         output = { exitCode: result.exitCode, matches: result.stdout.slice(0, 50_000), stderr: result.stderr.slice(0, 4_000) };
         break;
       }
@@ -214,8 +216,8 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         break;
       }
       case "git.status": {
-        const status = await runProcess(["git", "status", "--short"], context.root, 30_000, undefined, context.onProcess);
-        const head = await runProcess(["git", "rev-parse", "HEAD"], context.root, 30_000, undefined, context.onProcess);
+        const status = await runProcess(["git", "status", "--short"], context.root, 30_000, undefined, context.onProcess, workerEnvironment);
+        const head = await runProcess(["git", "rev-parse", "HEAD"], context.root, 30_000, undefined, context.onProcess, workerEnvironment);
         output = { head: head.stdout.trim(), status: status.stdout.trim(), statusCode: status.exitCode };
         break;
       }
@@ -231,7 +233,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         }
         const timeout = typeof args.timeoutMs === "number" ? Math.max(1_000, Math.min(args.timeoutMs, 15 * 60_000)) : 120_000;
         context.onProgress?.(`Tool shell.exec · ${command.join(" ")}`);
-        const result = await runProcess(command, context.root, timeout, undefined, context.onProcess);
+        const result = await runProcess(command, context.root, timeout, undefined, context.onProcess, workerEnvironment);
         output = { exitCode: result.exitCode, stdout: redactSecrets(result.stdout.slice(-50_000)), stderr: redactSecrets(result.stderr.slice(-10_000)), durationMs: result.durationMs };
         break;
       }

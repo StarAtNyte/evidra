@@ -2274,6 +2274,27 @@ test("research tool registry exposes safe workspace tools", async () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("autonomous research tools do not inherit controller credentials", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-tool-env-"));
+  const db = join(root, ".sota", "database.sqlite");
+  const previous = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "controller-secret";
+  try {
+    const probe = await executeResearchTool({
+      name: "shell.exec",
+      arguments: {
+        command: [process.execPath, "-e", "console.log(JSON.stringify({ secret: process.env.OPENAI_API_KEY ?? null }))"],
+      },
+    }, { root, storePath: db, autonomy: "yolo" });
+    assert.equal(probe.ok, true);
+    assert.match(probe.output.stdout, /\"secret\":null/);
+  } finally {
+    if (previous === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previous;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("missing tool provenance is downgraded to untrusted content", () => {
   assert.equal(normalizeResearchToolResult({ name: "custom", ok: true, output: "external" }).trust, "untrusted_content");
   assert.equal(toolFailureTrust("provider timed out"), "controller_observation");
