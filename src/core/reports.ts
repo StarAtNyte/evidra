@@ -55,7 +55,6 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     "## Counts",
     "",
     Object.entries(counts).map(([key, value]) => `- ${key}: ${value}`).join("\n"),
-    `- run_attempts: ${attempts.length}`,
     "",
     "## State integrity",
     "",

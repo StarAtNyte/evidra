@@ -925,9 +925,9 @@ export class ResearchStore {
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, Math.max(1, Math.min(limit, 200)));
   }
 
-  counts(): { hypotheses: number; experiments: number; runs: number; artifacts: number; trajectories: number; decisions: number; claims: number; edges: number; sources: number } {
+  counts(): { hypotheses: number; experiments: number; runs: number; attempts: number; artifacts: number; trajectories: number; decisions: number; claims: number; edges: number; sources: number } {
     const count = (table: string): number => (this.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
-    return { hypotheses: count("hypotheses"), experiments: count("experiments"), runs: count("runs"), artifacts: count("artifacts"), trajectories: count("trajectories"), decisions: count("decisions"), claims: count("evidence_claims"), edges: count("research_edges"), sources: count("research_sources") };
+    return { hypotheses: count("hypotheses"), experiments: count("experiments"), runs: count("runs"), attempts: count("run_attempts"), artifacts: count("artifacts"), trajectories: count("trajectories"), decisions: count("decisions"), claims: count("evidence_claims"), edges: count("research_edges"), sources: count("research_sources") };
   }
 
   experiments(): Array<{ id: string; payload: unknown; createdAt: string }> {
