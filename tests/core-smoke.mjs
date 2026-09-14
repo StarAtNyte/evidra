@@ -1729,9 +1729,11 @@ test("research tool registry exposes safe workspace tools", async () => {
     const db = join(root, ".sota", "database.sqlite");
     const files = await executeResearchTool({ name: "workspace.files" }, { root, storePath: db, autonomy: "safe" });
     assert.equal(files.ok, true);
+    assert.equal(files.trust, "controller_observation");
     assert.equal(files.output.files.includes("notes.txt"), true);
     const search = await executeResearchTool({ name: "workspace.search", arguments: { query: "hypothesis" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(search.ok, true);
+    assert.equal(search.trust, "untrusted_content");
     writeFileSync(join(root, "result.json"), JSON.stringify({ score: 0.9 }));
     const audited = await executeResearchTool({ name: "artifact.audit", arguments: { paths: ["result.json", "notes.txt"] } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(audited.ok, true);
@@ -1754,6 +1756,7 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.match(reportDenied.error, /inspection tools only/);
     const sourceBoundary = await executeResearchTool({ name: "source.retrieve", arguments: { url: "http://127.0.0.1:9/private" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(sourceBoundary.ok, false);
+    assert.equal(sourceBoundary.trust, "permission_boundary");
     assert.doesNotMatch(sourceBoundary.error, /inspection tools only/);
     assert.match(sourceBoundary.error, /private or loopback/);
     assert.equal(existsSync(join(root, "reports")), false);

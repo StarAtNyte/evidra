@@ -28,11 +28,15 @@ export interface ResearchToolCall {
   arguments?: Record<string, unknown>;
 }
 
+export type ResearchToolTrust = "controller_observation" | "untrusted_content" | "permission_boundary";
+
 export interface ResearchToolResult {
   name: string;
   ok: boolean;
   output?: unknown;
   error?: string;
+  /** Trust class prevents retrieved text or workspace instructions becoming agent directives. */
+  trust?: ResearchToolTrust;
 }
 
 export interface ResearchToolSpec {
@@ -49,6 +53,7 @@ function recordToolEvent(context: ResearchToolContext, result: ResearchToolResul
     store.appendEvent(result.ok ? "research.tool.completed" : "research.tool.failed", {
       name: result.name,
       ok: result.ok,
+      trust: result.trust,
       error: result.error,
       output,
     });
@@ -56,6 +61,12 @@ function recordToolEvent(context: ResearchToolContext, result: ResearchToolResul
   } catch {
     // Tool audit logging must not turn a successful research observation into a failure.
   }
+}
+
+function toolTrust(name: string): ResearchToolTrust {
+  if (["workspace.read", "workspace.search", "shell.exec", "source.search", "source.retrieve", "web.search", "repository.search"].includes(name)) return "untrusted_content";
+  if (["validation.generate", "report.generate"].includes(name)) return "permission_boundary";
+  return "controller_observation";
 }
 
 export const RESEARCH_TOOLS: ResearchToolSpec[] = [
@@ -309,11 +320,11 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       }
       default: throw new Error(`Unknown research tool: ${call.name}`);
     }
-    const result = { name: call.name, ok: true, output };
+    const result = { name: call.name, ok: true, output, trust: toolTrust(call.name) };
     recordToolEvent(context, result);
     return result;
   } catch (error) {
-    const result = { name: call.name, ok: false, error: error instanceof Error ? error.message : String(error) };
+    const result = { name: call.name, ok: false, error: error instanceof Error ? error.message : String(error), trust: "permission_boundary" as const };
     recordToolEvent(context, result);
     return result;
   }

@@ -140,6 +140,13 @@ advantage. In particular, future cases should cover persisted policy mutation,
 untrusted task artifacts, restart-time action replay, and recovery paths that
 attempt to escalate permissions.
 
+The tool protocol now makes this boundary machine-visible: workspace text,
+shell output, web/repository metadata, and retrieved source content are tagged
+`untrusted_content`; deterministic controller observations and permission
+decisions use separate trust classes. The director can therefore be told to
+use content as evidence candidates without allowing embedded instructions to
+change the controller policy.
+
 Source: [HarnessRisk: A Lifecycle-Oriented Benchmark for Agent Harness Safety](https://arxiv.org/abs/2608.17597).
 
 ## Scientific usefulness requires judgment plus external acceptance
