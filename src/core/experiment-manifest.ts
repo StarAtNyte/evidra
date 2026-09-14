@@ -94,6 +94,7 @@ export function createReplicationManifest(parent: ExperimentManifest, competitio
     timeoutMinutes: parent.resources.timeoutMinutes,
     folds: parent.evaluation.folds,
     seeds: [...parent.evaluation.seeds, Date.now() % 100000],
+    matrixRequired: parent.evaluation.matrixRequired,
     requiredArtifacts: parent.evaluation.requiredArtifacts,
     verificationCommand: parent.evaluation.verificationCommand,
     verificationCommands: parent.evaluation.verificationCommands,

@@ -1581,6 +1581,16 @@ test("competition matrix policy propagates into generated experiment manifests",
   assert.match(manifestSummary(manifest), /matrix required/);
 });
 
+test("replication manifests preserve strict matrix evaluation", () => {
+  const competition = {
+    id: "replication-matrix", name: "Replication Matrix", taskType: "general", datasetRevision: "data",
+    metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" },
+  };
+  const parent = createExperimentManifest({ id: "matrix-parent", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "data", matrixRequired: true }, competition);
+  const child = createReplicationManifest(parent, competition);
+  assert.equal(child.evaluation.matrixRequired, true);
+});
+
 test("terminal sessions are fresh by default and explicitly resumable", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-session-"));
   try {
