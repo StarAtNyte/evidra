@@ -108,6 +108,7 @@ import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks } from "../dist/core/airs-bench.js";
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
+import { planEvolutionaryIslands } from "../dist/core/evolution.js";
 import { planSuccessiveHalving, promoteHalvingStage } from "../dist/core/successive-halving.js";
 import { estimateCost } from "../dist/core/cost-model.js";
 import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
@@ -2688,6 +2689,24 @@ test("adaptive harness profiles influence search operator selection", () => {
 
 test("default autonomous search portfolio exposes every documented operator", () => {
   assert.deepEqual(DEFAULT_SEARCH_OPERATORS, ["greedy", "ucb_portfolio", "evolutionary", "mcts", "ablation", "combination", "replication", "audit"]);
+});
+
+test("evolution planner creates bounded deterministic islands and safe crossover proposals", () => {
+  const candidates = [
+    { id: "seed-a", title: "A", operator: "evolutionary", expectedValue: 1, costMinutes: 1, family: "representation" },
+    { id: "seed-b", title: "B", operator: "combination", expectedValue: 1, costMinutes: 1, family: "optimizer" },
+    { id: "seed-c", title: "C", operator: "mcts", expectedValue: 1, costMinutes: 1, family: "search" },
+    { id: "greedy", title: "G", operator: "greedy", expectedValue: 1, costMinutes: 1, family: "baseline" },
+  ];
+  const plan = planEvolutionaryIslands(candidates, 2);
+  assert.equal(plan.enabled, true);
+  assert.equal(plan.islands.length, 2);
+  assert.equal(plan.crossoverProposals.length, 1);
+  assert.deepEqual(plan.crossoverProposals[0].parentCandidateIds, ["seed-a", "seed-b"]);
+  assert.equal(plan.crossoverProposals[0].requiresMatchedEvaluation, true);
+  assert.equal(plan.crossoverProposals[0].executable, false);
+  assert.deepEqual(plan, planEvolutionaryIslands(candidates, 2));
+  assert.equal(planEvolutionaryIslands([{ ...candidates[0], operator: "greedy" }], 2).enabled, false);
 });
 
 test("search policy evidence reports rankings, rewards, cost, and reproducibility", () => {

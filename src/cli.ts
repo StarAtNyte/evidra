@@ -1900,6 +1900,7 @@ research
         reservedMinutes: portfolioPlan.reservedMinutes,
         parallelism: portfolioPlan.parallelism,
         successiveHalving: portfolioPlan.halving,
+        evolution: portfolioPlan.evolution,
         costEstimates: portfolioPlan.costEstimates,
         policy: "bounded-best-of-k",
       });

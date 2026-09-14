@@ -91,10 +91,12 @@ whether retrieval improves replicated outcomes without increasing stale-route
 repetition or context cost.
 
 [CodeEvolve](https://arxiv.org/abs/2510.14150) motivates island-style populations
-and inspiration-based crossover. Evidra currently approximates the safety
-invariant through formulation-family diversity and bounded portfolios; an
-island/crossover policy must be introduced as a matched benchmark arm before it
-can replace the current policy.
+and inspiration-based crossover. Evidra now emits a deterministic, bounded
+island plan from admitted evolutionary/combination/MCTS candidates, including
+explicit migration links and crossover proposals. Proposals remain
+non-executable until the controller creates a matched experiment manifest, so
+the mechanism cannot bypass permissions or evidence gates. It still requires a
+matched benchmark arm before it can be claimed better than the current policy.
 
 ## Benchmark the harness, not just the model
 

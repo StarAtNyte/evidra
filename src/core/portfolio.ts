@@ -27,6 +27,7 @@ export interface PortfolioPlan {
   reservedMinutes: number;
   parallelism: number;
   halving: SuccessiveHalvingPlan;
+  evolution: import("./evolution.js").EvolutionPlan;
   costEstimates: Record<string, CostEstimate>;
 }
 
@@ -88,7 +89,8 @@ export function planPortfolio(candidates: PortfolioCandidate[], options: Portfol
   // remain available through planSuccessiveHalving for adapters that expose
   // more intermediate worker contracts.
   const halving = planSuccessiveHalving(selected.map((candidate) => ({ id: candidate.id, costMinutes: costEstimates[candidate.id]?.upperMinutes ?? Math.max(0.1, candidate.costMinutes), family: candidate.family })), available, { rounds: 2 });
-  return { selected, rejected, reservedMinutes, parallelism, halving, costEstimates };
+  const evolution = planEvolutionaryIslands(selected, Math.min(parallelism, 4));
+  return { selected, rejected, reservedMinutes, parallelism, halving, evolution, costEstimates };
 }
 
 function score(candidate: PortfolioCandidate, history?: CostObservation[], context?: CostContext): number {
@@ -101,3 +103,4 @@ function score(candidate: PortfolioCandidate, history?: CostObservation[], conte
 }
 import { estimateCost, type CostContext, type CostEstimate, type CostObservation } from "./cost-model.js";
 import { planSuccessiveHalving, type SuccessiveHalvingPlan } from "./successive-halving.js";
+import { planEvolutionaryIslands } from "./evolution.js";
