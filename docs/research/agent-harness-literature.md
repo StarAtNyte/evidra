@@ -357,6 +357,10 @@ works, and records every probe in the durable frontier. The default remains one
 fast probe; deep search therefore spends extra network work only when the
 director requests progressive coverage.
 
+Literature-bearing research lanes use this deep route and retrieve at most two
+top candidates per lane. Search metadata remains a lead; only the bounded
+retrieval path creates hashed source records and claim edges for the director.
+
 The Agentic Harness Engineering work frames harness improvement as an
 observability-driven evolution loop: freeze failures, measure them under fixed
 budgets, and let later harness versions target the observed failure classes.

@@ -135,7 +135,7 @@ export function laneToolCalls(role: ResearchLaneRole, objective = ""): ResearchT
   // the evidence-aware source workflow.
   if (role === "domain researcher" || role === "method researcher") {
     const literatureQuery = objective.trim().slice(0, 600) || `${role} methods and evidence`;
-    calls.push({ name: "source.search", arguments: { query: literatureQuery, limit: 6 } });
+    calls.push({ name: "source.search", arguments: { query: literatureQuery, limit: 6, depth: "deep" } });
   }
   if (role === "method researcher") calls.push({ name: "repository.search", arguments: { query: objective.trim().slice(0, 300) || "research method implementation", limit: 6 } });
   return calls;
@@ -325,14 +325,16 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         toolResults.push(result);
         if (call.name === "source.search" && result.ok && !primarySourceQueued) {
           const output = result.output && typeof result.output === "object" ? result.output as { results?: unknown } : {};
-          const candidate = Array.isArray(output.results)
-            ? output.results.find((entry): entry is { url: string } => Boolean(entry && typeof entry === "object" && typeof (entry as { url?: unknown }).url === "string" && /^https?:\/\//i.test((entry as { url: string }).url)))
-            : undefined;
-          if (candidate) {
-            // Search results are candidates, not evidence. Retrieve exactly
-            // one top result per lane to bound network and context cost while
-            // ensuring the useful path produces a durable hashed source.
-            calls.push({ name: "source.retrieve", arguments: { url: candidate.url } });
+          const candidates = Array.isArray(output.results)
+            ? output.results.flatMap((entry): string[] => Boolean(entry && typeof entry === "object" && typeof (entry as { url?: unknown }).url === "string" && /^https?:\/\//i.test((entry as { url: string }).url)) ? [(entry as { url: string }).url] : [])
+            : [];
+          for (const url of [...new Set(candidates)].slice(0, 2)) {
+            // Search results are candidates, not evidence. Retrieve only two
+            // top results per literature lane: enough for independent source
+            // coverage without allowing a search call to flood context.
+            calls.push({ name: "source.retrieve", arguments: { url } });
+          }
+          if (candidates.length) {
             primarySourceQueued = true;
           }
         }
