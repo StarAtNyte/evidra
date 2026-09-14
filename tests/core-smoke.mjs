@@ -109,6 +109,7 @@ import { createAirsBenchmarkProtocol, discoverAirsBenchTasks } from "../dist/cor
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
 import { advanceEvolutionaryGeneration, planEvolutionaryIslands } from "../dist/core/evolution.js";
+import { literatureWorkKey, scoreLiteratureBenchmark } from "../dist/core/literature-bench.js";
 import { planSuccessiveHalving, promoteHalvingStage } from "../dist/core/successive-halving.js";
 import { estimateCost } from "../dist/core/cost-model.js";
 import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
@@ -1760,6 +1761,22 @@ test("deep literature search creates bounded deterministic progressive probes", 
   assert.equal(new Set(probes).size, probes.length);
   assert.ok(probes.every((probe) => probe.length <= 300));
   assert.deepEqual(probes, researchSearchQueries("agent harness validation benchmark reproducibility experiments", "deep"));
+});
+
+test("literature benchmark separates deep recall, wide recall, grounding, and query budget", () => {
+  assert.equal(literatureWorkKey("https://doi.org/10.1234/Test?x=1"), "doi:10.1234/test");
+  const report = scoreLiteratureBenchmark([
+    { id: "deep-1", kind: "deep", requiredWorks: ["doi:10.1/a"], queryBudget: 3 },
+    { id: "wide-1", kind: "wide", requiredWorks: ["doi:10.1/a", "https://example.org/b"], queryBudget: 4 },
+  ], [
+    { taskId: "deep-1", queries: 2, candidates: [{ work: "https://doi.org/10.1/a", grounded: true }] },
+    { taskId: "wide-1", queries: 3, candidates: [{ work: "doi:10.1/a", grounded: true }, { work: "https://example.org/b", grounded: false }] },
+  ]);
+  assert.equal(report.valid, false);
+  assert.equal(report.deepRecall, 1);
+  assert.equal(report.wideRecall, 1);
+  assert.equal(report.tasks[1].groundingRate, 0.5);
+  assert.match(report.tasks[1].reasons.join(" "), /grounding/);
 });
 
 test("repository search parsing preserves implementation leads without trusting metadata", () => {

@@ -364,6 +364,12 @@ Each returned work also retains the exact probe(s) that found it, preventing
 deep-search coverage metrics from counting a result against queries that did
 not actually produce it.
 
+The reusable literature benchmark scorer separates deep target recall from wide
+set recall, grounding rate, and query efficiency. A task is only protocol-valid
+when every required work is found and grounded within its declared query budget;
+partial discovery remains visible as a diagnostic score but cannot become a
+competitive win.
+
 The Agentic Harness Engineering work frames harness improvement as an
 observability-driven evolution loop: freeze failures, measure them under fixed
 budgets, and let later harness versions target the observed failure classes.
