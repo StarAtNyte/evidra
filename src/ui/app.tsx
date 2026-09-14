@@ -2247,7 +2247,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const project = store.project();
       const campaign = config.campaign;
-      append("assistant", project ? `Project: ${project.name}\nWorkspace: ${project.competitionId}\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\nEvents: ${store.eventCount()}${campaign ? `\nCampaign: ${campaign.status}\nGoal: ${campaign.goal}\nBudget: ${campaign.budgetMinutes} minutes\nStop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\nProvider retry: ${campaign.nextAttemptAt}` : ""}` : ""}` : "No Evidra project initialized. Start with /research to configure an autonomous campaign.");
+      const integrity = store.verifyEventChain();
+      const eventCount = store.eventCount();
+      append("assistant", project ? `Project: ${project.name}\nWorkspace: ${project.competitionId}\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\nEvents: ${eventCount}\nIntegrity: ${integrity.status.toUpperCase()}${integrity.legacy ? ` (${integrity.legacy} legacy)` : ""}${campaign ? `\nCampaign: ${campaign.status}\nGoal: ${campaign.goal}\nBudget: ${campaign.budgetMinutes} minutes\nStop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\nProvider retry: ${campaign.nextAttemptAt}` : ""}` : ""}` : "No Evidra project initialized. Start with /research to configure an autonomous campaign.");
       store.close();
       return;
     }

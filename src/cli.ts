@@ -400,8 +400,10 @@ program.command("status").action(() => {
     console.log("No Evidra project initialized. Start with: evidra init local-research or evidra init <workspace>");
   } else {
     console.log(`Project       ${project.name}`);
-  console.log(`Workspace     ${project.competitionId}`);
+    console.log(`Workspace     ${project.competitionId}`);
     console.log(`Events        ${store.eventCount()}`);
+    const integrity = store.verifyEventChain();
+    console.log(`Integrity     ${integrity.status.toUpperCase()}${integrity.legacy ? ` (${integrity.legacy} legacy)` : ""}`);
     const lease = store.liveControllerLease();
     const running = store.experiments().filter((entry) => (entry.payload as { status?: unknown }).status === "running");
     if (!lease && running.length) console.log(`Stale experiments ${running.length} (no live controller; run research/challenge to recover safely)`);
