@@ -16,7 +16,7 @@ import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
 import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInspection } from "../dist/core/permissions.js";
 import { QueueWorker } from "../dist/core/queue-worker.js";
-import { executeResearchTool, RESEARCH_TOOLS } from "../dist/core/tools.js";
+import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
 import { LocalExecutor, containerCommand, parseMetricOutput, parseModalWorkerResult, validateRunMetric } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
@@ -1769,6 +1769,10 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert(events.includes("research.tool.completed"));
     assert(events.includes("research.tool.failed"));
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("missing tool provenance is downgraded to untrusted content", () => {
+  assert.equal(normalizeResearchToolResult({ name: "custom", ok: true, output: "external" }).trust, "untrusted_content");
 });
 
 test("scholarly source discovery returns candidates without trusting them", () => {

@@ -1,7 +1,7 @@
 import { ResearchDecisionSchema, type AgentResult, type ResearchDecision, type AgentTask } from "../core/types.js";
 import { isProviderUsageLimit, isRetryableAgentError, runWithLocalFallback, type AgentProvider } from "./codex-exec.js";
 import type { ProcessControl } from "../core/process.js";
-import { RESEARCH_TOOLS, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
+import { normalizeResearchToolResult, RESEARCH_TOOLS, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
 import { boundResearchContext } from "../core/context-budget.js";
 
 function extractJson(output: unknown): unknown {
@@ -123,12 +123,13 @@ export async function runResearchDirector(
       let result: ResearchToolResult | undefined;
       for (let attempt = 1; attempt <= maxToolAttempts; attempt += 1) {
         try {
-          result = await options.executeTool(call);
+          result = normalizeResearchToolResult(await options.executeTool(call));
         } catch (error) {
           result = {
             name: call.name,
             ok: false,
             error: error instanceof Error ? error.message : String(error),
+            trust: "permission_boundary",
           };
         }
         if (result.ok || !isRetryableResearchToolFailure(result) || attempt === maxToolAttempts) break;

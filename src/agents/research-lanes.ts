@@ -5,7 +5,7 @@ import type { AgentProvider, ExecAgentOptions } from "./codex-exec.js";
 import { isProviderUsageLimit, isRetryableAgentError, resolveLocalFallbackModel, runWithLocalFallback } from "./codex-exec.js";
 import type { ProcessControl } from "../core/process.js";
 import type { AutonomyLevel } from "../core/permissions.js";
-import type { ResearchToolCall, ResearchToolResult } from "../core/tools.js";
+import { normalizeResearchToolResult, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
 import { boundResearchContext } from "../core/context-budget.js";
 
 export const RESEARCH_LANE_ROLES = [
@@ -161,6 +161,7 @@ export function selectResearchLaneRoles(objective: string, requested: number): R
 const MAX_LANE_TOOL_RESULT_BYTES = 12_000;
 
 export function boundLaneToolResult(result: ResearchToolResult): ResearchToolResult {
+  result = normalizeResearchToolResult(result);
   if (result.output === undefined) return result;
   const serialized = typeof result.output === "string" ? result.output : JSON.stringify(result.output);
   if (Buffer.byteLength(serialized, "utf8") <= MAX_LANE_TOOL_RESULT_BYTES) return result;
@@ -326,7 +327,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
           try {
             result = boundLaneToolResult(await options.executeTool(call));
           } catch (error) {
-            result = { name: call.name, ok: false, error: error instanceof Error ? error.message : String(error) };
+            result = { name: call.name, ok: false, error: error instanceof Error ? error.message : String(error), trust: "permission_boundary" };
           }
           options.onToolResult?.(`lane:${role}`, attempt === 1 ? callId : `${callId}:retry`, result);
           if (result.ok || attempt === 2 || !isRetryableAgentError(new Error(result.error ?? ""))) break;

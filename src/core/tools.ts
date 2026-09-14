@@ -46,6 +46,11 @@ export interface ResearchToolSpec {
   readOnly: boolean;
 }
 
+/** Apply the safest default when a provider or test double omits provenance metadata. */
+export function normalizeResearchToolResult(result: ResearchToolResult): ResearchToolResult {
+  return result.trust ? result : { ...result, trust: "untrusted_content" };
+}
+
 function recordToolEvent(context: ResearchToolContext, result: ResearchToolResult): void {
   try {
     const store = new ResearchStore(context.storePath);
