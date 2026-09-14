@@ -1574,6 +1574,10 @@ research
       const literatureGuidance = `Literature frontier: ${literatureFrontier.uniqueWorks} unique works across ${literatureFrontier.queryCount} queries; query coverage ${(literatureFrontier.queryCoverage * 100).toFixed(0)}%; ${literatureFrontier.retrievedWorks} retrieved (${(literatureFrontier.retrievalCoverage * 100).toFixed(0)}%); ${literatureFrontier.pendingWorks} pending; claim coverage ${(literatureFrontier.claimCoverage * 100).toFixed(0)}%. ${literatureCoverageInstruction}`;
       const recoveryGuidance = recoveryRoutes ? `\n\nMANDATORY RECOVERY ROUTES FROM PRIOR FAILURES:\n${recoveryRoutes}\nDo not schedule the same experiment manifest or unchanged command after a terminal recovery directive. The next action must implement the listed alternate route and explain its falsification target.` : "";
       const allocatedObjective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra search policy:\nPrioritize the '${searchPolicy[0]?.operator ?? "ucb_portfolio"}' operator (${searchPolicy[0]?.rationale ?? "portfolio default"}) while preserving at least one diverse alternative.\n\n${literatureGuidance}\n\n${harnessGuidance}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}\n\nBounded experience replay (use as lessons, not proof):\n${replayGuidance}${recoveryGuidance}${criticConstraintGuidance}`;
+      const latestEvolution = recentEvents.slice().reverse().find((event) => event.type === "research.evolution.generation.completed");
+      const evolutionGuidance = latestEvolution
+        ? `\\n\\nEVOLUTIONARY GENERATION: ${JSON.stringify(latestEvolution.payload).slice(0, 8_000)}\\nIf a crossover is justified, return one concrete offspring hypothesis with exactly the durable parentHypothesisIds from this record. Preserve each parent's falsification boundary; do not claim the offspring works before a matched evaluator run.`
+        : "";
       const priorRubricGaps = recentEvents
         .filter((event) => event.type === "research.rubric.assessed")
         .slice(-2)
@@ -1582,7 +1586,7 @@ research
       const rubricGuidance = priorRubricGaps.length
         ? `\n\nPrior decision-rubric gaps to repair before spending compute:\n${[...new Set(priorRubricGaps)].join("\n")}`
         : "";
-      const cycleObjective = allocatedObjective + rubricGuidance + steeringGuidance;
+      const cycleObjective = allocatedObjective + evolutionGuidance + rubricGuidance + steeringGuidance;
       const researchSources = latestSourcePayloads(store.sources(), 12, cycleObjective);
       const researchMemory = researchMemoryContext(store, 30, cycleObjective);
       const peerLaneBoard = boundedPeerBoard(recentEvents);
@@ -1934,6 +1938,7 @@ research
             const proposal = createExperimentManifest({
               id: proposalId,
               hypothesisId: selectedHypothesisId,
+              parentHypothesisIds: selectedHypothesis.parentHypothesisIds,
               outcomeType: selectedHypothesis.outcomeType,
               gitCommit: commit.stdout.trim(),
               datasetVersion: adapter.config.datasetRevision,
@@ -2000,6 +2005,7 @@ research
               const ablationManifest = createExperimentManifest({
                 id: ablationId,
                 parent: experimentId,
+                parentHypothesisIds: parentManifest.data.parentHypothesisIds,
                 hypothesisId: parentManifest.data.hypothesisId,
                 outcomeType: parentManifest.data.outcomeType,
                 gitCommit: parentManifest.data.gitCommit,
@@ -2100,6 +2106,7 @@ research
             const manifest = createExperimentManifest({
               id: experimentId,
               hypothesisId: selectedHypothesisId,
+              parentHypothesisIds: selectedHypothesis.parentHypothesisIds,
               outcomeType: selectedHypothesis.outcomeType,
               gitCommit: commit.stdout.trim(),
               datasetVersion: adapter.config.datasetRevision,

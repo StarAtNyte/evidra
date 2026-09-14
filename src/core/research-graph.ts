@@ -42,6 +42,18 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
     });
   });
 
+  // Evolutionary offspring must point only to hypotheses materialized in this
+  // decision or an earlier durable decision. Unknown IDs are ignored rather
+  // than allowing model text to manufacture graph ancestry.
+  const durableHypothesisIds = new Set(store.hypotheses().map((entry) => entry.id));
+  decision.hypotheses.forEach((hypothesis, index) => {
+    const hypothesisId = hypothesisIds[index];
+    for (const parentId of hypothesis.parentHypothesisIds ?? []) {
+      if (parentId === hypothesisId || !durableHypothesisIds.has(parentId)) continue;
+      store.saveEdge({ id: `edge_${hypothesisId}_${parentId}`, fromId: hypothesisId, toId: parentId, relation: "depends_on", confidence: 0.8, evidenceIds: [] });
+    }
+  });
+
   const selected = decision.hypotheses.find((hypothesis) => hypothesis.title === decision.selectedHypothesis);
   if (selected) {
     const selectedId = hypothesisIds[decision.hypotheses.indexOf(selected)];

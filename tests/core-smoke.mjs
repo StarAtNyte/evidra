@@ -1281,6 +1281,15 @@ test("source adaptation preserves literature provenance through the research gra
     const autonomousClaim = store.claims().find((entry) => entry.id === autonomousMaterialized.claimIds[0]);
     assert.equal(autonomousClaim?.payload.sourceType, "literature");
     assert.equal(autonomousClaim?.payload.sourceId, "paper-adapt");
+    const offspring = materializeResearchDecision(store, {
+      phase: "hypothesis", goalStatus: "active", decision: "propose",
+      bottleneck: "Test a measured combination",
+      rationale: "Two durable directions can be tested as one falsifiable offspring.",
+      hypotheses: [{ title: "Crossover test", mechanism: "The parent mechanisms may complement each other.", parentHypothesisIds: [materialized.hypothesisIds[0], "invented-parent"], evidence: [], proposedChange: "Combine only the two declared parent changes.", falsificationTest: "The matched evaluator does not improve or reproducibility fails.", expectedMetricDelta: { low: 0, median: 0, high: 0 }, computeCostGpuHours: 0, implementationRisk: "medium", leakageRisk: "low", dependencies: materialized.hypothesisIds, ablationFactors: [] }],
+      searchOperator: "evolutionary", selectedHypothesis: "Crossover test", nextAction: "Run a matched offspring evaluation", toolCalls: [],
+    });
+    assert.ok(store.edges().some((edge) => edge.fromId === offspring.hypothesisIds[0] && edge.toId === materialized.hypothesisIds[0] && edge.relation === "depends_on"));
+    assert.equal(store.edges().some((edge) => edge.fromId === offspring.hypothesisIds[0] && edge.toId === "invented-parent"), false);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

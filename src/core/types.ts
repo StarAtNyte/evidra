@@ -79,6 +79,8 @@ export const ResearchHypothesisSchema = z.object({
   evidence: z.array(z.string()).default([]),
   /** Durable source IDs supporting the literature-derived evidence above. */
   evidenceSourceIds: z.array(z.string().min(1)).max(8).default([]),
+  /** Exact durable hypothesis IDs used as parents for an evolutionary offspring. */
+  parentHypothesisIds: z.array(z.string().min(1)).max(2).default([]),
   proposedChange: z.string().min(1),
   falsificationTest: z.string().min(1),
   expectedMetricDelta: z.object({ low: z.number(), median: z.number(), high: z.number() }).default({ low: 0, median: 0, high: 0 }),
@@ -192,6 +194,7 @@ export const ExperimentManifestSchema = z.object({
   schemaVersion: z.number().int().positive().default(1),
   id: z.string().min(1),
   parent: z.string().nullable().default(null),
+  parentHypothesisIds: z.array(z.string().min(1)).max(2).default([]),
   hypothesisId: z.string().min(1),
   outcomeType: z.enum(["metric", "artifact", "proof", "behavior", "system", "other"]).default("metric"),
   gitCommit: z.string().min(1),

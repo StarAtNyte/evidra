@@ -22,6 +22,7 @@ export interface ManifestInput {
   maximumRegressionShift?: number;
   requireReplication?: boolean;
   parent?: string | null;
+  parentHypothesisIds?: string[];
   searchOperator?: string;
 }
 
@@ -30,6 +31,7 @@ export function createExperimentManifest(input: ManifestInput, competition: Comp
     schemaVersion: 1,
     id: input.id,
     parent: input.parent ?? null,
+    parentHypothesisIds: input.parentHypothesisIds ?? [],
     hypothesisId: input.hypothesisId,
     outcomeType: input.outcomeType ?? "metric",
     gitCommit: input.gitCommit,
@@ -75,6 +77,7 @@ export function createReplicationManifest(parent: ExperimentManifest, competitio
   return createExperimentManifest({
     id: `rep_${Date.now()}_${parent.hypothesisId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 28)}`,
     parent: parent.id,
+    parentHypothesisIds: parent.parentHypothesisIds,
     hypothesisId: parent.hypothesisId,
     outcomeType: parent.outcomeType,
     gitCommit: parent.gitCommit,

@@ -68,6 +68,7 @@ export async function runResearchDirector(
     "mechanism": "why it should work",
     "evidence": ["observed evidence or explicitly empty"],
     "evidenceSourceIds": ["exact durable source IDs when evidence is literature-derived"],
+    "parentHypothesisIds": ["exact durable parent hypothesis IDs for an evolutionary offspring, otherwise empty"],
     "proposedChange": "one concrete code or experiment change",
     "falsificationTest": "what result would disprove it",
     "expectedMetricDelta": {"low": 0, "median": 0, "high": 0},
