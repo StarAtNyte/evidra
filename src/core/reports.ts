@@ -98,10 +98,11 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   })() : "No experience curriculum recorded.");
   sections.push("", "## Harness benchmark feedback", "", harnessBenchmarkEvents.length
     ? harnessBenchmarkEvents.slice(-5).map((event) => {
-      const payload = event.payload as { challenger?: string; scorecards?: Array<{ harness?: string; competitiveScore?: number; failureProfile?: Record<string, number> }>; comparisons?: Array<{ incumbent?: string; challengerWins?: boolean; reason?: string }> };
+      const payload = event.payload as { challenger?: string; scorecards?: Array<{ harness?: string; competitiveScore?: number; failureProfile?: Record<string, number> }>; comparisons?: Array<{ incumbent?: string; challengerWins?: boolean; reason?: string }>; changeOutcomes?: Array<{ incumbent?: string; outcome?: { status?: string; observedDelta?: number } }> };
       const scores = (payload.scorecards ?? []).map((scorecard) => `${scorecard.harness ?? "unknown"}=${typeof scorecard.competitiveScore === "number" ? scorecard.competitiveScore.toFixed(1) : "?"}${Object.keys(scorecard.failureProfile ?? {}).length ? ` failures=${JSON.stringify(scorecard.failureProfile)}` : ""}`).join(", ");
       const comparisons = (payload.comparisons ?? []).map((comparison) => `vs ${comparison.incumbent ?? "unknown"}: ${comparison.challengerWins ? "win" : "not proven"}`).join("; ");
-      return `- ${event.createdAt} · challenger ${payload.challenger ?? "unknown"}\n  Scores: ${scores || "none"}${comparisons ? `\n  Comparisons: ${comparisons}` : ""}`;
+      const changes = (payload.changeOutcomes ?? []).map((item) => `vs ${item.incumbent ?? "unknown"}: ${item.outcome?.status ?? "unobserved"}${typeof item.outcome?.observedDelta === "number" ? ` (${item.outcome.observedDelta.toFixed(4)})` : ""}`).join("; ");
+      return `- ${event.createdAt} · challenger ${payload.challenger ?? "unknown"}\n  Scores: ${scores || "none"}${comparisons ? `\n  Comparisons: ${comparisons}` : ""}${changes ? `\n  Prediction contract: ${changes}` : ""}`;
     }).join("\n")
     : "No matched harness benchmark feedback recorded.");
   sections.push("", "## Harness evolution plan", "", harnessEvolutionEvents.length
