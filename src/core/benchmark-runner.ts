@@ -1,4 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve } from "node:path";
 import { parseMetricOutput } from "./executors.js";
 import { classifyProcessFailure } from "./executors.js";
@@ -40,6 +41,8 @@ export interface BenchmarkArmSpec {
 export interface BenchmarkRunReport {
   schemaVersion: 1;
   startedAt: string;
+  /** Stable identity of the matched comparison contract, independent of harness commands. */
+  protocolFingerprint: string;
   trials: HarnessTrial[];
   runs: Array<{ harness: string; command: string[]; cwd: string; result: ProcessResult; metric?: number; attempts: number; attemptDetails: BenchmarkAttemptRecord[]; failureClass?: string; reproducibility?: { command: string[]; result: ProcessResult; metric?: number; tolerance: number; matched: boolean } }>;
 }
@@ -57,6 +60,27 @@ export interface BenchmarkAttemptRecord {
 export interface BenchmarkRunOptions {
   /** Maximum number of independent task arms to execute concurrently. */
   maxParallel?: number;
+}
+
+/** Hash only fairness-critical protocol fields; harness implementations remain free to use different commands. */
+export function benchmarkProtocolFingerprint(arms: BenchmarkArmSpec[]): string {
+  const identity = arms.map((arm) => ({
+    task: arm.task,
+    slice: arm.slice ?? null,
+    arm: arm.arm,
+    seed: String(arm.seed),
+    model: arm.model,
+    reasoningEffort: arm.reasoningEffort ?? "medium",
+    budgetMinutes: arm.budgetMinutes,
+    dataRevision: arm.dataRevision ?? null,
+    runtimeFingerprint: arm.runtimeFingerprint ?? null,
+    direction: arm.direction,
+    baselineMetric: arm.baselineMetric,
+    taskWorstMetric: arm.taskWorstMetric ?? null,
+    taskBestMetric: arm.taskBestMetric ?? null,
+    metric: arm.metric,
+  })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return `sha256:${createHash("sha256").update(JSON.stringify(identity)).digest("hex")}`;
 }
 
 function benchmarkCwd(root: string, requested: string | undefined, harness: string): string {
@@ -187,5 +211,5 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     }
   };
   await Promise.all(Array.from({ length: concurrency }, () => worker()));
-  return { schemaVersion: 1, startedAt, trials: results.map((result) => result!.trial), runs: results.map((result) => result!.run) };
+  return { schemaVersion: 1, startedAt, protocolFingerprint: benchmarkProtocolFingerprint(arms), trials: results.map((result) => result!.trial), runs: results.map((result) => result!.run) };
 }

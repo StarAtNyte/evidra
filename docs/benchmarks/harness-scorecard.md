@@ -52,6 +52,12 @@ comparison passes the conservative win gate. This makes competitiveness the
 default behavior of the executable harness path, while still refusing to call a
 single-task, incomplete, invalid, or unreplicated result a win. Use
 `--challenger` and `--incumbent` for explicit labels.
+Every generated benchmark report also includes a `protocolFingerprint`. It is a
+SHA-256 identity over the fairness-critical task, arm, seed, model, reasoning
+effort, budget, data/runtime revision, direction, baseline, bounds, and metric
+fields. Harness-specific commands are deliberately excluded, so different
+implementations can share one contract while later reports can still prove
+that the comparison protocol was unchanged.
 Each arm declares the same protocol metadata plus a bounded command, working
 directory, metric name, and baseline. Evidra executes the commands with their
 declared time budgets, parses the declared metric, and writes raw process

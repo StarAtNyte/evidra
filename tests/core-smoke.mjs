@@ -130,7 +130,7 @@ import { deriveAdaptiveHarnessPolicy } from "../dist/core/adaptive-harness.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "../dist/core/error-analysis.js";
 import { createTransferableMethod, transferableMethodsFromEvents } from "../dist/core/method-transfer.js";
 import { createAblationPlan, ablationPlansFromEvents, evaluateAblationEvidence } from "../dist/core/ablation.js";
-import { runBenchmarkArms } from "../dist/core/benchmark-runner.js";
+import { benchmarkProtocolFingerprint, runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks } from "../dist/core/airs-bench.js";
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
@@ -3275,6 +3275,9 @@ test("benchmark runner executes matched arms and records evaluator-backed metric
     assert.ok(typeof report.trials[0].timeToEvidenceSeconds === "number");
     assert.deepEqual(report.trials[0].componentIds, ["routing", "verification"]);
     assert.equal(report.trials[0].policy, "ucb_portfolio");
+    assert.equal(report.protocolFingerprint, benchmarkProtocolFingerprint(arms));
+    assert.equal(benchmarkProtocolFingerprint(arms), benchmarkProtocolFingerprint(arms.map((arm) => ({ ...arm, command: ["different-harness-command"] }))));
+    assert.notEqual(benchmarkProtocolFingerprint(arms), benchmarkProtocolFingerprint(arms.map((arm) => ({ ...arm, model: "different-model" }))));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
