@@ -12,6 +12,14 @@ export interface HarnessComponent {
   editable: boolean;
 }
 
+export interface HarnessChangePresence {
+  status: "changed" | "unchanged" | "unavailable";
+  changedPaths: string[];
+  addedPaths: string[];
+  removedPaths: string[];
+  reason: string;
+}
+
 export interface HarnessIntervention {
   id: string;
   priority: number;
@@ -79,6 +87,23 @@ export function inventoryHarnessComponents(root: string, maxFiles = 500): Harnes
   const output: HarnessComponent[] = [];
   try { walk(root, root, output); } catch { return []; }
   return output.sort((a, b) => a.path.localeCompare(b.path)).slice(0, Math.max(1, maxFiles));
+}
+
+/** Check that a retest is exercising a real source change, not an unchanged rerun. */
+export function assessHarnessChangePresence(
+  baseline: Array<{ path: string; checksum: string }> | undefined,
+  current: HarnessComponent[],
+): HarnessChangePresence {
+  if (!baseline) return { status: "unavailable", changedPaths: [], addedPaths: [], removedPaths: [], reason: "No baseline component snapshot was recorded." };
+  const before = new Map(baseline.map((component) => [component.path, component.checksum]));
+  const after = new Map(current.map((component) => [component.path, component.checksum]));
+  const changedPaths = [...after.keys()].filter((path) => before.has(path) && before.get(path) !== after.get(path)).sort();
+  const addedPaths = [...after.keys()].filter((path) => !before.has(path)).sort();
+  const removedPaths = [...before.keys()].filter((path) => !after.has(path)).sort();
+  const allChanges = [...new Set([...changedPaths, ...addedPaths, ...removedPaths])].filter((path) => path.startsWith("src/")).sort();
+  return allChanges.length
+    ? { status: "changed", changedPaths: allChanges, addedPaths: addedPaths.filter((path) => path.startsWith("src/")), removedPaths: removedPaths.filter((path) => path.startsWith("src/")), reason: `${allChanges.length} source component path(s) changed.` }
+    : { status: "unchanged", changedPaths: [], addedPaths: [], removedPaths: [], reason: "No src/ component changed since the benchmark snapshot." };
 }
 
 function componentsOf(inventory: HarnessComponent[], patterns: RegExp[]): string[] {

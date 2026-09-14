@@ -146,7 +146,7 @@ import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../dist/core/validation-lock.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexSandbox, isProviderFallbackEligible, resolveCodexModel } from "../dist/agents/codex-exec.js";
-import { evaluateHarnessChange, inventoryHarnessComponents, planHarnessInterventions } from "../dist/core/harness-evolution.js";
+import { assessHarnessChangePresence, evaluateHarnessChange, inventoryHarnessComponents, planHarnessInterventions } from "../dist/core/harness-evolution.js";
 import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
 import { assessStopPolicy } from "../dist/core/stop-policy.js";
 import { classifyVerifier, verifierKind } from "../dist/core/formal-verification.js";
@@ -2712,6 +2712,12 @@ test("harness evolution inventories editable components and enforces prediction 
     assert.equal(evaluateHarnessChange(contract, { candidateScore: 0.57, valid: true }).status, "confirmed");
     assert.equal(evaluateHarnessChange(contract, { candidateScore: 0.51, valid: true }).status, "refuted");
     assert.equal(evaluateHarnessChange(contract, { candidateScore: 0.9, valid: false }).status, "unobserved");
+    const snapshot = inventory.map((component) => ({ path: component.path, checksum: component.checksum }));
+    assert.equal(assessHarnessChangePresence(snapshot, inventory).status, "unchanged");
+    assert.equal(assessHarnessChangePresence([{ path: "src/core/executors.ts", checksum: "old" }], inventory).status, "changed");
+    assert.equal(assessHarnessChangePresence([{ path: "src/core/executors.ts", checksum: "sha256:test" }], inventory).status, "changed");
+    assert.equal(assessHarnessChangePresence([{ path: "src/core/executors.ts", checksum: "sha256:test" }, { path: "src/agents/codex-exec.ts", checksum: "sha256:test" }], inventory).status, "changed");
+    assert.equal(assessHarnessChangePresence(undefined, inventory).status, "unavailable");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

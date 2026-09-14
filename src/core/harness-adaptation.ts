@@ -40,6 +40,7 @@ export interface HarnessRetestTask {
     challenger: string;
     benchmarkEvidence?: unknown;
     benchmarkProtocol?: unknown[];
+    baselineComponents?: Array<{ path: string; checksum: string }>;
     interventions: HarnessIntervention[];
     retest: HarnessRetestContract;
     executionRule: "controller-owned";
@@ -61,6 +62,9 @@ export function materializeHarnessRetestTask(plan: HarnessAdaptationPlan, benchm
   const benchmarkProtocol = benchmarkEvidence && typeof benchmarkEvidence === "object" && Array.isArray((benchmarkEvidence as { protocol?: unknown }).protocol)
     ? (benchmarkEvidence as { protocol: unknown[] }).protocol
     : undefined;
+  const baselineComponents = benchmarkEvidence && typeof benchmarkEvidence === "object" && Array.isArray((benchmarkEvidence as { componentSnapshot?: unknown }).componentSnapshot)
+    ? (benchmarkEvidence as { componentSnapshot: Array<{ path: string; checksum: string }> }).componentSnapshot
+    : undefined;
   return {
     id: `harness-retest:${plan.challenger}:${revision}`,
     kind: "harness.retest",
@@ -70,6 +74,7 @@ export function materializeHarnessRetestTask(plan: HarnessAdaptationPlan, benchm
       challenger: plan.challenger,
       ...(benchmarkEvidence === undefined ? {} : { benchmarkEvidence }),
       ...(benchmarkProtocol ? { benchmarkProtocol } : {}),
+      ...(baselineComponents ? { baselineComponents } : {}),
       interventions: plan.interventions,
       retest: plan.retest,
       executionRule: "controller-owned",
