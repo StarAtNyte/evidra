@@ -151,6 +151,39 @@ function commandArgs(value: unknown): string[] {
   throw new Error("Tool argument 'command' must be an argv array or non-empty string.");
 }
 
+/** Validate the small public tool contract before any filesystem or network work. */
+function validateToolArguments(name: string, value: unknown): Record<string, unknown> {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Tool arguments must be an object.");
+  const args = value as Record<string, unknown>;
+  const requiredString = (key: string): void => {
+    if (typeof args[key] !== "string" || !(args[key] as string).trim()) throw new Error(`Tool argument '${key}' is required and must be a non-empty string.`);
+  };
+  const optionalString = (key: string): void => {
+    if (args[key] !== undefined && typeof args[key] !== "string") throw new Error(`Tool argument '${key}' must be a string.`);
+  };
+  const optionalNumber = (key: string): void => {
+    if (args[key] !== undefined && (typeof args[key] !== "number" || !Number.isFinite(args[key]))) throw new Error(`Tool argument '${key}' must be a finite number.`);
+  };
+  switch (name) {
+    case "workspace.search": requiredString("query"); optionalString("path"); break;
+    case "workspace.read": requiredString("path"); optionalNumber("maxBytes"); break;
+    case "shell.exec": if (args.command === undefined) throw new Error("Tool argument 'command' is required."); commandArgs(args.command); optionalNumber("timeoutMs"); break;
+    case "source.retrieve": requiredString("url"); if (args.refresh !== undefined && typeof args.refresh !== "boolean") throw new Error("Tool argument 'refresh' must be a boolean."); break;
+    case "source.search": case "web.search": case "repository.search":
+      requiredString("query"); optionalNumber("limit");
+      if (name === "source.search" && args.depth !== undefined && args.depth !== "shallow" && args.depth !== "deep") throw new Error("Tool argument 'depth' must be 'shallow' or 'deep'.");
+      break;
+    case "data.audit": optionalString("path"); break;
+    case "artifact.audit":
+      if (!Array.isArray(args.paths) || !args.paths.length || args.paths.length > 64 || !args.paths.every((path) => typeof path === "string" && path.trim())) throw new Error("Tool argument 'paths' must contain 1 to 64 non-empty strings.");
+      optionalNumber("maxBytes"); break;
+    case "prediction.analyze": requiredString("path"); optionalString("baseline"); optionalNumber("maxRows"); break;
+    case "report.generate": if (args.kind !== "research" && args.kind !== "challenge" && args.kind !== "final") throw new Error("Tool argument 'kind' must be research, challenge, or final."); break;
+  }
+  return args;
+}
+
 export async function executeResearchTool(call: ResearchToolCall, context: ResearchToolContext): Promise<ResearchToolResult> {
   try {
     const spec = RESEARCH_TOOLS.find((tool) => tool.name === call.name);
@@ -158,7 +191,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
     if (context.autonomy === "safe" && !spec.readOnly) {
       throw new Error(`SAFE mode permits inspection tools only; '${call.name}' requires fast or yolo autonomy.`);
     }
-    const args = call.arguments ?? {};
+    const args = validateToolArguments(call.name, call.arguments);
     let output: unknown;
     switch (call.name) {
       case "workspace.files": {

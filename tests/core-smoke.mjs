@@ -2214,6 +2214,12 @@ test("research tool registry exposes safe workspace tools", async () => {
     const search = await executeResearchTool({ name: "workspace.search", arguments: { query: "hypothesis" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(search.ok, true);
     assert.equal(search.trust, "untrusted_content");
+    const malformedArguments = await executeResearchTool({ name: "workspace.search", arguments: { query: 42 } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(malformedArguments.ok, false);
+    assert.match(malformedArguments.error, /query.*required.*string/);
+    const malformedShape = await executeResearchTool({ name: "workspace.read", arguments: "notes.txt" }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(malformedShape.ok, false);
+    assert.match(malformedShape.error, /arguments must be an object/);
     writeFileSync(join(root, "result.json"), JSON.stringify({ score: 0.9 }));
     const audited = await executeResearchTool({ name: "artifact.audit", arguments: { paths: ["result.json", "notes.txt"] } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(audited.ok, true);
