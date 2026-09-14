@@ -213,8 +213,25 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       case "repository.search": {
         const query = stringArg(args, "query");
         const limit = typeof args.limit === "number" ? Math.max(1, Math.min(20, Math.floor(args.limit))) : 8;
+        const repositoryStore = new ResearchStore(context.storePath);
+        const cachedSearch = repositoryStore.recentEvents(2_000).reverse().find((event) => {
+          if (event.type !== "research.repository.search.completed") return false;
+          const payload = event.payload && typeof event.payload === "object" ? event.payload as { query?: unknown; results?: unknown } : {};
+          return payload.query === query && Array.isArray(payload.results) && Date.now() - Date.parse(event.createdAt) < DEFAULT_SOURCE_REFRESH_MS;
+        });
+        if (cachedSearch) {
+          const payload = cachedSearch.payload as { results: unknown[] };
+          repositoryStore.appendEvent("research.repository.search.cache_hit", { query, resultCount: payload.results.length, freshnessMs: DEFAULT_SOURCE_REFRESH_MS });
+          repositoryStore.close();
+          output = { query, results: payload.results.slice(0, limit), cached: true, warning: "Repository matches are research leads; inspect and reproduce their methods before treating them as evidence." };
+          break;
+        }
+        repositoryStore.close();
         const results = await searchResearchRepositories(query, limit);
-        output = { query, results, warning: "Repository matches are research leads; inspect and reproduce their methods before treating them as evidence." };
+        const store = new ResearchStore(context.storePath);
+        store.appendEvent("research.repository.search.completed", { query, results, source: "github" });
+        store.close();
+        output = { query, results, cached: false, warning: "Repository matches are research leads; inspect and reproduce their methods before treating them as evidence." };
         break;
       }
       case "data.audit": {

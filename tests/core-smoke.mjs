@@ -1805,6 +1805,16 @@ test("source retrieval reuses fresh durable evidence unless explicitly refreshed
     const finalStore = new ResearchStore(db);
     assert(finalStore.recentEvents(20).some((event) => event.type === "research.source.search.cache_hit"));
     finalStore.close();
+    const repositoryStore = new ResearchStore(db);
+    repositoryStore.appendEvent("research.repository.search.completed", { query: "cached implementation query", results: [{ name: "research/method", url: "https://github.com/research/method", stars: 12 }] });
+    repositoryStore.close();
+    const repositories = await executeResearchTool({ name: "repository.search", arguments: { query: "cached implementation query" } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(repositories.ok, true);
+    assert.equal(repositories.output.cached, true);
+    assert.equal(repositories.output.results[0].name, "research/method");
+    const repositoryEvents = new ResearchStore(db);
+    assert(repositoryEvents.recentEvents(30).some((event) => event.type === "research.repository.search.cache_hit"));
+    repositoryEvents.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
