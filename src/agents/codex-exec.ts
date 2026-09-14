@@ -376,7 +376,11 @@ export async function runWithLocalFallback(
     onProgress?.(`Codex limit reached; switching to local/${localModel}...`);
     try {
       await checkProvider({ provider: "local", model: localModel, cwd: options.cwd });
-      return await new CodexExecAgent({ provider: "local", model: localModel, cwd: options.cwd }).run(task, onProgress, onProcess);
+      return await new CodexExecAgent({
+        ...options,
+        provider: "local",
+        model: localModel,
+      }).run(task, onProgress, onProcess);
     } catch (localError) {
       if (options.limitPolicy !== "auto") throw localError;
       const detail = localError instanceof Error ? localError.message : String(localError);
