@@ -1449,6 +1449,10 @@ research
       const recentEvents = durableEvents.slice(-20);
       const openCriticConstraint = latestOpenCriticConstraint(durableEvents);
       const literatureFrontier = sourceFrontier(durableEvents);
+      const literatureBenchmarkEvidence = durableEvents
+        .filter((event) => event.type === "literature.benchmark.completed")
+        .slice(-3)
+        .map((event) => event.payload);
       const harnessBenchmarkEvidence = durableEvents
         .filter((event) => event.type === "harness.benchmark.completed")
         .slice(-3)
@@ -1601,6 +1605,9 @@ research
         ? "Before promoting a literature-derived method, retrieve pending primary sources and extract claims; treat the current literature frontier as incomplete evidence."
         : "Literature retrieval and claim coverage are adequate for this cycle, but source claims remain lower-confidence than workspace measurements.";
       const literatureGuidance = `Literature frontier: ${literatureFrontier.uniqueWorks} unique works across ${literatureFrontier.queryCount} queries; query coverage ${(literatureFrontier.queryCoverage * 100).toFixed(0)}%; ${literatureFrontier.retrievedWorks} retrieved (${(literatureFrontier.retrievalCoverage * 100).toFixed(0)}%); ${literatureFrontier.pendingWorks} pending; claim coverage ${(literatureFrontier.claimCoverage * 100).toFixed(0)}%. ${literatureCoverageInstruction}`;
+      const literatureBenchmarkGuidance = literatureBenchmarkEvidence.length
+        ? `\n\nLITERATURE BENCHMARK EVIDENCE (diagnostic, not workspace proof): ${JSON.stringify(literatureBenchmarkEvidence).slice(0, 6_000)}\nRepair any recall, grounding, or query-budget failure before claiming research coverage.`
+        : "";
       const recoveryGuidance = recoveryRoutes ? `\n\nMANDATORY RECOVERY ROUTES FROM PRIOR FAILURES:\n${recoveryRoutes}\nDo not schedule the same experiment manifest or unchanged command after a terminal recovery directive. The next action must implement the listed alternate route and explain its falsification target.` : "";
       const allocatedObjective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra search policy:\nPrioritize the '${searchPolicy[0]?.operator ?? "ucb_portfolio"}' operator (${searchPolicy[0]?.rationale ?? "portfolio default"}) while preserving at least one diverse alternative.\n\n${literatureGuidance}\n\n${harnessGuidance}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}\n\nBounded experience replay (use as lessons, not proof):\n${replayGuidance}${recoveryGuidance}${criticConstraintGuidance}`;
       const latestEvolution = recentEvents.slice().reverse().find((event) => event.type === "research.evolution.generation.completed");
@@ -1615,7 +1622,7 @@ research
       const rubricGuidance = priorRubricGaps.length
         ? `\n\nPrior decision-rubric gaps to repair before spending compute:\n${[...new Set(priorRubricGaps)].join("\n")}`
         : "";
-      const cycleObjective = allocatedObjective + evolutionGuidance + rubricGuidance + steeringGuidance;
+      const cycleObjective = allocatedObjective + literatureBenchmarkGuidance + evolutionGuidance + rubricGuidance + steeringGuidance;
       const researchSources = latestSourcePayloads(store.sources(), 12, cycleObjective);
       const researchMemory = researchMemoryContext(store, 30, cycleObjective);
       const peerLaneBoard = boundedPeerBoard(recentEvents);
@@ -1677,6 +1684,7 @@ research
             researchMemory,
             experienceReplay: replayContext,
             literatureFrontier,
+            literatureBenchmarkEvidence,
             openCriticConstraint,
             peerLaneBoard,
           }, {

@@ -51,6 +51,10 @@ An explicit autonomous campaign owns the full local loop: research lanes, implem
 /challenge status             Show challenge campaign state
 
 /benchmark literature-score <file>  Score deep/wide literature discovery and grounding
+
+Literature benchmark reports are durable and are supplied to later autonomous
+research cycles as diagnostic allocation evidence; they do not count as
+workspace experiment proof.
 ```
 
 These commands never authorize external submission. A stopped or interrupted campaign is saved and must be explicitly resumed.

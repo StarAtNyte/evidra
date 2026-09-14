@@ -13,7 +13,7 @@ export interface BoundedContext {
 const priority = [
   "observation", "phaseGoal", "allocation", "evidenceConflicts", "toolResults",
   "crossPollination", "laneReports", "researchMemory", "experienceReplay",
-  "literatureFrontier", "openCriticConstraint", "adaptiveHarnessPolicy",
+  "literatureFrontier", "literatureBenchmarkEvidence", "openCriticConstraint", "adaptiveHarnessPolicy",
   "harnessAdaptationAgenda", "harnessEvolutionPlan", "harnessBenchmarkEvidence",
   "recentEvents", "researchSources", "availableTools",
 ];
