@@ -47,6 +47,18 @@ export interface SplitRunPair {
   candidate: RunResult;
 }
 
+/** Re-open only the replication gate after a verified child confirms the improvement. */
+export function applyIndependentReplicationEvidence(acceptance: ValidationAcceptance, observed: boolean): ValidationAcceptance {
+  if (!observed || acceptance.gates.replication) return acceptance;
+  const gates = { ...acceptance.gates, replication: true };
+  return {
+    ...acceptance,
+    accepted: Object.values(gates).every(Boolean),
+    gates,
+    reasons: acceptance.reasons.filter((reason) => !/independently executed child experiment is required/i.test(reason)),
+  };
+}
+
 export interface MultiSplitValidation {
   accepted: boolean;
   splits: Array<{ split: string; comparison: RunComparison; normalizedDelta: number | null; passed: boolean }>;

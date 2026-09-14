@@ -28,7 +28,7 @@ import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDir
 import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, pauseCampaign, readCampaignRuntime, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { auditExperiment } from "./core/validation.js";
-import { comparisonFamilySize, evaluateValidationAcceptance } from "./core/validation-engine.js";
+import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance } from "./core/validation-engine.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
@@ -2293,6 +2293,12 @@ research
             ? replicationStore.hypotheses().find((entry) => entry.id === parentManifest.data.hypothesisId)?.payload as { title?: unknown; formulationFamily?: unknown; mechanism?: unknown; proposedChange?: unknown } | undefined
             : undefined;
           if (replicationRun.exitCode === 0 && replicationComparison?.comparison?.direction === "improved" && replicationHypothesisPayload && ablationEvidence.complete) {
+            const priorAssessmentEvent = replicationStore.recentEvents(2_000).reverse().find((event) => event.type === "experiment.validation.assessed" && (event.payload as { experimentId?: unknown }).experimentId === experimentId);
+            const priorAssessment = priorAssessmentEvent?.payload as { experimentId?: string; acceptance?: import("./core/validation-engine.js").ValidationAcceptance } | undefined;
+            if (priorAssessment?.acceptance) {
+              const acceptance = applyIndependentReplicationEvidence(priorAssessment.acceptance, true);
+              replicationStore.appendEvent("experiment.validation.reassessed", { experimentId, parentReplicationId: replication.id, acceptance, reason: "verified child replication improved under a distinct manifest" });
+            }
             replicationStore.appendEvent("research.method.transferable", createTransferableMethod({
               id: `method_${experimentId}`,
               sourceCompetition: adapter.id,

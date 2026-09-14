@@ -332,6 +332,12 @@ Replication gates are tied to the declared child manifest as well: two
 unrelated successful runs cannot satisfy the replication phase. The controller
 must observe a successful run for the recorded replication ID.
 
+The controller also persists a second validation assessment after the recorded
+child completes. This closes the temporal gap where a parent was assessed before
+replication existed: only a valid, improved child can lift the parent’s
+replication gate, while all independent leakage, review, statistical, and
+subgroup gates remain unchanged.
+
 Data-audit completion follows the same discipline: clean reports pass directly,
 while reports containing duplicates, distribution shifts, or warnings require an
 explicit recorded acceptance reason before the phase can advance. Acceptance is

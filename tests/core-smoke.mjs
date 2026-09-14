@@ -36,7 +36,7 @@ import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/cor
 import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, selectCurriculum } from "../dist/core/experience.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
 import { evaluateReducedPromotion, experimentNovelty, rankExperimentCandidates, rankPriorities } from "../dist/core/scheduler.js";
-import { comparisonFamilySize, evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
+import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
 import { renderReport } from "../dist/core/reports.js";
 import { latestSourceEntries, latestSourcePayloads, repositoryLeadsFromEvents, researchMemoryContext } from "../dist/core/research-context.js";
@@ -959,6 +959,11 @@ test("validation acceptance requires replicated evidence and safety gates", () =
   assert.equal(blocked.gates.minimumDelta, true);
   assert.equal(blocked.gates.replication, false);
   assert.equal(blocked.accepted, false);
+  const reassessed = applyIndependentReplicationEvidence(blocked, true);
+  assert.equal(reassessed.gates.replication, true);
+  assert.equal(reassessed.accepted, false, "leakage and reviewer gates must remain independently enforced");
+  assert.equal(reassessed.reasons.some((reason) => /independently executed child/i.test(reason)), false);
+  assert.deepEqual(applyIndependentReplicationEvidence(blocked, false), blocked);
   const accepted = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
   assert.equal(accepted.accepted, true);
   const permutationBlocked = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, requirePermutationTest: true });
