@@ -82,6 +82,7 @@ export function validateTrajectoryStructure(events: TrajectoryEvent[]): Trajecto
   const eventIds = new Set<string>();
   const callIndexes = new Map<string, number>();
   const resultCallIds = new Set<string>();
+  const callTools = new Map<string, string>();
   let terminalIndex = -1;
 
   events.forEach((event, index) => {
@@ -96,7 +97,10 @@ export function validateTrajectoryStructure(events: TrajectoryEvent[]): Trajecto
     if (event.kind === "tool_call") {
       if (!event.callId) quarantined.push(`tool call '${event.id || index}' has no call id`);
       else if (callIndexes.has(event.callId)) quarantined.push(`duplicate tool call id '${event.callId}'`);
-      else callIndexes.set(event.callId, index);
+      else {
+        callIndexes.set(event.callId, index);
+        if (typeof event.payload.tool === "string" && event.payload.tool.trim()) callTools.set(event.callId, event.payload.tool);
+      }
     }
     if (event.kind === "tool_result") {
       if (!event.callId) quarantined.push(`tool result '${event.id || index}' has no call id`);
@@ -105,6 +109,9 @@ export function validateTrajectoryStructure(events: TrajectoryEvent[]): Trajecto
       const callIndex = event.callId ? callIndexes.get(event.callId) : undefined;
       if (callIndex === undefined) quarantined.push(`tool result '${event.callId ?? (event.id || index)}' has no matching call`);
       else if (callIndex >= index) quarantined.push(`tool result '${event.callId}' precedes its call`);
+      const requestedTool = event.callId ? callTools.get(event.callId) : undefined;
+      const returnedTool = typeof event.payload.tool === "string" && event.payload.tool.trim() ? event.payload.tool : undefined;
+      if (requestedTool && returnedTool && requestedTool !== returnedTool) quarantined.push(`tool result '${event.callId}' identifies '${returnedTool}', requested '${requestedTool}'`);
     }
   });
 

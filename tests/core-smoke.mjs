@@ -508,6 +508,11 @@ test("trajectory structural gate quarantines ambiguous tool traces", () => {
   assert.ok(structure.issues.some((issue) => issue.includes("duplicate tool call id")));
   assert.ok(structure.issues.some((issue) => issue.includes("no matching call")));
   assert.equal(evaluateTrajectory(malformed).structural.verdict, "FAIL");
+  assert.equal(validateTrajectoryStructure([
+    { id: "call-1", kind: "tool_call", callId: "c1", payload: { tool: "workspace.read" } },
+    { id: "result-1", kind: "tool_result", callId: "c1", payload: { tool: "shell.exec" } },
+    { id: "terminal", kind: "terminal", payload: { status: "completed" } },
+  ]).status, "quarantined");
 });
 
 test("exhausted research-agent failures close a resumable failed trajectory", () => {
