@@ -52,6 +52,7 @@ An explicit autonomous campaign owns the full local loop: research lanes, implem
 
 /benchmark literature-score <file>  Score deep/wide literature discovery and grounding
 /benchmark autoresearch <file>     Import official AutoResearchBench deep/wide evaluation JSON
+/benchmark scientific <file>      Run a stepwise scientific-task contract with verifiers
 /telemetry export                  Export durable runs as secret-free MLflow-shaped JSON
 
 The same command is available in the full-screen TUI through `/` completion.

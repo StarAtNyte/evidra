@@ -87,6 +87,7 @@ import { createTransferableMethod } from "./core/method-transfer.js";
 import { createAblationPlan, evaluateAblationEvidence } from "./core/ablation.js";
 import { deriveReferenceCurve, type LearningPoint } from "./core/early-stopping.js";
 import { buildMlflowRunExports } from "./core/mlflow.js";
+import { evaluateScientificTaskRun, runScientificTask } from "./core/scientific-tasks.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -471,7 +472,6 @@ telemetry.command("export")
     if (options.out) writeFileSync(resolve(options.out), serialized);
     else process.stdout.write(serialized);
   });
-program.addCommand(telemetry);
 
 const benchmark = new Command("benchmark").description("Compare research harnesses under a common task/budget protocol");
 benchmark.command("run")
@@ -684,6 +684,28 @@ benchmark.command("autoresearch")
     if (report.passes !== undefined) console.log(`Passes            ${report.passes}`);
     for (const [name, score] of Object.entries(report.metrics)) console.log(`${name.padEnd(20)} ${score < 1 ? score.toFixed(4) : score.toFixed(2)}`);
     console.log("Imported as diagnostic benchmark evidence; it does not replace workspace evaluator proof.");
+  });
+benchmark.command("scientific")
+  .argument("<file>", "JSON stepwise scientific-task contract")
+  .option("--workspace <dir>", "task workspace root; defaults to the Evidra project")
+  .option("--out <file>", "write the stepwise run and evaluation JSON")
+  .description("Run a stepwise, agent-agnostic scientific task with verified boundaries and resumable snapshots")
+  .action(async (file: string, options: { workspace?: string; out?: string }) => {
+    const task = JSON.parse(readFileSync(resolve(file), "utf8")) as unknown;
+    const workspace = options.workspace ? resolve(options.workspace) : root;
+    const run = await runScientificTask(task, workspace, { onProgress: (message) => console.log(`· ${message}`) });
+    const evaluation = evaluateScientificTaskRun(task, run);
+    const report = { task, run, evaluation };
+    const output = JSON.stringify(report, null, 2);
+    if (options.out) { mkdirSync(dirname(resolve(options.out)), { recursive: true }); writeFileSync(resolve(options.out), `${output}\n`); }
+    const store = new ResearchStore(statePath);
+    store.appendEvent("scientific.task.completed", { taskId: run.taskId, status: run.status, evaluation, ...(options.out ? { reportPath: resolve(options.out) } : {}) });
+    store.close();
+    console.log(`Scientific task · ${evaluation.valid ? "VALID" : "INCOMPLETE"} · ${run.taskId}`);
+    console.log(`Stages           ${(evaluation.stageScore * 100).toFixed(0)}%`);
+    console.log(`Process quality  ${(evaluation.processQuality * 100).toFixed(0)}%`);
+    if (evaluation.reason) console.log(`Reason           ${evaluation.reason}`);
+    if (!evaluation.valid) process.exitCode = 2;
   });
 benchmark.command("compare")
   .argument("<file>", "JSON file containing a trial array or { trials: [...] }")

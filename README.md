@@ -598,6 +598,8 @@ Evidra's competitiveness target and equal-budget comparison protocol are documen
 
 The separate [Autoresearch Bench](https://www.autoresearch-bench.com/) is an external evaluation: agents work in isolated workspaces, may receive public feedback from a grader, and are scored on held-out private results. Evidra's submission adapters and durable public-score observations are the integration boundary for that benchmark; a local smoke run must never be presented as an official Autoresearch Bench score.
 
+For agent-agnostic scientific evaluation, `evidra benchmark scientific task.json` runs an ordered task contract with intermediate verifiers, required artifact checksums, snapshot boundaries, bounded logs, and resumable stage state. See the [stepwise scientific-task protocol](docs/benchmarks/scientific-task-protocol.md).
+
 ## Contribution
 
 Evidra is currently maintained as a private research project. Contributions should preserve the central invariants: deterministic state over conversational state, bounded autonomy, explicit provenance, isolated experiments, and no credential exposure to agents.

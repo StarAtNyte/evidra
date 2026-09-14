@@ -58,6 +58,7 @@ import { validateCompetitionContract } from "../dist/core/competition-contract.j
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
+import { evaluateScientificTaskRun, runScientificTask } from "../dist/core/scientific-tasks.js";
 
 test("search policies receive independent matched scorecards and comparisons", () => {
   const trial = (policy, task, candidateMetric) => ({ harness: `evidra-${policy}`, policy, task, arm: "default", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: false, reproducible: true });
@@ -3289,4 +3290,44 @@ test("experiment audit rejects incomplete declared verifier evidence", () => {
   assert.equal(incomplete.gates.verifiersPassed, false);
   const complete = auditExperiment(manifest, { ...base, verification: { declared: 2, executed: 2, passed: 2, failed: 0, independent: true } }, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true });
   assert.equal(complete.gates.verifiersPassed, true);
+});
+
+test("scientific task runner verifies intermediate stages and resumes verified snapshots", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-scientific-task-"));
+  try {
+    const task = {
+      id: "stepwise-demo",
+      title: "Stepwise scientific task",
+      description: "A small task with independently verified intermediate artifacts.",
+      stages: [
+        { id: "prepare", title: "Prepare evidence", objective: "Create the input artifact.", command: [process.execPath, "-e", "require('node:fs').writeFileSync('input.json','{}')"], requiredArtifacts: ["input.json"], verificationCommands: [[process.execPath, "-e", "if(!require('node:fs').existsSync('input.json')) process.exit(1)"]], snapshotPaths: ["input.json"], timeoutMinutes: 1 },
+        { id: "analyze", title: "Analyze evidence", objective: "Create the result artifact.", command: [process.execPath, "-e", "require('node:fs').writeFileSync('result.json','{}')"], requiredArtifacts: ["result.json"], verificationCommands: [[process.execPath, "-e", "if(!require('node:fs').existsSync('result.json')) process.exit(1)"]], snapshotPaths: ["result.json"], timeoutMinutes: 1 },
+      ],
+    };
+    const first = await runScientificTask(task, root);
+    assert.equal(first.status, "completed");
+    assert.equal(evaluateScientificTaskRun(task, first).valid, true);
+    const resumed = await runScientificTask(task, root, { previous: first });
+    assert.equal(resumed.status, "completed");
+    assert.deepEqual(resumed.stages.map((stage) => stage.status), ["resumed", "resumed"]);
+    writeFileSync(join(root, "input.json"), "{\"mutated\":true}");
+    const repaired = await runScientificTask(task, root, { previous: first });
+    assert.equal(repaired.status, "completed");
+    assert.equal(repaired.stages[0].status, "completed");
+    assert.equal(repaired.stages[1].status, "resumed");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("compiled CLI boots and exposes scientific benchmark command", async () => {
+  const { spawn } = await import("node:child_process");
+  const result = await new Promise((resolve) => {
+    const child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "benchmark", "--help"], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /scientific/);
 });
