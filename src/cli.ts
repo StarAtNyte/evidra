@@ -2558,7 +2558,7 @@ research
           console.log(`Harness · retest ${task.id} could not start: ${error instanceof Error ? error.message : String(error)}`);
         }
       };
-      for (const portfolioCandidate of executionCandidates) {
+      const executePortfolioCandidate = async (portfolioCandidate: (typeof executionCandidates)[number]): Promise<void> => {
         const selectedIndex = materialized.hypothesisIds.indexOf(portfolioCandidate.id);
         const selectedHypothesisId = selectedIndex >= 0 ? materialized.hypothesisIds[selectedIndex] : undefined;
         const selectedHypothesis = selectedIndex >= 0 ? decision.hypotheses[selectedIndex] : undefined;
@@ -2608,7 +2608,7 @@ research
                 screenStore.appendEvent(run.exitCode === 0 ? "experiment.autonomous.screened" : "experiment.autonomous.screening_failed", { experimentId, metric: metric ?? null, exitCode: run.exitCode });
                 screenStore.close();
                 decisionStore = new ResearchStore(statePath);
-                continue;
+                return;
               }
               run = await runCampaignExperiment(root, experimentId, "all", campaignRemainingMs(campaign));
             } catch (error) {
@@ -2624,6 +2624,19 @@ research
             if (run.exitCode === 0) await executeQueuedHarnessRetest(experimentId);
           }
         }
+      };
+      if (halvingEnabled) {
+        for (const portfolioCandidate of executionCandidates) await executePortfolioCandidate(portfolioCandidate);
+      } else {
+        let nextCandidate = 0;
+        const workerCount = Math.max(1, Math.min(portfolioPlan.parallelism, executionCandidates.length));
+        await Promise.all(Array.from({ length: workerCount }, async () => {
+          while (nextCandidate < executionCandidates.length) {
+            const candidate = executionCandidates[nextCandidate];
+            nextCandidate += 1;
+            if (candidate) await executePortfolioCandidate(candidate);
+          }
+        }));
       }
       if (halvingEnabled) {
         const screeningStage = portfolioPlan.halving.stages[0];
