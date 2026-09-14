@@ -666,6 +666,7 @@ benchmark.command("retest")
       throw new Error(`Stored harness retest protocol has insufficient independent coverage:\n${retestCoverage.issues.map((issue) => `- ${issue}`).join("\n")}`);
     }
     const benchmarkWorkspace = options.workspace ? resolve(options.workspace) : root;
+    const heartbeat = setInterval(() => { retestStore.heartbeatTask(taskId); }, 30_000);
     try {
       const targetComponentIds = [...new Set(arms.filter((arm) => arm.harness === challenger).flatMap((arm) => arm.componentIds ?? []))];
       const changePresence = assessHarnessChangePresence(payload.baselineComponents, inventoryHarnessComponents(benchmarkWorkspace), targetComponentIds);
@@ -696,6 +697,7 @@ benchmark.command("retest")
       retestStore.appendEvent("harness.benchmark.retest.failed", { taskId, error: message, attempts: claimed.attempts });
       throw error;
     } finally {
+      clearInterval(heartbeat);
       retestStore.close();
     }
   });
