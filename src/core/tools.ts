@@ -6,7 +6,7 @@ import { runProcess, type ProcessControl } from "./process.js";
 import { splitCommandLine } from "./process.js";
 import { renderReport, writeReport, type ReportKind } from "./reports.js";
 import { createValidationPolicy, writeValidationPolicy } from "./validation-policy.js";
-import { retrieveSource, searchResearchSources, sourceClaims, sourceFrontier } from "./sources.js";
+import { DEFAULT_SOURCE_REFRESH_MS, retrieveSource, searchResearchSources, sourceClaims, sourceFrontier, sourceIsFresh } from "./sources.js";
 import { ResearchStore } from "./store.js";
 import type { CompetitionConfig } from "./types.js";
 import { isSensitiveWorkspacePath, redactSecrets } from "./redaction.js";
@@ -66,7 +66,7 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   { name: "shell.exec", description: "Run an allowlisted shell command with captured output.", input: { command: "argv array or shell string", timeoutMs: "optional timeout" }, readOnly: true },
   // Retrieval writes only durable local evidence; it does not mutate the
   // workspace or perform an external action, so safe research may use it.
-  { name: "source.retrieve", description: "Retrieve, hash, excerpt, and store a research source with extracted claims.", input: { url: "HTTP(S) URL" }, readOnly: true },
+  { name: "source.retrieve", description: "Retrieve, hash, excerpt, and store a research source with extracted claims; reuse a fresh cached copy unless refresh is requested.", input: { url: "HTTP(S) URL", refresh: "optional boolean to bypass the fresh-source cache" }, readOnly: true },
   { name: "source.search", description: "Search scholarly works and return ranked candidates for later retrieval.", input: { query: "research question or keywords", limit: "optional result count" }, readOnly: true },
   { name: "data.audit", description: "Audit workspace files for size, duplicates, and suspicious data issues.", input: { path: "optional relative path" }, readOnly: true },
   { name: "artifact.audit", description: "Audit bounded research artifacts for safe containment, regular-file integrity, size, checksum, and optional JSON validity.", input: { paths: "relative artifact paths array", maxBytes: "optional per-file size limit" }, readOnly: true },
@@ -154,6 +154,21 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       }
       case "source.retrieve": {
         const url = stringArg(args, "url");
+        const forceRefresh = args.refresh === true;
+        if (!forceRefresh) {
+          const cacheStore = new ResearchStore(context.storePath);
+          const cached = cacheStore.sources().find((entry) => {
+            const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { url?: unknown } : {};
+            return payload.url === url && sourceIsFresh(entry, DEFAULT_SOURCE_REFRESH_MS);
+          });
+          if (cached) {
+            cacheStore.appendEvent("research.source.cache_hit", { id: cached.id, url, freshnessMs: DEFAULT_SOURCE_REFRESH_MS });
+            cacheStore.close();
+            output = { ...(cached.payload as Record<string, unknown>), id: cached.id, cached: true };
+            break;
+          }
+          cacheStore.close();
+        }
         const retrieved = await retrieveSource(url);
         const claims = sourceClaims(retrieved.text);
         const store = new ResearchStore(context.storePath);

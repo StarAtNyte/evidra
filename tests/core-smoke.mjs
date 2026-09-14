@@ -1734,6 +1734,25 @@ test("tool source retrieval preserves the SSRF safety boundary", async () => {
   }
 });
 
+test("source retrieval reuses fresh durable evidence unless explicitly refreshed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-source-cache-"));
+  const db = join(root, ".sota", "database.sqlite");
+  const url = "https://example.org/already-retrieved";
+  try {
+    const store = new ResearchStore(db);
+    store.saveSource({ id: "cached-source", payload: { id: "cached-source", url, title: "Cached paper", retrievedAt: new Date().toISOString(), text: "A durable source excerpt.", excerpt: "A durable source excerpt.", claims: ["A durable source claim."] } });
+    store.close();
+    const result = await executeResearchTool({ name: "source.retrieve", arguments: { url } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(result.ok, true);
+    assert.equal(result.output.cached, true);
+    assert.equal(result.output.id, "cached-source");
+    const eventStore = new ResearchStore(db);
+    const events = eventStore.recentEvents(10).map((event) => event.type);
+    eventStore.close();
+    assert(events.includes("research.source.cache_hit"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("research director executes typed tools and reasons over returned evidence", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-director-"));
   const previousHost = process.env.OLLAMA_HOST;
