@@ -30,6 +30,8 @@ Run it with:
 
 ```bash
 evidra benchmark scientific task.json --workspace ./task --out run.json
+# Later: reuse verified stages from the saved report
+evidra benchmark scientific task.json --workspace ./task --resume run.json --out run-2.json
 ```
 
 The report contains per-stage exit status, verifier counts, artifact checksums,

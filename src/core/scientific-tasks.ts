@@ -97,6 +97,7 @@ function verifyObservation(task: ScientificTask, observation: ScientificStageObs
   if (observation.exitCode !== 0) return "stage command failed";
   if (observation.verification.executed !== observation.verification.declared || observation.verification.failed > 0 || observation.verification.passed !== observation.verification.declared) return "verification contract is incomplete";
   for (const artifact of stage.requiredArtifacts) if (!observation.artifacts[artifact]) return `required artifact is missing: ${artifact}`;
+  for (const path of stage.snapshotPaths) if (!observation.snapshot.files[path]) return `snapshot file is missing: ${path}`;
   if (observation.snapshot.id !== snapshotId(observation.snapshot.files)) return "snapshot checksum is inconsistent";
   return undefined;
 }
@@ -172,9 +173,12 @@ export async function runScientificTask(taskValue: unknown, root: string, option
       const verification = await runProcess(command, cwd, Math.max(1_000, stageDeadline - Date.now()));
       if (verification.exitCode === 0) passed += 1; else failed += 1;
     }
-    const files = fileSnapshot(cwd, stage.snapshotPaths, `stage '${stage.id}' snapshot`);
-    stages.push({ stageId: stage.id, status: result.exitCode === 0 && failed === 0 ? "completed" : "failed", exitCode: result.exitCode, durationMs: result.durationMs, verification: { declared: stage.verificationCommands.length, executed, passed, failed }, artifacts, snapshot: { id: snapshotId(files), files }, stdoutTail: result.stdout.slice(-4_000), stderrTail: result.stderr.slice(-4_000) });
-    if (result.exitCode !== 0 || failed > 0 || artifactsMissing(stage, artifacts) || options.isCancelled?.()) break;
+    let files: Record<string, string> = {};
+    let snapshotError: string | undefined;
+    try { files = fileSnapshot(cwd, stage.snapshotPaths, `stage '${stage.id}' snapshot`); } catch (error) { snapshotError = error instanceof Error ? error.message : String(error); }
+    const stageFailed = result.exitCode !== 0 || failed > 0 || artifactsMissing(stage, artifacts) || Boolean(snapshotError);
+    stages.push({ stageId: stage.id, status: !stageFailed ? "completed" : "failed", exitCode: result.exitCode, durationMs: result.durationMs, verification: { declared: stage.verificationCommands.length, executed, passed, failed }, artifacts, snapshot: { id: snapshotId(files), files }, stdoutTail: result.stdout.slice(-4_000), stderrTail: `${result.stderr}${snapshotError ? `\nSnapshot failed: ${snapshotError}` : ""}`.slice(-4_000) });
+    if (stageFailed || options.isCancelled?.()) break;
   }
   const status = stages.length === task.stages.length && stages.every((stage) => !verifyObservation(task, stage)) ? "completed" : options.isCancelled?.() ? "interrupted" : "failed";
   return { schemaVersion: 1, taskId: task.id, startedAt, ...(status === "completed" ? { completedAt: new Date().toISOString() } : {}), status, stages };

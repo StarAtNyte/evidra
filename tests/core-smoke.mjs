@@ -3320,6 +3320,9 @@ test("scientific task runner verifies intermediate stages and resumes verified s
     assert.equal(repaired.status, "completed");
     assert.equal(repaired.stages[0].status, "completed");
     assert.equal(repaired.stages[1].status, "resumed");
+    const missingSnapshot = await runScientificTask({ ...task, id: "missing-snapshot", stages: [{ ...task.stages[0], snapshotPaths: ["missing.json"] }] }, root);
+    assert.equal(missingSnapshot.status, "failed");
+    assert.equal(evaluateScientificTaskRun({ ...task, id: "missing-snapshot", stages: [{ ...task.stages[0], snapshotPaths: ["missing.json"] }] }, missingSnapshot).valid, false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

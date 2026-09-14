@@ -689,11 +689,13 @@ benchmark.command("scientific")
   .argument("<file>", "JSON stepwise scientific-task contract")
   .option("--workspace <dir>", "task workspace root; defaults to the Evidra project")
   .option("--out <file>", "write the stepwise run and evaluation JSON")
+  .option("--resume <file>", "resume verified stages from a previous scientific-task report")
   .description("Run a stepwise, agent-agnostic scientific task with verified boundaries and resumable snapshots")
-  .action(async (file: string, options: { workspace?: string; out?: string }) => {
+  .action(async (file: string, options: { workspace?: string; out?: string; resume?: string }) => {
     const task = JSON.parse(readFileSync(resolve(file), "utf8")) as unknown;
     const workspace = options.workspace ? resolve(options.workspace) : root;
-    const run = await runScientificTask(task, workspace, { onProgress: (message) => console.log(`· ${message}`) });
+    const previous = options.resume ? (JSON.parse(readFileSync(resolve(options.resume), "utf8")) as { run?: Parameters<typeof evaluateScientificTaskRun>[1] }).run : undefined;
+    const run = await runScientificTask(task, workspace, { previous, onProgress: (message) => console.log(`· ${message}`) });
     const evaluation = evaluateScientificTaskRun(task, run);
     const report = { task, run, evaluation };
     const output = JSON.stringify(report, null, 2);
