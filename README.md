@@ -108,6 +108,15 @@ Search rewards are now context-aware as well. Autonomous experiment rewards reta
 
 Harness benchmarking is closed-loop: `benchmark run` records matched outcomes and emits a durable adaptive retest agenda. Losses are classified into reliability, recovery, alignment, efficiency, search, or coverage interventions with falsifiable predictions and acceptance criteria. The next retest preserves task, model, seed, evaluator, metric, and budget, so Evidra is optimized to beat incumbents by improving the harness rather than by changing the comparison.
 
+When a benchmark exposes a credible harness weakness, Evidra materializes one durable `harness.retest` task. A research or challenge campaign can execute that task automatically after the candidate implementation succeeds; operators can inspect the same queue with `evidra queue status` and run a specific task manually:
+
+```bash
+evidra benchmark retest harness-retest:<challenger>:<benchmark-revision> \\
+  --workspace path/to/candidate-worktree
+```
+
+Retests are deliberately harder to satisfy than a repeated smoke run. The stored protocol is revalidated before any process starts, the candidate must contain a real change in the declared harness component(s), and the retest must cover at least two distinct tasks with at least two independent seed repetitions per task. The result records raw trials, component checksums, change-presence status, prediction outcome, scorecards, and comparisons. An unchanged worktree, insufficient independent coverage, or an invalidated protocol is rejected and recorded as evidence rather than counted as a win. This makes harness improvement an empirical loop that generalizes across research domains and challenge adapters.
+
 Evidra also speaks the official [AutoResearchBench](https://github.com/CherYou/AutoResearchBench) evaluation protocol. After running its published inference and evaluator pipeline, import either track’s JSON result with `evidra benchmark autoresearch evaluation.json` (or `/benchmark autoresearch evaluation.json` in the TUI). Deep and wide results are stored as diagnostic evidence with their original metrics and record counts; Evidra does not rewrite those scores into a competing metric or confuse them with proof from the active workspace. The benchmark’s released task bundle is decrypted using its own published script before inference, keeping dataset handling compatible with the upstream protocol.
 
 Literature retrieval combines OpenAlex, arXiv, Crossref, public repository search, and bounded web search. The web route is used for official documentation, challenge discussions, dataset pages, and implementation leads; every result remains untrusted until the source is retrieved, hashed, and claim-extracted into the evidence store.
