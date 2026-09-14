@@ -203,7 +203,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         searchStore.close();
         const results = await searchResearchSources(query, limit);
         const store = new ResearchStore(context.storePath);
-        store.appendEvent("research.source.search.completed", { query, results, source: "openalex" });
+        store.appendEvent("research.source.search.completed", { query, results, sources: [...new Set(results.map((result) => result.provider ?? "unknown"))] });
         const frontier = sourceFrontier(store.recentEvents(2_000));
         store.close();
         output = { query, results, frontier: { uniqueWorks: frontier.uniqueWorks, retrievedWorks: frontier.retrievedWorks, pendingWorks: frontier.pendingWorks, queryCount: frontier.queryCount } };

@@ -13,6 +13,7 @@ export interface RetrievedSource extends ResearchSource {
 export interface SourceSearchResult {
   title: string;
   url: string;
+  provider?: "openalex" | "arxiv";
   doi?: string;
   venue?: string;
   publicationDate?: string;
@@ -49,8 +50,49 @@ export function parseSourceSearchResults(value: unknown, limit = 8): SourceSearc
       const name = author && typeof author === "object" && (author as { author?: { display_name?: unknown } }).author?.display_name;
       return typeof name === "string" ? [name] : [];
     }).slice(0, 8) : [];
-    return [{ title, url, doi: typeof item.doi === "string" ? item.doi : undefined, venue: typeof item.primary_location?.source?.display_name === "string" ? item.primary_location.source.display_name : undefined, publicationDate: typeof item.publication_date === "string" ? item.publication_date : undefined, authors, abstract: reconstructAbstract(item.abstract_inverted_index) }];
+    return [{ title, url, provider: "openalex" as const, doi: typeof item.doi === "string" ? item.doi : undefined, venue: typeof item.primary_location?.source?.display_name === "string" ? item.primary_location.source.display_name : undefined, publicationDate: typeof item.publication_date === "string" ? item.publication_date : undefined, authors, abstract: reconstructAbstract(item.abstract_inverted_index) }];
   }).slice(0, Math.max(1, Math.min(limit, 20)));
+}
+
+function xmlText(value: string): string {
+  return value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/\s+/g, " ").trim();
+}
+
+/** Parse the public arXiv Atom response without adding an XML dependency. */
+export function parseArxivSearchResults(xml: string, limit = 8): SourceSearchResult[] {
+  return [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/gi)].flatMap((match) => {
+    const entry = match[1];
+    const title = xmlText(entry.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ?? "");
+    const rawId = xmlText(entry.match(/<id>([\s\S]*?)<\/id>/i)?.[1] ?? "");
+    const arxivId = rawId.match(/arxiv\.org\/(?:abs|pdf)\/(\d+\.\d+(?:v\d+)?)/i)?.[1];
+    if (!title || !arxivId) return [];
+    const authors = [...entry.matchAll(/<author>[\s\S]*?<name>([\s\S]*?)<\/name>[\s\S]*?<\/author>/gi)].map((author) => xmlText(author[1])).filter(Boolean).slice(0, 8);
+    const doi = xmlText(entry.match(/<arxiv:doi>([\s\S]*?)<\/arxiv:doi>/i)?.[1] ?? "") || undefined;
+    return [{
+      title,
+      url: `https://arxiv.org/abs/${arxivId}`,
+      provider: "arxiv" as const,
+      ...(doi ? { doi: doi.startsWith("http") ? doi : `https://doi.org/${doi}` } : {}),
+      publicationDate: xmlText(entry.match(/<published>([\s\S]*?)<\/published>/i)?.[1] ?? "") || undefined,
+      authors,
+      abstract: xmlText(entry.match(/<summary>([\s\S]*?)<\/summary>/i)?.[1] ?? "") || undefined,
+    }];
+  }).slice(0, Math.max(1, Math.min(limit, 20)));
+}
+
+async function searchArxivSources(query: string, limit: number, signal?: AbortSignal): Promise<SourceSearchResult[]> {
+  const endpoint = new URL("https://export.arxiv.org/api/query");
+  endpoint.searchParams.set("search_query", `all:${query.trim().slice(0, 200)}`);
+  endpoint.searchParams.set("start", "0");
+  endpoint.searchParams.set("max_results", String(Math.max(1, Math.min(limit, 20))));
+  await assertPublicUrl(endpoint);
+  const timeoutSignal = AbortSignal.timeout(SOURCE_REQUEST_TIMEOUT_MS);
+  const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  const response = await fetch(endpoint, { signal: requestSignal, headers: { "user-agent": "Evidra/0.1 research-workbench" } });
+  if (!response.ok) throw new Error(`arXiv search failed (${response.status} ${response.statusText}).`);
+  return parseArxivSearchResults(await response.text(), limit);
 }
 
 /** Search scholarly works; retrieval and claim extraction remain a separate step. */
@@ -62,9 +104,26 @@ export async function searchResearchSources(query: string, limit = 8, signal?: A
   await assertPublicUrl(endpoint);
   const timeoutSignal = AbortSignal.timeout(SOURCE_REQUEST_TIMEOUT_MS);
   const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-  const response = await fetch(endpoint, { signal: requestSignal, headers: { "user-agent": "Evidra/0.1 research-workbench" } });
-  if (!response.ok) throw new Error(`Source search failed (${response.status} ${response.statusText}).`);
-  return parseSourceSearchResults(await response.json(), limit);
+  const openAlex = fetch(endpoint, { signal: requestSignal, headers: { "user-agent": "Evidra/0.1 research-workbench" } }).then(async (response) => {
+    if (!response.ok) throw new Error(`Source search failed (${response.status} ${response.statusText}).`);
+    return parseSourceSearchResults(await response.json(), limit);
+  });
+  const [openAlexResult, arxivResult] = await Promise.allSettled([openAlex, searchArxivSources(query, limit, signal)]);
+  const combined = [
+    ...(openAlexResult.status === "fulfilled" ? openAlexResult.value : []),
+    ...(arxivResult.status === "fulfilled" ? arxivResult.value : []),
+  ];
+  if (!combined.length) {
+    const failure = openAlexResult.status === "rejected" ? openAlexResult.reason : arxivResult.status === "rejected" ? arxivResult.reason : undefined;
+    throw failure instanceof Error ? failure : new Error("Scholarly source search returned no candidates.");
+  }
+  const seen = new Set<string>();
+  return combined.filter((result) => {
+    const key = (result.doi ?? result.url).toLowerCase().replace(/[?#].*$/, "").replace(/\/$/, "");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, Math.max(1, Math.min(limit, 20)));
 }
 
 /** Dynamic sources such as discussions and leaderboards should be revisited periodically. */

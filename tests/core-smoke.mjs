@@ -9,7 +9,7 @@ import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../di
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
-import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseSourceSearchResults, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
+import { DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseSourceSearchResults, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
@@ -1709,6 +1709,15 @@ test("scholarly source discovery returns candidates without trusting them", () =
   assert.equal(parsed[0].title, "Adaptive research agents");
   assert.equal(parsed[0].abstract, "Adaptive agents improve");
   assert.equal(parsed[0].authors[0], "A. Researcher");
+});
+
+test("arXiv search parsing preserves primary paper metadata", () => {
+  const parsed = parseArxivSearchResults(`<feed><entry><id>http://arxiv.org/abs/2601.12345v2</id><title>  A robust research method  </title><published>2026-01-15T00:00:00Z</published><author><name>A. Author</name></author><summary>A method that improves robust validation.</summary></entry></feed>`, 4);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].provider, "arxiv");
+  assert.equal(parsed[0].url, "https://arxiv.org/abs/2601.12345v2");
+  assert.equal(parsed[0].authors[0], "A. Author");
+  assert.match(parsed[0].abstract, /improves robust validation/);
 });
 
 test("literature search frontier deduplicates works and reports retrieval coverage", () => {
