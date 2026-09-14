@@ -39,7 +39,7 @@ export function createToolTraceRecorder(prefix = "research"): ToolTraceRecorder 
       return callId;
     },
     onToolResult: (source, callId, result) => {
-      events.push({ id: `${callId}-result`, kind: "tool_result", callId, at: new Date().toISOString(), payload: redactStructured({ tool: result.name, ok: result.ok, output: result.output, error: result.error, source }) });
+      events.push({ id: `${callId}-result`, kind: "tool_result", callId, at: new Date().toISOString(), payload: redactStructured({ tool: result.name, ok: result.ok, output: result.output, error: result.error, trust: result.trust, permissionChecked: result.trust === "permission_boundary", permissionDenied: result.trust === "permission_boundary" && result.ok === false, source }) });
     },
   };
 }

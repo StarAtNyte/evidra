@@ -333,6 +333,12 @@ test("tool trace recorder preserves causal call/result pairs and redacts secrets
   trace.events.push({ id: "terminal", kind: "terminal", payload: { status: "completed" } });
   assert.equal(validateTrajectoryStructure(trace.events).status, "complete");
   assert.equal(trace.events[1].payload.output.value, "token=[REDACTED]");
+  assert.equal(trace.events[1].payload.trust, "untrusted_content");
+  const blocked = createToolTraceRecorder("blocked");
+  const blockedCall = blocked.onToolCall("director", { name: "shell.exec" });
+  blocked.onToolResult("director", blockedCall, { name: "shell.exec", ok: false, error: "blocked", trust: "permission_boundary" });
+  blocked.events.push({ id: "terminal", kind: "terminal", payload: { status: "completed" } });
+  assert.equal(evaluateTrajectory(blocked.events).safetyControl.verdict, "PASS");
 });
 
 test("capability outcomes preserve prediction, serving action, and result", () => {
