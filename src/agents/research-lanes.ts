@@ -31,6 +31,7 @@ export const ResearchLaneReportSchema = z.object({
   recommendations: z.array(z.string()).max(8),
   uncertainties: z.array(z.string()).max(8),
   evidence: z.array(z.string()).max(12),
+  evidenceSourceIds: z.array(z.string().min(1)).max(8).default([]),
   confidence: z.number().min(0).max(1),
 });
 
@@ -195,7 +196,7 @@ function lanePrompt(role: ResearchLaneRole, objective: string): string {
           : "Investigate alternative methods, mechanisms, procedures, and implementation paths; propose falsifiable comparisons.";
   return `${focus}\n\nObjective: ${objective}\n\n` +
     "You are an independent Evidra research lane. Use the supplied workspace and evidence context; run only read-only inspection when tools are available. Do not edit files, submit anything, or claim measurements you did not observe. Return ONLY JSON with this shape: " +
-    '{"role":"...","summary":"...","findings":["..."],"recommendations":["..."],"uncertainties":["..."],"evidence":["command, artifact, or source supporting each important statement"],"confidence":0.0}. ' +
+    '{"role":"...","summary":"...","findings":["..."],"recommendations":["..."],"uncertainties":["..."],"evidence":["command, artifact, or source supporting each important statement"],"evidenceSourceIds":["exact durable source IDs for literature-derived evidence"],"confidence":0.0}. ' +
     "Recommendations must be testable and should state what would falsify them. A bounded prior-peer board may be present in the context: use it to challenge, extend, or explicitly reject earlier findings, but never treat it as stronger than primary evidence.";
 }
 
@@ -222,20 +223,23 @@ function saveLaneEvent(storePath: string, role: string, report: ResearchLaneRepo
   store.appendEvent(report.status === "completed" ? "research.lane.completed" : "research.lane.failed", { role, report });
   if (report.status === "completed") {
     const claimId = `claim_lane_${Date.now()}_${role.replace(/[^a-z0-9]+/gi, "-")}`;
+    const sourceIds = [...new Set((report.evidenceSourceIds ?? []).filter((sourceId) => store.sources().some((source) => source.id === sourceId)))];
+    const sourceId = sourceIds[0];
     store.saveClaim({
       id: claimId,
       payload: {
         id: claimId,
         statement: `[${role}] ${report.summary}`,
         scope: "research lane report",
-        confidence: report.confidence,
-        sourceType: "observation",
-        sourceId: `lane_${role}`,
+        confidence: sourceId ? Math.min(report.confidence, 0.35) : report.confidence,
+        sourceType: sourceId ? "literature" : "observation",
+        sourceId: sourceId ?? `lane_${role}`,
         status: "active",
         findings: report.findings,
         evidence: report.evidence,
       },
     });
+    for (const linkedSourceId of sourceIds) store.saveEdge({ id: `edge_${claimId}_${linkedSourceId}`, fromId: claimId, toId: linkedSourceId, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
   }
   store.close();
 }
@@ -380,7 +384,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     return report;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const report: ResearchLaneReport = { role, summary: "Lane failed before producing a validated report.", findings: [], recommendations: [], uncertainties: [message], evidence: [], confidence: 0, status: "failed", error: message };
+    const report: ResearchLaneReport = { role, summary: "Lane failed before producing a validated report.", findings: [], recommendations: [], uncertainties: [message], evidence: [], evidenceSourceIds: [], confidence: 0, status: "failed", error: message };
     saveLaneEvent(options.storePath, role, report);
     const failed = new ResearchStore(options.storePath);
     failed.updateAgentLane({ role, status: "failed", provider: laneRoute.provider, model: laneRoute.model, task: objective, error: message });

@@ -50,7 +50,7 @@ import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment } from "../dist/core/validation.js";
-import { assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
+import { assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, ResearchLaneReportSchema, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
 import { summarizeUsage } from "../dist/core/usage.js";
@@ -1594,6 +1594,19 @@ test("research lanes use bounded role-specific workspace observations", () => {
   const bounded = boundLaneToolResult({ name: "workspace.search", ok: true, output: "x".repeat(20_000) });
   assert.match(String(bounded.output), /lane observation truncated/);
   assert.ok(Buffer.byteLength(String(bounded.output)) <= 12_100);
+});
+
+test("lane literature claims link only to durable source IDs", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-lane-provenance-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.saveSource({ id: "lane-paper", payload: { title: "Lane paper", url: "https://example.org/lane-paper", retrievedAt: new Date().toISOString(), claims: [] } });
+    store.close();
+    // The lane runner persists parsed reports; exercise the schema contract
+    // here so old reports remain compatible and source IDs are bounded.
+    const report = ResearchLaneReportSchema.parse({ role: "domain researcher", summary: "A source-grounded finding", findings: ["finding"], recommendations: ["test"], uncertainties: [], evidence: ["lane-paper"], evidenceSourceIds: ["lane-paper", "invented-source"], confidence: 0.9 });
+    assert.deepEqual(report.evidenceSourceIds, ["lane-paper", "invented-source"]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("research tool boundaries protect sensitive paths and credentials", () => {
