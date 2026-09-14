@@ -1265,6 +1265,21 @@ test("source adaptation preserves literature provenance through the research gra
     assert.equal(claim?.payload.sourceId, "paper-adapt");
     assert.ok(store.edges().some((edge) => edge.fromId === materialized.claimIds[0] && edge.toId === "paper-adapt" && edge.relation === "derived_from"));
     assert.equal(ablationPlansFromEvents(store.recentEvents(50)).length, 1);
+    const autonomousMaterialized = materializeResearchDecision(store, {
+      phase: "hypothesis",
+      goalStatus: "active",
+      decision: "propose",
+      bottleneck: "Need a paper-grounded test",
+      rationale: "A retrieved source supports the direction.",
+      hypotheses: [{ title: "Autonomous paper link", mechanism: "The source mechanism may transfer.", evidence: ["The retrieved source reports a relevant effect."], evidenceSourceIds: ["paper-adapt"], proposedChange: "Run a controlled transfer test.", falsificationTest: "The transfer test fails on the locked split.", expectedMetricDelta: { low: 0, median: 0, high: 0 }, computeCostGpuHours: 0, implementationRisk: "low", leakageRisk: "low", dependencies: [], ablationFactors: [] }],
+      searchOperator: "greedy",
+      selectedHypothesis: null,
+      nextAction: "Run the controlled transfer test",
+      toolCalls: [],
+    });
+    const autonomousClaim = store.claims().find((entry) => entry.id === autonomousMaterialized.claimIds[0]);
+    assert.equal(autonomousClaim?.payload.sourceType, "literature");
+    assert.equal(autonomousClaim?.payload.sourceId, "paper-adapt");
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

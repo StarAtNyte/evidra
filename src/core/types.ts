@@ -77,6 +77,8 @@ export const ResearchHypothesisSchema = z.object({
   expectedOutcome: z.string().min(1).optional(),
   mechanism: z.string().min(1),
   evidence: z.array(z.string()).default([]),
+  /** Durable source IDs supporting the literature-derived evidence above. */
+  evidenceSourceIds: z.array(z.string().min(1)).max(8).default([]),
   proposedChange: z.string().min(1),
   falsificationTest: z.string().min(1),
   expectedMetricDelta: z.object({ low: z.number(), median: z.number(), high: z.number() }).default({ low: 0, median: 0, high: 0 }),

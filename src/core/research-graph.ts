@@ -19,6 +19,7 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
   const stamp = `${Date.now()}_${decisionId}`;
   const hypothesisIds: string[] = [];
   const claimIds: string[] = [];
+  const durableSourceIds = new Set(store.sources().map((source) => source.id));
 
   decision.hypotheses.forEach((hypothesis, index) => {
     const hypothesisId = `hyp_${stamp}_${String(index + 1).padStart(2, "0")}_${slug(hypothesis.title)}`;
@@ -27,15 +28,17 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
     if (hypothesis.ablationFactors.length > 0) {
       store.appendEvent("research.ablation.plan", createAblationPlan({ hypothesisId, factors: hypothesis.ablationFactors }));
     }
+    const linkedSourceIds = [
+      ...(hypothesis.evidenceSourceIds ?? []).filter((sourceId) => durableSourceIds.has(sourceId)),
+      ...(options.evidenceSourceId && durableSourceIds.has(options.evidenceSourceId) ? [options.evidenceSourceId] : []),
+    ].filter((sourceId, sourceIndex, sourceIds) => sourceIds.indexOf(sourceId) === sourceIndex);
     hypothesis.evidence.forEach((statement, evidenceIndex) => {
       const claimId = `claim_${stamp}_${String(index + 1).padStart(2, "0")}_${evidenceIndex + 1}`;
       claimIds.push(claimId);
-      const literature = Boolean(options.evidenceSourceId);
-      store.saveClaim({ id: claimId, payload: { id: claimId, statement, scope: options.evidenceScope ?? "director decision context", confidence: literature ? 0.35 : 0.5, sourceType: literature ? "literature" : "observation", sourceId: options.evidenceSourceId ?? decisionId.toString(), status: "active" } });
+      const literature = linkedSourceIds.length > 0;
+      store.saveClaim({ id: claimId, payload: { id: claimId, statement, scope: options.evidenceScope ?? (literature ? "durable literature source" : "director decision context"), confidence: literature ? 0.35 : 0.5, sourceType: literature ? "literature" : "observation", sourceId: linkedSourceIds[0] ?? decisionId.toString(), status: "active" } });
       store.saveEdge({ id: `edge_${claimId}_${hypothesisId}`, fromId: claimId, toId: hypothesisId, relation: "supports", confidence: literature ? 0.35 : 0.5, evidenceIds: [claimId] });
-      if (options.evidenceSourceId) {
-        store.saveEdge({ id: `edge_${claimId}_${options.evidenceSourceId}`, fromId: claimId, toId: options.evidenceSourceId, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
-      }
+      for (const sourceId of linkedSourceIds) store.saveEdge({ id: `edge_${claimId}_${sourceId}`, fromId: claimId, toId: sourceId, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
     });
   });
 
