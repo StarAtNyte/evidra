@@ -18,9 +18,24 @@ export interface ExperimentExecutor {
 export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: string): NodeJS.ProcessEnv {
   const configPath = `${cwd}/.sota/experiment-config.json`;
   mkdirSync(dirname(configPath), { recursive: true });
+  const datasetVersion = manifest.datasetVersion ?? "unknown";
+  const splitVersion = manifest.splitVersion ?? "unknown";
+  const folds = manifest.evaluation?.folds ?? [0];
+  const seeds = manifest.evaluation?.seeds ?? [0];
   const payload = redactStructured({
     schemaVersion: 1,
     experimentId: manifest.id,
+    datasetVersion,
+    splitVersion,
+    evaluation: {
+      folds,
+      seeds,
+    },
+    resources: {
+      executor: manifest.resources.executor,
+      gpu: manifest.resources.gpu ?? null,
+      timeoutMinutes: manifest.resources.timeoutMinutes,
+    },
     configPatch: manifest.change?.configPatch ?? {},
   });
   writeFileSync(configPath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
@@ -28,6 +43,8 @@ export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: 
     ...process.env,
     EVIDRA_EXPERIMENT_ID: manifest.id,
     EVIDRA_EXPERIMENT_CONFIG: configPath,
+    EVIDRA_DATASET_VERSION: datasetVersion,
+    EVIDRA_SPLIT_VERSION: splitVersion,
   };
 }
 

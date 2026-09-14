@@ -2497,7 +2497,7 @@ test("experiment executor parses the declared metric instead of a competition-sp
 test("experiment executors expose a redacted generic config contract", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-experiment-config-"));
   try {
-    const manifest = { id: "ablation-1", resources: { executor: "local", timeoutMinutes: 1 }, change: { configPatch: { learningRate: 0.001, apiKey: "sk-test-secret-value-123456789" } } };
+    const manifest = { id: "ablation-1", datasetVersion: "data-v1", splitVersion: "split-v1", resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0, 1], seeds: [17, 41] }, change: { configPatch: { learningRate: 0.001, apiKey: "sk-test-secret-value-123456789" } } };
     const script = "const fs=require('node:fs'); const p=process.env.EVIDRA_EXPERIMENT_CONFIG; const c=JSON.parse(fs.readFileSync(p,'utf8')); console.log(JSON.stringify({metrics:{score:c.configPatch.learningRate}, config:c, id:process.env.EVIDRA_EXPERIMENT_ID}));";
     const result = await new LocalExecutor().run(manifest, root, [process.execPath, "-e", script], undefined, "score");
     assert.equal(result.status, "completed");
@@ -2505,6 +2505,8 @@ test("experiment executors expose a redacted generic config contract", async () 
     assert.equal(result.metrics.final_layer_mse, undefined);
     const config = JSON.parse(readFileSync(join(root, ".sota", "experiment-config.json"), "utf8"));
     assert.equal(config.experimentId, "ablation-1");
+    assert.equal(config.datasetVersion, "data-v1");
+    assert.deepEqual(config.evaluation, { folds: [0, 1], seeds: [17, 41] });
     assert.equal(config.configPatch.apiKey, "[REDACTED_TOKEN]");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
