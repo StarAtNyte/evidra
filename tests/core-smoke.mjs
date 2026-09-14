@@ -109,7 +109,7 @@ import { createAirsBenchmarkProtocol, discoverAirsBenchTasks } from "../dist/cor
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
 import { advanceEvolutionaryGeneration, planEvolutionaryIslands } from "../dist/core/evolution.js";
-import { literatureWorkKey, scoreLiteratureBenchmark } from "../dist/core/literature-bench.js";
+import { literatureWorkKey, parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "../dist/core/literature-bench.js";
 import { planSuccessiveHalving, promoteHalvingStage } from "../dist/core/successive-halving.js";
 import { estimateCost } from "../dist/core/cost-model.js";
 import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
@@ -1777,6 +1777,12 @@ test("literature benchmark separates deep recall, wide recall, grounding, and qu
   assert.equal(report.wideRecall, 1);
   assert.equal(report.tasks[1].groundingRate, 0.5);
   assert.match(report.tasks[1].reasons.join(" "), /grounding/);
+});
+
+test("literature benchmark input validation rejects malformed or orphaned observations", () => {
+  assert.throws(() => parseLiteratureBenchmarkInput({ tasks: [{ id: "x", kind: "deep", requiredWorks: [], queryBudget: 1 }], observations: [] }), /at least 1/);
+  assert.throws(() => parseLiteratureBenchmarkInput({ tasks: [{ id: "x", kind: "deep", requiredWorks: ["doi:1/x"], queryBudget: 1 }, { id: "x", kind: "wide", requiredWorks: ["doi:1/y"], queryBudget: 1 }], observations: [] }), /duplicate task/);
+  assert.throws(() => parseLiteratureBenchmarkInput({ tasks: [{ id: "x", kind: "deep", requiredWorks: ["doi:1/x"], queryBudget: 1 }], observations: [{ taskId: "missing", queries: 1, candidates: [] }] }), /unknown task/);
 });
 
 test("repository search parsing preserves implementation leads without trusting metadata", () => {

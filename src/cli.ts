@@ -13,7 +13,7 @@ import { createValidationPolicy, writeValidationPolicy } from "./core/validation
 import { estimateDistributionBeliefs, type ExternalValidationObservation } from "./core/distribution-beliefs.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "./core/execution-stages.js";
 import { retrieveSource, searchResearchSources, sourceClaims, sourceFrontier, sourceSearchText, sourceIsFresh } from "./core/sources.js";
-import { scoreLiteratureBenchmark, type LiteratureBenchmarkObservation, type LiteratureBenchmarkTask } from "./core/literature-bench.js";
+import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "./core/literature-bench.js";
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
 import { pollSubmissionScore, submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
@@ -628,11 +628,8 @@ benchmark.command("literature-score")
   .description("Score deep/wide literature discovery, grounding, and query efficiency")
   .action((file: string, options: { json?: boolean }) => {
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
-    if (!parsed || typeof parsed !== "object") throw new Error("Literature benchmark input must be an object.");
-    const tasks = (parsed as { tasks?: unknown }).tasks;
-    const observations = (parsed as { observations?: unknown }).observations;
-    if (!Array.isArray(tasks) || !tasks.length || !Array.isArray(observations)) throw new Error("Literature benchmark input must contain non-empty tasks and an observations array.");
-    const report = scoreLiteratureBenchmark(tasks as LiteratureBenchmarkTask[], observations as LiteratureBenchmarkObservation[]);
+    const input = parseLiteratureBenchmarkInput(parsed);
+    const report = scoreLiteratureBenchmark(input.tasks, input.observations);
     const store = new ResearchStore(statePath);
     store.appendEvent("literature.benchmark.completed", { source: resolve(file), report });
     store.close();

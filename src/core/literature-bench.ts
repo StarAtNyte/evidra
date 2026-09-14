@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export type LiteratureTaskKind = "deep" | "wide";
 
 export interface LiteratureBenchmarkTask {
@@ -11,6 +13,35 @@ export interface LiteratureBenchmarkObservation {
   taskId: string;
   queries: number;
   candidates: Array<{ work: string; grounded: boolean }>;
+}
+
+export const LiteratureBenchmarkTaskSchema = z.object({
+  id: z.string().min(1).max(160),
+  kind: z.enum(["deep", "wide"]),
+  requiredWorks: z.array(z.string().min(1)).min(1).max(1_000),
+  queryBudget: z.number().int().positive().max(10_000),
+});
+
+export const LiteratureBenchmarkObservationSchema = z.object({
+  taskId: z.string().min(1).max(160),
+  queries: z.number().int().nonnegative().max(10_000),
+  candidates: z.array(z.object({ work: z.string().min(1), grounded: z.boolean() })).max(10_000),
+});
+
+export function parseLiteratureBenchmarkInput(value: unknown): { tasks: LiteratureBenchmarkTask[]; observations: LiteratureBenchmarkObservation[] } {
+  if (!value || typeof value !== "object") throw new Error("Literature benchmark input must be an object.");
+  const rawTasks = (value as { tasks?: unknown }).tasks;
+  const rawObservations = (value as { observations?: unknown }).observations;
+  if (!Array.isArray(rawTasks) || !rawTasks.length || !Array.isArray(rawObservations)) throw new Error("Literature benchmark input must contain non-empty tasks and an observations array.");
+  const tasks = z.array(LiteratureBenchmarkTaskSchema).parse(rawTasks);
+  const observations = z.array(LiteratureBenchmarkObservationSchema).parse(rawObservations);
+  const taskIds = new Set<string>();
+  for (const task of tasks) {
+    if (taskIds.has(task.id)) throw new Error(`Literature benchmark contains duplicate task '${task.id}'.`);
+    taskIds.add(task.id);
+  }
+  if (observations.some((observation) => !taskIds.has(observation.taskId))) throw new Error("Literature benchmark observation references an unknown task.");
+  return { tasks, observations };
 }
 
 export interface LiteratureTaskScore {

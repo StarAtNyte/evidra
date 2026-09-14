@@ -56,7 +56,7 @@ import { redactSecrets } from "../core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "../core/claim-audit.js";
 import { summarizeUsage } from "../core/usage.js";
-import { scoreLiteratureBenchmark, type LiteratureBenchmarkObservation, type LiteratureBenchmarkTask } from "../core/literature-bench.js";
+import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "../core/literature-bench.js";
 import { assessResearchDecisionRubric } from "../core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../core/validation-lock.js";
 import { deriveAdaptiveHarnessPolicy } from "../core/adaptive-harness.js";
@@ -2199,11 +2199,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (!file) { append("assistant", "Usage: /benchmark literature-score <json-file>"); return; }
       try {
         const parsed: unknown = JSON.parse(readFileSync(resolve(root, file), "utf8"));
-        if (!parsed || typeof parsed !== "object") throw new Error("Literature benchmark input must be an object.");
-        const tasks = (parsed as { tasks?: unknown }).tasks;
-        const observations = (parsed as { observations?: unknown }).observations;
-        if (!Array.isArray(tasks) || !tasks.length || !Array.isArray(observations)) throw new Error("Input must contain non-empty tasks and an observations array.");
-        const report = scoreLiteratureBenchmark(tasks as LiteratureBenchmarkTask[], observations as LiteratureBenchmarkObservation[]);
+        const input = parseLiteratureBenchmarkInput(parsed);
+        const report = scoreLiteratureBenchmark(input.tasks, input.observations);
         const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
         store.appendEvent("literature.benchmark.completed", { source: resolve(root, file), report });
         store.close();
