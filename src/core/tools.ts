@@ -37,6 +37,8 @@ export interface ResearchToolResult {
   error?: string;
   /** Trust class prevents retrieved text or workspace instructions becoming agent directives. */
   trust: ResearchToolTrust;
+  /** Deterministic signals found in untrusted content; signals never execute or rewrite content. */
+  securityWarnings?: string[];
 }
 
 export interface ResearchToolSpec {
@@ -58,6 +60,18 @@ export function toolFailureTrust(message: string): ResearchToolTrust {
     : "controller_observation";
 }
 
+/** Detect common instruction-injection signals without pretending to judge intent. */
+export function untrustedContentWarnings(value: unknown): string[] {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  const checks: Array<[string, RegExp]> = [
+    ["instruction_override", /ignore\s+(all\s+)?previous|disregard\s+(the\s+)?(system|developer|先前)|follow\s+these\s+new\s+instructions/i],
+    ["privilege_escalation", /disable\s+(safety|permissions?|sandbox)|bypass\s+(the\s+)?(permission|security|approval)|grant\s+yourself\s+access/i],
+    ["secret_exfiltration", /(?:reveal|print|dump|exfiltrate)[^.\n]{0,80}(?:secret|token|password|credential|api\s*key)/i],
+    ["embedded_role_message", /<(?:system|developer|assistant)>|BEGIN\s+(?:SYSTEM|DEVELOPER)\s+MESSAGE/i],
+  ];
+  return checks.filter(([, pattern]) => pattern.test(text)).map(([name]) => name);
+}
+
 function recordToolEvent(context: ResearchToolContext, result: ResearchToolResult): void {
   try {
     const store = new ResearchStore(context.storePath);
@@ -66,6 +80,7 @@ function recordToolEvent(context: ResearchToolContext, result: ResearchToolResul
       name: result.name,
       ok: result.ok,
       trust: result.trust,
+      securityWarnings: result.securityWarnings,
       error: result.error,
       output,
     });
@@ -332,7 +347,9 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       }
       default: throw new Error(`Unknown research tool: ${call.name}`);
     }
-    const result = { name: call.name, ok: true, output, trust: toolTrust(call.name) };
+    const trust = toolTrust(call.name);
+    const securityWarnings = trust === "untrusted_content" ? untrustedContentWarnings(output) : [];
+    const result = { name: call.name, ok: true, output, trust, ...(securityWarnings.length ? { securityWarnings } : {}) };
     recordToolEvent(context, result);
     return result;
   } catch (error) {

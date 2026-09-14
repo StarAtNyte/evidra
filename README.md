@@ -198,6 +198,7 @@ Implemented today:
 - a deterministic six-lifecycle safety boundary benchmark (`evidra benchmark safety`) covering configuration, capability extension, runtime, persistence, action control, and recovery;
 - durable external-action intents that reserve submissions before invocation, refuse restart-time replay, and require explicit `evidra submission reconcile <bundle> --status submitted|not-submitted` after an ambiguous crash;
 - integrity-bound campaign runtime policy: resume verifies provider, model, thinking effort, lanes, autonomy, usage-limit policy, and executor before continuing;
+- deterministic injection-signal warnings on untrusted workspace, web, repository, and source observations, retained in director context and trajectory traces without rewriting evidence;
 - empirical-Bernstein search allocation with variance-aware uncertainty and hard remaining-budget checks;
 - deterministic hierarchical research-decision rubrics for action closure, falsifiability, evidence, verification, diversity, and risk, with gaps fed into the next cycle;
 - matched benchmark-arm validation requiring task, seed, model, and budget parity before a competitive claim.

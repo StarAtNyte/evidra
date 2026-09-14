@@ -164,6 +164,13 @@ outcome is ambiguous, an operator must reconcile it explicitly before retrying,
 which closes the restart-time action-replay path without pretending that a
 network failure proves the remote action did not happen.
 
+Untrusted artifacts are additionally scanned for high-signal instruction
+injection patterns (instruction override, privilege escalation, secret
+exfiltration, and embedded role messages). Evidra does not delete or rewrite
+the observation; it attaches bounded `securityWarnings` metadata to the tool
+result and trajectory so the director can treat the content as data while the
+audit retains what was observed.
+
 Campaign safety settings are integrity-bound as well. A SHA-256 fingerprint of
 the persisted provider/model, reasoning effort, lane count, autonomy, limit
 policy, and executor is checked before resume; a changed record or an implicit
