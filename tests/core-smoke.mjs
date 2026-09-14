@@ -242,6 +242,17 @@ test("GPU reservations prevent concurrent workers from oversubscribing a campaig
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("GPU reservation recovery releases orphaned reservations", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-gpu-recovery-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.reserveComputeBudget({ experimentId: "missing-experiment", budgetGpuHours: 4, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" });
+    assert.deepEqual(store.reconcileComputeReservations(), ["missing-experiment"]);
+    assert.equal(store.reservedComputeGpuHours(), 0);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("event-family history remains durable beyond the bounded UI timeline", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-event-history-"));
   try {

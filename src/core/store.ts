@@ -1057,7 +1057,24 @@ export class ResearchStore {
       this.appendEvent("experiment.stale.recovered", { experimentId: experiment.id, previousStatus: "running" });
       recovered.push(experiment.id);
     }
+    this.reconcileComputeReservations();
     return recovered;
+  }
+
+  /** Release reservations whose experiment was never persisted or is terminal. */
+  reconcileComputeReservations(): string[] {
+    const terminal = new Set(["completed", "failed", "invalid", "rejected", "cancelled", "blocked"]);
+    const experiments = new Map(this.experiments().map((experiment) => {
+      const payload = experiment.payload && typeof experiment.payload === "object" ? experiment.payload as { status?: unknown } : {};
+      return [experiment.id, String(payload.status ?? "")] as const;
+    }));
+    const rows = this.db.prepare("SELECT experiment_id FROM compute_reservations WHERE status = 'reserved'").all() as Array<{ experiment_id: string }>;
+    const released: string[] = [];
+    for (const row of rows) {
+      if (experiments.has(row.experiment_id) && !terminal.has(experiments.get(row.experiment_id) ?? "")) continue;
+      if (this.releaseComputeReservation(row.experiment_id, experiments.has(row.experiment_id) ? "terminal experiment reconciliation" : "orphaned reservation reconciliation")) released.push(row.experiment_id);
+    }
+    return released;
   }
 
   runs(): Array<{ id: string; experimentId: string; status: string; payload: unknown; createdAt: string; updatedAt: string }> {
