@@ -1623,10 +1623,13 @@ test("research lanes use bounded role-specific workspace observations", () => {
   const dataCalls = laneToolCalls("data detective");
   const validationCalls = laneToolCalls("validation scientist");
   const modelCalls = laneToolCalls("model researcher");
-  assert.deepEqual(dataCalls.map((call) => call.name), ["workspace.files", "workspace.search"]);
+  assert.deepEqual(dataCalls.map((call) => call.name), ["workspace.files", "workspace.search", "web.search"]);
   assert.match(String(dataCalls[1].arguments.query), /leak|duplicate/i);
   assert.match(String(validationCalls[1].arguments.query), /split|metric/i);
   assert.match(String(modelCalls[1].arguments.query), /model|estimator/i);
+  assert.equal(modelCalls.some((call) => call.name === "source.search" && call.arguments.depth === "deep"), true);
+  assert.equal(modelCalls.some((call) => call.name === "repository.search"), true);
+  assert.equal(laneToolCalls("validation scientist", "compare robust validation methods").some((call) => call.name === "source.search"), true);
   const domainCalls = laneToolCalls("domain researcher", "derive a stable theorem-informed method for fluid dynamics");
   const methodCalls = laneToolCalls("method researcher", "compare optimization methods for robust generalization");
   assert.equal(domainCalls.at(-2).name, "source.search");

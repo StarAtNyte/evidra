@@ -140,14 +140,14 @@ export function laneToolCalls(role: ResearchLaneRole, objective = ""): ResearchT
   // commits to a method. Search is deliberately bounded and remains only a
   // candidate frontier; retrieval and claim verification still happen through
   // the evidence-aware source workflow.
-  if (role === "domain researcher" || role === "method researcher") {
+  if (role === "domain researcher" || role === "method researcher" || role === "model researcher" || role === "validation scientist") {
     const literatureQuery = objective.trim().slice(0, 600) || `${role} methods and evidence`;
     calls.push({ name: "source.search", arguments: { query: literatureQuery, limit: 6, depth: "deep" } });
   }
-  if (role === "domain researcher") {
+  if (role === "domain researcher" || role === "data detective") {
     calls.push({ name: "web.search", arguments: { query: objective.trim().slice(0, 500) || "official documentation discussions datasets", limit: 6 } });
   }
-  if (role === "method researcher") calls.push({ name: "repository.search", arguments: { query: objective.trim().slice(0, 300) || "research method implementation", limit: 6 } });
+  if (role === "method researcher" || role === "model researcher") calls.push({ name: "repository.search", arguments: { query: objective.trim().slice(0, 300) || "research method implementation", limit: 6 } });
   return calls;
 }
 
