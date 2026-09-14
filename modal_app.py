@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import base64
 from pathlib import Path
@@ -18,6 +19,24 @@ import modal
 WORKSPACE = Path(os.environ.get("EVIDRA_MODAL_WORKSPACE", ".")).resolve()
 REMOTE_WORKSPACE = Path("/workspace")
 GPU = os.environ.get("EVIDRA_MODAL_GPU") or None
+SECRET_ENV = re.compile(r"(TOKEN|KEY|SECRET|PASSWORD|COOKIE|AUTH|CREDENTIAL|PASS|API[_-]?KEY)", re.IGNORECASE)
+WORKER_ENV_KEYS = {
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP", "PWD",
+    "LANG", "LANGUAGE", "VIRTUAL_ENV", "CONDA_DEFAULT_ENV", "CONDA_PREFIX",
+    "CUDA_HOME", "CUDA_PATH", "CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES",
+    "NVIDIA_DRIVER_CAPABILITIES", "LD_LIBRARY_PATH", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+}
+
+
+def worker_environment() -> dict[str, str]:
+    """Return runtime-only environment; never forward Modal/controller secrets."""
+    safe: dict[str, str] = {}
+    for key, value in os.environ.items():
+        if SECRET_ENV.search(key):
+            continue
+        if (key in WORKER_ENV_KEYS or key.startswith(("LC_", "PYTHON", "CONDA_", "CUDA_", "NVIDIA_", "OMP_", "MKL_"))):
+            safe[key] = value
+    return safe
 
 
 def contained_path(root: Path, candidate: Path) -> Path:
@@ -64,10 +83,18 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]") -> dict[str
     working_directory = contained_path(REMOTE_WORKSPACE, REMOTE_WORKSPACE / relative_cwd)
     if not working_directory.is_dir():
         raise FileNotFoundError(f"Modal working directory does not exist: {working_directory}")
-    environment = os.environ.copy()
+    environment = worker_environment()
     config_path = REMOTE_WORKSPACE / ".sota" / "experiment-config.json"
     if config_path.is_file():
         environment["EVIDRA_EXPERIMENT_CONFIG"] = str(config_path)
+        try:
+            config = json.loads(config_path.read_text())
+            environment["EVIDRA_EXPERIMENT_ID"] = str(config["experimentId"])
+            environment["EVIDRA_DATASET_VERSION"] = str(config["datasetVersion"])
+            environment["EVIDRA_SPLIT_VERSION"] = str(config["splitVersion"])
+            environment["EVIDRA_MATRIX_REQUIRED"] = "1" if config.get("evaluation", {}).get("matrixRequired") else "0"
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
     completed = subprocess.run(command, cwd=working_directory, capture_output=True, text=True, check=False, env=environment)
     artifact_payload: dict[str, str] = {}
     for artifact in json.loads(artifacts_json):

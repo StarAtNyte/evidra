@@ -15,7 +15,32 @@ export interface ExperimentExecutor {
  * contract. The file lives in the isolated worktree, never in controller
  * state, and is redacted before a model-supplied patch reaches a worker.
  */
-export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: string): NodeJS.ProcessEnv {
+const WORKER_SECRET_KEY = /(TOKEN|KEY|SECRET|PASSWORD|COOKIE|AUTH|CREDENTIAL|PASS|API[_-]?KEY)/i;
+const WORKER_ENV_KEYS = new Set([
+  "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP", "PWD",
+  "LANG", "LANGUAGE", "VIRTUAL_ENV", "CONDA_DEFAULT_ENV", "CONDA_PREFIX",
+  "CUDA_HOME", "CUDA_PATH", "CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES",
+  "NVIDIA_DRIVER_CAPABILITIES", "LD_LIBRARY_PATH", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+]);
+
+/**
+ * Construct the environment visible to model-supplied experiment code.
+ * Controller credentials must never be ambient inputs to arbitrary workers.
+ * Explicit experiment metadata is added below after this filter.
+ */
+export function safeWorkerEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const merged = { ...process.env, ...overrides };
+  const safe: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(merged)) {
+    if (value === undefined || WORKER_SECRET_KEY.test(key)) continue;
+    if (WORKER_ENV_KEYS.has(key) || key.startsWith("LC_") || key.startsWith("PYTHON") || key.startsWith("CONDA_") || key.startsWith("CUDA_") || key.startsWith("NVIDIA_") || key.startsWith("OMP_") || key.startsWith("MKL_")) {
+      safe[key] = value;
+    }
+  }
+  return safe;
+}
+
+export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: string, overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const configPath = `${cwd}/.sota/experiment-config.json`;
   mkdirSync(dirname(configPath), { recursive: true });
   const datasetVersion = manifest.datasetVersion ?? "unknown";
@@ -41,7 +66,7 @@ export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: 
   });
   writeFileSync(configPath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
   return {
-    ...process.env,
+    ...safeWorkerEnvironment(overrides),
     EVIDRA_EXPERIMENT_ID: manifest.id,
     EVIDRA_EXPERIMENT_CONFIG: configPath,
     EVIDRA_DATASET_VERSION: datasetVersion,
@@ -259,7 +284,7 @@ export class LocalExecutor implements ExperimentExecutor {
   readonly kind = "local" as const;
 
   async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
-    const experimentEnvironment = { ...prepareExperimentEnvironment(manifest, cwd), ...environment };
+    const experimentEnvironment = prepareExperimentEnvironment(manifest, cwd, environment);
     return toRunResult(manifest, await runProcess(command, cwd, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, experimentEnvironment, manifest.resources.earlyStopping), metricName);
   }
 }
@@ -281,7 +306,7 @@ export class ContainerExecutor implements ExperimentExecutor {
   constructor(private readonly workspaceRoot?: string) {}
 
   async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
-    const experimentEnvironment = { ...prepareExperimentEnvironment(manifest, cwd), ...environment };
+    const experimentEnvironment = prepareExperimentEnvironment(manifest, cwd, environment);
     const requestedRuntime = process.env.EVIDRA_CONTAINER_RUNTIME;
     const candidates: Array<"docker" | "podman"> = requestedRuntime === "podman" ? ["podman"] : requestedRuntime === "docker" ? ["docker"] : requestedRuntime ? [] : ["docker", "podman"];
     const launchRoot = resolve(this.workspaceRoot ?? cwd);
@@ -300,6 +325,9 @@ export class ContainerExecutor implements ExperimentExecutor {
       const result = await runProcess(containerCommand(runtime, image, resolve(cwd), command, {
         EVIDRA_EXPERIMENT_ID: manifest.id,
         EVIDRA_EXPERIMENT_CONFIG: "/workspace/.sota/experiment-config.json",
+        EVIDRA_DATASET_VERSION: manifest.datasetVersion ?? "unknown",
+        EVIDRA_SPLIT_VERSION: manifest.splitVersion ?? "unknown",
+        EVIDRA_MATRIX_REQUIRED: manifest.evaluation?.matrixRequired ? "1" : "0",
       }), launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, experimentEnvironment, manifest.resources.earlyStopping);
       return toRunResult(manifest, { ...result, command, cwd }, metricName);
     } catch (error) {

@@ -19,7 +19,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
-import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, validateRunMetric } from "../dist/core/executors.js";
+import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
@@ -2552,6 +2552,23 @@ test("experiment executors expose a redacted generic config contract", async () 
     assert.match(result.stdout, /"matrix":"1"/);
     assert.equal(config.configPatch.apiKey, "[REDACTED_TOKEN]");
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("experiment workers do not inherit controller credentials", () => {
+  const safe = safeWorkerEnvironment({
+    PATH: "/usr/bin",
+    CUDA_VISIBLE_DEVICES: "0",
+    OPENAI_API_KEY: "sk-controller-secret",
+    MODAL_TOKEN_ID: "ak-controller-secret",
+    CUSTOM_PASSWORD: "controller-secret",
+    SAFE_WORKER_FLAG: "should-not-be-ambient",
+  });
+  assert.equal(safe.PATH, "/usr/bin");
+  assert.equal(safe.CUDA_VISIBLE_DEVICES, "0");
+  assert.equal(safe.OPENAI_API_KEY, undefined);
+  assert.equal(safe.MODAL_TOKEN_ID, undefined);
+  assert.equal(safe.CUSTOM_PASSWORD, undefined);
+  assert.equal(safe.SAFE_WORKER_FLAG, undefined);
 });
 
 test("experiment executor rejects successful processes with missing declared artifacts", async () => {
