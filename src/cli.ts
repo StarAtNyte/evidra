@@ -3348,6 +3348,7 @@ experiment.command("run")
           minimumDelta: manifest.acceptance.minimumPrimaryDelta,
           maximumRegressionShift: manifest.acceptance.maximumRegressionShift,
           requireReplication: manifest.acceptance.requireReplication,
+          largeGainThreshold: manifest.acceptance.largeGainThreshold,
           leakageAuditPassed: gates.leakageAuditPassed,
           reviewerApproved: gates.reviewerApproved,
           independentReplicationObserved: typeof entryPayload.replicationOf === "string" || typeof manifest.parent === "string",

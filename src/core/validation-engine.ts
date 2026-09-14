@@ -21,6 +21,8 @@ export interface ValidationAcceptanceInput {
   comparisonCount?: number;
   /** Production paths can require a paired randomization test in addition to bootstrap evidence. */
   requirePermutationTest?: boolean;
+  /** Absolute normalized-gain threshold that triggers the extra scrutiny gate. */
+  largeGainThreshold?: number;
 }
 
 export interface ValidationAcceptance {
@@ -88,8 +90,8 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   // independent-review path for such results even when ordinary replication
   // was disabled for a small probe.
   const baselineScale = Math.abs(comparison.baseline ?? 0);
-  const largeGainThreshold = Math.max(0.05, baselineScale * 0.25);
-  const unexpectedGain = normalizedDelta !== null && normalizedDelta >= largeGainThreshold;
+  const scrutinyThreshold = input.largeGainThreshold !== undefined ? input.largeGainThreshold : Math.max(0.05, baselineScale * 0.25);
+  const unexpectedGain = normalizedDelta !== null && normalizedDelta >= scrutinyThreshold;
   const probabilityThreshold = input.probabilityThreshold ?? 0.95;
   const comparisonCount = Math.max(1, Math.floor(input.comparisonCount ?? 1));
   // Bonferroni-style family-wise correction prevents a campaign from treating
@@ -116,7 +118,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   if (!gates.subgroupAnalysis) reasons.push("declared secondary splits have no subgroup evidence");
   if (!gates.leakageAudit) reasons.push("leakage audit has not passed");
   if (!gates.review) reasons.push("independent reviewer approval is missing");
-  if (!gates.unexpectedGainReview) reasons.push(`unexpectedly large normalized gain ${normalizedDelta?.toFixed(6) ?? "missing"} exceeds scrutiny threshold ${largeGainThreshold.toFixed(6)}; require independent replication and review`);
+  if (!gates.unexpectedGainReview) reasons.push(`unexpectedly large normalized gain ${normalizedDelta?.toFixed(6) ?? "missing"} exceeds scrutiny threshold ${scrutinyThreshold.toFixed(6)}; require independent replication and review`);
   return { accepted: Object.values(gates).every(Boolean), comparison, gates, reasons, normalizedDelta, worstSubgroupDelta, adjustedProbabilityThreshold };
 }
 

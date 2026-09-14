@@ -2520,6 +2520,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
             minimumDelta: policy.acceptance.minimumDelta,
             maximumRegressionShift: 0,
             requireReplication: policy.acceptance.requireReplication,
+            largeGainThreshold: undefined,
             leakageAuditPassed: false,
             reviewerApproved: false,
             comparisonCount,

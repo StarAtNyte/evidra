@@ -21,6 +21,7 @@ export interface ManifestInput {
   verificationCommands?: string[][];
   minimumPrimaryDelta?: number;
   maximumRegressionShift?: number;
+  largeGainThreshold?: number;
   requireReplication?: boolean;
   parent?: string | null;
   parentHypothesisIds?: string[];
@@ -58,6 +59,7 @@ export function createExperimentManifest(input: ManifestInput, competition: Comp
       minimumPrimaryDelta: input.minimumPrimaryDelta ?? 0,
       maximumRegressionShift: input.maximumRegressionShift ?? 0,
       requireReplication: input.requireReplication ?? true,
+      ...(input.largeGainThreshold !== undefined ? { largeGainThreshold: input.largeGainThreshold } : {}),
     },
     searchOperator: input.searchOperator ?? "ucb_portfolio",
     createdAt: new Date().toISOString(),
