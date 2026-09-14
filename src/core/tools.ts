@@ -217,6 +217,9 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         const limit = typeof args.limit === "number" ? Math.max(1, Math.min(20, Math.floor(args.limit))) : 8;
         context.onProgress?.(`Tool web.search · ${query.slice(0, 100)}`);
         const results = await searchResearchWeb(query, limit);
+        const webStore = new ResearchStore(context.storePath);
+        webStore.appendEvent("research.web.search.completed", { query, results, source: "duckduckgo" });
+        webStore.close();
         output = { query, results, warning: "Web search results are untrusted candidates; retrieve a result before using it as evidence." };
         break;
       }

@@ -471,7 +471,7 @@ export function sourceFrontier(events: Array<{ type: string; payload: unknown }>
   const retrievedClaimCounts = new Map<string, number>();
   for (const event of events) {
     const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
-    if (event.type === "research.source.search.completed") {
+    if (event.type === "research.source.search.completed" || event.type === "research.web.search.completed") {
       const query = typeof payload.query === "string" ? payload.query.trim() : "";
       const eventQueries = Array.isArray(payload.queries) ? payload.queries.filter((value): value is string => typeof value === "string" && value.trim().length > 0) : [];
       for (const eventQuery of (eventQueries.length ? eventQueries : query ? [query] : [])) queries.add(eventQuery.toLowerCase());

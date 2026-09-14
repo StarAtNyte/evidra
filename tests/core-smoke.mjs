@@ -1790,6 +1790,17 @@ test("web search parsing unwraps redirect URLs and rejects search-engine links",
   assert.equal(parsed[0].title, "Official Guide");
 });
 
+test("source frontier includes durable web candidates and tracks their retrieval", () => {
+  const report = sourceFrontier([
+    { type: "research.web.search.completed", payload: { query: "official method", results: [{ title: "Guide", url: "https://example.org/guide", provider: "web", authors: [] }] } },
+    { type: "research.source.retrieved", payload: { url: "https://example.org/guide", claimCount: 2 } },
+  ]);
+  assert.equal(report.queryCount, 1);
+  assert.equal(report.uniqueWorks, 1);
+  assert.equal(report.retrievedWorks, 1);
+  assert.equal(report.claimCoverage, 1);
+});
+
 test("deep literature search creates bounded deterministic progressive probes", () => {
   assert.deepEqual(researchSearchQueries("agent harness validation", "shallow"), ["agent harness validation"]);
   const probes = researchSearchQueries("agent harness validation benchmark reproducibility experiments", "deep");
