@@ -150,6 +150,7 @@ export function laneToolCalls(role: ResearchLaneRole, objective = ""): ResearchT
     calls.push({ name: "web.search", arguments: { query: objective.trim().slice(0, 500) || "official documentation discussions datasets", limit: 6 } });
   }
   if (role === "method researcher" || role === "model researcher") calls.push({ name: "repository.search", arguments: { query: objective.trim().slice(0, 300) || "research method implementation", limit: 6 } });
+  if (role === "ensemble scientist") calls.push({ name: "ensemble.analyze", arguments: {} });
   return calls;
 }
 

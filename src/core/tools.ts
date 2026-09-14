@@ -13,6 +13,7 @@ import { isSensitiveWorkspacePath, redactSecrets } from "./redaction.js";
 import { readValidationPolicyLock } from "./validation-lock.js";
 import { sha256File } from "./evidence.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "./error-analysis.js";
+import { diversityReport, loadPredictionVector, safePredictionPath } from "./ensemble.js";
 
 const SOURCE_FRONTIER_EVENT_TYPES = [
   "research.source.search.completed",
@@ -117,6 +118,7 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   { name: "data.audit", description: "Audit workspace files for size, duplicates, and suspicious data issues.", input: { path: "optional relative path" }, readOnly: true },
   { name: "artifact.audit", description: "Audit bounded research artifacts for safe containment, regular-file integrity, size, checksum, and optional JSON validity.", input: { paths: "relative artifact paths array", maxBytes: "optional per-file size limit" }, readOnly: true },
   { name: "prediction.analyze", description: "Analyze a bounded JSON/JSONL prediction artifact; optionally compare it with a baseline to identify fixed and regressed groups.", input: { path: "relative JSON or JSONL prediction artifact", baseline: "optional relative baseline artifact", maxRows: "optional row limit" }, readOnly: true },
+  { name: "ensemble.analyze", description: "Inspect registered prediction/OOF artifacts and measure pairwise diversity without creating or promoting a blend.", input: {}, readOnly: true },
   { name: "validation.generate", description: "Create a versioned validation policy for the active workspace.", input: {}, readOnly: false },
   { name: "report.generate", description: "Write a durable research, challenge, or final report.", input: { kind: "research|challenge|final" }, readOnly: false },
 ];
@@ -338,6 +340,22 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         analysisStore.appendEvent("prediction.analysis.completed", { path: relative(context.root, path), rows: rows.length, analysis, ...(comparison ? { comparison } : {}) });
         analysisStore.close();
         output = { path: relative(context.root, path), rows: rows.length, ignoredRows: Math.max(0, text.split(/\r?\n/).filter(Boolean).length - rows.length), analysis, ...(comparison ? { comparison } : {}) };
+        break;
+      }
+      case "ensemble.analyze": {
+        const store = new ResearchStore(context.storePath);
+        const artifacts = store.artifacts().filter((entry) => /prediction|oof/i.test(entry.name) && safePredictionPath(context.root, entry.path));
+        const vectors = artifacts.flatMap((entry) => {
+          try { return [loadPredictionVector(entry.id, entry.path)]; } catch { return []; }
+        });
+        const diversity = vectors.length >= 2 ? diversityReport(vectors) : [];
+        store.appendEvent("ensemble.analysis.completed", {
+          vectors: vectors.map((vector) => ({ id: vector.id, path: relative(context.root, vector.path), values: vector.values.length, checksum: vector.checksum })),
+          diversity,
+          eligible: vectors.length >= 2,
+        });
+        store.close();
+        output = { vectors: vectors.map((vector) => ({ id: vector.id, path: relative(context.root, vector.path), values: vector.values.length, checksum: vector.checksum })), diversity, eligible: vectors.length >= 2, ...(vectors.length < 2 ? { reason: "at least two valid prediction artifacts are required" } : {}) };
         break;
       }
       case "validation.generate": {
