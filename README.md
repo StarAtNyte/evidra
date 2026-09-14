@@ -602,7 +602,7 @@ Evidra's competitiveness target and equal-budget comparison protocol are documen
 
 The separate [Autoresearch Bench](https://www.autoresearch-bench.com/) is an external evaluation: agents work in isolated workspaces, may receive public feedback from a grader, and are scored on held-out private results. Evidra's submission adapters and durable public-score observations are the integration boundary for that benchmark; a local smoke run must never be presented as an official Autoresearch Bench score.
 
-For agent-agnostic scientific evaluation, `evidra benchmark scientific task.json` runs an ordered task contract with intermediate verifiers, required artifact checksums, snapshot boundaries, bounded logs, and resumable stage state. See the [stepwise scientific-task protocol](docs/benchmarks/scientific-task-protocol.md).
+For agent-agnostic scientific evaluation, `evidra benchmark scientific task.json` runs an ordered task contract with intermediate verifiers, required artifact checksums, snapshot boundaries, bounded logs, and resumable stage state. `evidra benchmark scientific-suite contracts/` runs a stable, task-balanced directory of contracts and reports per-task validity, mean stage score, process quality, and resumable task results. See the [stepwise scientific-task protocol](docs/benchmarks/scientific-task-protocol.md).
 
 Run `evidra benchmark safety` to execute Evidra's local lifecycle safety regression suite. It must pass before treating a harness change as benchmarkable; `--json` emits the machine-readable probe report for CI. This is an internal boundary regression suite, not an external HarnessRisk score.
 

@@ -60,6 +60,7 @@ import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, ScientificTaskSchema } from "../dist/core/scientific-tasks.js";
 import { runSafetyBenchmark } from "../dist/core/safety-bench.js";
+import { loadScientificTaskDirectory, runScientificTaskSuite } from "../dist/core/scientific-suite.js";
 
 test("search policies receive independent matched scorecards and comparisons", () => {
   const trial = (policy, task, candidateMetric) => ({ harness: `evidra-${policy}`, policy, task, arm: "default", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: false, reproducible: true });
@@ -3424,6 +3425,25 @@ test("scientific task runner verifies intermediate stages and resumes verified s
     const recovered = await runScientificTask({ ...task, id: "alternate-route", stages: [{ ...task.stages[0], command: [process.execPath, "-e", "process.exit(3)"], alternateCommands: [[process.execPath, "-e", "require('node:fs').writeFileSync('recovered.json','{}')"]], requiredArtifacts: ["recovered.json"], verificationCommands: [[process.execPath, "-e", "if(!require('node:fs').existsSync('recovered.json')) process.exit(1)"]], snapshotPaths: ["recovered.json"] }] }, root);
     assert.equal(recovered.status, "completed");
     assert.deepEqual(recovered.stages[0].attempts?.map((attempt) => attempt.route), ["primary", "alternate"]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("scientific task suite preserves task-balanced results and per-task resume", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-scientific-suite-"));
+  try {
+    const tasks = ["alpha", "beta"].map((id) => ({ id, title: id, description: "suite task", stages: [{ id: "check", title: "Check", objective: "Run a bounded check", command: [process.execPath, "--version"], timeoutMinutes: 1 }] }));
+    const first = await runScientificTaskSuite(tasks, root);
+    assert.equal(first.taskCount, 2);
+    assert.equal(first.validTasks, 2);
+    assert.equal(first.validityRate, 1);
+    const previous = Object.fromEntries(first.tasks.map((item) => [item.taskId, item.run]));
+    const resumed = await runScientificTaskSuite(tasks, root, { previous });
+    assert.deepEqual(resumed.tasks.map((item) => item.run.stages[0].status), ["resumed", "resumed"]);
+    const taskDir = join(root, "contracts");
+    mkdirSync(taskDir);
+    writeFileSync(join(taskDir, "b.json"), JSON.stringify(tasks[1]));
+    writeFileSync(join(taskDir, "a.json"), JSON.stringify(tasks[0]));
+    assert.deepEqual(loadScientificTaskDirectory(taskDir).map((entry) => entry.task.id), ["alpha", "beta"]);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

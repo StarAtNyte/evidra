@@ -242,12 +242,13 @@ The next high-value upgrades are:
 2. run equal-budget comparisons of greedy, UCB, evolutionary, and MCTS policies
    under the same task and compute budgets.
 
-3. Add an agent-agnostic, stepwise scientific-task suite. SciAgentArena's
+3. Run the external matched task suites and compare harnesses. SciAgentArena's
 roughly 200 interactive tasks and InnovatorBench's ResearchGym both reinforce
 that final answers are insufficient: the environment must expose intermediate
 verification, asynchronous execution, snapshots, and process-level outcomes.
-Evidra already persists these primitives; the remaining work is a reproducible
-adapter and matched runs rather than another prompt-only benchmark.
+Evidra now provides `benchmark scientific-suite` for stable directory loading,
+per-task resumability, and task-balanced aggregation; the remaining work is
+running matched external suites rather than another prompt-only benchmark.
 
 Sources: [SciAgentArena](https://arxiv.org/abs/2606.12736) and
 [InnovatorBench](https://arxiv.org/abs/2510.27598).

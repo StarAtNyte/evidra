@@ -88,6 +88,7 @@ import { createAblationPlan, evaluateAblationEvidence } from "./core/ablation.js
 import { deriveReferenceCurve, type LearningPoint } from "./core/early-stopping.js";
 import { buildMlflowRunExports } from "./core/mlflow.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema } from "./core/scientific-tasks.js";
+import { loadScientificTaskDirectory, runScientificTaskSuite } from "./core/scientific-suite.js";
 import { runSafetyBenchmark } from "./core/safety-bench.js";
 
 const root = findWorkspaceRoot();
@@ -744,6 +745,41 @@ benchmark.command("safety")
     for (const [name, result] of Object.entries(report.lifecycle)) console.log(`${name.padEnd(20)} ${result.passed}/${result.probes}`);
     for (const item of report.probes.filter((probe) => !probe.passed)) console.log(`✗ ${item.id}: ${item.reason ?? "boundary expectation failed"}`);
     if (report.failed > 0) process.exitCode = 2;
+  });
+benchmark.command("scientific-suite")
+  .argument("<directory>", "directory containing JSON stepwise scientific-task contracts")
+  .option("--workspace <dir>", "task workspace root; defaults to the Evidra project")
+  .option("--out <file>", "write the aggregate suite report")
+  .option("--resume-dir <dir>", "directory containing prior per-task reports named <task-id>.json")
+  .description("Run a task-balanced suite of stepwise scientific tasks with independent evidence and resume state")
+  .action(async (directory: string, options: { workspace?: string; out?: string; resumeDir?: string }) => {
+    const taskFiles = loadScientificTaskDirectory(resolve(directory));
+    if (!taskFiles.length) throw new Error(`No JSON scientific-task contracts found in ${resolve(directory)}.`);
+    const previous: Record<string, import("./core/scientific-tasks.js").ScientificTaskRun> = {};
+    if (options.resumeDir && existsSync(resolve(options.resumeDir))) {
+      for (const entry of readdirSync(resolve(options.resumeDir))) {
+        if (!entry.endsWith(".json")) continue;
+        try {
+          const value = JSON.parse(readFileSync(join(resolve(options.resumeDir), entry), "utf8")) as { run?: unknown };
+          if (value.run) {
+            const parsed = ScientificTaskRunSchema.safeParse(value.run);
+            if (parsed.success) previous[parsed.data.taskId] = parsed.data;
+          }
+        } catch { /* Ignore an incomplete task report; that task runs from its last valid stage. */ }
+      }
+    }
+    const suite = await runScientificTaskSuite(taskFiles.map((entry) => entry.task), options.workspace ? resolve(options.workspace) : root, { previous, onProgress: (message) => console.log(`· ${message}`) });
+    const output = `${JSON.stringify({ tasks: taskFiles.map((entry) => ({ path: entry.path, taskId: entry.task.id })), suite }, null, 2)}\n`;
+    if (options.out) { mkdirSync(dirname(resolve(options.out)), { recursive: true }); writeFileSync(resolve(options.out), output); }
+    const store = new ResearchStore(statePath);
+    store.appendEvent("scientific.suite.completed", { suite, taskFiles: taskFiles.map((entry) => entry.path), ...(options.out ? { reportPath: resolve(options.out) } : {}) });
+    store.close();
+    console.log(`Scientific suite · ${suite.validTasks}/${suite.taskCount} valid tasks`);
+    console.log(`Validity            ${(suite.validityRate * 100).toFixed(1)}%`);
+    console.log(`Mean stage score    ${(suite.meanStageScore * 100).toFixed(1)}%`);
+    console.log(`Mean process quality ${(suite.meanProcessQuality * 100).toFixed(1)}%`);
+    for (const result of suite.tasks) console.log(`${result.evaluation.valid ? "✓" : "✗"} ${result.taskId} · ${(result.evaluation.stageScore * 100).toFixed(0)}% · ${result.evaluation.reason}`);
+    if (suite.validTasks !== suite.taskCount) process.exitCode = 2;
   });
 benchmark.command("compare")
   .argument("<file>", "JSON file containing a trial array or { trials: [...] }")
