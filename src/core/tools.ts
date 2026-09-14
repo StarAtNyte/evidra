@@ -51,6 +51,13 @@ export function normalizeResearchToolResult(result: ResearchToolResult): Researc
   return result.trust ? result : { ...result, trust: "untrusted_content" };
 }
 
+/** Classify only explicit policy/containment denials as permission-boundary events. */
+export function toolFailureTrust(message: string): ResearchToolTrust {
+  return /permission|refusing|safe mode|loopback|private or loopback|escapes the workspace|sensitive workspace|symlink/i.test(message)
+    ? "permission_boundary"
+    : "controller_observation";
+}
+
 function recordToolEvent(context: ResearchToolContext, result: ResearchToolResult): void {
   try {
     const store = new ResearchStore(context.storePath);
@@ -329,7 +336,8 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
     recordToolEvent(context, result);
     return result;
   } catch (error) {
-    const result = { name: call.name, ok: false, error: error instanceof Error ? error.message : String(error), trust: "permission_boundary" as const };
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const result = { name: call.name, ok: false, error: errorMessage, trust: toolFailureTrust(errorMessage) };
     recordToolEvent(context, result);
     return result;
   }

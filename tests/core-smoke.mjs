@@ -16,7 +16,7 @@ import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
 import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInspection } from "../dist/core/permissions.js";
 import { QueueWorker } from "../dist/core/queue-worker.js";
-import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS } from "../dist/core/tools.js";
+import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
 import { LocalExecutor, containerCommand, parseMetricOutput, parseModalWorkerResult, validateRunMetric } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
@@ -1793,6 +1793,18 @@ test("research tool registry exposes safe workspace tools", async () => {
 
 test("missing tool provenance is downgraded to untrusted content", () => {
   assert.equal(normalizeResearchToolResult({ name: "custom", ok: true, output: "external" }).trust, "untrusted_content");
+  assert.equal(toolFailureTrust("provider timed out"), "controller_observation");
+  assert.equal(toolFailureTrust("SAFE mode refuses this command"), "permission_boundary");
+});
+
+test("ordinary tool failures remain operational observations", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-tool-failure-"));
+  const result = await executeResearchTool(
+    { name: "workspace.read", arguments: { path: "missing.txt" } },
+    { root, storePath: join(root, "state.db"), autonomy: "safe" },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.trust, "controller_observation");
 });
 
 test("scholarly source discovery returns candidates without trusting them", () => {
