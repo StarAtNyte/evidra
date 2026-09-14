@@ -28,7 +28,7 @@ import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoal
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
-import { checkProvider, codexIsLoggedIn, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, runWithLocalFallback, runWithUsageLimitWait, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
+import { checkProvider, codexIsLoggedIn, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, resolveStartupProvider, runWithLocalFallback, runWithUsageLimitWait, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { boundedPeerBoard, runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
@@ -758,6 +758,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
   };
 
   const runResearchCycle = async (objective: string, campaign?: ResearchCampaign): Promise<{ text: string; goalStatus: "active" | "blocked" | "met"; decision: "inspect" | "propose" | "run" | "replicate" | "stop" }> => {
+    const requestedConfig = configRef.current;
+    const startupRoute = await resolveStartupProvider({ provider: requestedConfig.provider, model: requestedConfig.model, cwd: root, limitPolicy: requestedConfig.limitPolicy }, requestedConfig.fallbackModel);
+    const config = startupRoute.fallback
+      ? { ...requestedConfig, provider: startupRoute.provider, model: startupRoute.model }
+      : requestedConfig;
+    if (startupRoute.fallback) {
+      configRef.current = config;
+      setConfig(config);
+      setProgress(`Codex unavailable · continuing with local/${startupRoute.model}...`);
+    }
     const mode = configRef.current.mode;
     const observation = await performResearchObservation();
     setProgress("Research 3/3 · asking the director to analyze observed evidence and select the next experiment...");
@@ -813,7 +823,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const toolTrace = createToolTraceRecorder(`research-${Date.now()}`);
     try {
       activeSteer.current = null;
-      await checkProvider({ provider: config.provider, model: config.model, cwd: root });
       setProgress(`Research 3/4 · route ${route.tier} · ${route.reasoningEffort} reasoning · investigating...`);
       const allocatedObjective = `${objective}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}`;
       laneReports = await runResearchLanes(allocatedObjective, {
