@@ -2759,16 +2759,20 @@ experiment.command("run")
     const hypothesis = store.hypotheses().find((candidate) => candidate.id === manifest.hypothesisId);
     const campaignBudget = store.campaign() as { gpuBudgetHours?: unknown } | undefined;
     const gpuBudget = typeof campaignBudget?.gpuBudgetHours === "number" ? campaignBudget.gpuBudgetHours : 0;
-    if (gpuBudget > 0 && manifest.resources.gpu) {
+    const currentHypothesisPayload = hypothesis?.payload as { computeCostGpuHours?: unknown } | undefined;
+    const currentRequestedGpuHours = typeof currentHypothesisPayload?.computeCostGpuHours === "number" ? currentHypothesisPayload.computeCostGpuHours : 0;
+    const currentGpuLabel = manifest.resources.gpu ?? (manifest.resources.executor === "modal" && currentRequestedGpuHours > 0 ? "modal-default" : undefined);
+    if (gpuBudget > 0 && currentGpuLabel) {
       const experiments = store.experiments();
+      const hypotheses = store.hypotheses();
       const usedGpuHours = store.runAttempts().reduce((total, attempt) => {
         const experiment = experiments.find((candidate) => candidate.id === attempt.experimentId);
-        const payload = experiment?.payload as { resources?: { gpu?: unknown } } | undefined;
-        return total + (payload?.resources?.gpu ? Math.max(0, attempt.durationSeconds ?? 0) / 3_600 : 0);
+        const payload = experiment?.payload as { resources?: { gpu?: unknown; executor?: unknown }; hypothesisId?: unknown } | undefined;
+        const priorHypothesis = hypotheses.find((candidate) => candidate.id === payload?.hypothesisId)?.payload as { computeCostGpuHours?: unknown } | undefined;
+        const priorGpu = payload?.resources?.gpu || (payload?.resources?.executor === "modal" && typeof priorHypothesis?.computeCostGpuHours === "number" && priorHypothesis.computeCostGpuHours > 0);
+        return total + (priorGpu ? Math.max(0, attempt.durationSeconds ?? 0) / 3_600 : 0);
       }, 0);
-      const hypothesisPayload = hypothesis?.payload as { computeCostGpuHours?: unknown } | undefined;
-      const requestedGpuHours = typeof hypothesisPayload?.computeCostGpuHours === "number" ? hypothesisPayload.computeCostGpuHours : 0;
-      const budgetDecision = evaluateGpuBudget({ budgetGpuHours: gpuBudget, usedGpuHours, requestedGpuHours, executor: manifest.resources.executor, gpu: manifest.resources.gpu });
+      const budgetDecision = evaluateGpuBudget({ budgetGpuHours: gpuBudget, usedGpuHours, requestedGpuHours: currentRequestedGpuHours, executor: manifest.resources.executor, gpu: currentGpuLabel });
       store.appendEvent("compute.budget.checked", { experimentId: id, ...budgetDecision });
       if (!budgetDecision.allowed) {
         store.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "blocked", executionPlan, computeBudget: budgetDecision } });

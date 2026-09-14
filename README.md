@@ -86,6 +86,7 @@ If the Modal controller should launch separate Modal experiment workers, create 
 This headless mode has no interactive TUI or implicit approval channel. Inspect or approve external actions from a trusted local session after attaching to the persisted state. A local ChatGPT subscription login is intentionally not copied into Modal.
 
 The controller initializes the requested competition in the durable Modal state volume on first start. `--executor local` runs experiments inside the controller container; `--executor modal` routes them to a separate Modal worker and requires the Modal CLI/runtime in the image.
+Autonomous campaigns accept `--gpu-budget <hours>` (zero means unlimited). Before each GPU-backed experiment, Evidra compares the declared hypothesis cost plus observed GPU usage against that durable campaign budget; over-budget work is blocked and recorded rather than launched.
 
 Provider and lane failures are recoverable. Transient network, timeout, stream, malformed-response, and service errors receive bounded retries with backoff; configured Codex-to-local fallback changes route when appropriate; every exhausted lane is recorded as failed evidence so the director can choose a different path instead of silently treating it as success. SDK subprocesses are cancelled on timeout and terminal interruption.
 
