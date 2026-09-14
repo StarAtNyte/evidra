@@ -337,15 +337,15 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         // select a different route; one unavailable tool must not erase an
         // otherwise independent research perspective.
         toolResults.push(result);
-        if (call.name === "source.search" && result.ok && !primarySourceQueued) {
+        if ((call.name === "source.search" || call.name === "web.search") && result.ok && !primarySourceQueued) {
           const output = result.output && typeof result.output === "object" ? result.output as { results?: unknown } : {};
           const candidates = Array.isArray(output.results)
             ? output.results.flatMap((entry): string[] => Boolean(entry && typeof entry === "object" && typeof (entry as { url?: unknown }).url === "string" && /^https?:\/\//i.test((entry as { url: string }).url)) ? [(entry as { url: string }).url] : [])
             : [];
           for (const url of [...new Set(candidates)].slice(0, 2)) {
             // Search results are candidates, not evidence. Retrieve only two
-            // top results per literature lane: enough for independent source
-            // coverage without allowing a search call to flood context.
+            // top results per lane: enough for independent source coverage
+            // without allowing a search call to flood context.
             calls.push({ name: "source.retrieve", arguments: { url } });
           }
           if (candidates.length) {
