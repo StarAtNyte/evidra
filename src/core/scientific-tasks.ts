@@ -158,7 +158,7 @@ export async function runScientificTask(taskValue: unknown, root: string, option
     if (options.isCancelled?.()) return { schemaVersion: 1, taskId: task.id, startedAt, status: "interrupted", stages };
     options.onProgress?.(`Scientific task · ${stage.id} · ${stage.title}`);
     const stageDeadline = Date.now() + stage.timeoutMinutes * 60_000;
-    const result = await runProcess(stage.command, cwd, stage.timeoutMinutes * 60_000, undefined, options.onProcess);
+    const result = await runProcessObserved(stage.command, cwd, stage.timeoutMinutes * 60_000, options.onProcess);
     const artifacts: Record<string, string> = {};
     for (const artifact of stage.requiredArtifacts) {
       const path = containedPath(cwd, artifact, `stage '${stage.id}' artifact`);
@@ -170,7 +170,7 @@ export async function runScientificTask(taskValue: unknown, root: string, option
     for (const command of stage.verificationCommands) {
       if (Date.now() >= stageDeadline) break;
       executed += 1;
-      const verification = await runProcess(command, cwd, Math.max(1_000, stageDeadline - Date.now()));
+      const verification = await runProcessObserved(command, cwd, Math.max(1_000, stageDeadline - Date.now()));
       if (verification.exitCode === 0) passed += 1; else failed += 1;
     }
     let files: Record<string, string> = {};
@@ -187,3 +187,20 @@ export async function runScientificTask(taskValue: unknown, root: string, option
 function artifactsMissing(stage: ScientificTaskStage, artifacts: Record<string, string>): boolean {
   return stage.requiredArtifacts.some((artifact) => !artifacts[artifact]);
 }
+
+async function runProcessObserved(command: string[], cwd: string, timeoutMs: number, onProcess?: (control: ProcessControl) => void): Promise<ProcessResultLike> {
+  try {
+    return await runProcess(command, cwd, timeoutMs, undefined, onProcess);
+  } catch (error) {
+    return {
+      command,
+      cwd,
+      exitCode: 127,
+      durationMs: 0,
+      stdout: "",
+      stderr: `Process could not start: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+type ProcessResultLike = Awaited<ReturnType<typeof runProcess>>;

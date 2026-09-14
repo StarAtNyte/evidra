@@ -3323,6 +3323,9 @@ test("scientific task runner verifies intermediate stages and resumes verified s
     const missingSnapshot = await runScientificTask({ ...task, id: "missing-snapshot", stages: [{ ...task.stages[0], snapshotPaths: ["missing.json"] }] }, root);
     assert.equal(missingSnapshot.status, "failed");
     assert.equal(evaluateScientificTaskRun({ ...task, id: "missing-snapshot", stages: [{ ...task.stages[0], snapshotPaths: ["missing.json"] }] }, missingSnapshot).valid, false);
+    const unavailableCommand = await runScientificTask({ ...task, id: "unavailable-command", stages: [{ ...task.stages[0], command: ["evidra-command-that-does-not-exist"] }] }, root);
+    assert.equal(unavailableCommand.status, "failed");
+    assert.match(unavailableCommand.stages[0].stderrTail, /Process could not start/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
