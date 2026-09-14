@@ -121,7 +121,7 @@ test("component ablations require one declared removal and preserve the paired g
   assert.equal(invalid[0].valid, false);
   assert.match(invalid[0].reason, /exactly the full harness component set/);
 });
-import { planHarnessAdaptation } from "../dist/core/harness-adaptation.js";
+import { materializeHarnessRetestTask, planHarnessAdaptation } from "../dist/core/harness-adaptation.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "../dist/core/claim-audit.js";
 import { deriveAdaptiveHarnessPolicy } from "../dist/core/adaptive-harness.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "../dist/core/error-analysis.js";
@@ -824,6 +824,18 @@ test("adaptive planning remains compatible with pre-slice benchmark records", ()
     reason: "legacy report",
   }], "evidra");
   assert.ok(plan.interventions.some((item) => item.kind === "reliability"));
+});
+
+test("benchmark adaptation materializes one deterministic durable retest task", () => {
+  const plan = planHarnessAdaptation([], [], [], "evidra");
+  const task = materializeHarnessRetestTask(plan, "2026-09-15T12:00:00.000Z");
+  assert.equal(task?.kind, "harness.retest");
+  assert.match(task?.id ?? "", /^harness-retest:evidra:/);
+  assert.equal(task?.payload.retest.noMetricOrBudgetChanges, true);
+  assert.equal(materializeHarnessRetestTask(plan, "2026-09-15T12:00:00.000Z")?.id, task?.id);
+  assert.notEqual(materializeHarnessRetestTask(plan, "2026-09-15T12:00:01.000Z")?.id, task?.id);
+  const proven = { ...plan, claimStatus: "win_proven" };
+  assert.equal(materializeHarnessRetestTask(proven, "2026-09-15T12:00:00.000Z"), undefined);
 });
 
 test("claim audit separates measured, literature, unsupported, and conflicted evidence", () => {

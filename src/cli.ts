@@ -82,7 +82,7 @@ import { evaluateHarnessChange, type HarnessChangeContract } from "./core/harnes
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, type AirsBenchFamily, type AirsBenchDiscovery, type AirsHarnessTemplate } from "./core/airs-bench.js";
 import { inventoryHarnessComponents, planHarnessInterventions } from "./core/harness-evolution.js";
 import { advanceEvolutionaryGeneration } from "./core/evolution.js";
-import { planHarnessAdaptation } from "./core/harness-adaptation.js";
+import { materializeHarnessRetestTask, planHarnessAdaptation, type HarnessAdaptationPlan } from "./core/harness-adaptation.js";
 import { deriveAdaptiveHarnessPolicy } from "./core/adaptive-harness.js";
 import { createTransferableMethod } from "./core/method-transfer.js";
 import { createAblationPlan, evaluateAblationEvidence } from "./core/ablation.js";
@@ -1702,6 +1702,9 @@ research
         .slice(-3)
         .map((event) => event.payload)
         .slice(-3);
+      const latestHarnessBenchmarkEvent = durableEvents
+        .filter((event) => event.type === "harness.benchmark.completed")
+        .at(-1);
       const latestHarnessBenchmark = harnessBenchmarkEvidence.at(-1) as { comparisons?: unknown } | undefined;
       const benchmarkRegression = Array.isArray(latestHarnessBenchmark?.comparisons)
         && latestHarnessBenchmark.comparisons.some((comparison) => comparison && typeof comparison === "object" && (comparison as { challengerWins?: unknown }).challengerWins === false);
@@ -1709,6 +1712,21 @@ research
         .map((payload) => (payload as { adaptation?: unknown }).adaptation)
         .filter((adaptation): adaptation is Record<string, unknown> => Boolean(adaptation && typeof adaptation === "object"))
         .slice(-1)[0];
+      const harnessRetestPlan = harnessAdaptationAgenda
+        && typeof harnessAdaptationAgenda.challenger === "string"
+        && Array.isArray(harnessAdaptationAgenda.interventions)
+        && harnessAdaptationAgenda.retest
+        && typeof harnessAdaptationAgenda.retest === "object"
+        ? harnessAdaptationAgenda as unknown as HarnessAdaptationPlan
+        : undefined;
+      const harnessRetestTask = harnessRetestPlan && latestHarnessBenchmarkEvent
+        ? materializeHarnessRetestTask(harnessRetestPlan, latestHarnessBenchmarkEvent.createdAt)
+        : undefined;
+      if (harnessRetestTask && !store.queueTasks().some((task) => task.id === harnessRetestTask.id)) {
+        store.enqueueTask(harnessRetestTask);
+        store.appendEvent("harness.retest.materialized", { taskId: harnessRetestTask.id, benchmarkRevision: harnessRetestTask.payload.benchmarkRevision, interventionIds: harnessRetestTask.payload.interventions.map((intervention) => intervention.id) });
+      }
+      const queuedHarnessRetest = store.queueTasks("queued").find((task) => task.kind === "harness.retest");
       const harnessComponents = inventoryHarnessComponents(root);
       const harnessFailureProfile = Object.fromEntries(Object.entries(harnessBenchmarkEvidence
         .flatMap((payload) => Array.isArray((payload as { scorecards?: unknown }).scorecards) ? (payload as { scorecards: Array<{ failureProfile?: Record<string, number> }> }).scorecards : [])
@@ -1725,7 +1743,7 @@ research
       });
       store.appendEvent("harness.evolution.plan", { cycle, components: harnessComponents.map((component) => ({ id: component.id, path: component.path, kind: component.kind, checksum: component.checksum })), interventions: harnessEvolutionPlan, failureProfile: harnessFailureProfile });
       const harnessGuidance = harnessBenchmarkEvidence.length
-        ? `Harness-evolution evidence from matched benchmark runs (diagnostic, not workspace task evidence): ${JSON.stringify(harnessBenchmarkEvidence).slice(0, 8_000)}. Prioritize these checksummed, falsifiable interventions and remeasure them under the same protocol: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}${harnessAdaptationAgenda ? `\n\nLocked adaptive retest agenda (must be addressed before claiming a win): ${JSON.stringify(harnessAdaptationAgenda).slice(0, 8_000)}` : ""}`
+        ? `Harness-evolution evidence from matched benchmark runs (diagnostic, not workspace task evidence): ${JSON.stringify(harnessBenchmarkEvidence).slice(0, 8_000)}. Prioritize these checksummed, falsifiable interventions and remeasure them under the same protocol: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}${harnessAdaptationAgenda ? `\n\nLocked adaptive retest agenda (must be addressed before claiming a win): ${JSON.stringify(harnessAdaptationAgenda).slice(0, 8_000)}` : ""}${queuedHarnessRetest ? `\n\nDurable retest task queued for controller execution: ${queuedHarnessRetest.id}. It is not proof; select or reject it through the normal experiment and validation gates.` : ""}`
         : `No matched harness benchmark evidence is recorded yet; preserve failure telemetry for the first comparison. The harness action space is inventory-backed; use these candidate intervention contracts when a failure is observed: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}`;
       const recentTrajectories = store.trajectories(20);
       const recentQuality = recentTrajectories.map((entry) => qualityFeedback(entry.quality));

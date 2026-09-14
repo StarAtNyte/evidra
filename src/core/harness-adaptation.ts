@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { HarnessComparison, HarnessScorecard, HarnessTrial } from "./harness-scorecard.js";
 
 export type HarnessInterventionKind = "reliability" | "recovery" | "alignment" | "efficiency" | "search" | "coverage";
@@ -28,6 +29,45 @@ export interface HarnessAdaptationPlan {
   claimStatus: "win_proven" | "not_proven" | "no_incumbent";
   interventions: HarnessIntervention[];
   retest: HarnessRetestContract;
+}
+
+export interface HarnessRetestTask {
+  id: string;
+  kind: "harness.retest";
+  priority: number;
+  payload: {
+    benchmarkRevision: string;
+    challenger: string;
+    interventions: HarnessIntervention[];
+    retest: HarnessRetestContract;
+    executionRule: "controller-owned";
+  };
+}
+
+/** Materialize benchmark feedback as durable controller work.
+ *
+ * The benchmark protocol is intentionally copied into the task contract: a
+ * later controller cycle must not be able to silently change the metric,
+ * budget, evaluator, or model while attempting a retest. The revision is part
+ * of the id so a new benchmark result creates new work, while repeated cycles
+ * deduplicate the same result.
+ */
+export function materializeHarnessRetestTask(plan: HarnessAdaptationPlan, benchmarkRevision: string): HarnessRetestTask | undefined {
+  if (plan.claimStatus === "win_proven" || plan.interventions.length === 0 || !benchmarkRevision.trim()) return undefined;
+  const revision = createHash("sha256").update(benchmarkRevision).digest("hex").slice(0, 16);
+  const highestPriority = plan.interventions[0]?.priority;
+  return {
+    id: `harness-retest:${plan.challenger}:${revision}`,
+    kind: "harness.retest",
+    priority: highestPriority === "critical" ? 100 : highestPriority === "high" ? 70 : 40,
+    payload: {
+      benchmarkRevision,
+      challenger: plan.challenger,
+      interventions: plan.interventions,
+      retest: plan.retest,
+      executionRule: "controller-owned",
+    },
+  };
 }
 
 function priority(kind: HarnessInterventionKind): HarnessIntervention["priority"] {
