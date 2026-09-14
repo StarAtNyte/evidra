@@ -15,7 +15,7 @@ import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVecto
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
-import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInspection } from "../dist/core/permissions.js";
+import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInspection, guardWorkspaceCommand } from "../dist/core/permissions.js";
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
@@ -2046,6 +2046,13 @@ test("autonomy policy and shell guard enforce hard safety boundaries", () => {
   assert.equal(guardReadOnlyInspection(["git", "checkout", "main"]).allowed, false);
   assert.equal(guardReadOnlyInspection(["python3", "-c", "open('x', 'w')"]).allowed, false);
   assert.equal(guardReadOnlyInspection(["find", ".", "-exec", "rm", "{}", ";"]).allowed, false);
+  const workspace = mkdtempSync(join(tmpdir(), "evidra-permissions-"));
+  try {
+    assert.equal(guardWorkspaceCommand(["rg", "needle", workspace], workspace).allowed, true);
+    assert.equal(guardWorkspaceCommand(["rg", "needle", "/etc"], workspace).allowed, false);
+    assert.equal(guardWorkspaceCommand(["git", "-C", "/tmp", "status"], workspace).allowed, false);
+    assert.equal(guardWorkspaceCommand(["rg", "needle", "../outside"], workspace).allowed, false);
+  } finally { rmSync(workspace, { recursive: true, force: true }); }
 });
 
 test("shell parsing and safety guard handle quoted and wrapped commands", () => {

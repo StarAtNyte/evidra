@@ -1,4 +1,5 @@
-import { basename } from "node:path";
+import { basename, isAbsolute, relative, resolve } from "node:path";
+import { realpathSync } from "node:fs";
 
 export type AutonomyLevel = "safe" | "fast" | "yolo";
 
@@ -86,6 +87,37 @@ export function guardAutonomousCommand(command: string[]): CommandGuard {
   }
   if (executable === "modal" && /\b(deploy|serve|run)\b/.test(joined)) {
     return { allowed: false, reason: "Refusing autonomous Modal deployment or job launch; use the configured executor boundary." };
+  }
+  return { allowed: true };
+}
+
+/**
+ * Keep autonomous inspection and experiment commands inside the selected
+ * workspace. The process CWD alone is insufficient because tools such as
+ * `git -C`, `rg`, and `find` accept independent paths.
+ */
+export function guardWorkspaceCommand(command: string[], root: string): CommandGuard {
+  let rootPath: string;
+  try { rootPath = realpathSync(root); } catch { return { allowed: false, reason: "Workspace root is unavailable." }; }
+  const executable = basename(command[0] ?? "").toLowerCase();
+  const pathArguments = new Set<number>();
+  if (executable === "git") {
+    for (let index = 1; index < command.length - 1; index += 1) if (command[index] === "-C" || command[index] === "--work-tree") pathArguments.add(index + 1);
+  }
+  if (["rg", "grep", "find", "sed", "head", "tail", "cat", "du", "file", "wc", "awk"].includes(executable)) {
+    for (let index = 1; index < command.length; index += 1) {
+      const value = command[index] ?? "";
+      if (!value.startsWith("-")) pathArguments.add(index);
+    }
+  }
+  for (const index of pathArguments) {
+    const value = command[index] ?? "";
+    if (!value || /^https?:\/\//i.test(value)) continue;
+    if (value.split(/[\\/]+/).includes("..")) return { allowed: false, reason: `Refusing workspace escape path '${value}'.` };
+    if (!isAbsolute(value)) continue;
+    const target = resolve(value);
+    const targetRelative = relative(rootPath, target);
+    if (targetRelative.startsWith("..") || isAbsolute(targetRelative)) return { allowed: false, reason: `Refusing path outside the workspace: '${value}'.` };
   }
   return { allowed: true };
 }
