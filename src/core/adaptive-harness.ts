@@ -39,6 +39,54 @@ export interface AdaptiveHarnessPolicy {
   reasons: string[];
 }
 
+export interface CollaborationOutcome {
+  useful: boolean;
+  criticVerdict?: "proceed" | "revise" | "reject";
+  evidenceAnchors?: number;
+}
+
+export interface CollaborationUtility {
+  samples: number;
+  usefulSamples: number;
+  usefulRate: number | null;
+  recommendTeam: boolean;
+  rationale: string;
+}
+
+/**
+ * Treat peer review as an empirical resource allocation decision. With fewer
+ * than three observations we keep the team path available; after that, a
+ * repeated sequence of reviews that adds no actionable disagreement should
+ * not consume the campaign's model and wall-time budget forever.
+ */
+export function collaborationUtility(outcomes: CollaborationOutcome[], hardEvidencePressure = false): CollaborationUtility {
+  const valid = outcomes.filter((outcome) => typeof outcome.useful === "boolean").slice(-24);
+  const usefulSamples = valid.filter((outcome) => outcome.useful).length;
+  if (hardEvidencePressure) return {
+    samples: valid.length,
+    usefulSamples,
+    usefulRate: valid.length ? usefulSamples / valid.length : null,
+    recommendTeam: true,
+    rationale: "hard evidence pressure requires independent review",
+  };
+  if (valid.length < 3) return {
+    samples: valid.length,
+    usefulSamples,
+    usefulRate: valid.length ? usefulSamples / valid.length : null,
+    recommendTeam: true,
+    rationale: "insufficient collaboration history; retain the bounded team path",
+  };
+  const usefulRate = usefulSamples / valid.length;
+  const recommendTeam = usefulRate >= 0.34;
+  return {
+    samples: valid.length,
+    usefulSamples,
+    usefulRate,
+    recommendTeam,
+    rationale: recommendTeam ? "peer review produced actionable value in " + usefulSamples + "/" + valid.length + " recent cycle(s)" : "peer review produced no actionable value in " + (valid.length - usefulSamples) + "/" + valid.length + " recent cycle(s); preserve solo reasoning until evidence pressure returns",
+  };
+}
+
 function countVerdict(quality: AdaptiveHarnessInput["quality"], key: "toolUse" | "evidenceConsistency" | "errorRecovery" | "termination", verdicts: string[]): number {
   return quality.filter((item) => verdicts.includes(item[key]?.verdict ?? "")).length;
 }

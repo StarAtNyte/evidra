@@ -63,6 +63,7 @@ import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, 
 import { runSafetyBenchmark } from "../dist/core/safety-bench.js";
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "../dist/core/scientific-suite.js";
 import { evaluateGpuBudget, observedGpuHours } from "../dist/core/compute-budget.js";
+import { collaborationUtility } from "../dist/core/adaptive-harness.js";
 
 test("search policies receive independent matched scorecards and comparisons", () => {
   const trial = (policy, task, candidateMetric) => ({ harness: `evidra-${policy}`, policy, task, arm: "default", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: false, reproducible: true });
@@ -974,6 +975,19 @@ test("adaptive harness policy changes routing from measured failure pressure", (
   assert.equal(drift.recoveryRoute, "alternate_route");
   assert.equal(drift.requireReplication, true);
   assert.match(drift.reasons.join(" "), /environment drift/i);
+});
+
+test("collaboration utility gates repeated no-value peer review but preserves hard pressure", () => {
+  const early = collaborationUtility([{ useful: false }, { useful: false }]);
+  assert.equal(early.recommendTeam, true);
+  const stale = collaborationUtility([{ useful: false }, { useful: false }, { useful: false }]);
+  assert.equal(stale.recommendTeam, false);
+  assert.match(stale.rationale, /solo reasoning/);
+  const useful = collaborationUtility([{ useful: false }, { useful: true }, { useful: true }]);
+  assert.equal(useful.recommendTeam, true);
+  const forced = collaborationUtility([{ useful: false }, { useful: false }, { useful: false }], true);
+  assert.equal(forced.recommendTeam, true);
+  assert.match(forced.rationale, /hard evidence pressure/);
 });
 
 test("prediction error analysis turns aggregate outcomes into actionable failures", () => {

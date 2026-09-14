@@ -83,7 +83,7 @@ import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, type AirsBenchFami
 import { inventoryHarnessComponents, planHarnessInterventions } from "./core/harness-evolution.js";
 import { advanceEvolutionaryGeneration } from "./core/evolution.js";
 import { materializeHarnessRetestTask, planHarnessAdaptation, validateHarnessRetestProtocol, type HarnessAdaptationPlan } from "./core/harness-adaptation.js";
-import { deriveAdaptiveHarnessPolicy } from "./core/adaptive-harness.js";
+import { collaborationUtility, deriveAdaptiveHarnessPolicy } from "./core/adaptive-harness.js";
 import { createTransferableMethod } from "./core/method-transfer.js";
 import { createAblationPlan, evaluateAblationEvidence } from "./core/ablation.js";
 import { deriveReferenceCurve, type LearningPoint } from "./core/early-stopping.js";
@@ -1885,6 +1885,12 @@ research
         ],
       });
       store.appendEvent("research.adaptive_harness.policy", { cycle, policy: adaptiveHarness });
+      const collaborationHistory = durableEvents
+        .filter((event) => event.type === "research.collaboration.outcome")
+        .map((event) => event.payload)
+        .filter((payload): payload is { useful: boolean; criticVerdict?: "proceed" | "revise" | "reject"; evidenceAnchors?: number } => Boolean(payload && typeof payload === "object" && typeof (payload as { useful?: unknown }).useful === "boolean"));
+      const collaboration = collaborationUtility(collaborationHistory);
+      store.appendEvent("research.collaboration.policy", { cycle, utility: collaboration, hardEvidencePressure: adaptiveHarness.peerReview });
       const searchPolicy = rankSearchArms({
         arms: [
           ...DEFAULT_SEARCH_OPERATORS.map((operator, index) => {
@@ -2048,7 +2054,10 @@ research
           // the director commits to an experiment. Keep this bounded: the
           // second pass is only activated for a genuinely uncertain board and
           // only when the selected autonomy level can afford parallel review.
-          if ((crossPollination.needsAdversarialReview || adaptiveHarness.peerReview) && laneReports.filter((lane) => lane.status === "completed").length > 1 && autonomy !== "safe") {
+          const shouldPeerReview = (adaptiveHarness.peerReview || (crossPollination.needsAdversarialReview && collaboration.recommendTeam))
+            && laneReports.filter((lane) => lane.status === "completed").length > 1
+            && autonomy !== "safe";
+          if (shouldPeerReview) {
             console.log("Research · evidence is contested; independent lanes are peer-reviewing the board...");
             const peerReports = await runResearchLanes(
               `${agentObjective}\n\nPeer-review the supplied lane board. Challenge unsupported agreements, resolve tensions where primary evidence permits, and identify the cheapest discriminating test. Do not repeat workspace inspection unless the board exposes a specific evidence gap.`,
@@ -2114,6 +2123,18 @@ research
             maxParallel: 1,
             autonomy,
           });
+          if (shouldPeerReview) {
+            const collaborationStore = new ResearchStore(statePath);
+            const useful = criticReview.verdict !== "proceed" || criticReview.requiredChecks.length > 0 || crossPollination.tensions.length > 0;
+            collaborationStore.appendEvent("research.collaboration.outcome", {
+              cycle,
+              useful,
+              criticVerdict: criticReview.verdict,
+              evidenceAnchors: crossPollination.independentEvidenceCount,
+              reviewers: laneReports.filter((lane) => lane.role.includes("peer-review")).map((lane) => lane.role),
+            });
+            collaborationStore.close();
+          }
           break;
         } catch (error) {
           if (isProviderUsageLimit(error)) {
