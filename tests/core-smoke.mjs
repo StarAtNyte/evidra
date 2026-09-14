@@ -258,6 +258,20 @@ test("phase-gate event families are queryable without unrelated telemetry", () =
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("trajectory learning history is not truncated at the UI query limit", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-trajectory-history-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    for (let index = 0; index < 1_005; index += 1) {
+      store.saveTrajectory({ id: `trajectory-${index}`, payload: { objective: `task-${index}`, events: [] }, quality: { overall: "PASS" } });
+    }
+    assert.equal(store.trajectories(100).length, 100);
+    assert.equal(store.trajectoryHistory().length, 1_005);
+    assert.equal(store.trajectoryHistory()[0].id, "trajectory-0");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("durable queue can claim one specific retest without stealing another task", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-claim-"));
   try {

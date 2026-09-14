@@ -537,6 +537,12 @@ export class ResearchStore {
     return rows.map((row) => ({ id: row.id, runId: row.run_id, experimentId: row.experiment_id, payload: JSON.parse(row.payload_json), quality: JSON.parse(row.quality_json), createdAt: row.created_at, updatedAt: row.updated_at }));
   }
 
+  /** Complete trajectory history for durable learning/export paths. */
+  trajectoryHistory(): Array<{ id: string; runId: string | null; experimentId: string | null; payload: unknown; quality: unknown; createdAt: string; updatedAt: string }> {
+    const rows = this.db.prepare("SELECT id, run_id, experiment_id, payload_json, quality_json, created_at, updated_at FROM trajectories ORDER BY updated_at ASC").all() as Array<{ id: string; run_id: string | null; experiment_id: string | null; payload_json: string; quality_json: string; created_at: string; updated_at: string }>;
+    return rows.map((row) => ({ id: row.id, runId: row.run_id, experimentId: row.experiment_id, payload: JSON.parse(row.payload_json), quality: JSON.parse(row.quality_json), createdAt: row.created_at, updatedAt: row.updated_at }));
+  }
+
   private readControllerLease(): ControllerLease | undefined {
     const row = this.db.prepare("SELECT controller_id, pid, mode, current_step, status, requested_action, started_at, heartbeat_at, updated_at FROM controller_leases WHERE id = 1").get() as {
       controller_id: string; pid: number; mode: string; current_step: string | null; status: ControllerLease["status"];
