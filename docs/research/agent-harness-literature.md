@@ -517,3 +517,21 @@ than allowing the director to spend another cycle repeating the same run.
 
 Sources: [AutoResearchBench](https://arxiv.org/abs/2604.25256) and
 [Agentic Harness Engineering](https://arxiv.org/abs/2604.25850), [Adaptive Auto-Harness](https://arxiv.org/abs/2606.01770), [HarnessDev](https://arxiv.org/abs/2609.01437), and [Better Harnesses, Smaller Models](https://arxiv.org/abs/2607.08938).
+
+Two additional design constraints are important for the next evolution stage.
+Recent controlled collaboration work finds that stronger models can outgrow
+the benefit of adding more agents, so team size should be selected from
+observed capability and budget rather than maximized by default. Evidra now
+keeps lane fan-out bounded, prioritizes a measured repair specialty, and
+rotates the remaining specialties across cycles; this provides coverage while
+avoiding a permanent swarm tax. See [Capable language models can outgrow the
+benefits of collaboration](https://www.nature.com/articles/s42256-026-01268-y).
+
+The harness should also learn execution cost at the route level. A runtime
+observed on a local CPU, Modal GPU, or a particular provider/model is not
+interchangeable with the global operator prior, but a single observation is
+too sparse to trust as a standalone estimate. Evidra's cost model now blends
+one matching observation toward the global prior and retains the conservative
+global upper tail for admission decisions. This makes budget allocation
+adaptive immediately while preventing a lucky or anomalous first run from
+silently overspending a campaign.
