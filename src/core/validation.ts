@@ -6,6 +6,8 @@ export interface ValidationContext {
   currentCommit: string;
   datasetVersion: string;
   splitVersion: string;
+  /** The competition's declared primary metric; required for metric outcomes. */
+  metricName?: string;
   leakageAuditPassed?: boolean;
   reviewerApproved?: boolean;
   artifactChecksums?: Record<string, string>;
@@ -32,7 +34,9 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
       return !expectedChecksum || sha256File(path) === expectedChecksum;
     }),
     predictionsValid: run.status === "completed" && run.exitCode === 0,
-    metricsRecomputed: manifest.outcomeType !== "metric" ? run.status === "completed" : Object.keys(run.metrics).length > 0,
+    metricsRecomputed: manifest.outcomeType !== "metric" && manifest.outcomeType !== undefined ? run.status === "completed" : context.metricName
+      ? typeof run.metrics[context.metricName] === "number" && Number.isFinite(run.metrics[context.metricName])
+      : Object.keys(run.metrics).length > 0,
     leakageAuditPassed: context.leakageAuditPassed ?? false,
     reviewerApproved: context.reviewerApproved ?? false,
     verifiersPassed,

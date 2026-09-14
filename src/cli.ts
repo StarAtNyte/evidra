@@ -3397,6 +3397,7 @@ experiment.command("audit")
       currentCommit: currentCommit.stdout.trim(),
       datasetVersion: adapter.config.datasetRevision,
       splitVersion: manifest.splitVersion,
+      metricName: adapter.config.metric.name,
       leakageAuditPassed: gates.leakageAuditPassed,
       reviewerApproved: gates.reviewerApproved,
       artifactChecksums,

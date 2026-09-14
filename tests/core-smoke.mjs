@@ -1848,6 +1848,8 @@ test("evidence audit rejects missing declared artifact files", () => {
     const run = { runId: "run", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 1 }, metricsByFold: {}, artifacts: { "predictions.json": artifact } };
     const context = { currentCommit: "commit", datasetVersion: "data", splitVersion: "split", leakageAuditPassed: true, reviewerApproved: true };
     assert.equal(auditExperiment(manifest, run, context).gates.outputsComplete, true);
+    assert.equal(auditExperiment(manifest, { ...run, metrics: { loss: 0.1 } }, { ...context, metricName: "score" }).gates.metricsRecomputed, false);
+    assert.equal(auditExperiment(manifest, run, { ...context, metricName: "score" }).gates.metricsRecomputed, true);
     assert.equal(auditExperiment(manifest, run, { ...context, artifactChecksums: { "predictions.json": "sha256:tampered" } }).gates.outputsComplete, false);
     const checksum = createHash("sha256").update(readFileSync(artifact)).digest("hex");
     assert.equal(auditExperiment(manifest, run, { ...context, artifactChecksums: { "predictions.json": `sha256:${checksum}` } }).gates.outputsComplete, true);
