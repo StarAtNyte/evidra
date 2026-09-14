@@ -2627,8 +2627,19 @@ research
           }
         }
       };
+      const executePortfolioCandidateSafely = async (portfolioCandidate: (typeof executionCandidates)[number]): Promise<void> => {
+        try {
+          await executePortfolioCandidate(portfolioCandidate);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const failureStore = new ResearchStore(statePath);
+          failureStore.appendEvent("experiment.autonomous.portfolio_worker_failed", { candidateId: portfolioCandidate.id, error: message, recoverable: true, action: "continue remaining portfolio candidates and replan next cycle" });
+          failureStore.close();
+          console.log(`Autonomous portfolio candidate ${portfolioCandidate.id} failed; continuing remaining candidates.`);
+        }
+      };
       if (halvingEnabled) {
-        for (const portfolioCandidate of executionCandidates) await executePortfolioCandidate(portfolioCandidate);
+        for (const portfolioCandidate of executionCandidates) await executePortfolioCandidateSafely(portfolioCandidate);
       } else {
         let nextCandidate = 0;
         const workerCount = Math.max(1, Math.min(portfolioPlan.parallelism, executionCandidates.length));
@@ -2636,7 +2647,7 @@ research
           while (nextCandidate < executionCandidates.length) {
             const candidate = executionCandidates[nextCandidate];
             nextCandidate += 1;
-            if (candidate) await executePortfolioCandidate(candidate);
+            if (candidate) await executePortfolioCandidateSafely(candidate);
           }
         }));
       }
