@@ -1959,7 +1959,14 @@ research
       const executionCandidates = !criticBlocks && !policyBlocksExecution && decision.decision === "run" && decision.selectedHypothesis && autonomyPolicy(autonomy).canRunIsolatedExperiments
         ? (portfolioPlan.selected.length ? portfolioPlan.selected : selectedDecisionCandidate ? [selectedDecisionCandidate] : [])
         : [];
-      const halvingEnabled = executionCandidates.length > 1 && portfolioPlan.halving.feasible && portfolioPlan.halving.stages.length > 1;
+      // Successive halving is only executable when the competition declares a
+      // reduced-validation command. Otherwise a feasible portfolio must go
+      // directly to the full evaluator; pretending a reduced stage exists
+      // turns valid candidates into avoidable "reduced-only" failures.
+      const halvingEnabled = executionCandidates.length > 1
+        && Boolean(adapter.config.execution?.reducedValidationCommand)
+        && portfolioPlan.halving.feasible
+        && portfolioPlan.halving.stages.length > 1;
       const screenedCandidates: Array<{ experimentId: string; metric?: number; valid: boolean }> = [];
       const finalizeAutonomousRun = async (experimentId: string, run: { exitCode: number; stdout: string; stderr: string }): Promise<void> => {
         const completionStore = new ResearchStore(statePath);
