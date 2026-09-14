@@ -752,9 +752,9 @@ export class ResearchStore {
     return recovered;
   }
 
-  runs(): Array<{ id: string; experimentId: string; status: string; payload: unknown; updatedAt: string }> {
-    const rows = this.db.prepare("SELECT id, experiment_id, status, payload_json, updated_at FROM runs ORDER BY updated_at DESC").all() as Array<{ id: string; experiment_id: string; status: string; payload_json: string; updated_at: string }>;
-    return rows.map((row) => ({ id: row.id, experimentId: row.experiment_id, status: row.status, payload: JSON.parse(row.payload_json), updatedAt: row.updated_at }));
+  runs(): Array<{ id: string; experimentId: string; status: string; payload: unknown; createdAt: string; updatedAt: string }> {
+    const rows = this.db.prepare("SELECT id, experiment_id, status, payload_json, created_at, updated_at FROM runs ORDER BY updated_at DESC").all() as Array<{ id: string; experiment_id: string; status: string; payload_json: string; created_at: string; updated_at: string }>;
+    return rows.map((row) => ({ id: row.id, experimentId: row.experiment_id, status: row.status, payload: JSON.parse(row.payload_json), createdAt: row.created_at, updatedAt: row.updated_at }));
   }
 
   artifacts(runId?: string): Array<{ id: string; runId: string; name: string; path: string; checksum: string; createdAt: string }> {

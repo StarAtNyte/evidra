@@ -65,6 +65,7 @@ import { synthesizeLaneReports } from "../core/cross-pollination.js";
 import { analyzePredictionRows, parsePredictionRows } from "../core/error-analysis.js";
 import { createTransferableMethod } from "../core/method-transfer.js";
 import { createAblationPlan } from "../core/ablation.js";
+import { buildMlflowRunExports } from "../core/mlflow.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -172,6 +173,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
   "/sources": [["/sources list", "List retrieved sources"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources discover", "Search scholarly literature"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
   "/benchmark": [["/benchmark literature-score ", "Score Evidra literature discovery"], ["/benchmark autoresearch ", "Import official AutoResearchBench evaluation"]],
+  "/telemetry": [["/telemetry export", "Export MLflow-compatible run telemetry"]],
   "/evidence": [["/evidence audit", "Audit claim provenance and completion blockers"], ["/evidence analyze", "Analyze prediction errors and worst groups"]],
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
@@ -2202,6 +2204,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const elapsed = campaign ? campaignElapsedMinutes(campaign) : 0;
       const executorUsage = Object.entries(usage.byExecutor).map(([executor, bucket]) => `  ${executor}: ${bucket.runs} runs · ${bucket.wallMinutes.toFixed(1)}m · ${bucket.gpuWallHours.toFixed(3)} GPU-h`).join("\n");
       append("assistant", `Usage\n  provider: ${config.provider}\n  model: ${config.model}\n  thinking: ${config.reasoningEffort}\n  scheduler: ${state.status}\n  events: ${events}\n  hypotheses: ${counts.hypotheses} · claims: ${counts.claims} · decisions: ${counts.decisions}\n  experiments: ${counts.experiments} · runs: ${counts.runs} · artifacts: ${counts.artifacts}\n  run wall time: ${usage.wallMinutes.toFixed(1)} minutes\n  GPU-tagged wall time: ${usage.gpuWallHours.toFixed(3)} hours${executorUsage ? `\n${executorUsage}` : ""}\n${campaign ? `\nCampaign\n  status: ${campaign.status}\n  elapsed: ${elapsed.toFixed(1)} / ${campaign.budgetMinutes} minutes\n  remaining: ${Math.max(0, campaign.budgetMinutes - elapsed).toFixed(1)} minutes\n  goal: ${campaign.goal}\n  stop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\n  provider retry: ${campaign.nextAttemptAt}` : ""}` : "\nNo autonomous campaign configured. Start one with /research."}`);
+      return;
+    }
+    if (request === "/telemetry export") {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const project = store.project();
+      const output = { format: "mlflow", version: 1, project: project?.name ?? "evidra", runs: buildMlflowRunExports(store.runs(), store.experiments(), store.artifacts(), project?.name ?? "evidra") };
+      store.close();
+      append("assistant", JSON.stringify(output, null, 2));
       return;
     }
     if (request.startsWith("/benchmark literature-score")) {

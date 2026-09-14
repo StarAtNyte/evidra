@@ -111,6 +111,7 @@ import { planPortfolio } from "../dist/core/portfolio.js";
 import { advanceEvolutionaryGeneration, planEvolutionaryIslands } from "../dist/core/evolution.js";
 import { literatureWorkKey, parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "../dist/core/literature-bench.js";
 import { parseAutoResearchBenchEvaluation, parseAutoResearchBenchInput } from "../dist/core/autoresearch-bench.js";
+import { buildMlflowRunExports } from "../dist/core/mlflow.js";
 import { planSuccessiveHalving, promoteHalvingStage } from "../dist/core/successive-halving.js";
 import { estimateCost } from "../dist/core/cost-model.js";
 import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
@@ -1852,6 +1853,23 @@ test("AutoResearchBench adapter parses official wide aggregate summaries and rej
   assert.equal(report.source, "wide");
   assert.equal(report.metrics.avg_iou, 0.4);
   assert.throws(() => parseAutoResearchBenchEvaluation({ nope: true }), /Unrecognized AutoResearchBench/);
+});
+
+test("MLflow export preserves run metrics, timing, artifacts, and failure tags without secrets", () => {
+  const output = buildMlflowRunExports([
+    { id: "run-1", experimentId: "exp-1", status: "completed", createdAt: "2026-09-15T10:00:00.000Z", updatedAt: "2026-09-15T10:01:00.000Z", payload: { durationSeconds: 60, metrics: { score: 0.82, invalid: Number.NaN }, model: "gpt-5.6-luna" } },
+    { id: "run-2", experimentId: "exp-2", status: "failed", createdAt: "2026-09-15T10:00:00.000Z", updatedAt: "2026-09-15T10:02:00.000Z", payload: { failureClass: "timeout", apiKey: "should-not-export" } },
+  ], [
+    { id: "exp-1", payload: { datasetVersion: "data-v1", splitVersion: "split-v1", hypothesisId: "h-1", resources: { executor: "local" } } },
+    { id: "exp-2", payload: {} },
+  ], [{ runId: "run-1", name: "predictions.json", path: "artifacts/predictions.json", checksum: "sha256:test" }], "demo");
+  assert.equal(output[0].status, "FINISHED");
+  assert.equal(output[0].metrics.score, 0.82);
+  assert.equal(output[0].params.executor, "local");
+  assert.equal(output[0].artifacts[0].checksum, "sha256:test");
+  assert.equal(output[1].status, "FAILED");
+  assert.equal(output[1].tags["evidra.failure_class"], "timeout");
+  assert.equal("apiKey" in output[1].params, false);
 });
 
 test("repository search parsing preserves implementation leads without trusting metadata", () => {

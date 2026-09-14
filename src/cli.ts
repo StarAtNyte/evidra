@@ -86,6 +86,7 @@ import { deriveAdaptiveHarnessPolicy } from "./core/adaptive-harness.js";
 import { createTransferableMethod } from "./core/method-transfer.js";
 import { createAblationPlan, evaluateAblationEvidence } from "./core/ablation.js";
 import { deriveReferenceCurve, type LearningPoint } from "./core/early-stopping.js";
+import { buildMlflowRunExports } from "./core/mlflow.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -454,6 +455,23 @@ program.command("usage").description("Show research, experiment, and campaign us
   for (const [executor, bucket] of Object.entries(usage.byExecutor)) console.log(`  ${executor.padEnd(11)} ${bucket.runs} runs · ${bucket.wallMinutes.toFixed(1)}m · ${bucket.gpuWallHours.toFixed(3)} GPU-h`);
   store.close();
 });
+
+const telemetry = program.command("telemetry").description("Export interoperable experiment telemetry");
+telemetry.command("export")
+  .argument("[format]", "export format", "mlflow")
+  .option("--out <file>", "write the export to a JSON file instead of stdout")
+  .description("Export durable runs in an MLflow-compatible, secret-free JSON shape")
+  .action((format: string, options: { out?: string }) => {
+    if (format !== "mlflow") throw new Error("Supported telemetry format: mlflow.");
+    const store = new ResearchStore(statePath);
+    const project = store.project();
+    const output = { format: "mlflow", version: 1, project: project?.name ?? "evidra", runs: buildMlflowRunExports(store.runs(), store.experiments(), store.artifacts(), project?.name ?? "evidra") };
+    store.close();
+    const serialized = `${JSON.stringify(output, null, 2)}\n`;
+    if (options.out) writeFileSync(resolve(options.out), serialized);
+    else process.stdout.write(serialized);
+  });
+program.addCommand(telemetry);
 
 const benchmark = new Command("benchmark").description("Compare research harnesses under a common task/budget protocol");
 benchmark.command("run")
