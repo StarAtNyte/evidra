@@ -62,7 +62,7 @@ import { compareHarnesses, compareSearchPolicies, evaluateHarnessComponentAblati
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, ScientificTaskSchema } from "../dist/core/scientific-tasks.js";
 import { runSafetyBenchmark } from "../dist/core/safety-bench.js";
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "../dist/core/scientific-suite.js";
-import { evaluateGpuBudget } from "../dist/core/compute-budget.js";
+import { evaluateGpuBudget, observedGpuHours } from "../dist/core/compute-budget.js";
 
 test("search policies receive independent matched scorecards and comparisons", () => {
   const trial = (policy, task, candidateMetric) => ({ harness: `evidra-${policy}`, policy, task, arm: "default", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: false, reproducible: true });
@@ -80,6 +80,15 @@ test("GPU budget decisions protect bounded campaigns without blocking CPU work",
   assert.match(blocked.reason, /remaining/);
   assert.equal(evaluateGpuBudget({ budgetGpuHours: 1, usedGpuHours: 99, requestedGpuHours: 0, executor: "local" }).allowed, true);
   assert.equal(evaluateGpuBudget({ budgetGpuHours: 1, usedGpuHours: 99, requestedGpuHours: 10, executor: "local" }).allowed, true);
+});
+
+test("GPU usage accounting includes retries and implicit Modal GPU routes", () => {
+  const hours = observedGpuHours(
+    [{ experimentId: "modal-exp", durationSeconds: 3600 }, { experimentId: "cpu-exp", durationSeconds: 7200 }],
+    [{ id: "modal-exp", payload: { resources: { executor: "modal" }, hypothesisId: "gpu-hyp" } }, { id: "cpu-exp", payload: { resources: { executor: "local" }, hypothesisId: "cpu-hyp" } }],
+    [{ id: "gpu-hyp", payload: { computeCostGpuHours: 2 } }, { id: "cpu-hyp", payload: { computeCostGpuHours: 0 } }],
+  );
+  assert.equal(hours, 1);
 });
 
 test("stagnation widens search before the campaign can pause", () => {

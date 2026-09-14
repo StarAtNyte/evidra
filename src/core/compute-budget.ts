@@ -16,6 +16,22 @@ export interface GpuBudgetDecision {
   reason: string;
 }
 
+/** Sum observed GPU wall time from durable attempts and experiment manifests. */
+export function observedGpuHours(
+  attempts: readonly { experimentId: string; durationSeconds: number | null }[],
+  experiments: readonly { id: string; payload: unknown }[],
+  hypotheses: readonly { id: string; payload: unknown }[] = [],
+): number {
+  const manifests = new Map(experiments.map((experiment) => [experiment.id, experiment.payload as { resources?: { gpu?: unknown; executor?: unknown }; hypothesisId?: unknown }]));
+  const costs = new Map(hypotheses.map((hypothesis) => [hypothesis.id, hypothesis.payload as { computeCostGpuHours?: unknown }]));
+  return attempts.reduce((total, attempt) => {
+    const manifest = manifests.get(attempt.experimentId);
+    const hypothesis = costs.get(manifest?.hypothesisId as string);
+    const gpu = Boolean(manifest?.resources?.gpu) || (manifest?.resources?.executor === "modal" && typeof hypothesis?.computeCostGpuHours === "number" && hypothesis.computeCostGpuHours > 0);
+    return total + (gpu ? Math.max(0, attempt.durationSeconds ?? 0) / 3_600 : 0);
+  }, 0);
+}
+
 /**
  * Enforce a campaign GPU budget before a worker is launched. Zero/undefined
  * means unlimited because many CPU-only research campaigns have no GPU cost.

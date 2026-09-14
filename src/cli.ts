@@ -42,7 +42,7 @@ import { applyUnifiedDiff, extractUnifiedDiff } from "./core/experiment-patches.
 import { applyCriticGate, latestOpenCriticConstraint } from "./core/critic-gate.js";
 import { recordBaselineEvidence } from "./core/baseline.js";
 import { redactSecrets } from "./core/redaction.js";
-import { evaluateGpuBudget } from "./core/compute-budget.js";
+import { evaluateGpuBudget, observedGpuHours } from "./core/compute-budget.js";
 import { enforceClaimTermination, enforceGoalTermination } from "./core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds, type ClaimAuditReport } from "./core/claim-audit.js";
 import { analyzePredictionRows, parsePredictionRows } from "./core/error-analysis.js";
@@ -1403,9 +1403,10 @@ challenge.command("status").action(() => {
   const active = store.project();
   const adapter = activeCompetition();
   const campaign = store.campaign() as { status?: string; goal?: string; budgetMinutes?: number; gpuBudgetHours?: number; autoExecuteExperiments?: boolean; runtime?: { autonomy?: string } } | undefined;
+  const gpuUsed = observedGpuHours(store.runAttempts(), store.experiments(), store.hypotheses());
   const autonomous = campaign?.autoExecuteExperiments === true || campaign?.runtime?.autonomy === "fast" || campaign?.runtime?.autonomy === "yolo";
   const lease = store.liveControllerLease();
-  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}${campaign ? `\nCampaign: ${campaign.status ?? "unknown"}\nGoal: ${campaign.goal ?? "(none)"}\nBudget: ${campaign.budgetMinutes ?? "?"} minutes\nGPU budget: ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}\nAutonomous experiments: ${autonomous ? "enabled" : "approval-gated"}` : "\nCampaign: none"}${lease ? `\nController: running (pid ${lease.pid}, step ${lease.currentStep ?? "unknown"})` : "\nController: idle"}`);
+  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}${campaign ? `\nCampaign: ${campaign.status ?? "unknown"}\nGoal: ${campaign.goal ?? "(none)"}\nBudget: ${campaign.budgetMinutes ?? "?"} minutes\nGPU usage: ${gpuUsed.toFixed(3)} / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed).toFixed(3)} remaining)` : ""}\nAutonomous experiments: ${autonomous ? "enabled" : "approval-gated"}` : "\nCampaign: none"}${lease ? `\nController: running (pid ${lease.pid}, step ${lease.currentStep ?? "unknown"})` : "\nController: idle"}`);
   store.close();
 });
 for (const action of ["pause", "resume", "stop"] as const) {
@@ -2763,15 +2764,7 @@ experiment.command("run")
     const currentRequestedGpuHours = typeof currentHypothesisPayload?.computeCostGpuHours === "number" ? currentHypothesisPayload.computeCostGpuHours : 0;
     const currentGpuLabel = manifest.resources.gpu ?? (manifest.resources.executor === "modal" && currentRequestedGpuHours > 0 ? "modal-default" : undefined);
     if (gpuBudget > 0 && currentGpuLabel) {
-      const experiments = store.experiments();
-      const hypotheses = store.hypotheses();
-      const usedGpuHours = store.runAttempts().reduce((total, attempt) => {
-        const experiment = experiments.find((candidate) => candidate.id === attempt.experimentId);
-        const payload = experiment?.payload as { resources?: { gpu?: unknown; executor?: unknown }; hypothesisId?: unknown } | undefined;
-        const priorHypothesis = hypotheses.find((candidate) => candidate.id === payload?.hypothesisId)?.payload as { computeCostGpuHours?: unknown } | undefined;
-        const priorGpu = payload?.resources?.gpu || (payload?.resources?.executor === "modal" && typeof priorHypothesis?.computeCostGpuHours === "number" && priorHypothesis.computeCostGpuHours > 0);
-        return total + (priorGpu ? Math.max(0, attempt.durationSeconds ?? 0) / 3_600 : 0);
-      }, 0);
+      const usedGpuHours = observedGpuHours(store.runAttempts(), store.experiments(), store.hypotheses());
       const budgetDecision = evaluateGpuBudget({ budgetGpuHours: gpuBudget, usedGpuHours, requestedGpuHours: currentRequestedGpuHours, executor: manifest.resources.executor, gpu: currentGpuLabel });
       store.appendEvent("compute.budget.checked", { experimentId: id, ...budgetDecision });
       if (!budgetDecision.allowed) {
