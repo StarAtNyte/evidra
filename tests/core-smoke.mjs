@@ -2544,13 +2544,19 @@ test("research director executes typed tools and reasons over returned evidence"
   const previousHost = process.env.OLLAMA_HOST;
   let calls = 0;
   let toolAttempts = 0;
-  const server = createServer((_request, response) => {
+  let observedSteering = false;
+  const server = createServer((request, response) => {
     calls += 1;
     const decision = calls === 1
       ? { phase: "orientation", goalStatus: "active", decision: "inspect", bottleneck: "Need workspace evidence", rationale: "The workspace has not been inspected yet.", hypotheses: [], selectedHypothesis: null, nextAction: "Inspect files", toolCalls: [{ name: "workspace.files", arguments: {} }] }
       : { phase: "orientation", goalStatus: "active", decision: "propose", bottleneck: "Evidence is available", rationale: "The tool result is now available for the next decision.", hypotheses: [{ title: "Inspect the current implementation", mechanism: "Workspace evidence identifies the next testable change.", evidence: ["workspace.files returned repository files"], proposedChange: "Use the observed files to define a minimal experiment", falsificationTest: "The proposed experiment fails its validation check", expectedMetricDelta: { low: 0, median: 0, high: 0 }, computeCostGpuHours: 0, implementationRisk: "low", leakageRisk: "low", dependencies: [] }], selectedHypothesis: "Inspect the current implementation", nextAction: "Run the validation check", toolCalls: [] };
-    response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+    let body = "";
+    request.on("data", (chunk) => { body += chunk.toString(); });
+    request.on("end", () => {
+      if (body.includes("focus on falsification")) observedSteering = true;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+    });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -2560,9 +2566,10 @@ test("research director executes typed tools and reasons over returned evidence"
       toolAttempts += 1;
       if (toolAttempts === 1) return { name: call.name, ok: false, error: "temporary network unavailable" };
       return { name: call.name, ok: true, output: { files: ["notes.txt"] } };
-    } });
+    }, consumeSteering: () => calls === 1 ? ["focus on falsification"] : [] });
     assert.equal(calls, 2);
     assert.equal(toolAttempts, 2);
+    assert.equal(observedSteering, true);
     assert.equal(decision.decision, "propose");
     assert.equal(decision.toolCalls.length, 0);
   } finally {

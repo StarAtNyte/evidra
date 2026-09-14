@@ -27,6 +27,8 @@ export interface ResearchDirectorOptions {
   executeTool?: (call: ResearchToolCall) => Promise<ResearchToolResult>;
   onToolCall?: (source: string, call: ResearchToolCall) => string;
   onToolResult?: (source: string, callId: string, result: ResearchToolResult) => void;
+  /** Consume operator steering after each completed tool, before replanning. */
+  consumeSteering?: () => string[];
   maxToolRounds?: number;
   maxToolAttempts?: number;
 }
@@ -91,6 +93,7 @@ export async function runResearchDirector(
     ...context,
     availableTools: options.executeTool ? RESEARCH_TOOLS : [],
   }).context;
+  const steering: string[] = [];
   for (let round = 0; round <= maxToolRounds; round += 1) {
     let parsed: ReturnType<typeof ResearchDecisionSchema.safeParse> | undefined;
     let lastError: unknown;
@@ -141,6 +144,11 @@ export async function runResearchDirector(
       options.onToolResult?.("director", callId, result);
       if (!result.ok) onProgress?.(`Tool ${call.name} failed; the director will replan from this evidence.`);
       results.push(result);
+      const newSteering = options.consumeSteering?.() ?? [];
+      if (newSteering.length) {
+        steering.push(...newSteering);
+        onProgress?.(`Operator steering applied at the next safe tool boundary (${newSteering.length} instruction${newSteering.length === 1 ? "" : "s"}).`);
+      }
     }
     workingContext = boundResearchContext({
       ...workingContext,
@@ -149,7 +157,10 @@ export async function runResearchDirector(
         ...results,
       ],
       lastDecision: { ...decision, toolCalls: [] },
-      toolInstruction: "Use the tool results above. Request another tool only if it is necessary; otherwise return the final decision with toolCalls: [].",
+      ...(steering.length ? { operatorSteering: steering.slice(-8) } : {}),
+      toolInstruction: steering.length
+        ? "Use the tool results above and incorporate the operator steering instructions at this safe boundary while preserving all evidence, permission, and validation gates. Request another tool only if it is necessary; otherwise return the final decision with toolCalls: []."
+        : "Use the tool results above. Request another tool only if it is necessary; otherwise return the final decision with toolCalls: [].",
     }).context;
   }
   throw new Error("Research director stopped without a final decision.");
