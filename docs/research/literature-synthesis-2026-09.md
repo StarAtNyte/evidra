@@ -102,12 +102,19 @@ that Evidra beats another harness.
 
 1. Add a durable harness-change record with component checksums, forecasts, and
    matched evaluation identity.
-2. Add a verified skill/procedure registry separate from claims and raw experience.
-3. Add Pareto and constraint-based objective handling for mixed metric/artifact/
+2. ~~Add a verified skill/procedure registry separate from claims and raw experience.~~
+   Implemented as provenance-linked, schema-validated playbook leads derived only
+   from independently replicated methods; each playbook carries transfer failure
+   modes and remains a lead until freshly tested.
+3. ~~Add Pareto and constraint-based objective handling for mixed metric/artifact/
    verifier campaigns.
+   Implemented for normalized metric suites and non-metric objective values;
+   incomparable survivors are retained through Pareto promotion.~~
 4. Add held-out cross-provider harness evaluation to the benchmark runner.
-5. Generate a final research report from immutable evidence with explicit
+5. ~~Generate a final research report from immutable evidence with explicit
    uncertainty, failed directions, and reproduction commands.
+   Implemented through the durable report and claim-audit pipeline; the remaining
+   empirical work is to validate report usefulness on held-out campaigns.~~
 
 ## Sources
 

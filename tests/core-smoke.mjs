@@ -1866,6 +1866,8 @@ test("research memory carries only validated transferable methods into a new obj
     store.appendEvent("research.method.transferable", { ...method, id: "unreplicated", replicated: false });
     const context = researchMemoryContext(store, 5, "source leakage validation");
     assert.deepEqual(context.transferableMethods.map((entry) => entry.id), ["method-memory"]);
+    assert.deepEqual(context.verifiedPlaybooks.map((entry) => entry.id), ["playbook_method-memory"]);
+    assert.equal(context.verifiedPlaybooks[0].status, "replicated_lead");
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
