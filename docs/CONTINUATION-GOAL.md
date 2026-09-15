@@ -58,6 +58,10 @@ external evaluator.
 ## Latest repository state
 
 - Latest pushed state: `origin/master` at commit `1ea3dda` (verify with `git log`).
+- The current working change adds a generic auditable-subtask contract: phase
+  goals can expose structured acceptance criteria, and verifier/auditor
+  observations—not executor prose—determine completion. Update this line to the
+  pushed commit when handing off.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.

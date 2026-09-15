@@ -1,4 +1,5 @@
 import { PhaseGoalSchema, type PhaseGoal, type ResearchPhase } from "./types.js";
+import { auditSubtask, type SubtaskAudit, type SubtaskContract, type SubtaskObservation } from "./subtask-state.js";
 
 /** Create a short deterministic identity for one mode/objective goal set. */
 export function phaseGoalSetId(ultimateGoal: string, mode: "research" | "challenge"): string {
@@ -21,6 +22,29 @@ const PHASES: Array<{ phase: ResearchPhase; title: string; objective: string; cr
   { phase: "replication", title: "Independently replicate", objective: "Repeat promising improvements with an independent seed or implementation before acceptance.", criteria: ["replication manifest created", "replication run completed", "replication agrees within configured tolerance"] },
   { phase: "promotion", title: "Promote only verified work", objective: "Require leakage clearance, review approval, and complete provenance before promotion or submission.", criteria: ["all evidence gates pass", "review approval recorded", "promotion provenance written"] },
 ];
+
+/** Adapt the durable phase machine to the generic auditable-subtask contract. */
+export function phaseGoalSubtaskContract(goal: Pick<PhaseGoal, "id" | "objective" | "completionCriteria">): SubtaskContract {
+  return {
+    id: goal.id,
+    objective: goal.objective,
+    acceptanceCriteria: goal.completionCriteria.map((description, index) => ({
+      id: `criterion_${index + 1}`,
+      description,
+      required: true,
+    })),
+    scope: "phase_goal",
+  };
+}
+
+/**
+ * Run the generic auditor for a phase goal. The phase-specific gate remains
+ * responsible for interpreting domain evidence; this adapter makes its final
+ * decision auditable and prevents executor prose from satisfying a phase.
+ */
+export function auditPhaseGoal(goal: Pick<PhaseGoal, "id" | "objective" | "completionCriteria">, observations: SubtaskObservation[], auditedAt?: string): SubtaskAudit {
+  return auditSubtask(phaseGoalSubtaskContract(goal), observations, auditedAt);
+}
 
 /** Event families that can satisfy phase completion; correctness must read the durable history. */
 export const PHASE_GOAL_EVENT_TYPES = [

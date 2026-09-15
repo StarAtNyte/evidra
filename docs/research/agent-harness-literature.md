@@ -581,3 +581,13 @@ blocked and smaller drift remains durable evidence for later harness
 adaptation. Source: [SlopCodeBench](https://arxiv.org/abs/2603.24755).
 The trend detector also retains recent assessments, because degradation can
 accumulate even when no individual change crosses a severe threshold.
+
+The next control boundary is now implemented as a provider-neutral subtask
+contract. A phase or other unit of work declares an objective and required
+acceptance criteria; structured verifier/auditor observations produce a
+durable-compatible audit result with evidence IDs and unmet criteria. Executor
+claims are intentionally ignored as proof, and later verification can revoke or
+repair an earlier result. Phase goals expose this same contract through the
+`phaseGoalSubtaskContract`/`auditPhaseGoal` adapter, so the mechanism applies to
+research, software tasks, scientific proofs, and competitions rather than a
+single benchmark format.

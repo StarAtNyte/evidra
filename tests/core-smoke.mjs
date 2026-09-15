@@ -27,7 +27,8 @@ import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist
 import { experienceReplayWorld } from "../dist/core/experience.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
-import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../dist/core/phase-goals.js";
+import { activePhaseGoal, auditPhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../dist/core/phase-goals.js";
+import { assertSubtaskContract, auditSubtask, subtaskStateFromAudit, validateSubtaskContract } from "../dist/core/subtask-state.js";
 import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
@@ -2240,6 +2241,36 @@ test("phase completion requires durable evidence instead of model status alone",
   assert.equal(researchGoal.title, "Establish a trusted reference");
   assert.equal(evaluatePhaseGoalEvidence(researchGoal, { mode: "research", eventTypes: ["research.observation"], eventPayloads: [], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, true);
   assert.equal(evaluatePhaseGoalEvidence(researchGoal, { mode: "research", eventTypes: [], eventPayloads: [], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, false);
+});
+
+test("generic subtask auditing requires verifier evidence and preserves unmet criteria", () => {
+  const contract = { id: "audit-1", objective: "produce a reproducible result", acceptanceCriteria: [
+    { id: "artifact", description: "result artifact exists" },
+    { id: "optional-note", description: "operator note exists", required: false },
+  ] };
+  assert.equal(validateSubtaskContract(contract).valid, true);
+  // An executor's confident claim is not completion evidence.
+  const blocked = auditSubtask(contract, [{ criterionId: "artifact", satisfied: true, source: "executor", detail: "done" }]);
+  assert.equal(blocked.complete, false);
+  assert.deepEqual(blocked.unmetRequired, ["artifact"]);
+  assert.deepEqual(blocked.ignoredObservations, ["artifact"]);
+  const complete = auditSubtask(contract, [
+    { criterionId: "artifact", satisfied: true, source: "verifier", evidenceIds: ["sha256:artifact"] },
+  ], "2026-09-16T00:00:00.000Z");
+  assert.equal(complete.complete, true);
+  assert.equal(complete.status, "completed");
+  assert.deepEqual(complete.criteria[0].evidenceIds, ["sha256:artifact"]);
+  assert.equal(subtaskStateFromAudit(complete).status, "completed");
+  assert.throws(() => assertSubtaskContract({ ...contract, acceptanceCriteria: [{ id: "x", description: "x" }, { id: "x", description: "duplicate" }] }), /duplicate/);
+});
+
+test("phase goals expose the same auditable contract used by generic work", () => {
+  const goal = definePhaseGoals("measure a general research question", "research")[0];
+  const contract = phaseGoalSubtaskContract(goal);
+  assert.equal(contract.scope, "phase_goal");
+  assert.equal(contract.acceptanceCriteria.length, goal.completionCriteria.length);
+  const audit = auditPhaseGoal(goal, contract.acceptanceCriteria.map((criterion) => ({ criterionId: criterion.id, satisfied: true, source: "auditor", evidenceIds: [`event:${criterion.id}`] })));
+  assert.equal(audit.complete, true);
 });
 
 test("validation phase completion requires the latest policy lifecycle event to be a lock", () => {
