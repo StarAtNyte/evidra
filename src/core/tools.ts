@@ -232,9 +232,9 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         if (!guard.allowed) throw new Error(guard.reason);
         const workspaceGuard = guardWorkspaceCommand(command, context.root);
         if (!workspaceGuard.allowed) throw new Error(workspaceGuard.reason);
-        if (context.autonomy === "safe") {
-          const inspection = guardReadOnlyInspection(command);
-          if (!inspection.allowed) throw new Error(inspection.reason);
+        const inspection = guardReadOnlyInspection(command);
+        if (!inspection.allowed) {
+          throw new Error(context.autonomy === "safe" ? inspection.reason : `Autonomous research tools remain read-only in ${context.autonomy.toUpperCase()} mode: ${inspection.reason}`);
         }
         const timeout = typeof args.timeoutMs === "number" ? Math.max(1_000, Math.min(args.timeoutMs, 15 * 60_000)) : 120_000;
         context.onProgress?.(`Tool shell.exec · ${command.join(" ")}`);
