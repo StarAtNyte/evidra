@@ -1905,7 +1905,8 @@ research
       const steeringGuidance = steering.length
         ? `\n\nOperator steering received at the cycle boundary. Incorporate these instructions into this cycle while preserving the evidence, reproducibility, and permission gates:\n${steering.map((item) => `- ${item.message}`).join("\n")}`
         : "";
-      if (!store.phaseGoals().length) for (const goal of definePhaseGoals(objective, mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
+      const storedGoals = store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));
+      if (!phaseGoalsForMode(storedGoals, mode).length) for (const goal of definePhaseGoals(objective, mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
       const staleExperiment = store.experiments().find((entry) => {
         const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { status?: unknown; stale?: unknown; recoveryAttempted?: unknown } : {};
         return payload.status === "failed" && payload.stale === true && payload.recoveryAttempted !== true;
@@ -3209,7 +3210,7 @@ research.command("propose")
   .action(async (objective: string) => {
     const store = new ResearchStore(statePath);
     const project = store.project();
-    if (!store.phaseGoals().length) {
+    if (!phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), "research").length) {
       for (const goal of definePhaseGoals(objective, "research")) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
     }
     const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), "research"));
