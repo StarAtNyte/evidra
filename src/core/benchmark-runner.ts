@@ -38,6 +38,8 @@ export interface BenchmarkArmSpec {
   metric: string;
   /** Additional metrics that must be emitted for this arm to be valid. */
   requiredMetrics?: string[];
+  /** Optional pairwise non-regression gates for secondary objectives. */
+  metricGates?: Array<{ name: string; direction: ScoreDirection; maximumRegression?: number }>;
   command: string[];
   cwd?: string;
 }
@@ -86,6 +88,7 @@ export function benchmarkProtocolFingerprint(arms: BenchmarkArmSpec[]): string {
     taskBestMetric: arm.taskBestMetric ?? null,
     metric: arm.metric,
     requiredMetrics: [...new Set([arm.metric, ...(arm.requiredMetrics ?? [])])].sort(),
+    metricGates: (arm.metricGates ?? []).map((gate) => ({ name: gate.name, direction: gate.direction, maximumRegression: gate.maximumRegression ?? 0 })).sort((left, right) => left.name.localeCompare(right.name)),
   })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
   return `sha256:${createHash("sha256").update(JSON.stringify(identity)).digest("hex")}`;
 }
@@ -112,6 +115,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     if (!arm.command.length || arm.command.some((part) => !part.trim())) throw new Error(`Benchmark arm '${arm.harness}' has an empty command.`);
     if (arm.provider !== undefined && (!arm.provider.trim() || arm.provider.length > 80)) throw new Error(`Benchmark arm '${arm.harness}' has an invalid provider label.`);
     if (arm.requiredMetrics !== undefined && (!Array.isArray(arm.requiredMetrics) || arm.requiredMetrics.some((name) => typeof name !== "string" || !name.trim()))) throw new Error(`Benchmark arm '${arm.harness}' has invalid required metric names.`);
+    if (arm.metricGates !== undefined && (!Array.isArray(arm.metricGates) || arm.metricGates.some((gate) => !gate || typeof gate.name !== "string" || !gate.name.trim() || !["maximize", "minimize"].includes(gate.direction) || (gate.maximumRegression !== undefined && (!Number.isFinite(gate.maximumRegression) || gate.maximumRegression < 0))))) throw new Error(`Benchmark arm '${arm.harness}' has invalid metric gates.`);
     if (!Number.isFinite(arm.budgetMinutes) || arm.budgetMinutes <= 0) throw new Error(`Benchmark arm '${arm.harness}' must have a positive budget.`);
     if (arm.policy !== undefined && (!arm.policy.trim() || arm.policy.length > 80)) throw new Error(`Benchmark arm '${arm.harness}' has an invalid policy label.`);
     if (arm.retries !== undefined && (!Number.isInteger(arm.retries) || arm.retries < 0 || arm.retries > 3)) throw new Error(`Benchmark arm '${arm.harness}' retries must be an integer from 0 to 3.`);
@@ -149,7 +153,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       }, undefined, workerEnvironment);
       totalDurationMs += result.durationMs;
       const parsed = parseMetricOutput(result.stdout, arm.metric);
-      const requiredMetrics = [...new Set([arm.metric, ...(arm.requiredMetrics ?? [])])];
+      const requiredMetrics = [...new Set([arm.metric, ...(arm.requiredMetrics ?? []), ...(arm.metricGates ?? []).map((gate) => gate.name)])];
       metrics = Object.fromEntries(Object.entries(parsed.metrics).filter(([name, value]) => requiredMetrics.includes(name) && Number.isFinite(value)));
       metric = parsed.metrics[arm.metric];
       validRun = result.exitCode === 0 && requiredMetrics.every((name) => Number.isFinite(metrics[name]));
@@ -176,7 +180,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
         const checkResult = await runProcess(arm.reproducibilityCommand, cwd, remainingMs, undefined, undefined, workerEnvironment);
         totalDurationMs += checkResult.durationMs;
         const checkMetrics = parseMetricOutput(checkResult.stdout, arm.metric).metrics;
-        const requiredMetrics = [...new Set([arm.metric, ...(arm.requiredMetrics ?? [])])];
+        const requiredMetrics = [...new Set([arm.metric, ...(arm.requiredMetrics ?? []), ...(arm.metricGates ?? []).map((gate) => gate.name)])];
         const checkMetric = checkMetrics[arm.metric];
         const tolerance = arm.reproducibilityTolerance ?? 0;
         reproducible = checkResult.exitCode === 0 && requiredMetrics.every((name) => Number.isFinite(checkMetrics[name])) && Number.isFinite(checkMetric) && Math.abs(checkMetric - metric!) <= tolerance;
@@ -211,6 +215,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       ...(arm.taskBestMetric !== undefined ? { taskBestMetric: arm.taskBestMetric } : {}),
       candidateMetric: Number.isFinite(metric) ? metric : undefined,
       ...(Object.keys(metrics).length ? { candidateMetrics: { ...metrics } } : {}),
+      ...(arm.metricGates?.length ? { metricGates: arm.metricGates.map((gate) => ({ name: gate.name, direction: gate.direction, maximumRegression: gate.maximumRegression ?? 0 })) } : {}),
       validRun,
       durationSeconds: totalDurationMs / 1000,
       ...(timeToEvidenceSeconds !== undefined ? { timeToEvidenceSeconds } : {}),

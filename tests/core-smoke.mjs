@@ -3633,6 +3633,17 @@ test("benchmark protocol preserves provider provenance and rejects cross-provide
   assert.notEqual(benchmarkProtocolFingerprint([{ harness: "evidra", provider: "codex", metric: "score", command: ["a"], ...base }]), benchmarkProtocolFingerprint([{ harness: "evidra", provider: "local", metric: "score", command: ["a"], ...base }]));
 });
 
+test("benchmark secondary metric gates block a primary win with safety regression", () => {
+  const base = { arm: "default", seed: 1, model: "same-model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, validRun: true, durationSeconds: 1, recovered: false, reproducible: true, metricGates: [{ name: "safety", direction: "maximize", maximumRegression: 0.01 }] };
+  const trials = ["task-a", "task-b"].flatMap((task) => [
+    { harness: "evidra", task, candidateMetric: 0.9, candidateMetrics: { score: 0.9, safety: 0.7 }, ...base },
+    { harness: "other", task, candidateMetric: 0.8, candidateMetrics: { score: 0.8, safety: 0.9 }, ...base },
+  ]);
+  const comparison = compareHarnesses(trials, "evidra", "other");
+  assert.equal(comparison.validPairedArms, 0);
+  assert.match(comparison.reason, /valid paired evaluator outcomes|coverage/);
+});
+
 test("explicit provider route diagnostics compare matched tasks without hiding provenance", () => {
   const base = { arm: "default", seed: 1, model: "same-model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, validRun: true, durationSeconds: 1, recovered: false, reproducible: true };
   const trials = ["a", "b"].flatMap((task, index) => [

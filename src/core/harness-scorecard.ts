@@ -26,6 +26,8 @@ export interface HarnessTrial {
   candidateMetric?: number;
   /** Complete evaluator-backed metric suite when the benchmark declares one. */
   candidateMetrics?: Record<string, number>;
+  /** Pairwise non-regression contract for auxiliary objectives. */
+  metricGates?: Array<{ name: string; direction: ScoreDirection; maximumRegression?: number }>;
   /** Optional task-level bounds for cross-task metric normalization. */
   taskWorstMetric?: number;
   taskBestMetric?: number;
@@ -343,7 +345,19 @@ function fairPair(left: HarnessTrial, right: HarnessTrial): boolean {
     left.runtimeFingerprint === right.runtimeFingerprint &&
     left.taskWorstMetric === right.taskWorstMetric &&
     left.taskBestMetric === right.taskBestMetric &&
-    left.reproducibilityChecked === right.reproducibilityChecked;
+    left.reproducibilityChecked === right.reproducibilityChecked &&
+    JSON.stringify(left.metricGates ?? []) === JSON.stringify(right.metricGates ?? []);
+}
+
+function secondaryMetricsPass(left: HarnessTrial, right: HarnessTrial): boolean {
+  for (const gate of left.metricGates ?? []) {
+    const challenger = left.candidateMetrics?.[gate.name];
+    const incumbent = right.candidateMetrics?.[gate.name];
+    if (!Number.isFinite(challenger) || !Number.isFinite(incumbent)) return false;
+    const improvement = gate.direction === "maximize" ? challenger! - incumbent! : incumbent! - challenger!;
+    if (improvement < -(gate.maximumRegression ?? 0)) return false;
+  }
+  return true;
 }
 
 function protocolValues(trials: HarnessTrial[], read: (trial: HarnessTrial) => string): string[] {
@@ -389,6 +403,7 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
     const right = incumbentArms.get(key)!;
     if (!left.validRun || !right.validRun || !Number.isFinite(left.candidateMetric) || !Number.isFinite(right.candidateMetric)) return [];
     if (!fairPair(left, right)) return [];
+    if (!secondaryMetricsPass(left, right)) return [];
     if ((left.reproducibilityChecked === true && !left.reproducible) || (right.reproducibilityChecked === true && !right.reproducible)) return [];
     const direction = left.direction;
     const delta = direction === "maximize" ? left.candidateMetric! - right.candidateMetric! : right.candidateMetric! - left.candidateMetric!;
