@@ -2273,6 +2273,24 @@ test("phase goals expose the same auditable contract used by generic work", () =
   assert.equal(audit.complete, true);
 });
 
+test("subtask audits are durable controller evidence", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-subtask-audit-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    const audit = auditSubtask({ id: "durable-1", objective: "check a result", acceptanceCriteria: [{ id: "check", description: "check passes" }] }, [{ criterionId: "check", satisfied: true, source: "verifier", evidenceIds: ["run:1"] }]);
+    store.recordSubtaskAudit(audit);
+    store.close();
+    const reopened = new ResearchStore(join(root, "state.sqlite"));
+    const events = reopened.eventsByType("subtask.audit");
+    assert.equal(events.length, 1);
+    assert.equal(events[0].payload.subtaskId, "durable-1");
+    assert.equal(events[0].payload.complete, true);
+    reopened.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("validation phase completion requires the latest policy lifecycle event to be a lock", () => {
   const goal = definePhaseGoals("lock a trustworthy split", "challenge").find((entry) => entry.phase === "validation");
   const created = { type: "validation.policy.created", payload: { checksum: "sha256:policy" } };

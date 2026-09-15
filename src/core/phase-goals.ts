@@ -46,6 +46,20 @@ export function auditPhaseGoal(goal: Pick<PhaseGoal, "id" | "objective" | "compl
   return auditSubtask(phaseGoalSubtaskContract(goal), observations, auditedAt);
 }
 
+/** Convert the domain gate into a conservative structured audit for persistence. */
+export function auditPhaseGoalGate(goal: Pick<PhaseGoal, "id" | "objective" | "completionCriteria">, gate: PhaseGoalGate, evidenceIds: string[] = [], auditedAt?: string): SubtaskAudit {
+  const observations: SubtaskObservation[] = phaseGoalSubtaskContract(goal).acceptanceCriteria.map((criterion) => ({
+    criterionId: criterion.id,
+    // The domain gate is the verifier for the phase. Never infer partial
+    // success from an agent's status; an unmet gate blocks the whole subtask.
+    satisfied: gate.met,
+    source: "auditor",
+    evidenceIds: gate.met ? evidenceIds : [],
+    detail: gate.met ? "phase domain gate passed" : `phase domain gate missing: ${gate.missing.join(", ")}`,
+  }));
+  return auditPhaseGoal(goal, observations, auditedAt);
+}
+
 /** Event families that can satisfy phase completion; correctness must read the durable history. */
 export const PHASE_GOAL_EVENT_TYPES = [
   "research.observation", "project.created", "baseline.completed", "data.audit.completed", "data.audit.accepted",

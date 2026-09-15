@@ -616,6 +616,11 @@ export class ResearchStore {
     this.appendEvent("phase_goal.updated", goal.payload);
   }
 
+  /** Persist the controller's structured subtask audit as first-class evidence. */
+  recordSubtaskAudit(audit: unknown): void {
+    this.appendEvent("subtask.audit", audit);
+  }
+
   saveCampaign(campaign: unknown): void {
     const updatedAt = new Date().toISOString();
     this.db.prepare(`

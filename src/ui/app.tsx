@@ -25,7 +25,7 @@ import { auditData, dataAuditFingerprint } from "../core/data-audit.js";
 import { executeResearchTool } from "../core/tools.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { retrieveSource, searchResearchSources, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
-import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../core/phase-goals.js";
+import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../core/phase-goals.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
@@ -1134,6 +1134,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const phaseGate = phaseGoal && decision.goalStatus === "met" && phaseEvidence
       ? evaluatePhaseGoalEvidence(phaseGoal, phaseEvidence)
       : { met: decision.goalStatus === "met", missing: [] };
+    if (phaseGoal && phaseEvidence) {
+      const audit = auditPhaseGoalGate(phaseGoal, phaseGate, phaseEvidence.eventTypes);
+      decisionStore.recordSubtaskAudit(audit);
+    }
     const effectiveDecision = decision.goalStatus === "met" && !phaseGate.met
       ? { ...decision, goalStatus: "active" as const, nextAction: decision.nextAction + " (phase gate missing: " + phaseGate.missing.join(", ") + ")" }
       : decision;
