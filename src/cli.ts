@@ -27,7 +27,7 @@ import { detectRouteDrift } from "./core/drift-detection.js";
 import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
 import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readCampaignRuntime, researchTurnTimeoutMs, resumeCampaign, withCampaignCheckpoint, type CampaignCheckpointStep, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
-import { auditExperiment, auditExperimentSubtask, validateEvaluationMatrix } from "./core/validation.js";
+import { auditExperiment, auditExperimentSubtask, refreshExperimentAudit, validateEvaluationMatrix } from "./core/validation.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "./core/decision-auditor.js";
 import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance } from "./core/validation-engine.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
@@ -1549,6 +1549,11 @@ submission.command("poll").argument("<bundle>").description("Poll a configured e
     store.updateSubmissionStatus(bundle, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: observation.score, platform: observation.platform, recordedAt, scoreObservation: observation });
     store.saveClaim({ id: `claim_external_score_${bundle}_${Date.now()}`, payload: { statement: `External ${observation.platform} score for ${bundle}: ${observation.score}`, scope: entry.experimentId, confidence: 1, sourceType: "external_score", sourceId: bundle, status: "active", score: observation.score, platform: observation.platform, recordedAt } });
     store.appendEvent("submission.score.polled", { id: bundle, score: observation.score, platform: observation.platform, recordedAt });
+    const currentAudit = store.latestSubtaskAudit(`experiment_audit:${entry.experimentId}`);
+    if (currentAudit) {
+      store.recordSubtaskAudit({ ...(currentAudit.payload as Record<string, unknown>), refreshTrigger: "external_score", externalScore: observation.score, externalPlatform: observation.platform, externalObservedAt: recordedAt });
+      store.appendEvent("experiment.audit.refreshed", { experimentId: entry.experimentId, runId: (currentAudit.payload as { runId?: unknown }).runId ?? null, trigger: "external_score", score: observation.score, platform: observation.platform });
+    }
     console.log(`Polled ${observation.platform} score ${observation.score} for ${bundle}.`);
   } finally { store.close(); }
 });
@@ -1569,6 +1574,11 @@ submission.command("record").argument("<bundle>").requiredOption("--public-score
   store.updateSubmissionStatus(bundle, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: score, validationScores, platform: options.platform, recordedAt });
   store.saveClaim({ id: `claim_external_score_${bundle}_${Date.now()}`, payload: { statement: `External ${options.platform} score for ${bundle}: ${score}`, scope: entry.experimentId, confidence: 1, sourceType: "external_score", sourceId: bundle, status: "active", score, platform: options.platform, recordedAt } });
   store.appendEvent("submission.score.recorded", { id: bundle, score, platform: options.platform, recordedAt });
+  const currentAudit = store.latestSubtaskAudit(`experiment_audit:${entry.experimentId}`);
+  if (currentAudit) {
+    store.recordSubtaskAudit({ ...(currentAudit.payload as Record<string, unknown>), refreshTrigger: "external_score", externalScore: score, externalPlatform: options.platform, externalObservedAt: recordedAt });
+    store.appendEvent("experiment.audit.refreshed", { experimentId: entry.experimentId, runId: (currentAudit.payload as { runId?: unknown }).runId ?? null, trigger: "external_score", score, platform: options.platform });
+  }
   store.close();
   console.log(`Recorded ${options.platform} score ${score} for ${bundle}.`);
 });
@@ -4037,6 +4047,18 @@ experiment.command("run")
     }
     const terminalRecovery = recorded.status === "completed" ? undefined : recoveryRouteDirective(recorded.failureClass);
     resultStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: recorded.status === "completed" ? "completed" : "failed", runId: result.runId, worktreePath: experimentCwd, executionPlan, ...(terminalRecovery ? { recoveryRoute: { ...terminalRecovery, attempts: attempt, runId: result.runId, recordedAt: new Date().toISOString() } } : {}) } });
+    if (typeof manifest.parent === "string") {
+      const parentEntry = resultStore.experiments().find((candidate) => candidate.id === manifest.parent);
+      const parentManifest = parentEntry ? ExperimentManifestSchema.safeParse(parentEntry.payload) : undefined;
+      const parentRunId = parentEntry && typeof (parentEntry.payload as { runId?: unknown }).runId === "string" ? (parentEntry.payload as { runId: string }).runId : undefined;
+      const parentRun = parentRunId ? resultStore.runs().find((candidate) => candidate.id === parentRunId) : undefined;
+      if (parentManifest?.success && parentRun) {
+        const parentChecksums = Object.fromEntries(resultStore.artifacts(parentRun.id).map((artifact) => [artifact.name, artifact.checksum]));
+        const refreshed = refreshExperimentAudit(parentManifest.data, RunResultSchema.parse(parentRun.payload), { currentCommit: parentManifest.data.gitCommit, datasetVersion: parentManifest.data.datasetVersion, splitVersion: parentManifest.data.splitVersion, metricName: adapter.config.metric.name, leakageAuditPassed: resultStore.experimentGates(manifest.parent).leakageAuditPassed, reviewerApproved: resultStore.experimentGates(manifest.parent).reviewerApproved, artifactChecksums: parentChecksums }, [parentRun.id, ...Object.keys(parentChecksums), `replication:${id}`]);
+        resultStore.recordSubtaskAudit({ ...refreshed.subtaskAudit, experimentId: manifest.parent, runId: parentRun.id, refreshTrigger: "replication_completed", replicationExperimentId: id });
+        resultStore.appendEvent("experiment.audit.refreshed", { experimentId: manifest.parent, runId: parentRun.id, trigger: "replication_completed", replicationExperimentId: id, accepted: refreshed.audit.accepted, subtaskAudit: refreshed.subtaskAudit });
+      }
+    }
     resultStore.close();
     console.log(`Experiment ${id}: ${recorded.status}`);
     console.log(`Run: ${result.runId}`);

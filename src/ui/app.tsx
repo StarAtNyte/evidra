@@ -9,7 +9,7 @@ import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
 import { classifyProcessFailure, executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
-import { auditExperiment, auditExperimentSubtask, validateEvaluationMatrix } from "../core/validation.js";
+import { auditExperiment, auditExperimentSubtask, refreshExperimentAudit, validateEvaluationMatrix } from "../core/validation.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "../core/decision-auditor.js";
 import { sha256File } from "../core/evidence.js";
 import { captureEnvironment } from "../core/environment.js";
@@ -3100,6 +3100,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
           store.updateSubmissionStatus(bundleId, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: observation.score, platform: observation.platform, recordedAt, scoreObservation: observation });
           store.saveClaim({ id: `claim_external_score_${bundleId}_${Date.now()}`, payload: { statement: `External ${observation.platform} score for ${bundleId}: ${observation.score}`, scope: entry.experimentId, confidence: 1, sourceType: "external_score", sourceId: bundleId, status: "active", score: observation.score, platform: observation.platform, recordedAt } });
           store.appendEvent("submission.score.polled", { id: bundleId, score: observation.score, platform: observation.platform, recordedAt });
+          const currentAudit = store.latestSubtaskAudit(`experiment_audit:${entry.experimentId}`);
+          if (currentAudit) {
+            store.recordSubtaskAudit({ ...(currentAudit.payload as Record<string, unknown>), refreshTrigger: "external_score", externalScore: observation.score, externalPlatform: observation.platform, externalObservedAt: recordedAt });
+            store.appendEvent("experiment.audit.refreshed", { experimentId: entry.experimentId, runId: (currentAudit.payload as { runId?: unknown }).runId ?? null, trigger: "external_score", score: observation.score, platform: observation.platform });
+          }
           append("assistant", `Polled ${observation.platform} score ${observation.score} for ${bundleId}.`);
         } catch (error) { appendError(error); }
         finally { activeProcess.current = null; store.close(); setBusy(false); setProgress(""); }
@@ -3124,8 +3129,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (!report.valid) { store.close(); append("assistant", "Bundle is not valid; score was not recorded."); return; }
         const recordedAt = new Date().toISOString();
         store.updateSubmissionStatus(bundleId, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: score, validationScores, platform, recordedAt });
-        store.saveClaim({ id: `claim_external_score_${bundleId}_${Date.now()}`, payload: { statement: `External ${platform} score for ${bundleId}: ${score}`, scope: entry.experimentId, confidence: 1, sourceType: "external_score", sourceId: bundleId, status: "active", score, platform, recordedAt } });
-        store.appendEvent("submission.score.recorded", { id: bundleId, score, platform, recordedAt });
+          store.saveClaim({ id: `claim_external_score_${bundleId}_${Date.now()}`, payload: { statement: `External ${platform} score for ${bundleId}: ${score}`, scope: entry.experimentId, confidence: 1, sourceType: "external_score", sourceId: bundleId, status: "active", score, platform, recordedAt } });
+          store.appendEvent("submission.score.recorded", { id: bundleId, score, platform, recordedAt });
+          const currentAudit = store.latestSubtaskAudit(`experiment_audit:${entry.experimentId}`);
+          if (currentAudit) {
+            store.recordSubtaskAudit({ ...(currentAudit.payload as Record<string, unknown>), refreshTrigger: "external_score", externalScore: score, externalPlatform: platform, externalObservedAt: recordedAt });
+            store.appendEvent("experiment.audit.refreshed", { experimentId: entry.experimentId, runId: (currentAudit.payload as { runId?: unknown }).runId ?? null, trigger: "external_score", score, platform });
+          }
         store.close();
         append("assistant", `Recorded ${platform} score ${score} for ${bundleId}.`);
         return;

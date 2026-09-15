@@ -59,7 +59,7 @@ import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
-import { auditExperiment, auditExperimentSubtask, validateEvaluationMatrix } from "../dist/core/validation.js";
+import { auditExperiment, auditExperimentSubtask, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
 import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";

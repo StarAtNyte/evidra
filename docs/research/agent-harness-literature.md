@@ -628,3 +628,7 @@ explicit experiment audit command.
 Approval changes now trigger that same recomputation automatically in both
 interfaces, using the locked manifest and current run/artifact evidence; the
 latest audit therefore reflects gate state without a manual refresh.
+Replication completion also recomputes the parent experiment audit, while
+external evaluator score observations append a refreshed audit carrying the
+score, platform, and observation time. These events remain provenance rather
+than automatic promotion approval.

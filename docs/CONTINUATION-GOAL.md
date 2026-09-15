@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `dc7c44b` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `ab04d6c` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -78,6 +78,8 @@ external evaluator.
   current experiment run; stale or missing audits are blocked.
 - Changing leakage/reviewer gates automatically refreshes the persisted audit in
   CLI and TUI flows.
+- Replication completion and external evaluator score observations now refresh
+  the affected experiment audit with trigger provenance.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.

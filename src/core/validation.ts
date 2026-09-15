@@ -44,6 +44,11 @@ export function auditExperimentSubtask(manifest: ExperimentManifest, audit: Expe
   })));
 }
 
+export function refreshExperimentAudit(manifest: ExperimentManifest, run: RunResult, context: ValidationContext, evidenceIds: string[] = []): { audit: ExperimentAudit; subtaskAudit: SubtaskAudit } {
+  const audit = auditExperiment(manifest, run, context);
+  return { audit, subtaskAudit: auditExperimentSubtask(manifest, audit, evidenceIds) };
+}
+
 export function validateEvaluationMatrix(manifest: Pick<ExperimentManifest, "evaluation">, run: Pick<RunResult, "matrix">, metricName: string): { valid: boolean; expected: number; observed: number; missing: string[]; invalidMetric: string[] } {
   if (!manifest.evaluation.matrixRequired) return { valid: true, expected: 0, observed: run.matrix?.length ?? 0, missing: [], invalidMetric: [] };
   const cells = run.matrix ?? [];
