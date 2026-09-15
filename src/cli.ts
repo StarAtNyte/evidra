@@ -1478,6 +1478,12 @@ submission.command("submit").argument("<bundle>").option("--message <message>", 
   if (!entry) { store.close(); throw new Error(`Submission bundle ${bundle} is not registered.`); }
   if (entry.status !== "approved") { store.close(); throw new Error(`Submission ${bundle} is '${entry.status}'. Run submission approve first.`); }
   const gates = store.experimentGates(entry.experimentId);
+  const experimentAudit = store.latestSubtaskAudit(`experiment_audit:${entry.experimentId}`);
+  const runForAudit = store.runs().find((candidate) => candidate.experimentId === entry.experimentId);
+  if (!experimentAudit || experimentAudit.complete !== true || (experimentAudit.payload as { runId?: unknown }).runId !== runForAudit?.id) {
+    store.close();
+    throw new Error(`Submission ${bundle} is blocked: run /experiment audit ${entry.experimentId} and obtain a complete audit for the current run.`);
+  }
   if (!gates.leakageAuditPassed) { store.close(); throw new Error(`Submission ${bundle} is blocked: leakage audit approval is required. Run evidra experiment gate ${entry.experimentId} leakage approve.`); }
   const adapter = activeCompetition();
   const policy = adapter.config.submissionPolicy;
@@ -3890,6 +3896,16 @@ experiment.command("run")
     const resultStore = new ResearchStore(statePath);
     resultStore.saveRun({ id: result.runId, experimentId: id, status: recorded.status, payload: recorded });
     for (const [name, path] of Object.entries(artifactPaths)) resultStore.saveArtifact({ id: `${result.runId}-${name}`, runId: result.runId, name, path, checksum: sha256File(path) });
+    const initialExperimentAudit = auditExperiment(manifest, RunResultSchema.parse(recorded), {
+      currentCommit: manifest.gitCommit,
+      datasetVersion: manifest.datasetVersion,
+      splitVersion: manifest.splitVersion,
+      metricName: adapter.config.metric.name,
+      leakageAuditPassed: resultStore.experimentGates(id).leakageAuditPassed,
+      reviewerApproved: resultStore.experimentGates(id).reviewerApproved,
+      artifactChecksums: Object.fromEntries(Object.entries(artifactPaths).map(([name, path]) => [name, sha256File(path)])),
+    });
+    resultStore.recordSubtaskAudit({ ...auditExperimentSubtask(manifest, initialExperimentAudit, [result.runId, ...Object.keys(artifactPaths)]), experimentId: id, runId: result.runId });
       const experimentTrajectoryEvents: TrajectoryEvent[] = [
         { id: `${result.runId}-process`, kind: "process", payload: { status: recorded.status, exitCode: recorded.exitCode, failureClass: recorded.failureClass ?? null } },
         ...Array.from({ length: Math.max(0, attempt - 1) }, (_, index) => ({ id: `${result.runId}-recovery-${index + 1}`, kind: "recovery" as const, payload: { attempt: index + 1, status: "completed" } })),
@@ -4042,7 +4058,7 @@ experiment.command("audit")
     });
     const subtaskAudit = auditExperimentSubtask(manifest, audit, [run.id, ...Object.keys(artifactChecksums)]);
     const auditStore = new ResearchStore(statePath);
-    auditStore.recordSubtaskAudit(subtaskAudit);
+    auditStore.recordSubtaskAudit({ ...subtaskAudit, experimentId: id, runId: run.id });
     auditStore.appendEvent("experiment.audit.completed", { experimentId: id, accepted: audit.accepted, subtaskAudit });
     auditStore.close();
     console.log(`Evidence audit · ${id}\nStatus: ${audit.accepted ? "ACCEPTED" : "NOT ACCEPTED"}\n\n${Object.entries(audit.gates).map(([name, passed]) => `  ${passed ? "✓" : "·"} ${name}`).join("\n")}${audit.reasons.length ? `\n\nReasons:\n${audit.reasons.map((reason) => `- ${reason}`).join("\n")}` : ""}\n\nCriterion audit: ${subtaskAudit.complete ? "complete" : `blocked (${subtaskAudit.unmetRequired.join(", ")})`}`);

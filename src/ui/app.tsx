@@ -1746,6 +1746,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
     for (const [name, path] of Object.entries(recordedResult.artifacts)) {
       resultStore.saveArtifact({ id: `${result.runId}-${name}`, runId: result.runId, name, path, checksum: sha256File(path) });
     }
+    const initialExperimentAudit = auditExperiment(manifest, RunResultSchema.parse(recordedResult), {
+      currentCommit: manifest.gitCommit,
+      datasetVersion: manifest.datasetVersion,
+      splitVersion: manifest.splitVersion,
+      metricName: activeAdapter().config.metric.name,
+      leakageAuditPassed: resultStore.experimentGates(id).leakageAuditPassed,
+      reviewerApproved: resultStore.experimentGates(id).reviewerApproved,
+      artifactChecksums: Object.fromEntries(Object.entries(recordedResult.artifacts).map(([name, path]) => [name, sha256File(path)])),
+    });
+    resultStore.recordSubtaskAudit({ ...auditExperimentSubtask(manifest, initialExperimentAudit, [result.runId, ...Object.keys(recordedResult.artifacts)]), experimentId: id, runId: result.runId });
     if (recordedResult.status === "completed") {
       const baselineEvent = resultStore.recentEvents(500).reverse().find((event) => event.type === "baseline.completed");
       const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string; stderr?: string; durationMs?: number; command?: string[]; cwd?: string } | undefined;
@@ -2792,7 +2802,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const audit = auditExperiment(manifest, runResult, { currentCommit: currentCommit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, splitVersion: manifest.splitVersion, metricName: adapter.config.metric.name, leakageAuditPassed: storedGates.leakageAuditPassed, reviewerApproved: storedGates.reviewerApproved, artifactChecksums });
           const subtaskAudit = auditExperimentSubtask(manifest, audit, [run.id, ...Object.keys(artifactChecksums)]);
           const auditStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-          auditStore.recordSubtaskAudit(subtaskAudit);
+          auditStore.recordSubtaskAudit({ ...subtaskAudit, experimentId: id, runId: run.id });
           auditStore.appendEvent("experiment.audit.completed", { experimentId: id, accepted: audit.accepted, subtaskAudit });
           auditStore.close();
           const gateLines = Object.entries(audit.gates).map(([name, passed]) => `  ${passed ? "✓" : "·"} ${name}`).join("\n");
@@ -3024,6 +3034,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (!entry) { store.close(); append("assistant", `Submission bundle ${bundleId} is not registered.`); return; }
         if (entry.status !== "approved") { store.close(); append("assistant", `Submission ${bundleId} is '${entry.status}'. Run /submission approve first.`); return; }
         const gates = store.experimentGates(entry.experimentId);
+        const experimentAudit = store.latestSubtaskAudit(`experiment_audit:${entry.experimentId}`);
+        const runForAudit = store.runs().find((candidate) => candidate.experimentId === entry.experimentId);
+        if (!experimentAudit || experimentAudit.complete !== true || (experimentAudit.payload as { runId?: unknown }).runId !== runForAudit?.id) {
+          store.close();
+          append("assistant", `Submission blocked: complete /experiment audit ${entry.experimentId} for the current run first.`);
+          return;
+        }
         if (!gates.leakageAuditPassed) { store.close(); append("assistant", `Submission blocked: leakage audit approval is required. Use /experiment gate ${entry.experimentId} leakage approve.`); return; }
         const optionValue = (name: string): number | undefined => {
           const index = parts.findIndex((part) => part === name);

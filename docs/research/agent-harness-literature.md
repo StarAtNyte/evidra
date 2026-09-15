@@ -620,3 +620,8 @@ and evaluation-coverage gate is represented as a required criterion. Headless
 and TUI experiment-audit commands persist the criterion-level result, so
 promotion and recovery can inspect structured experiment evidence rather than
 only a boolean acceptance summary.
+Promotion and external submission now require that persisted audit to be
+complete for the exact current run; a stale, missing, or incomplete audit is a
+hard stop. New experiment runs create an initial audit automatically, while
+operator-controlled leakage/reviewer approvals are reflected by rerunning the
+explicit experiment audit command.
