@@ -36,7 +36,7 @@ import { estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.j
 import { auditData, dataAuditFingerprint } from "../dist/core/data-audit.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { runReducedValidation } from "../dist/core/stage-executor.js";
-import { createToolTraceRecorder, evaluateTrajectory, capabilityGaps, validateTrajectoryStructure } from "../dist/core/trajectories.js";
+import { createToolTraceRecorder, evaluateTrajectory, capabilityGaps, providerActivityFailureClass, validateTrajectoryStructure } from "../dist/core/trajectories.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
 import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, selectCurriculum } from "../dist/core/experience.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
@@ -2865,6 +2865,13 @@ test("Codex item progress covers tools, plans, and file changes", () => {
   assert.equal(codexItemProgress({ type: "command_execution", command: "npm test", status: "completed", exit_code: 2 }, "item.completed"), "Command failed: npm test (exit 2)");
   assert.equal(codexItemProgress({ type: "file_change", status: "failed", changes: [{ kind: "update", path: "src/main.ts" }] }, "item.completed"), "File change failed: update src/main.ts");
   assert.match(codexItemProgress({ type: "command_execution", command: "run --token secret" }) ?? "", /Running: run --token \[REDACTED_ARGUMENT\]/);
+});
+
+test("native provider failures map into generic recovery routes", () => {
+  assert.equal(providerActivityFailureClass("Command failed: request timed out"), "timeout");
+  assert.equal(providerActivityFailureClass("Codex item error: rate limit reached"), "rate_limit");
+  assert.equal(providerActivityFailureClass("Tool failed: MCP/registry (module not found)"), "dependency");
+  assert.equal(providerActivityFailureClass("Reasoning: reconsidering"), undefined);
 });
 
 test("Codex failure events preserve nested provider diagnostics", () => {

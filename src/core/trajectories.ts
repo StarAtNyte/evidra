@@ -28,6 +28,16 @@ export interface ToolTraceRecorder {
   onActivity: (source: string, activity: string) => void;
 }
 
+/** Map redacted native provider failures to the controller's generic recovery vocabulary. */
+export function providerActivityFailureClass(activity: string): "timeout" | "rate_limit" | "auth" | "dependency" | "unknown" | undefined {
+  if (!/^(?:Command failed|Tool failed|File change failed|Codex item error):?/i.test(activity)) return undefined;
+  if (/rate limit|quota|too many requests|429/i.test(activity)) return "rate_limit";
+  if (/not logged in|auth|credential|permission denied|unauthorized|forbidden/i.test(activity)) return "auth";
+  if (/timeout|timed out|network|unreachable|connection|econnreset|ePIPE|502|503|504/i.test(activity)) return "timeout";
+  if (/module not found|dependency|package|executable not found|command not found/i.test(activity)) return "dependency";
+  return "unknown";
+}
+
 /** Capture interleaved tool activity without retaining provider protocol noise or credentials. */
 export function createToolTraceRecorder(prefix = "research"): ToolTraceRecorder {
   const events: TrajectoryEvent[] = [];

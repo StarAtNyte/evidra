@@ -37,7 +37,7 @@ import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { compareRuns } from "./core/statistics.js";
-import { createToolTraceRecorder, evaluateTrajectory, type TrajectoryEvent } from "./core/trajectories.js";
+import { createToolTraceRecorder, evaluateTrajectory, providerActivityFailureClass, type TrajectoryEvent } from "./core/trajectories.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "./core/experiment-patches.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "./core/critic-gate.js";
 import { recordBaselineEvidence } from "./core/baseline.js";
@@ -1948,8 +1948,22 @@ research
         if (!verification || typeof verification.declared !== "number" || verification.declared <= 0) return false;
         return verification.failed !== 0 || verification.executed !== verification.declared || verification.passed !== verification.executed || (verification.declared >= 2 && verification.independent !== true);
       });
-      const failureClasses = [
+      const nativeFailureClasses: string[] = recentTrajectories.flatMap((entry) => {
+        const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { events?: unknown } : {};
+        if (!Array.isArray(payload.events)) return [];
+        return payload.events.flatMap((event) => {
+          if (!event || typeof event !== "object") return [];
+          const eventPayload = (event as { payload?: unknown }).payload;
+          if (!eventPayload || typeof eventPayload !== "object") return [];
+          const value = eventPayload as { providerActivity?: unknown; activity?: unknown };
+          if (value.providerActivity !== true || typeof value.activity !== "string") return [];
+          const failure = providerActivityFailureClass(value.activity);
+          return failure ? [failure] : [];
+        });
+      });
+      const failureClasses: string[] = [
         ...recentRuns.map((entry) => (entry.payload as { failureClass?: unknown }).failureClass).filter((failureClass): failureClass is string => typeof failureClass === "string" && failureClass.length > 0),
+        ...nativeFailureClasses,
         ...(verificationPressure ? ["verification"] : []),
       ];
       const recoveryRoutes = durableEvents
