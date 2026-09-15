@@ -72,7 +72,17 @@ function auroc(target: readonly unknown[], prediction: readonly unknown[]): numb
   if (!positives || !negatives) throw new Error("AUROC requires both positive and negative examples.");
   const ordered = pairs.map(([actual, score], index) => ({ actual, score, index })).sort((left, right) => left.score - right.score || left.index - right.index);
   let rank = 1; let positiveRankSum = 0;
-  for (const item of ordered) { if (item.actual === 1) positiveRankSum += rank; rank += 1; }
+  // AUROC is the probability that a random positive outranks a random
+  // negative. Tied scores receive their average rank; assigning arrival
+  // order would make the metric depend on input ordering.
+  for (let index = 0; index < ordered.length;) {
+    let end = index + 1;
+    while (end < ordered.length && ordered[end].score === ordered[index].score) end += 1;
+    const averageRank = (rank + (rank + end - index - 1)) / 2;
+    for (let tie = index; tie < end; tie += 1) if (ordered[tie].actual === 1) positiveRankSum += averageRank;
+    rank += end - index;
+    index = end;
+  }
   return (positiveRankSum - (positives * (positives + 1)) / 2) / (positives * negatives);
 }
 
