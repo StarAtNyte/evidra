@@ -211,6 +211,12 @@ complete. The embedded AIRS prompt directs Codex to use shell or Python file
 creation because provider patch tools are not portable across disposable worker
 paths.
 
+After a successful agent stage, the adapter writes a contract-bound
+`.evidra-airs-agent.json` checkpoint. A later invocation with the same task,
+metric, model, seed, effort, and evaluator contract restores the completed
+artifact and reruns evaluation without launching another agent. A partial or
+failed agent stage does not create this completion checkpoint.
+
 Embedded Codex also receives a local `TASK.md` copy of the public task brief;
 its serialized task context uses only `TASK.md`, `data`, and `log` workspace
 paths, so it does not need an absolute path into the benchmark checkout. The

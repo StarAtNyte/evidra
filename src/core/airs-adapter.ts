@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { parseMetricOutput, safeWorkerEnvironment } from "./executors.js";
 import { processFailureResult, runProcess, splitCommandLine } from "./process.js";
@@ -56,6 +56,16 @@ function usableSubmission(path: string): boolean {
   return existsSync(path) && statSync(path).isFile() && statSync(path).size > 0;
 }
 
+function readAgentCheckpoint(path: string, contract: string): boolean {
+  if (!existsSync(path)) return false;
+  try {
+    const value = JSON.parse(readFileSync(path, "utf8")) as { contract?: unknown; agentCompleted?: unknown };
+    return value.contract === contract && value.agentCompleted === true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Execute the official AIRS task lifecycle around a caller-supplied agent.
  * The agent receives only its data/log mounts and explicit task metadata; the
@@ -77,6 +87,8 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
   const agentLogDir = join(lifecycleRoot, "log");
   const submissionPath = join(agentLogDir, "submission.csv");
   const planPath = join(lifecycleRoot, "PLAN.md");
+  const checkpointPath = join(lifecycleRoot, ".evidra-airs-agent.json");
+  const contract = JSON.stringify({ repository, taskPath, preparePath, evaluatePreparePath, evaluatePath, globalSharedDataDir, metric: options.metric, model: options.model ?? "", seed: options.seed ?? "", effort: options.effort ?? "medium" });
   const resumed = existsSync(join(lifecycleRoot, ".git")) || existsSync(submissionPath) || existsSync(planPath);
   const initialArtifactBytes = existsSync(submissionPath) && statSync(submissionPath).isFile() ? statSync(submissionPath).size : 0;
   const lifecycleState = (): Pick<AirsTaskLifecycleResult, "resumed" | "initialArtifactBytes" | "finalArtifactBytes"> => ({
@@ -131,7 +143,11 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
     await runProcess(["git", "-c", "user.name=Evidra", "-c", "user.email=evidra@localhost", "commit", "--quiet", "-m", "seed AIRS agent workspace"], lifecycleRoot, 10_000, undefined, undefined, environment);
   }
   let agent: ProcessResult;
-  if (options.agentRunner) {
+  if (readAgentCheckpoint(checkpointPath, contract) && usableSubmission(submissionPath)) {
+    options.onProgress?.("AIRS · restored completed agent artifact");
+    agent = { command: ["<restored-agent-artifact>"], cwd: lifecycleRoot, exitCode: 0, durationMs: 0, stdout: "Restored a completed agent artifact from the workspace checkpoint.", stderr: "" };
+    stages.push({ stage: "agent", result: agent });
+  } else if (options.agentRunner) {
     options.onProgress?.("AIRS · agent");
     try { agent = await options.agentRunner({ workspace: lifecycleRoot, agentDataDir, agentLogDir, taskPath, timeoutMs: options.timeoutMs, onProgress: options.onProgress }); }
     catch (error) { agent = processFailureResult(["<embedded-agent>"], lifecycleRoot, error); }
@@ -149,6 +165,7 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
     stages[stages.length - 1] = { stage: "agent", result: failure };
     return { valid: false, ...lifecycleState(), metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "agent" };
   }
+  writeFileSync(checkpointPath, `${JSON.stringify({ schemaVersion: 1, contract, agentCompleted: true, artifactBytes: statSync(submissionPath).size, completedAt: new Date().toISOString() }, null, 2)}\n`, { mode: 0o600 });
   const evaluatePrepare = await runStage("evaluate_prepare", [python, evaluatePreparePath, "--global-shared-data-dir", globalSharedDataDir, "--agent-data-mount-dir", agentDataDir, "--agent-log-dir", agentLogDir], repository);
   if (evaluatePrepare.exitCode !== 0) return { valid: false, ...lifecycleState(), metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "evaluate_prepare" };
   // AIRS evaluators conventionally resolve ./data/test_with_labels from the

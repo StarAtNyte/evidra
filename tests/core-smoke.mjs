@@ -4815,6 +4815,13 @@ test("AIRS lifecycle rejects the seeded empty submission and accepts a real arti
     assert.equal(resumed.resumed, true);
     assert.equal(resumed.initialArtifactBytes, "partial-work\n".length);
     assert.equal(resumed.finalArtifactBytes, "id,prediction\n1,ok\n".length);
+    const restored = await runAirsTaskLifecycle({
+      repository: root, taskPath: "task", preparePath: "task/prepare.py", evaluatePreparePath: "task/evaluate_prepare.py", evaluatePath: "task/evaluate.py",
+      globalSharedDataDir: globalData, python: process.execPath, workspace: resumeWorkspace, timeoutMs: 30_000,
+      agentRunner: async () => { throw new Error("agent should not restart after a completed checkpoint"); }, metric: "Accuracy",
+    });
+    assert.equal(restored.valid, true);
+    assert.match(restored.stages.find((stage) => stage.stage === "agent")?.result.stdout ?? "", /Restored/);
     const complete = await runAirsTaskLifecycle({
       repository: root, taskPath: "task", preparePath: "task/prepare.py", evaluatePreparePath: "task/evaluate_prepare.py", evaluatePath: "task/evaluate.py",
       globalSharedDataDir: globalData, python: process.execPath, workspace: join(root, "complete"), timeoutMs: 30_000,
