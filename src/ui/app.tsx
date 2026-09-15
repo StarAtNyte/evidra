@@ -437,7 +437,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       : input.startsWith("/")
         ? COMMANDS.filter(([command]) => command.startsWith(input)).slice(0, 8)
         : [];
-  const reasoningChoices = selectedModel?.supportedReasoningEfforts?.length ? selectedModel.supportedReasoningEfforts : REASONING_LEVELS;
+  const activeModel = availableModels.find((model) => model.id === config.model) ?? selectedModel;
+  const reasoningChoices = activeModel?.supportedReasoningEfforts?.length ? activeModel.supportedReasoningEfforts : REASONING_LEVELS;
   const providerChoices: readonly AgentProvider[] = ["codex", "local"];
   const modeChoices: readonly WorkbenchMode[] = ["research", "challenge"];
   const permissionChoices: readonly AutonomyLevel[] = ["safe", "fast", "yolo"];
@@ -520,6 +521,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const models = config.provider === "codex" ? await listCodexModels() : await listLocalModels();
         if (active) {
           setAvailableModels(models);
+          setSelectedModel(models.find((model) => model.id === config.model) ?? null);
           if (config.provider === "local" && (!models.some((model) => model.id === config.model) || config.model === "unconfigured")) {
             setConfig((current) => ({ ...current, model: models[0]?.id ?? "unconfigured" }));
           }
@@ -2215,7 +2217,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
         }
       }
       else {
+        const available = availableModels.find((entry) => entry.id === model);
+        if (availableModels.length && !available) {
+          append("assistant", `Model '${model}' is not available for ${config.provider}. Use /model to choose from the loaded models.`);
+          return;
+        }
         activeCodexThread.current = undefined;
+        setSelectedModel(available ?? null);
         setConfig((current) => ({ ...current, model, codexThreadId: undefined }));
         append("assistant", `Model selected: ${model}`);
       }

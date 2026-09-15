@@ -91,6 +91,9 @@ available model list is refreshed after login. Evidra explicitly selects Luna
 after provider or login transitions so a server-side account default cannot
 silently select a different model. Model and provider changes invalidate the
 active chat thread to prevent context crossing routes.
+The thinking-effort picker is derived from the selected model's supported
+efforts when Codex provides that capability, and an unavailable model ID is
+rejected before a turn starts.
 
 If model discovery fails, `/model` reports whether the Codex route or local
 Ollama route is unavailable and gives the next corrective action; it does not
