@@ -3006,13 +3006,14 @@ test("Codex failure events preserve nested provider diagnostics", () => {
 
 test("Codex adapter accepts only a completed injected stream", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-codex-stream-"));
+  let threadOptions;
   const makeClient = (events) => () => ({
-    startThread: () => ({ runStreamed: async () => ({ events: (async function* () { for (const event of events) yield event; })() }) }),
+    startThread: (options) => { threadOptions = options; return { runStreamed: async () => ({ events: (async function* () { for (const event of events) yield event; })() }) }; },
     resumeThread: () => ({ runStreamed: async () => ({ events: (async function* () { for (const event of events) yield event; })() }) }),
   });
   const task = { role: "conversation assistant", objective: "hello", context: {} };
   try {
-    const completed = new CodexExecAgent({ provider: "codex", model: "gpt-test", cwd: root }, {
+    const completed = new CodexExecAgent({ provider: "codex", model: "gpt-test", cwd: root, networkAccessEnabled: true, webSearchMode: "live" }, {
       isLoggedIn: async () => true,
       createClient: makeClient([
         { type: "thread.started", thread_id: "thread-test" },
@@ -3022,6 +3023,8 @@ test("Codex adapter accepts only a completed injected stream", async () => {
     });
     const result = await completed.run(task);
     assert.equal(result.output, "Evidra response");
+    assert.equal(threadOptions.networkAccessEnabled, true);
+    assert.equal(threadOptions.webSearchMode, "live");
     const incomplete = new CodexExecAgent({ provider: "codex", model: "gpt-test", cwd: root }, {
       isLoggedIn: async () => true,
       createClient: makeClient([{ type: "item.completed", item: { type: "agent_message", text: "partial" } }]),

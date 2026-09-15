@@ -398,6 +398,9 @@ external evaluator.
 - The Codex adapter now supports injected authentication/client dependencies
   for deterministic stream-contract tests, covering both completed and partial
   provider turns without requiring live credentials.
+- The same stream-contract coverage verifies research web-search/network
+  settings reach the SDK thread boundary rather than existing only in controller
+  configuration.
 
 ## Immediate next work
 
