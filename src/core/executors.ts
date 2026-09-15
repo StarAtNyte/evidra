@@ -187,46 +187,57 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
   const metrics: Record<string, number> = {};
   const metricsByFold: Record<string, number[]> = {};
   let subgroupDeltas: number[] = [];
+  const finiteMetric = (value: unknown): number | undefined => {
+    if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+    if (typeof value !== "string") return undefined;
+    const match = value.trim().match(/^(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(%)?$/);
+    if (!match) return undefined;
+    const parsed = Number(match[1]);
+    if (!Number.isFinite(parsed)) return undefined;
+    return match[2] ? parsed / 100 : parsed;
+  };
   const addObject = (value: unknown): void => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return;
     const object = value as Record<string, unknown>;
     const nested = object.metrics;
     if (nested && typeof nested === "object" && !Array.isArray(nested)) {
       for (const [name, metric] of Object.entries(nested as Record<string, unknown>)) {
-        if (typeof metric === "number" && Number.isFinite(metric)) metrics[name] = metric;
+        const parsed = finiteMetric(metric);
+        if (parsed !== undefined) metrics[name] = parsed;
       }
       addObject(nested);
     }
     const primary = object[metricName];
-    if (typeof primary === "number" && Number.isFinite(primary)) metrics[metricName] = primary;
+    const parsedPrimary = finiteMetric(primary);
+    if (parsedPrimary !== undefined) metrics[metricName] = parsedPrimary;
     const byFold = object.metricsByFold ?? object.byFold;
     if (byFold && typeof byFold === "object" && !Array.isArray(byFold)) {
       for (const [name, series] of Object.entries(byFold as Record<string, unknown>)) {
         if (Array.isArray(series)) {
-          const finite = series.filter((item): item is number => typeof item === "number" && Number.isFinite(item));
+          const finite = series.map(finiteMetric).filter((item): item is number => item !== undefined);
           if (finite.length) metricsByFold[name] = finite;
         }
       }
     }
     const subgroup = object.subgroupDeltas ?? object.bySubgroupDelta ?? object.subgroupDelta;
-    if (Array.isArray(subgroup)) subgroupDeltas = subgroup.filter((item): item is number => typeof item === "number" && Number.isFinite(item));
+    if (Array.isArray(subgroup)) subgroupDeltas = subgroup.map(finiteMetric).filter((item): item is number => item !== undefined);
   };
   try { addObject(JSON.parse(stdout)); } catch { /* output may be a log stream */ }
   for (const line of stdout.split("\n")) {
     try { addObject(JSON.parse(line)); } catch { /* non-JSON log line */ }
     const escapedMetric = metricName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");
-    const keyed = line.match(new RegExp(`(?:^|\\s)[\\\"']?${escapedMetric}[\\\"']?\\s*[:=]\\s*(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`, "i"));
+    const keyed = line.match(new RegExp(`(?:^|\\s)[\\\"']?${escapedMetric}[\\\"']?\\s*[:=]\\s*(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)(%)?`, "i"));
     if (keyed) {
       const value = Number(keyed[1]);
-      if (Number.isFinite(value)) metrics[metricName] = value;
+      if (Number.isFinite(value)) metrics[metricName] = keyed[2] ? value / 100 : value;
     }
     // Human-readable evaluator tables often render a stable machine label in
     // brackets, e.g. `Raw MSE [final_layer_mse] 2.22e-04`. Keep this parser
     // generic so competition adapters do not need to know the table's prose.
-    const bracketed = line.match(new RegExp(`\\[${escapedMetric}\\]\\s+(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`, "i"));
+    const bracketed = line.match(new RegExp(`\\[${escapedMetric}\\]\\s+(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)(%)?`, "i"));
     if (bracketed) {
       const value = Number(bracketed[1]);
-      if (Number.isFinite(value)) metrics[metricName] = value;
+      if (Number.isFinite(value)) metrics[metricName] = bracketed[2] ? value / 100 : value;
     }
     const columns = line.split("|").map((column) => column.trim());
     if (columns.length >= 5 && /^\d[\d,]*$/.test(columns[0])) {
