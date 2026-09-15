@@ -118,7 +118,7 @@ Autonomous fast/yolo campaigns also use a bounded best-of-k portfolio. Hypothese
 
 Runtime history is context-aware: local, container, and Modal observations are kept distinct when enough evidence exists, so a slow remote or GPU route does not distort the scheduler’s estimate for a different execution environment. Sparse context history conservatively falls back to the broader operator prior.
 
-Search rewards are now context-aware as well. Autonomous experiment rewards retain provider, model, executor, and phase provenance; repeated local evidence is combined with global history through conservative shrinkage, so a policy can specialize to a Modal/GPU or validation context without trusting a tiny lucky sample.
+Search rewards are now context-aware and cost-aware as well. Autonomous experiment rewards retain provider, model, executor, and phase provenance; repeated local evidence is combined with global history through conservative shrinkage, and the operator rank includes a bounded reward-per-minute bonus. A policy can specialize to a Modal/GPU or validation context without trusting a tiny lucky sample or spending the whole budget on a slow operator.
 
 Harness benchmarking is closed-loop: `benchmark run` records matched outcomes and emits a durable adaptive retest agenda. Losses are classified into reliability, recovery, alignment, efficiency, search, or coverage interventions with falsifiable predictions and acceptance criteria. The next retest preserves task, model, seed, evaluator, metric, and budget, so Evidra is optimized to beat incumbents by improving the harness rather than by changing the comparison.
 

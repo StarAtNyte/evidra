@@ -73,6 +73,7 @@ export interface SearchPolicyEvidence {
     meanScore: number | null;
     rewardSamples: number;
     meanReward: number | null;
+    meanRewardPerMinute: number | null;
     meanCostMinutes: number | null;
     failureRate: number | null;
     reproducibilityRate: number | null;
@@ -129,6 +130,11 @@ export function summarizeSearchPolicyEvidence(
     const operatorRewards = rewards.filter((reward) => reward.operator === operator && Number.isFinite(Number(reward.reward)));
     const values = operatorRewards.map((reward) => Number(reward.reward));
     const durations = operatorRewards.map((reward) => Number(reward.durationSeconds) / 60).filter((value) => Number.isFinite(value) && value > 0);
+    const rewardPerMinute = operatorRewards.flatMap((reward) => {
+      const value = Number(reward.reward);
+      const minutes = Number(reward.durationSeconds) / 60;
+      return Number.isFinite(value) && Number.isFinite(minutes) && minutes > 0 ? [value / minutes] : [];
+    });
     const successful = operatorRewards.filter((reward) => reward.valid === true).length;
     const reproducible = operatorRewards.filter((reward) => reward.reproducible !== undefined);
     return {
@@ -139,6 +145,7 @@ export function summarizeSearchPolicyEvidence(
       meanScore: scores.length ? scores.reduce((sum, value) => sum + value, 0) / scores.length : null,
       rewardSamples: values.length,
       meanReward: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null,
+      meanRewardPerMinute: rewardPerMinute.length ? rewardPerMinute.reduce((sum, value) => sum + value, 0) / rewardPerMinute.length : null,
       meanCostMinutes: durations.length ? durations.reduce((sum, value) => sum + value, 0) / durations.length : null,
       failureRate: operatorRewards.length ? 1 - successful / operatorRewards.length : null,
       reproducibilityRate: reproducible.length ? reproducible.filter((reward) => reward.reproducible === true).length / reproducible.length : null,
@@ -192,6 +199,11 @@ export function rankSearchArms(input: SearchPolicyInput): RankedSearchArm[] {
       // sample cannot dominate an explicitly untried search strategy.
       : Math.min(2, exploration * (Math.sqrt((2 * variance * logTerm) / arm.attempts) + (3 * logTerm) / arm.attempts));
     const costPenalty = cost > Math.max(0.1, input.remainingBudgetMinutes) ? 100 : cost * 0.05;
+    // Convert the historical reward into a bounded value-per-minute signal.
+    // Keep it as a bonus rather than replacing reward, so exploration and
+    // high-upside expensive operators remain available when uncertainty is
+    // genuinely informative.
+    const costEfficiencyBonus = Math.max(-1, Math.min(1, estimatedReward / cost)) * 0.4;
     const successRate = arm.attempts ? arm.successes / arm.attempts : 0;
     const strategyBonus = arm.operator === "greedy"
       ? estimatedReward * 0.5 - uncertainty * 0.5
@@ -200,10 +212,10 @@ export function rankSearchArms(input: SearchPolicyInput): RankedSearchArm[] {
         : arm.operator === "mcts"
           ? uncertainty * 1.25 + arm.novelty * 0.35
           : arm.novelty * 0.5;
-    const score = estimatedReward + strategyBonus + uncertainty + untriedBonus + conflictPressure + recoveryPressure + profileBonus - costPenalty;
+    const score = estimatedReward + strategyBonus + uncertainty + untriedBonus + conflictPressure + recoveryPressure + profileBonus + costEfficiencyBonus - costPenalty;
     const rationale = arm.attempts === 0
       ? `untried ${arm.operator} policy: obtain information before over-exploiting a known direction`
-      : `${arm.operator} reward ${estimatedReward.toFixed(3)}${hasContextEvidence ? ` (context-shrunk from ${arm.meanReward.toFixed(3)} using ${contextAttempts} local samples)` : ""} with uncertainty ${uncertainty.toFixed(3)}${profileBonus ? ` and ${input.profile} profile adjustment ${profileBonus.toFixed(3)}` : ""}`;
+      : `${arm.operator} reward ${estimatedReward.toFixed(3)}${hasContextEvidence ? ` (context-shrunk from ${arm.meanReward.toFixed(3)} using ${contextAttempts} local samples)` : ""} with uncertainty ${uncertainty.toFixed(3)}, value/minute bonus ${costEfficiencyBonus.toFixed(3)}${profileBonus ? ` and ${input.profile} profile adjustment ${profileBonus.toFixed(3)}` : ""}`;
     return { ...arm, score, rationale };
   }).sort((left, right) => right.score - left.score);
 }

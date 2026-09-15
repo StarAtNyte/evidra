@@ -3957,6 +3957,7 @@ test("search policy evidence reports rankings, rewards, cost, and reproducibilit
   assert.equal(report.operators.find((entry) => entry.operator === "audit")?.meanRank, 1.5);
   assert.equal(report.operators.find((entry) => entry.operator === "audit")?.failureRate, 1);
   assert.equal(report.operators.find((entry) => entry.operator === "greedy")?.meanCostMinutes, 2);
+  assert.equal(report.operators.find((entry) => entry.operator === "greedy")?.meanRewardPerMinute, 0.2);
 });
 
 test("search policy evidence can be scoped to the active provider route", () => {
@@ -3982,6 +3983,15 @@ test("search policy exposes bounded evolutionary and MCTS exploration", () => {
   });
   assert.equal(ranked[0].operator, "mcts");
   assert.match(ranked.find((arm) => arm.operator === "evolutionary")?.rationale ?? "", /evolutionary/);
+});
+
+test("search policy exposes cost-aware value in its ranking rationale", () => {
+  const [ranked] = rankSearchArms({
+    arms: [{ id: "cheap", operator: "greedy", attempts: 4, successes: 2, meanReward: 0.4, cost: 2, novelty: 0.2 }],
+    remainingBudgetMinutes: 10, recentFailures: 0, evidenceConflicts: 0,
+  });
+  assert.match(ranked.rationale, /value\/minute bonus/);
+  assert.ok(ranked.score > 0);
 });
 
 test("search policy uses empirical uncertainty and excludes unaffordable arms", () => {
