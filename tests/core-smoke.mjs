@@ -3898,6 +3898,18 @@ test("successive halving promotes normalized objective values for non-metric out
   ], "minimize"), ["proof-b", "proof-a"]);
 });
 
+test("successive halving supports Pareto promotion for normalized objective suites", () => {
+  const stage = { index: 0, fraction: 0.2, candidateIds: ["balanced", "fast", "accurate", "dominated"], budgetMinutes: 1, retainCount: 2, rationale: "screen" };
+  const outcomes = [
+    { id: "balanced", objectiveValues: { quality: 0.90, speed: 0.90 }, valid: true },
+    { id: "fast", objectiveValues: { quality: 0.70, speed: 0.98 }, valid: true },
+    { id: "accurate", objectiveValues: { quality: 0.98, speed: 0.70 }, valid: true },
+    { id: "dominated", objectiveValues: { quality: 0.60, speed: 0.60 }, valid: true },
+  ];
+  assert.deepEqual(promoteHalvingStage(stage, outcomes, "maximize", ["quality", "speed"]), ["balanced", "fast"]);
+  assert.deepEqual(promoteHalvingStage({ ...stage, retainCount: 3 }, outcomes, "maximize", ["quality", "speed"]), ["balanced", "fast", "accurate"]);
+});
+
 test("early stopping requires persistent underperformance against a reference curve", () => {
   const config = { enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 1, patience: 2, minimumImprovement: 0.01 };
   const reference = [{ step: 1, metric: 0.70 }, { step: 2, metric: 0.80 }, { step: 3, metric: 0.90 }];

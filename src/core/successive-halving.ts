@@ -26,6 +26,8 @@ export interface HalvingOutcome {
   objectiveValue?: number;
   /** Legacy alias for metric-based competitions. */
   metric?: number;
+  /** Optional normalized higher-is-better objective vector for multi-objective promotion. */
+  objectiveValues?: Record<string, number>;
   valid: boolean;
 }
 
@@ -87,16 +89,46 @@ export function promoteHalvingStage(
   stage: HalvingStage,
   outcomes: HalvingOutcome[],
   direction: "maximize" | "minimize",
+  objectiveNames: string[] = [],
 ): string[] {
   const order = new Map(stage.candidateIds.map((id, index) => [id, index]));
   const valueOf = (outcome: HalvingOutcome): number | undefined => outcome.objectiveValue ?? outcome.metric;
-  return outcomes
-    .filter((outcome) => stage.candidateIds.includes(outcome.id) && outcome.valid && Number.isFinite(valueOf(outcome)))
+  const eligible = outcomes.filter((outcome) => stage.candidateIds.includes(outcome.id) && outcome.valid);
+  if (!objectiveNames.length) {
+    return eligible
+      .filter((outcome) => Number.isFinite(valueOf(outcome)))
+      .sort((left, right) => {
+        const leftValue = valueOf(left)!;
+        const rightValue = valueOf(right)!;
+        const difference = direction === "maximize" ? rightValue - leftValue : leftValue - rightValue;
+        return difference || (order.get(left.id)! - order.get(right.id)!);
+      })
+      .slice(0, stage.retainCount)
+      .map((outcome) => outcome.id);
+  }
+
+  // Objective vectors are supplied in a common higher-is-better scale by the
+  // evaluator. Rank Pareto fronts first; a vector sum only breaks ties within
+  // a front and does not turn differently scaled objectives into a fake score.
+  const vectors = eligible.filter((outcome) => objectiveNames.every((name) => Number.isFinite(outcome.objectiveValues?.[name])));
+  const dominates = (left: HalvingOutcome, right: HalvingOutcome): boolean => {
+    const leftValues = objectiveNames.map((name) => left.objectiveValues![name]);
+    const rightValues = objectiveNames.map((name) => right.objectiveValues![name]);
+    return leftValues.every((value, index) => value >= rightValues[index]) && leftValues.some((value, index) => value > rightValues[index]);
+  };
+  const front = new Map<string, number>();
+  for (const candidate of vectors) {
+    let rank = 0;
+    for (const other of vectors) if (other.id !== candidate.id && dominates(other, candidate)) rank += 1;
+    front.set(candidate.id, rank);
+  }
+  return vectors
     .sort((left, right) => {
-      const leftValue = valueOf(left)!;
-      const rightValue = valueOf(right)!;
-      const difference = direction === "maximize" ? rightValue - leftValue : leftValue - rightValue;
-      return difference || (order.get(left.id)! - order.get(right.id)!);
+      const rankDifference = front.get(left.id)! - front.get(right.id)!;
+      if (rankDifference) return rankDifference;
+      const leftSum = objectiveNames.reduce((sum, name) => sum + left.objectiveValues![name], 0);
+      const rightSum = objectiveNames.reduce((sum, name) => sum + right.objectiveValues![name], 0);
+      return rightSum - leftSum || (order.get(left.id)! - order.get(right.id)!);
     })
     .slice(0, stage.retainCount)
     .map((outcome) => outcome.id);

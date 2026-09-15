@@ -235,6 +235,7 @@ Implemented today:
 - direct scorecard comparisons independently recheck data revision, runtime fingerprint, baseline, direction, and normalization-bound parity before pairing outcomes;
 - an arm with an explicitly requested reproducibility check must pass that check, and both harnesses must expose the same check status before their metrics can support a win;
 - domain-agnostic successive-halving schedules that allocate cheap screens before expensive validation.
+- optional normalized multi-objective Pareto promotion for quality/speed/safety suites, while preserving scalar promotion compatibility.
 - autonomous portfolio execution that screens candidates in a first pass and promotes survivors into full validation and replication.
 - explicit leave-one-factor-out ablation plans for composite hypotheses, with bounded autonomous variant execution and independent evidence per factor;
 - checksum-locked validation policies with auditable unlock reasons and pre-experiment mutation checks.
