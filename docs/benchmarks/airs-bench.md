@@ -143,6 +143,20 @@ This confirms the real preparation → agent mount → evaluator preparation →
 official evaluation path; it is a baseline reproduction, not a claim of agent
 quality or leaderboard performance.
 
+On the same task, the embedded Codex route was then run with `gpt-5.6-luna`,
+medium reasoning effort, and a ten-minute total agent budget. The run completed
+all lifecycle stages and the unchanged official evaluator returned:
+
+```text
+Accuracy = 0.8065633917651854
+Absolute improvement over majority baseline = +0.2378719934773746
+```
+
+This is the first valid end-to-end agent result in the workbench. It is a
+single local run, so it is evidence that the harness can execute and improve a
+real task—not evidence of leaderboard SOTA. Repeated seeds, task-balanced
+comparisons, and a held-out suite are still required.
+
 A bounded embedded-Codex probe was also attempted with `gpt-5.6-luna` at
 medium effort. Codex authenticated and entered the isolated workspace, but
 repeatedly inspected the working directory without producing the required
