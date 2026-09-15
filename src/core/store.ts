@@ -80,6 +80,12 @@ export class ResearchStore {
   constructor(path: string) {
     mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path);
+    // Research lanes, tool traces, and controller heartbeats may use separate
+    // store instances at the same time. WAL improves reader/writer overlap,
+    // but SQLite still needs a bounded wait when another writer owns the
+    // commit lock; without this, healthy parallel lanes can fail with a
+    // misleading `database is locked` error.
+    this.db.pragma("busy_timeout = 5000");
     this.db.pragma("journal_mode = WAL");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS projects (

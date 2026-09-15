@@ -45,6 +45,7 @@ Most coding agents optimize for one conversation and one code change. Evidra is 
 - **Literature becomes testable work.** Independent research lanes search OpenAlex and arXiv, retrieve bounded primary sources, cache them, and adapt them into falsifiable hypotheses with explicit low-confidence provenance and source-to-claim graph edges.
 - **Falsifiable research.** Decisions contain phases, goals, hypotheses, expected effects, costs, risks, dependencies, and explicit falsification tests.
 - **Durable state.** SQLite and an append-only event log preserve projects, claims, sources, hypotheses, decisions, experiments, runs, artifacts, phase goals, agent lanes, sessions, and queue tasks.
+- **Concurrent lane safety.** The SQLite store uses WAL and a bounded writer wait, so parallel Codex lanes can record observations and traces without turning brief writer contention into lost research evidence.
 - **Bounded autonomy.** A campaign has an ultimate goal, internal phase goals, a budget, and a stopping condition. It pauses when genuinely blocked and can resume later.
 - **Reproducible execution.** Experiment manifests, Git worktrees, run metadata, metrics, logs, checksums, and environment snapshots make results inspectable.
 - **Provider choice.** Use the authenticated Codex CLI with a ChatGPT subscription or a local Ollama model.

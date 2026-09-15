@@ -173,6 +173,10 @@ external evaluator.
   metadata.
 - CLI and TUI now share one validated checkpoint constructor, preventing their
   durable campaign metadata formats from drifting.
+- The SQLite store now enables WAL plus a bounded five-second writer wait, and
+  has a regression test covering concurrent lane-style event writers. This
+  prevents transient database-lock contention from dropping parallel Codex
+  observations.
 - Codex structured-output schemas now cover the research director, independent
   research lanes, and critic, so every research-role response is constrained
   before durable parsing and evidence gates.

@@ -138,6 +138,11 @@ phase, timestamp, and scheduler state. On resume, an interrupted phase repeats
 its current cycle; only `cycle-complete` advances to the next cycle. CLI and TUI
 use the same checkpoint validator and constructor.
 
+The SQLite state store uses WAL plus a bounded writer wait. This matters when
+multiple Codex research lanes retrieve sources, record tool traces, or update
+their lane status at the same time: brief writer contention is absorbed, while
+a genuinely unavailable store still surfaces as an error.
+
 ```text
 /research status
 /research pause
@@ -197,4 +202,3 @@ local ChatGPT login into a worker.
 The reliable claim is the measured, reproducible claim: inspect run logs,
 checksums, evaluator output, validation slices, and replication evidence before
 promoting or submitting anything.
-

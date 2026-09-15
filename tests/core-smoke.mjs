@@ -237,6 +237,25 @@ test("durable research state and queue survive store reopen", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("parallel store writers tolerate transient SQLite writer contention", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-store-contention-"));
+  const db = join(root, "state.sqlite");
+  try {
+    const writers = Array.from({ length: 4 }, (_, writer) => new ResearchStore(db));
+    await Promise.all(writers.map(async (store, writer) => {
+      for (let index = 0; index < 20; index += 1) {
+        store.appendEvent("test.parallel_writer", { writer, index });
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    }));
+    writers.forEach((store) => store.close());
+    const reopened = new ResearchStore(db);
+    assert.equal(reopened.eventsByType("test.parallel_writer").length, 80);
+    assert.equal(reopened.verifyEventChain().status, "valid");
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("GPU reservations prevent concurrent workers from oversubscribing a campaign", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-gpu-reservation-"));
   try {
