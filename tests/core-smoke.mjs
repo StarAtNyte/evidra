@@ -3959,6 +3959,19 @@ test("search policy evidence reports rankings, rewards, cost, and reproducibilit
   assert.equal(report.operators.find((entry) => entry.operator === "greedy")?.meanCostMinutes, 2);
 });
 
+test("search policy evidence can be scoped to the active provider route", () => {
+  const events = [
+    { type: "research.search_policy.selected", payload: { competitionId: "arc", provider: "codex", model: "luna", selected: { operator: "greedy", score: 2 } } },
+    { type: "research.search_policy.selected", payload: { competitionId: "arc", provider: "local", model: "qwen", selected: { operator: "audit", score: 3 } } },
+    { type: "research.search.reward", payload: { competitionId: "arc", provider: "codex", model: "luna", operator: "greedy", reward: 0.4, durationSeconds: 60, valid: true, reproducible: true } },
+    { type: "research.search.reward", payload: { competitionId: "arc", provider: "local", model: "qwen", operator: "audit", reward: -1, durationSeconds: 60, valid: false, reproducible: false } },
+  ];
+  const report = summarizeSearchPolicyEvidence(events, "arc", { provider: "codex", model: "luna" });
+  assert.equal(report.cycles, 1);
+  assert.equal(report.operators.find((entry) => entry.operator === "greedy")?.rewardSamples, 1);
+  assert.equal(report.operators.find((entry) => entry.operator === "audit")?.rewardSamples, 0);
+});
+
 test("search policy exposes bounded evolutionary and MCTS exploration", () => {
   const ranked = rankSearchArms({
     arms: [

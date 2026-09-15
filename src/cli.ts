@@ -2076,6 +2076,10 @@ research
       store.appendEvent("research.search_policy.selected", {
         cycle,
         competitionId: store.project()?.competitionId,
+        provider: options.provider,
+        model: selectedModel,
+        executor: options.executor,
+        phase: phaseGoal?.phase ?? "unknown",
         selected: searchPolicy[0],
         // Persist the complete bounded ranking so policy analysis can explain
         // both the chosen operator and the alternatives it rejected.
@@ -2896,7 +2900,13 @@ research.command("policy")
   .action(() => {
     const store = new ResearchStore(statePath);
     const project = store.project();
-    const report = summarizeSearchPolicyEvidence(store.eventsByType("research.search.reward"), project?.competitionId);
+    const campaign = store.campaign() as { runtime?: { provider?: unknown; model?: unknown; executor?: unknown } } | undefined;
+    const runtime = campaign?.runtime;
+    const report = summarizeSearchPolicyEvidence(store.eventsByTypes(["research.search.reward", "research.search_policy.selected"]), project?.competitionId, {
+      ...(typeof runtime?.provider === "string" ? { provider: runtime.provider } : {}),
+      ...(typeof runtime?.model === "string" ? { model: runtime.model } : {}),
+      ...(typeof runtime?.executor === "string" ? { executor: runtime.executor } : {}),
+    });
     store.close();
     console.log(JSON.stringify(report, null, 2));
   });

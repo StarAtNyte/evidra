@@ -36,6 +36,10 @@ export interface RankedSearchArm extends SearchArm {
 }
 
 export interface SearchPolicyEvent {
+  provider?: string;
+  model?: string;
+  executor?: string;
+  phase?: string;
   selected?: RankedSearchArm;
   ranked?: RankedSearchArm[];
   portfolio?: RankedSearchArm[];
@@ -75,6 +79,13 @@ export interface SearchPolicyEvidence {
   }>;
 }
 
+export interface SearchPolicyScope {
+  provider?: string;
+  model?: string;
+  executor?: string;
+  phase?: string;
+}
+
 /**
  * Turn durable policy and reward events into an auditable policy report.
  * Missing legacy metadata is accepted, but scoped events never leak between
@@ -83,17 +94,23 @@ export interface SearchPolicyEvidence {
 export function summarizeSearchPolicyEvidence(
   events: Array<{ type: string; payload: unknown }>,
   competitionId?: string,
+  scope?: SearchPolicyScope,
 ): SearchPolicyEvidence {
-  const sameCompetition = (payload: unknown): boolean => {
-    const value = payload && typeof payload === "object" ? payload as { competitionId?: unknown } : {};
-    return value.competitionId === undefined || value.competitionId === competitionId;
+  const inScope = (payload: unknown): boolean => {
+    const value = payload && typeof payload === "object" ? payload as { competitionId?: unknown; provider?: unknown; model?: unknown; executor?: unknown; phase?: unknown } : {};
+    if (value.competitionId !== undefined && value.competitionId !== competitionId) return false;
+    for (const key of ["provider", "model", "executor", "phase"] as const) {
+      const expected = scope?.[key];
+      if (expected !== undefined && value[key] !== undefined && value[key] !== expected) return false;
+    }
+    return true;
   };
   const policies = events
-    .filter((event) => event.type === "research.search_policy.selected" && sameCompetition(event.payload))
+    .filter((event) => event.type === "research.search_policy.selected" && inScope(event.payload))
     .map((event) => event.payload as SearchPolicyEvent)
     .filter((event) => Array.isArray(event.ranked) || event.selected?.operator);
   const rewards = events
-    .filter((event) => event.type === "research.search.reward" && sameCompetition(event.payload))
+    .filter((event) => event.type === "research.search.reward" && inScope(event.payload))
     .map((event) => event.payload as SearchRewardEvent);
   const operators = DEFAULT_SEARCH_OPERATORS.map((operator) => {
     const ranks: number[] = [];
