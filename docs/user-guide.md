@@ -186,6 +186,9 @@ Those failures are classified into the same generic recovery vocabulary used by
 experiment execution and fed into the next autonomous allocation: timeout,
 rate-limit, authentication, dependency, and unknown failures can therefore
 select different recovery guidance.
+The CLI and TUI use the same failure pressure when selecting capability tiers,
+verification intensity, and bounded lane fan-out, so switching interfaces does
+not silently discard recovery evidence.
 
 Independent lanes explore different formulations and roles. Their evidence is
 cross-pollinated through a bounded board, while shared citations are not

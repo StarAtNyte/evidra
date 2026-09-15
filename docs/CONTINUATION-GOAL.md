@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `668ec02`.
+- Latest pushed commit: `ca8ac78`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -139,6 +139,9 @@ external evaluator.
 - Native Codex failures are classified into the generic recovery vocabulary and
   included in the next cycle's allocation policy. Timeout, rate-limit, auth,
   dependency, and unknown failures now provide targeted route pressure.
+- The CLI and TUI now pass the same typed failure pressure into capability
+  routing, making verification demand and lane fan-out consistent across
+  interfaces instead of dropping provider recovery evidence in the TUI path.
 - Codex structured-output schemas now cover the research director, independent
   research lanes, and critic, so every research-role response is constrained
   before durable parsing and evidence gates.
