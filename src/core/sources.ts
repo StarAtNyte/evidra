@@ -484,6 +484,10 @@ export function sourceClaims(text: string, limit = 12): string[] {
     .split(/(?<=[.!?])\s+/)
     .map((sentence) => sentence.trim())
     .filter((sentence) => sentence.length >= 50 && sentence.length <= 500)
+    // Retrieved text is evidence material, never an instruction channel. Do
+    // not let prompt-injection or operational directions become durable claims
+    // just because the sentence also mentions a model, result, or dataset.
+    .filter((sentence) => !/ignore\s+(all\s+)?previous|disregard\s+(the\s+)?(?:system|developer)|follow\s+these\s+instructions|disable\s+(?:safety|permissions?|sandbox)|reveal\s+(?:the\s+)?(?:token|password|credential|api\s*key)|you\s+must\s+(?:run|execute|upload|submit)/i.test(sentence))
     .filter((sentence) => /\b(show|find|improv|decreas|increas|result|method|dataset|model|validation|leak|error|accuracy|score)\b/i.test(sentence))
     .slice(0, limit);
 }
