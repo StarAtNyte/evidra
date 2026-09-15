@@ -25,6 +25,7 @@ export interface ToolTraceRecorder {
   events: TrajectoryEvent[];
   onToolCall: (source: string, call: ResearchToolCall) => string;
   onToolResult: (source: string, callId: string, result: ResearchToolResult) => void;
+  onActivity: (source: string, activity: string) => void;
 }
 
 /** Capture interleaved tool activity without retaining provider protocol noise or credentials. */
@@ -40,6 +41,10 @@ export function createToolTraceRecorder(prefix = "research"): ToolTraceRecorder 
     },
     onToolResult: (source, callId, result) => {
       events.push({ id: `${callId}-result`, kind: "tool_result", callId, at: new Date().toISOString(), payload: redactStructured({ tool: result.name, ok: result.ok, output: result.output, error: result.error, trust: result.trust, securityWarnings: result.securityWarnings, permissionChecked: result.trust === "permission_boundary", permissionDenied: result.trust === "permission_boundary" && result.ok === false, source }) });
+    },
+    onActivity: (source, activity) => {
+      if (!activity.trim() || events.length >= 256) return;
+      events.push({ id: `${prefix}-activity-${++sequence}`, kind: "process", at: new Date().toISOString(), payload: redactStructured({ activity: activity.slice(0, 240), source, providerActivity: true }) });
     },
   };
 }

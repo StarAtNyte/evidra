@@ -894,6 +894,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         }),
         onToolCall: toolTrace.onToolCall,
         onToolResult: toolTrace.onToolResult,
+        onActivity: toolTrace.onActivity,
       });
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
       setProgress("Research 4/4 · director is cross-pollinating lane findings...");
@@ -935,6 +936,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         }),
         onToolCall: toolTrace.onToolCall,
         onToolResult: toolTrace.onToolResult,
+        onActivity: toolTrace.onActivity,
       }, setProgress);
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
       criticReview = await runResearchCritic(objective, decision, laneReports, {
@@ -948,6 +950,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         maxParallel: 1,
         autonomy: config.autonomy,
         onProgress: setProgress,
+        onActivity: toolTrace.onActivity,
       });
       activeProcess.current = null;
       activeSteer.current = null;

@@ -72,6 +72,8 @@ export interface ExecAgentOptions {
   onThread?: (threadId: string) => void;
   limitPolicy?: "auto" | "wait" | "fallback" | "stop";
   timeoutMs?: number;
+  /** Receive concise, redacted native provider activity for durable traces. */
+  onActivity?: (source: string, activity: string) => void;
 }
 
 export class ProviderUsageLimitError extends Error {
@@ -503,7 +505,10 @@ export class CodexExecAgent {
         else if (value.type === "turn.started") onProgress?.("Thinking...");
         else if (value.item && (value.type === "item.started" || value.type === "item.updated" || value.type === "item.completed")) {
           const activity = codexItemProgress(value.item, value.type);
-          if (activity) onProgress?.(activity);
+          if (activity) {
+            onProgress?.(activity);
+            this.options.onActivity?.("codex", activity);
+          }
         }
         else if ((value.type === "item.updated" || value.type === "item.completed") && value.item?.type === "agent_message" && value.item.text) {
           finalText = value.item.text;
