@@ -57,11 +57,11 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `a111d6d`.
+- Latest pushed commit: `18fcccd`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 340/340 tests passing, TypeScript check passing,
+- Latest verified baseline: 341/341 tests passing, TypeScript check passing,
   and build passing. The worktree has six intentionally untracked pilot reports
   under `reports/`; do not confuse those generated artifacts with source edits.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
@@ -86,6 +86,9 @@ external evaluator.
   separate-argument credential forms.
 - Codex steering and login-status probes are bounded to five seconds, so a
   broken Codex transport cannot freeze the TUI input loop.
+- Codex nested `turn.failed.error.message` diagnostics are preserved, allowing
+  the existing retry, usage-limit, and fallback classifiers to route failures
+  correctly instead of receiving a generic error.
 - Codex thread restoration is explicit: a new terminal starts a fresh Evidra
   chat, while `/resume <session-id>` restores the saved Codex thread and
   transcript. Provider/model changes invalidate the active chat thread.
