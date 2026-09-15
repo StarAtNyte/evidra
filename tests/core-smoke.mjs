@@ -60,7 +60,7 @@ import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment, validateEvaluationMatrix } from "../dist/core/validation.js";
-import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, ResearchLaneReportSchema, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
+import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
 import { summarizeAgentUsage, summarizeUsage } from "../dist/core/usage.js";
@@ -2304,6 +2304,16 @@ test("controller decision auditor independently downgrades unaudited completion 
   const valid = auditResearchDecision({ ...base, goalStatus: "met" }, { currentPhase: "evaluation", phaseAuditComplete: true });
   assert.equal(valid.verdict, "pass");
   assert.deepEqual(valid.evidence, ["subtask.audit:complete"]);
+});
+
+test("semantic auditor output is grounded before it can pass", () => {
+  const parsed = ResearchSemanticAuditSchema.parse({ verdict: "pass", summary: "checked", findings: [], requiredChecks: [], evidence: ["run:known", "invented"], confidence: 0.9 });
+  const normalized = normalizeResearchSemanticAudit(parsed, new Set(["run:known"]));
+  assert.equal(normalized.verdict, "pass");
+  assert.deepEqual(normalized.evidence, ["run:known"]);
+  assert.match(normalized.findings.join(" "), /invented/);
+  const ungrounded = normalizeResearchSemanticAudit({ ...parsed, evidence: ["invented"] }, new Set());
+  assert.equal(ungrounded.verdict, "revise");
 });
 
 test("validation phase completion requires the latest policy lifecycle event to be a lock", () => {

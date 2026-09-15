@@ -599,6 +599,9 @@ It checks typed action legality, active-phase alignment, stop conditions, and
 whether completion has a successful durable phase audit. A failing audit is
 recorded as `research.decision.audit` and downgrades the decision to inspection;
 the director cannot override this with rationale text. This is the first
-Manage–Execute–Audit separation in the live control path; a future provider
-auditor can add independent semantic review without weakening these hard
-controller checks.
+Manage–Execute–Audit separation in the live control path. A provider-backed
+semantic auditor now runs as a fresh read-only role after director/critic
+synthesis, prefers a distinct authenticated route when available, grounds
+citations against durable evidence, and gates non-pass decisions. It adds
+independent methodological review without weakening the hard controller
+checks.

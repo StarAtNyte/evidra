@@ -32,7 +32,7 @@ import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
 import { codexLoginStatus, codexResearchModelPool, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveStartupProvider, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
-import { boundedPeerBoard, runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
+import { boundedPeerBoard, runResearchCritic, runResearchLanes, runResearchSemanticAuditor, type ResearchLaneReport, type ResearchReview, type ResearchSemanticAudit } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
 import { createToolTraceRecorder, evaluateTrajectory, providerActivityFailureClass, type TrajectoryEvent } from "../core/trajectories.js";
 import { recoverUncommittedTraceFiles } from "../core/trajectory-recovery.js";
@@ -900,6 +900,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     let laneReports: ResearchLaneReport[] = [];
     let crossPollination: ReturnType<typeof synthesizeLaneReports> | undefined;
     let criticReview: ResearchReview | undefined;
+    let semanticAudit: ResearchSemanticAudit | undefined;
     const tracePrefix = `research-${Date.now()}`;
     const tracePath = join(root, ".sota", "traces", `${tracePrefix}.jsonl`);
     mkdirSync(dirname(tracePath), { recursive: true });
@@ -1075,6 +1076,35 @@ export function App({ root }: { root: string }): React.JSX.Element {
         onAssistant: toolTrace.onAssistant,
         onUsage: recordAgentUsage,
       });
+      semanticAudit = await runResearchSemanticAuditor(objective, decision, {
+        observation,
+        phaseGoal,
+        laneReports: laneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
+        critic: criticReview,
+      }, {
+        provider: config.provider,
+        model: config.model,
+        modelPool: researchModelPool,
+        fallbackLocalModel: config.fallbackModel,
+        limitPolicy: config.limitPolicy,
+        reasoningEffort: config.reasoningEffort,
+        cwd: root,
+        storePath: join(root, ".sota", "database.sqlite"),
+        maxParallel: 1,
+        autonomy: config.autonomy,
+        onProcess: registerProcess,
+        isCancelled: () => interruptedProcess.current,
+        onProgress: setProgress,
+        onActivity: toolTrace.onActivity,
+        onAssistant: toolTrace.onAssistant,
+        onUsage: recordAgentUsage,
+      });
+      if (semanticAudit.verdict !== "pass") {
+        decision = { ...decision, decision: "inspect", goalStatus: "active", nextAction: `${decision.nextAction} (semantic audit: ${[...semanticAudit.findings, ...semanticAudit.requiredChecks].join(", ")})` };
+        const auditStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        auditStore.appendEvent("research.semantic_audit.gated", { verdict: semanticAudit.verdict, findings: semanticAudit.findings, requiredChecks: semanticAudit.requiredChecks });
+        auditStore.close();
+      }
       activeProcess.current = null;
       activeSteer.current = null;
       const completedLane = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -1181,7 +1211,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const routingOutcome = capabilityOutcome({ objective, mode, route, provider: config.provider, model: config.model, quality: researchQuality, parallelLanes: laneReports.length });
     const trajectoryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const trajectoryId = `trajectory_research_${Date.now()}`;
-    const trajectoryPayload = { objective, observation, laneReports, crossPollination, criticReview, decision, tracePath: relative(root, tracePath), routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: config.provider, model: config.model }, events: researchTrajectoryEvents };
+    const trajectoryPayload = { objective, observation, laneReports, crossPollination, criticReview, semanticAudit, decision, tracePath: relative(root, tracePath), routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: config.provider, model: config.model }, events: researchTrajectoryEvents };
     trajectoryStore.saveTrajectory({ id: trajectoryId, payload: trajectoryPayload, quality: researchQuality });
     const experience = buildExperienceRecord({ trajectoryId, payload: trajectoryPayload, quality: researchQuality, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: config.provider, model: config.model } });
     const priorExperiences = trajectoryStore.trajectories(100).filter((entry) => entry.id !== trajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));

@@ -52,7 +52,7 @@ import { summarizeAgentUsage, summarizeUsage } from "./core/usage.js";
 import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "./core/ensemble.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
-import { runResearchCritic } from "./agents/research-lanes.js";
+import { runResearchCritic, runResearchSemanticAuditor, type ResearchSemanticAudit } from "./agents/research-lanes.js";
 import { checkProvider, codexLoginStatus, codexResearchModelPool, CodexExecAgent, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listCodexModels, listLocalModels, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
@@ -2453,6 +2453,7 @@ research
       projectStore.close();
       let decision: Awaited<ReturnType<typeof runResearchDirector>>;
       let criticReview: Awaited<ReturnType<typeof runResearchCritic>> | undefined;
+      let semanticAudit: ResearchSemanticAudit | undefined;
       let laneReports: Awaited<ReturnType<typeof runResearchLanes>> = [];
       let crossPollination: ReturnType<typeof synthesizeLaneReports> | undefined;
       const tracePrefix = `research-${cycle}-${Date.now()}`;
@@ -2621,6 +2622,33 @@ research
             onAssistant: toolTrace.onAssistant,
             onUsage: recordAgentUsage,
           });
+          semanticAudit = await runResearchSemanticAuditor(cycleObjective, decision, {
+            observation,
+            phaseGoal,
+            laneReports: laneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
+            critic: criticReview,
+          }, {
+            provider: options.provider as "codex" | "local",
+            model: selectedModel,
+            modelPool: researchModelPool,
+            fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
+            limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop",
+            reasoningEffort: options.thinking,
+            timeoutMs: agentTimeoutMs,
+            cwd: root,
+            storePath: statePath,
+            maxParallel: 1,
+            autonomy,
+            onActivity: toolTrace.onActivity,
+            onAssistant: toolTrace.onAssistant,
+            onUsage: recordAgentUsage,
+          });
+          if (semanticAudit.verdict !== "pass") {
+            decision = { ...decision, decision: "inspect", goalStatus: "active", nextAction: `${decision.nextAction} (semantic audit: ${[...semanticAudit.findings, ...semanticAudit.requiredChecks].join(", ")})` };
+            const auditStore = new ResearchStore(statePath);
+            auditStore.appendEvent("research.semantic_audit.gated", { cycle, verdict: semanticAudit.verdict, findings: semanticAudit.findings, requiredChecks: semanticAudit.requiredChecks });
+            auditStore.close();
+          }
           if (shouldPeerReview) {
             const collaborationStore = new ResearchStore(statePath);
             const useful = criticReview.verdict !== "proceed" || criticReview.requiredChecks.length > 0 || crossPollination.tensions.length > 0;
@@ -3236,7 +3264,7 @@ research
       const researchQuality = evaluateTrajectory(researchTrajectoryEvents);
       const routingOutcome = capabilityOutcome({ objective: allocatedObjective, mode, route, provider: options.provider, model: selectedModel, quality: researchQuality, parallelLanes: laneReports.length });
       const trajectoryId = `trajectory_research_${Date.now()}`;
-      const trajectoryPayload = { objective, observation, laneReports, crossPollination, criticReview, decision, tracePath: relative(root, tracePath), routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: options.provider, model: selectedModel }, events: researchTrajectoryEvents };
+      const trajectoryPayload = { objective, observation, laneReports, crossPollination, criticReview, semanticAudit, decision, tracePath: relative(root, tracePath), routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: options.provider, model: selectedModel }, events: researchTrajectoryEvents };
       decisionStore.saveTrajectory({ id: trajectoryId, payload: trajectoryPayload, quality: researchQuality });
       const experience = buildExperienceRecord({ trajectoryId, payload: trajectoryPayload, quality: researchQuality, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: options.provider, model: selectedModel } });
       const priorExperiences = decisionStore.trajectoryHistory().filter((entry) => entry.id !== trajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));

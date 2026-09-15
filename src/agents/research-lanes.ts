@@ -61,6 +61,34 @@ export type ResearchReview = z.infer<typeof ResearchReviewSchema> & {
   error?: string;
 };
 
+export const ResearchSemanticAuditSchema = z.object({
+  verdict: z.enum(["pass", "revise", "reject"]),
+  summary: z.string().min(1),
+  findings: z.array(z.string()).max(12),
+  requiredChecks: z.array(z.string()).max(12),
+  evidence: z.array(z.string()).max(12).default([]),
+  confidence: z.number().min(0).max(1),
+});
+
+export type ResearchSemanticAudit = z.infer<typeof ResearchSemanticAuditSchema> & {
+  status: "completed" | "failed";
+  error?: string;
+  servedProvider?: string;
+  servedModel?: string;
+};
+
+export function normalizeResearchSemanticAudit(audit: z.infer<typeof ResearchSemanticAuditSchema>, validEvidence: ReadonlySet<string>): ResearchSemanticAudit {
+  const evidence = audit.evidence.filter((anchor) => validEvidence.has(anchor));
+  const invalid = audit.evidence.filter((anchor) => !validEvidence.has(anchor));
+  return {
+    ...audit,
+    evidence,
+    verdict: audit.verdict === "pass" && (evidence.length === 0 || audit.requiredChecks.length > 0) ? "revise" : audit.verdict,
+    findings: invalid.length ? [...audit.findings, `Unrecognized evidence anchors discarded: ${invalid.join(", ")}.`].slice(0, 12) : audit.findings,
+    status: "completed",
+  };
+}
+
 const RESEARCH_LANE_OUTPUT_SCHEMA = JSON.stringify({
   type: "object",
   additionalProperties: false,
@@ -89,6 +117,20 @@ const RESEARCH_REVIEW_OUTPUT_SCHEMA = JSON.stringify({
     requiredChecks: { type: "array", maxItems: 12, items: { type: "string" } },
     evidence: { type: "array", maxItems: 12, items: { type: "string" } },
     independentReplication: { type: "boolean" },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+  },
+});
+
+const RESEARCH_SEMANTIC_AUDIT_OUTPUT_SCHEMA = JSON.stringify({
+  type: "object",
+  additionalProperties: false,
+  required: ["verdict", "summary", "findings", "requiredChecks", "evidence", "confidence"],
+  properties: {
+    verdict: { type: "string", enum: ["pass", "revise", "reject"] },
+    summary: { type: "string" },
+    findings: { type: "array", maxItems: 12, items: { type: "string" } },
+    requiredChecks: { type: "array", maxItems: 12, items: { type: "string" } },
+    evidence: { type: "array", maxItems: 12, items: { type: "string" } },
     confidence: { type: "number", minimum: 0, maximum: 1 },
   },
 });
@@ -433,6 +475,73 @@ export async function runResearchCritic(
     failed.updateAgentLane({ role: "critic", status: "failed", provider: options.provider, model: options.model, task: objective, error: message });
     failed.close();
     return { verdict: "revise", summary: "Independent critic did not complete; do not promote this direction without manual review.", objections: [message], requiredChecks: ["rerun the independent critic"], evidence: [], independentReplication: true, confidence: 0, status: "failed", error: message };
+  }
+}
+
+/**
+ * Run a fresh semantic audit after the director and critic. The auditor gets
+ * only typed decision/evidence context, uses a separate role/thread, and can
+ * never mutate the workspace. Hard controller checks still outrank this
+ * model-backed opinion.
+ */
+export async function runResearchSemanticAuditor(
+  objective: string,
+  decision: unknown,
+  evidenceContext: unknown,
+  options: ResearchLanesOptions,
+): Promise<ResearchSemanticAudit> {
+  const role = "semantic auditor";
+  const store = new ResearchStore(options.storePath);
+  store.updateAgentLane({ role, status: "running", provider: options.provider, model: options.model, task: objective, error: null });
+  store.close();
+  options.onProgress?.("Research auditor · independently checking evidence and method...");
+  const prompt = `${objective}\n\nYou are Evidra's independent semantic auditor. Inspect the typed proposed decision and bounded durable evidence below. Do not trust the director, critic, or executor narrative. Check whether the proposed action follows from evidence, whether the comparison/control is valid, whether the hypothesis is falsifiable, and whether risks or required checks are unresolved. Do not invent measurements, citations, or workspace facts. Return ONLY JSON: {"verdict":"pass|revise|reject","summary":"...","findings":["..."],"requiredChecks":["..."],"evidence":["copy exact evidence anchors only"],"confidence":0.0}. A pass requires at least one exact evidence anchor and no requiredChecks.\n\nProposed decision:\n${JSON.stringify(decision)}\n\nBounded evidence:\n${JSON.stringify(evidenceContext)}`;
+  try {
+    let provider = options.provider;
+    let model = options.model;
+    const alternate = alternateResearchLaneRoute({ provider, model }, options.modelPool, new Set([`${provider}\u0000${model}`]));
+    // Prefer a distinct authenticated route where one is available; otherwise
+    // a fresh auditor thread still provides independent context separation.
+    if (alternate) ({ provider, model } = alternate);
+    const result = await runWithLocalFallback({ role, objective: prompt, context: { decision, evidenceContext }, outputSchema: RESEARCH_SEMANTIC_AUDIT_OUTPUT_SCHEMA }, {
+      provider,
+      model,
+      limitPolicy: options.limitPolicy,
+      reasoningEffort: options.reasoningEffort,
+      networkAccessEnabled: false,
+      webSearchMode: "disabled",
+      timeoutMs: options.timeoutMs,
+      cwd: options.cwd,
+      sandbox: "read-only",
+      onActivity: options.onActivity,
+      onAssistant: options.onAssistant,
+    }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
+    options.onUsage?.(result.usage, result.provider, result.model ?? model, role);
+    const evidenceStore = new ResearchStore(options.storePath);
+    const validEvidence = new Set<string>([
+      ...evidenceStore.eventsByType("research.observation").map((event) => event.type),
+      ...evidenceStore.sources().map((source) => source.id),
+      ...evidenceStore.runs().map((run) => run.id),
+      ...evidenceStore.artifacts().map((artifact) => artifact.id),
+    ]);
+    evidenceStore.close();
+    const audit: ResearchSemanticAudit = {
+      ...normalizeResearchSemanticAudit(ResearchSemanticAuditSchema.parse(parseJson(result.output)), validEvidence),
+      servedProvider: result.provider,
+      servedModel: result.model ?? model,
+    };
+    const completed = new ResearchStore(options.storePath);
+    completed.appendEvent("research.semantic_audit.completed", { objective, audit, requestedProvider: options.provider, requestedModel: options.model, servedProvider: result.provider, servedModel: result.model ?? model });
+    completed.updateAgentLane({ role, status: "idle", provider: result.provider, model: result.model ?? model, task: null, error: null });
+    completed.close();
+    return audit;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const failed = new ResearchStore(options.storePath);
+    failed.appendEvent("research.semantic_audit.failed", { objective, error: message });
+    failed.updateAgentLane({ role, status: "failed", provider: options.provider, model: options.model, task: objective, error: message });
+    failed.close();
+    return { verdict: "revise", summary: "Semantic auditor did not complete; preserve the decision for another audit.", findings: [message], requiredChecks: ["rerun semantic auditor"], evidence: [], confidence: 0, status: "failed", error: message };
   }
 }
 
