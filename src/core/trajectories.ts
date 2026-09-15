@@ -37,14 +37,29 @@ export interface ToolTraceRecorderOptions {
 export const MAX_TRACE_EVENTS = 256;
 export const MAX_TRACE_BYTES = 2_000_000;
 
+function boundedTracePrefix(text: string, maxBytes: number): { text: string; truncated: boolean } {
+  const rawBytes = Buffer.byteLength(text, "utf8");
+  if (rawBytes <= maxBytes) return { text, truncated: false };
+  // Find the largest UTF-8-safe JavaScript string prefix without allocating a
+  // second Buffer containing the entire corrupt/oversized trace.
+  let low = 0;
+  let high = Math.min(text.length, maxBytes);
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(text.slice(0, middle), "utf8") <= maxBytes) low = middle;
+    else high = middle - 1;
+  }
+  return { text: text.slice(0, low), truncated: true };
+}
+
 /** Parse a crash-surviving JSONL trace without trusting arbitrary file data. */
 export function parsePersistedTrace(text: string, maxEvents = 256, maxBytes = MAX_TRACE_BYTES): { events: TrajectoryEvent[]; invalidLines: number; truncated: boolean } {
   const events: TrajectoryEvent[] = [];
   let invalidLines = 0;
   const boundedBytes = Math.max(1, Math.min(maxBytes, MAX_TRACE_BYTES));
-  const rawBytes = Buffer.byteLength(text, "utf8");
-  const truncated = rawBytes > boundedBytes;
-  const boundedText = truncated ? Buffer.from(text, "utf8").subarray(0, boundedBytes).toString("utf8") : text;
+  const bounded = boundedTracePrefix(text, boundedBytes);
+  const truncated = bounded.truncated;
+  const boundedText = bounded.text;
   for (const line of boundedText.split(/\r?\n/).filter(Boolean).slice(0, Math.max(1, Math.min(maxEvents, MAX_TRACE_EVENTS)))) {
     try {
       const value = JSON.parse(line) as Partial<TrajectoryEvent>;

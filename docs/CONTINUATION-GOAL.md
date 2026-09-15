@@ -361,6 +361,9 @@ external evaluator.
 - Persisted trace parsing and startup recovery now cap input bytes as well as
   event count, use bounded file-prefix reads, and record byte truncation
   explicitly to protect long campaigns from oversized or corrupt artifacts.
+- The parser computes an UTF-8-safe bounded prefix without duplicating an
+  oversized trace into a full temporary buffer, preserving the intended memory
+  bound under corrupt-input conditions.
 
 ## Immediate next work
 
