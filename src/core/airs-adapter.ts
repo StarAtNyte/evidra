@@ -25,6 +25,9 @@ export interface AirsTaskLifecycleOptions {
 
 export interface AirsTaskLifecycleResult {
   valid: boolean;
+  resumed: boolean;
+  initialArtifactBytes: number;
+  finalArtifactBytes: number;
   metric?: number;
   metrics: Record<string, number>;
   workspace: string;
@@ -72,6 +75,15 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
   const lifecycleRoot = containedPath(options.workspace, ".", "AIRS lifecycle workspace");
   const agentDataDir = join(lifecycleRoot, "data");
   const agentLogDir = join(lifecycleRoot, "log");
+  const submissionPath = join(agentLogDir, "submission.csv");
+  const planPath = join(lifecycleRoot, "PLAN.md");
+  const resumed = existsSync(join(lifecycleRoot, ".git")) || existsSync(submissionPath) || existsSync(planPath);
+  const initialArtifactBytes = existsSync(submissionPath) && statSync(submissionPath).isFile() ? statSync(submissionPath).size : 0;
+  const lifecycleState = (): Pick<AirsTaskLifecycleResult, "resumed" | "initialArtifactBytes" | "finalArtifactBytes"> => ({
+    resumed,
+    initialArtifactBytes,
+    finalArtifactBytes: existsSync(submissionPath) && statSync(submissionPath).isFile() ? statSync(submissionPath).size : 0,
+  });
   mkdirSync(agentDataDir, { recursive: true, mode: 0o700 });
   mkdirSync(agentLogDir, { recursive: true, mode: 0o700 });
   const python = options.python ?? "python3";
@@ -95,7 +107,7 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
     return result;
   };
   const prepare = await runStage("prepare", [python, preparePath, "--global-shared-data-dir", globalSharedDataDir, "--agent-data-mount-dir", agentDataDir, "--agent-log-dir", agentLogDir], repository);
-  if (prepare.exitCode !== 0) return { valid: false, metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "prepare" };
+  if (prepare.exitCode !== 0) return { valid: false, ...lifecycleState(), metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "prepare" };
   // Codex file-change tools require a repository root even when the task is
   // otherwise a disposable scratch workspace. This repository is ephemeral;
   // it is never connected to the user's checkout or used as submission proof.
@@ -103,14 +115,12 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
     const gitInit = await runProcess(["git", "init", "--quiet"], lifecycleRoot, 10_000, undefined, undefined, environment);
     if (gitInit.exitCode !== 0) {
       stages.push({ stage: "agent", result: { ...gitInit, stderr: `${gitInit.stderr}\nCould not initialize the disposable AIRS agent repository.`.trim() } });
-      return { valid: false, metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "agent" };
+      return { valid: false, ...lifecycleState(), metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "agent" };
     }
   }
   // Seed the two files most agents must update, then commit the seed. Codex's
   // file-change tool is more reliable when it updates tracked paths in a repo
   // with a HEAD; an empty seed is never accepted as a finished submission.
-  const submissionPath = join(agentLogDir, "submission.csv");
-  const planPath = join(lifecycleRoot, "PLAN.md");
   // Never overwrite a partial run when a caller resumes the same workspace.
   // The controller's artifact gate, not the seed, decides whether the files
   // are complete.
@@ -129,7 +139,7 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
   } else {
     agent = await runStage("agent", options.agentCommand!, lifecycleRoot);
   }
-  if (agent.exitCode !== 0) return { valid: false, metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "agent" };
+  if (agent.exitCode !== 0) return { valid: false, ...lifecycleState(), metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "agent" };
   if (!usableSubmission(submissionPath)) {
     const failure: ProcessResult = {
       ...agent,
@@ -137,10 +147,10 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
       stderr: `${agent.stderr}\nAgent completed without creating the required submission artifact: ${submissionPath}`.trim(),
     };
     stages[stages.length - 1] = { stage: "agent", result: failure };
-    return { valid: false, metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "agent" };
+    return { valid: false, ...lifecycleState(), metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "agent" };
   }
   const evaluatePrepare = await runStage("evaluate_prepare", [python, evaluatePreparePath, "--global-shared-data-dir", globalSharedDataDir, "--agent-data-mount-dir", agentDataDir, "--agent-log-dir", agentLogDir], repository);
-  if (evaluatePrepare.exitCode !== 0) return { valid: false, metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "evaluate_prepare" };
+  if (evaluatePrepare.exitCode !== 0) return { valid: false, ...lifecycleState(), metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "evaluate_prepare" };
   // AIRS evaluators conventionally resolve ./data/test_with_labels from the
   // agent workspace, while the preparation stage mounts that directory as
   // <workspace>/data. Keep evaluator cwd aligned with the official layout.
@@ -149,6 +159,7 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
   const metric = metrics[options.metric];
   return {
     valid: evaluate.exitCode === 0 && Number.isFinite(metric),
+    ...lifecycleState(),
     ...(Number.isFinite(metric) ? { metric } : {}),
     metrics,
     workspace: lifecycleRoot,

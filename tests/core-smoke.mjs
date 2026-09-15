@@ -4789,6 +4789,9 @@ test("AIRS lifecycle rejects the seeded empty submission and accepts a real arti
     });
     assert.equal(empty.valid, false);
     assert.equal(empty.failureStage, "agent");
+    assert.equal(empty.resumed, false);
+    assert.equal(empty.initialArtifactBytes, 0);
+    assert.equal(empty.finalArtifactBytes, 0);
     const resumeWorkspace = join(root, "resume");
     const interrupted = await runAirsTaskLifecycle({
       repository: root, taskPath: "task", preparePath: "task/prepare.py", evaluatePreparePath: "task/evaluate_prepare.py", evaluatePath: "task/evaluate.py",
@@ -4796,6 +4799,9 @@ test("AIRS lifecycle rejects the seeded empty submission and accepts a real arti
       agentRunner: async ({ agentLogDir }) => { writeFileSync(join(agentLogDir, "submission.csv"), "partial-work\n"); return result(1); }, metric: "Accuracy",
     });
     assert.equal(interrupted.valid, false);
+    assert.equal(interrupted.resumed, false);
+    assert.equal(interrupted.initialArtifactBytes, 0);
+    assert.equal(interrupted.finalArtifactBytes, "partial-work\n".length);
     const resumed = await runAirsTaskLifecycle({
       repository: root, taskPath: "task", preparePath: "task/prepare.py", evaluatePreparePath: "task/evaluate_prepare.py", evaluatePath: "task/evaluate.py",
       globalSharedDataDir: globalData, python: process.execPath, workspace: resumeWorkspace, timeoutMs: 30_000,
@@ -4806,6 +4812,9 @@ test("AIRS lifecycle rejects the seeded empty submission and accepts a real arti
       }, metric: "Accuracy",
     });
     assert.equal(resumed.valid, true);
+    assert.equal(resumed.resumed, true);
+    assert.equal(resumed.initialArtifactBytes, "partial-work\n".length);
+    assert.equal(resumed.finalArtifactBytes, "id,prediction\n1,ok\n".length);
     const complete = await runAirsTaskLifecycle({
       repository: root, taskPath: "task", preparePath: "task/prepare.py", evaluatePreparePath: "task/evaluate_prepare.py", evaluatePath: "task/evaluate.py",
       globalSharedDataDir: globalData, python: process.execPath, workspace: join(root, "complete"), timeoutMs: 30_000,

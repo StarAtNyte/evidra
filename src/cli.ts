@@ -1238,7 +1238,7 @@ airsBenchmark.command("execute")
       effort: options.effort,
       onProgress: (message) => console.error(`· ${message}`),
     });
-    console.log(JSON.stringify({ metrics: result.metrics, valid: result.valid, workspace: result.workspace }));
+    console.log(JSON.stringify({ metrics: result.metrics, valid: result.valid, resumed: result.resumed, initialArtifactBytes: result.initialArtifactBytes, finalArtifactBytes: result.finalArtifactBytes, workspace: result.workspace }));
     if (!result.valid) {
       const failed = result.stages.find((stage) => stage.stage === result.failureStage);
       if (failed) console.error(failed.result.stderr || failed.result.stdout || `AIRS ${result.failureStage} stage failed.`);
