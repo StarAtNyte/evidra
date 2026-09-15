@@ -22,6 +22,9 @@ export interface SuccessiveHalvingPlan {
 
 export interface HalvingOutcome {
   id: string;
+  /** Normalized higher-is-better objective value for non-metric evaluators. */
+  objectiveValue?: number;
+  /** Legacy alias for metric-based competitions. */
   metric?: number;
   valid: boolean;
 }
@@ -86,10 +89,13 @@ export function promoteHalvingStage(
   direction: "maximize" | "minimize",
 ): string[] {
   const order = new Map(stage.candidateIds.map((id, index) => [id, index]));
+  const valueOf = (outcome: HalvingOutcome): number | undefined => outcome.objectiveValue ?? outcome.metric;
   return outcomes
-    .filter((outcome) => stage.candidateIds.includes(outcome.id) && outcome.valid && Number.isFinite(outcome.metric))
+    .filter((outcome) => stage.candidateIds.includes(outcome.id) && outcome.valid && Number.isFinite(valueOf(outcome)))
     .sort((left, right) => {
-      const difference = direction === "maximize" ? right.metric! - left.metric! : left.metric! - right.metric!;
+      const leftValue = valueOf(left)!;
+      const rightValue = valueOf(right)!;
+      const difference = direction === "maximize" ? rightValue - leftValue : leftValue - rightValue;
       return difference || (order.get(left.id)! - order.get(right.id)!);
     })
     .slice(0, stage.retainCount)

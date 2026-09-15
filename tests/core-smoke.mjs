@@ -3826,6 +3826,19 @@ test("portfolio planning rewards bounded value of information", () => {
   assert.equal(plan.selected[0]?.id, "uncertain");
 });
 
+test("successive halving promotes normalized objective values for non-metric outcomes", () => {
+  const stage = { index: 0, fraction: 0.2, candidateIds: ["proof-a", "proof-b", "proof-c"], budgetMinutes: 1, retainCount: 2, rationale: "screen" };
+  assert.deepEqual(promoteHalvingStage(stage, [
+    { id: "proof-a", objectiveValue: 0.72, valid: true },
+    { id: "proof-b", objectiveValue: 0.91, valid: true },
+    { id: "proof-c", objectiveValue: 0.99, valid: false },
+  ], "maximize"), ["proof-b", "proof-a"]);
+  assert.deepEqual(promoteHalvingStage(stage, [
+    { id: "proof-a", metric: 0.2, valid: true },
+    { id: "proof-b", metric: 0.1, valid: true },
+  ], "minimize"), ["proof-b", "proof-a"]);
+});
+
 test("early stopping requires persistent underperformance against a reference curve", () => {
   const config = { enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 1, patience: 2, minimumImprovement: 0.01 };
   const reference = [{ step: 1, metric: 0.70 }, { step: 2, metric: 0.80 }, { step: 3, metric: 0.90 }];
