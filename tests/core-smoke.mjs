@@ -153,7 +153,7 @@ import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../dist/core/validation-lock.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexSandbox, isProviderFallbackEligible, resolveCodexModel } from "../dist/agents/codex-exec.js";
-import { assessHarnessChangePresence, evaluateHarnessChange, inventoryHarnessComponents, parseHarnessChangeContract, planHarnessInterventions } from "../dist/core/harness-evolution.js";
+import { analyzeHarnessComponentFailures, assessHarnessChangePresence, evaluateHarnessChange, inventoryHarnessComponents, parseHarnessChangeContract, planHarnessInterventions } from "../dist/core/harness-evolution.js";
 import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
 import { assessStopPolicy } from "../dist/core/stop-policy.js";
 import { classifyVerifier, verifierKind } from "../dist/core/formal-verification.js";
@@ -3586,6 +3586,20 @@ test("benchmark secondary gates remain task-balanced when arm counts differ", ()
   const comparison = compareHarnesses(trials, "evidra", "incumbent");
   assert.equal(comparison.pairedProcessQualityDelta, 0);
   assert.equal(comparison.challengerWins, true);
+});
+
+test("harness component failure analysis exposes correlational failure lifts", () => {
+  const evidence = analyzeHarnessComponentFailures([
+    { componentIds: ["router", "executor"], validRun: false, failureClass: "timeout" },
+    { componentIds: ["router"], validRun: true },
+    { componentIds: ["executor"], validRun: true },
+    { componentIds: ["validator"], validRun: true },
+  ]);
+  assert.equal(evidence[0].componentId, "executor");
+  assert.equal(evidence.find((item) => item.componentId === "router")?.failures, 1);
+  assert.equal(evidence.find((item) => item.componentId === "validator")?.failureLift, -0.25);
+  assert.equal(evidence[0].interpretation, "correlational");
+  assert.deepEqual(evidence[0].failureClasses, { timeout: 1 });
 });
 
 test("benchmark runner executes matched arms and records evaluator-backed metrics", async () => {

@@ -115,6 +115,12 @@ challenger manifest, and its result is evaluated with the same paired protocol
 and win gates. This attributes a measured change to a harness component
 without replacing the main competitive comparison.
 
+Benchmark reports also emit `componentFailureEvidence`: per-component sample
+counts, failure rates, failure classes, and failure lift relative to the suite.
+This is an observability signal for selecting the next ablation or repair; it is
+explicitly correlational and cannot establish causality without matched removal
+or addition evidence.
+
 For suites with task-level reference bounds, a trial may also declare
 `taskWorstMetric` and `taskBestMetric`. Evidra then uses the bounded normalized
 outcome when scoring instead of treating every positive delta as equally good;

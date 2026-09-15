@@ -79,7 +79,7 @@ import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "./core/validation-lock.js";
 import { runBenchmarkArms, type BenchmarkArmSpec } from "./core/benchmark-runner.js";
-import { assessHarnessChangePresence, evaluateHarnessChange, parseHarnessChangeContract, type HarnessChangeContract } from "./core/harness-evolution.js";
+import { analyzeHarnessComponentFailures, assessHarnessChangePresence, evaluateHarnessChange, parseHarnessChangeContract, type HarnessChangeContract } from "./core/harness-evolution.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, type AirsBenchFamily, type AirsBenchDiscovery, type AirsHarnessTemplate } from "./core/airs-bench.js";
 import { inventoryHarnessComponents, planHarnessInterventions } from "./core/harness-evolution.js";
 import { advanceEvolutionaryGeneration } from "./core/evolution.js";
@@ -611,6 +611,7 @@ benchmark.command("run")
     const benchmarkWorkspace = options.workspace ? resolve(options.workspace) : root;
     const maxParallel = Math.max(1, Math.min(32, Number.parseInt(options.parallel, 10) || 1));
     const report = await runBenchmarkArms(arms, benchmarkWorkspace, (message) => console.log(`· ${message}`), { maxParallel });
+    const componentFailureEvidence = analyzeHarnessComponentFailures(report.trials);
     const matched = validateBenchmarkProtocol(report.trials);
     const matchedIssues = providerPair.length === 2 ? matched.issues.filter((issue) => issue.field !== "provider") : matched.issues;
     if (!matched.valid && matchedIssues.length) throw new Error(`Benchmark results are not matched:\n${matchedIssues.map((issue) => `- ${issue.message}`).join("\n")}`);
@@ -662,7 +663,7 @@ benchmark.command("run")
       const maximumRegression = Number(options.retentionRegression);
       retention = evaluateHarnessRetention(priorTrials, report.trials, options.challenger, maximumRegression);
     }
-    const output = { ...report, scorecards, ...(policyScorecards ? { policyScorecards, policyComparisons } : {}), pareto, protocol: matched, challenger: options.challenger, comparisons, ...(providerComparison ? { providerComparison } : {}), ...(providerGeneralization ? { providerGeneralization } : {}), adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, ...(changePresence ? { changePresence } : {}), changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
+    const output = { ...report, scorecards, ...(policyScorecards ? { policyScorecards, policyComparisons } : {}), pareto, componentFailureEvidence, protocol: matched, challenger: options.challenger, comparisons, ...(providerComparison ? { providerComparison } : {}), ...(providerGeneralization ? { providerGeneralization } : {}), adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, ...(changePresence ? { changePresence } : {}), changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
     if (options.out) writeFileSync(resolve(options.out), `${JSON.stringify(output, null, 2)}\n`);
     const benchmarkStore = new ResearchStore(statePath);
     benchmarkStore.appendEvent("harness.benchmark.completed", {
@@ -677,6 +678,7 @@ benchmark.command("run")
       scorecards: scorecards.map((scorecard) => ({ harness: scorecard.harness, competitiveScore: scorecard.competitiveScore, lower95: scorecard.competitiveScoreLower95, sliceBalancedScore: scorecard.sliceBalancedScore, sliceScores: scorecard.sliceScores, validRunRate: scorecard.validRunRate, failureProfile: scorecard.failureProfile })),
       ...(policyScorecards ? { policyScorecards, policyComparisons: policyComparisons?.map((comparison) => ({ challenger: comparison.challenger, incumbent: comparison.incumbent, challengerWins: comparison.challengerWins, reason: comparison.reason, pairedLower95: comparison.pairedLower95 })) } : {}),
       pareto,
+      componentFailureEvidence,
       comparisons: comparisons.map((comparison) => ({ incumbent: comparison.incumbent, challengerWins: comparison.challengerWins, reason: comparison.reason, pairedLower95: comparison.pairedLower95, sliceRegressions: comparison.sliceRegressions, sliceLower95: comparison.sliceLower95 })),
       ...(providerComparison ? { providerComparison } : {}),
       ...(providerGeneralization ? { providerGeneralization } : {}),

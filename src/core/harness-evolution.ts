@@ -64,6 +64,50 @@ export interface HarnessChangeOutcome {
   explanation: string;
 }
 
+export interface HarnessComponentFailureEvidence {
+  componentId: string;
+  samples: number;
+  failures: number;
+  failureRate: number;
+  overallFailureRate: number;
+  failureLift: number;
+  failureClasses: Record<string, number>;
+  interpretation: "correlational";
+}
+
+/**
+ * Attribute observed benchmark failures to declared components. This is a
+ * diagnostic signal for ablation planning, never proof that a component is
+ * causal; matched component removal is still required for a causal claim.
+ */
+export function analyzeHarnessComponentFailures(
+  trials: Array<{ componentIds?: string[]; validRun: boolean; failureClass?: string }>,
+): HarnessComponentFailureEvidence[] {
+  const overallFailures = trials.filter((trial) => !trial.validRun).length;
+  const overallFailureRate = trials.length ? overallFailures / trials.length : 0;
+  const componentIds = [...new Set(trials.flatMap((trial) => trial.componentIds ?? []))].sort();
+  return componentIds.map((componentId) => {
+    const members = trials.filter((trial) => trial.componentIds?.includes(componentId));
+    const failures = members.filter((trial) => !trial.validRun);
+    const failureClasses: Record<string, number> = {};
+    for (const failure of failures) {
+      const name = failure.failureClass ?? "unknown";
+      failureClasses[name] = (failureClasses[name] ?? 0) + 1;
+    }
+    const failureRate = members.length ? failures.length / members.length : 0;
+    return {
+      componentId,
+      samples: members.length,
+      failures: failures.length,
+      failureRate,
+      overallFailureRate,
+      failureLift: failureRate - overallFailureRate,
+      failureClasses,
+      interpretation: "correlational" as const,
+    };
+  }).sort((left, right) => right.failureLift - left.failureLift || right.failures - left.failures || left.componentId.localeCompare(right.componentId));
+}
+
 function classify(path: string): HarnessComponent["kind"] {
   if (/agents\//.test(path)) return "agent";
   if (/cli|scheduler|queue|campaign|allocation|search-policy|portfolio/.test(path)) return "orchestration";
