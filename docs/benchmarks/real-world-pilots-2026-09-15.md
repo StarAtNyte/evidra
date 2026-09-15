@@ -39,6 +39,9 @@ submission.
    persisted, and reported as a durable checkpoint.
 4. The ARC manifest now declares a one-MLP streaming reduced-validation screen,
    allowing Evidra to reject broken candidates before full dataset evaluation.
+5. Autonomous experiment manifests now record a conservative runtime estimate
+   derived from prior attempts in the same operator/executor context, capped by
+   the competition timeout contract.
 
 The next proving run should use a small, real research contract with an
 executable verifier and a challenge evaluator configured with a cheap screen

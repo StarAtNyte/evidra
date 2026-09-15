@@ -70,7 +70,7 @@ import { researchFailureRecord } from "./core/research-failure.js";
 import { DEFAULT_SEARCH_OPERATORS, DEFAULT_SEARCH_OPERATOR_COSTS, DEFAULT_SEARCH_OPERATOR_NOVELTY, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "./core/search-policy.js";
 import { planPortfolio } from "./core/portfolio.js";
 import { promoteHalvingStage } from "./core/successive-halving.js";
-import type { CostObservation } from "./core/cost-model.js";
+import { estimateCost, type CostObservation } from "./core/cost-model.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
 import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, evaluateProviderGeneralization, harnessParetoFrontier, parseHarnessTrial, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
@@ -2817,6 +2817,25 @@ research
           const commit = await runProcess(["git", "rev-parse", "HEAD"], root);
           if (commit.exitCode === 0) {
             const experimentId = `exp_${Date.now()}_${selectedHypothesisId.slice(-32)}`;
+            const runtimeHistory: CostObservation[] = decisionStore.runAttempts().flatMap((attempt) => {
+              if (typeof attempt.durationSeconds !== "number" || !Number.isFinite(attempt.durationSeconds) || attempt.durationSeconds <= 0) return [];
+              const prior = decisionStore.experiments().find((entry) => entry.id === attempt.experimentId);
+              const priorPayload = prior?.payload && typeof prior.payload === "object" ? prior.payload as { searchOperator?: unknown } : {};
+              if (typeof priorPayload.searchOperator !== "string") return [];
+              return [{
+                operator: priorPayload.searchOperator,
+                actualMinutes: attempt.durationSeconds / 60,
+                status: attempt.status === "completed" ? "completed" : attempt.failureClass === "timeout" ? "timeout" : "failed",
+                context: { executor: attempt.executor },
+              }];
+            });
+            const runtimeEstimate = estimateCost(
+              portfolioCandidate.operator,
+              adapter.config.evaluatorTimeoutMinutes,
+              runtimeHistory,
+              { executor: options.executor },
+            );
+            const timeoutMinutes = Math.max(1, Math.ceil(Math.min(adapter.config.evaluatorTimeoutMinutes, runtimeEstimate.upperMinutes)));
             const manifest = createExperimentManifest({
               id: experimentId,
               hypothesisId: selectedHypothesisId,
@@ -2825,13 +2844,14 @@ research
               gitCommit: commit.stdout.trim(),
               datasetVersion: adapter.config.datasetRevision,
               executor: options.executor as "local" | "container" | "modal",
+              timeoutMinutes,
               searchOperator: decision.searchOperator,
               earlyStopping: automaticEarlyStoppingPolicy(decisionStore, adapter.config.datasetRevision, options.executor as "local" | "container" | "modal", adapter.config.metric.name, adapter.config.metric.direction),
               configPatch: { estimatorPath: candidateEstimatorPath(selectedHypothesis) ?? adapter.config.evaluator.estimatorPath },
             }, adapter.config);
-            decisionStore.saveExperiment({ id: experimentId, payload: { ...manifest, status: "proposed", runtimeContext: { provider: options.provider, model: selectedModel, phase: phaseGoal?.phase ?? "unknown" }, executionPlan: createExecutionPlan(manifest) } });
+            decisionStore.saveExperiment({ id: experimentId, payload: { ...manifest, status: "proposed", runtimeContext: { provider: options.provider, model: selectedModel, phase: phaseGoal?.phase ?? "unknown" }, runtimeEstimate, executionPlan: createExecutionPlan(manifest) } });
             executedPortfolioExperiments.push({ candidateId: portfolioCandidate.id, experimentId });
-            decisionStore.appendEvent("experiment.autonomous.scheduled", { experimentId, hypothesisId: selectedHypothesisId, decision: decision.decision, executor: options.executor });
+            decisionStore.appendEvent("experiment.autonomous.scheduled", { experimentId, hypothesisId: selectedHypothesisId, decision: decision.decision, executor: options.executor, timeoutMinutes, runtimeEstimate });
             console.log(`Autonomous experiment scheduled: ${experimentId}\n${manifestSummary(manifest)}`);
             decisionStore.close();
             let run: { exitCode: number; stdout: string; stderr: string };
