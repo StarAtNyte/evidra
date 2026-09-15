@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `39a886a`.
+- Latest pushed commit: `5eef4c3`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -115,6 +115,9 @@ external evaluator.
 - Codex executable resolution is centralized across SDK turns, login, model
   discovery, and steering via `EVIDRA_CODEX_BIN`, with unsafe newline-bearing
   values rejected and regression coverage added.
+- TUI thinking choices now derive from the active Codex model capabilities,
+  and direct `/model <id>` selection rejects IDs absent from the discovered
+  provider model list before execution.
 - Codex thread restoration is explicit: a new terminal starts a fresh Evidra
   chat, while `/resume <session-id>` restores the saved Codex thread and
   transcript. Provider/model changes invalidate the active chat thread.
