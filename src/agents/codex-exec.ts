@@ -143,6 +143,7 @@ export function codexItemProgress(item: unknown, eventType = "item.started"): st
     server?: unknown;
     tool?: unknown;
     status?: unknown;
+    error?: { message?: unknown };
     changes?: unknown;
     text?: unknown;
     items?: unknown;
@@ -172,7 +173,7 @@ export function codexItemProgress(item: unknown, eventType = "item.started"): st
   if (type === "mcp_tool_call") {
     const server = typeof value.server === "string" ? progressLine(value.server, 60) : "MCP";
     const tool = typeof value.tool === "string" ? progressLine(value.tool, 100) : "tool";
-    if (value.status === "failed" || (typeof value.message === "string" && value.message.trim())) return `Tool failed: ${server}/${tool}`;
+    if (value.status === "failed" || (typeof value.error?.message === "string" && value.error.message.trim()) || (typeof value.message === "string" && value.message.trim())) return `Tool failed: ${server}/${tool}`;
     return `${completed ? "Tool completed" : "Calling tool"}: ${server}/${tool}`;
   }
   if (type === "todo_list") {

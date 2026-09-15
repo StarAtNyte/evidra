@@ -2983,6 +2983,7 @@ test("Codex live progress redacts inline and separate-looking credentials", () =
 
 test("Codex item progress covers tools, plans, and file changes", () => {
   assert.equal(codexItemProgress({ type: "mcp_tool_call", server: "research", tool: "source.retrieve" }), "Calling tool: research/source.retrieve");
+  assert.equal(codexItemProgress({ type: "mcp_tool_call", server: "research", tool: "source.retrieve", error: { message: "upstream unavailable" } }, "item.completed"), "Tool failed: research/source.retrieve");
   assert.equal(codexItemProgress({ type: "todo_list", items: [{ completed: true }, { completed: false }] }, "item.updated"), "Plan progress: 1/2 steps");
   assert.equal(codexItemProgress({ type: "file_change", changes: [{ kind: "update", path: "src/main.ts" }] }, "item.completed"), "Applied: update src/main.ts");
   assert.equal(codexItemProgress({ type: "command_execution", command: "npm test", status: "failed" }, "item.completed"), "Command failed: npm test");

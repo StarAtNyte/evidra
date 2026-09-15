@@ -411,6 +411,9 @@ external evaluator.
 - Newly created Codex threads are tagged `evidra-chat`, `evidra-research`, or
   `evidra-experiment` according to their controller route, preserving route
   identity in Codex session telemetry and recovery diagnostics.
+- Codex MCP tool progress now recognizes nested SDK `error.message` failures
+  as failed activity, preventing provider tool errors from being rendered or
+  scored as successful completions.
 
 ## Immediate next work
 
