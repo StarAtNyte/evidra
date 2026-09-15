@@ -715,6 +715,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
     store.close();
   };
 
+  const persistCampaignCheckpoint = (campaign: ResearchCampaign, step: "research-lanes" | "experiment-execution" | "cycle-complete", cycle: number): void => {
+    const updated = { ...campaign, currentCycle: cycle, currentStep: step, checkpointedAt: new Date().toISOString() };
+    persistCampaign(updated);
+    updateControllerStep(step);
+    setConfig((current) => ({ ...current, campaign: current.campaign ? { ...current.campaign, ...updated } : updated }));
+  };
+
   const performResearchObservation = async (): Promise<Record<string, unknown>> => {
     const mode = configRef.current.mode;
     setProgress("Research 1/3 · inspecting repository and challenge state...");
@@ -1695,6 +1702,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     let queueTaskId: string | undefined;
     try {
       const campaign = campaignOverride ?? config.campaign;
+      const cycleNumber = campaign?.currentCycle ?? 0;
+      if (campaign) persistCampaignCheckpoint(campaign, "research-lanes", cycleNumber);
       if (campaign?.nextAttemptAt) {
         campaign.nextAttemptAt = undefined;
         campaign.limitMessage = undefined;
@@ -1765,6 +1774,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
       update.close();
       const proposed = mode === "challenge" || campaign?.autoExecuteExperiments === true ? await proposeLatestExperiment() : null;
+      if (campaign && proposed) persistCampaignCheckpoint(campaign, "experiment-execution", cycleNumber);
       append("assistant", cycle.text + (proposed?.text ?? ""));
       let approvalRequired = false;
       if (proposed && (mode === "challenge" || campaign?.autoExecuteExperiments === true)) {
@@ -1805,6 +1815,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         approvalStore.appendEvent("research.autonomy.approval_required", { experimentId: proposed?.id, reason: "safe permission mode", next: `/experiment run ${proposed?.id}`, researchContinues: true });
         approvalStore.close();
         append("assistant", `Approval pending for ${proposed?.id ?? "the proposed experiment"}. Run /experiment run ${proposed?.id ?? "<proposal>"} when ready; research continues on other directions.`);
+      }
+      if (campaign && campaign.status === "running") {
+        persistCampaignCheckpoint(campaign, "cycle-complete", cycleNumber + 1);
       }
       if (campaign && !approvalRequired && cycle.decision === "stop") {
         campaign.status = "completed";
