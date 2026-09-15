@@ -30,6 +30,16 @@ export interface SubmissionScoreObservation {
   stderr: string;
 }
 
+/** Resolve the provider's identifier from a persisted submission receipt. */
+export function externalSubmissionId(payload: unknown, fallback: string): string {
+  if (!fallback.trim()) throw new Error("Submission bundle identifier must be non-empty.");
+  if (!payload || typeof payload !== "object") return fallback;
+  const receipt = (payload as { receipt?: unknown }).receipt;
+  if (!receipt || typeof receipt !== "object") return fallback;
+  const value = (receipt as { submissionId?: unknown }).submissionId;
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
 function validateHttpUrl(raw: string, label: string): string {
   let parsed: URL;
   try { parsed = new URL(raw); } catch { throw new Error(`${label} must be a valid URL.`); }

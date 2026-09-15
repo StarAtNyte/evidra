@@ -16,7 +16,7 @@ import { retrieveSource, searchResearchSources, sourceClaims, sourceFrontier, so
 import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "./core/literature-bench.js";
 import { parseAutoResearchBenchEvaluation } from "./core/autoresearch-bench.js";
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
-import { pollSubmissionScore, submitApprovedBundle } from "./core/submission-adapters.js";
+import { externalSubmissionId, pollSubmissionScore, submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
 import { renderTimeline } from "./core/timeline.js";
 import { latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
@@ -1377,7 +1377,8 @@ submission.command("poll").argument("<bundle>").description("Poll a configured e
   if (entry.status !== "submitted" && entry.status !== "scored") { store.close(); throw new Error(`Submission ${bundle} is '${entry.status}'. Submit it before polling.`); }
   const adapter = activeCompetition();
   try {
-    const observation = await pollSubmissionScore(root, entry.path, bundle, adapter.config);
+    const providerSubmissionId = externalSubmissionId(entry.payload, bundle);
+    const observation = await pollSubmissionScore(root, entry.path, providerSubmissionId, adapter.config);
     const recordedAt = observation.observedAt;
     store.updateSubmissionStatus(bundle, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: observation.score, platform: observation.platform, recordedAt, scoreObservation: observation });
     store.saveClaim({ id: `claim_external_score_${bundle}_${Date.now()}`, payload: { statement: `External ${observation.platform} score for ${bundle}: ${observation.score}`, scope: entry.experimentId, confidence: 1, sourceType: "external_score", sourceId: bundle, status: "active", score: observation.score, platform: observation.platform, recordedAt } });

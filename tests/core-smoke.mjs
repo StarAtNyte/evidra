@@ -25,7 +25,7 @@ import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
 import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalsForMode } from "../dist/core/phase-goals.js";
-import { parseSubmissionScore, pollSubmissionScore, submitApprovedBundle } from "../dist/core/submission-adapters.js";
+import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../dist/core/experiment-manifest.js";
@@ -3285,6 +3285,13 @@ test("generic score polling parses JSON and human-readable adapter output", asyn
   assert.equal(parseSubmissionScore("fileName,publicScore\npred.csv,\"0.812\""), 0.812);
   assert.equal(parseSubmissionScore("no score here"), undefined);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("submission polling resolves the persisted provider submission id", () => {
+  assert.equal(externalSubmissionId({ receipt: { submissionId: "provider-42" } }, "bundle-1"), "provider-42");
+  assert.equal(externalSubmissionId({ receipt: {} }, "bundle-1"), "bundle-1");
+  assert.equal(externalSubmissionId(undefined, "bundle-1"), "bundle-1");
+  assert.throws(() => externalSubmissionId(undefined, ""), /bundle identifier/);
 });
 
 test("source retrieval refuses loopback hosts before fetching", async () => {
