@@ -142,6 +142,9 @@ external evaluator.
 - The CLI and TUI now pass the same typed failure pressure into capability
   routing, making verification demand and lane fan-out consistent across
   interfaces instead of dropping provider recovery evidence in the TUI path.
+- Autonomous hypothesis scheduling now suppresses unchanged retries after a
+  failed run. A retry must change executor, provider, model, or search operator;
+  the failed attempt remains immutable evidence for recovery planning.
 - Codex structured-output schemas now cover the research director, independent
   research lanes, and critic, so every research-role response is constrained
   before durable parsing and evidence gates.

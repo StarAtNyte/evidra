@@ -190,6 +190,12 @@ The CLI and TUI use the same failure pressure when selecting capability tiers,
 verification intensity, and bounded lane fan-out, so switching interfaces does
 not silently discard recovery evidence.
 
+Autonomous scheduling also applies retry-route novelty: after a hypothesis fails,
+the same executor/provider/model/search-operator combination is suppressed until
+the director selects a materially different route. This prevents relabelled
+repetition while preserving controlled retries after a transient or environmental
+failure.
+
 Independent lanes explore different formulations and roles. Their evidence is
 cross-pollinated through a bounded board, while shared citations are not
 counted as independent corroboration. A critic and replication gate review
