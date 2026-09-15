@@ -12,6 +12,26 @@ export interface ExperimentCandidate extends PriorityInput {
   mechanism?: string;
 }
 
+export interface ExperimentRetryRoute {
+  executor?: string;
+  provider?: string;
+  model?: string;
+  searchOperator?: string;
+}
+
+/** Stable, explainable identity for deciding whether a failed route is truly being changed. */
+export function experimentRetryRouteKey(route: ExperimentRetryRoute): string {
+  return [route.executor ?? "unknown", route.provider ?? "unknown", route.model ?? "unknown", route.searchOperator ?? "unknown"]
+    .map((value) => value.trim().toLowerCase())
+    .join("\u001f");
+}
+
+/** A failed hypothesis may retry only when every previous failed route is changed. */
+export function retryRouteIsNew(current: ExperimentRetryRoute, priorFailedRoutes: ExperimentRetryRoute[]): boolean {
+  const currentKey = experimentRetryRouteKey(current);
+  return priorFailedRoutes.every((route) => experimentRetryRouteKey(route) !== currentKey);
+}
+
 export interface ReducedPromotionInput {
   candidateMetric: number | undefined;
   baselineMetric: number | undefined;

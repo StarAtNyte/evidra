@@ -61,7 +61,7 @@ import { autonomyPolicy, type AutonomyLevel } from "./core/permissions.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "./core/capability-router.js";
 import { allocateNextResearch } from "./core/allocation.js";
 import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, experienceReplayWorld, selectCurriculum } from "./core/experience.js";
-import { evaluateReducedPromotion } from "./core/scheduler.js";
+import { evaluateReducedPromotion, retryRouteIsNew, type ExperimentRetryRoute } from "./core/scheduler.js";
 import { validateCompetitionContract } from "./core/competition-contract.js";
 import { assessForecast, summarizeForecastAssessments } from "./core/forecast-calibration.js";
 import { candidateChangePath } from "./core/hypothesis-path.js";
@@ -2826,14 +2826,22 @@ research
         const selectedHypothesis = selectedIndex >= 0 ? decision.hypotheses[selectedIndex] : undefined;
         const hypothesisAlreadyScheduled = selectedHypothesis
           ? decisionStore.experiments().some((entry) => {
-            const payload = entry.payload as { hypothesisId?: string; status?: string };
+            const payload = entry.payload as { hypothesisId?: string; status?: string; executor?: string; searchOperator?: string; runtimeContext?: { provider?: string; model?: string; executor?: string } };
             const hypothesis = payload.hypothesisId ? decisionStore.hypotheses().find((candidate) => candidate.id === payload.hypothesisId) : undefined;
             // Failed attempts are evidence for recovery, not a permanent
             // deduplication lock. Permit a fresh immutable manifest after a
             // failed/invalid run, while avoiding duplicate active or completed
             // work for the same hypothesis title.
             const terminalRetryable = payload.status === "failed" || payload.status === "rejected" || payload.status === "cancelled";
-            return hypothesis && (hypothesis.payload as { title?: unknown }).title === selectedHypothesis.title && !terminalRetryable;
+            if (!hypothesis || (hypothesis.payload as { title?: unknown }).title !== selectedHypothesis.title) return false;
+            if (!terminalRetryable) return true;
+            const priorRoute: ExperimentRetryRoute = {
+              executor: payload.executor ?? payload.runtimeContext?.executor,
+              provider: payload.runtimeContext?.provider,
+              model: payload.runtimeContext?.model,
+              searchOperator: payload.searchOperator,
+            };
+            return !retryRouteIsNew({ executor: options.executor, provider: options.provider, model: selectedModel, searchOperator: decision.searchOperator }, [priorRoute]);
           })
           : false;
         if (selectedHypothesisId && selectedHypothesis && !hypothesisAlreadyScheduled) {

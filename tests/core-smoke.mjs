@@ -40,7 +40,7 @@ import { createToolTraceRecorder, evaluateTrajectory, capabilityGaps, providerAc
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
 import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, selectCurriculum } from "../dist/core/experience.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
-import { evaluateReducedPromotion, experimentNovelty, rankExperimentCandidates, rankPriorities } from "../dist/core/scheduler.js";
+import { evaluateReducedPromotion, experimentNovelty, rankExperimentCandidates, rankPriorities, retryRouteIsNew } from "../dist/core/scheduler.js";
 import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
 import { renderReport } from "../dist/core/reports.js";
@@ -640,6 +640,13 @@ test("capability routing raises targeted pressure for typed native failures", ()
   const pressured = routeCapability({ objective: "research", mode: "research", provider: "codex", autonomy: "fast", failureClasses: ["timeout", "dependency"] });
   assert.ok(pressured.demandScore > baseline.demandScore);
   assert.match(pressured.rationale.join(" "), /timeout, dependency/);
+});
+
+test("failed hypothesis retries require a changed execution route", () => {
+  const route = { executor: "local", provider: "codex", model: "gpt-5.6-luna", searchOperator: "greedy" };
+  assert.equal(retryRouteIsNew(route, [route]), false);
+  assert.equal(retryRouteIsNew({ ...route, executor: "modal" }, [route]), true);
+  assert.equal(retryRouteIsNew(route, [{ ...route, searchOperator: "ucb_portfolio" }]), true);
 });
 
 test("capability outcomes preserve actual served lane count", () => {
