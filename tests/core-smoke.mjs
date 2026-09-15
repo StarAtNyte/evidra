@@ -2172,9 +2172,11 @@ test("research memory context remains bounded and cumulative", () => {
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.saveClaim({ id: "memory-claim", payload: { statement: "A durable measured observation", scope: "workspace", confidence: 0.9, sourceType: "observation", sourceId: "obs-1", status: "active" } });
+    store.saveClaim({ id: "stale-claim", payload: { statement: "A superseded measured observation", scope: "workspace", confidence: 1, sourceType: "observation", sourceId: "obs-old", status: "superseded" } });
     store.saveHypothesis({ id: "memory-hypothesis", payload: { title: "Bounded memory", mechanism: "Keep durable context available", status: "proposed" } });
     const context = researchMemoryContext(store, 1);
     assert.equal(context.claims[0].id, "memory-claim");
+    assert.deepEqual(context.quarantinedClaims.map((claim) => claim.id), ["stale-claim"]);
     assert.equal(context.hypotheses[0].title, "Bounded memory");
     assert.deepEqual(context.contradictions, []);
     store.close();

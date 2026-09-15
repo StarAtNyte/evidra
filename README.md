@@ -221,6 +221,8 @@ Benchmark process and efficiency gates are task-balanced too: extra arms on one 
 
 The same audit is an execution gate, not just a report decoration. Autonomous research cannot mark a goal complete while durable claims are unsupported, provisional, literature-only, or conflicted. Inspect the gate directly with `evidra evidence audit` (or `--json` for automation); the controller records the rejection and continues from the missing evidence.
 
+Research memory keeps invalidated and superseded claims in a quarantined channel for audit and negative evidence, while excluding them from active claims supplied to autonomous agents. This prevents stale conclusions from silently re-entering a later research cycle without deleting the historical record.
+
 The claim-audit rule is shared by the CLI, TUI, and generated reports. Self-describing observations such as lane findings are accepted only when their payload includes durable evidence fields; interactive status and exported provenance reports therefore cannot disagree about the same claim.
 
 Before allocating compute, Evidra also structurally scores each hypothesis for a concrete mechanism, grounded evidence, falsifiability, implementation cost, and leakage risk. This score only prioritizes work; it never counts as an empirical improvement.

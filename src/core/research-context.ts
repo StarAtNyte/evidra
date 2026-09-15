@@ -9,6 +9,8 @@ export type ResearchRepositoryLead = RepositorySearchResult;
 
 export interface ResearchMemoryContext {
   claims: Array<{ id: string; statement: string; scope: string; confidence: number; sourceType: string; sourceId: string; status: string }>;
+  /** Retained for audit and negative evidence, but never mixed into active claims. */
+  quarantinedClaims: Array<{ id: string; statement: string; scope: string; confidence: number; sourceType: string; sourceId: string; status: string }>;
   hypotheses: Array<{ id: string; title: string; status: string; mechanism?: string }>;
   contradictions: Array<{ fromId: string; toId: string; confidence: number }>;
   transferableMethods: TransferableMethod[];
@@ -101,12 +103,23 @@ export function repositoryLeadsFromEvents(events: Array<{ type: string; payload:
 /** Build a bounded, structured memory snapshot for autonomous research context. */
 export function researchMemoryContext(store: ResearchStore, limit = 30, query?: string, transferTarget: TransferTarget = {}): ResearchMemoryContext {
   const bounded = Math.max(1, Math.min(limit, 100));
-  const claims = rankedMemory(store, store.claims(), query, (entry) => JSON.stringify(entry.payload)).slice(0, bounded).flatMap((entry) => {
+  const claimEntries = store.claims();
+  const activeClaimEntries = claimEntries.filter((entry) => {
+    const status = (entry.payload as { status?: unknown }).status;
+    return status !== "invalidated" && status !== "superseded";
+  });
+  const quarantinedClaimEntries = claimEntries.filter((entry) => {
+    const status = (entry.payload as { status?: unknown }).status;
+    return status === "invalidated" || status === "superseded";
+  });
+  const claimValue = (entry: { id: string; payload: unknown }): ResearchMemoryContext["claims"][number] | undefined => {
     const value = entry.payload as Partial<ResearchMemoryContext["claims"][number]>;
     return typeof value.statement === "string" && typeof value.scope === "string" && typeof value.confidence === "number" && typeof value.sourceType === "string" && typeof value.sourceId === "string"
-      ? [{ id: entry.id, statement: value.statement.slice(0, 800), scope: value.scope, confidence: value.confidence, sourceType: value.sourceType, sourceId: value.sourceId, status: value.status ?? "active" }]
-      : [];
-  });
+      ? { id: entry.id, statement: value.statement.slice(0, 800), scope: value.scope, confidence: value.confidence, sourceType: value.sourceType, sourceId: value.sourceId, status: value.status ?? "active" }
+      : undefined;
+  };
+  const claims = rankedMemory(store, activeClaimEntries, query, (entry) => JSON.stringify(entry.payload)).slice(0, bounded).flatMap((entry) => claimValue(entry) ?? []);
+  const quarantinedClaims = rankedMemory(store, quarantinedClaimEntries, query, (entry) => JSON.stringify(entry.payload)).slice(0, bounded).flatMap((entry) => claimValue(entry) ?? []);
   const hypotheses = rankedMemory(store, store.hypotheses(), query, (entry) => JSON.stringify(entry.payload)).slice(0, bounded).flatMap((entry) => {
     const value = entry.payload as { title?: unknown; status?: unknown; mechanism?: unknown };
     return typeof value.title === "string" ? [{ id: entry.id, title: value.title, status: typeof value.status === "string" ? value.status : "proposed", ...(typeof value.mechanism === "string" ? { mechanism: value.mechanism.slice(0, 500) } : {}) }] : [];
@@ -125,5 +138,5 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
   const failedDirections = failedDirectionsFromExperiments(store.experiments(), query, Math.min(8, bounded));
   const repositoryLeads = repositoryLeadsFromEvents(events, query, Math.min(8, bounded));
   const ablationPlans = ablationPlansFromEvents(events, Math.min(8, bounded));
-  return { claims, hypotheses, contradictions, transferableMethods, verifiedPlaybooks, failedDirections, repositoryLeads, ablationPlans };
+  return { claims, quarantinedClaims, hypotheses, contradictions, transferableMethods, verifiedPlaybooks, failedDirections, repositoryLeads, ablationPlans };
 }

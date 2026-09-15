@@ -662,3 +662,10 @@ answer ([Chen et al., ICLR 2025](https://proceedings.iclr.cc/paper_files/paper/2
 This supports Evidra's phase gates and process-quality scorecard: a campaign
 must preserve executable artifacts and intermediate evidence at each stage,
 while final claims remain subordinate to evaluator-backed outcomes.
+
+MemoryAgentBench identifies accurate retrieval, test-time learning, long-range
+understanding, and selective forgetting as separate memory competencies
+([Hu et al., 2025](https://arxiv.org/abs/2507.05257)). Evidra applies the
+selective-forgetting lesson conservatively: invalidated and superseded claims
+remain durably queryable as `quarantinedClaims` for audit and negative evidence,
+but are excluded from the active research context supplied to agents.
