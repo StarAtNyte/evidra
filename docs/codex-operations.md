@@ -219,7 +219,9 @@ the next controller start, Evidra validates and checksums uncommitted traces,
 then records their recovery metadata as durable evidence; traces already linked
 to a completed trajectory are not duplicated. The CLI and TUI perform the same
 startup recovery, so changing interfaces cannot hide an interrupted Codex
-cycle.
+cycle. Recovery metadata includes only a bounded redacted activity tail and
+tool-name summary, allowing the next decision to understand the failure
+surface without importing an unbounded transcript.
 
 ## Production checklist
 

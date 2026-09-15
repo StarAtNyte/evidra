@@ -201,6 +201,9 @@ external evaluator.
 - The TUI now performs the same partial-trace recovery as the CLI, preserving
   Codex provenance consistently when autonomous work is restarted from either
   interface.
+- Recovered trace evidence now includes a bounded redacted activity tail and
+  recent tool-name summary, so the next Codex decision can use crash context
+  without loading an unbounded raw transcript.
 - The Codex director's provider output schema now caps each turn at eight tool
   calls, matching the local decision schema before any tool is executed.
 - Autonomous memory context now uses hybrid FTS-plus-lexical retrieval for

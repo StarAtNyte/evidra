@@ -429,7 +429,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
           if (recoveredTrajectoryPaths.has(path) || recoveredTraceEvents.has(`${path}:${checksum}`)) continue;
           const parsed = parsePersistedTrace(readFileSync(absolute, "utf8"));
           if (!parsed.events.length) continue;
-          recoveredStore.appendEvent("research.trace.recovered", { path, checksum, eventCount: parsed.events.length, invalidLines: parsed.invalidLines, firstEvent: parsed.events[0]?.id, lastEvent: parsed.events.at(-1)?.id, reason: "uncommitted cycle trace found during controller startup" });
+          const activityTail = parsed.events.filter((event) => typeof event.payload.activity === "string").slice(-8).map((event) => String(event.payload.activity).slice(0, 240));
+          const toolNames = [...new Set(parsed.events.filter((event) => typeof event.payload.tool === "string").map((event) => String(event.payload.tool)).slice(-16))];
+          recoveredStore.appendEvent("research.trace.recovered", { path, checksum, eventCount: parsed.events.length, invalidLines: parsed.invalidLines, firstEvent: parsed.events[0]?.id, lastEvent: parsed.events.at(-1)?.id, ...(activityTail.length ? { activityTail } : {}), ...(toolNames.length ? { toolNames } : {}), reason: "uncommitted cycle trace found during controller startup" });
         } catch { /* A corrupt or unavailable trace must not block the TUI. */ }
       }
     }
