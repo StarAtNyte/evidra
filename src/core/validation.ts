@@ -76,11 +76,15 @@ export function externalScoreObservedForExperiment(
   runId?: string,
 ): boolean {
   return submissions.some((entry) => {
-    if (entry.experimentId !== experimentId || (entry.status !== "scored" && entry.status !== "submitted")) return false;
+    if (entry.experimentId !== experimentId || entry.status !== "scored") return false;
     const payload = entry.payload as { publicScore?: unknown; scoreObservation?: unknown; runId?: unknown };
     if (runId !== undefined && payload.runId !== runId) return false;
-    return (typeof payload.publicScore === "number" && Number.isFinite(payload.publicScore))
-      || (payload.scoreObservation !== undefined && payload.scoreObservation !== null);
+    const observedScore = typeof payload.publicScore === "number" && Number.isFinite(payload.publicScore)
+      ? payload.publicScore
+      : payload.scoreObservation && typeof payload.scoreObservation === "object"
+        ? (payload.scoreObservation as { score?: unknown }).score
+        : undefined;
+    return typeof observedScore === "number" && Number.isFinite(observedScore);
   });
 }
 

@@ -5704,6 +5704,8 @@ test("external evaluator evidence can be required as a separate experiment gate"
   assert.equal(externalScoreObservedForExperiment("external-exp", [{ experimentId: "external-exp", status: "scored", payload: { publicScore: 0.91 } }]), true);
   assert.equal(externalScoreObservedForExperiment("external-exp", [{ experimentId: "external-exp", status: "scored", payload: { publicScore: 0.91, runId: "other-run" } }], "external-run"), false);
   assert.equal(externalScoreObservedForExperiment("external-exp", [{ experimentId: "external-exp", status: "scored", payload: { publicScore: 0.91, runId: "external-run" } }], "external-run"), true);
+  assert.equal(externalScoreObservedForExperiment("external-exp", [{ experimentId: "external-exp", status: "submitted", payload: { publicScore: 0.91, runId: "external-run" } }], "external-run"), false);
+  assert.equal(externalScoreObservedForExperiment("external-exp", [{ experimentId: "external-exp", status: "scored", payload: { scoreObservation: { status: "pending" }, runId: "external-run" } }], "external-run"), false);
   assert.equal(externalScoreObservedForExperiment("external-exp", [{ experimentId: "external-exp", status: "prepared", payload: { publicScore: 0.91 } }]), false);
   const externalAudit = auditExperimentSubtask(manifest, pending, ["external-run"]);
   const refreshed = refreshAuditWithExternalScore(externalAudit, "submission:external-bundle");
