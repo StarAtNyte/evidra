@@ -60,7 +60,7 @@ import { findWorkspaceRoot } from "./core/workspace.js";
 import { autonomyPolicy, type AutonomyLevel } from "./core/permissions.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "./core/capability-router.js";
 import { allocateNextResearch } from "./core/allocation.js";
-import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, selectCurriculum } from "./core/experience.js";
+import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, experienceReplayWorld, selectCurriculum } from "./core/experience.js";
 import { evaluateReducedPromotion } from "./core/scheduler.js";
 import { validateCompetitionContract } from "./core/competition-contract.js";
 import { assessForecast, summarizeForecastAssessments } from "./core/forecast-calibration.js";
@@ -93,6 +93,7 @@ import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema }
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "./core/scientific-suite.js";
 import { runSafetyBenchmark } from "./core/safety-bench.js";
 import { selectRatchetReference } from "./core/ratchet.js";
+import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.js";
 
 const PHASE_GATE_EVENT_TYPES = [
   "research.observation", "project.created", "baseline.completed", "data.audit.completed", "data.audit.accepted",
@@ -2097,6 +2098,53 @@ research
       const replayGuidance = replayContext.length
         ? replayContext.map((item) => `- ${item.trajectoryId}: ${item.outcome}/${item.quality}; objective=${item.objective}; acceptance=${item.acceptance}; evidence=${item.evidence.join(" | ") || "none"}; gaps=${item.gaps.join(" | ") || "none"}`).join("\n")
         : "- none";
+      // Replay is a policy diagnostic over prior trajectories, not a source
+      // of task truth. The utility here measures trajectory reliability so
+      // this adapter remains usable for both research and challenges; the
+      // task evaluator still owns the objective-specific utility.
+      const replayWorld = experienceReplayWorld(experienceRecords, (record) => {
+        if (record.quality.overall === "PASS") return 1;
+        if (record.quality.overall === "WARN") return 0.5;
+        if (record.quality.overall === "FAIL") return 0;
+        return undefined;
+      });
+      const replayPolicies: ReplayPolicy[] = replayWorld ? [
+        {
+          id: "replay-breadth",
+          maxRounds: 4,
+          maxParallel: Math.max(1, Math.min(effectiveLaneLimit, 4)),
+          select: ({ frontier }) => frontier,
+        },
+        {
+          id: "replay-depth",
+          maxRounds: 4,
+          maxParallel: 1,
+          select: ({ frontier }) => frontier.slice(-1),
+        },
+        {
+          id: "replay-low-cost",
+          maxRounds: 4,
+          maxParallel: 1,
+          select: ({ frontier }) => frontier.slice().sort((left, right) => {
+            const leftCost = replayWorld.nodes.find((node) => node.id === left)?.costMinutes ?? Number.POSITIVE_INFINITY;
+            const rightCost = replayWorld.nodes.find((node) => node.id === right)?.costMinutes ?? Number.POSITIVE_INFINITY;
+            return leftCost - rightCost || left.localeCompare(right);
+          }),
+        },
+      ] : [];
+      const replayRanking = replayWorld ? rankReplayPolicies(replayWorld, replayPolicies, { costPenalty: 0.01, parallelismBonus: 0.02 }) : [];
+      if (replayRanking.length) {
+        store.appendEvent("research.replay.policy.selected", {
+          cycle,
+          worldNodes: replayWorld?.nodes.length ?? 0,
+          selected: replayRanking[0],
+          ranked: replayRanking,
+          interpretation: "offline trajectory-policy diagnostic; fresh evaluator evidence remains authoritative",
+        });
+      }
+      const replayPolicyGuidance = replayRanking.length
+        ? `Replay policy diagnostic: ${replayRanking.map((result) => `${result.policyId} utility=${result.bestUtility ?? "none"}, cost=${result.totalCostMinutes.toFixed(2)}m, score=${result.replayScore.toFixed(3)}`).join("; ")}. Prefer the leading policy only as a bounded allocation hint; do not treat replay as a new result.`
+        : "Replay policy diagnostic: no eligible prior trajectories.";
       const criticConstraintGuidance = openCriticConstraint
         ? `\n\nOPEN CRITIC CONSTRAINT (${openCriticConstraint.verdict}):\n${openCriticConstraint.summary}\nObjections: ${openCriticConstraint.objections.join("; ") || "none listed"}\nRequired checks: ${openCriticConstraint.requiredChecks.join("; ") || "produce an independent evidence check"}\nDo not run or stop until these checks are addressed with durable evidence.`
         : "";
@@ -2108,7 +2156,7 @@ research
         ? `\n\nLITERATURE BENCHMARK EVIDENCE (diagnostic, not workspace proof): ${JSON.stringify(literatureBenchmarkEvidence).slice(0, 6_000)}\nRepair any recall, grounding, or query-budget failure before claiming research coverage.`
         : "";
       const recoveryGuidance = recoveryRoutes ? `\n\nMANDATORY RECOVERY ROUTES FROM PRIOR FAILURES:\n${recoveryRoutes}\nDo not schedule the same experiment manifest or unchanged command after a terminal recovery directive. The next action must implement the listed alternate route and explain its falsification target.` : "";
-      const allocatedObjective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra search policy:\nPrioritize the '${searchPolicy[0]?.operator ?? "ucb_portfolio"}' operator (${searchPolicy[0]?.rationale ?? "portfolio default"}) while preserving at least one diverse alternative.\n\n${literatureGuidance}\n\n${harnessGuidance}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}\n\nBounded experience replay (use as lessons, not proof):\n${replayGuidance}${recoveryGuidance}${criticConstraintGuidance}`;
+      const allocatedObjective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra search policy:\nPrioritize the '${searchPolicy[0]?.operator ?? "ucb_portfolio"}' operator (${searchPolicy[0]?.rationale ?? "portfolio default"}) while preserving at least one diverse alternative.\n\n${literatureGuidance}\n\n${harnessGuidance}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}\n\nBounded experience replay (use as lessons, not proof):\n${replayGuidance}\n\n${replayPolicyGuidance}${recoveryGuidance}${criticConstraintGuidance}`;
       const latestEvolution = recentEvents.slice().reverse().find((event) => event.type === "research.evolution.generation.completed");
       const evolutionGuidance = latestEvolution
         ? `\\n\\nEVOLUTIONARY GENERATION: ${JSON.stringify(latestEvolution.payload).slice(0, 8_000)}\\nIf a crossover is justified, return one concrete offspring hypothesis with exactly the durable parentHypothesisIds from this record. Preserve each parent's falsification boundary; do not claim the offspring works before a matched evaluator run.`

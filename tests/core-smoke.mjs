@@ -23,6 +23,7 @@ import { runResearchDirector } from "../dist/agents/research-director.js";
 import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
+import { experienceReplayWorld } from "../dist/core/experience.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
 import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalsForMode } from "../dist/core/phase-goals.js";
@@ -3117,6 +3118,19 @@ test("replay simulator evaluates alternate branch and batch policies without exe
 test("replay simulator rejects malformed or cyclic discovery history", () => {
   assert.throws(() => validateReplayWorld({ rootId: "root", nodes: [{ id: "root", parentId: "missing", score: 0, costMinutes: 0, valid: true }] }), /root must have/);
   assert.throws(() => validateReplayWorld({ rootId: "root", nodes: [{ id: "root", parentId: null, score: 0, costMinutes: 0, valid: true }, { id: "a", parentId: "b", score: 0, costMinutes: 0, valid: true }, { id: "b", parentId: "a", score: 0, costMinutes: 0, valid: true }] }), /cycle/);
+});
+
+test("experience replay adapter preserves generic evaluator utility and quarantines weak records", () => {
+  const quality = (overall) => ({ overall, structural: {}, goalAttainment: {}, instructionAdherence: {}, toolUse: {}, executionAlignment: {}, evidenceConsistency: {}, errorRecovery: {}, termination: {}, safetyControl: {} });
+  const world = experienceReplayWorld([
+    { trajectoryId: "clean", admission: "candidate", events: [{ id: "clean-event", kind: "terminal", payload: {} }], quality: quality("PASS") },
+    { trajectoryId: "weak", admission: "replay-only", events: [{ id: "weak-event", kind: "terminal", payload: {} }], quality: quality("FAIL") },
+    { trajectoryId: "unsafe", admission: "quarantined", events: [{ id: "unsafe-event", kind: "terminal", payload: {} }], quality: quality("PASS") },
+  ], (record) => record.quality.overall === "PASS" ? 7 : record.quality.overall === "FAIL" ? 1 : undefined);
+  assert.equal(world?.nodes.length, 3);
+  assert.equal(world?.nodes.find((node) => node.id === "clean")?.utility, 7);
+  assert.equal(world?.nodes.find((node) => node.id === "weak")?.valid, false);
+  assert.equal(world?.nodes.some((node) => node.id === "unsafe"), false);
 });
 
 test("ensemble analysis exposes diversity and deterministic blends", () => {

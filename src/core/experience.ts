@@ -1,6 +1,7 @@
 import { capabilityGaps, validateTrajectoryStructure, type TrajectoryEvent, type TrajectoryQuality } from "./trajectories.js";
 import type { CapabilityTier } from "./capability-router.js";
 import { redactStructured } from "./redaction.js";
+import type { ReplayWorld } from "./replay-simulator.js";
 
 export type ExperienceAdmission = "candidate" | "replay-only" | "quarantined";
 
@@ -41,6 +42,51 @@ export interface CurriculumReplay {
   evidence: string[];
   gaps: string[];
   quality: TrajectoryQuality["overall"];
+}
+
+/**
+ * Project durable experiences into an offline replay world. The utility is
+ * deliberately supplied by the caller: trajectory quality is not the same
+ * thing as task success, and different research/challenge evaluators need
+ * different objective semantics.
+ */
+export function experienceReplayWorld(
+  records: ExperienceRecord[],
+  utilityFor: (record: ExperienceRecord) => number | undefined,
+  options: { limit?: number; rootId?: string } = {},
+): ReplayWorld | undefined {
+  const limit = Math.max(0, Math.min(256, options.limit ?? 48));
+  const rootId = options.rootId ?? "experience-root";
+  const selected = records
+    .filter((item) => item.admission !== "quarantined")
+    .slice(-limit);
+  if (!selected.length) return undefined;
+  const projected = selected.map((item) => ({ item, utility: utilityFor(item) })).filter((entry): entry is { item: ExperienceRecord; utility: number } => entry.utility !== undefined);
+  if (!projected.length) return undefined;
+  const ids = new Set(projected.map(({ item }) => item.trajectoryId));
+  if (ids.has(rootId)) throw new Error(`Replay root '${rootId}' collides with an experience trajectory ID.`);
+  const nodes = projected.map(({ item, utility }) => {
+    const durationMinutes = item.events.reduce((maximum, event) => {
+      const payload = record(event.payload);
+      const minutes = typeof payload.durationMinutes === "number" ? payload.durationMinutes : typeof payload.durationMs === "number" ? payload.durationMs / 60_000 : undefined;
+      return typeof minutes === "number" && Number.isFinite(minutes) && minutes >= 0 ? Math.max(maximum, minutes) : maximum;
+    }, 0);
+    const rawParent = item.events.map((event) => record(event.payload).parentTrajectoryId).find((value) => typeof value === "string");
+    const parentId = typeof rawParent === "string" && ids.has(rawParent) ? rawParent : rootId;
+    return {
+      id: item.trajectoryId,
+      parentId,
+      utility,
+      outcomeType: "other" as const,
+      costMinutes: durationMinutes,
+      valid: item.admission === "candidate",
+    };
+  });
+  return {
+    rootId,
+    direction: "maximize",
+    nodes: [{ id: rootId, parentId: null, utility: 0, outcomeType: "system", costMinutes: 0, valid: false }, ...nodes],
+  };
 }
 
 function record(value: unknown): Record<string, unknown> {

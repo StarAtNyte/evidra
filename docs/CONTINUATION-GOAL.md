@@ -118,6 +118,9 @@ external evaluator.
   metric scores; the simulator never invents a scalar outcome.
 - Replay worlds now preserve maximize/minimize direction for legacy metrics and
   normalize it to higher-is-better utility internally.
+- The autonomous controller now ranks bounded breadth/depth/low-cost policies
+  over durable experience trajectories and injects the ranking as advisory
+  allocation context; replay never replaces fresh evaluator evidence.
 
 ## Immediate next work
 

@@ -145,9 +145,12 @@ forming hypotheses, intervening, revising from evidence, and transferring only
 validated skills across tasks. Evidra already represents hypotheses, validation,
 experiments, evidence, critics, and experience; the replay contract is the first
 concrete addition toward making the intervention and continual-improvement
-interfaces explicit. The next integration step is to attach replay nodes to
-durable experiment/trajectory records and require a fresh holdout before a
-replayed policy can alter autonomous allocation.
+interfaces explicit. The controller now materializes eligible durable
+trajectories through `experienceReplayWorld`, ranks bounded breadth/depth/cost
+policies, and places the result in the next cycle's allocation context. The
+utility is explicitly a trajectory-reliability diagnostic supplied by the
+caller; it is not silently treated as task success. A fresh evaluator or
+holdout remains required before any replay-derived idea can be promoted.
 
 Primary sources:
 
