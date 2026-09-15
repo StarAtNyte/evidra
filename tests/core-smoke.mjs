@@ -2256,10 +2256,13 @@ test("research tool boundaries protect sensitive paths and credentials", () => {
   assert.match(redactSecrets("OPENAI_API_KEY=sk-test_12345678901234567890"), /REDACTED/);
   assert.match(redactSecrets("authorization: Bearer very-secret-value"), /REDACTED/);
   assert.equal(redactStructured({ nested: "OPENAI_API_KEY=sk-test_12345678901234567890" }).nested.includes("sk-test_"), false);
+  assert.deepEqual(redactStructured({ command: ["submit", "--token", "secret-value"] }).command, ["submit", "--token", "[REDACTED_ARGUMENT]"]);
   const storeRoot = mkdtempSync(join(tmpdir(), "evidra-redaction-store-"));
   const store = new ResearchStore(join(storeRoot, ".sota", "database.sqlite"));
   store.appendEvent("test.secret", { output: "token=sk-test_12345678901234567890" });
+  store.appendEvent("test.command-secret", { command: ["submit", "--token", "secret-value"] });
   assert.doesNotMatch(JSON.stringify(store.recentEvents(1)[0].payload), /sk-test_/);
+  assert.doesNotMatch(JSON.stringify(store.recentEvents(2)), /secret-value/);
   store.close();
   rmSync(storeRoot, { recursive: true, force: true });
 });

@@ -67,6 +67,9 @@ external evaluator.
   coverage for primary, alternate, and reproducibility routes.
 - Baseline and scientific-task attempt evidence now applies the same command and
   output redaction boundary before persistence.
+- Structured store payloads now recognize command-shaped argv arrays globally,
+  preventing separate-argument credentials from leaking through event or run
+  attempt persistence.
 
 ## Immediate next work
 

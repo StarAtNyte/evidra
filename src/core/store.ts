@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { EvidenceClaimSchema } from "./types.js";
 import { compareClaims } from "./claim-consistency.js";
-import { redactStructured } from "./redaction.js";
+import { redactCommand, redactStructured } from "./redaction.js";
 import { canonicalSourceUrl } from "./sources.js";
 
 function safeJson(value: unknown): string {
@@ -508,7 +508,7 @@ export class ResearchStore {
       ON CONFLICT(id) DO UPDATE SET run_id = excluded.run_id, status = excluded.status, exit_code = excluded.exit_code,
         failure_class = excluded.failure_class, duration_seconds = excluded.duration_seconds, metric = excluded.metric,
         metrics_json = excluded.metrics_json, command_json = excluded.command_json, cwd = excluded.cwd, executor = excluded.executor, updated_at = excluded.updated_at
-    `).run(attempt.id, attempt.experimentId, attempt.runId ?? null, attempt.attempt, attempt.stage, attempt.status, attempt.exitCode ?? null, attempt.failureClass ?? null, attempt.durationSeconds ?? null, attempt.metric ?? null, safeJson(attempt.metrics ?? {}), safeJson(attempt.command), attempt.cwd, attempt.executor, now, now);
+    `).run(attempt.id, attempt.experimentId, attempt.runId ?? null, attempt.attempt, attempt.stage, attempt.status, attempt.exitCode ?? null, attempt.failureClass ?? null, attempt.durationSeconds ?? null, attempt.metric ?? null, safeJson(attempt.metrics ?? {}), safeJson(redactCommand(attempt.command)), attempt.cwd, attempt.executor, now, now);
   }
 
   runAttempts(experimentId?: string): RunAttempt[] {
