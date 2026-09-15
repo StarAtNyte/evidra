@@ -152,6 +152,17 @@ failure and does not spend evaluator time on an invalid run. This is useful
 negative evidence for improving the task prompt and agent progress watchdog,
 not a benchmark score.
 
+Embedded Codex execution gets one bounded repair turn when the first turn
+fails or returns without the required submission artifact. The repair turn is
+fresh, explicitly told to inspect the existing workspace and produce the
+artifact, and remains inside the original stage deadline; Evidra never starts
+concurrent agent turns.
+
+Before the agent stage, the adapter initializes the disposable task workspace
+as a local Git repository when necessary. This is required by Codex's file
+change tool and does not touch the user's checkout or turn the temporary
+repository into benchmark evidence.
+
 Embedded AIRS Codex runs now use a repeated-command watchdog: three identical
 shell commands in succession terminate the agent stage with an explicit stuck
 diagnostic, allowing the outer retry/route policy to recover instead of

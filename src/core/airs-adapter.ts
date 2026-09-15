@@ -92,6 +92,16 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
   };
   const prepare = await runStage("prepare", [python, preparePath, "--global-shared-data-dir", globalSharedDataDir, "--agent-data-mount-dir", agentDataDir, "--agent-log-dir", agentLogDir], repository);
   if (prepare.exitCode !== 0) return { valid: false, metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "prepare" };
+  // Codex file-change tools require a repository root even when the task is
+  // otherwise a disposable scratch workspace. This repository is ephemeral;
+  // it is never connected to the user's checkout or used as submission proof.
+  if (!existsSync(join(lifecycleRoot, ".git"))) {
+    const gitInit = await runProcess(["git", "init", "--quiet"], lifecycleRoot, 10_000, undefined, undefined, environment);
+    if (gitInit.exitCode !== 0) {
+      stages.push({ stage: "agent", result: { ...gitInit, stderr: `${gitInit.stderr}\nCould not initialize the disposable AIRS agent repository.`.trim() } });
+      return { valid: false, metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "agent" };
+    }
+  }
   let agent: ProcessResult;
   if (options.agentRunner) {
     options.onProgress?.("AIRS · agent");
