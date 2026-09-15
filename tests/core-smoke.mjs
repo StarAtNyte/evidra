@@ -52,7 +52,7 @@ import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js"
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { materializeResearchDecision } from "../dist/core/research-graph.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
-import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, pauseCampaign, researchTurnTimeoutMs, resumeCampaign } from "../dist/core/campaign.js";
+import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, pauseCampaign, readCampaignCheckpoint, researchTurnTimeoutMs, resumeCampaign } from "../dist/core/campaign.js";
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
@@ -800,6 +800,14 @@ test("research model stages scale with long campaigns without exceeding their bu
   assert.equal(researchTurnTimeoutMs(5 * 60_000), 75_000);
   assert.equal(researchTurnTimeoutMs(4 * 60 * 60_000), 30 * 60_000);
   assert.equal(researchTurnTimeoutMs(0), 0);
+});
+
+test("campaign checkpoints accept known phases and reject corrupted metadata", () => {
+  const checkpoint = { currentCycle: 3, currentStep: "research-director", checkpointedAt: "2026-09-15T12:00:00.000Z" };
+  assert.deepEqual(readCampaignCheckpoint(checkpoint), checkpoint);
+  assert.equal(readCampaignCheckpoint({ ...checkpoint, currentCycle: -1 }), undefined);
+  assert.equal(readCampaignCheckpoint({ ...checkpoint, currentStep: "invented-phase" }), undefined);
+  assert.equal(readCampaignCheckpoint({ ...checkpoint, checkpointedAt: "not-a-date" }), undefined);
 });
 
 test("durable campaign runtime settings are validated before resume", () => {

@@ -7,6 +7,25 @@ export interface CampaignTimeState {
   pausedDurationMinutes?: number;
 }
 
+export const CAMPAIGN_CHECKPOINT_STEPS = ["cycle-start", "research-lanes", "research-director", "research-critic", "experiment-execution", "cycle-complete", "campaign-terminal"] as const;
+export type CampaignCheckpointStep = typeof CAMPAIGN_CHECKPOINT_STEPS[number];
+
+export interface CampaignCheckpoint {
+  currentCycle: number;
+  currentStep: CampaignCheckpointStep;
+  checkpointedAt: string;
+}
+
+/** Validate optional checkpoint metadata without rejecting legacy campaigns. */
+export function readCampaignCheckpoint(value: unknown): CampaignCheckpoint | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.currentCycle !== "number" || !Number.isInteger(candidate.currentCycle) || candidate.currentCycle < 0) return undefined;
+  if (!CAMPAIGN_CHECKPOINT_STEPS.includes(candidate.currentStep as CampaignCheckpointStep)) return undefined;
+  if (typeof candidate.checkpointedAt !== "string" || !Number.isFinite(Date.parse(candidate.checkpointedAt))) return undefined;
+  return { currentCycle: candidate.currentCycle, currentStep: candidate.currentStep as CampaignCheckpointStep, checkpointedAt: candidate.checkpointedAt };
+}
+
 /**
  * The execution settings that must travel with a durable campaign.  Keeping
  * these beside the campaign state means a resumed controller does not
