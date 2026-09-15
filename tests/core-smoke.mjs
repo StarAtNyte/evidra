@@ -3106,6 +3106,12 @@ test("replay simulator evaluates alternate branch and batch policies without exe
     { id: "proof", parentId: "root", utility: 1, outcomeType: "proof", costMinutes: 1, valid: true },
   ] }, { id: "proof-policy", maxRounds: 1, maxParallel: 1, select: ({ frontier }) => frontier }, { costPenalty: 0 });
   assert.equal(nonMetric.bestUtility, 1);
+  const minimization = simulateReplay({ rootId: "root", direction: "minimize", nodes: [
+    { id: "root", parentId: null, score: 4, costMinutes: 0, valid: true },
+    { id: "loss", parentId: "root", score: 2, costMinutes: 1, valid: true },
+  ] }, { id: "min-policy", maxRounds: 1, maxParallel: 1, select: ({ frontier }) => frontier }, { costPenalty: 0 });
+  assert.equal(minimization.bestScore, 2);
+  assert.equal(minimization.bestUtility, -2);
 });
 
 test("replay simulator rejects malformed or cyclic discovery history", () => {

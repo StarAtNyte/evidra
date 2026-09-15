@@ -132,6 +132,9 @@ compares candidate exploration policies using best valid outcome, cost, and
 parallelism. Replay nodes support both legacy metric scores and explicit
 evaluator-defined utility for artifact, proof, behavior, system, and other
 non-metric outcomes; the simulator never invents a scalar for a non-metric goal.
+Legacy metric worlds also declare maximize/minimize direction, while replay
+normalizes utility internally so loss/error objectives are not accidentally
+treated as higher-is-better.
 This is a policy-evaluation primitive, not evidence that a policy
 will transfer to an unobserved task. A fresh online rollout and matched holdout
 remain required before deployment claims.

@@ -31,6 +31,8 @@ const ReplayNodeSchema = z.object({
 export interface ReplayWorld {
   rootId: string;
   nodes: ReplayNode[];
+  /** Direction applies only to legacy metric `score`; evaluator utility is always higher-is-better. */
+  direction?: "maximize" | "minimize";
 }
 
 export interface ReplayPolicyState {
@@ -86,7 +88,8 @@ export function validateReplayWorld(world: ReplayWorld): ReplayWorld {
       current = current.parentId === null ? undefined : byId.get(current.parentId);
     }
   }
-  return { rootId: world.rootId, nodes };
+  if (world.direction !== undefined && world.direction !== "maximize" && world.direction !== "minimize") throw new Error("Replay world direction must be maximize or minimize.");
+  return { rootId: world.rootId, nodes, ...(world.direction ? { direction: world.direction } : {}) };
 }
 
 /**
@@ -126,9 +129,11 @@ export function simulateReplay(worldInput: ReplayWorld, policy: ReplayPolicy, sc
     }
     if (!revealedThisRound) break;
   }
-  const validUtilities = world.nodes.filter((node) => revealed.has(node.id) && node.valid).map((node) => node.utility ?? node.score!).filter(Number.isFinite);
-  const bestUtility = validUtilities.length ? Math.max(...validUtilities) : null;
-  const bestScore = bestUtility;
+  const validNodes = world.nodes.filter((node) => revealed.has(node.id) && node.valid && Number.isFinite(node.utility ?? node.score));
+  const utilityOf = (node: ReplayNode): number => node.utility ?? (world.direction === "minimize" ? -(node.score!) : node.score!);
+  const bestUtility = validNodes.length ? Math.max(...validNodes.map(utilityOf)) : null;
+  const metricScores = validNodes.map((node) => node.score).filter((score): score is number => Number.isFinite(score));
+  const bestScore = metricScores.length ? (world.direction === "minimize" ? Math.min(...metricScores) : Math.max(...metricScores)) : null;
   const attemptedNodes = Math.max(0, revealed.size - 1);
   const replayScore = bestUtility === null ? -costPenalty * totalCostMinutes : bestUtility - costPenalty * totalCostMinutes + parallelismBonus * (attemptedNodes / Math.max(1, rounds));
   const stopped = !frontier.size ? "exhausted" : rounds >= policy.maxRounds ? "round_limit" : "policy";

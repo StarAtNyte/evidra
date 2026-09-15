@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `449cba3`.
+- Latest pushed commit: `401955a`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -116,6 +116,8 @@ external evaluator.
 - Replay outcomes support explicit evaluator utility for non-metric research
   goals (artifact, proof, behavior, system, or other), while retaining legacy
   metric scores; the simulator never invents a scalar outcome.
+- Replay worlds now preserve maximize/minimize direction for legacy metrics and
+  normalize it to higher-is-better utility internally.
 
 ## Immediate next work
 
