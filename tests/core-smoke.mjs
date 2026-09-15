@@ -3788,6 +3788,19 @@ test("benchmark runner records bounded recovery after a failed arm attempt", asy
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("benchmark runner changes to a declared alternate route after retries", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-alternate-route-"));
+  try {
+    const primary = [process.execPath, "-e", "process.exit(1)"];
+    const alternate = [process.execPath, "-e", "console.log(JSON.stringify({score:0.9}))"];
+    const report = await runBenchmarkArms([{ harness: "rerouted", task: "task-a", arm: "default", seed: 1, model: "test-model", budgetMinutes: 1, retries: 1, alternateCommands: [alternate], direction: "maximize", baselineMetric: 0.5, metric: "score", command: primary }], root);
+    assert.equal(report.trials[0].validRun, true);
+    assert.equal(report.runs[0].attempts, 3);
+    assert.deepEqual(report.runs[0].attemptDetails.map((attempt) => attempt.route), ["primary", "primary", "alternate"]);
+    assert.deepEqual(report.runs[0].attemptDetails[2].command, alternate);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("benchmark runner measures an explicit independent reproducibility command", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-reproducibility-"));
   try {

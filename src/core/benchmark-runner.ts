@@ -34,6 +34,8 @@ export interface BenchmarkArmSpec {
   taskBestMetric?: number;
   /** Maximum bounded retries within the arm's total time budget. */
   retries?: number;
+  /** Distinct bounded routes to try after same-route retries are exhausted. */
+  alternateCommands?: string[][];
   /** Optional independent command used to verify metric reproducibility. */
   reproducibilityCommand?: string[];
   reproducibilityTolerance?: number;
@@ -57,6 +59,8 @@ export interface BenchmarkRunReport {
 
 export interface BenchmarkAttemptRecord {
   attempt: number;
+  route: "primary" | "alternate";
+  command: string[];
   exitCode: number;
   durationMs: number;
   metric?: number;
@@ -122,6 +126,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     if (!Number.isFinite(arm.budgetMinutes) || arm.budgetMinutes <= 0) throw new Error(`Benchmark arm '${arm.harness}' must have a positive budget.`);
     if (arm.policy !== undefined && (!arm.policy.trim() || arm.policy.length > 80)) throw new Error(`Benchmark arm '${arm.harness}' has an invalid policy label.`);
     if (arm.retries !== undefined && (!Number.isInteger(arm.retries) || arm.retries < 0 || arm.retries > 3)) throw new Error(`Benchmark arm '${arm.harness}' retries must be an integer from 0 to 3.`);
+    if (arm.alternateCommands !== undefined && (!Array.isArray(arm.alternateCommands) || arm.alternateCommands.length > 3 || arm.alternateCommands.some((command) => !Array.isArray(command) || !command.length || command.some((part) => typeof part !== "string" || !part.trim())))) throw new Error(`Benchmark arm '${arm.harness}' has invalid alternate commands.`);
     if (arm.reproducibilityCommand !== undefined && (!Array.isArray(arm.reproducibilityCommand) || !arm.reproducibilityCommand.length || arm.reproducibilityCommand.some((part) => typeof part !== "string" || !part.trim()))) throw new Error(`Benchmark arm '${arm.harness}' has an invalid reproducibility command.`);
     if (arm.reproducibilityTolerance !== undefined && (!Number.isFinite(arm.reproducibilityTolerance) || arm.reproducibilityTolerance < 0)) throw new Error(`Benchmark arm '${arm.harness}' reproducibility tolerance must be finite and non-negative.`);
     return { arm, cwd: benchmarkCwd(root, arm.cwd, arm.harness) };
@@ -131,7 +136,9 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
   const runOne = async ({ arm, cwd }: (typeof prepared)[number]): Promise<{ trial: HarnessTrial; run: BenchmarkRunReport["runs"][number] }> => {
     onProgress?.(`Benchmark · ${arm.harness} · ${arm.task} · ${arm.budgetMinutes}m`);
     const deadline = Date.now() + arm.budgetMinutes * 60_000;
-    const maxAttempts = 1 + Math.min(3, Math.max(0, Math.floor(arm.retries ?? 0)));
+    const sameRouteAttempts = 1 + Math.min(3, Math.max(0, Math.floor(arm.retries ?? 0)));
+    const alternateCommands = arm.alternateCommands ?? [];
+    const maxAttempts = sameRouteAttempts + alternateCommands.length;
     let result: ProcessResult | undefined;
     let metric: number | undefined;
     let metrics: Record<string, number> = {};
@@ -146,9 +153,13 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       if (remainingMs < 1_000) break;
       attempts += 1;
       const attemptStartedAt = Date.now();
+      const route = attempt < sameRouteAttempts ? "primary" : "alternate";
+      const command = attempt < sameRouteAttempts ? arm.command : alternateCommands[attempt - sameRouteAttempts];
+      if (!command) break;
+      if (route === "alternate") onProgress?.(`Benchmark · ${arm.harness} switching to alternate route ${attempt - sameRouteAttempts + 1}/${alternateCommands.length}`);
       let attemptEvidenceMs: number | undefined;
       let outputBuffer = "";
-      result = await runProcess(arm.command, cwd, remainingMs, (_stream, chunk) => {
+      result = await runProcess(command, cwd, remainingMs, (_stream, chunk) => {
         if (attemptEvidenceMs !== undefined) return;
         outputBuffer = `${outputBuffer}${chunk}`.slice(-128_000);
         const observed = parseMetricOutput(outputBuffer, arm.metric).metrics[arm.metric];
@@ -163,6 +174,8 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       if (validRun && attemptEvidenceMs !== undefined) timeToEvidenceSeconds = (totalDurationMs - result.durationMs + attemptEvidenceMs) / 1000;
       attemptDetails.push({
         attempt: attempt + 1,
+        route,
+        command: [...command],
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         ...(Number.isFinite(metric) ? { metric } : {}),
@@ -172,7 +185,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
         ...(result.exitCode !== 0 ? { failureClass: classifyProcessFailure(result) ?? "unknown" } : !validRun ? { failureClass: "invalid_metric_suite" } : {}),
       });
       if (validRun || attempt === maxAttempts - 1) break;
-      onProgress?.(`Benchmark · ${arm.harness} failed; retrying ${attempt + 1}/${maxAttempts - 1}`);
+      if (attempt + 1 < sameRouteAttempts) onProgress?.(`Benchmark · ${arm.harness} failed; retrying same route ${attempt + 1}/${sameRouteAttempts - 1}`);
     }
     if (!result) throw new Error(`Benchmark arm '${arm.harness}' exhausted its time budget before the first attempt.`);
     let reproducible = false;
