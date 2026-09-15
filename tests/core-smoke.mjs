@@ -3208,6 +3208,10 @@ test("HTTP submission adapter uploads artifacts and polls scores without persist
         response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ publicScore: 0.876 }));
         return;
       }
+      if (request.method === "GET" && request.url === "/score/oversized") {
+        response.setHeader("content-type", "text/plain"); response.end("x".repeat(100_000));
+        return;
+      }
       response.statusCode = 404; response.end("not found");
     });
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -3225,6 +3229,7 @@ test("HTTP submission adapter uploads artifacts and polls scores without persist
     assert.equal(observation.score, 0.876);
     assert.equal(scoreRequests, 2);
     assert.doesNotMatch(JSON.stringify({ receipt, observation }), /http-secret-token/);
+    await assert.rejects(() => pollSubmissionScore(root, bundle.path, "oversized", { ...competition, submission: { ...competition.submission, scoreUrl: `http://127.0.0.1:${port}/score/{submission}` } }), /no finite score/);
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     if (previousToken === undefined) delete process.env.EVIDRA_TEST_HTTP_TOKEN;

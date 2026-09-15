@@ -81,6 +81,8 @@ external evaluator.
   through declared alternate routes instead of aborting the whole protocol.
 - HTTP score polling retries bounded transient reads, while HTTP submission POST
   requests remain single-attempt to prevent duplicate external actions.
+- HTTP response bodies are now read through a bounded 32 KiB stream before
+  parsing, with oversized-response coverage.
 
 ## Immediate next work
 

@@ -46,7 +46,33 @@ function httpAuthHeaders(authEnv: string | undefined): Record<string, string> {
 }
 
 async function httpResponse(response: Response, label: string): Promise<string> {
-  const body = (await response.text()).slice(0, 32_000);
+  const maxBytes = 32_000;
+  let body: string;
+  if (!response.body) {
+    body = "";
+  } else {
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      while (total < maxBytes) {
+        const next = await reader.read();
+        if (next.done) break;
+        const remaining = maxBytes - total;
+        const chunk = next.value instanceof Uint8Array ? next.value : new Uint8Array(next.value);
+        const portion = chunk.byteLength > remaining ? chunk.slice(0, remaining) : chunk;
+        chunks.push(portion);
+        total += portion.byteLength;
+        if (portion.byteLength < chunk.byteLength) {
+          await reader.cancel();
+          break;
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    body = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
+  }
   if (!response.ok) throw new Error(`${label} failed (${response.status}): ${redactSecrets(body || response.statusText)}`);
   return body;
 }
