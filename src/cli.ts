@@ -3556,13 +3556,27 @@ experiment.command("gate")
   .argument("<experiment>", "experiment identifier")
   .argument("<gate>", "leakage or review")
   .argument("[action]", "approve or clear", "approve")
-  .action((experimentId: string, gate: string, action: string) => {
+  .action(async (experimentId: string, gate: string, action: string) => {
     if (!["leakage", "review"].includes(gate) || !["approve", "clear"].includes(action)) throw new Error("Usage: evidra experiment gate <id> leakage|review approve|clear");
     const store = new ResearchStore(statePath);
     if (!store.experiments().some((entry) => entry.id === experimentId)) { store.close(); throw new Error(`Experiment not found: ${experimentId}`); }
     const approved = action === "approve";
     store.setExperimentGates(experimentId, gate === "leakage" ? { leakageAuditPassed: approved } : { reviewerApproved: approved });
     const gates = store.experimentGates(experimentId);
+    const entry = store.experiments().find((candidate) => candidate.id === experimentId);
+    const runId = entry && typeof (entry.payload as { runId?: unknown }).runId === "string" ? (entry.payload as { runId: string }).runId : undefined;
+    const run = runId ? store.runs().find((candidate) => candidate.id === runId) : store.runs().find((candidate) => candidate.experimentId === experimentId);
+    if (entry && run) {
+      const manifest = ExperimentManifestSchema.safeParse(entry.payload);
+      const runResult = RunResultSchema.safeParse(run.payload);
+      if (manifest.success && runResult.success) {
+        const checksums = Object.fromEntries(store.artifacts(run.id).map((artifact) => [artifact.name, artifact.checksum]));
+        const audit = auditExperiment(manifest.data, runResult.data, { currentCommit: manifest.data.gitCommit, datasetVersion: manifest.data.datasetVersion, splitVersion: manifest.data.splitVersion, metricName: activeCompetition().config.metric.name, leakageAuditPassed: gates.leakageAuditPassed, reviewerApproved: gates.reviewerApproved, artifactChecksums: checksums });
+        const subtaskAudit = auditExperimentSubtask(manifest.data, audit, [run.id, ...Object.keys(checksums)]);
+        store.recordSubtaskAudit({ ...subtaskAudit, experimentId, runId: run.id });
+        store.appendEvent("experiment.audit.refreshed", { experimentId, runId: run.id, trigger: "gate_update", accepted: audit.accepted, subtaskAudit });
+      }
+    }
     store.close();
     console.log(`Experiment ${experimentId} gates\n  leakage audit: ${gates.leakageAuditPassed ? "approved" : "pending"}\n  reviewer: ${gates.reviewerApproved ? "approved" : "pending"}`);
   });

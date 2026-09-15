@@ -625,3 +625,6 @@ complete for the exact current run; a stale, missing, or incomplete audit is a
 hard stop. New experiment runs create an initial audit automatically, while
 operator-controlled leakage/reviewer approvals are reflected by rerunning the
 explicit experiment audit command.
+Approval changes now trigger that same recomputation automatically in both
+interfaces, using the locked manifest and current run/artifact evidence; the
+latest audit therefore reflects gate state without a manual refresh.

@@ -5675,6 +5675,16 @@ test("experiment audit rejects incomplete declared verifier evidence", () => {
   assert.equal(completeAudit.criteria.some((criterion) => criterion.id === "gate:verifiersPassed" && criterion.satisfied), true);
 });
 
+test("experiment audit criteria refresh when operator gates change", () => {
+  const competition = { id: "refresh", name: "Refresh", taskType: "formal", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"] }, execution: { verificationCommand: ["true"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["true"], experimentCommand: ["true"] };
+  const manifest = createExperimentManifest({ id: "refresh-exp", hypothesisId: "hyp", outcomeType: "proof", gitCommit: "abc", datasetVersion: "data" }, competition);
+  const run = { runId: "refresh-run", status: "completed", exitCode: 0, durationSeconds: 1, metrics: {}, artifacts: {}, verification: { declared: 1, executed: 1, passed: 1, failed: 0, independent: false } };
+  const pending = auditExperiment(manifest, run, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: false, reviewerApproved: false });
+  const approved = auditExperiment(manifest, run, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true });
+  assert.equal(auditExperimentSubtask(manifest, pending).complete, false);
+  assert.equal(auditExperimentSubtask(manifest, approved).complete, true);
+});
+
 test("scientific task runner verifies intermediate stages and resumes verified snapshots", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-scientific-task-"));
   try {

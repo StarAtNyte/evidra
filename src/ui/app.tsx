@@ -2822,6 +2822,20 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (!store.experiments().some((entry) => entry.id === id)) { store.close(); append("assistant", `Experiment not found: ${id}`); return; }
         store.setExperimentGates(id, gate === "leakage" ? { leakageAuditPassed: approved } : { reviewerApproved: approved });
         const gates = store.experimentGates(id);
+        const experimentEntry = store.experiments().find((candidate) => candidate.id === id);
+        const runId = experimentEntry && typeof (experimentEntry.payload as { runId?: unknown }).runId === "string" ? (experimentEntry.payload as { runId: string }).runId : undefined;
+        const run = runId ? store.runs().find((candidate) => candidate.id === runId) : store.runs().find((candidate) => candidate.experimentId === id);
+        if (experimentEntry && run) {
+          const manifest = ExperimentManifestSchema.safeParse(experimentEntry.payload);
+          const runResult = RunResultSchema.safeParse(run.payload);
+          if (manifest.success && runResult.success) {
+            const checksums = Object.fromEntries(store.artifacts(run.id).map((artifact) => [artifact.name, artifact.checksum]));
+            const audit = auditExperiment(manifest.data, runResult.data, { currentCommit: manifest.data.gitCommit, datasetVersion: manifest.data.datasetVersion, splitVersion: manifest.data.splitVersion, metricName: activeAdapter().config.metric.name, leakageAuditPassed: gates.leakageAuditPassed, reviewerApproved: gates.reviewerApproved, artifactChecksums: checksums });
+            const subtaskAudit = auditExperimentSubtask(manifest.data, audit, [run.id, ...Object.keys(checksums)]);
+            store.recordSubtaskAudit({ ...subtaskAudit, experimentId: id, runId: run.id });
+            store.appendEvent("experiment.audit.refreshed", { experimentId: id, runId: run.id, trigger: "gate_update", accepted: audit.accepted, subtaskAudit });
+          }
+        }
         store.close();
         append("assistant", `Evidence gate updated · ${id}\n  leakage audit: ${gates.leakageAuditPassed ? "approved" : "pending"}\n  reviewer: ${gates.reviewerApproved ? "approved" : "pending"}`);
         return;
