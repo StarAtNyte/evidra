@@ -35,7 +35,10 @@ codex login
 codex login status
 ```
 
-Inside Evidra, use `/login codex` to check or complete the Codex route. A local
+Inside Evidra, use `/login codex` to check or complete the Codex route. Login
+runs asynchronously, so the TUI remains responsive while the Codex device or
+browser flow is active; interrupting the process terminates the login child.
+A local
 route is available when Ollama is installed and has a model. Evidra does not
 pretend that a provider is connected: unavailable routes are shown as
 unavailable and no model request is started.

@@ -151,10 +151,43 @@ export function normalizeCodexModels(value: unknown): AvailableModel[] {
   });
 }
 
-export function loginCodex(mode: "device" | "browser" = "device"): number {
+/**
+ * Run the interactive Codex login without blocking Ink's event loop. Codex
+ * owns the terminal while the flow is active, but Evidra remains alive to
+ * render status and can terminate the child when the operator interrupts it.
+ */
+export function loginCodex(
+  mode: "device" | "browser" = "device",
+  onProcess?: (control: ProcessControl) => void,
+): Promise<number> {
   const args = mode === "device" ? ["login", "--device-auth"] : ["login"];
-  const result = spawnSync("codex", args, { stdio: "inherit" });
-  return result.status ?? 1;
+  return new Promise((resolve) => {
+    const child = spawn("codex", args, { stdio: "inherit", detached: false });
+    let settled = false;
+    let paused = false;
+    const finish = (status: number): void => {
+      if (settled) return;
+      settled = true;
+      resolve(status);
+    };
+    const control: ProcessControl = {
+      pause: () => { paused = true; },
+      resume: () => { paused = false; },
+      terminate: () => {
+        if (settled) return;
+        try { child.kill("SIGTERM"); } catch { /* already exited */ }
+        setTimeout(() => {
+          if (!settled) {
+            try { child.kill("SIGKILL"); } catch { /* already exited */ }
+          }
+        }, 1_500).unref();
+      },
+      get paused() { return paused; },
+    };
+    onProcess?.(control);
+    child.once("error", () => finish(1));
+    child.once("close", (code, signal) => finish(signal ? 130 : (code ?? 1)));
+  });
 }
 
 export function codexLoginStatus(): string {

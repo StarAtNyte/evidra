@@ -2225,7 +2225,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         // while its own login UI is running.
         if (wasRaw) process.stdin.setRawMode?.(false);
         process.stdin.resume();
-        const status = loginCodex(mode);
+        const status = await loginCodex(mode, registerProcess);
         if (status === 0) {
           activeCodexThread.current = undefined;
           setConfig((current) => ({ ...current, provider: "codex", model: current.provider === "codex" ? current.model : DEFAULT_CODEX_MODEL, codexThreadId: undefined }));

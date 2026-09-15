@@ -20,7 +20,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
-import { CodexExecAgent, codexEventErrorMessage, normalizeCodexModels, progressLine } from "../dist/agents/codex-exec.js";
+import { CodexExecAgent, codexEventErrorMessage, loginCodex, normalizeCodexModels, progressLine } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
@@ -2805,6 +2805,27 @@ test("Codex model responses normalize reasoning-effort objects", () => {
   assert.deepEqual(models[0].supportedReasoningEfforts, ["low", "medium"]);
   assert.equal(models[0].displayName, "GPT-5.6-Luna");
   assert.deepEqual(normalizeCodexModels([{ model: "fallback", supportedReasoningEfforts: ["high", { reasoningEffort: "max" }, null] }])[0].supportedReasoningEfforts, ["high", "max"]);
+});
+
+test("Codex login is asynchronous and interruptible", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-codex-login-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "codex"), "#!/bin/sh\nsleep 5\n", { mode: 0o755 });
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${bin}:${previousPath ?? ""}`;
+  let control;
+  try {
+    const login = loginCodex("device", (candidate) => { control = candidate; });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.ok(control, "login should expose an interrupt control while active");
+    control.terminate();
+    assert.equal(await login, 130);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("research director honors the bounded provider-attempt policy", async () => {
