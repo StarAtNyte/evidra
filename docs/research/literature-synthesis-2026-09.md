@@ -197,6 +197,10 @@ and a fluent research writer measurable:
   task kinds, target recall, grounding rate, and query-budget efficiency. The
   remaining step for a formal comparison is to run the published task set with
   a fixed provider/model/effort budget and preserve the raw query trace.
+- Literature lanes now use a deterministic progressive query portfolio: the
+  objective is followed by replication/limitations and robustness/ablation
+  probes (or domain-definition/counterexample probes), while source retrieval
+  stays capped and provenance-linked.
 - [ResearchClawBench](https://arxiv.org/abs/2606.07591) evaluates end-to-end
   scientific rediscovery with weighted artifact-level criteria. This supports
   Evidra's choice to represent proof, behavior, artifact, and system outcomes
