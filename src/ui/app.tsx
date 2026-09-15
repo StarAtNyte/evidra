@@ -10,6 +10,7 @@ import { QueueWorker } from "../core/queue-worker.js";
 import { classifyProcessFailure, executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
 import { auditExperiment, validateEvaluationMatrix } from "../core/validation.js";
+import { auditResearchDecision, downgradeUnauditedDecision } from "../core/decision-auditor.js";
 import { sha256File } from "../core/evidence.js";
 import { captureEnvironment } from "../core/environment.js";
 import { compareRuns } from "../core/statistics.js";
@@ -1142,15 +1143,22 @@ export function App({ root }: { root: string }): React.JSX.Element {
       ? { ...decision, goalStatus: "active" as const, nextAction: decision.nextAction + " (phase gate missing: " + phaseGate.missing.join(", ") + ")" }
       : decision;
     if (decision.goalStatus === "met" && !phaseGate.met) decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal?.phase, missing: phaseGate.missing });
-    materializeResearchDecision(decisionStore, effectiveDecision);
+    const decisionAudit = auditResearchDecision(effectiveDecision, {
+      currentPhase: phaseGoal?.phase,
+      durableEventTypes: new Set(decisionStore.eventsByTypes(PHASE_GOAL_EVENT_TYPES as unknown as string[]).map((event) => event.type)),
+      phaseAuditComplete: phaseGoal ? decisionStore.latestSubtaskAudit(phaseGoal.id)?.complete : undefined,
+    });
+    decisionStore.appendEvent("research.decision.audit", { ...decisionAudit, phase: phaseGoal?.phase ?? null, decision: effectiveDecision.decision });
+    const auditedDecision = downgradeUnauditedDecision(effectiveDecision, decisionAudit);
+    materializeResearchDecision(decisionStore, auditedDecision);
     if (phaseGoal) {
       const now = new Date().toISOString();
       const durableAudit = decisionStore.latestSubtaskAudit(phaseGoal.id);
-      const auditedMet = effectiveDecision.goalStatus === "met" && durableAudit?.complete === true;
-      const nextStatus = auditedMet ? "met" : effectiveDecision.goalStatus === "blocked" ? "blocked" : "active";
+      const auditedMet = auditedDecision.goalStatus === "met" && durableAudit?.complete === true;
+      const nextStatus = auditedMet ? "met" : auditedDecision.goalStatus === "blocked" ? "blocked" : "active";
       decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: nextStatus, payload: { ...phaseGoal, status: nextStatus, attempts: phaseGoal.attempts + 1, updatedAt: now } });
     }
-    if (phaseGoal && effectiveDecision.goalStatus === "met" && decisionStore.latestSubtaskAudit(phaseGoal.id)?.complete === true) {
+    if (phaseGoal && auditedDecision.goalStatus === "met" && decisionStore.latestSubtaskAudit(phaseGoal.id)?.complete === true) {
       const goals = phaseGoalsForMode(decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, goalSet);
       const index = goals.findIndex((goal) => goal.id === phaseGoal.id);
       const now = new Date().toISOString();

@@ -28,6 +28,7 @@ import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDir
 import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readCampaignRuntime, researchTurnTimeoutMs, resumeCampaign, withCampaignCheckpoint, type CampaignCheckpointStep, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { auditExperiment, validateEvaluationMatrix } from "./core/validation.js";
+import { auditResearchDecision, downgradeUnauditedDecision } from "./core/decision-auditor.js";
 import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance } from "./core/validation-engine.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { processFailureResult, runProcess } from "./core/process.js";
@@ -2776,6 +2777,13 @@ research
           decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal.phase, missing: gate.missing });
         }
       }
+      const decisionAudit = auditResearchDecision(decision, {
+        currentPhase: phaseGoal?.phase,
+        durableEventTypes: new Set(decisionStore.eventsByTypes([...PHASE_GATE_EVENT_TYPES]).map((event) => event.type)),
+        phaseAuditComplete: phaseGoal ? decisionStore.latestSubtaskAudit(phaseGoal.id)?.complete : undefined,
+      });
+      decisionStore.appendEvent("research.decision.audit", { ...decisionAudit, phase: phaseGoal?.phase ?? null, decision: decision.decision });
+      decision = downgradeUnauditedDecision(decision, decisionAudit);
       const materialized = materializeResearchDecision(decisionStore, decision);
       const hypothesisQuality = decision.hypotheses.map((hypothesis) => assessHypothesisQuality({
         title: hypothesis.title,
@@ -3394,6 +3402,13 @@ research.command("propose")
         decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal.phase, missing: gate.missing });
       }
     }
+    const decisionAudit = auditResearchDecision(decision, {
+      currentPhase: phaseGoal?.phase,
+      durableEventTypes: new Set(decisionStore.eventsByTypes([...PHASE_GATE_EVENT_TYPES]).map((event) => event.type)),
+      phaseAuditComplete: phaseGoal ? decisionStore.latestSubtaskAudit(phaseGoal.id)?.complete : undefined,
+    });
+    decisionStore.appendEvent("research.decision.audit", { ...decisionAudit, phase: phaseGoal?.phase ?? null, decision: decision.decision });
+    decision = downgradeUnauditedDecision(decision, decisionAudit);
     materializeResearchDecision(decisionStore, decision);
     if (phaseGoal) {
       const now = new Date().toISOString();

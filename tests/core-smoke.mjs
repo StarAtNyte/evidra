@@ -29,6 +29,7 @@ import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
 import { activePhaseGoal, auditPhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../dist/core/phase-goals.js";
 import { assertSubtaskContract, auditSubtask, subtaskStateFromAudit, validateSubtaskContract } from "../dist/core/subtask-state.js";
+import { auditResearchDecision, downgradeUnauditedDecision } from "../dist/core/decision-auditor.js";
 import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
@@ -2291,6 +2292,18 @@ test("subtask audits are durable controller evidence", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("controller decision auditor independently downgrades unaudited completion and illegal actions", () => {
+  const base = { phase: "evaluation", decision: "stop", goalStatus: "met", selectedHypothesis: null, hypotheses: [], toolCalls: [] };
+  const missing = auditResearchDecision(base, { currentPhase: "evaluation", phaseAuditComplete: false });
+  assert.equal(missing.verdict, "reject");
+  assert.equal(downgradeUnauditedDecision({ ...base, nextAction: "finish" }, missing).decision, "inspect");
+  const mismatched = auditResearchDecision({ ...base, goalStatus: "active" }, { currentPhase: "evaluation", phaseAuditComplete: true });
+  assert.equal(mismatched.verdict, "reject");
+  const valid = auditResearchDecision({ ...base, goalStatus: "met" }, { currentPhase: "evaluation", phaseAuditComplete: true });
+  assert.equal(valid.verdict, "pass");
+  assert.deepEqual(valid.evidence, ["subtask.audit:complete"]);
 });
 
 test("validation phase completion requires the latest policy lifecycle event to be a lock", () => {
