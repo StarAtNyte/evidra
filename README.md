@@ -43,6 +43,7 @@ Metric handling is similarly generic: a workspace may expose any named scalar me
 Benchmark arms accept the same general contract: `metric` identifies the headline score and optional `requiredMetrics` declares auxiliary metrics that must be emitted for a valid run. The runner preserves the complete finite suite for diagnostics and fairness checks while keeping legacy primary-score comparisons compatible. This supports quality, latency, safety, calibration, cost, and other task-specific objectives without hard-coding them into the harness. Arms may also declare `provider` so Codex-vs-local or other route studies retain explicit provenance and cannot be silently paired as identical environments.
 
 Normal benchmark claims reject mixed providers on a matched arm. Intentional route studies use the explicit provider comparison diagnostic, keeping provider choice visible instead of allowing it to masquerade as a harness improvement.
+Provider-route claims can also require task-disjoint transfer: the same comparison gate is run on training and held-out task sets, and a route win is rejected unless it survives both.
 
 Provider exhaustion is autonomous by default. The `auto` policy first selects an installed local Qwen/Ollama model, then waits durably for the Codex entitlement reset if no local model is available. Use `/limits auto`, `/limits fallback`, `/limits wait`, or `/limits stop` in the TUI to choose explicitly. The fallback model can be pinned with `EVIDRA_FALLBACK_MODEL`.
 

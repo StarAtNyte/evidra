@@ -62,7 +62,7 @@ import { validateCompetitionContract } from "../dist/core/competition-contract.j
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { assessForecast, summarizeForecastAssessments } from "../dist/core/forecast-calibration.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
-import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
+import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, evaluateProviderGeneralization, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, ScientificTaskSchema } from "../dist/core/scientific-tasks.js";
 import { runSafetyBenchmark } from "../dist/core/safety-bench.js";
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "../dist/core/scientific-suite.js";
@@ -3637,6 +3637,17 @@ test("explicit provider route diagnostics compare matched tasks without hiding p
   assert.equal(comparison.comparableArms, 2);
   assert.equal(comparison.validPairedArms, 2);
   assert.ok((comparison.pairedMeanDelta ?? 0) > 0);
+});
+
+test("provider route generalization requires a task-disjoint held-out win", () => {
+  const base = { arm: "default", seed: 1, model: "same-model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, validRun: true, durationSeconds: 1, recovered: false, reproducible: true };
+  const make = (task, codex, local) => [{ harness: "evidra", provider: "codex", task, candidateMetric: codex, ...base }, { harness: "evidra", provider: "local", task, candidateMetric: local, ...base }];
+  const report = evaluateProviderGeneralization([...make("train-a", 0.7, 0.6), ...make("train-b", 0.72, 0.61)], [...make("heldout-a", 0.69, 0.6), ...make("heldout-b", 0.71, 0.62)], "codex", "local");
+  assert.equal(report.generalizes, true);
+  assert.deepEqual(report.overlappingTasks, []);
+  const overlap = evaluateProviderGeneralization([...make("same", 0.7, 0.6), ...make("train-b", 0.72, 0.61)], [...make("same", 0.69, 0.6), ...make("heldout-b", 0.71, 0.62)], "codex", "local");
+  assert.equal(overlap.generalizes, false);
+  assert.match(overlap.reason, /overlap/);
 });
 
 test("benchmark workers do not inherit controller credentials", async () => {

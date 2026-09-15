@@ -487,6 +487,54 @@ export function compareProviderRoutes(trials: HarnessTrial[], challengerProvider
   return compareHarnesses(routed, challengerProvider, incumbentProvider);
 }
 
+export interface ProviderGeneralizationReport {
+  challengerProvider: string;
+  incumbentProvider: string;
+  training: HarnessComparison;
+  heldOut: HarnessComparison;
+  overlappingTasks: string[];
+  protocolParity: boolean;
+  protocolDifferences: string[];
+  generalizes: boolean;
+  reason: string;
+}
+
+/** Require an intentional provider-route advantage to transfer to unseen tasks. */
+export function evaluateProviderGeneralization(
+  training: HarnessTrial[],
+  heldOut: HarnessTrial[],
+  challengerProvider: string,
+  incumbentProvider: string,
+): ProviderGeneralizationReport {
+  const normalize = (trials: HarnessTrial[]): HarnessTrial[] => trials
+    .filter((trial) => trial.provider === challengerProvider || trial.provider === incumbentProvider)
+    .map((trial) => ({ ...trial, harness: trial.provider!, provider: undefined }));
+  const trainingNormalized = normalize(training);
+  const heldOutNormalized = normalize(heldOut);
+  const trainingProtocol = validateBenchmarkProtocol(trainingNormalized);
+  const heldOutProtocol = validateBenchmarkProtocol(heldOutNormalized);
+  if (!trainingProtocol.valid) throw new Error(`Training provider protocol is invalid: ${trainingProtocol.issues.map((issue) => issue.message).join("; ")}`);
+  if (!heldOutProtocol.valid) throw new Error(`Held-out provider protocol is invalid: ${heldOutProtocol.issues.map((issue) => issue.message).join("; ")}`);
+  const trainingTasks = new Set(trainingNormalized.map((trial) => trial.task));
+  const heldOutTasks = new Set(heldOutNormalized.map((trial) => trial.task));
+  const overlappingTasks = [...trainingTasks].filter((task) => heldOutTasks.has(task)).sort();
+  const protocolDifferences = compareProtocolParity(trainingNormalized, heldOutNormalized);
+  const protocolParity = protocolDifferences.length === 0;
+  const trainingComparison = compareProviderRoutes(training, challengerProvider, incumbentProvider);
+  const heldOutComparison = compareProviderRoutes(heldOut, challengerProvider, incumbentProvider);
+  const generalizes = overlappingTasks.length === 0 && protocolParity && trainingComparison.challengerWins && heldOutComparison.challengerWins;
+  const reason = overlappingTasks.length
+    ? `train and held-out task sets overlap: ${overlappingTasks.join(", ")}`
+    : !protocolParity
+      ? `train and held-out protocols differ: ${protocolDifferences.join("; ")}`
+      : !trainingComparison.challengerWins
+        ? `challenger provider has no proven training win: ${trainingComparison.reason}`
+        : !heldOutComparison.challengerWins
+          ? `training provider win does not transfer to held-out tasks: ${heldOutComparison.reason}`
+          : `challenger provider wins both task-disjoint training and held-out comparisons`;
+  return { challengerProvider, incumbentProvider, training: trainingComparison, heldOut: heldOutComparison, overlappingTasks, protocolParity, protocolDifferences, generalizes, reason };
+}
+
 /**
  * Attribute a harness change to one removed component at a time. This is a
  * diagnostic, not a loophole around the normal paired comparison: every
