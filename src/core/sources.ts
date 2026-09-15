@@ -35,7 +35,7 @@ export type SourceSearchDepth = "shallow" | "deep";
 export function sourceEvidenceClass(url: string, provider?: SourceSearchResult["provider"], doi?: string): SourceEvidenceClass {
   let host = "";
   try { host = new URL(url).hostname.toLowerCase(); } catch { /* malformed URLs are rejected by retrieval */ }
-  if (provider === "arxiv" || provider === "openalex" || provider === "crossref" || Boolean(doi) || /(^|\.)arxiv\.org$/i.test(host)) return "scholarly";
+  if (provider === "arxiv" || provider === "openalex" || provider === "crossref" || Boolean(doi) || /(^|\.)arxiv\.org$|(^|\.)doi\.org$/i.test(host)) return "scholarly";
   if (/(^|\.)github\.com$|(^|\.)gitlab\.com$/i.test(host)) return "implementation";
   if (/(^|\.)scholar\.google\.|(^|\.)researchgate\.net$/i.test(host)) return "discovery";
   if (/(^|\.)((gov|edu)|openai\.com|deepmind\.google|ai\.google|nasa\.gov|who\.int)$/i.test(host)) return "official";

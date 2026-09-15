@@ -2494,6 +2494,7 @@ test("source ranking prefers provenance-rich evidence over web discovery noise",
 
 test("direct source provenance remains classifiable without a search event", () => {
   assert.equal(sourceEvidenceClass("https://arxiv.org/abs/2601.12345"), "scholarly");
+  assert.equal(sourceEvidenceClass("https://doi.org/10.1234/example"), "scholarly");
   assert.equal(sourceEvidenceClass("https://github.com/example/project"), "implementation");
   assert.equal(sourceEvidenceClass("https://example.org/discussion", "web"), "discovery");
   assert.ok(sourceEvidenceQuality({ url: "https://arxiv.org/abs/2601.12345", authors: ["Author"], abstract: "Measured results", doi: "https://doi.org/10.1/x" }) > 0.8);
