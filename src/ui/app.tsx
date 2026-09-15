@@ -1398,9 +1398,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
       setProgress(`Experiment ${id} · running canonical evaluator...`);
       let evaluated: Awaited<ReturnType<typeof runProcess>>;
       let evaluatorAttempt = 1;
+      const evaluatorDeadline = Date.now() + manifest.resources.timeoutMinutes * 60_000;
       while (true) {
+        const remainingMs = Math.max(1_000, evaluatorDeadline - Date.now());
         evaluated = await withExecutionHeartbeat(
-          () => runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, registerProcess, experimentEnvironment),
+          () => runProcess(evaluatorCommand, experimentCwd, remainingMs, undefined, registerProcess, experimentEnvironment),
           { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt: evaluatorAttempt, stage: "evaluator", executor: manifest.resources.executor },
         );
         if (evaluated.exitCode === 0) break;
@@ -1408,6 +1410,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const plan = recoveryPlan(failureClass);
         if (!plan.retry || evaluatorAttempt >= plan.maxAttempts) break;
         const delay = recoveryDelay(plan, evaluatorAttempt);
+        if (Date.now() + delay * 1_000 + 1_000 > evaluatorDeadline) break;
         const retryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
         retryStore.appendEvent("run.retry.scheduled", { experimentId: id, stage: "evaluator", attempt: evaluatorAttempt, delaySeconds: delay, failureClass, action: plan.action });
         retryStore.close();

@@ -3261,9 +3261,11 @@ experiment.command("run")
     if (result.status === "completed" && !sameCommand) {
       let evaluated: Awaited<ReturnType<typeof runProcess>>;
       let evaluatorAttempt = 1;
+      const evaluatorDeadline = Date.now() + manifest.resources.timeoutMinutes * 60_000;
       while (true) {
+        const remainingMs = Math.max(1_000, evaluatorDeadline - Date.now());
         evaluated = await withExecutionHeartbeat(
-          () => runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, undefined, experimentEnvironment),
+          () => runProcess(evaluatorCommand, experimentCwd, remainingMs, undefined, undefined, experimentEnvironment),
           { storePath: statePath, experimentId: id, attempt: evaluatorAttempt, stage: "evaluator", executor: manifest.resources.executor },
         );
         if (evaluated.exitCode === 0) break;
@@ -3271,6 +3273,7 @@ experiment.command("run")
         const plan = recoveryPlan(failureClass);
         if (!plan.retry || evaluatorAttempt >= plan.maxAttempts) break;
         const delay = recoveryDelay(plan, evaluatorAttempt);
+        if (Date.now() + delay * 1_000 + 1_000 > evaluatorDeadline) break;
         const retryStore = new ResearchStore(statePath);
         retryStore.appendEvent("run.retry.scheduled", { experimentId: id, stage: "evaluator", attempt: evaluatorAttempt, delaySeconds: delay, failureClass, action: plan.action });
         retryStore.close();
