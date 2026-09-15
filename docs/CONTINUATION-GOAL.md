@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `e742bcc` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `0e31ac9` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -113,6 +113,7 @@ external evaluator.
 - Scientific task progress now supports weighted stages; final validity still requires every declared stage and verifier to pass.
 - Criterion and stage weights are bounded to keep aggregate diagnostics finite even for malformed or adversarial task contracts.
 - Research and Challenge hypothesis-phase gates now require the selected direction itself to include a concrete falsification test; a raw hypothesis count can no longer advance the phase.
+- Research hypothesis schemas trim and reject blank falsification tests before materialization, keeping the durable graph clean at its input boundary.
 - Latest verified baseline: 389/389 tests passing, TypeScript check passing,
   and build passing. The worktree is clean; generated reports remain excluded
   from source changes.
