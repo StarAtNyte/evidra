@@ -186,5 +186,35 @@ Primary sources:
 
 ## Sources
 
+## External evaluation targets
+
+Recent benchmark work makes the distinction between a useful research harness
+and a fluent research writer measurable:
+
+- [AutoResearchBench](https://arxiv.org/abs/2604.25256) separates deep target
+  discovery from wide, constraint-satisfying collection. Evidra's
+  `literature-score` protocol already has the corresponding `deep` and `wide`
+  task kinds, target recall, grounding rate, and query-budget efficiency. The
+  remaining step for a formal comparison is to run the published task set with
+  a fixed provider/model/effort budget and preserve the raw query trace.
+- [ResearchClawBench](https://arxiv.org/abs/2606.07591) evaluates end-to-end
+  scientific rediscovery with weighted artifact-level criteria. This supports
+  Evidra's choice to represent proof, behavior, artifact, and system outcomes
+  without fabricating a scalar metric; an adapter should translate each rubric
+  criterion into a typed verifier and retain criterion-level evidence.
+- [AutoExperiment](https://arxiv.org/abs/2506.19724) and [AutoMat](https://arxiv.org/abs/2605.00803)
+  test reconstruction and execution of paper workflows. They reinforce the
+  need for immutable paper/source identities, environment capture, intermediate
+  checkpoints, and independent reproduction—not just a final generated report.
+- [ScienceAgentBench](https://proceedings.iclr.cc/paper_files/paper/2025/hash/f12b4df26344f3be803c06b555252efe-Abstract-Conference.html)
+  evaluates executable programs, results, and cost across the discovery
+  workflow. Evidra should report those dimensions separately in any external
+  comparison; a single aggregate score must not hide invalid execution or
+  excessive cost.
+
+These are evaluation targets and design inputs, not current Evidra scores. A
+claim of superiority requires matched task inventories, model and effort
+parity, fixed budgets, valid outputs, and held-out or independent replication.
+
 The links above point to the original papers or publisher material. Claims are
 paraphrased; no generated agent summary is treated as primary evidence.
