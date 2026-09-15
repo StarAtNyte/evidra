@@ -402,6 +402,32 @@ test("run attempts remain separately queryable across retries and reopen", () =>
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("harness change records survive store reopen with provenance and decision", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-harness-change-"));
+  try {
+    const db = join(root, "state.sqlite");
+    const store = new ResearchStore(db);
+    store.saveHarnessChange({
+      id: "change:protocol-1",
+      contract: { id: "change", predictedDelta: { low: 0, median: 0.1, high: 0.2 } },
+      baselineComponents: [{ path: "src/core/old.ts", checksum: "before" }],
+      candidateComponents: [{ path: "src/core/old.ts", checksum: "after" }],
+      protocolFingerprint: "sha256:protocol",
+      outcomes: [{ incumbent: "baseline", status: "confirmed" }],
+      decision: "retain",
+    });
+    store.close();
+    const reopened = new ResearchStore(db);
+    const changes = reopened.harnessChanges();
+    assert.equal(changes.length, 1);
+    assert.equal(changes[0].decision, "retain");
+    assert.equal(changes[0].protocolFingerprint, "sha256:protocol");
+    assert.deepEqual(changes[0].candidateComponents, [{ path: "src/core/old.ts", checksum: "after" }]);
+    assert.equal(reopened.eventsByType("harness.change.recorded").length, 1);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("SQLite state backups preserve verifiable research state", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-state-backup-"));
   try {

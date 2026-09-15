@@ -73,6 +73,18 @@ export interface RunAttempt {
   updatedAt: string;
 }
 
+export interface HarnessChangeRecord {
+  id: string;
+  contract: unknown;
+  baselineComponents: Array<{ path: string; checksum: string }>;
+  candidateComponents: Array<{ path: string; checksum: string }>;
+  protocolFingerprint: string;
+  outcomes: unknown[];
+  decision: "retain" | "revert" | "branch" | "unobserved";
+  createdAt: string;
+  updatedAt: string;
+}
+
 export class ResearchStore {
   private readonly db: Database.Database;
   private memoryFtsAvailable = false;
@@ -149,6 +161,12 @@ export class ResearchStore {
         command_json TEXT NOT NULL,
         cwd TEXT NOT NULL,
         executor TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS harness_changes (
+        id TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -300,6 +318,7 @@ export class ResearchStore {
       CREATE INDEX IF NOT EXISTS idx_runs_experiment_id ON runs(experiment_id);
       CREATE INDEX IF NOT EXISTS idx_trajectories_updated_at ON trajectories(updated_at);
       CREATE INDEX IF NOT EXISTS idx_attempts_experiment_id ON run_attempts(experiment_id);
+      CREATE INDEX IF NOT EXISTS idx_harness_changes_updated_at ON harness_changes(updated_at);
     `);
     // Existing stores predate event integrity. Keep them readable and mark their
     // history as legacy; all newly appended events are chained and verifiable.
@@ -527,6 +546,37 @@ export class ResearchStore {
       exitCode: row.exit_code === null ? null : Number(row.exit_code), failureClass: row.failure_class === null ? null : String(row.failure_class), durationSeconds: row.duration_seconds === null ? null : Number(row.duration_seconds), metric: row.metric === null ? null : Number(row.metric), metrics: row.metrics_json ? JSON.parse(String(row.metrics_json)) as Record<string, number> : {},
       command: JSON.parse(String(row.command_json)) as string[], cwd: String(row.cwd), executor: String(row.executor), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     }));
+  }
+
+  /** Persist a harness evolution record independently of transient benchmark output files. */
+  saveHarnessChange(change: Omit<HarnessChangeRecord, "createdAt" | "updatedAt">): void {
+    const now = new Date().toISOString();
+    const payload = {
+      id: change.id,
+      contract: change.contract,
+      baselineComponents: change.baselineComponents,
+      candidateComponents: change.candidateComponents,
+      protocolFingerprint: change.protocolFingerprint,
+      outcomes: change.outcomes,
+      decision: change.decision,
+    };
+    this.db.prepare(`
+      INSERT INTO harness_changes (id, payload_json, created_at, updated_at)
+      VALUES (?, ?, COALESCE((SELECT created_at FROM harness_changes WHERE id = ?), ?), ?)
+      ON CONFLICT(id) DO UPDATE SET payload_json = excluded.payload_json, updated_at = excluded.updated_at
+    `).run(change.id, safeJson(payload), change.id, now, now);
+    this.appendEvent("harness.change.recorded", payload);
+  }
+
+  harnessChanges(): HarnessChangeRecord[] {
+    const rows = this.db.prepare("SELECT payload_json, created_at, updated_at FROM harness_changes ORDER BY updated_at ASC").all() as Array<{ payload_json: string; created_at: string; updated_at: string }>;
+    return rows.flatMap((row) => {
+      try {
+        const payload = JSON.parse(row.payload_json) as Omit<HarnessChangeRecord, "createdAt" | "updatedAt">;
+        if (!payload || typeof payload !== "object" || typeof payload.id !== "string" || !Array.isArray(payload.baselineComponents) || !Array.isArray(payload.candidateComponents) || typeof payload.protocolFingerprint !== "string" || !Array.isArray(payload.outcomes) || !["retain", "revert", "branch", "unobserved"].includes(payload.decision)) return [];
+        return [{ ...payload, decision: payload.decision as HarnessChangeRecord["decision"], createdAt: row.created_at, updatedAt: row.updated_at }];
+      } catch { return []; }
+    });
   }
 
   saveArtifact(artifact: { id: string; runId: string; name: string; path: string; checksum: string }): void {

@@ -102,8 +102,11 @@ that Evidra beats another harness.
 
 ## Implementation backlog derived from the synthesis
 
-1. Add a durable harness-change record with component checksums, forecasts, and
-   matched evaluation identity.
+1. ~~Add a durable harness-change record with component checksums, forecasts, and
+   matched evaluation identity.~~ Implemented as a durable SQLite registry
+   populated by matched benchmark runs, including the baseline/candidate
+   component snapshots, forecast contract, protocol fingerprint, measured
+   outcomes, and a conservative retain/revert/branch/unobserved decision.
 2. ~~Add a verified skill/procedure registry separate from claims and raw experience.~~
    Implemented as provenance-linked, schema-validated playbook leads derived only
    from independently replicated methods; each playbook carries transfer failure

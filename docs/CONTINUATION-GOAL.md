@@ -61,7 +61,7 @@ external evaluator.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 369/369 tests passing, TypeScript check passing,
+- Latest verified baseline: 371/371 tests passing, TypeScript check passing,
   and build passing. The worktree has six intentionally untracked pilot reports
   under `reports/`; do not confuse those generated artifacts with source edits.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
@@ -139,6 +139,10 @@ external evaluator.
 - The adversarial critic also receives the route pool and retries on an
   untried route before degrading to a revise-only review, keeping verification
   available during transient provider failures.
+- Matched harness benchmark changes are now durable SQLite records containing
+  the forecast contract, before/after component checksums, protocol fingerprint,
+  measured comparison outcomes, and a conservative retain/revert/branch or
+  unobserved decision for future harness evolution.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
 - Codex command activity now includes an exit code only when the provider

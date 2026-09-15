@@ -697,6 +697,24 @@ benchmark.command("run")
     const output = { ...report, scorecards, ...(policyScorecards ? { policyScorecards, policyComparisons } : {}), pareto, componentFailureEvidence, protocol: matched, challenger: options.challenger, comparisons, ...(providerComparison ? { providerComparison } : {}), ...(providerGeneralization ? { providerGeneralization } : {}), adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, ...(changePresence ? { changePresence } : {}), changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
     if (options.out) writeFileSync(resolve(options.out), `${JSON.stringify(output, null, 2)}\n`);
     const benchmarkStore = new ResearchStore(statePath);
+    if (change) {
+      const changeDecision = changeOutcomes?.some((item) => item.outcome.status === "refuted")
+        ? "revert" as const
+        : changeOutcomes?.length && changeOutcomes.every((item) => item.outcome.status === "confirmed") && comparisons.every((comparison) => comparison.challengerWins)
+          ? "retain" as const
+          : changeOutcomes?.some((item) => item.outcome.status === "partially_confirmed")
+            ? "branch" as const
+            : "unobserved" as const;
+      benchmarkStore.saveHarnessChange({
+        id: `${change.id}:${report.protocolFingerprint}`,
+        contract: change,
+        baselineComponents: baselineComponents ?? [],
+        candidateComponents: inventoryHarnessComponents(benchmarkWorkspace).map((component) => ({ path: component.path, checksum: component.checksum })),
+        protocolFingerprint: report.protocolFingerprint,
+        outcomes: changeOutcomes ?? [],
+        decision: changeDecision,
+      });
+    }
     benchmarkStore.appendEvent("harness.benchmark.completed", {
       suite: "generic",
       workspace: benchmarkWorkspace,
