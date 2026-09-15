@@ -45,7 +45,7 @@ unavailable and no model request is started.
 
 If Codex is installed outside `PATH`, set `EVIDRA_CODEX_BIN` to the executable
 path. Evidra uses that same binary for login, model discovery, steering, and
-SDK-backed turns.
+SDK-backed turns; `/doctor` reports the resolved binary as well.
 
 ## 2. The Codex-first TUI
 

@@ -51,7 +51,7 @@ import { createBlendCandidate, diversityReport, loadPredictionVector, safePredic
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
-import { checkProvider, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listLocalModels, providerRetryAfterMs, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listLocalModels, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -491,10 +491,13 @@ program.command("backup")
 
 program.command("doctor").description("Check local providers, runtimes, and execution backends").action(async () => {
   const checks: string[] = [`workspace     ${root}`, `node          ${process.versions.node}`];
-  for (const command of ["git", "uv", "codex", "ollama", "modal", "docker", "podman"]) {
+  for (const command of ["git", "uv", "ollama", "modal", "docker", "podman"]) {
     const result = await runProcess(["which", command], root, 5_000);
     checks.push(`${command.padEnd(13)}${result.exitCode === 0 ? result.stdout.trim() : "not found"}`);
   }
+  const codexPath = resolveCodexBinary();
+  const codexResult = await runProcess(["which", codexPath], root, 5_000);
+  checks.push(`codex        ${codexResult.exitCode === 0 ? codexResult.stdout.trim() : "not found"} (${codexPath})`);
   checks.push(`codex auth    ${codexLoginStatus() || "not authenticated"}`);
   try {
     const models = await listLocalModels();

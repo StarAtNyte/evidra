@@ -29,7 +29,7 @@ import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoal
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
-import { checkProvider, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, resolveStartupProvider, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveStartupProvider, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { boundedPeerBoard, runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
@@ -2731,12 +2731,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request === "/doctor") {
       const checks: string[] = [`node ${process.versions.node}`, `cwd ${root}`];
-      for (const command of ["git", "uv", "codex", "docker", "podman"]) {
+      for (const command of ["git", "uv", "docker", "podman"]) {
         try {
           const result = await runProcess(["which", command], root, 5_000);
           checks.push(`${command}: ${result.exitCode === 0 ? result.stdout.trim() : "not found"}`);
         } catch { checks.push(`${command}: unavailable`); }
       }
+      const codexPath = resolveCodexBinary();
+      try {
+        const result = await runProcess(["which", codexPath], root, 5_000);
+        checks.push(`codex: ${result.exitCode === 0 ? result.stdout.trim() : "not found"} (${codexPath})`);
+      } catch { checks.push(`codex: unavailable (${codexPath})`); }
       try { await listLocalModels(); checks.push("ollama: reachable"); } catch { checks.push("ollama: unavailable"); }
       checks.push(`modal: ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}`);
       append("assistant", `Evidra doctor\n${checks.map((check) => `  ${check}`).join("\n")}`);
