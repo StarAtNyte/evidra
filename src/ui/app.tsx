@@ -890,6 +890,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const toolTrace = createToolTraceRecorder(tracePrefix, { onEvent: (event) => {
       try { appendFileSync(tracePath, `${JSON.stringify(event)}\n`, "utf8"); } catch { /* Partial trace persistence is best-effort. */ }
     } });
+    const recordAgentUsage = (usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningOutputTokens?: number } | undefined, provider: string, model: string, role: string): void => {
+      const usageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      usageStore.appendEvent("research.agent.usage", { role, provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, cacheWriteInputTokens: usage?.cacheWriteInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens });
+      usageStore.close();
+    };
     try {
       activeSteer.current = null;
       setProgress(`Research 3/4 · route ${route.tier} · ${route.reasoningEffort} reasoning · investigating...`);
@@ -931,6 +936,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         onToolResult: toolTrace.onToolResult,
         onActivity: toolTrace.onActivity,
         onAssistant: toolTrace.onAssistant,
+        onUsage: recordAgentUsage,
       });
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
       setProgress("Research 4/4 · director is cross-pollinating lane findings...");
@@ -974,6 +980,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         onToolResult: toolTrace.onToolResult,
         onActivity: toolTrace.onActivity,
         onAssistant: toolTrace.onAssistant,
+        onUsage: recordAgentUsage,
       }, setProgress);
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
       criticReview = await runResearchCritic(objective, decision, laneReports, {
@@ -989,6 +996,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         onProgress: setProgress,
         onActivity: toolTrace.onActivity,
         onAssistant: toolTrace.onAssistant,
+        onUsage: recordAgentUsage,
       });
       activeProcess.current = null;
       activeSteer.current = null;

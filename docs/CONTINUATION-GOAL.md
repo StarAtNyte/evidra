@@ -368,6 +368,9 @@ external evaluator.
   keeping long-session cost and prompt-cache diagnostics complete.
 - Cache-write usage now flows through durable agent-usage events, aggregate
   summaries, CLI status, and TUI usage output instead of stopping at parsing.
+- TUI-started research cycles now record the same provider usage events as the
+  CLI for lanes, director, and critic, restoring cross-interface accounting
+  parity.
 
 ## Immediate next work
 
