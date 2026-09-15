@@ -1922,6 +1922,17 @@ test("baseline evidence is persisted as checksummed artifacts", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("legacy baseline evidence falls back to the configured primary metric", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-legacy-baseline-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    recordBaselineEvidence(store, root, { command: ["true"], cwd: root, exitCode: 0, durationMs: 1, stdout: "", stderr: "" }, 0.7);
+    const event = store.eventsByType("baseline.completed")[0];
+    assert.deepEqual(event.payload.metrics, {});
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("evidence audit rejects missing declared artifact files", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-audit-"));
   try {

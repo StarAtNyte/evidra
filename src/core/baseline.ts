@@ -27,7 +27,7 @@ export function recordBaselineEvidence(
   root: string,
   result: ProcessResult,
   metric: number | null,
-  metrics: Record<string, number> = metric === null ? {} : { primary: metric },
+  metrics: Record<string, number> = {},
   metricsByFold: Record<string, number[]> = {},
 ): BaselineEvidence {
   const runId = `baseline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
