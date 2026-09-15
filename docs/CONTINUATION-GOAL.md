@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `e3ba4df`.
+- Latest pushed commit: `0173b9b`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -408,6 +408,9 @@ external evaluator.
 - Codex model discovery now handles an app-server process that exits before
   JSON-RPC requests are written, converting stdin transport failures into a
   bounded actionable error instead of an unhandled TUI exception.
+- Newly created Codex threads are tagged `evidra-chat`, `evidra-research`, or
+  `evidra-experiment` according to their controller route, preserving route
+  identity in Codex session telemetry and recovery diagnostics.
 
 ## Immediate next work
 

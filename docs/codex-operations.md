@@ -8,7 +8,9 @@ terminal transcript as state.
 
 ## Runtime model
 
-There are three distinct Codex uses:
+There are three distinct Codex uses. Evidra tags newly created provider
+threads as `evidra-chat`, `evidra-research`, or `evidra-experiment`, so Codex
+session telemetry can distinguish them after a restart:
 
 1. **Conversation** — ordinary text is a normal Codex chat turn. It does not
    inspect the repository or start research.
