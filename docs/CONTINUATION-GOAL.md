@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `9bbab86` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `8237af2` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -97,6 +97,9 @@ external evaluator.
 - Research context now separates active claims from invalidated/superseded
   `quarantinedClaims`; stale evidence remains auditable and useful as negative
   evidence without being presented as current truth.
+- Each bounded memory packet is fingerprinted and recorded as
+  `research.memory.retrieved`, making retrieval independently replayable and
+  diagnosable.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
