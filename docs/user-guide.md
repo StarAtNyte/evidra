@@ -222,6 +222,9 @@ lose resume context.
 Checkpoint updates are applied to the live campaign state before subsequent
 pause, approval, budget, or completion writes, preventing those transitions from
 erasing the saved resume position.
+Both interfaces use the same validated checkpoint constructor, so campaign
+metadata remains format-compatible when inspected or resumed through either
+entry point.
 
 Independent lanes explore different formulations and roles. Their evidence is
 cross-pollinated through a bounded board, while shared citations are not

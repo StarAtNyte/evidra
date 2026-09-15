@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `21f34de`.
+- Latest pushed commit: `2a51aa2`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -171,6 +171,8 @@ external evaluator.
 - TUI checkpoint updates now mutate live campaign state before later writes, so
   pause, approval, budget, and completion transitions cannot erase resume
   metadata.
+- CLI and TUI now share one validated checkpoint constructor, preventing their
+  durable campaign metadata formats from drifting.
 - Codex structured-output schemas now cover the research director, independent
   research lanes, and critic, so every research-role response is constrained
   before durable parsing and evidence gates.

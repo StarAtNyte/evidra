@@ -261,6 +261,7 @@ Implemented today:
 - resume explicitly records and reports invalid saved checkpoints before returning to a safe cycle boundary, preserving operator visibility instead of silently discarding progress metadata;
 - the interactive TUI now writes the same research, execution, and cycle-complete checkpoints as the CLI, keeping Codex campaigns resumable regardless of entry point;
 - TUI checkpoint updates mutate the live campaign state before later persistence, so pause, approval, budget, and completion writes cannot erase resume metadata;
+- CLI and TUI now share one validated checkpoint constructor, preventing their durable campaign metadata formats from drifting;
 - local research lanes can use a bounded heterogeneous Ollama pool: installed local models are discovered at campaign start, assigned deterministically across independent roles, and the actual model used by every lane is recorded for replay and routing analysis;
 - independently replicated methods are also distilled into ranked, provenance-linked playbook leads with explicit transfer failure modes; playbooks guide new research but never count as current-workspace proof;
 - failed, invalid, rejected, and blocked experiment directions are retained as ranked negative experience, so future cycles must change the route instead of repeating an unchanged failure;
