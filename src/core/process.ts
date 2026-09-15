@@ -51,6 +51,7 @@ export function runProcess(
     let paused = false;
     let settled = false;
     let processExited = false;
+    let interrupted = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let forceTimer: ReturnType<typeof setTimeout> | undefined;
     let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
@@ -75,6 +76,13 @@ export function runProcess(
       },
       get paused() { return paused; },
     };
+    const signalHandler = (): void => {
+      if (settled || processExited) return;
+      interrupted = true;
+      control.terminate();
+    };
+    process.once("SIGINT", signalHandler);
+    process.once("SIGTERM", signalHandler);
     const earlyStoppingMonitor = earlyStopping?.enabled ? new EarlyStoppingMonitor(earlyStopping, earlyStopping.reference) : undefined;
     let earlyStopReason: string | undefined;
     onProcess?.(control);
@@ -85,7 +93,10 @@ export function runProcess(
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      resolve(earlyStopReason ? { ...result, stderr: `${result.stderr}\nEarly stopped by Evidra: ${earlyStopReason}` } : result);
+      process.removeListener("SIGINT", signalHandler);
+      process.removeListener("SIGTERM", signalHandler);
+      const withReason = earlyStopReason ? { ...result, stderr: `${result.stderr}\nEarly stopped by Evidra: ${earlyStopReason}` } : result;
+      resolve(interrupted ? { ...withReason, exitCode: 130, stderr: `${withReason.stderr}\nInterrupted by Evidra.` } : withReason);
     };
 
     const fail = (error: Error): void => {
@@ -94,6 +105,8 @@ export function runProcess(
       if (timer) clearTimeout(timer);
       if (forceTimer) clearTimeout(forceTimer);
       if (cleanupTimer) clearTimeout(cleanupTimer);
+      process.removeListener("SIGINT", signalHandler);
+      process.removeListener("SIGTERM", signalHandler);
       reject(error);
     };
 

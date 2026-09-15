@@ -3405,6 +3405,13 @@ test("process interruption escalates when a worker ignores SIGTERM", async () =>
   assert(Date.now() - started < 5_000);
 });
 
+test("SIGINT marks the process result interrupted and kills its detached group", async () => {
+  const promise = runProcess([process.execPath, "-e", "setTimeout(() => process.kill(process.ppid, 'SIGINT'), 40); setInterval(() => {}, 30000)"], process.cwd(), 30_000);
+  const result = await promise;
+  assert.equal(result.exitCode, 130);
+  assert.match(result.stderr, /Interrupted by Evidra/);
+});
+
 test("normal process completion cleans up launcher descendants", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-process-cleanup-"));
   const pidFile = join(root, "worker.pid");
