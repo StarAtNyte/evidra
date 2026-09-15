@@ -547,6 +547,8 @@ The event log records observations, tool calls, source retrieval, queue claims, 
 
 Evidence claims are validated at the SQLite boundary. Every claim requires a statement, scope, confidence, source type, source identifier, and lifecycle status; literature claims are rejected unless their source was retrieved and stored. Additional provenance such as excerpts, findings, reports, and artifact references is retained alongside the validated core.
 
+Source discovery is provenance-aware but deliberately not gullible. Scholarly works, official references, implementation repositories, and generic discovery pages receive separate evidence classes and conservative routing scores. Deep searches use a small diversity bonus to avoid filling the frontier with one provider's near-duplicates; retrieval, extracted claims, and independent evaluation are still required before a source can support a conclusion. Retrieved text is untrusted content, and instruction-like sentences are excluded from durable claim extraction.
+
 The store also performs a conservative consistency pass: exact duplicates are recorded for review, and only strongly overlapping statements with explicit negation receive a `contradicts` graph edge. These findings never invalidate or promote a claim automatically; inspect them with `/graph` or the generated report.
 
 Unresolved evidence conflicts feed back into autonomous allocation: the next research cycle prioritizes source review and independent falsification before spending compute on another hypothesis.
