@@ -2511,7 +2511,7 @@ research
         && Boolean(adapter.config.execution?.reducedValidationCommand)
         && portfolioPlan.halving.feasible
         && portfolioPlan.halving.stages.length > 1;
-      const screenedCandidates: Array<{ experimentId: string; metric?: number; valid: boolean }> = [];
+      const screenedCandidates: Array<{ experimentId: string; metric?: number; metrics: Record<string, number>; valid: boolean }> = [];
       const executedPortfolioExperiments: Array<{ candidateId: string; experimentId: string }> = [];
       const finalizeAutonomousRun = async (experimentId: string, run: { exitCode: number; stdout: string; stderr: string }): Promise<void> => {
         const completionStore = new ResearchStore(statePath);
@@ -2694,10 +2694,13 @@ research
                 run = await runCampaignExperiment(root, experimentId, "reduced", campaignRemainingMs(campaign));
                 const screenStore = new ResearchStore(statePath);
                 const screenEvent = screenStore.eventsByType("experiment.screening.completed").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === experimentId);
-                const screenPayload = screenEvent?.payload as { metric?: unknown } | undefined;
+                const screenPayload = screenEvent?.payload as { metric?: unknown; metrics?: unknown } | undefined;
                 const metric = typeof screenPayload?.metric === "number" && Number.isFinite(screenPayload.metric) ? screenPayload.metric : undefined;
-                screenedCandidates.push({ experimentId, metric, valid: run.exitCode === 0 && metric !== undefined });
-                screenStore.appendEvent(run.exitCode === 0 ? "experiment.autonomous.screened" : "experiment.autonomous.screening_failed", { experimentId, metric: metric ?? null, exitCode: run.exitCode });
+                const metrics = screenPayload?.metrics && typeof screenPayload.metrics === "object" && !Array.isArray(screenPayload.metrics)
+                  ? Object.fromEntries(Object.entries(screenPayload.metrics as Record<string, unknown>).filter(([, value]) => typeof value === "number" && Number.isFinite(value)) as Array<[string, number]>)
+                  : metric === undefined ? {} : { [adapter.config.metric.name]: metric };
+                screenedCandidates.push({ experimentId, metric, metrics, valid: run.exitCode === 0 && metric !== undefined });
+                screenStore.appendEvent(run.exitCode === 0 ? "experiment.autonomous.screened" : "experiment.autonomous.screening_failed", { experimentId, metric: metric ?? null, metrics, exitCode: run.exitCode });
                 screenStore.close();
                 return;
               }
@@ -2742,7 +2745,17 @@ research
       }
       if (halvingEnabled) {
         const screeningStage = portfolioPlan.halving.stages[0];
-        const promoted = promoteHalvingStage(screeningStage, screenedCandidates.map((candidate) => ({ id: candidate.experimentId, metric: candidate.metric, valid: candidate.valid })), adapter.config.metric.direction);
+        const objectiveDefinitions = [{ name: adapter.config.metric.name, direction: adapter.config.metric.direction }, ...(adapter.config.secondaryMetrics ?? [])];
+        const objectiveNames = objectiveDefinitions.length > 1 ? objectiveDefinitions.map((objective) => objective.name) : [];
+        const promoted = promoteHalvingStage(screeningStage, screenedCandidates.map((candidate) => ({
+          id: candidate.experimentId,
+          metric: candidate.metric,
+          valid: candidate.valid,
+          ...(objectiveNames.length ? { objectiveValues: Object.fromEntries(objectiveDefinitions.flatMap((objective) => {
+            const value = candidate.metrics[objective.name];
+            return typeof value === "number" && Number.isFinite(value) ? [[objective.name, objective.direction === "maximize" ? value : -value]] : [];
+          })) } : {}),
+        })), adapter.config.metric.direction, objectiveNames);
         const promotionStore = new ResearchStore(statePath);
         promotionStore.appendEvent("research.portfolio.screening_promoted", { cycle, stage: screeningStage.index, candidates: screenedCandidates, promoted, retainCount: screeningStage.retainCount, direction: adapter.config.metric.direction });
         promotionStore.close();
@@ -3185,7 +3198,7 @@ experiment.command("run")
       if (options.reducedOnly) {
         const screenedStore = new ResearchStore(statePath);
         screenedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "screened", reducedRunId: reduced.runId, reducedMetric: reduced.metrics[adapter.config.metric.name] ?? null, executionPlan } });
-        screenedStore.appendEvent("experiment.screening.completed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[adapter.config.metric.name] ?? null, command: reducedCommand });
+        screenedStore.appendEvent("experiment.screening.completed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[adapter.config.metric.name] ?? null, metrics: reduced.metrics, command: reducedCommand });
         screenedStore.close();
         console.log(`Experiment ${id}: reduced screening completed`);
         console.log(`Run: ${reduced.runId}`);

@@ -107,9 +107,9 @@ export function promoteHalvingStage(
       .map((outcome) => outcome.id);
   }
 
-  // Objective vectors are supplied in a common higher-is-better scale by the
-  // evaluator. Rank Pareto fronts first; a vector sum only breaks ties within
-  // a front and does not turn differently scaled objectives into a fake score.
+  // Objective vectors are supplied in a common higher-is-better direction by
+  // the evaluator. Rank Pareto fronts first; ties preserve manifest order and
+  // never turn differently scaled objectives into a fake weighted score.
   const vectors = eligible.filter((outcome) => objectiveNames.every((name) => Number.isFinite(outcome.objectiveValues?.[name])));
   const dominates = (left: HalvingOutcome, right: HalvingOutcome): boolean => {
     const leftValues = objectiveNames.map((name) => left.objectiveValues![name]);
@@ -126,9 +126,7 @@ export function promoteHalvingStage(
     .sort((left, right) => {
       const rankDifference = front.get(left.id)! - front.get(right.id)!;
       if (rankDifference) return rankDifference;
-      const leftSum = objectiveNames.reduce((sum, name) => sum + left.objectiveValues![name], 0);
-      const rightSum = objectiveNames.reduce((sum, name) => sum + right.objectiveValues![name], 0);
-      return rightSum - leftSum || (order.get(left.id)! - order.get(right.id)!);
+      return order.get(left.id)! - order.get(right.id)!;
     })
     .slice(0, stage.retainCount)
     .map((outcome) => outcome.id);
