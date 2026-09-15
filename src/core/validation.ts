@@ -19,7 +19,10 @@ export function validateEvaluationMatrix(manifest: Pick<ExperimentManifest, "eva
   const observed = new Set(cells.map((cell) => `${cell.fold}:${cell.seed}`));
   const expectedCells = manifest.evaluation.folds.flatMap((fold) => manifest.evaluation.seeds.map((seed) => `${fold}:${seed}`));
   const missing = expectedCells.filter((key) => !observed.has(key));
-  const invalidMetric = cells.filter((cell) => typeof cell.metrics[metricName] !== "number" || !Number.isFinite(cell.metrics[metricName])).map((cell) => `${cell.fold}:${cell.seed}`);
+  const objectiveNames = [...new Set([metricName, ...(manifest.evaluation.metrics ?? []).map((objective) => objective.name)].filter(Boolean))];
+  const invalidMetric = cells.flatMap((cell) => objectiveNames
+    .filter((name) => typeof cell.metrics[name] !== "number" || !Number.isFinite(cell.metrics[name]))
+    .map((name) => `${cell.fold}:${cell.seed}:${name}`));
   return { valid: missing.length === 0 && invalidMetric.length === 0 && cells.length === observed.size && observed.size === expectedCells.length, expected: expectedCells.length, observed: observed.size, missing, invalidMetric };
 }
 
@@ -34,6 +37,12 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
       && verification.failed === 0
       && (declaredVerifiers < 2 || verification.independent === true);
   const matrix = validateEvaluationMatrix(manifest, run, context.metricName ?? "");
+  const declaredMetricNames = [...new Set([context.metricName, ...(manifest.evaluation.metrics ?? []).map((objective) => objective.name)].filter((name): name is string => Boolean(name)))];
+  const metricsRecomputed = manifest.outcomeType !== "metric" && manifest.outcomeType !== undefined
+    ? run.status === "completed"
+    : declaredMetricNames.length
+      ? declaredMetricNames.every((name) => typeof run.metrics[name] === "number" && Number.isFinite(run.metrics[name]))
+      : Object.keys(run.metrics).length > 0;
   const gates = {
     validCommit: manifest.gitCommit === context.currentCommit,
     datasetMatch: manifest.datasetVersion === context.datasetVersion,
@@ -45,9 +54,7 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
       return !expectedChecksum || sha256File(path) === expectedChecksum;
     }),
     predictionsValid: run.status === "completed" && run.exitCode === 0,
-    metricsRecomputed: manifest.outcomeType !== "metric" && manifest.outcomeType !== undefined ? run.status === "completed" : context.metricName
-      ? typeof run.metrics[context.metricName] === "number" && Number.isFinite(run.metrics[context.metricName])
-      : Object.keys(run.metrics).length > 0,
+    metricsRecomputed,
     leakageAuditPassed: context.leakageAuditPassed ?? false,
     reviewerApproved: context.reviewerApproved ?? false,
     verifiersPassed,

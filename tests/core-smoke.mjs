@@ -2841,6 +2841,31 @@ test("evaluation matrix protocol requires exact fold-seed coverage", () => {
   assert.equal(validateEvaluationMatrix(manifest, { matrix: [...matrix, matrix[0]] }, "score").valid, false);
 });
 
+test("evaluation matrix and evidence audit require every declared objective", () => {
+  const manifest = {
+    id: "multi-objective", gitCommit: "commit", datasetVersion: "data", splitVersion: "split",
+    change: { configPatch: {} }, resources: { executor: "local", timeoutMinutes: 1 },
+    evaluation: { folds: [0], seeds: [17, 41], matrixRequired: true, requiredArtifacts: [], metrics: [
+      { name: "score", direction: "maximize", minimumDelta: 0, maximumRegression: 0 },
+      { name: "safety", direction: "maximize", minimumDelta: 0, maximumRegression: 0 },
+    ] },
+    acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 1, requireReplication: false }, createdAt: new Date().toISOString(),
+  };
+  const matrix = { matrix: [
+    { fold: 0, seed: 17, metrics: { score: 0.8, safety: 0.9 } },
+    { fold: 0, seed: 41, metrics: { score: 0.81 } },
+  ] };
+  const coverage = validateEvaluationMatrix(manifest, matrix, "score");
+  assert.equal(coverage.valid, false);
+  assert.deepEqual(coverage.invalidMetric, ["0:41:safety"]);
+  const audit = auditExperiment(manifest, {
+    runId: "run", status: "completed", exitCode: 0, durationSeconds: 1,
+    metrics: { score: 0.805 }, matrix: matrix.matrix, artifacts: {},
+  }, { currentCommit: "commit", datasetVersion: "data", splitVersion: "split", metricName: "score", leakageAuditPassed: true, reviewerApproved: true });
+  assert.equal(audit.gates.metricsRecomputed, false);
+  assert.equal(audit.gates.evaluationCoverage, false);
+});
+
 test("matrix-only worker output derives the aggregate primary metric", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-matrix-worker-"));
   try {
