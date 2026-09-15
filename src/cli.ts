@@ -52,7 +52,7 @@ import { createBlendCandidate, diversityReport, loadPredictionVector, safePredic
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
-import { checkProvider, codexLoginStatus, codexResearchModelPool, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listCodexModels, listLocalModels, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, codexResearchModelPool, CodexExecAgent, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listCodexModels, listLocalModels, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -1151,7 +1151,8 @@ airsBenchmark.command("discover")
 airsBenchmark.command("execute")
   .argument("<task-path>", "task directory relative to the AIRS repository")
   .requiredOption("--global-data <dir>", "AIRS shared dataset directory")
-  .requiredOption("--agent <command>", "shell-free agent command, e.g. 'python3 agent.py'")
+  .option("--agent <command>", "shell-free agent command, e.g. 'python3 agent.py'")
+  .option("--codex", "use the authenticated Evidra Codex SDK as the agent")
   .option("--prepare <path>", "prepare.py path; defaults to <task-path>/prepare.py")
   .option("--evaluate-prepare <path>", "evaluate_prepare.py path; defaults to <task-path>/evaluate_prepare.py")
   .option("--evaluate <path>", "evaluate.py path; defaults to <task-path>/evaluate.py")
@@ -1163,8 +1164,26 @@ airsBenchmark.command("execute")
   .option("--effort <effort>", "reasoning effort metadata exposed to the agent", "medium")
   .option("--timeout <minutes>", "per-stage timeout", "30")
   .description("Run one AIRS task through prepare, agent, evaluator preparation, and official evaluation")
-  .action(async (taskPath: string, options: { globalData: string; agent: string; prepare?: string; evaluatePrepare?: string; evaluate?: string; workspace: string; python: string; metric?: string; model: string; seed: string; effort: string; timeout: string }) => {
+  .action(async (taskPath: string, options: { globalData: string; agent?: string; codex?: boolean; prepare?: string; evaluatePrepare?: string; evaluate?: string; workspace: string; python: string; metric?: string; model: string; seed: string; effort: string; timeout: string }) => {
+    if (!options.agent && !options.codex) throw new Error("Choose --agent <command> or --codex.");
     const taskDir = taskPath.replace(/\/$/, "");
+    const lifecycleWorkspace = resolve(options.workspace);
+    const agentRunner = options.codex ? async (context: { workspace: string; agentDataDir: string; agentLogDir: string; taskPath: string; timeoutMs: number; onProgress?: (message: string) => void }) => {
+      await checkProvider({ provider: "codex", model: options.model, cwd: context.workspace });
+      const taskDescription = resolve(process.cwd(), taskDir, "project_description.md");
+      const agent = new CodexExecAgent({
+        provider: "codex", model: options.model, cwd: context.workspace,
+        reasoningEffort: options.effort, sandbox: "workspace-write", networkAccessEnabled: false,
+        timeoutMs: context.timeoutMs,
+      });
+      const started = Date.now();
+      const response = await agent.run({
+        role: "experiment engineer",
+        objective: `Solve the AIRS-Bench task autonomously. Read the task specification at ${taskDescription}. Work only inside ${context.workspace}. Use the prepared data in ${context.agentDataDir}; do not access hidden labels or test_with_labels. Run justified train/validation experiments within the time budget. You MUST create the final submission at ${join(context.agentLogDir, "submission.csv")} in the exact format required by the task. Before finishing, run a command that verifies this file exists, has the expected header and row count, and can be consumed by the evaluator. Do not submit externally and do not finish with only an explanation: the required submission artifact is the deliverable.`,
+        context: { taskPath: context.taskPath, taskDescription, agentDataDir: context.agentDataDir, agentLogDir: context.agentLogDir, model: options.model, seed: options.seed, effort: options.effort },
+      }, context.onProgress);
+      return { command: ["codex-sdk", "airs-agent"], cwd: context.workspace, exitCode: 0, durationMs: Date.now() - started, stdout: typeof response.output === "string" ? response.output : JSON.stringify(response.output), stderr: "" };
+    } : undefined;
     const result = await runAirsTaskLifecycle({
       repository: process.cwd(),
       taskPath: taskDir,
@@ -1172,9 +1191,10 @@ airsBenchmark.command("execute")
       evaluatePreparePath: options.evaluatePrepare ?? join(taskDir, "evaluate_prepare.py"),
       evaluatePath: options.evaluate ?? join(taskDir, "evaluate.py"),
       globalSharedDataDir: options.globalData,
-      agentCommand: parseAirsAgentCommand(options.agent),
+      ...(options.agent ? { agentCommand: parseAirsAgentCommand(options.agent) } : {}),
+      ...(agentRunner ? { agentRunner } : {}),
       python: options.python,
-      workspace: resolve(options.workspace),
+      workspace: lifecycleWorkspace,
       timeoutMs: Math.max(1_000, Number(options.timeout) * 60_000),
       metric: options.metric ?? "Accuracy",
       model: options.model,

@@ -121,6 +121,17 @@ evidra benchmark airs execute airsbench/tasks/rad/TextualClassificationSickAccur
   --workspace .sota/airs-sick-agent
 ```
 
+With an authenticated Codex account, the agent stage can instead use Evidra's
+embedded Codex SDK route. It receives the same isolated workspace and is
+required to write the task submission before the official evaluator runs:
+
+```bash
+evidra benchmark airs execute airsbench/tasks/rad/TextualClassificationSickAccuracy \
+  --global-data /path/to/airs-bench/datasets/datasets_download_location \
+  --codex --model gpt-5.6-luna --effort medium \
+  --workspace .sota/airs-sick-codex
+```
+
 The adapter is intentionally task-agnostic; custom AIRS task layouts can
 override the three script paths with `--prepare`, `--evaluate-prepare`, and
 `--evaluate`.
@@ -131,6 +142,15 @@ The adapter was exercised against the locally prepared SICK task on
 This confirms the real preparation → agent mount → evaluator preparation →
 official evaluation path; it is a baseline reproduction, not a claim of agent
 quality or leaderboard performance.
+
+A bounded embedded-Codex probe was also attempted with `gpt-5.6-luna` at
+medium effort. Codex authenticated and entered the isolated workspace, but
+repeatedly inspected the working directory without producing the required
+submission; the operator interrupted it before the five-minute agent budget
+expired. Evidra now treats a missing submission as an immediate `agent`-stage
+failure and does not spend evaluator time on an invalid run. This is useful
+negative evidence for improving the task prompt and agent progress watchdog,
+not a benchmark score.
 
 ```bash
 git clone https://github.com/facebookresearch/airs-bench.git

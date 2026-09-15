@@ -11,7 +11,8 @@ export interface AirsTaskLifecycleOptions {
   evaluatePreparePath: string;
   evaluatePath: string;
   globalSharedDataDir: string;
-  agentCommand: string[];
+  agentCommand?: string[];
+  agentRunner?: (context: { workspace: string; agentDataDir: string; agentLogDir: string; taskPath: string; timeoutMs: number; onProgress?: (message: string) => void }) => Promise<ProcessResult>;
   python?: string;
   workspace: string;
   timeoutMs: number;
@@ -54,7 +55,7 @@ function scriptPath(repository: string, value: string, label: string): string {
  * controller credentials and home directory are never inherited.
  */
 export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): Promise<AirsTaskLifecycleResult> {
-  if (!options.agentCommand.length) throw new Error("AIRS agent command must not be empty.");
+  if (!options.agentCommand?.length && !options.agentRunner) throw new Error("AIRS agent command or embedded agent runner must be supplied.");
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) throw new Error("AIRS lifecycle timeout must be positive.");
   const repository = realpathSync(resolve(options.repository));
   const taskPath = scriptPath(repository, options.taskPath, "AIRS task path");
@@ -91,14 +92,32 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
   };
   const prepare = await runStage("prepare", [python, preparePath, "--global-shared-data-dir", globalSharedDataDir, "--agent-data-mount-dir", agentDataDir, "--agent-log-dir", agentLogDir], repository);
   if (prepare.exitCode !== 0) return { valid: false, metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "prepare" };
-  const agent = await runStage("agent", options.agentCommand, lifecycleRoot);
+  let agent: ProcessResult;
+  if (options.agentRunner) {
+    options.onProgress?.("AIRS · agent");
+    try { agent = await options.agentRunner({ workspace: lifecycleRoot, agentDataDir, agentLogDir, taskPath, timeoutMs: options.timeoutMs, onProgress: options.onProgress }); }
+    catch (error) { agent = processFailureResult(["<embedded-agent>"], lifecycleRoot, error); }
+    stages.push({ stage: "agent", result: agent });
+  } else {
+    agent = await runStage("agent", options.agentCommand!, lifecycleRoot);
+  }
   if (agent.exitCode !== 0) return { valid: false, metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "agent" };
+  const submissionPath = join(agentLogDir, "submission.csv");
+  if (!existsSync(submissionPath)) {
+    const failure: ProcessResult = {
+      ...agent,
+      exitCode: 66,
+      stderr: `${agent.stderr}\nAgent completed without creating the required submission artifact: ${submissionPath}`.trim(),
+    };
+    stages[stages.length - 1] = { stage: "agent", result: failure };
+    return { valid: false, metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "agent" };
+  }
   const evaluatePrepare = await runStage("evaluate_prepare", [python, evaluatePreparePath, "--global-shared-data-dir", globalSharedDataDir, "--agent-data-mount-dir", agentDataDir, "--agent-log-dir", agentLogDir], repository);
   if (evaluatePrepare.exitCode !== 0) return { valid: false, metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "evaluate_prepare" };
   // AIRS evaluators conventionally resolve ./data/test_with_labels from the
   // agent workspace, while the preparation stage mounts that directory as
   // <workspace>/data. Keep evaluator cwd aligned with the official layout.
-  const evaluate = await runStage("evaluate", [python, evaluatePath, "--submission-file", join(agentLogDir, "submission.csv")], lifecycleRoot);
+  const evaluate = await runStage("evaluate", [python, evaluatePath, "--submission-file", submissionPath], lifecycleRoot);
   const metrics = parseMetricOutput(evaluate.stdout, options.metric).metrics;
   const metric = metrics[options.metric];
   return {
