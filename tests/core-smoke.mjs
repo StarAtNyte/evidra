@@ -3590,6 +3590,14 @@ test("benchmark runner enforces and preserves general metric suites", async () =
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("benchmark protocol preserves provider provenance and rejects cross-provider pairing", () => {
+  const base = { task: "task-a", arm: "default", seed: 1, model: "same-model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, validRun: true, durationSeconds: 1, recovered: false, reproducible: true };
+  const report = validateBenchmarkProtocol([{ harness: "evidra", provider: "codex", ...base }, { harness: "other", provider: "local", ...base }]);
+  assert.equal(report.valid, false);
+  assert.ok(report.issues.some((issue) => issue.field === "provider"));
+  assert.notEqual(benchmarkProtocolFingerprint([{ harness: "evidra", provider: "codex", metric: "score", command: ["a"], ...base }]), benchmarkProtocolFingerprint([{ harness: "evidra", provider: "local", metric: "score", command: ["a"], ...base }]));
+});
+
 test("benchmark workers do not inherit controller credentials", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-env-"));
   const previous = process.env.OPENAI_API_KEY;

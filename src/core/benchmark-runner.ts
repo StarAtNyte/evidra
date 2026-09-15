@@ -18,6 +18,8 @@ export interface BenchmarkArmSpec {
   slice?: string;
   arm: string;
   seed: string | number;
+  /** Agent/provider route, e.g. codex or local; required for new cross-provider studies. */
+  provider?: string;
   model: string;
   /** Fixed reasoning/thinking effort; defaults to Evidra's medium setting. */
   reasoningEffort?: string;
@@ -72,6 +74,7 @@ export function benchmarkProtocolFingerprint(arms: BenchmarkArmSpec[]): string {
     slice: arm.slice ?? null,
     arm: arm.arm,
     seed: String(arm.seed),
+    provider: arm.provider ?? "<default-provider>",
     model: arm.model,
     reasoningEffort: arm.reasoningEffort ?? "medium",
     budgetMinutes: arm.budgetMinutes,
@@ -195,6 +198,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       arm: arm.arm,
       seed: arm.seed,
       model: arm.model,
+      ...(arm.provider ? { provider: arm.provider } : {}),
       reasoningEffort: arm.reasoningEffort ?? "medium",
       budgetMinutes: arm.budgetMinutes,
       ...(arm.dataRevision ? { dataRevision: arm.dataRevision } : {}),

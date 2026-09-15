@@ -12,6 +12,8 @@ export interface HarnessTrial {
   /** Optional protocol identity fields. Older exports remain readable. */
   arm?: string;
   seed?: string | number;
+  /** Agent/provider route used by the arm; absent means legacy/default route. */
+  provider?: string;
   model?: string;
   /** Optional matched reasoning effort; legacy reports may omit it. */
   reasoningEffort?: string;
@@ -45,7 +47,7 @@ export interface HarnessTrial {
 
 export interface BenchmarkProtocolIssue {
   key: string;
-  field: "task" | "slice" | "arm" | "seed" | "model" | "reasoningEffort" | "budgetMinutes" | "dataRevision" | "runtimeFingerprint" | "direction" | "baselineMetric" | "taskWorstMetric" | "taskBestMetric";
+  field: "task" | "slice" | "arm" | "seed" | "provider" | "model" | "reasoningEffort" | "budgetMinutes" | "dataRevision" | "runtimeFingerprint" | "direction" | "baselineMetric" | "taskWorstMetric" | "taskBestMetric";
   values: string[];
   message: string;
 }
@@ -74,7 +76,7 @@ export function validateBenchmarkProtocol(trials: HarnessTrial[]): BenchmarkProt
     if (trial.taskBestMetric !== undefined && !Number.isFinite(trial.taskBestMetric)) {
       issues.push({ key: `${trial.task}:${trial.arm ?? ""}`, field: "taskBestMetric", values: [String(trial.taskBestMetric)], message: "Task normalization bounds must be finite numbers." });
     }
-    const key = [trial.task, trial.arm ?? "", trial.seed ?? "", trial.model ?? "", trial.budgetMinutes ?? ""].join("\u001f");
+    const key = [trial.task, trial.arm ?? "", trial.seed ?? "", trial.provider ?? "", trial.model ?? "", trial.budgetMinutes ?? ""].join("\u001f");
     groups.set(key, [...(groups.get(key) ?? []), trial]);
   }
 
@@ -105,6 +107,7 @@ export function validateBenchmarkProtocol(trials: HarnessTrial[]): BenchmarkProt
       ["slice", (trial) => trial.slice ?? "<unscoped>"],
       ["arm", (trial) => trial.arm === undefined ? "<missing>" : String(trial.arm)],
       ["seed", (trial) => trial.seed === undefined ? "<missing>" : String(trial.seed)],
+      ["provider", (trial) => trial.provider ?? "<default-provider>"],
       ["model", (trial) => trial.model ?? "<missing>"],
       ["reasoningEffort", (trial) => trial.reasoningEffort ?? "<default-medium>"],
       ["budgetMinutes", (trial) => trial.budgetMinutes === undefined ? "<missing>" : String(trial.budgetMinutes)],
@@ -122,7 +125,7 @@ export function validateBenchmarkProtocol(trials: HarnessTrial[]): BenchmarkProt
     const observedHarnesses = new Set(entries.map((entry) => entry.harness));
     for (const harness of observedHarnesses) {
       const count = entries.filter((entry) => entry.harness === harness).length;
-      if (count > 1) issues.push({ key, field: "arm", values: [harness], message: `Harness '${harness}' has duplicate trials for the same task, arm, seed, model, and budget.` });
+      if (count > 1) issues.push({ key, field: "arm", values: [harness], message: `Harness '${harness}' has duplicate trials for the same task, arm, seed, provider, model, and budget.` });
     }
     if (observedHarnesses.size !== harnesses.length) {
       issues.push({ key, field: "arm", values: [...observedHarnesses].sort(), message: "Not every harness was run on this task arm." });
@@ -328,11 +331,12 @@ function taskBalancedMean(entries: Array<{ task: string; value: number }>): numb
 }
 
 function protocolKey(trial: HarnessTrial): string {
-  return [trial.task, trial.arm ?? "", trial.seed ?? "", trial.model ?? "", trial.budgetMinutes ?? ""].join("\u001f");
+  return [trial.task, trial.arm ?? "", trial.seed ?? "", trial.provider ?? "", trial.model ?? "", trial.budgetMinutes ?? ""].join("\u001f");
 }
 
 function fairPair(left: HarnessTrial, right: HarnessTrial): boolean {
   return left.direction === right.direction &&
+    left.provider === right.provider &&
     left.slice === right.slice &&
     left.baselineMetric === right.baselineMetric &&
     left.dataRevision === right.dataRevision &&
@@ -348,6 +352,7 @@ function protocolValues(trials: HarnessTrial[], read: (trial: HarnessTrial) => s
 
 function compareProtocolParity(training: HarnessTrial[], heldOut: HarnessTrial[]): string[] {
   const fields: Array<[string, (trial: HarnessTrial) => string]> = [
+    ["provider", (trial) => trial.provider ?? "<default-provider>"],
     ["model", (trial) => trial.model ?? "<missing>"],
     ["budgetMinutes", (trial) => String(trial.budgetMinutes ?? "<missing>")],
     ["direction", (trial) => trial.direction],
