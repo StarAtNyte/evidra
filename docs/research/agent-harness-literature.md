@@ -590,4 +590,6 @@ claims are intentionally ignored as proof, and later verification can revoke or
 repair an earlier result. Phase goals expose this same contract through the
 `phaseGoalSubtaskContract`/`auditPhaseGoal` adapter, so the mechanism applies to
 research, software tasks, scientific proofs, and competitions rather than a
-single benchmark format.
+single benchmark format. The CLI and TUI now persist `subtask.audit` events at
+the live phase gate before advancing a phase, making the audit visible to
+restart/recovery logic instead of leaving it as an in-memory check.

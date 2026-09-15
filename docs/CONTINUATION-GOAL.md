@@ -57,11 +57,10 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `1ea3dda` (verify with `git log`).
-- The current working change adds a generic auditable-subtask contract: phase
-  goals can expose structured acceptance criteria, and verifier/auditor
-  observations—not executor prose—determine completion. Update this line to the
-  pushed commit when handing off.
+- Latest pushed state: `origin/master` at commit `d76adbe` (verify with `git log`).
+- Generic auditable-subtask contracts are now persisted in the live CLI/TUI
+  phase-gate path as `subtask.audit` events. Required criteria only pass from
+  the domain verifier/auditor; executor prose is ignored as proof.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
