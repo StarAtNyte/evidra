@@ -5,7 +5,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "./core/experiment-manifest.js";
-import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalSetId, phaseGoalsForMode } from "./core/phase-goals.js";
+import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "./core/phase-goals.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "./core/types.js";
 import { loadCompetitionAdapter } from "./competitions/adapters.js";
 import { auditData, dataAuditFingerprint } from "./core/data-audit.js";
@@ -2655,12 +2655,16 @@ research
       decision = enforceClaimTermination(decision, claimAudit);
       if (decision !== claimGateBefore) decisionStore.appendEvent("research.claim_gate.rejected", { ...claimAudit, phase: phaseGoal?.phase ?? null });
       if (phaseGoal && decision.goalStatus === "met") {
-        const phaseEvents = decisionStore.eventsByTypes([...PHASE_GATE_EVENT_TYPES]);
+        const phaseEvents = phaseGoalEventsSince(phaseGoal, decisionStore.eventsByTypes([...PHASE_GATE_EVENT_TYPES]));
         const gate = evaluatePhaseGoalEvidence(phaseGoal, {
           mode,
           eventTypes: phaseEvents.map((event) => event.type),
           eventPayloads: phaseEvents.map((event) => ({ type: event.type, payload: event.payload })),
           ...decisionStore.counts(),
+          hypotheses: phaseGoalRecordsSince(phaseGoal, decisionStore.hypotheses()),
+          experiments: phaseGoalRecordsSince(phaseGoal, decisionStore.experiments()),
+          runs: phaseGoalRecordsSince(phaseGoal, decisionStore.runs()),
+          artifacts: phaseGoalRecordsSince(phaseGoal, decisionStore.artifacts()),
           candidateHypotheses: decision.hypotheses.length,
         });
         if (!gate.met) {
@@ -3263,12 +3267,16 @@ research.command("propose")
     decision = enforceClaimTermination(decision, claimAudit);
     if (decision !== claimGateBefore) decisionStore.appendEvent("research.claim_gate.rejected", { ...claimAudit, phase: phaseGoal?.phase ?? null });
     if (phaseGoal && decision.goalStatus === "met") {
-      const phaseEvents = decisionStore.eventsByTypes([...PHASE_GATE_EVENT_TYPES]);
+      const phaseEvents = phaseGoalEventsSince(phaseGoal, decisionStore.eventsByTypes([...PHASE_GATE_EVENT_TYPES]));
       const gate = evaluatePhaseGoalEvidence(phaseGoal, {
         mode: "research",
         eventTypes: phaseEvents.map((event) => event.type),
         eventPayloads: phaseEvents.map((event) => ({ type: event.type, payload: event.payload })),
         ...decisionStore.counts(),
+        hypotheses: phaseGoalRecordsSince(phaseGoal, decisionStore.hypotheses()),
+        experiments: phaseGoalRecordsSince(phaseGoal, decisionStore.experiments()),
+        runs: phaseGoalRecordsSince(phaseGoal, decisionStore.runs()),
+        artifacts: phaseGoalRecordsSince(phaseGoal, decisionStore.artifacts()),
         candidateHypotheses: decision.hypotheses.length,
       });
       if (!gate.met) {

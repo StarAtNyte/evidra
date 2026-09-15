@@ -174,6 +174,9 @@ external evaluator.
 - Phase goals now carry a deterministic objective-set identity; separate
   campaigns in the same mode cannot inherit another campaign's active phase
   or completion evidence, while legacy unscoped goals remain readable.
+- Phase-gate event and record counts are now bounded by the active goal-set
+  creation boundary, preventing historical hypotheses, runs, or artifacts from
+  satisfying a new campaign's phase criteria.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
 - Codex command activity now includes an exit code only when the provider

@@ -25,7 +25,7 @@ import { auditData, dataAuditFingerprint } from "../core/data-audit.js";
 import { executeResearchTool } from "../core/tools.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { retrieveSource, searchResearchSources, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
-import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalSetId, phaseGoalsForMode } from "../core/phase-goals.js";
+import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../core/phase-goals.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
@@ -1119,12 +1119,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
       gaps: decisionRubric.gaps,
       source: "tui",
     });
-    const phaseEvents = phaseGoal ? decisionStore.recentEvents(500) : [];
+    const phaseEvents = phaseGoal ? phaseGoalEventsSince(phaseGoal, decisionStore.recentEvents(500)) : [];
     const phaseEvidence = phaseGoal ? {
       mode,
       eventTypes: phaseEvents.map((event) => event.type),
       eventPayloads: phaseEvents.map((event) => ({ type: event.type, payload: event.payload })),
       ...decisionStore.counts(),
+      hypotheses: phaseGoalRecordsSince(phaseGoal, decisionStore.hypotheses()),
+      experiments: phaseGoalRecordsSince(phaseGoal, decisionStore.experiments()),
+      runs: phaseGoalRecordsSince(phaseGoal, decisionStore.runs()),
+      artifacts: phaseGoalRecordsSince(phaseGoal, decisionStore.artifacts()),
       candidateHypotheses: decision.hypotheses.length,
     } : undefined;
     const phaseGate = phaseGoal && decision.goalStatus === "met" && phaseEvidence

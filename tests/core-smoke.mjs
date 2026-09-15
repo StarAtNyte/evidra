@@ -27,7 +27,7 @@ import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist
 import { experienceReplayWorld } from "../dist/core/experience.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
-import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalSetId, phaseGoalsForMode } from "../dist/core/phase-goals.js";
+import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../dist/core/phase-goals.js";
 import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
@@ -2319,6 +2319,14 @@ test("phase goal sets isolate separate objectives within one mode", () => {
   assert.equal(phaseGoalsForMode([...first, ...second], "research", firstSet).length, first.length);
   assert.equal(phaseGoalsForMode([...first, ...second], "research", secondSet).length, second.length);
   assert.notEqual(first[0].id, second[0].id);
+});
+
+test("phase evidence excludes records from before the objective goal set", () => {
+  const goal = definePhaseGoals("new objective", "research")[0];
+  const before = new Date(Date.parse(goal.createdAt) - 1_000).toISOString();
+  const after = new Date(Date.parse(goal.createdAt) + 1_000).toISOString();
+  assert.equal(phaseGoalEventsSince(goal, [{ createdAt: before }, { createdAt: after }]).length, 1);
+  assert.equal(phaseGoalRecordsSince(goal, [{ createdAt: before }, { createdAt: after }]), 1);
 });
 
 test("evaluation phase requires a measured primary metric", () => {

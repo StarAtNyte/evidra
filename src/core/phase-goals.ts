@@ -60,6 +60,17 @@ export function phaseGoalsForMode(goals: PhaseGoal[], mode: "research" | "challe
   return modeGoals.filter((goal) => goal.goalSetId === goalSetId || goal.id.startsWith(`goal_${mode}_${goalSetId}_`));
 }
 
+/** Keep phase-gate evidence inside the objective's durable creation boundary. */
+export function phaseGoalEventsSince<T extends { createdAt: string }>(goal: Pick<PhaseGoal, "createdAt">, events: T[]): T[] {
+  const boundary = Date.parse(goal.createdAt);
+  return Number.isFinite(boundary) ? events.filter((event) => Date.parse(event.createdAt) >= boundary) : [];
+}
+
+/** Count durable records created after a phase goal began. */
+export function phaseGoalRecordsSince<T extends { createdAt: string }>(goal: Pick<PhaseGoal, "createdAt">, records: T[]): number {
+  return phaseGoalEventsSince(goal, records).length;
+}
+
 export interface PhaseGoalEvidence {
   mode?: "research" | "challenge";
   eventTypes: string[];
