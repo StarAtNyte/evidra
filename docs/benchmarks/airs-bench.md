@@ -163,6 +163,14 @@ A second run with the same model, effort, budget, task, and evaluator but seed
 the majority baseline. This is initial reproducibility evidence; it is not yet
 a multi-task or leaderboard comparison.
 
+The same generic lifecycle was exercised on the task-disjoint
+`MathQuestionAnsweringSVAMPAccuracy` task. Its public data was prepared through
+the official task script, a deterministic majority-answer agent produced the
+required `Answer` submission, and the unchanged evaluator returned
+`Accuracy = 0.07333333333333333`. This is a second-task adapter baseline; no
+Codex SVAMP score is counted because the safe Codex probe was stopped after it
+attempted to inspect paths outside its worker boundary.
+
 A bounded embedded-Codex probe was also attempted with `gpt-5.6-luna` at
 medium effort. Codex authenticated and entered the isolated workspace, but
 repeatedly inspected the working directory without producing the required

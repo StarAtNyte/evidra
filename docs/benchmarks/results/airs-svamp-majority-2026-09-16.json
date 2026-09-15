@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "benchmark": "AIRS-Bench",
+  "task": "MathQuestionAnsweringSVAMPAccuracy",
+  "taskPath": "airsbench/tasks/rad/MathQuestionAnsweringSVAMPAccuracy",
+  "provider": "deterministic-agent",
+  "model": "none",
+  "reasoningEffort": "none",
+  "seed": "0",
+  "metric": "Accuracy",
+  "direction": "maximize",
+  "baselineType": "majority-answer",
+  "candidate": 0.07333333333333333,
+  "valid": true,
+  "lifecycle": ["prepare", "agent", "evaluate_prepare", "evaluate"],
+  "evaluator": "official task evaluator, unchanged",
+  "claimBoundary": "task-disjoint adapter baseline; not agent or SOTA evidence"
+}
