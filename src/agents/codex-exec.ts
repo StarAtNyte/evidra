@@ -326,6 +326,11 @@ export class CodexExecAgent {
   private async runOllama(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
     onProgress?.("Calling local Ollama model...");
     const abort = new AbortController();
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; abort.abort(); }, this.options.timeoutMs ?? 30 * 60_000);
+    const signalHandler = (): void => { abort.abort(); };
+    process.once("SIGTERM", signalHandler);
+    process.once("SIGINT", signalHandler);
     let paused = false;
     const control: ProcessControl = {
       pause: () => { paused = true; },
@@ -334,23 +339,32 @@ export class CodexExecAgent {
       get paused() { return paused; },
     };
     onProcess?.(control);
-    const response = await fetch(process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434/api/chat", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model: this.options.model,
-        stream: false,
-        messages: [{ role: "user", content: prompt }],
-        options: { temperature: 0.2 },
-      }),
-      signal: abort.signal,
-    });
-    if (!response.ok) throw new Error(`Ollama request failed: ${response.status} ${await response.text()}`);
-    const payload = await response.json() as { message?: { content?: string } };
-    const text = payload.message?.content;
-    if (!text) throw new Error("Ollama returned no message content.");
-    onProgress?.("Completed.");
-    return { provider: "local", model: this.options.model, output: text };
+    try {
+      const response = await fetch(process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: this.options.model,
+          stream: false,
+          messages: [{ role: "user", content: prompt }],
+          options: { temperature: 0.2 },
+        }),
+        signal: abort.signal,
+      });
+      if (!response.ok) throw new Error(`Ollama request failed: ${response.status} ${await response.text()}`);
+      const payload = await response.json() as { message?: { content?: string } };
+      const text = payload.message?.content;
+      if (!text) throw new Error("Ollama returned no message content.");
+      onProgress?.("Completed.");
+      return { provider: "local", model: this.options.model, output: text };
+    } catch (error) {
+      if (abort.signal.aborted) throw new Error(timedOut ? "Local model request timed out." : "Local model request interrupted.");
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      process.removeListener("SIGTERM", signalHandler);
+      process.removeListener("SIGINT", signalHandler);
+    }
   }
 }
 
