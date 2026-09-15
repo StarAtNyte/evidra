@@ -4652,3 +4652,17 @@ test("benchmark protocol rejects mismatched reasoning effort", () => {
   assert.equal(report.valid, false);
   assert.ok(report.issues.some((issue) => issue.field === "reasoningEffort"));
 });
+
+test("benchmark protocol rejects mismatched task provenance", () => {
+  const base = {
+    harness: "a", task: "task", taskMetadata: { dataset: "v1" }, arm: "a", seed: 1,
+    model: "m", budgetMinutes: 1, direction: "maximize", baselineMetric: 0,
+    validRun: true, durationSeconds: 1, recovered: false, reproducible: true,
+  };
+  const result = validateBenchmarkProtocol([
+    base,
+    { ...base, harness: "b", taskMetadata: { dataset: "v2" } },
+  ]);
+  assert.equal(result.valid, false);
+  assert.ok(result.issues.some((issue) => issue.field === "taskMetadata"));
+});

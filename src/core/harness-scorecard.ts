@@ -111,7 +111,7 @@ export function parseHarnessTrial(value: unknown, label = "Benchmark trial"): Ha
 
 export interface BenchmarkProtocolIssue {
   key: string;
-  field: "task" | "slice" | "arm" | "seed" | "provider" | "model" | "reasoningEffort" | "budgetMinutes" | "dataRevision" | "runtimeFingerprint" | "direction" | "baselineMetric" | "taskWorstMetric" | "taskBestMetric";
+  field: "task" | "taskMetadata" | "slice" | "arm" | "seed" | "provider" | "model" | "reasoningEffort" | "budgetMinutes" | "dataRevision" | "runtimeFingerprint" | "direction" | "baselineMetric" | "taskWorstMetric" | "taskBestMetric";
   values: string[];
   message: string;
 }
@@ -122,6 +122,11 @@ export interface BenchmarkProtocolReport {
   arms: number;
   harnesses: string[];
   issues: BenchmarkProtocolIssue[];
+}
+
+function taskMetadataKey(metadata: HarnessTrial["taskMetadata"]): string {
+  if (!metadata) return "<missing>";
+  return JSON.stringify(Object.fromEntries(Object.entries(metadata).sort(([left], [right]) => left.localeCompare(right))));
 }
 
 /**
@@ -168,6 +173,7 @@ export function validateBenchmarkProtocol(trials: HarnessTrial[]): BenchmarkProt
   for (const [key, entries] of byArm) {
     const fields: Array<[BenchmarkProtocolIssue["field"], (trial: HarnessTrial) => string]> = [
       ["task", (trial) => trial.task],
+      ["taskMetadata", (trial) => taskMetadataKey(trial.taskMetadata)],
       ["slice", (trial) => trial.slice ?? "<unscoped>"],
       ["arm", (trial) => trial.arm === undefined ? "<missing>" : String(trial.arm)],
       ["seed", (trial) => trial.seed === undefined ? "<missing>" : String(trial.seed)],
@@ -400,6 +406,7 @@ function protocolKey(trial: HarnessTrial): string {
 
 function fairPair(left: HarnessTrial, right: HarnessTrial): boolean {
   return left.direction === right.direction &&
+    taskMetadataKey(left.taskMetadata) === taskMetadataKey(right.taskMetadata) &&
     left.provider === right.provider &&
     left.slice === right.slice &&
     left.baselineMetric === right.baselineMetric &&
