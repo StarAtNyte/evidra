@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `6f2a4ab`.
+- Latest pushed commit: `0211cd3`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -132,6 +132,9 @@ external evaluator.
 - Codex steering through `codex queue` is now asynchronous and timeout-bounded,
   preserving a responsive TUI while retaining durable queue fallback when
   native delivery fails.
+- Ordinary-chat provider fallback now announces the route change and clears
+  the Codex thread, preventing later Codex turns from resuming context that
+  omitted the fallback response.
 - Codex thread restoration is explicit: a new terminal starts a fresh Evidra
   chat, while `/resume <session-id>` restores the saved Codex thread and
   transcript. Provider/model changes invalidate the active chat thread.
