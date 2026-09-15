@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ResearchStore } from "./store.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "./claim-audit.js";
+import { redactCommand } from "./redaction.js";
 
 export type ReportKind = "research" | "challenge" | "final";
 
@@ -124,6 +125,20 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     const metrics = Object.entries(attempt.metrics ?? {}).map(([name, value]) => `${name}=${value}`).join(", ");
     return `- ${attempt.experimentId} · attempt ${attempt.attempt} · ${attempt.status} · ${attempt.executor}${attempt.failureClass ? ` · ${attempt.failureClass}` : ""}${metrics ? ` · metrics ${metrics}` : attempt.metric !== null ? ` · metric ${attempt.metric}` : ""}`;
   }).join("\n") : "No run attempts recorded.");
+  const reproducibleAttempts = attempts.filter((attempt) => attempt.command.length > 0).slice(-100);
+  const failedDirections = experiments.flatMap((experiment) => {
+    const status = (experiment.payload as { status?: unknown }).status;
+    return typeof status === "string" && ["failed", "invalid", "rejected", "blocked"].includes(status) ? [{ id: experiment.id, status }] : [];
+  });
+  const benchmarkUncertainty = harnessBenchmarkEvents.slice(-10).flatMap((event) => {
+    const payload = event.payload as { challenger?: string; comparisons?: Array<{ incumbent?: string; pairedLower95?: number | null; reason?: string }> };
+    return (payload.comparisons ?? []).map((comparison) => `- ${payload.challenger ?? "unknown"} vs ${comparison.incumbent ?? "unknown"}: lower95=${typeof comparison.pairedLower95 === "number" ? comparison.pairedLower95 : "unavailable"} · ${comparison.reason ?? "no reason recorded"}`);
+  });
+  sections.push("", "## Reproduction and uncertainty", "", reproducibleAttempts.length
+    ? reproducibleAttempts.map((attempt) => `- ${attempt.experimentId} · ${attempt.stage} · ${attempt.status}\n  command: ${redactCommand(attempt.command).join(" ")}\n  cwd: ${attempt.cwd}${attempt.metrics && Object.keys(attempt.metrics).length ? `\n  metrics: ${JSON.stringify(attempt.metrics)}` : ""}${attempt.failureClass ? `\n  failure: ${attempt.failureClass}` : ""}`).join("\n")
+    : "No executable run attempts recorded.",
+    failedDirections.length ? `Failed directions retained: ${failedDirections.map((experiment) => `${experiment.id} (${experiment.status})`).join(", ")}` : "Failed directions retained: none.",
+    benchmarkUncertainty.length ? `Benchmark uncertainty:\n${benchmarkUncertainty.join("\n")}` : "Benchmark uncertainty: no paired confidence bounds recorded.");
   sections.push("", "## Recent event log", "", events.length ? events.map((event) => `- ${event.createdAt} · ${event.type}`).join("\n") : "No events recorded.");
   return `${sections.join("\n")}\n`;
 }

@@ -1474,6 +1474,23 @@ test("reports and timeline expose ensemble lifecycle state", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("final reports preserve reproduction commands, failed directions, and uncertainty", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-report-reproduction-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.saveExperiment({ id: "failed-direction", payload: { status: "failed" } });
+    store.recordRunAttempt({ id: "attempt-1", experimentId: "failed-direction", attempt: 1, stage: "full_validation", status: "failed", failureClass: "timeout", command: ["python", "evaluate.py", "--token", "secret-value"], cwd: root, executor: "local" });
+    store.appendEvent("harness.benchmark.completed", { challenger: "evidra", comparisons: [{ incumbent: "other", pairedLower95: -0.03, reason: "not proven" }] });
+    const report = renderReport(store, "final");
+    assert.match(report, /## Reproduction and uncertainty/);
+    assert.match(report, /python evaluate\.py --token \[REDACTED_ARGUMENT\]/);
+    assert.match(report, /Failed directions retained: failed-direction \(failed\)/);
+    assert.match(report, /lower95=-0\.03/);
+    assert.doesNotMatch(report, /secret-value/);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("data audit reports bounded tabular duplicate and missingness diagnostics", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-data-audit-"));
   try {
