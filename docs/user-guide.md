@@ -205,6 +205,9 @@ without treating an in-progress cycle as completed.
 Checkpoint heartbeats are process-bound: a stale controller cannot refresh or
 overwrite the lease of a replacement controller. Status output includes the
 checkpoint cycle, phase, and timestamp for operational diagnosis.
+Checkpoint metadata is validated against the known campaign phases, cycle
+number, and timestamp format. Legacy campaigns remain resumable, but invalid
+checkpoint fields are shown as unavailable instead of being treated as fact.
 
 Independent lanes explore different formulations and roles. Their evidence is
 cross-pollinated through a bounded board, while shared citations are not

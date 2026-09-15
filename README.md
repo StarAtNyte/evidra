@@ -255,6 +255,7 @@ Implemented today:
 - suppressed duplicate or unchanged retries emit a durable scheduling event with the route and reason, so the next research cycle can replan from an explicit controller decision;
 - autonomous campaigns persist phase-level checkpoints (cycle start, lanes, director, critic, execution, and terminal/completion) into campaign state, scheduler state, and the controller lease for reliable restart and status reporting;
 - checkpoint ownership is process-bound, and CLI/TUI status views expose the saved cycle, phase, and timestamp so stale controllers cannot overwrite live progress;
+- checkpoint metadata is validated against a fixed phase contract with nonnegative cycles and valid timestamps; malformed or legacy metadata is reported as unavailable rather than trusted;
 - local research lanes can use a bounded heterogeneous Ollama pool: installed local models are discovered at campaign start, assigned deterministically across independent roles, and the actual model used by every lane is recorded for replay and routing analysis;
 - independently replicated methods are also distilled into ranked, provenance-linked playbook leads with explicit transfer failure modes; playbooks guide new research but never count as current-workspace proof;
 - failed, invalid, rejected, and blocked experiment directions are retained as ranked negative experience, so future cycles must change the route instead of repeating an unchanged failure;
