@@ -4269,9 +4269,18 @@ test("research decision rubric exposes actionable evidence gaps", () => {
 
 test("non-metric experiments can pass evidence audit through verified completion", () => {
   const competition = { id: "proof", name: "Proof", taskType: "formal", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["true"], experimentCommand: ["true"] };
-  const manifest = createExperimentManifest({ id: "proof-exp", hypothesisId: "hyp-proof", outcomeType: "proof", gitCommit: "abc", datasetVersion: "data" }, competition);
-  const audit = auditExperiment(manifest, { runId: "run-proof", status: "completed", exitCode: 0, durationSeconds: 1, metrics: {}, artifacts: {} }, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true });
+  const manifest = createExperimentManifest({ id: "proof-exp", hypothesisId: "hyp-proof", outcomeType: "proof", gitCommit: "abc", datasetVersion: "data", verificationCommand: ["true"] }, competition);
+  const audit = auditExperiment(manifest, { runId: "run-proof", status: "completed", exitCode: 0, durationSeconds: 1, metrics: {}, artifacts: {}, verification: { declared: 1, executed: 1, passed: 1, failed: 0, independent: false } }, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true });
   assert.equal(audit.accepted, true);
+});
+
+test("non-metric evidence audit rejects a successful run without an evidence contract", () => {
+  const competition = { id: "proof-empty", name: "Proof", taskType: "formal", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["true"], experimentCommand: ["true"] };
+  const manifest = createExperimentManifest({ id: "proof-empty-exp", hypothesisId: "hyp-proof", outcomeType: "proof", gitCommit: "abc", datasetVersion: "data" }, competition);
+  const audit = auditExperiment(manifest, { runId: "run-proof-empty", status: "completed", exitCode: 0, durationSeconds: 1, metrics: {}, artifacts: {} }, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true });
+  assert.equal(audit.accepted, false);
+  assert.equal(audit.gates.metricsRecomputed, false);
+  assert.match(audit.reasons.join(" "), /independently recomputed|evidence/i);
 });
 
 test("experiment audit rejects incomplete declared verifier evidence", () => {

@@ -29,6 +29,8 @@ export function validateEvaluationMatrix(manifest: Pick<ExperimentManifest, "eva
 export function auditExperiment(manifest: ExperimentManifest, run: RunResult, context: ValidationContext): { accepted: boolean; reasons: string[]; gates: Record<string, boolean> } {
   const declaredVerifiers = (manifest.evaluation.verificationCommand ? 1 : 0) + (manifest.evaluation.verificationCommands?.length ?? 0);
   const verification = run.verification;
+  const nonMetric = manifest.outcomeType !== "metric" && manifest.outcomeType !== undefined;
+  const nonMetricEvidenceDeclared = manifest.evaluation.requiredArtifacts.length > 0 || declaredVerifiers > 0;
   const verifiersPassed = declaredVerifiers === 0
     ? true
     : verification?.declared === declaredVerifiers
@@ -38,8 +40,8 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
       && (declaredVerifiers < 2 || verification.independent === true);
   const matrix = validateEvaluationMatrix(manifest, run, context.metricName ?? "");
   const declaredMetricNames = [...new Set([context.metricName, ...(manifest.evaluation.metrics ?? []).map((objective) => objective.name)].filter((name): name is string => Boolean(name)))];
-  const metricsRecomputed = manifest.outcomeType !== "metric" && manifest.outcomeType !== undefined
-    ? run.status === "completed"
+  const metricsRecomputed = nonMetric
+    ? run.status === "completed" && nonMetricEvidenceDeclared
     : declaredMetricNames.length
       ? declaredMetricNames.every((name) => typeof run.metrics[name] === "number" && Number.isFinite(run.metrics[name]))
       : Object.keys(run.metrics).length > 0;
