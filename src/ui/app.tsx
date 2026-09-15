@@ -1149,16 +1149,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
       phaseAuditComplete: phaseGoal ? decisionStore.latestSubtaskAudit(phaseGoal.id)?.complete : undefined,
     });
     decisionStore.appendEvent("research.decision.audit", { ...decisionAudit, phase: phaseGoal?.phase ?? null, decision: effectiveDecision.decision });
-    const auditedDecision = downgradeUnauditedDecision(effectiveDecision, decisionAudit);
-    materializeResearchDecision(decisionStore, auditedDecision);
+    decision = downgradeUnauditedDecision(effectiveDecision, decisionAudit);
+    materializeResearchDecision(decisionStore, decision);
     if (phaseGoal) {
       const now = new Date().toISOString();
       const durableAudit = decisionStore.latestSubtaskAudit(phaseGoal.id);
-      const auditedMet = auditedDecision.goalStatus === "met" && durableAudit?.complete === true;
-      const nextStatus = auditedMet ? "met" : auditedDecision.goalStatus === "blocked" ? "blocked" : "active";
+      const auditedMet = decision.goalStatus === "met" && durableAudit?.complete === true;
+      const nextStatus = auditedMet ? "met" : decision.goalStatus === "blocked" ? "blocked" : "active";
       decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: nextStatus, payload: { ...phaseGoal, status: nextStatus, attempts: phaseGoal.attempts + 1, updatedAt: now } });
     }
-    if (phaseGoal && auditedDecision.goalStatus === "met" && decisionStore.latestSubtaskAudit(phaseGoal.id)?.complete === true) {
+    if (phaseGoal && decision.goalStatus === "met" && decisionStore.latestSubtaskAudit(phaseGoal.id)?.complete === true) {
       const goals = phaseGoalsForMode(decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, goalSet);
       const index = goals.findIndex((goal) => goal.id === phaseGoal.id);
       const now = new Date().toISOString();
