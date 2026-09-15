@@ -29,7 +29,7 @@ import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoal
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
-import { codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveStartupProvider, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
+import { codexLoginStatus, codexResearchModelPool, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveStartupProvider, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { boundedPeerBoard, runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
@@ -904,6 +904,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
       activeSteer.current = null;
       setProgress(`Research 3/4 · route ${route.tier} · ${route.reasoningEffort} reasoning · investigating...`);
       const allocatedObjective = `${objective}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}`;
+      const researchModelPool = config.provider === "codex" && route.parallelLanes > 1
+        ? await listCodexModels().then((models) => codexResearchModelPool(config.model, models, Math.min(4, route.parallelLanes), config.reasoningEffort)).catch(() => [{ provider: "codex" as const, model: config.model }])
+        : config.provider === "local"
+          ? await listLocalModels().then((models) => models.length ? models.map((model) => ({ provider: "local" as const, model: model.id })) : [{ provider: "local" as const, model: config.model }]).catch(() => [{ provider: "local" as const, model: config.model }])
+          : [{ provider: "codex" as const, model: config.model }];
       laneReports = await runResearchLanes(allocatedObjective, {
         mode,
         project,
@@ -918,7 +923,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }, {
         provider: config.provider,
         model: config.model,
-        modelPool: config.provider === "local" ? await listLocalModels().then((models) => models.length ? models.map((model) => ({ provider: "local" as const, model: model.id })) : [{ provider: "local" as const, model: config.model }]).catch(() => [{ provider: "local" as const, model: config.model }]) : [{ provider: "codex" as const, model: config.model }],
+        modelPool: researchModelPool,
         fallbackLocalModel: config.fallbackModel,
         limitPolicy: config.limitPolicy,
         reasoningEffort: config.reasoningEffort,
