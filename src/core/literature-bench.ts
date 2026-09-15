@@ -40,7 +40,12 @@ export function parseLiteratureBenchmarkInput(value: unknown): { tasks: Literatu
     if (taskIds.has(task.id)) throw new Error(`Literature benchmark contains duplicate task '${task.id}'.`);
     taskIds.add(task.id);
   }
-  if (observations.some((observation) => !taskIds.has(observation.taskId))) throw new Error("Literature benchmark observation references an unknown task.");
+  const observedTaskIds = new Set<string>();
+  for (const observation of observations) {
+    if (!taskIds.has(observation.taskId)) throw new Error("Literature benchmark observation references an unknown task.");
+    if (observedTaskIds.has(observation.taskId)) throw new Error(`Literature benchmark contains duplicate observation for task '${observation.taskId}'.`);
+    observedTaskIds.add(observation.taskId);
+  }
   return { tasks, observations };
 }
 

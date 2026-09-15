@@ -438,6 +438,7 @@ function compareProtocolParity(training: HarnessTrial[], heldOut: HarnessTrial[]
   const fields: Array<[string, (trial: HarnessTrial) => string]> = [
     ["provider", (trial) => trial.provider ?? "<default-provider>"],
     ["model", (trial) => trial.model ?? "<missing>"],
+    ["reasoningEffort", (trial) => trial.reasoningEffort ?? "<default-medium>"],
     ["budgetMinutes", (trial) => String(trial.budgetMinutes ?? "<missing>")],
     ["direction", (trial) => trial.direction],
     ["dataRevision", (trial) => trial.dataRevision ?? "<missing>"],

@@ -2538,6 +2538,7 @@ test("literature benchmark input validation rejects malformed or orphaned observ
   assert.throws(() => parseLiteratureBenchmarkInput({ tasks: [{ id: "x", kind: "deep", requiredWorks: [], queryBudget: 1 }], observations: [] }), /at least 1/);
   assert.throws(() => parseLiteratureBenchmarkInput({ tasks: [{ id: "x", kind: "deep", requiredWorks: ["doi:1/x"], queryBudget: 1 }, { id: "x", kind: "wide", requiredWorks: ["doi:1/y"], queryBudget: 1 }], observations: [] }), /duplicate task/);
   assert.throws(() => parseLiteratureBenchmarkInput({ tasks: [{ id: "x", kind: "deep", requiredWorks: ["doi:1/x"], queryBudget: 1 }], observations: [{ taskId: "missing", queries: 1, candidates: [] }] }), /unknown task/);
+  assert.throws(() => parseLiteratureBenchmarkInput({ tasks: [{ id: "x", kind: "deep", requiredWorks: ["doi:1/x"], queryBudget: 1 }], observations: [{ taskId: "x", queries: 1, candidates: [] }, { taskId: "x", queries: 1, candidates: [] }] }), /duplicate observation/);
 });
 
 test("AutoResearchBench adapter parses official task JSONL and deep evaluation summaries", () => {
@@ -4342,6 +4343,15 @@ test("direct harness comparison refuses mismatched reasoning effort", () => {
   ], "evidra", "other");
   assert.equal(comparison.validPairedArms, 0);
   assert.equal(comparison.challengerWins, false);
+});
+
+test("held-out harness parity includes reasoning effort", () => {
+  const make = (task, harness, effort, metric) => ({ harness, task, reasoningEffort: effort, arm: "default", seed: 1, model: "same-model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric: metric, validRun: true, durationSeconds: 1, recovered: false, reproducible: true });
+  assert.throws(() => evaluateHarnessGeneralization(
+    [make("train-a", "evidra", "medium", 0.8), make("train-a", "other", "medium", 0.7), make("train-b", "evidra", "medium", 0.8), make("train-b", "other", "medium", 0.7)],
+    [make("held-a", "evidra", "high", 0.8), make("held-a", "other", "medium", 0.7), make("held-b", "evidra", "high", 0.8), make("held-b", "other", "medium", 0.7)],
+    "evidra", "other",
+  ), /reasoningEffort differs/);
 });
 
 test("benchmark wins require matched successful reproducibility checks", () => {
