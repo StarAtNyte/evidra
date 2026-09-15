@@ -256,8 +256,7 @@ export function laneToolCalls(role: ResearchLaneRole, objective = ""): ResearchT
   // candidate frontier; retrieval and claim verification still happen through
   // the evidence-aware source workflow.
   if (role === "domain researcher" || role === "method researcher" || role === "model researcher" || role === "validation scientist") {
-    const literatureQuery = objective.trim().slice(0, 600) || `${role} methods and evidence`;
-    calls.push({ name: "source.search", arguments: { query: literatureQuery, limit: 6, depth: "deep" } });
+    for (const literatureQuery of researchLiteratureQueries(objective, role)) calls.push({ name: "source.search", arguments: { query: literatureQuery, limit: 6, depth: "deep" } });
   }
   if (role === "domain researcher" || role === "data detective") {
     calls.push({ name: "web.search", arguments: { query: objective.trim().slice(0, 500) || "official documentation discussions datasets", limit: 6 } });
@@ -265,6 +264,21 @@ export function laneToolCalls(role: ResearchLaneRole, objective = ""): ResearchT
   if (role === "method researcher" || role === "model researcher") calls.push({ name: "repository.search", arguments: { query: objective.trim().slice(0, 300) || "research method implementation", limit: 6 } });
   if (role === "ensemble scientist") calls.push({ name: "ensemble.analyze", arguments: {} });
   return calls;
+}
+
+/**
+ * Generate complementary literature probes rather than spending a lane's
+ * entire search budget on one wording of the objective. The probes are
+ * deterministic so query cost and coverage can be replayed and compared.
+ */
+export function researchLiteratureQueries(objective: string, role: ResearchLaneRole): string[] {
+  const base = objective.trim().slice(0, 500) || `${role} methods and evidence`;
+  const probes = role === "validation scientist"
+    ? ["replication limitations evaluation protocol", "robustness ablation independent validation"]
+    : role === "domain researcher"
+      ? ["definitions assumptions competing explanations", "open problems evidence and counterexamples"]
+      : ["implementation replication limitations", "ablation generalization benchmark evaluation"];
+  return [...new Set([base, ...probes.map((probe) => `${base} ${probe}`)])].slice(0, 3);
 }
 
 /** Choose an appropriate research team without assuming every task is ML. */
@@ -588,7 +602,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     const toolResults: ResearchToolResult[] = [];
     if (options.executeTool) {
       const calls = laneToolCalls(role, objective);
-      let primarySourceQueued = false;
+      let retrievedSourceCount = 0;
       for (let callIndex = 0; callIndex < calls.length; callIndex += 1) {
         const call = calls[callIndex];
         if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
@@ -611,19 +625,17 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         // select a different route; one unavailable tool must not erase an
         // otherwise independent research perspective.
         toolResults.push(result);
-        if ((call.name === "source.search" || call.name === "web.search") && result.ok && !primarySourceQueued) {
+        if ((call.name === "source.search" || call.name === "web.search") && result.ok && retrievedSourceCount < 2) {
           const output = result.output && typeof result.output === "object" ? result.output as { results?: unknown } : {};
           const candidates = Array.isArray(output.results)
             ? output.results.flatMap((entry): string[] => Boolean(entry && typeof entry === "object" && typeof (entry as { url?: unknown }).url === "string" && /^https?:\/\//i.test((entry as { url: string }).url)) ? [(entry as { url: string }).url] : [])
             : [];
-          for (const url of [...new Set(candidates)].slice(0, 2)) {
+          for (const url of [...new Set(candidates)].slice(0, 2 - retrievedSourceCount)) {
             // Search results are candidates, not evidence. Retrieve only two
             // top results per lane: enough for independent source coverage
             // without allowing a search call to flood context.
             calls.push({ name: "source.retrieve", arguments: { url } });
-          }
-          if (candidates.length) {
-            primarySourceQueued = true;
+            retrievedSourceCount += 1;
           }
         }
       }
