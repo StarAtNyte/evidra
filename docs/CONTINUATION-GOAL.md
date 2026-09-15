@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `54662de` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `1ea3dda` (verify with `git log`).
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -123,6 +123,9 @@ external evaluator.
 - AIRS workspace seeding is non-destructive. Lifecycle results expose
   `resumed`, `initialArtifactBytes`, and `finalArtifactBytes`, and a failed
   partial workspace is covered by a resume regression test.
+- Embedded AIRS Codex receives a local `TASK.md` brief and workspace-relative
+  `TASK.md`/`data`/`log` context; absolute benchmark task paths are not sent to
+  the provider. The worker remains `workspace-write` with network disabled.
 - The next evidence gate is a valid Codex SVAMP run or another task-disjoint
   task, followed by matched multi-task harness comparison. Do not call the
   current SICK improvement SOTA.
