@@ -218,6 +218,7 @@ async function verifyKaggleAccess(config: NonNullable<CompetitionConfig["submiss
 /** Parse the intentionally small score protocol used by generic competition adapters. */
 export function parseSubmissionScore(output: string): number | undefined {
   const candidates: unknown[] = [];
+  const csvScores: number[] = [];
   for (const line of output.split(/\r?\n/)) {
     try {
       const parsed: unknown = JSON.parse(line.trim());
@@ -229,7 +230,6 @@ export function parseSubmissionScore(output: string): number | undefined {
       } else candidates.push(parsed);
     } catch { /* permit human-readable adapter output below */ }
   }
-  for (const match of output.matchAll(/(?:public[_ ]score|leaderboard[_ ]score|score)\s*[:=]\s*(-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/gi)) candidates.push(match[1]);
   // Kaggle's `competitions submissions --csv` emits a header followed by
   // rows, commonly using publicScore/privateScore columns without labels.
   const lines = output.trim().split(/\r?\n/).filter(Boolean);
@@ -242,11 +242,16 @@ export function parseSubmissionScore(output: string): number | undefined {
       for (const line of lines.slice(1).reverse()) {
         try {
           const value = parseCsvRow(line)[scoreIndex];
-          if (value) candidates.push(value);
+          const score = value ? Number(value) : NaN;
+          if (Number.isFinite(score)) csvScores.push(score);
         } catch { /* fall back to the other score formats */ }
       }
     }
   }
+  // Prefer a structurally recognized CSV value over incidental `score: ...`
+  // text in status logs or descriptions emitted alongside the table.
+  if (csvScores.length) return csvScores.at(-1);
+  for (const match of output.matchAll(/(?:public[_ ]score|leaderboard[_ ]score|score)\s*[:=]\s*(-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/gi)) candidates.push(match[1]);
   for (const value of candidates) {
     const score = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
     if (Number.isFinite(score)) return score;
