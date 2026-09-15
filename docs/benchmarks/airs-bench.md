@@ -162,9 +162,12 @@ instruction: they summarize only after producing and verifying the required
 artifact. Conversational research turns retain the concise-answer behavior.
 
 The embedded AIRS route supervises Codex in three bounded phases—inspect/plan,
-implement, and verify—with a controller artifact check between phases. A
-failed phase can be retried by the next fresh phase while the original deadline
-is preserved.
+implement, and verify—with a controller artifact check between phases. The
+default phase budget is 25% / 60% / 15% of the total agent deadline, so planning
+cannot consume the complete run. If a phase produces no artifact, the next
+fresh phase receives an explicit strategy-switch instruction. As soon as any
+phase produces a non-empty artifact, the controller hands it to the official
+evaluator; evaluator validity, not the agent's prose, is authoritative.
 
 Before the agent stage, the adapter initializes the disposable task workspace
 as a local Git repository when necessary. This is required by Codex's file
@@ -178,7 +181,8 @@ submission as complete. The embedded AIRS prompt directs Codex to use shell or
 Python file creation because provider patch tools are not portable across
 disposable worker paths.
 
-Embedded AIRS Codex runs now use a repeated-command watchdog: three identical
+Embedded AIRS Codex runs use full filesystem access only inside their disposable
+workspace (network remains disabled), plus a repeated-command watchdog: three identical
 shell commands in succession terminate the agent stage with an explicit stuck
 diagnostic, allowing the outer retry/route policy to recover instead of
 silently consuming the entire experiment budget. The watchdog is opt-in in

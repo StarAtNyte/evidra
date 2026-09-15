@@ -400,7 +400,11 @@ export function listCodexModels(): Promise<AvailableModel[]> {
       callback();
     };
     const timer = setTimeout(() => finish(() => reject(new Error("Timed out while loading Codex models."))), 12_000);
-    child.stdin.on("error", (error) => finish(() => reject(new Error(`Codex model listing transport failed: ${error.message}`))));
+    // A short-lived app-server can close stdin after emitting its final JSON
+    // response. Do not reject immediately on EPIPE: stdout may still contain
+    // the complete response and the close handler can parse it. The timeout
+    // and close paths still surface a genuine transport failure.
+    child.stdin.on("error", () => undefined);
     const handleLine = (line: string): boolean => {
       try {
         const event = JSON.parse(line) as { id?: number; result?: { data?: unknown }; error?: { message?: string } };

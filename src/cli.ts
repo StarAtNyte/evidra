@@ -1177,6 +1177,7 @@ airsBenchmark.command("execute")
       const deadline = started + context.timeoutMs;
       const outputs: string[] = [];
       let lastError: unknown;
+      const phaseBudgetFractions = [0.25, 0.60, 0.15];
       const phases = [
         { name: "inspect", instruction: "Begin by inspecting the task description and the visible train/validation data. Write a short PLAN.md in the workspace with the chosen approach and the exact submission format. Do not spend the phase repeatedly printing the working directory." },
         { name: "implement", instruction: `Implement the simplest justified solution now. Use the visible data and the plan, and create ${submissionRelativePath} with predictions in the required format. Use shell or Python commands when they are more reliable than a patch tool.` },
@@ -1186,6 +1187,7 @@ airsBenchmark.command("execute")
         const remainingMs = deadline - Date.now();
         if (remainingMs < 1_000) break;
         context.onProgress?.(`Codex · ${phases[phaseIndex].name} phase`);
+        const phaseTimeoutMs = Math.max(10_000, Math.min(remainingMs, Math.floor(context.timeoutMs * (phaseBudgetFractions[phaseIndex] ?? 0.15))));
         const agent = new CodexExecAgent({
           provider: "codex", model: options.model, cwd: context.workspace,
           // AIRS runs inside a disposable workspace created by the adapter.
@@ -1193,9 +1195,10 @@ airsBenchmark.command("execute")
           // preserving the important boundaries: no network and no access to
           // the controller checkout.
           reasoningEffort: options.effort, sandbox: "danger-full-access", networkAccessEnabled: false,
-          timeoutMs: remainingMs, maxRepeatedCommands: 3,
+          timeoutMs: phaseTimeoutMs, maxRepeatedCommands: 3,
         });
-        const objective = `You are running phase ${phaseIndex + 1} of ${phases.length} (${phases[phaseIndex].name}) for an AIRS-Bench experiment. Read the task specification at ${taskDescription}. Your current working directory is ${context.workspace}; work only there. Use the prepared data in ${context.agentDataDir}; do not access hidden labels or test_with_labels. ${phases[phaseIndex].instruction} You MUST leave the required local artifact at ${submissionRelativePath} before the final verification phase completes. Do not submit externally and do not finish with only an explanation. IMPORTANT: create and edit files with shell commands (for example python3 -c, heredocs, or redirection). Do not use the provider's file-change/apply-patch tool; this worker runs in a disposable workspace where that tool is unavailable.`;
+        const strategyShift = phaseIndex > 0 ? " The previous phase did not leave a usable artifact; change strategy now, stop investigating, and execute the shortest reliable shell/Python path to produce the artifact." : "";
+        const objective = `You are running phase ${phaseIndex + 1} of ${phases.length} (${phases[phaseIndex].name}) for an AIRS-Bench experiment. Read the task specification at ${taskDescription}. Your current working directory is ${context.workspace}; work only there. Use the prepared data in ${context.agentDataDir}; do not access hidden labels or test_with_labels. ${phases[phaseIndex].instruction}${strategyShift} You MUST leave the required local artifact at ${submissionRelativePath} before the final verification phase completes. Do not submit externally and do not finish with only an explanation. IMPORTANT: create and edit files with shell commands (for example python3 -c, heredocs, or redirection). Do not use the provider's file-change/apply-patch tool; this worker runs in a disposable workspace where that tool is unavailable.`;
         try {
           const response = await agent.run({
             role: "experiment engineer",
