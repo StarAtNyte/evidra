@@ -22,7 +22,16 @@ export function enforceGoalTermination(decision: ResearchDecision, context: { cu
 
 /** Keep completion claims behind a durable provenance gate. */
 export function enforceClaimTermination(decision: ResearchDecision, audit: ClaimAuditReport): ResearchDecision {
-  if ((decision.decision !== "stop" && decision.goalStatus !== "met") || audit.total === 0 || audit.publishable) return decision;
+  if (decision.decision !== "stop" && decision.goalStatus !== "met") return decision;
+  if (audit.total === 0) {
+    return {
+      ...decision,
+      decision: "inspect",
+      goalStatus: "active",
+      nextAction: `${decision.nextAction} Completion requires at least one durable evidence claim; record evaluator, artifact, observation, or review evidence first.`,
+    };
+  }
+  if (audit.publishable) return decision;
   const blockers = [
     audit.unsupported ? `${audit.unsupported} unsupported` : "",
     audit.conflicted ? `${audit.conflicted} conflicted` : "",

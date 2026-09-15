@@ -799,6 +799,9 @@ test("active goals cannot be terminated by a premature model stop", () => {
 
 test("claim verification gate prevents unsupported completion but allows publishable completion", () => {
   const decision = { phase: "evaluation", goalStatus: "met", decision: "stop", bottleneck: "done", rationale: "r", hypotheses: [], selectedHypothesis: null, nextAction: "finish", toolCalls: [] };
+  const empty = enforceClaimTermination(decision, { total: 0, verified: 0, provisional: 0, literatureOnly: 0, unsupported: 0, conflicted: 0, publishable: false, entries: [] });
+  assert.equal(empty.decision, "inspect");
+  assert.match(empty.nextAction, /at least one durable evidence claim/i);
   const blocked = enforceClaimTermination(decision, { total: 2, verified: 1, provisional: 0, literatureOnly: 0, unsupported: 1, conflicted: 0, publishable: false, entries: [] });
   assert.equal(blocked.decision, "inspect");
   assert.equal(blocked.goalStatus, "active");

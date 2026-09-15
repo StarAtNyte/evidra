@@ -352,6 +352,9 @@ external evaluator.
 - Trajectory validation now turns that marker into an explicit recoverable
   structural issue, preventing truncated Codex prefixes from being treated as
   complete evidence by routing or learning components.
+- Completion claims now require at least one durable evidence claim; a Codex
+  `met`/`stop` response with no persisted provenance is forced back to
+  inspection rather than silently ending a campaign.
 
 ## Immediate next work
 
