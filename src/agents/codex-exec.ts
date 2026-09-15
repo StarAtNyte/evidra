@@ -124,6 +124,7 @@ export function codexItemProgress(item: unknown, eventType = "item.started"): st
   const completed = eventType === "item.completed";
   if (type === "command_execution") {
     const command = typeof value.command === "string" ? progressLine(value.command) : "command";
+    if (value.status === "failed") return `Command failed: ${command}`;
     return completed ? `Finished: ${command}` : `Running: ${command}`;
   }
   if (type === "web_search") {
@@ -135,6 +136,7 @@ export function codexItemProgress(item: unknown, eventType = "item.started"): st
         .map((change) => `${typeof change.kind === "string" ? change.kind : "update"} ${typeof change.path === "string" ? progressLine(change.path, 80) : "file"}`)
         .slice(0, 3)
       : [];
+    if (value.status === "failed") return changes.length ? `File change failed: ${changes.join(", ")}` : "File change failed.";
     return changes.length ? `${completed ? "Applied" : "Applying"}: ${changes.join(", ")}` : "Applying a workspace change...";
   }
   if (type === "mcp_tool_call") {
