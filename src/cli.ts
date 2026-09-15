@@ -2197,7 +2197,11 @@ research
         : "";
       const cycleObjective = allocatedObjective + literatureBenchmarkGuidance + evolutionGuidance + rubricGuidance + steeringGuidance;
       const researchSources = latestSourcePayloads(store.sources(), 12, cycleObjective);
-      const researchMemory = researchMemoryContext(store, 30, cycleObjective);
+      const researchMemory = researchMemoryContext(store, 30, cycleObjective, {
+        objective: campaign.goal,
+        taskType: mode === "challenge" ? adapter.config.taskType : "general research",
+        context: mode === "challenge" ? `challenge ${adapter.id}` : "research",
+      });
       const peerLaneBoard = boundedPeerBoard(recentEvents);
       console.log(`${mode === "challenge" ? "Challenge" : "Research"} ${cycle} · inspecting workspace${mode === "challenge" ? " and baseline" : ""} (budget ${campaign.budgetMinutes}m)...`);
       const gitStatus = await runProcess(["git", "status", "--short"], root);
@@ -3023,7 +3027,7 @@ research.command("propose")
     store.appendEvent("research.observation", observation);
     store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
     const recentEvents = store.recentEvents(20);
-    const researchMemory = researchMemoryContext(store, 30, objective);
+    const researchMemory = researchMemoryContext(store, 30, objective, { objective, taskType: "general research", context: "research" });
     store.close();
     console.log("Research 3/3 · analyzing observed evidence...");
     let decision = await runResearchDirector(objective, {

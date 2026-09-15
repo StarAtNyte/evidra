@@ -1,5 +1,5 @@
 import type { ResearchStore } from "./store.js";
-import { transferableMethodsFromEvents, type TransferableMethod } from "./method-transfer.js";
+import { transferableMethodsFromEvents, type TransferTarget, type TransferableMethod } from "./method-transfer.js";
 import { ablationPlansFromEvents, type AblationPlan } from "./ablation.js";
 import { verifiedPlaybooksFromEvents, type VerifiedPlaybook } from "./playbooks.js";
 import { failedDirectionsFromExperiments, type FailedDirection } from "./failure-memory.js";
@@ -81,7 +81,7 @@ export function repositoryLeadsFromEvents(events: Array<{ type: string; payload:
 }
 
 /** Build a bounded, structured memory snapshot for autonomous research context. */
-export function researchMemoryContext(store: ResearchStore, limit = 30, query?: string): ResearchMemoryContext {
+export function researchMemoryContext(store: ResearchStore, limit = 30, query?: string, transferTarget: TransferTarget = {}): ResearchMemoryContext {
   const bounded = Math.max(1, Math.min(limit, 100));
   const claims = ranked(store.claims(), query, (entry) => JSON.stringify(entry.payload)).slice(0, bounded).flatMap((entry) => {
     const value = entry.payload as Partial<ResearchMemoryContext["claims"][number]>;
@@ -102,7 +102,7 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
     "research.repository.search.completed",
     "research.ablation.plan",
   ]);
-  const transferableMethods = transferableMethodsFromEvents(events, query, Math.min(8, bounded));
+  const transferableMethods = transferableMethodsFromEvents(events, query, Math.min(8, bounded), transferTarget);
   const verifiedPlaybooks = verifiedPlaybooksFromEvents(events, query, Math.min(8, bounded));
   const failedDirections = failedDirectionsFromExperiments(store.experiments(), query, Math.min(8, bounded));
   const repositoryLeads = repositoryLeadsFromEvents(events, query, Math.min(8, bounded));

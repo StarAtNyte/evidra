@@ -134,7 +134,7 @@ import { materializeHarnessRetestTask, planHarnessAdaptation, validateHarnessRet
 import { auditClaims, selfDescribingClaimEvidenceIds } from "../dist/core/claim-audit.js";
 import { deriveAdaptiveHarnessPolicy } from "../dist/core/adaptive-harness.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "../dist/core/error-analysis.js";
-import { createTransferableMethod, transferableMethodsFromEvents } from "../dist/core/method-transfer.js";
+import { assessTransferApplicability, createTransferableMethod, transferableMethodsFromEvents } from "../dist/core/method-transfer.js";
 import { createAblationPlan, ablationPlansFromEvents, evaluateAblationEvidence } from "../dist/core/ablation.js";
 import { benchmarkProtocolFingerprint, parseBenchmarkArm, runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, parseAirsBenchDiscovery } from "../dist/core/airs-bench.js";
@@ -1220,6 +1220,10 @@ test("only independently replicated method events enter transfer memory", () => 
   const scientific = createTransferableMethod({ id: "method-scientific", sourceContext: "scientific:fluid-dynamics", sourceTaskType: "theorem-proving", title: "Invariant-guided search", formulationFamily: "formal", mechanism: "candidate steps violate a conserved invariant", proposedChange: "reject invariant-violating branches before expensive proof search", evidenceIds: ["proof-1", "proof-2"], tags: ["formal", "search"] });
   assert.equal(scientific.sourceContext, "scientific:fluid-dynamics");
   assert.equal(scientific.sourceCompetition, undefined);
+  const fit = assessTransferApplicability(scientific, { objective: "invariant guided proof search calibration", taskType: "theorem-proving", context: "scientific fluid dynamics" });
+  assert.equal(fit.status, "strong-lead");
+  assert.ok(fit.score > 0.6);
+  assert.match(fit.missing.join(" "), /calibration/);
 });
 
 test("replicated methods become bounded playbook leads with fresh-transfer warnings", () => {

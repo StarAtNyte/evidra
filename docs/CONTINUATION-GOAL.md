@@ -134,6 +134,9 @@ external evaluator.
 - Transferable methods/playbooks now preserve explicit source assumptions,
   failure signals, and a fresh transfer-test procedure; retrieval remains a
   hypothesis lead rather than evidence of universal applicability.
+- Transfer-memory retrieval now scores objective, task-family, and provenance
+  context fit and exposes matched/missing signals; low-fit methods remain
+  visible as weak leads instead of being auto-applied.
 
 ## Immediate next work
 

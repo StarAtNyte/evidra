@@ -166,6 +166,10 @@ Each transferred method also carries source assumptions, falsifying signals,
 and a concrete target-side transfer test. This operationalizes revision and
 continual transfer: a method can be retrieved because it is relevant, but it
 cannot be promoted merely because it worked in its source setting.
+Retrieval now also considers target objective, task family, and provenance
+context, while retaining weak matches as explicitly labeled leads so the
+system can still discover cross-domain analogies without pretending they are
+already applicable.
 
 Primary sources:
 

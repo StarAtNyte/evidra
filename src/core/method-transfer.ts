@@ -42,6 +42,19 @@ export const TransferableMethodSchema = z.object({
   tags: z.array(z.string().min(1)),
 });
 
+export interface TransferTarget {
+  objective?: string;
+  taskType?: string;
+  context?: string;
+}
+
+export interface TransferApplicability {
+  score: number;
+  matched: string[];
+  missing: string[];
+  status: "strong-lead" | "conditional-lead" | "weak-lead";
+}
+
 function tokens(value: string): Set<string> {
   return new Set(value.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3));
 }
@@ -51,6 +64,27 @@ function relevance(method: TransferableMethod, query?: string): number {
   if (!queryTokens.size) return 0;
   const methodTokens = tokens(`${method.title} ${method.sourceContext} ${method.sourceCompetition ?? ""} ${method.formulationFamily} ${method.mechanism} ${method.proposedChange} ${method.tags.join(" ")}`);
   return [...queryTokens].filter((token) => methodTokens.has(token)).length / queryTokens.size;
+}
+
+/**
+ * Rank transfer leads with target context, while preserving uncertainty. A
+ * high score only means "worth testing first"; it never admits a method as
+ * current-task evidence.
+ */
+export function assessTransferApplicability(method: TransferableMethod, target: TransferTarget = {}): TransferApplicability {
+  const queryTokens = tokens(target.objective ?? "");
+  const methodTokens = tokens(`${method.title} ${method.formulationFamily} ${method.mechanism} ${method.proposedChange} ${method.tags.join(" ")}`);
+  const matched = [...queryTokens].filter((token) => methodTokens.has(token));
+  const missing = [...queryTokens].filter((token) => !methodTokens.has(token));
+  const objectiveFit = queryTokens.size ? matched.length / queryTokens.size : 0;
+  const taskTokens = tokens(target.taskType ?? "");
+  const sourceTaskTokens = tokens(method.sourceTaskType);
+  const taskFit = taskTokens.size ? [...taskTokens].filter((token) => sourceTaskTokens.has(token)).length / taskTokens.size : 0;
+  const contextTokens = tokens(target.context ?? "");
+  const sourceContextTokens = tokens(method.sourceContext);
+  const contextFit = contextTokens.size ? [...contextTokens].filter((token) => sourceContextTokens.has(token)).length / contextTokens.size : 0;
+  const score = Math.max(0, Math.min(1, objectiveFit * 0.6 + taskFit * 0.25 + contextFit * 0.15));
+  return { score, matched, missing, status: score >= 0.6 ? "strong-lead" : score >= 0.25 ? "conditional-lead" : "weak-lead" };
 }
 
 /** Create a reusable method only after an independent replicated improvement. */
@@ -72,7 +106,7 @@ export function createTransferableMethod(input: Omit<TransferableMethod, "schema
 }
 
 /** Read only durable method events and rank them for a new research objective. */
-export function transferableMethodsFromEvents(events: Array<{ type: string; payload: unknown }>, query?: string, limit = 8): TransferableMethod[] {
+export function transferableMethodsFromEvents(events: Array<{ type: string; payload: unknown }>, query?: string, limit = 8, target: TransferTarget = {}): TransferableMethod[] {
   const seen = new Set<string>();
   return events
     .filter((event) => event.type === "research.method.transferable" && event.payload && typeof event.payload === "object")
@@ -82,7 +116,7 @@ export function transferableMethodsFromEvents(events: Array<{ type: string; payl
       seen.add(method.id);
       return true;
     })
-    .map((method, index) => ({ method, score: relevance(method, query), index }))
+    .map((method, index) => ({ method, score: target.taskType || target.context ? assessTransferApplicability(method, { ...target, objective: query }).score : relevance(method, query), index }))
     .sort((left, right) => right.score - left.score || left.index - right.index)
     .slice(0, Math.max(0, Math.min(limit, 50)))
     .map((entry) => entry.method);
