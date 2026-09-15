@@ -48,6 +48,15 @@ export interface ValidationAcceptance {
   normalizedDelta: number | null;
   worstSubgroupDelta: number | null;
   adjustedProbabilityThreshold: number;
+  secondaryAssessments: Array<{
+    name: string;
+    direction: "minimize" | "maximize";
+    normalizedDelta: number | null;
+    minimumDelta: number;
+    maximumRegression: number;
+    evidence: RunComparison["evidence"];
+    passed: boolean;
+  }>;
 }
 
 export interface SplitRunPair {
@@ -107,7 +116,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
     const normalized = secondary.delta === null ? null : objective.direction === "minimize" ? -secondary.delta : secondary.delta;
     const minimumDelta = objective.minimumDelta ?? 0;
     const maximumRegression = objective.maximumRegression ?? 0;
-    return { name: objective.name, normalized, passed: normalized !== null && normalized >= minimumDelta - maximumRegression };
+    return { name: objective.name, direction: objective.direction, normalizedDelta: normalized, minimumDelta, maximumRegression, evidence: secondary.evidence, passed: normalized !== null && normalized >= minimumDelta - maximumRegression };
   });
   const gates = {
     minimumDelta: normalizedDelta !== null && normalizedDelta >= input.minimumDelta,
@@ -134,8 +143,8 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   if (!gates.review) reasons.push("independent reviewer approval is missing");
   if (!gates.unexpectedGainReview) reasons.push(`unexpectedly large normalized gain ${normalizedDelta?.toFixed(6) ?? "missing"} exceeds scrutiny threshold ${scrutinyThreshold.toFixed(6)}; require independent replication and review`);
   if (!gates.evaluationCoverage) reasons.push("declared fold/seed evaluation matrix is incomplete or missing the primary metric");
-  if (!gates.secondaryMetrics) reasons.push(`secondary metric gate failed: ${secondaryResults.filter((result) => !result.passed).map((result) => `${result.name}=${result.normalized ?? "missing"}`).join(", ")}`);
-  return { accepted: Object.values(gates).every(Boolean), comparison, gates, reasons, normalizedDelta, worstSubgroupDelta, adjustedProbabilityThreshold };
+  if (!gates.secondaryMetrics) reasons.push(`secondary metric gate failed: ${secondaryResults.filter((result) => !result.passed).map((result) => `${result.name}=${result.normalizedDelta ?? "missing"}`).join(", ")}`);
+  return { accepted: Object.values(gates).every(Boolean), comparison, gates, reasons, normalizedDelta, worstSubgroupDelta, adjustedProbabilityThreshold, secondaryAssessments: secondaryResults };
 }
 
 /** Compare every required validation environment, preserving split identity. */

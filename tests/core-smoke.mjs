@@ -4064,6 +4064,10 @@ test("validation acceptance protects configured secondary objectives", () => {
   const candidate = { ...base, runId: "multi-candidate", metrics: { score: 0.53, safety: 0.8 }, metricsByFold: { score: [0.52, 0.53, 0.54], safety: [0.79, 0.8, 0.81] } };
   const acceptance = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.01, maximumRegressionShift: 0.2, requireReplication: false, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, secondaryMetrics: [{ name: "safety", direction: "maximize", maximumRegression: 0.05 }] });
   assert.equal(acceptance.gates.secondaryMetrics, false);
+  assert.equal(acceptance.secondaryAssessments[0].name, "safety");
+  assert.ok(Math.abs(acceptance.secondaryAssessments[0].normalizedDelta + 0.1) < 1e-9);
+  assert.equal(acceptance.secondaryAssessments[0].maximumRegression, 0.05);
+  assert.equal(acceptance.secondaryAssessments[0].evidence, "replicated");
   assert.match(acceptance.reasons.join(" "), /secondary metric gate failed.*safety/i);
 });
 
