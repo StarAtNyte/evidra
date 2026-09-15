@@ -3321,7 +3321,7 @@ experiment.command("run")
         const formal = classifyVerifier(verificationCommand, checked.exitCode, checked.stdout, checked.stderr);
         verifications.push({ command: verificationCommand, stdout: checked.stdout, stderr: checked.stderr, exitCode: checked.exitCode, formal });
         const verificationStore = new ResearchStore(statePath);
-        verificationStore.appendEvent(checked.exitCode === 0 ? "experiment.verification.completed" : "experiment.verification.failed", { experimentId: id, runId: result.runId, verifierIndex: verifications.length, command: verificationCommand, exitCode: checked.exitCode, kind: formal.kind, evidence: formal.evidence, semanticMarker: formal.semanticMarker ?? null, summary: formal.summary, stdout: checked.stdout.slice(-4000), stderr: checked.stderr.slice(-4000) });
+        verificationStore.appendEvent(checked.exitCode === 0 ? "experiment.verification.completed" : "experiment.verification.failed", { experimentId: id, runId: result.runId, verifierIndex: verifications.length, command: verificationCommand, exitCode: checked.exitCode, kind: formal.kind, evidence: formal.evidence, semanticMarker: formal.semanticMarker ?? null, summary: formal.summary, stdout: redactSecrets(checked.stdout.slice(-4000)), stderr: redactSecrets(checked.stderr.slice(-4000)) });
         verificationStore.close();
         result = { ...result, status: checked.exitCode === 0 ? "completed" : "failed", exitCode: checked.exitCode, stdout: `${result.stdout ?? ""}\n[VERIFICATION ${verifications.length}]\n${checked.stdout}`, stderr: `${result.stderr ?? ""}\n[VERIFICATION ${verifications.length}]\n${checked.stderr}`, ...(checked.exitCode === 0 ? {} : { failureClass: classifyProcessFailure(checked) ?? "unknown" }) };
         if (checked.exitCode !== 0) break;
@@ -3335,15 +3335,18 @@ experiment.command("run")
     const artifactDir = join(root, ".sota", "artifacts", result.runId);
     mkdirSync(artifactDir, { recursive: true });
     const artifactPaths: Record<string, string> = {};
+    const persistedResult = { ...result, stdout: redactSecrets(result.stdout ?? ""), stderr: redactSecrets(result.stderr ?? "") };
+    const persistedEvaluator = evaluator ? { ...evaluator, stdout: redactSecrets(evaluator.stdout), stderr: redactSecrets(evaluator.stderr) } : undefined;
+    const persistedVerifications = verifications.map((verification) => ({ ...verification, stdout: redactSecrets(verification.stdout), stderr: redactSecrets(verification.stderr) }));
     const environment = await captureEnvironment(root, result.cwd ?? experimentCwd, result.command ?? command, manifest.resources.executor, manifest.resources.gpu);
-    const verificationArtifacts = Object.fromEntries(verifications.flatMap((verification, index) => [[`verification-${index + 1}.stdout.log`, verification.stdout], [`verification-${index + 1}.stderr.log`, verification.stderr]]));
-    for (const [name, content] of Object.entries({ "stdout.log": result.stdout ?? "", "stderr.log": result.stderr ?? "", "metrics.json": `${JSON.stringify(result.metrics, null, 2)}\n`, "environment.json": `${JSON.stringify(environment, null, 2)}\n`, ...(evaluator ? { "evaluator.stdout.log": evaluator.stdout, "evaluator.stderr.log": evaluator.stderr } : {}), ...verificationArtifacts })) {
+    const verificationArtifacts = Object.fromEntries(persistedVerifications.flatMap((verification, index) => [[`verification-${index + 1}.stdout.log`, verification.stdout], [`verification-${index + 1}.stderr.log`, verification.stderr]]));
+    for (const [name, content] of Object.entries({ "stdout.log": persistedResult.stdout, "stderr.log": persistedResult.stderr, "metrics.json": `${JSON.stringify(result.metrics, null, 2)}\n`, "environment.json": `${JSON.stringify(environment, null, 2)}\n`, ...(persistedEvaluator ? { "evaluator.stdout.log": persistedEvaluator.stdout, "evaluator.stderr.log": persistedEvaluator.stderr } : {}), ...verificationArtifacts })) {
       const path = join(artifactDir, name);
       writeFileSync(path, content);
       artifactPaths[name] = path;
     }
     const recorded = {
-      ...result,
+      ...persistedResult,
       recoveryAttempts: attempt,
       verification: {
         declared: verificationCommands.length,
@@ -3351,9 +3354,9 @@ experiment.command("run")
         passed: verifications.filter((verification) => verification.exitCode === 0).length,
         failed: verifications.filter((verification) => verification.exitCode !== 0).length,
         independent: verificationCommands.length >= 2 && verificationCommands.length === new Set(verificationCommands.map((command) => JSON.stringify(command))).size,
-        formalDeclared: verifications.filter((verification) => verification.formal.kind !== "generic").length,
-        formalPassed: verifications.filter((verification) => verification.formal.kind !== "generic" && verification.exitCode === 0).length,
-        details: verifications.map((verification) => ({ kind: verification.formal.kind, evidence: verification.formal.evidence, summary: verification.formal.summary, ...(verification.formal.semanticMarker ? { semanticMarker: verification.formal.semanticMarker } : {}) })),
+        formalDeclared: persistedVerifications.filter((verification) => verification.formal.kind !== "generic").length,
+        formalPassed: persistedVerifications.filter((verification) => verification.formal.kind !== "generic" && verification.exitCode === 0).length,
+        details: persistedVerifications.map((verification) => ({ kind: verification.formal.kind, evidence: verification.formal.evidence, summary: verification.formal.summary, ...(verification.formal.semanticMarker ? { semanticMarker: verification.formal.semanticMarker } : {}) })),
       },
       artifacts: { ...result.artifacts, ...artifactPaths },
     };

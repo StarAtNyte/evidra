@@ -1470,7 +1470,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         activeProcess.current = null;
         verificationOutputs.push({ command: verificationCommand, stdout: checked.stdout, stderr: checked.stderr, exitCode: checked.exitCode });
         const verificationStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        verificationStore.appendEvent(checked.exitCode === 0 ? "experiment.verification.completed" : "experiment.verification.failed", { experimentId: id, runId: result.runId, verifierIndex: verificationOutputs.length, command: verificationCommand, exitCode: checked.exitCode, stdout: checked.stdout.slice(-4000), stderr: checked.stderr.slice(-4000) });
+        verificationStore.appendEvent(checked.exitCode === 0 ? "experiment.verification.completed" : "experiment.verification.failed", { experimentId: id, runId: result.runId, verifierIndex: verificationOutputs.length, command: verificationCommand, exitCode: checked.exitCode, stdout: redactSecrets(checked.stdout.slice(-4000)), stderr: redactSecrets(checked.stderr.slice(-4000)) });
         verificationStore.close();
         result = { ...result, status: checked.exitCode === 0 ? "completed" : "failed", exitCode: checked.exitCode, stdout: `${result.stdout ?? ""}\n[VERIFICATION ${verificationOutputs.length}]\n${checked.stdout}`, stderr: `${result.stderr ?? ""}\n[VERIFICATION ${verificationOutputs.length}]\n${checked.stderr}`, ...(checked.exitCode === 0 ? {} : { failureClass: classifyProcessFailure(checked) ?? "unknown" }) };
         if (checked.exitCode !== 0) break;
@@ -1483,6 +1483,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
     fullStageStore.close();
     const artifactDir = join(root, ".sota", "artifacts", result.runId);
     mkdirSync(artifactDir, { recursive: true });
+    const persistedResult = { ...result, stdout: redactSecrets(result.stdout ?? ""), stderr: redactSecrets(result.stderr ?? "") };
+    const persistedEvaluatorOutput = evaluatorOutput ? { ...evaluatorOutput, stdout: redactSecrets(evaluatorOutput.stdout), stderr: redactSecrets(evaluatorOutput.stderr) } : undefined;
+    const persistedVerificationOutputs = verificationOutputs.map((verification) => ({ ...verification, stdout: redactSecrets(verification.stdout), stderr: redactSecrets(verification.stderr) }));
     const stdoutPath = join(artifactDir, "stdout.log");
     const stderrPath = join(artifactDir, "stderr.log");
     const metricsPath = join(artifactDir, "metrics.json");
@@ -1492,10 +1495,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     writeFileSync(metricsPath, `${JSON.stringify(result.metrics, null, 2)}\n`);
     const evaluatorStdoutPath = evaluatorOutput ? join(artifactDir, "evaluator.stdout.log") : undefined;
     const evaluatorStderrPath = evaluatorOutput ? join(artifactDir, "evaluator.stderr.log") : undefined;
-    const verificationPaths = verificationOutputs.map((verification, index) => ({ verification, stdoutPath: join(artifactDir, `verification-${index + 1}.stdout.log`), stderrPath: join(artifactDir, `verification-${index + 1}.stderr.log`) }));
-    if (evaluatorOutput && evaluatorStdoutPath && evaluatorStderrPath) {
-      writeFileSync(evaluatorStdoutPath, evaluatorOutput.stdout);
-      writeFileSync(evaluatorStderrPath, evaluatorOutput.stderr);
+    const verificationPaths = persistedVerificationOutputs.map((verification, index) => ({ verification, stdoutPath: join(artifactDir, `verification-${index + 1}.stdout.log`), stderrPath: join(artifactDir, `verification-${index + 1}.stderr.log`) }));
+    if (persistedEvaluatorOutput && evaluatorStdoutPath && evaluatorStderrPath) {
+      writeFileSync(evaluatorStdoutPath, persistedEvaluatorOutput.stdout);
+      writeFileSync(evaluatorStderrPath, persistedEvaluatorOutput.stderr);
     }
     for (const { verification, stdoutPath, stderrPath } of verificationPaths) {
       writeFileSync(stdoutPath, verification.stdout);
@@ -1504,7 +1507,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const environment = await captureEnvironment(root, result.cwd ?? experimentCwd, result.command ?? command, manifest.resources.executor, manifest.resources.gpu);
     writeFileSync(environmentPath, `${JSON.stringify(environment, null, 2)}\n`);
     const recordedResult = {
-      ...result,
+      ...persistedResult,
       recoveryAttempts: attempt,
       verification: {
         declared: verificationCommands.length,
