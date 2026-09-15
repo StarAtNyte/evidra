@@ -93,7 +93,7 @@ export function classifyProcessFailure(result: ProcessResult, remote = false): R
   if (/nan|inf loss/.test(text)) return "nan_loss";
   if (/timed out|timeout/.test(text)) return "timeout";
   if (/no such file|file not found|missing data/.test(text)) return "data_missing";
-  if (/module not found|modul enotfound|cannot import|no module named|dependency/.test(text)) return "dependency";
+  if (/enoent|eacces|permission denied|module not found|modul enotfound|cannot import|no module named|dependency/.test(text)) return "dependency";
   if (/no space left on device|disk quota|enospc|out of disk space/.test(text)) return "disk";
   if (/rate limit|429|usage limit/.test(text)) return "rate_limit";
   if (/auth|unauthorized|forbidden/.test(text)) return "auth";
@@ -337,7 +337,12 @@ export class LocalExecutor implements ExperimentExecutor {
 
   async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
     const experimentEnvironment = prepareExperimentEnvironment(manifest, cwd, environment);
-    return toRunResult(manifest, await runProcess(command, cwd, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, experimentEnvironment, manifest.resources.earlyStopping), metricName);
+    try {
+      return toRunResult(manifest, await runProcess(command, cwd, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, experimentEnvironment, manifest.resources.earlyStopping), metricName);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return toRunResult(manifest, { command, cwd, exitCode: 127, durationMs: 0, stdout: "", stderr: message }, metricName);
+    }
   }
 }
 
@@ -405,13 +410,19 @@ export class ModalExecutor implements ExperimentExecutor {
     // The worker image must contain the isolated worktree. Mounting the repo
     // root would omit `.sota/worktrees` and silently execute the wrong source.
     const args = ["modal", "run", modalEntrypoint, "--command-json", commandJson, "--cwd", ".", "--artifacts-json", JSON.stringify(manifest.evaluation?.requiredArtifacts ?? []), "--timeout-seconds", String(timeoutSeconds)];
-    const result = await runProcess(args, launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, {
-      ...process.env,
-      EVIDRA_MODAL_WORKSPACE: experimentWorkspace,
-      ...(manifest.resources.gpu ? { EVIDRA_MODAL_GPU: manifest.resources.gpu } : {}),
-      EVIDRA_MODAL_TIMEOUT_SECONDS: String(timeoutSeconds),
-      EVIDRA_EXPERIMENT_ID: manifest.id,
-    }, manifest.resources.earlyStopping);
+    let result: ProcessResult;
+    try {
+      result = await runProcess(args, launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, {
+        ...process.env,
+        EVIDRA_MODAL_WORKSPACE: experimentWorkspace,
+        ...(manifest.resources.gpu ? { EVIDRA_MODAL_GPU: manifest.resources.gpu } : {}),
+        EVIDRA_MODAL_TIMEOUT_SECONDS: String(timeoutSeconds),
+        EVIDRA_EXPERIMENT_ID: manifest.id,
+      }, manifest.resources.earlyStopping);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      result = { command: args, cwd: launchRoot, exitCode: 127, durationMs: 0, stdout: "", stderr: message };
+    }
     const payload = parseModalWorkerResult(result.stdout);
     if (!payload) return toRunResult(manifest, { ...result, command, cwd }, metricName, true);
     const allowedArtifacts = new Set(manifest.evaluation?.requiredArtifacts ?? []);

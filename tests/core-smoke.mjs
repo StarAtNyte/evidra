@@ -2799,6 +2799,17 @@ test("completed workers without a finite declared metric become invalid metric f
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("executor spawn failures become classified durable run failures", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-spawn-failure-"));
+  try {
+    const manifest = { id: "spawn-failure", datasetVersion: "data", splitVersion: "split", resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0], seeds: [0], requiredArtifacts: [] }, change: { configPatch: {} }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 0, requireReplication: false }, createdAt: new Date().toISOString() };
+    const result = await new LocalExecutor().run(manifest, root, ["evidra-command-that-does-not-exist"], undefined, "score");
+    assert.equal(result.status, "failed");
+    assert.equal(result.failureClass, "dependency");
+    assert.equal(result.exitCode, 127);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("completed workers require the complete declared metric suite", () => {
   const result = { runId: "suite-run", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 0.8 }, artifacts: {} };
   const invalid = validateRunMetrics(result, ["score", "safety"]);
