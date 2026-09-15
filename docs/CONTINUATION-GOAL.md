@@ -72,6 +72,8 @@ external evaluator.
   attempt persistence.
 - External benchmark arms now pass through one schema-first parser before a run
   or retest replay; malformed protocols cannot reach workers.
+- The arm parser also enforces cross-field normalization ordering, unique metric
+  gates, and non-blank command parts before execution.
 
 ## Immediate next work
 

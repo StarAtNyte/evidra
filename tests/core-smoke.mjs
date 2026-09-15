@@ -4691,6 +4691,8 @@ test("benchmark arm parser normalizes defaults and rejects malformed external pr
   assert.equal(parsed.reasoningEffort, "medium");
   assert.throws(() => parseBenchmarkArm({ ...parsed, alternateCommands: [["run", ""]] }), /alternateCommands/);
   assert.throws(() => parseBenchmarkArm({ ...parsed, metricGates: [{ name: "latency", direction: "maximize", maximumRegression: -1 }] }), /maximumRegression/);
+  assert.throws(() => parseBenchmarkArm({ ...parsed, taskWorstMetric: 1, taskBestMetric: 0 }), /task normalization bounds/);
+  assert.throws(() => parseBenchmarkArm({ ...parsed, metricGates: [{ name: "latency", direction: "maximize" }, { name: "latency", direction: "maximize" }] }), /gate names must be unique/);
 });
 
 test("benchmark protocol rejects mismatched task provenance", () => {

@@ -69,15 +69,25 @@ const BenchmarkArmSchema = z.object({
   taskWorstMetric: z.number().finite().optional(),
   taskBestMetric: z.number().finite().optional(),
   retries: z.number().int().min(0).max(3).optional(),
-  alternateCommands: z.array(z.array(z.string().min(1)).min(1)).max(3).optional(),
+  alternateCommands: z.array(z.array(z.string().min(1).refine((part) => part.trim().length > 0)).min(1)).max(3).optional(),
   reproducibilityCommand: z.array(z.string().min(1)).min(1).optional(),
   reproducibilityTolerance: z.number().finite().nonnegative().optional(),
   metric: z.string().min(1),
   requiredMetrics: z.array(z.string().min(1)).optional(),
   metricGates: z.array(z.object({ name: z.string().min(1), direction: z.enum(["maximize", "minimize"]), maximumRegression: z.number().finite().nonnegative().optional() })).optional(),
-  command: z.array(z.string().min(1)).min(1),
+  command: z.array(z.string().min(1).refine((part) => part.trim().length > 0)).min(1),
   cwd: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough().superRefine((arm, context) => {
+  if (arm.taskWorstMetric !== undefined && arm.taskBestMetric !== undefined) {
+    const ordered = arm.direction === "maximize" ? arm.taskWorstMetric < arm.taskBestMetric : arm.taskBestMetric < arm.taskWorstMetric;
+    if (!ordered) context.addIssue({ code: z.ZodIssueCode.custom, path: ["taskBestMetric"], message: "task normalization bounds must be ordered for the declared direction" });
+  }
+  const gateNames = new Set<string>();
+  for (const [index, gate] of (arm.metricGates ?? []).entries()) {
+    if (gateNames.has(gate.name)) context.addIssue({ code: z.ZodIssueCode.custom, path: ["metricGates", index, "name"], message: "metric gate names must be unique" });
+    gateNames.add(gate.name);
+  }
+});
 
 /** Parse an externally supplied benchmark arm before any worker is launched. */
 export function parseBenchmarkArm(value: unknown, label = "Benchmark arm"): BenchmarkArmSpec {
