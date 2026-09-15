@@ -364,6 +364,8 @@ external evaluator.
 - The parser computes an UTF-8-safe bounded prefix without duplicating an
   oversized trace into a full temporary buffer, preserving the intended memory
   bound under corrupt-input conditions.
+- Codex usage normalization now retains the SDK's cache-write token count,
+  keeping long-session cost and prompt-cache diagnostics complete.
 
 ## Immediate next work
 

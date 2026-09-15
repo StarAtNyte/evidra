@@ -199,6 +199,7 @@ export function normalizeCodexUsage(value: unknown): AgentResult["usage"] {
     inputTokens: number("input_tokens"),
     outputTokens: number("output_tokens"),
     cachedInputTokens: number("cached_input_tokens"),
+    cacheWriteInputTokens: number("cache_write_input_tokens"),
     reasoningOutputTokens: number("reasoning_output_tokens"),
   };
   return Object.values(usage).some((entry) => entry !== undefined) ? usage : undefined;

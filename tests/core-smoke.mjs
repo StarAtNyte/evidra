@@ -3004,8 +3004,8 @@ test("Codex failure events preserve nested provider diagnostics", () => {
 });
 
 test("Codex usage preserves cache and reasoning-token accounting", () => {
-  assert.deepEqual(normalizeCodexUsage({ input_tokens: 100, cached_input_tokens: 40, output_tokens: 20, reasoning_output_tokens: 12 }), {
-    inputTokens: 100, cachedInputTokens: 40, outputTokens: 20, reasoningOutputTokens: 12,
+  assert.deepEqual(normalizeCodexUsage({ input_tokens: 100, cached_input_tokens: 40, cache_write_input_tokens: 8, output_tokens: 20, reasoning_output_tokens: 12 }), {
+    inputTokens: 100, cachedInputTokens: 40, cacheWriteInputTokens: 8, outputTokens: 20, reasoningOutputTokens: 12,
   });
   assert.equal(normalizeCodexUsage({ input_tokens: "unknown" }), undefined);
 });
