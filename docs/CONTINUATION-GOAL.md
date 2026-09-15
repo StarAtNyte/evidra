@@ -57,11 +57,11 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `b70c6a8`.
+- Latest pushed commit: `d1f37cf`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 361/361 tests passing, TypeScript check passing,
+- Latest verified baseline: 362/362 tests passing, TypeScript check passing,
   and build passing. The worktree has six intentionally untracked pilot reports
   under `reports/`; do not confuse those generated artifacts with source edits.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
@@ -405,6 +405,9 @@ external evaluator.
   compatibility `webSearchEnabled` flag. This keeps live web retrieval active
   across installed Codex CLI versions; ordinary conversation leaves both flags
   unset.
+- Codex model discovery now handles an app-server process that exits before
+  JSON-RPC requests are written, converting stdin transport failures into a
+  bounded actionable error instead of an unhandled TUI exception.
 
 ## Immediate next work
 
