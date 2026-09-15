@@ -2857,11 +2857,15 @@ research
         if (typeof payload.operator !== "string" || typeof payload.durationSeconds !== "number" || !Number.isFinite(payload.durationSeconds) || payload.durationSeconds <= 0) return [];
         return [{ operator: payload.operator, actualMinutes: payload.durationSeconds / 60, status: payload.valid === true ? "completed" : "failed", context: { executor: typeof (payload as { executor?: unknown }).executor === "string" ? (payload as { executor: string }).executor : undefined, gpu: typeof (payload as { gpu?: unknown }).gpu === "string" ? (payload as { gpu: string }).gpu : undefined, provider: typeof (payload as { provider?: unknown }).provider === "string" ? (payload as { provider: string }).provider : undefined, model: typeof (payload as { model?: unknown }).model === "string" ? (payload as { model: string }).model : undefined } }];
       });
+      const falsificationByHypothesisId = new Map(researchMemory.falsificationAgenda.map((item) => [item.hypothesisId, item]));
       const portfolioPlan = planPortfolio(decision.hypotheses.map((hypothesis, index) => ({
         id: materialized.hypothesisIds[index] ?? `hypothesis-${index}`,
         title: hypothesis.title,
-        falsificationStatus: researchMemory.falsificationAgenda.find((item) => item.hypothesisId === (materialized.hypothesisIds[index] ?? `hypothesis-${index}`))?.status,
-        falsificationPriority: researchMemory.falsificationAgenda.find((item) => item.hypothesisId === (materialized.hypothesisIds[index] ?? `hypothesis-${index}`))?.priority,
+        // The current decision is materialized after planning. A hypothesis
+        // absent from durable memory is therefore new work, not an unknown
+        // status: give it the same open-test priority as an untested item.
+        falsificationStatus: falsificationByHypothesisId.get(materialized.hypothesisIds[index] ?? `hypothesis-${index}`)?.status ?? "untested",
+        falsificationPriority: falsificationByHypothesisId.get(materialized.hypothesisIds[index] ?? `hypothesis-${index}`)?.priority ?? 100,
         // A single director operator describes the cycle; hypotheses still
         // need distinct search families so best-of-k does not collapse into
         // repeated variants of the same move.

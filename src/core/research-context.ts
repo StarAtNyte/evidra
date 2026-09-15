@@ -161,5 +161,8 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
     falsificationHypothesisIds: falsificationAgenda.map((item) => item.hypothesisId),
   };
   const fingerprint = `sha256:${createHash("sha256").update(JSON.stringify(retrievalBasis)).digest("hex")}`;
-  return { claims, quarantinedClaims, hypotheses, contradictions, transferableMethods, verifiedPlaybooks, failedDirections, repositoryLeads, ablationPlans, falsificationAgenda, retrieval: { ...retrievalBasis, fingerprint } };
+  // Keep the actionable agenda near the front of the packet. Context packing
+  // is key-order aware, so this prevents historical prose from crowding out
+  // the next falsifiable test when a prompt is tightly bounded.
+  return { claims, quarantinedClaims, hypotheses, falsificationAgenda, contradictions, transferableMethods, verifiedPlaybooks, failedDirections, repositoryLeads, ablationPlans, retrieval: { ...retrievalBasis, fingerprint } };
 }
