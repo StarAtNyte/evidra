@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `5343580`.
+- Latest pushed commit: `3de1d6b`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -79,6 +79,9 @@ external evaluator.
   terminal session, preserving native conversation context and steering. Each
   autonomous research turn remains isolated and receives only controller-owned,
   bounded context.
+- Codex stream events are normalized into concise TUI progress updates for
+  reasoning, searches, file changes, commands, and assistant output; raw
+  protocol event IDs are never shown to the user.
 - Source discovery now persists provenance classes and conservative quality
   scores, backfills metadata for historical events, diversity-reranks providers,
   and rejects instruction-like retrieved sentences before durable claim
