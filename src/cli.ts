@@ -2844,6 +2844,14 @@ research
             return !retryRouteIsNew({ executor: options.executor, provider: options.provider, model: selectedModel, searchOperator: decision.searchOperator }, [priorRoute]);
           })
           : false;
+        if (selectedHypothesisId && selectedHypothesis && hypothesisAlreadyScheduled) {
+          decisionStore.appendEvent("experiment.autonomous.schedule_suppressed", {
+            hypothesisId: selectedHypothesisId,
+            title: selectedHypothesis.title,
+            reason: "active_or_completed_duplicate_or_unchanged_failed_route",
+            route: { executor: options.executor, provider: options.provider, model: selectedModel, searchOperator: decision.searchOperator },
+          });
+        }
         if (selectedHypothesisId && selectedHypothesis && !hypothesisAlreadyScheduled) {
           const commit = await runProcess(["git", "rev-parse", "HEAD"], root);
           if (commit.exitCode === 0) {
