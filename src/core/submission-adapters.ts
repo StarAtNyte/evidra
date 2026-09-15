@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { guardCommand } from "./permissions.js";
 import { runProcess, type ProcessControl } from "./process.js";
@@ -28,6 +28,58 @@ export interface SubmissionScoreObservation {
   command: string[];
   stdout: string;
   stderr: string;
+}
+
+function validateHttpUrl(raw: string, label: string): string {
+  let parsed: URL;
+  try { parsed = new URL(raw); } catch { throw new Error(`${label} must be a valid URL.`); }
+  const local = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "::1";
+  if (parsed.protocol !== "https:" && !local) throw new Error(`${label} must use HTTPS unless it targets localhost.`);
+  return parsed.toString();
+}
+
+function httpAuthHeaders(authEnv: string | undefined): Record<string, string> {
+  if (!authEnv) return {};
+  const token = process.env[authEnv];
+  if (!token?.trim()) throw new Error(`HTTP submission requires credential environment variable '${authEnv}' to be set.`);
+  return { Authorization: `Bearer ${token}` };
+}
+
+async function httpResponse(response: Response, label: string): Promise<string> {
+  const body = (await response.text()).slice(0, 32_000);
+  if (!response.ok) throw new Error(`${label} failed (${response.status}): ${redactSecrets(body || response.statusText)}`);
+  return body;
+}
+
+function httpResponseId(body: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed && typeof parsed === "object") {
+      const value = parsed as Record<string, unknown>;
+      for (const key of ["submissionId", "submission_id", "id", "jobId", "job_id"]) if (typeof value[key] === "string" && value[key].trim()) return value[key];
+    }
+  } catch { /* permit text responses */ }
+  return body.match(/(?:submission|job)(?:[_ -]?id)?\s*[:=]\s*([A-Za-z0-9._:-]+)/i)?.[1];
+}
+
+async function httpSubmit(file: string, config: NonNullable<CompetitionConfig["submission"]>): Promise<{ submissionId?: string; body: string }> {
+  if (!config.submitUrl) throw new Error("HTTP submission requires submission.submitUrl.");
+  const url = validateHttpUrl(config.submitUrl, "submission.submitUrl");
+  const form = new FormData();
+  form.append(config.fileField ?? "file", new Blob([readFileSync(file)]), basename(file));
+  const response = await fetch(url, { method: "POST", headers: httpAuthHeaders(config.authEnv), body: form, signal: AbortSignal.timeout(10 * 60_000) });
+  const body = await httpResponse(response, "HTTP submission");
+  return { body, ...(httpResponseId(body) ? { submissionId: httpResponseId(body) } : {}) };
+}
+
+async function httpScore(submissionId: string, config: NonNullable<CompetitionConfig["submission"]>): Promise<{ score: number; body: string; url: string }> {
+  if (!config.scoreUrl) throw new Error("HTTP score polling requires submission.scoreUrl.");
+  const url = validateHttpUrl(config.scoreUrl.replaceAll("{submission}", encodeURIComponent(submissionId)), "submission.scoreUrl");
+  const response = await fetch(url, { method: "GET", headers: httpAuthHeaders(config.authEnv), signal: AbortSignal.timeout(10 * 60_000) });
+  const body = await httpResponse(response, "HTTP score polling");
+  const score = parseSubmissionScore(body);
+  if (score === undefined) throw new Error("HTTP score polling completed but emitted no finite score.");
+  return { score, body, url };
 }
 
 function predictionFile(bundlePath: string, configured?: string): string {
@@ -89,6 +141,16 @@ export async function submitApprovedBundle(root: string, bundlePath: string, com
   const command = platform === "kaggle"
     ? ["kaggle", "competitions", "submit", "-c", values.competition, "-f", values.file, "-m", values.message]
     : substitute(config?.submitCommand ?? [], values);
+  if (platform === "http") {
+    if (!config) throw new Error("HTTP submission configuration is missing.");
+    const file = predictionFile(bundlePath, config?.predictionFile);
+    try {
+      const response = await httpSubmit(file, config);
+      return { validation, receipt: { platform, submittedAt: new Date().toISOString(), predictionFile: file, command: ["HTTP", "POST", redactSecrets(config.submitUrl ?? "")], ...(response.submissionId ? { submissionId: response.submissionId } : {}), stdout: redactSecrets(response.body), stderr: "" } };
+    } catch (error) {
+      throw new Error(`HTTP submission could not complete: ${redactSecrets(error instanceof Error ? error.message : String(error))}`);
+    }
+  }
   if (!command.length) throw new Error("Command submission requires submission.submitCommand in competition.json.");
   const guard = guardCommand(command);
   if (!guard.allowed) throw new Error(`Submission command refused: ${guard.reason}`);
@@ -112,6 +174,14 @@ export async function pollSubmissionScore(root: string, bundlePath: string, subm
   if (!validation.valid) throw new Error("Submission bundle is invalid; refusing to poll its external score.");
   const config = competition.submission;
   const template = config?.scoreCommand ?? [];
+  if (config?.platform === "http") {
+    try {
+      const response = await httpScore(submissionId, config);
+      return { platform: "http", observedAt: new Date().toISOString(), score: response.score, command: ["HTTP", "GET", redactSecrets(response.url)], stdout: redactSecrets(response.body), stderr: "" };
+    } catch (error) {
+      throw new Error(`HTTP score polling could not complete: ${redactSecrets(error instanceof Error ? error.message : String(error))}`);
+    }
+  }
   if (!template.length) throw new Error("No scoreCommand is configured. Add submission.scoreCommand or use submission record for a manually observed score.");
   const needsFile = Boolean(config?.predictionFile) || template.some((part) => part.includes("{file}"));
   const file = needsFile ? predictionFile(bundlePath, config?.predictionFile) : "";

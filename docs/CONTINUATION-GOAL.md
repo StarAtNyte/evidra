@@ -74,6 +74,9 @@ external evaluator.
   or retest replay; malformed protocols cannot reach workers.
 - The arm parser also enforces cross-field normalization ordering, unique metric
   gates, and non-blank command parts before execution.
+- A provider-neutral HTTP submission/score adapter supports multipart uploads,
+  `{submission}` score URLs, environment-referenced bearer credentials, HTTPS
+  enforcement, bounded responses, and redacted durable receipts.
 
 ## Immediate next work
 

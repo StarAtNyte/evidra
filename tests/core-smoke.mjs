@@ -3187,6 +3187,48 @@ test("configured command submission requires a valid approved bundle and preserv
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("HTTP submission adapter uploads artifacts and polls scores without persisting bearer tokens", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-http-submit-"));
+  const previousToken = process.env.EVIDRA_TEST_HTTP_TOKEN;
+  process.env.EVIDRA_TEST_HTTP_TOKEN = "http-secret-token";
+  let server;
+  let authorization;
+  try {
+    server = createServer((request, response) => {
+      authorization = request.headers.authorization;
+      if (request.method === "POST" && request.url === "/submit") {
+        request.resume();
+        request.on("end", () => { response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ submissionId: "http-sub-1" })); });
+        return;
+      }
+      if (request.method === "GET" && request.url === "/score/http-sub-1") {
+        response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ publicScore: 0.876 }));
+        return;
+      }
+      response.statusCode = 404; response.end("not found");
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = server.address().port;
+    const artifact = join(root, "prediction.csv");
+    writeFileSync(artifact, "id,prediction\n1,0.5\n");
+    const manifest = { schemaVersion: 1, id: "exp-http", parent: null, hypothesisId: "hyp-http", gitCommit: "abc", datasetVersion: "data", splitVersion: "split", change: { configPatch: {} }, resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0], seeds: [0], requiredArtifacts: [] }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 0, requireReplication: false }, createdAt: new Date().toISOString() };
+    const run = { runId: "run-http", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 1 }, artifacts: { prediction: artifact } };
+    const bundle = prepareSubmission(root, "exp-http", manifest, run, { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } });
+    const competition = { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" }, submission: { platform: "http", predictionFile: "prediction.csv", submitUrl: `http://127.0.0.1:${port}/submit`, scoreUrl: `http://127.0.0.1:${port}/score/{submission}`, authEnv: "EVIDRA_TEST_HTTP_TOKEN" } };
+    const receipt = await submitApprovedBundle(root, bundle.path, competition);
+    assert.equal(receipt.receipt.submissionId, "http-sub-1");
+    assert.equal(authorization, "Bearer http-secret-token");
+    const observation = await pollSubmissionScore(root, bundle.path, "http-sub-1", competition);
+    assert.equal(observation.score, 0.876);
+    assert.doesNotMatch(JSON.stringify({ receipt, observation }), /http-secret-token/);
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    if (previousToken === undefined) delete process.env.EVIDRA_TEST_HTTP_TOKEN;
+    else process.env.EVIDRA_TEST_HTTP_TOKEN = previousToken;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("submission working directories reject symlink escapes", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-submit-symlink-"));
   const outside = mkdtempSync(join(tmpdir(), "evidra-submit-outside-"));

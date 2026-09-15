@@ -597,6 +597,26 @@ Other platforms can use an argv-based command adapter. Supported placeholders ar
 
 `scoreCommand` is an optional generic read-only polling adapter. It runs inside the project root and accepts `{bundle}`, `{file}`, `{competition}`, and `{submission}` placeholders. Emit JSON such as `{ "publicScore": 0.812 }` or a line such as `score: 0.812`; Evidra validates that the result is finite, redacts captured output, stores the observation as evidence, and marks the bundle scored. Use `/submission poll <bundle-id>` or `evidra submission poll <bundle-id>`. Platforms without a polling API can continue using `/submission record` after a manual leaderboard observation.
 
+Platforms with an HTTP API can use the provider-neutral adapter. The prediction
+file is uploaded as multipart form data, and score polling substitutes
+`{submission}` in the configured URL. Credentials are referenced by an
+environment-variable name and are never stored in the project or sent to an
+agent:
+
+    "submission": {
+      "platform": "http",
+      "submitUrl": "https://challenge.example/api/submissions",
+      "scoreUrl": "https://challenge.example/api/submissions/{submission}",
+      "authEnv": "CHALLENGE_API_TOKEN",
+      "fileField": "file",
+      "predictionFile": "submission.csv"
+    }
+
+HTTP endpoints must use HTTPS; localhost HTTP is allowed for local adapters and
+tests. Responses are bounded, parsed for a submission identifier or finite
+score, redacted, and recorded through the same approval and external-action
+ledger as command/Kaggle submissions.
+
 ## Provider architecture
 
 The provider is an implementation detail behind the same research protocol:
@@ -623,7 +643,8 @@ data/leakage audits, a typed worker protocol with heartbeats and artifact checks
 screening and cost-aware scheduling, persistent lane state with independent critics, and
 OOF/prediction analysis with ensemble candidates. The remaining research-lab layers are:
 
-1. richer first-party HTTP submission adapters and leaderboard integrations;
+1. richer platform-specific leaderboard/discussion integrations on top of the
+   provider-neutral HTTP adapter;
 2. Slurm and additional remote executor backends;
 3. a local browser dashboard on top of the same event/state model.
 

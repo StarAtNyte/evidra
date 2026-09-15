@@ -26,13 +26,18 @@ export const CompetitionConfigSchema = z.object({
   researchSources: z.array(z.string().url()).default([]),
   evaluatorTimeoutMinutes: z.number().positive().default(60),
   submission: z.object({
-    platform: z.enum(["manual", "kaggle", "command"]).default("manual"),
+    platform: z.enum(["manual", "kaggle", "command", "http"]).default("manual"),
     source: z.enum(["prediction", "workspace"]).default("prediction"),
     competition: z.string().optional(),
     predictionFile: z.string().optional(),
     workingDirectory: z.string().optional(),
     submitCommand: z.array(z.string()).optional(),
     scoreCommand: z.array(z.string()).optional(),
+    submitUrl: z.string().url().optional(),
+    scoreUrl: z.string().url().optional(),
+    /** Name of an environment variable holding the bearer token; never store the token itself. */
+    authEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(),
+    fileField: z.string().min(1).max(80).default("file").optional(),
   }).optional(),
   submissionPolicy: z.object({
     requireHumanApproval: z.boolean().default(true),
