@@ -185,6 +185,11 @@ an appropriate route dimension such as executor, provider, model, or search
 operator. This prevents an autonomous campaign from burning its budget by
 repeating the same failed request.
 
+When a Codex entitlement reset is required, the campaign is durably paused and
+the wait interval is excluded from its research-time budget. Retry guards use
+that pause-aware clock as well, so a long provider wait cannot consume the
+active campaign budget merely because calendar time elapsed.
+
 Native Codex activity is normalized into concise progress and bounded,
 secret-redacted trajectory events. Raw protocol ids, credentials, and
 unbounded payloads are not shown in the TUI or stored in research context.

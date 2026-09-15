@@ -183,6 +183,9 @@ external evaluator.
   without starting new work.
 - Terminal campaign checkpoints now set scheduler state to `idle` rather than
   incorrectly reporting a completed campaign as `running`.
+- Outer Codex retry guards now use pause-aware campaign elapsed time. Provider
+  entitlement reset waits no longer consume active research budget through a
+  raw wall-clock comparison.
 - Codex structured-output schemas now cover the research director, independent
   research lanes, and critic, so every research-role response is constrained
   before durable parsing and evidence gates.

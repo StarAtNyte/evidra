@@ -2495,7 +2495,10 @@ research
           // the campaign has spent its allotted turn budget.
           const routeTimedOut = /request timed out|campaign budget expired/i.test(routeError);
           researchAttempt += 1;
-          if (routeTimedOut || Date.now() - started >= budget * 60_000 || !isRetryableAgentError(error) || researchAttempt >= 3) {
+          // Use pause-aware campaign time here. Provider entitlement waits
+          // deliberately pause the campaign, so raw wall-clock time would
+          // incorrectly exhaust the research budget while Codex is waiting.
+          if (routeTimedOut || campaignElapsedMinutes(campaign) >= budget || !isRetryableAgentError(error) || researchAttempt >= 3) {
             const failure = researchFailureRecord(cycle, error, toolTrace.events, laneReports.filter((lane) => lane.status === "failed"));
             const failureStore = new ResearchStore(statePath);
             failureStore.appendEvent("research.agent.failed", { cycle, error: failure.error, attempts: researchAttempt, quality: failure.quality });
