@@ -82,6 +82,7 @@ import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock,
 import { benchmarkProtocolFingerprint, parseBenchmarkArm, runBenchmarkArms, type BenchmarkArmSpec } from "./core/benchmark-runner.js";
 import { analyzeHarnessComponentFailures, assessHarnessChangePresence, evaluateHarnessChange, parseHarnessChangeContract, type HarnessChangeContract } from "./core/harness-evolution.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, parseAirsBenchDiscovery, type AirsBenchFamily, type AirsHarnessTemplate } from "./core/airs-bench.js";
+import { parseAirsAgentCommand, runAirsTaskLifecycle } from "./core/airs-adapter.js";
 import { inventoryHarnessComponents, planHarnessInterventions } from "./core/harness-evolution.js";
 import { advanceEvolutionaryGeneration } from "./core/evolution.js";
 import { materializeHarnessRetestTask, planHarnessAdaptation, validateHarnessRetestProtocol, type HarnessAdaptationPlan } from "./core/harness-adaptation.js";
@@ -1146,6 +1147,47 @@ airsBenchmark.command("discover")
     if (options.out) writeFileSync(resolve(options.out), output);
     else process.stdout.write(output);
     if (report.invalidTasks > 0) process.exitCode = 2;
+  });
+airsBenchmark.command("execute")
+  .argument("<task-path>", "task directory relative to the AIRS repository")
+  .requiredOption("--global-data <dir>", "AIRS shared dataset directory")
+  .requiredOption("--agent <command>", "shell-free agent command, e.g. 'python3 agent.py'")
+  .option("--prepare <path>", "prepare.py path; defaults to <task-path>/prepare.py")
+  .option("--evaluate-prepare <path>", "evaluate_prepare.py path; defaults to <task-path>/evaluate_prepare.py")
+  .option("--evaluate <path>", "evaluate.py path; defaults to <task-path>/evaluate.py")
+  .option("--workspace <dir>", "isolated agent workspace", ".sota/airs-run")
+  .option("--python <command>", "Python executable", "python3")
+  .option("--metric <name>", "primary metric emitted by the official evaluator")
+  .option("--model <model>", "model metadata exposed to the agent", DEFAULT_CODEX_MODEL)
+  .option("--seed <seed>", "seed metadata exposed to the agent", "0")
+  .option("--effort <effort>", "reasoning effort metadata exposed to the agent", "medium")
+  .option("--timeout <minutes>", "per-stage timeout", "30")
+  .description("Run one AIRS task through prepare, agent, evaluator preparation, and official evaluation")
+  .action(async (taskPath: string, options: { globalData: string; agent: string; prepare?: string; evaluatePrepare?: string; evaluate?: string; workspace: string; python: string; metric?: string; model: string; seed: string; effort: string; timeout: string }) => {
+    const taskDir = taskPath.replace(/\/$/, "");
+    const result = await runAirsTaskLifecycle({
+      repository: process.cwd(),
+      taskPath: taskDir,
+      preparePath: options.prepare ?? join(taskDir, "prepare.py"),
+      evaluatePreparePath: options.evaluatePrepare ?? join(taskDir, "evaluate_prepare.py"),
+      evaluatePath: options.evaluate ?? join(taskDir, "evaluate.py"),
+      globalSharedDataDir: options.globalData,
+      agentCommand: parseAirsAgentCommand(options.agent),
+      python: options.python,
+      workspace: resolve(options.workspace),
+      timeoutMs: Math.max(1_000, Number(options.timeout) * 60_000),
+      metric: options.metric ?? "Accuracy",
+      model: options.model,
+      seed: options.seed,
+      effort: options.effort,
+      onProgress: (message) => console.error(`· ${message}`),
+    });
+    console.log(JSON.stringify({ metrics: result.metrics, valid: result.valid, workspace: result.workspace }));
+    if (!result.valid) {
+      const failed = result.stages.find((stage) => stage.stage === result.failureStage);
+      if (failed) console.error(failed.result.stderr || failed.result.stdout || `AIRS ${result.failureStage} stage failed.`);
+      process.exitCode = 1;
+    }
   });
 airsBenchmark.command("protocol")
   .argument("<inventory>", "JSON inventory produced by benchmark airs discover")

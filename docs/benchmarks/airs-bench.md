@@ -108,6 +108,30 @@ Every arm also receives the same adapter environment contract:
 useful for adapters that prefer environment configuration over argv, and makes
 the same contract usable by local, container, and remote workers.
 
+For a real task, the built-in lifecycle adapter runs the official scripts around
+an agent command. The agent receives `EVIDRA_AIRS_AGENT_DATA_DIR` and
+`EVIDRA_AIRS_AGENT_LOG_DIR`; it must write the task's expected submission into
+the log directory. The evaluator's metric is emitted as normalized JSON for
+the generic benchmark runner:
+
+```bash
+evidra benchmark airs execute airsbench/tasks/rad/TextualClassificationSickAccuracy \
+  --global-data /path/to/airs-bench/datasets/datasets_download_location \
+  --agent "python3 /path/to/my-agent.py" --metric Accuracy \
+  --workspace .sota/airs-sick-agent
+```
+
+The adapter is intentionally task-agnostic; custom AIRS task layouts can
+override the three script paths with `--prepare`, `--evaluate-prepare`, and
+`--evaluate`.
+
+The adapter was exercised against the locally prepared SICK task on
+2026-09-16. All four stages completed, and the official evaluator returned
+`Accuracy = 0.5686913982878108` for the existing majority-label submission.
+This confirms the real preparation → agent mount → evaluator preparation →
+official evaluation path; it is a baseline reproduction, not a claim of agent
+quality or leaderboard performance.
+
 ```bash
 git clone https://github.com/facebookresearch/airs-bench.git
 cd airs-bench
