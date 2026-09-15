@@ -33,9 +33,14 @@ def ignore_workspace_path(path: Path) -> bool:
 
 
 image = (
-    modal.Image.from_registry("python:3.11-slim-bookworm")
-    .apt_install("nodejs", "npm")
-    .run_commands("python -m pip install uv modal")
+    # Evidra's package contract requires Node >=22.19. Debian bookworm's
+    # `apt install nodejs` is commonly Node 18, which made the remote
+    # controller fail before it could initialize durable state. Start from
+    # the official Node 22 image and add Python only for Modal's runtime and
+    # user experiment tooling.
+    modal.Image.from_registry("node:22-bookworm-slim")
+    .apt_install("python3", "python3-pip", "python-is-python3")
+    .pip_install("uv", "modal")
     .add_local_dir(WORKSPACE, remote_path=str(REMOTE_WORKSPACE), ignore=ignore_workspace_path)
 )
 app = modal.App("evidra-controller")
