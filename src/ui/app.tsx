@@ -29,7 +29,7 @@ import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoal
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
-import { checkProvider, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveStartupProvider, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
+import { codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveStartupProvider, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { boundedPeerBoard, runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
@@ -3160,7 +3160,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
     activeSteer.current = null;
     setBusy(true); setProgress(`Using ${config.provider}/${config.model}`);
     try {
-      await checkProvider({ provider: config.provider, model: config.model, cwd: root });
       const result = await runWithLocalFallback({
         role: "conversation assistant",
         objective: request,

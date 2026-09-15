@@ -100,7 +100,9 @@ Ollama route is unavailable and gives the next corrective action; it does not
 display raw provider protocol output or start a request against an unknown
 model.
 Authentication checks are asynchronous, so an unavailable Codex installation
-does not block the TUI while it waits for a subprocess timeout.
+does not block the TUI while it waits for a subprocess timeout. Normal turns
+perform that check once at the provider boundary rather than duplicating it in
+the UI layer.
 
 An ordinary terminal session reuses one Codex thread so conversation context
 and steering are preserved. A new terminal starts a fresh chat. Saved sessions
