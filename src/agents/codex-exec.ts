@@ -12,6 +12,11 @@ export type AgentProvider = "codex" | "local";
 /** Cost-conscious Codex default used by the CLI, TUI, and autonomous tests. */
 export const DEFAULT_CODEX_MODEL = "gpt-5.6-luna";
 
+/** Never delegate Evidra's legacy default sentinel to a provider-side default. */
+export function effectiveCodexModel(preferred?: string): string {
+  return !preferred || preferred === "default" ? DEFAULT_CODEX_MODEL : preferred;
+}
+
 export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
 export function effectiveCodexSandbox(requested?: CodexSandboxMode): CodexSandboxMode {
@@ -411,6 +416,7 @@ export class CodexExecAgent {
     const sandboxMode = effectiveCodexSandbox(this.options.sandbox);
     const isolatedWorkspace = sandboxMode === "danger-full-access" && this.options.sandbox !== "workspace-write";
     const isolated = isolatedWorkspace ? createIsolatedCodexWorkspace(this.options.cwd) : undefined;
+    const model = effectiveCodexModel(this.options.model);
 
     try {
       const codex = new Codex();
@@ -418,7 +424,7 @@ export class CodexExecAgent {
         ? codex.resumeThread(this.options.threadId, {
           workingDirectory: isolated?.path ?? this.options.cwd,
           skipGitRepoCheck: true,
-          model: this.options.model !== "default" ? this.options.model : undefined,
+          model,
           sandboxMode,
           modelReasoningEffort: this.options.reasoningEffort as "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "persistent" | undefined,
           approvalPolicy: "never",
@@ -426,7 +432,7 @@ export class CodexExecAgent {
         : codex.startThread({
         workingDirectory: isolated?.path ?? this.options.cwd,
         skipGitRepoCheck: true,
-        model: this.options.model !== "default" ? this.options.model : undefined,
+        model,
         sandboxMode,
         modelReasoningEffort: this.options.reasoningEffort as "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "persistent" | undefined,
         approvalPolicy: "never",
@@ -455,7 +461,7 @@ export class CodexExecAgent {
       }
       settled = true;
       if (!finalText) throw new Error("Codex returned no assistant response.");
-      return { provider: this.options.provider, model: this.options.model, threadId: threadId ?? this.options.threadId, output: finalText, usage };
+      return { provider: this.options.provider, model, threadId: threadId ?? this.options.threadId, output: finalText, usage };
     } catch (error) {
       settled = true;
       if (abort.signal.aborted) throw new Error(timedOut ? "Codex request timed out." : "Codex request interrupted.");
@@ -464,7 +470,7 @@ export class CodexExecAgent {
         const retryAfterMs = providerRetryAfterMs(new Error(diagnostic));
         throw new ProviderUsageLimitError(`Codex usage limit reached. Retrying in ${Math.ceil(retryAfterMs / 60_000)} minute(s).`, retryAfterMs);
       }
-      if (/not supported when using Codex with a ChatGPT account/i.test(diagnostic)) throw new Error("The selected model is not available for your ChatGPT Codex account. Use /model default.");
+      if (/not supported when using Codex with a ChatGPT account/i.test(diagnostic)) throw new Error("The selected model is not available for your ChatGPT Codex account. Use /model to choose an available model.");
       if (/stream disconnected|network|timed out|upstream connect error|connection termination/i.test(diagnostic)) throw new Error("Codex is unreachable right now. Check your connection, then try again.");
       throw error;
     } finally {
