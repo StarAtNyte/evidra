@@ -67,6 +67,12 @@ export const ResearchSemanticAuditSchema = z.object({
   findings: z.array(z.string()).max(12),
   requiredChecks: z.array(z.string()).max(12),
   evidence: z.array(z.string()).max(12).default([]),
+  criteria: z.array(z.object({
+    criterionId: z.string().min(1),
+    verdict: z.enum(["pass", "revise", "reject"]),
+    evidence: z.array(z.string()).max(8).default([]),
+    reasoning: z.string().min(1),
+  })).max(12).default([]),
   confidence: z.number().min(0).max(1),
 });
 
@@ -77,14 +83,22 @@ export type ResearchSemanticAudit = z.infer<typeof ResearchSemanticAuditSchema> 
   servedModel?: string;
 };
 
-export function normalizeResearchSemanticAudit(audit: z.infer<typeof ResearchSemanticAuditSchema>, validEvidence: ReadonlySet<string>): ResearchSemanticAudit {
+export function normalizeResearchSemanticAudit(audit: z.infer<typeof ResearchSemanticAuditSchema>, validEvidence: ReadonlySet<string>, requiredCriteria: Array<{ id: string; description: string; required?: boolean }> = []): ResearchSemanticAudit {
   const evidence = audit.evidence.filter((anchor) => validEvidence.has(anchor));
   const invalid = audit.evidence.filter((anchor) => !validEvidence.has(anchor));
+  const criteria = audit.criteria.map((criterion) => ({ ...criterion, evidence: criterion.evidence.filter((anchor) => validEvidence.has(anchor)) }));
+  const criterionIds = new Set(requiredCriteria.map((criterion) => criterion.id));
+  const unknownCriteria = criteria.filter((criterion) => !criterionIds.has(criterion.criterionId)).map((criterion) => criterion.criterionId);
+  const missingCriteria = requiredCriteria.filter((criterion) => criterion.required !== false && !criteria.some((auditCriterion) => auditCriterion.criterionId === criterion.id)).map((criterion) => criterion.id);
+  const failedCriteria = requiredCriteria.filter((criterion) => criterion.required !== false && criteria.find((auditCriterion) => auditCriterion.criterionId === criterion.id)?.verdict !== "pass").map((criterion) => criterion.id);
+  const criterionFailure = requiredCriteria.length > 0 && (missingCriteria.length > 0 || failedCriteria.length > 0);
   return {
     ...audit,
     evidence,
-    verdict: audit.verdict === "pass" && (evidence.length === 0 || audit.requiredChecks.length > 0) ? "revise" : audit.verdict,
-    findings: invalid.length ? [...audit.findings, `Unrecognized evidence anchors discarded: ${invalid.join(", ")}.`].slice(0, 12) : audit.findings,
+    criteria,
+    verdict: audit.verdict === "pass" && (evidence.length === 0 || audit.requiredChecks.length > 0 || criterionFailure) ? "revise" : audit.verdict,
+    findings: [...audit.findings, ...(invalid.length ? [`Unrecognized evidence anchors discarded: ${invalid.join(", ")}.`] : []), ...(unknownCriteria.length ? [`Unknown criterion IDs discarded: ${unknownCriteria.join(", ")}.`] : [])].slice(0, 12),
+    requiredChecks: [...audit.requiredChecks, ...(missingCriteria.length ? [`missing criteria: ${missingCriteria.join(", ")}`] : []), ...(failedCriteria.length ? [`failed criteria: ${failedCriteria.join(", ")}`] : [])].slice(0, 12),
     status: "completed",
   };
 }
@@ -124,13 +138,14 @@ const RESEARCH_REVIEW_OUTPUT_SCHEMA = JSON.stringify({
 const RESEARCH_SEMANTIC_AUDIT_OUTPUT_SCHEMA = JSON.stringify({
   type: "object",
   additionalProperties: false,
-  required: ["verdict", "summary", "findings", "requiredChecks", "evidence", "confidence"],
+  required: ["verdict", "summary", "findings", "requiredChecks", "evidence", "criteria", "confidence"],
   properties: {
     verdict: { type: "string", enum: ["pass", "revise", "reject"] },
     summary: { type: "string" },
     findings: { type: "array", maxItems: 12, items: { type: "string" } },
     requiredChecks: { type: "array", maxItems: 12, items: { type: "string" } },
     evidence: { type: "array", maxItems: 12, items: { type: "string" } },
+    criteria: { type: "array", maxItems: 12, items: { type: "object", additionalProperties: false, required: ["criterionId", "verdict", "evidence", "reasoning"], properties: { criterionId: { type: "string" }, verdict: { type: "string", enum: ["pass", "revise", "reject"] }, evidence: { type: "array", maxItems: 8, items: { type: "string" } }, reasoning: { type: "string" } } } },
     confidence: { type: "number", minimum: 0, maximum: 1 },
   },
 });
@@ -489,6 +504,7 @@ export async function runResearchSemanticAuditor(
   decision: unknown,
   evidenceContext: unknown,
   options: ResearchLanesOptions,
+  acceptanceCriteria: Array<{ id: string; description: string; required?: boolean }> = [],
 ): Promise<ResearchSemanticAudit> {
   const role = "semantic auditor";
   const store = new ResearchStore(options.storePath);
@@ -512,7 +528,7 @@ export async function runResearchSemanticAuditor(
       const artifactPaths = listed.filter((file) => /(?:result|artifact|metric|score|submission|output|report)/i.test(file) && /\.(?:json|jsonl|csv|log|txt)$/i.test(file)).slice(0, 16);
       if (artifactPaths.length) await inspect({ name: "artifact.audit", arguments: { paths: artifactPaths, maxBytes: 2_000_000 } });
     }
-    const prompt = `${objective}\n\nYou are Evidra's independent semantic auditor. Inspect the typed proposed decision and bounded durable evidence below, plus fresh read-only tool observations collected by the controller. Do not trust the director, critic, or executor narrative. Check whether the proposed action follows from evidence, whether the comparison/control is valid, whether the hypothesis is falsifiable, and whether risks or required checks are unresolved. Do not invent measurements, citations, or workspace facts. Return ONLY JSON: {"verdict":"pass|revise|reject","summary":"...","findings":["..."],"requiredChecks":["..."],"evidence":["copy exact evidence anchors only"],"confidence":0.0}. A pass requires at least one exact evidence anchor and no requiredChecks.\n\nProposed decision:\n${JSON.stringify(decision)}\n\nBounded evidence:\n${JSON.stringify(evidenceContext)}\n\nFresh auditor observations:\n${JSON.stringify(directEvidence)}`;
+    const prompt = `${objective}\n\nYou are Evidra's independent semantic auditor. Inspect the typed proposed decision and bounded durable evidence below, plus fresh read-only tool observations collected by the controller. Do not trust the director, critic, or executor narrative. Check whether the proposed action follows from evidence, whether the comparison/control is valid, whether the hypothesis is falsifiable, and whether risks or required checks are unresolved. Do not invent measurements, citations, or workspace facts. Return ONLY JSON with verdict pass|revise|reject, summary, findings, requiredChecks, overall evidence, criterion-level results, and confidence: {"verdict":"pass|revise|reject","summary":"...","findings":["..."],"requiredChecks":["..."],"evidence":["exact evidence anchors only"],"criteria":[{"criterionId":"exact supplied criterion id","verdict":"pass|revise|reject","evidence":["exact anchors"],"reasoning":"..."}],"confidence":0.0}. Evaluate every supplied criterion. A pass requires every required criterion to pass, at least one exact evidence anchor, and no requiredChecks.\n\nAcceptance criteria:\n${JSON.stringify(acceptanceCriteria)}\n\nProposed decision:\n${JSON.stringify(decision)}\n\nBounded evidence:\n${JSON.stringify(evidenceContext)}\n\nFresh auditor observations:\n${JSON.stringify(directEvidence)}`;
     let provider = options.provider;
     let model = options.model;
     const alternate = alternateResearchLaneRoute({ provider, model }, options.modelPool, new Set([`${provider}\u0000${model}`]));
@@ -544,7 +560,7 @@ export async function runResearchSemanticAuditor(
     ]);
     evidenceStore.close();
     const audit: ResearchSemanticAudit = {
-      ...normalizeResearchSemanticAudit(ResearchSemanticAuditSchema.parse(parseJson(result.output)), validEvidence),
+      ...normalizeResearchSemanticAudit(ResearchSemanticAuditSchema.parse(parseJson(result.output)), validEvidence, acceptanceCriteria),
       servedProvider: result.provider,
       servedModel: result.model ?? model,
     };
@@ -559,7 +575,7 @@ export async function runResearchSemanticAuditor(
     failed.appendEvent("research.semantic_audit.failed", { objective, error: message });
     failed.updateAgentLane({ role, status: "failed", provider: options.provider, model: options.model, task: objective, error: message });
     failed.close();
-    return { verdict: "revise", summary: "Semantic auditor did not complete; preserve the decision for another audit.", findings: [message], requiredChecks: ["rerun semantic auditor"], evidence: [], confidence: 0, status: "failed", error: message };
+    return { verdict: "revise", summary: "Semantic auditor did not complete; preserve the decision for another audit.", findings: [message], requiredChecks: ["rerun semantic auditor"], evidence: [], criteria: [], confidence: 0, status: "failed", error: message };
   }
 }
 

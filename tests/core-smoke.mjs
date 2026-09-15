@@ -2307,13 +2307,16 @@ test("controller decision auditor independently downgrades unaudited completion 
 });
 
 test("semantic auditor output is grounded before it can pass", () => {
-  const parsed = ResearchSemanticAuditSchema.parse({ verdict: "pass", summary: "checked", findings: [], requiredChecks: [], evidence: ["run:known", "invented"], confidence: 0.9 });
+  const parsed = ResearchSemanticAuditSchema.parse({ verdict: "pass", summary: "checked", findings: [], requiredChecks: [], evidence: ["run:known", "invented"], criteria: [{ criterionId: "metric", verdict: "pass", evidence: ["run:known"], reasoning: "verified" }], confidence: 0.9 });
   const normalized = normalizeResearchSemanticAudit(parsed, new Set(["run:known"]));
   assert.equal(normalized.verdict, "pass");
   assert.deepEqual(normalized.evidence, ["run:known"]);
   assert.match(normalized.findings.join(" "), /invented/);
   const ungrounded = normalizeResearchSemanticAudit({ ...parsed, evidence: ["invented"] }, new Set());
   assert.equal(ungrounded.verdict, "revise");
+  const incomplete = normalizeResearchSemanticAudit(parsed, new Set(["run:known"]), [{ id: "metric", description: "metric parsed" }, { id: "artifact", description: "artifact checked" }]);
+  assert.equal(incomplete.verdict, "revise");
+  assert.match(incomplete.requiredChecks.join(" "), /missing criteria/);
 });
 
 test("validation phase completion requires the latest policy lifecycle event to be a lock", () => {

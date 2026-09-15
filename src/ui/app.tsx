@@ -1114,7 +1114,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         onActivity: toolTrace.onActivity,
         onAssistant: toolTrace.onAssistant,
         onUsage: recordAgentUsage,
-      });
+      }, phaseGoal?.completionCriteria.map((description, index) => ({ id: `criterion_${index + 1}`, description })) ?? []);
       if (semanticAudit.verdict !== "pass") {
         decision = { ...decision, decision: "inspect", goalStatus: "active", nextAction: `${decision.nextAction} (semantic audit: ${[...semanticAudit.findings, ...semanticAudit.requiredChecks].join(", ")})` };
         const auditStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
