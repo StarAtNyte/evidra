@@ -1725,6 +1725,9 @@ research
     const savedStore = new ResearchStore(statePath);
     const savedCampaign = savedStore.campaign() as { goal?: string; budgetMinutes?: number; gpuBudgetHours?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime?: unknown; runtimeFingerprint?: string; autoExecuteExperiments?: boolean } | undefined;
     const savedCheckpoint = options.resume ? readCampaignCheckpoint(savedCampaign) : undefined;
+    const hasCheckpointFields = Boolean(savedCampaign && ["currentCycle", "currentStep", "checkpointedAt"].some((key) => key in savedCampaign));
+    const invalidSavedCheckpoint = Boolean(options.resume && hasCheckpointFields && !savedCheckpoint);
+    if (invalidSavedCheckpoint) savedStore.appendEvent("research.campaign.checkpoint.invalid", { reason: "saved checkpoint failed validation; resume will restart from the current durable campaign boundary" });
     savedStore.close();
     // A resume is a continuation of the durable campaign, not a new run with
     // whichever defaults the current terminal happens to have. Legacy
@@ -1799,6 +1802,7 @@ research
     let campaign: { goal: string; budgetMinutes: number; gpuBudgetHours: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime: CampaignRuntimeConfig; runtimeFingerprint: string; autoExecuteExperiments: boolean } = options.resume && savedCampaign && savedCampaign.status !== "completed"
       ? { ...resumeCampaign({ goal: savedCampaign.goal ?? options.goal, budgetMinutes: savedCampaign.budgetMinutes ?? budget, stopCondition: savedCampaign.stopCondition ?? options.stop, startedAt: savedCampaign.startedAt ?? new Date(started).toISOString(), status: savedCampaign.status === "paused" ? "paused" : "running", pausedAt: savedCampaign.pausedAt, pausedDurationMinutes: savedCampaign.pausedDurationMinutes, runtime: savedRuntime ?? runtime, runtimeFingerprint: savedCampaign.runtimeFingerprint ?? campaignRuntimeFingerprint(savedRuntime ?? runtime) }), gpuBudgetHours, status: "running", runtime, autoExecuteExperiments: savedCampaign.autoExecuteExperiments === true || autonomy !== "safe" }
       : { goal: options.goal, budgetMinutes: budget, gpuBudgetHours, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running", runtime, runtimeFingerprint: campaignRuntimeFingerprint(runtime), autoExecuteExperiments: autonomy !== "safe" };
+    if (options.resume && invalidSavedCheckpoint) console.log("Saved campaign checkpoint is invalid; preserving the campaign and restarting from a safe cycle boundary.");
     if (options.resume) console.log(savedCampaign && savedCampaign.status !== "completed" ? `Resuming durable research campaign from ${savedCampaign.startedAt ?? "saved state"}.` : "No resumable campaign found; starting a new research campaign.");
     const objective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}`;
     let cycle = options.resume ? nextCampaignCycle(savedCheckpoint) : 0;
