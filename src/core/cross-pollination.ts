@@ -40,7 +40,7 @@ export interface CrossPollinationBoard {
  */
 export function synthesizeLaneReports(reports: LaneFinding[]): CrossPollinationBoard {
   const completed = reports.filter((report) => report.status !== "failed");
-  const findings = completed.flatMap((report) => (report.findings ?? []).map((finding) => ({ finding, role: report.role ?? "lane", confidence: report.confidence ?? 0.5, evidenceCount: (report.evidence ?? []).length })));
+  const findings = completed.flatMap((report) => (report.findings ?? []).map((finding) => ({ finding, role: report.role ?? "lane", confidence: report.confidence ?? 0.5, evidence: new Set(report.evidence ?? []) })));
   const agreements: string[] = [];
   const agreementScores: number[] = [];
   for (let index = 0; index < findings.length; index += 1) {
@@ -50,7 +50,15 @@ export function synthesizeLaneReports(reports: LaneFinding[]): CrossPollinationB
       if (overlap.length >= 2) {
         agreements.push(`${findings[index].finding} ↔ ${findings[other].finding} (shared: ${overlap.slice(0, 4).join(", ")})`);
         const confidence = Math.min(findings[index].confidence, findings[other].confidence);
-        const evidenceFactor = findings[index].evidenceCount > 0 && findings[other].evidenceCount > 0 ? 1 : 0.5;
+        // Two lanes citing the same artifact are agreement, but not
+        // independent corroboration. Reward distinct evidence anchors and
+        // discount consensus that may simply be copied from a shared report.
+        const leftEvidence = findings[index].evidence;
+        const rightEvidence = findings[other].evidence;
+        const hasDistinctSupport = leftEvidence.size > 0 && rightEvidence.size > 0 &&
+          [...leftEvidence].some((item) => !rightEvidence.has(item)) &&
+          [...rightEvidence].some((item) => !leftEvidence.has(item));
+        const evidenceFactor = hasDistinctSupport ? 1 : leftEvidence.size > 0 && rightEvidence.size > 0 ? 0.5 : 0.25;
         agreementScores.push(Math.max(0, Math.min(1, confidence * evidenceFactor)));
       }
     }

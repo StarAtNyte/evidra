@@ -720,7 +720,7 @@ test("campaign child timeout is bounded by remaining active budget", () => {
 
 test("research model stages scale with long campaigns without exceeding their budget share", () => {
   assert.equal(researchTurnTimeoutMs(5 * 60_000), 75_000);
-  assert.equal(researchTurnTimeoutMs(4 * 60 * 60_000), 10 * 60_000);
+  assert.equal(researchTurnTimeoutMs(4 * 60 * 60_000), 30 * 60_000);
   assert.equal(researchTurnTimeoutMs(0), 0);
 });
 
@@ -4613,6 +4613,19 @@ test("cross-pollination does not count shared evidence as independent support", 
   ]);
   assert.equal(board.transferCandidates[0].independentSupport, 1);
   assert.equal(board.needsAdversarialReview, true);
+});
+
+test("cross-pollination discounts agreement backed by the same artifact", () => {
+  const shared = synthesizeLaneReports([
+    { role: "data", status: "completed", findings: ["group leakage affects validation"], evidence: ["shared-report.json"], confidence: 1 },
+    { role: "validation", status: "completed", findings: ["validation leakage affects score"], evidence: ["shared-report.json"], confidence: 1 },
+  ]);
+  const independent = synthesizeLaneReports([
+    { role: "data", status: "completed", findings: ["group leakage affects validation"], evidence: ["audit.csv"], confidence: 1 },
+    { role: "validation", status: "completed", findings: ["validation leakage affects score"], evidence: ["fold-report.json"], confidence: 1 },
+  ]);
+  assert.equal(shared.agreementStrength, 0.5);
+  assert.equal(independent.agreementStrength, 1);
 });
 
 test("cross-pollination does not count an evidence-free lane as corroboration", () => {

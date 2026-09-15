@@ -252,7 +252,10 @@ export class CodexExecAgent {
   private async runCodexSdk(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
     const abort = new AbortController();
     let timedOut = false;
-    const timeout = setTimeout(() => { timedOut = true; abort.abort(); }, this.options.timeoutMs ?? 15 * 60_000);
+    // Serious research turns may include several tool calls and should not be
+    // cut off by a five-minute conversational ceiling. Campaigns still pass
+    // their remaining-budget-aware timeout explicitly.
+    const timeout = setTimeout(() => { timedOut = true; abort.abort(); }, this.options.timeoutMs ?? 30 * 60_000);
     const signalHandler = (): void => { abort.abort(); };
     process.once("SIGTERM", signalHandler);
     process.once("SIGINT", signalHandler);

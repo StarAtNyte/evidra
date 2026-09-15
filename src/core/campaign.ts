@@ -86,9 +86,9 @@ export function campaignRemainingMs(campaign: CampaignTimeState & { budgetMinute
  * short smoke campaigns bounded while allowing tool-heavy turns in serious
  * multi-hour campaigns to finish instead of inheriting an arbitrary tiny cap.
  */
-export function researchTurnTimeoutMs(remainingBudgetMs: number, maxTimeoutMs = 10 * 60_000): number {
+export function researchTurnTimeoutMs(remainingBudgetMs: number, maxTimeoutMs = 30 * 60_000): number {
   if (!Number.isFinite(remainingBudgetMs) || remainingBudgetMs <= 0) return 0;
-  const ceiling = Math.max(15_000, Number.isFinite(maxTimeoutMs) ? maxTimeoutMs : 10 * 60_000);
+  const ceiling = Math.max(15_000, Number.isFinite(maxTimeoutMs) ? maxTimeoutMs : 30 * 60_000);
   return Math.max(15_000, Math.min(ceiling, Math.floor(remainingBudgetMs / 4)));
 }
 
