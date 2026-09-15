@@ -28,6 +28,10 @@ replication or reviewer gates.
 Director structured output also caps each reasoning round at eight tool calls,
 matching the local decision schema before Evidra executes anything. This keeps
 provider-side tool fan-out bounded as well as controller-side execution.
+The director schema is strict-compatible with Codex response formats: nested
+hypotheses, source adaptations, ablation factors, and tool arguments use closed
+property sets. Provider-required `null` sentinels for locally optional fields
+are normalized at the controller boundary before Zod validation.
 Read-only observations may be reused within a turn, but shell results are
 never cached because fast/YOLO commands can observe changing process or
 filesystem state.

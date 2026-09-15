@@ -19,7 +19,7 @@ import { createValidationPolicy, splitStrategy } from "../dist/core/validation-p
 import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInspection, guardWorkspaceCommand } from "../dist/core/permissions.js";
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
-import { runResearchDirector } from "../dist/agents/research-director.js";
+import { normalizeResearchDecisionPayload, runResearchDirector } from "../dist/agents/research-director.js";
 import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
@@ -174,6 +174,14 @@ test("research context packing preserves priority and records truncation", () =>
   assert.ok(packed.report.usedChars <= packed.report.maxChars + 100);
   assert.ok(packed.report.truncated.length > 0 || packed.report.dropped.length > 0);
   assert.ok(packed.context.contextBudget);
+});
+
+test("strict Codex research output normalizes nullable optional fields", () => {
+  const payload = normalizeResearchDecisionPayload({ selectedHypothesis: null, hypotheses: [{ expectedOutcome: null, sourceAdaptation: { sourceTitle: "paper", section: null, repository: null, originalSetting: "setting", competitionDifference: "difference", expectedFailureModes: ["failure"] } }] });
+  assert.equal(payload.hypotheses[0].expectedOutcome, undefined);
+  assert.equal(payload.hypotheses[0].sourceAdaptation.section, undefined);
+  assert.equal(payload.hypotheses[0].sourceAdaptation.repository, undefined);
+  assert.equal(payload.selectedHypothesis, null);
 });
 
 test("route drift requires adjacent windows before changing policy", () => {

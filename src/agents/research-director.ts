@@ -14,6 +14,28 @@ function extractJson(output: unknown): unknown {
   }
 }
 
+/** Convert strict-provider null sentinels to the optional fields used locally. */
+export function normalizeResearchDecisionPayload(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const root = { ...(value as Record<string, unknown>) };
+  if (Array.isArray(root.hypotheses)) {
+    root.hypotheses = root.hypotheses.map((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+      const hypothesis = { ...(entry as Record<string, unknown>) };
+      if (hypothesis.expectedOutcome === null) delete hypothesis.expectedOutcome;
+      if (hypothesis.sourceAdaptation === null) delete hypothesis.sourceAdaptation;
+      if (hypothesis.sourceAdaptation && typeof hypothesis.sourceAdaptation === "object" && !Array.isArray(hypothesis.sourceAdaptation)) {
+        const adaptation = { ...(hypothesis.sourceAdaptation as Record<string, unknown>) };
+        if (adaptation.section === null) delete adaptation.section;
+        if (adaptation.repository === null) delete adaptation.repository;
+        hypothesis.sourceAdaptation = adaptation;
+      }
+      return hypothesis;
+    });
+  }
+  return root;
+}
+
 export interface ResearchDirectorOptions {
   provider: AgentProvider;
   model: string;
@@ -234,7 +256,7 @@ export async function runResearchDirector(
           objective: `${objective}\n\n${contract}\n\n${contractGuidance}`,
         }, { ...options, networkAccessEnabled: options.networkAccessEnabled ?? true, webSearchMode: options.webSearchMode ?? "live", onActivity: options.onActivity, onAssistant: options.onAssistant, onUsage: undefined }, options.fallbackLocalModel, onProgress, options.onProcess);
         options.onUsage?.(result.usage, result.provider, result.model ?? options.model, "director");
-        parsed = ResearchDecisionSchema.safeParse(extractJson(result.output));
+        parsed = ResearchDecisionSchema.safeParse(normalizeResearchDecisionPayload(extractJson(result.output)));
         if (parsed.success) break;
         throw new Error(`Research director returned invalid decision: ${parsed.error.issues.map((issue) => issue.path.join(".") + " " + issue.message).join("; ")}`);
       } catch (error) {

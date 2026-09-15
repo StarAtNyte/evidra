@@ -61,7 +61,7 @@ external evaluator.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 364/364 tests passing, TypeScript check passing,
+- Latest verified baseline: 365/365 tests passing, TypeScript check passing,
   and build passing. The worktree has six intentionally untracked pilot reports
   under `reports/`; do not confuse those generated artifacts with source edits.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
@@ -432,6 +432,10 @@ external evaluator.
 - Codex capacity/overload responses are classified as usage-limit failures,
   enabling the configured wait or route-fallback policy instead of opaque
   campaign termination.
+- Strict Codex director responses may encode local optional fields as `null`;
+  the controller now removes those sentinels for optional hypothesis/source
+  fields while preserving meaningful nullable fields, preventing valid provider
+  decisions from being rejected after a completed turn.
 
 ## Immediate next work
 
