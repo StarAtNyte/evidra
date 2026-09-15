@@ -24,6 +24,7 @@ export function effectiveCodexModel(preferred?: string): string {
 }
 
 export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
+export type CodexWebSearchMode = "disabled" | "cached" | "live";
 
 export function effectiveCodexSandbox(requested?: CodexSandboxMode): CodexSandboxMode {
   const baseline = requested ?? "read-only";
@@ -76,6 +77,9 @@ export interface ExecAgentOptions {
   threadId?: string;
   reasoningEffort?: string;
   sandbox?: CodexSandboxMode;
+  /** Enable Codex-native web retrieval only for explicitly research routes. */
+  networkAccessEnabled?: boolean;
+  webSearchMode?: CodexWebSearchMode;
   onThread?: (threadId: string) => void;
   limitPolicy?: "auto" | "wait" | "fallback" | "stop";
   timeoutMs?: number;
@@ -506,6 +510,8 @@ export class CodexExecAgent {
           model,
           sandboxMode,
           modelReasoningEffort: this.options.reasoningEffort as "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "persistent" | undefined,
+          networkAccessEnabled: this.options.networkAccessEnabled,
+          webSearchMode: this.options.webSearchMode,
           approvalPolicy: "never",
         })
         : codex.startThread({
@@ -514,6 +520,8 @@ export class CodexExecAgent {
         model,
         sandboxMode,
         modelReasoningEffort: this.options.reasoningEffort as "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "persistent" | undefined,
+        networkAccessEnabled: this.options.networkAccessEnabled,
+        webSearchMode: this.options.webSearchMode,
         approvalPolicy: "never",
       });
       let outputSchema: unknown;

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { cpus, totalmem } from "node:os";
 import { ResearchStore } from "../core/store.js";
-import type { AgentProvider, ExecAgentOptions } from "./codex-exec.js";
+import type { AgentProvider, CodexWebSearchMode, ExecAgentOptions } from "./codex-exec.js";
 import type { AgentResult } from "../core/types.js";
 import { isProviderUsageLimit, isRetryableAgentError, resolveLocalFallbackModel, runWithLocalFallback } from "./codex-exec.js";
 import type { ProcessControl } from "../core/process.js";
@@ -126,6 +126,8 @@ export interface ResearchLanesOptions {
   fallbackLocalModel?: string;
   limitPolicy?: ExecAgentOptions["limitPolicy"];
   reasoningEffort?: string;
+  networkAccessEnabled?: boolean;
+  webSearchMode?: CodexWebSearchMode;
   timeoutMs?: number;
   cwd: string;
   storePath: string;
@@ -351,6 +353,8 @@ export async function runResearchCritic(
       model: options.model,
       limitPolicy: options.limitPolicy,
       reasoningEffort: options.reasoningEffort,
+      networkAccessEnabled: options.networkAccessEnabled ?? true,
+      webSearchMode: options.webSearchMode ?? "live",
       timeoutMs: options.timeoutMs,
       cwd: options.cwd,
       sandbox: "read-only",
@@ -453,6 +457,8 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
           model,
           limitPolicy: options.limitPolicy,
           reasoningEffort: options.reasoningEffort,
+          networkAccessEnabled: options.networkAccessEnabled ?? true,
+          webSearchMode: options.webSearchMode ?? "live",
           timeoutMs: options.timeoutMs,
           cwd: options.cwd,
           sandbox: "read-only",

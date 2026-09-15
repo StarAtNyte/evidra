@@ -374,6 +374,10 @@ external evaluator.
 - Ordinary TUI conversation turns now use the same durable usage callback, so
   `/usage` includes Codex and local chat consumption rather than only
   autonomous research calls.
+- Research Codex routes now opt into the installed SDK's live web-search and
+  network capabilities for lanes, director, and critic turns; ordinary chat
+  remains unchanged, and retrieved material still enters Evidra only through
+  its provenance/evidence gates.
 
 ## Immediate next work
 

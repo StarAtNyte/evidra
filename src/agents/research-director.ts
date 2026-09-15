@@ -1,5 +1,5 @@
 import { ResearchDecisionSchema, type AgentResult, type ResearchDecision, type AgentTask } from "../core/types.js";
-import { isProviderUsageLimit, isRetryableAgentError, runWithLocalFallback, type AgentProvider } from "./codex-exec.js";
+import { isProviderUsageLimit, isRetryableAgentError, runWithLocalFallback, type AgentProvider, type CodexWebSearchMode } from "./codex-exec.js";
 import type { ProcessControl } from "../core/process.js";
 import { normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
 import { boundResearchContext } from "../core/context-budget.js";
@@ -18,6 +18,8 @@ export interface ResearchDirectorOptions {
   provider: AgentProvider;
   model: string;
   reasoningEffort?: string;
+  networkAccessEnabled?: boolean;
+  webSearchMode?: CodexWebSearchMode;
   timeoutMs?: number;
   cwd: string;
   fallbackLocalModel?: string;
@@ -136,7 +138,7 @@ export async function runResearchDirector(
           ...task,
           context: workingContext,
           objective: `${objective}\n\n${contract}\n\n${contractGuidance}`,
-        }, { ...options, onActivity: options.onActivity, onAssistant: options.onAssistant, onUsage: undefined }, options.fallbackLocalModel, onProgress, options.onProcess);
+        }, { ...options, networkAccessEnabled: options.networkAccessEnabled ?? true, webSearchMode: options.webSearchMode ?? "live", onActivity: options.onActivity, onAssistant: options.onAssistant, onUsage: undefined }, options.fallbackLocalModel, onProgress, options.onProcess);
         options.onUsage?.(result.usage, result.provider, result.model ?? options.model, "director");
         parsed = ResearchDecisionSchema.safeParse(extractJson(result.output));
         if (parsed.success) break;
