@@ -20,7 +20,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
-import { CodexExecAgent } from "../dist/agents/codex-exec.js";
+import { CodexExecAgent, progressLine } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
@@ -2787,6 +2787,11 @@ test("local provider enforces the configured turn timeout", async () => {
     await new Promise((resolve) => server.close(resolve));
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("Codex live progress redacts inline and separate-looking credentials", () => {
+  assert.equal(progressLine("python run.py --token super-secret-value"), "python run.py --token [REDACTED_ARGUMENT]");
+  assert.equal(progressLine("upload --api-key=sk-12345678901234567890"), "upload --api-key=[REDACTED_ARGUMENT]");
 });
 
 test("research director honors the bounded provider-attempt policy", async () => {

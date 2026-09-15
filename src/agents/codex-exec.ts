@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { Codex } from "@openai/codex-sdk";
 import type { AgentResult, AgentTask } from "../core/types.js";
 import type { ProcessControl } from "../core/process.js";
+import { redactSecrets } from "../core/redaction.js";
 
 export type AgentProvider = "codex" | "local";
 
@@ -86,8 +87,10 @@ export function isRetryableAgentError(error: unknown): boolean {
 }
 
 /** Keep live provider activity useful in a one-line TUI status rail. */
-function progressLine(value: string, limit = 180): string {
-  const compact = value.replace(/\s+/g, " ").trim();
+export function progressLine(value: string, limit = 180): string {
+  const compact = redactSecrets(value.replace(/\s+/g, " ").trim())
+    .replace(/((?:--?|\/)(?:api[-_]?key|token|secret|password|passwd|authorization|auth|credential)=)\[REDACTED\]/gi, "$1[REDACTED_ARGUMENT]")
+    .replace(/((?:--?|\/)(?:api[-_]?key|token|secret|password|passwd|authorization|auth|credential)\s+)([^\s]+)/gi, "$1[REDACTED_ARGUMENT]");
   return compact.length > limit ? `${compact.slice(0, limit - 1)}…` : compact;
 }
 
