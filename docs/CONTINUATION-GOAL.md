@@ -57,11 +57,11 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `46f7e72`.
+- Latest pushed commit: `8d74c72`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 314/314 tests passing, TypeScript check passing,
+- Latest verified baseline: 319/319 tests passing, TypeScript check passing,
   build passing, and a clean worktree.
 - Benchmark report command argv is now redacted alongside process output, with
   coverage for primary, alternate, and reproducibility routes.
@@ -83,6 +83,9 @@ external evaluator.
   requests remain single-attempt to prevent duplicate external actions.
 - HTTP response bodies are now read through a bounded 32 KiB stream before
   parsing, with oversized-response coverage.
+- Direct harness comparisons now include reasoning effort in pairing identity
+  and fair-pair checks, preventing high/medium-effort routes from being treated
+  as matched evidence.
 
 ## Immediate next work
 
