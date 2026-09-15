@@ -1621,12 +1621,15 @@ test("research lane pools expose ensemble and reproducibility specialties when c
 
 test("peer research board is bounded and keeps provenance-shaped evidence", () => {
   const board = boundedPeerBoard([
-    { type: "research.lane.completed", payload: { report: { role: "data detective", summary: "A".repeat(2_000), findings: ["f1", "f2", "f3", "f4", "f5", "f6"], uncertainties: ["u1"], evidence: ["e1"] } } },
+    { type: "research.lane.completed", payload: { report: { role: "data detective", summary: "A".repeat(2_000), findings: ["f1", "f2", "f3", "f4", "f5", "f6"], recommendations: ["r1", "r2", "r3", "r4", "r5"], uncertainties: ["u1"], evidence: ["e1"], evidenceSourceIds: ["src-1"], confidence: 0.8 } } },
     { type: "research.lane.failed", payload: { role: "ignored" } },
   ], 4);
   assert.equal(board.length, 1);
   assert.equal(String(board[0].summary).length, 1_200);
   assert.deepEqual(board[0].findings, ["f1", "f2", "f3", "f4", "f5"]);
+  assert.deepEqual(board[0].recommendations, ["r1", "r2", "r3", "r4"]);
+  assert.deepEqual(board[0].evidenceSourceIds, ["src-1"]);
+  assert.equal(board[0].confidence, 0.8);
 });
 
 test("replication manifests preserve provenance while changing the independent seed", () => {

@@ -261,8 +261,11 @@ export function boundedPeerBoard(events: Array<{ type: string; payload: unknown 
         role: typeof report.role === "string" ? report.role : "unknown",
         summary: typeof report.summary === "string" ? report.summary.slice(0, 1200) : "",
         findings: Array.isArray(report.findings) ? report.findings.slice(0, 5) : [],
+        recommendations: Array.isArray(report.recommendations) ? report.recommendations.slice(0, 4) : [],
         uncertainties: Array.isArray(report.uncertainties) ? report.uncertainties.slice(0, 3) : [],
         evidence: Array.isArray(report.evidence) ? report.evidence.slice(0, 5) : [],
+        evidenceSourceIds: Array.isArray(report.evidenceSourceIds) ? report.evidenceSourceIds.slice(0, 5) : [],
+        confidence: typeof report.confidence === "number" && Number.isFinite(report.confidence) ? report.confidence : 0,
       };
     })
     .slice(-Math.max(1, Math.min(limit, 8)));
