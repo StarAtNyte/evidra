@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { guardCommand } from "./permissions.js";
 import { runProcess, type ProcessControl } from "./process.js";
@@ -42,10 +42,15 @@ function substitute(command: string[], values: Record<string, string>): string[]
 }
 
 function commandWorkingDirectory(root: string, configured?: string): string {
-  const workingDirectory = configured ? resolve(root, configured) : root;
-  const workingRelative = relative(resolve(root), workingDirectory);
+  const rootPath = realpathSync(resolve(root));
+  const workingDirectory = configured ? resolve(rootPath, configured) : rootPath;
+  // Lexical containment is insufficient when a configured directory is a
+  // symlink. Resolve the existing path before allowing an authenticated
+  // external command to run there.
+  const checked = existsSync(workingDirectory) ? realpathSync(workingDirectory) : workingDirectory;
+  const workingRelative = relative(rootPath, checked);
   if (isAbsolute(workingRelative) || workingRelative.startsWith("..")) throw new Error("Submission workingDirectory must stay inside the project root.");
-  return workingDirectory;
+  return checked;
 }
 
 /** Parse the intentionally small score protocol used by generic competition adapters. */

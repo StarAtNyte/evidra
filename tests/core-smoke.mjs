@@ -3122,6 +3122,23 @@ test("configured command submission requires a valid approved bundle and preserv
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("submission working directories reject symlink escapes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-submit-symlink-"));
+  const outside = mkdtempSync(join(tmpdir(), "evidra-submit-outside-"));
+  try {
+    const artifact = join(root, "prediction.csv");
+    writeFileSync(artifact, "id,prediction\n1,0.5\n");
+    const manifest = { schemaVersion: 1, id: "exp-link", parent: null, hypothesisId: "hyp-link", gitCommit: "abc", datasetVersion: "data", splitVersion: "split", change: { configPatch: {} }, resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0], seeds: [0], requiredArtifacts: [] }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 0, requireReplication: false }, createdAt: new Date().toISOString() };
+    const run = { runId: "run-link", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 1 }, artifacts: { prediction: artifact } };
+    const bundle = prepareSubmission(root, "exp-link", manifest, run, { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } });
+    symlinkSync(outside, join(root, "escape"));
+    await assert.rejects(() => submitApprovedBundle(root, bundle.path, {
+      id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" },
+      submission: { platform: "command", workingDirectory: "escape", submitCommand: [process.execPath, "-e", "console.log('submitted')"] },
+    }), /workingDirectory must stay inside/);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); }
+});
+
 test("generic score polling parses JSON and human-readable adapter output", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-score-poll-"));
   try {
