@@ -58,6 +58,7 @@ function mae(target: readonly unknown[], prediction: readonly unknown[]): number
 
 function logLoss(target: readonly unknown[], prediction: readonly unknown[]): number {
   const pairs = numberPairs(target, prediction);
+  if (pairs.some(([actual]) => actual !== 0 && actual !== 1)) throw new Error("Log loss requires binary target labels 0 or 1.");
   const epsilon = 1e-15;
   return -pairs.reduce((sum, [actual, predicted]) => {
     const probability = Math.min(1 - epsilon, Math.max(epsilon, predicted));
@@ -67,6 +68,7 @@ function logLoss(target: readonly unknown[], prediction: readonly unknown[]): nu
 
 function auroc(target: readonly unknown[], prediction: readonly unknown[]): number {
   const pairs = numberPairs(target, prediction);
+  if (pairs.some(([actual]) => actual !== 0 && actual !== 1)) throw new Error("AUROC requires binary target labels 0 or 1.");
   const positives = pairs.filter(([actual]) => actual === 1).length;
   const negatives = pairs.length - positives;
   if (!positives || !negatives) throw new Error("AUROC requires both positive and negative examples.");
@@ -89,6 +91,7 @@ function auroc(target: readonly unknown[], prediction: readonly unknown[]): numb
 /** Binary average precision for one ranked list (the single-query MAP case). */
 function averagePrecision(target: readonly unknown[], prediction: readonly unknown[]): number {
   const pairs = numberPairs(target, prediction);
+  if (pairs.some(([actual]) => actual !== 0 && actual !== 1)) throw new Error("Average precision requires binary target labels 0 or 1.");
   const positives = pairs.filter(([actual]) => actual > 0).length;
   if (!positives) throw new Error("Average precision requires at least one positive example.");
   const ordered = pairs
