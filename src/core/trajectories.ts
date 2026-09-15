@@ -26,6 +26,7 @@ export interface ToolTraceRecorder {
   onToolCall: (source: string, call: ResearchToolCall) => string;
   onToolResult: (source: string, callId: string, result: ResearchToolResult) => void;
   onActivity: (source: string, activity: string) => void;
+  onAssistant: (source: string, text: string) => void;
 }
 
 export interface ToolTraceRecorderOptions {
@@ -103,6 +104,10 @@ export function createToolTraceRecorder(prefix = "research", options: ToolTraceR
     onActivity: (source, activity) => {
       if (!activity.trim()) return;
       record({ id: `${prefix}-activity-${++sequence}`, kind: "process", at: new Date().toISOString(), payload: redactStructured({ activity: activity.slice(0, 240), source, providerActivity: true }) });
+    },
+    onAssistant: (source, text) => {
+      if (!text.trim()) return;
+      record({ id: `${prefix}-assistant-${++sequence}`, kind: "assistant", at: new Date().toISOString(), payload: redactStructured({ text: text.slice(0, 8_000), source, providerMessage: true }) });
     },
   };
 }

@@ -355,6 +355,9 @@ external evaluator.
 - Completion claims now require at least one durable evidence claim; a Codex
   `met`/`stop` response with no persisted provenance is forced back to
   inspection rather than silently ending a campaign.
+- Codex and local provider turns now persist bounded, redacted assistant
+  messages alongside tool activity, improving replay and failure attribution
+  without treating generated prose as workspace evidence.
 
 ## Immediate next work
 

@@ -630,7 +630,10 @@ test("tool trace recorder preserves causal call/result pairs and redacts secrets
   assert.equal(trace.events[2].payload.activity, "Running: upload --api-key=[REDACTED]");
   assert.equal(trace.events[2].payload.providerActivity, true);
   assert.equal(trace.events[2].payload.source, "codex");
-  assert.equal(persisted.length, 3);
+  trace.onAssistant("codex", "Final result with token=sk-test_12345678901234567890");
+  assert.equal(trace.events[3].kind, "assistant");
+  assert.equal(trace.events[3].payload.text, "Final result with token=[REDACTED]");
+  assert.equal(persisted.length, 4);
   assert.equal(persisted[1].payload.output.value, "token=[REDACTED]");
   trace.events.push({ id: "terminal", kind: "terminal", payload: { status: "completed" } });
   assert.equal(validateTrajectoryStructure(trace.events).status, "complete");

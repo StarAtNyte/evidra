@@ -81,6 +81,8 @@ export interface ExecAgentOptions {
   timeoutMs?: number;
   /** Receive concise, redacted native provider activity for durable traces. */
   onActivity?: (source: string, activity: string) => void;
+  /** Receive the bounded, redacted assistant message for replay diagnostics. */
+  onAssistant?: (source: string, text: string) => void;
 }
 
 export class ProviderUsageLimitError extends Error {
@@ -542,6 +544,7 @@ export class CodexExecAgent {
       }
       settled = true;
       if (!finalText) throw new Error("Codex returned no assistant response.");
+      this.options.onAssistant?.("codex", finalText);
       return { provider: this.options.provider, model, threadId: threadId ?? this.options.threadId, output: finalText, usage };
     } catch (error) {
       settled = true;
@@ -594,6 +597,7 @@ export class CodexExecAgent {
       const payload = await response.json() as { message?: { content?: string } };
       const text = payload.message?.content;
       if (!text) throw new Error("Ollama returned no message content.");
+      this.options.onAssistant?.("local", text);
       onProgress?.("Completed.");
       return { provider: "local", model: this.options.model, output: text };
     } catch (error) {

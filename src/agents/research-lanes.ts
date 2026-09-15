@@ -140,6 +140,7 @@ export interface ResearchLanesOptions {
   onToolCall?: (source: string, call: ResearchToolCall) => string;
   onToolResult?: (source: string, callId: string, result: ResearchToolResult) => void;
   onActivity?: (source: string, activity: string) => void;
+  onAssistant?: (source: string, text: string) => void;
   onUsage?: (usage: AgentResult["usage"], provider: string, model: string, role: string) => void;
 }
 
@@ -354,6 +355,7 @@ export async function runResearchCritic(
       cwd: options.cwd,
       sandbox: "read-only",
       onActivity: options.onActivity,
+      onAssistant: options.onAssistant,
     }, options.provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
     options.onUsage?.(result.usage, result.provider, result.model ?? options.model, "critic");
     const evidenceStore = new ResearchStore(options.storePath);
@@ -455,6 +457,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
           cwd: options.cwd,
           sandbox: "read-only",
           onActivity: options.onActivity,
+          onAssistant: options.onAssistant,
         }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
         options.onUsage?.(result.usage, result.provider, result.model ?? model, role);
         parsed = { ...ResearchLaneReportSchema.parse(parseJson(result.output)), provider: result.provider, model: result.model ?? model };

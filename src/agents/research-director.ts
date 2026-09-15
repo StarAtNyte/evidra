@@ -28,6 +28,7 @@ export interface ResearchDirectorOptions {
   onToolCall?: (source: string, call: ResearchToolCall) => string;
   onToolResult?: (source: string, callId: string, result: ResearchToolResult) => void;
   onActivity?: (source: string, activity: string) => void;
+  onAssistant?: (source: string, text: string) => void;
   onUsage?: (usage: AgentResult["usage"], provider: string, model: string, role: string) => void;
   /** Consume operator steering after each completed tool, before replanning. */
   consumeSteering?: () => string[];
@@ -135,7 +136,7 @@ export async function runResearchDirector(
           ...task,
           context: workingContext,
           objective: `${objective}\n\n${contract}\n\n${contractGuidance}`,
-        }, { ...options, onActivity: options.onActivity }, options.fallbackLocalModel, onProgress, options.onProcess);
+        }, { ...options, onActivity: options.onActivity, onAssistant: options.onAssistant }, options.fallbackLocalModel, onProgress, options.onProcess);
         options.onUsage?.(result.usage, result.provider, result.model ?? options.model, "director");
         parsed = ResearchDecisionSchema.safeParse(extractJson(result.output));
         if (parsed.success) break;
