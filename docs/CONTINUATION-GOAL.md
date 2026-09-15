@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `3de1d6b`.
+- Latest pushed commit: `f5a1e90`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -82,6 +82,9 @@ external evaluator.
 - Codex stream events are normalized into concise TUI progress updates for
   reasoning, searches, file changes, commands, and assistant output; raw
   protocol event IDs are never shown to the user.
+- Codex thread restoration is explicit: a new terminal starts a fresh Evidra
+  chat, while `/resume <session-id>` restores the saved Codex thread and
+  transcript. Provider/model changes invalidate the active chat thread.
 - Source discovery now persists provenance classes and conservative quality
   scores, backfills metadata for historical events, diversity-reranks providers,
   and rejects instruction-like retrieved sentences before durable claim
