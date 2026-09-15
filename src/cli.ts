@@ -2110,6 +2110,21 @@ research
         if (record.quality.overall === "WARN") return 0.5;
         if (record.quality.overall === "FAIL") return 0;
         return undefined;
+      }, {
+        objectiveValuesFor: (record) => {
+          if (mode !== "challenge") return undefined;
+          const evaluator = record.events.find((event) => event.kind === "evaluator");
+          const metrics = evaluator?.payload.metrics;
+          if (!metrics || typeof metrics !== "object" || Array.isArray(metrics)) return undefined;
+          const definitions = [{ name: adapter.config.metric.name, direction: adapter.config.metric.direction }, ...(adapter.config.secondaryMetrics ?? [])];
+          const values = Object.fromEntries(definitions.flatMap((objective) => {
+            const value = (metrics as Record<string, unknown>)[objective.name];
+            return typeof value === "number" && Number.isFinite(value)
+              ? [[objective.name, objective.direction === "minimize" ? -value : value]]
+              : [];
+          }));
+          return Object.keys(values).length ? values : undefined;
+        },
       });
       const replayPolicies: ReplayPolicy[] = replayWorld ? [
         {
@@ -2136,7 +2151,14 @@ research
           selectChild: (_parentId, candidates) => candidates.slice().sort((left, right) => left.costMinutes - right.costMinutes || left.id.localeCompare(right.id))[0]?.id,
         },
       ] : [];
-      const replayRanking = replayWorld ? rankReplayPolicies(replayWorld, replayPolicies, { costPenalty: 0.01, parallelismBonus: 0.02 }) : [];
+      const replayObjectiveNames = mode === "challenge"
+        ? [adapter.config.metric.name, ...(adapter.config.secondaryMetrics ?? []).map((objective) => objective.name)]
+        : [];
+      const replayRanking = replayWorld ? rankReplayPolicies(replayWorld, replayPolicies, {
+        costPenalty: 0.01,
+        parallelismBonus: 0.02,
+        ...(replayObjectiveNames.length ? { objectiveNames: replayObjectiveNames } : {}),
+      }) : [];
       if (replayRanking.length) {
         store.appendEvent("research.replay.policy.selected", {
           cycle,
@@ -2147,7 +2169,7 @@ research
         });
       }
       const replayPolicyGuidance = replayRanking.length
-        ? `Replay policy diagnostic: ${replayRanking.map((result) => `${result.policyId} utility=${result.bestUtility ?? "none"}, cost=${result.totalCostMinutes.toFixed(2)}m, score=${result.replayScore.toFixed(3)}`).join("; ")}. Prefer the leading policy only as a bounded allocation hint; do not treat replay as a new result.`
+        ? `Replay policy diagnostic: ${replayRanking.map((result) => `${result.policyId} utility=${result.bestUtility ?? "none"}, Pareto=${result.paretoFront.length}, cost=${result.totalCostMinutes.toFixed(2)}m, score=${result.replayScore.toFixed(3)}`).join("; ")}. Prefer the leading policy only as a bounded allocation hint; do not treat replay as a new result.`
         : "Replay policy diagnostic: no eligible prior trajectories.";
       const criticConstraintGuidance = openCriticConstraint
         ? `\n\nOPEN CRITIC CONSTRAINT (${openCriticConstraint.verdict}):\n${openCriticConstraint.summary}\nObjections: ${openCriticConstraint.objections.join("; ") || "none listed"}\nRequired checks: ${openCriticConstraint.requiredChecks.join("; ") || "produce an independent evidence check"}\nDo not run or stop until these checks are addressed with durable evidence.`

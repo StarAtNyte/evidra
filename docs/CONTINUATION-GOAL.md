@@ -124,6 +124,10 @@ external evaluator.
 - Experiment trajectories now retain normalized primary evaluator utility and
   measured duration for replay diagnostics; non-metric research still requires
   an explicit evaluator-provided utility.
+- Replay nodes now preserve optional normalized multi-objective vectors and
+  report Pareto-front coverage without inventing a weighted scalar.
+- Replay expansion now removes terminal leaves from the frontier, preserving
+  access to unexplored sibling branches during bounded policy simulation.
 
 ## Immediate next work
 

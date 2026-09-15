@@ -7,6 +7,8 @@ export interface ReplayNode {
   /** Metric score for legacy metric worlds; evaluator-defined utility is the generic form. */
   score?: number;
   utility?: number;
+  /** Optional normalized higher-is-better vector for multi-objective replay. */
+  objectiveValues?: Record<string, number>;
   outcomeType?: "metric" | "artifact" | "proof" | "behavior" | "system" | "other";
   costMinutes: number;
   valid: boolean;
@@ -19,6 +21,7 @@ const ReplayNodeSchema = z.object({
   parentId: z.string().min(1).nullable(),
   score: z.number().finite().optional(),
   utility: z.number().finite().optional(),
+  objectiveValues: z.record(z.string().min(1), z.number().finite()).optional(),
   outcomeType: z.enum(["metric", "artifact", "proof", "behavior", "system", "other"]).default("metric"),
   costMinutes: z.number().finite().nonnegative(),
   valid: z.boolean(),
@@ -58,6 +61,8 @@ export interface ReplayResult {
   totalCostMinutes: number;
   bestScore: number | null;
   bestUtility: number | null;
+  /** IDs on the replay Pareto front when objectiveNames are requested. */
+  paretoFront: string[];
   replayScore: number;
   stopped: "policy" | "exhausted" | "round_limit";
 }
@@ -65,6 +70,9 @@ export interface ReplayResult {
 export interface ReplayScoring {
   costPenalty?: number;
   parallelismBonus?: number;
+  /** Names of already-normalized, higher-is-better objectives to preserve. */
+  objectiveNames?: string[];
+  paretoBonus?: number;
 }
 
 /** Validate a recorded tree before allowing it to influence policy selection. */
@@ -105,7 +113,9 @@ export function simulateReplay(worldInput: ReplayWorld, policy: ReplayPolicy, sc
   if (!Number.isInteger(policy.maxParallel) || policy.maxParallel < 1) throw new Error("Replay policy maxParallel must be a positive integer.");
   const costPenalty = scoring.costPenalty ?? 0.01;
   const parallelismBonus = scoring.parallelismBonus ?? 0;
-  if (!Number.isFinite(costPenalty) || costPenalty < 0 || !Number.isFinite(parallelismBonus) || parallelismBonus < 0) throw new Error("Replay scoring coefficients must be finite and non-negative.");
+  const objectiveNames = [...new Set(scoring.objectiveNames ?? [])].filter((name) => name.trim());
+  const paretoBonus = scoring.paretoBonus ?? 0.05;
+  if (!Number.isFinite(costPenalty) || costPenalty < 0 || !Number.isFinite(parallelismBonus) || parallelismBonus < 0 || !Number.isFinite(paretoBonus) || paretoBonus < 0) throw new Error("Replay scoring coefficients must be finite and non-negative.");
   const byParent = new Map<string, ReplayNode[]>();
   for (const node of world.nodes) if (node.parentId !== null) byParent.set(node.parentId, [...(byParent.get(node.parentId) ?? []), node]);
   for (const children of byParent.values()) children.sort((left, right) => left.id.localeCompare(right.id));
@@ -125,7 +135,9 @@ export function simulateReplay(worldInput: ReplayWorld, policy: ReplayPolicy, sc
       const child = (requestedChild ? candidates.find((candidate) => candidate.id === requestedChild) : undefined) ?? candidates[0];
       frontier.delete(parentId);
       if (!child) continue;
-      revealed.add(child.id); frontier.add(child.id); revealedThisRound += 1; totalCostMinutes += child.costMinutes;
+      revealed.add(child.id);
+      if ((byParent.get(child.id)?.length ?? 0) > 0) frontier.add(child.id);
+      revealedThisRound += 1; totalCostMinutes += child.costMinutes;
       // A branching parent remains selectable until every recorded child has
       // been revealed; this is what lets replay policies compare branch
       // order and parallel opening rather than only walking one chain.
@@ -138,10 +150,19 @@ export function simulateReplay(worldInput: ReplayWorld, policy: ReplayPolicy, sc
   const bestUtility = validNodes.length ? Math.max(...validNodes.map(utilityOf)) : null;
   const metricScores = validNodes.map((node) => node.score).filter((score): score is number => Number.isFinite(score));
   const bestScore = metricScores.length ? (world.direction === "minimize" ? Math.min(...metricScores) : Math.max(...metricScores)) : null;
+  const paretoCandidates = objectiveNames.length
+    ? validNodes.filter((node) => objectiveNames.every((name) => Number.isFinite(node.objectiveValues?.[name])))
+    : [];
+  const dominates = (left: ReplayNode, right: ReplayNode): boolean => {
+    const leftValues = objectiveNames.map((name) => left.objectiveValues![name]);
+    const rightValues = objectiveNames.map((name) => right.objectiveValues![name]);
+    return leftValues.every((value, index) => value >= rightValues[index]) && leftValues.some((value, index) => value > rightValues[index]);
+  };
+  const paretoFront = paretoCandidates.filter((candidate) => !paretoCandidates.some((other) => other.id !== candidate.id && dominates(other, candidate))).map((node) => node.id).sort();
   const attemptedNodes = Math.max(0, revealed.size - 1);
-  const replayScore = bestUtility === null ? -costPenalty * totalCostMinutes : bestUtility - costPenalty * totalCostMinutes + parallelismBonus * (attemptedNodes / Math.max(1, rounds));
+  const replayScore = bestUtility === null ? -costPenalty * totalCostMinutes + paretoBonus * paretoFront.length : bestUtility - costPenalty * totalCostMinutes + parallelismBonus * (attemptedNodes / Math.max(1, rounds)) + paretoBonus * paretoFront.length;
   const stopped = !frontier.size ? "exhausted" : rounds >= policy.maxRounds ? "round_limit" : "policy";
-  return { policyId: policy.id, revealed: [...revealed].sort(), rounds, attemptedNodes, totalCostMinutes, bestScore, bestUtility, replayScore, stopped };
+  return { policyId: policy.id, revealed: [...revealed].sort(), rounds, attemptedNodes, totalCostMinutes, bestScore, bestUtility, paretoFront, replayScore, stopped };
 }
 
 /** Evaluate alternative policies and return the highest replay score first. */

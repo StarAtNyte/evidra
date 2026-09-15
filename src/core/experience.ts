@@ -53,7 +53,7 @@ export interface CurriculumReplay {
 export function experienceReplayWorld(
   records: ExperienceRecord[],
   utilityFor: (record: ExperienceRecord) => number | undefined,
-  options: { limit?: number; rootId?: string } = {},
+  options: { limit?: number; rootId?: string; objectiveValuesFor?: (record: ExperienceRecord) => Record<string, number> | undefined } = {},
 ): ReplayWorld | undefined {
   const limit = Math.max(0, Math.min(256, options.limit ?? 48));
   const rootId = options.rootId ?? "experience-root";
@@ -73,10 +73,12 @@ export function experienceReplayWorld(
     }, 0);
     const rawParent = item.events.map((event) => record(event.payload).parentTrajectoryId).find((value) => typeof value === "string");
     const parentId = typeof rawParent === "string" && ids.has(rawParent) ? rawParent : rootId;
+    const objectiveValues = options.objectiveValuesFor?.(item);
     return {
       id: item.trajectoryId,
       parentId,
       utility,
+      ...(objectiveValues && Object.keys(objectiveValues).length ? { objectiveValues } : {}),
       outcomeType: "other" as const,
       costMinutes: durationMinutes,
       valid: item.admission === "candidate",

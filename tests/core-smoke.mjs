@@ -3121,6 +3121,13 @@ test("replay simulator evaluates alternate branch and batch policies without exe
   ] }, { id: "min-policy", maxRounds: 1, maxParallel: 1, select: ({ frontier }) => frontier }, { costPenalty: 0 });
   assert.equal(minimization.bestScore, 2);
   assert.equal(minimization.bestUtility, -2);
+  const pareto = simulateReplay({ rootId: "root", nodes: [
+    { id: "root", parentId: null, utility: 0, objectiveValues: { quality: 0, speed: 0 }, costMinutes: 0, valid: false },
+    { id: "quality", parentId: "root", utility: 0.8, objectiveValues: { quality: 1, speed: 0.2 }, costMinutes: 1, valid: true },
+    { id: "speed", parentId: "root", utility: 0.7, objectiveValues: { quality: 0.2, speed: 1 }, costMinutes: 1, valid: true },
+    { id: "dominated", parentId: "root", utility: 0.4, objectiveValues: { quality: 0.1, speed: 0.1 }, costMinutes: 1, valid: true },
+  ] }, { id: "pareto-policy", maxRounds: 3, maxParallel: 1, select: ({ frontier }) => frontier }, { costPenalty: 0, objectiveNames: ["quality", "speed"], paretoBonus: 0.1 });
+  assert.deepEqual(pareto.paretoFront, ["quality", "speed"]);
 });
 
 test("replay simulator rejects malformed or cyclic discovery history", () => {
