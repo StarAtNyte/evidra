@@ -73,7 +73,7 @@ import { promoteHalvingStage } from "./core/successive-halving.js";
 import type { CostObservation } from "./core/cost-model.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
-import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
+import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, evaluateProviderGeneralization, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
 import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.js";
 import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
@@ -579,8 +579,9 @@ benchmark.command("run")
   .option("--retention-regression <delta>", "maximum allowed task-level regression for retention", "0")
   .option("--holdout <file>", "task-disjoint held-out benchmark report required to validate transfer")
   .option("--compare-providers <routes>", "explicit provider diagnostic, e.g. codex,local; allows intentional mixed-provider arms")
+  .option("--provider-holdout <file>", "task-disjoint held-out report for the explicit provider comparison")
   .description("Execute matched arms, score the evidence, and verify the challenger beats incumbents")
-  .action(async (file: string, options: { out?: string; workspace?: string; challenger: string; incumbent?: string; parallel: string; retention?: string; retentionRegression: string; holdout?: string; compareProviders?: string }) => {
+  .action(async (file: string, options: { out?: string; workspace?: string; challenger: string; incumbent?: string; parallel: string; retention?: string; retentionRegression: string; holdout?: string; compareProviders?: string; providerHoldout?: string }) => {
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
     const raw = parsed && typeof parsed === "object" && Array.isArray((parsed as { arms?: unknown }).arms) ? (parsed as { arms: unknown[] }).arms : undefined;
     if (!raw?.length) throw new Error("Benchmark protocol must contain a non-empty arms array.");
@@ -619,6 +620,14 @@ benchmark.command("run")
     const incumbents = options.incumbent ? [options.incumbent] : harnesses.filter((harness) => harness !== options.challenger);
     const comparisons = incumbents.map((incumbent) => compareHarnesses(report.trials, options.challenger, incumbent));
     const providerComparison = providerPair.length === 2 ? compareProviderRoutes(report.trials, providerPair[0], providerPair[1]) : undefined;
+    let providerGeneralization: ReturnType<typeof evaluateProviderGeneralization> | undefined;
+    if (options.providerHoldout) {
+      if (providerPair.length !== 2) throw new Error("--provider-holdout requires --compare-providers providerA,providerB.");
+      const heldOutParsed: unknown = JSON.parse(readFileSync(resolve(options.providerHoldout), "utf8"));
+      const heldOutRaw = Array.isArray(heldOutParsed) ? heldOutParsed : heldOutParsed && typeof heldOutParsed === "object" && Array.isArray((heldOutParsed as { trials?: unknown }).trials) ? (heldOutParsed as { trials: unknown[] }).trials : undefined;
+      if (!heldOutRaw?.length) throw new Error("Provider held-out report must contain a non-empty trials array.");
+      providerGeneralization = evaluateProviderGeneralization(report.trials, heldOutRaw as HarnessTrial[], providerPair[0], providerPair[1]);
+    }
     const adaptation = planHarnessAdaptation(report.trials, scorecards, comparisons, options.challenger);
     const challengerTrials = report.trials.filter((trial) => trial.harness === options.challenger);
     const componentAblations = challengerTrials.length > 0 && challengerTrials.every((trial) => Array.isArray(trial.componentIds))
@@ -646,7 +655,7 @@ benchmark.command("run")
       const maximumRegression = Number(options.retentionRegression);
       retention = evaluateHarnessRetention(priorTrials, report.trials, options.challenger, maximumRegression);
     }
-    const output = { ...report, scorecards, ...(policyScorecards ? { policyScorecards, policyComparisons } : {}), pareto, protocol: matched, challenger: options.challenger, comparisons, ...(providerComparison ? { providerComparison } : {}), adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
+    const output = { ...report, scorecards, ...(policyScorecards ? { policyScorecards, policyComparisons } : {}), pareto, protocol: matched, challenger: options.challenger, comparisons, ...(providerComparison ? { providerComparison } : {}), ...(providerGeneralization ? { providerGeneralization } : {}), adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
     if (options.out) writeFileSync(resolve(options.out), `${JSON.stringify(output, null, 2)}\n`);
     const benchmarkStore = new ResearchStore(statePath);
     benchmarkStore.appendEvent("harness.benchmark.completed", {
@@ -663,6 +672,7 @@ benchmark.command("run")
       pareto,
       comparisons: comparisons.map((comparison) => ({ incumbent: comparison.incumbent, challengerWins: comparison.challengerWins, reason: comparison.reason, pairedLower95: comparison.pairedLower95, sliceRegressions: comparison.sliceRegressions, sliceLower95: comparison.sliceLower95 })),
       ...(providerComparison ? { providerComparison } : {}),
+      ...(providerGeneralization ? { providerGeneralization } : {}),
       adaptation,
       ...(componentAblations ? { componentAblations: componentAblations.map((item) => ({ variant: item.variant, removedComponents: item.removedComponents, valid: item.valid, challengerWins: item.comparison.challengerWins, reason: item.reason })) } : {}),
       ...(change ? { change, changeOutcomes } : {}),
@@ -673,6 +683,7 @@ benchmark.command("run")
     console.log(`Harness benchmark run complete\n${scorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})${Object.keys(scorecard.failureProfile).length ? ` · failures ${JSON.stringify(scorecard.failureProfile)}` : ""}`).join("\n")}`);
     if (policyScorecards) console.log(`\nSearch-policy scorecards\n${policyScorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})`).join("\n")}`);
     if (providerComparison) console.log(`\nProvider route diagnostic · ${providerPair[0]} vs ${providerPair[1]}: ${providerComparison.pairedMeanDelta === null ? "no valid paired outcomes" : `mean primary delta ${providerComparison.pairedMeanDelta.toFixed(6)}`} · ${providerComparison.reason}`);
+    if (providerGeneralization) console.log(`Provider held-out transfer · ${providerGeneralization.generalizes ? "GENERALIZES" : "NOT PROVEN"} · ${providerGeneralization.reason}`);
     console.log(`\nPareto frontier · ${pareto.filter((point) => point.onFrontier).map((point) => `${point.harness}${point.medianTimeToEvidenceSeconds === null ? "" : ` (${point.medianTimeToEvidenceSeconds.toFixed(1)}s)`}`).join(", ") || "none"}`);
     if (comparisons.length) {
       console.log(`\nCompetitive gate · challenger ${options.challenger}`);
