@@ -1437,16 +1437,34 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (result.status === "completed") {
       for (const verificationCommand of verificationCommands) {
         setProgress(`Experiment ${id} · running verification ${verificationOutputs.length + 1}/${verificationCommands.length}...`);
-        const checked = await withExecutionHeartbeat(
-          () => runProcess(verificationCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, registerProcess, experimentEnvironment),
-          { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "verification", executor: manifest.resources.executor },
-        );
+        let checked: Awaited<ReturnType<typeof runProcess>>;
+        let verifierAttempt = 1;
+        const verifierDeadline = Date.now() + manifest.resources.timeoutMinutes * 60_000;
+        while (true) {
+          const remainingMs = Math.max(1_000, verifierDeadline - Date.now());
+          checked = await withExecutionHeartbeat(
+            () => runProcess(verificationCommand, experimentCwd, remainingMs, undefined, registerProcess, experimentEnvironment),
+            { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt: verifierAttempt, stage: "verification", executor: manifest.resources.executor },
+          );
+          if (checked.exitCode === 0) break;
+          const failureClass = classifyProcessFailure(checked) ?? "unknown";
+          const plan = recoveryPlan(failureClass);
+          if (!plan.retry || verifierAttempt >= plan.maxAttempts) break;
+          const delay = recoveryDelay(plan, verifierAttempt);
+          if (Date.now() + delay * 1_000 + 1_000 > verifierDeadline) break;
+          const retryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+          retryStore.appendEvent("run.retry.scheduled", { experimentId: id, stage: "verification", verifierIndex: verificationOutputs.length + 1, attempt: verifierAttempt, delaySeconds: delay, failureClass, action: plan.action });
+          retryStore.close();
+          setProgress(`Verifier retry ${verifierAttempt + 1}/${plan.maxAttempts} after ${plan.action}...`);
+          await new Promise<void>((resolve) => setTimeout(resolve, delay * 1000));
+          verifierAttempt += 1;
+        }
         activeProcess.current = null;
         verificationOutputs.push({ command: verificationCommand, stdout: checked.stdout, stderr: checked.stderr, exitCode: checked.exitCode });
         const verificationStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
         verificationStore.appendEvent(checked.exitCode === 0 ? "experiment.verification.completed" : "experiment.verification.failed", { experimentId: id, runId: result.runId, verifierIndex: verificationOutputs.length, command: verificationCommand, exitCode: checked.exitCode, stdout: checked.stdout.slice(-4000), stderr: checked.stderr.slice(-4000) });
         verificationStore.close();
-        result = { ...result, status: checked.exitCode === 0 ? "completed" : "failed", exitCode: checked.exitCode, stdout: `${result.stdout ?? ""}\n[VERIFICATION ${verificationOutputs.length}]\n${checked.stdout}`, stderr: `${result.stderr ?? ""}\n[VERIFICATION ${verificationOutputs.length}]\n${checked.stderr}`, ...(checked.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
+        result = { ...result, status: checked.exitCode === 0 ? "completed" : "failed", exitCode: checked.exitCode, stdout: `${result.stdout ?? ""}\n[VERIFICATION ${verificationOutputs.length}]\n${checked.stdout}`, stderr: `${result.stderr ?? ""}\n[VERIFICATION ${verificationOutputs.length}]\n${checked.stderr}`, ...(checked.exitCode === 0 ? {} : { failureClass: classifyProcessFailure(checked) ?? "unknown" }) };
         if (checked.exitCode !== 0) break;
       }
     }

@@ -3288,16 +3288,34 @@ experiment.command("run")
     const verificationCommands = [...(manifest.evaluation.verificationCommand ? [manifest.evaluation.verificationCommand] : []), ...(manifest.evaluation.verificationCommands ?? [])];
     if (result.status === "completed") {
       for (const verificationCommand of verificationCommands) {
-        const checked = await withExecutionHeartbeat(
-          () => runProcess(verificationCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, undefined, experimentEnvironment),
-          { storePath: statePath, experimentId: id, attempt, stage: "verification", executor: manifest.resources.executor },
-        );
+        let checked: Awaited<ReturnType<typeof runProcess>>;
+        let verifierAttempt = 1;
+        const verifierDeadline = Date.now() + manifest.resources.timeoutMinutes * 60_000;
+        while (true) {
+          const remainingMs = Math.max(1_000, verifierDeadline - Date.now());
+          checked = await withExecutionHeartbeat(
+            () => runProcess(verificationCommand, experimentCwd, remainingMs, undefined, undefined, experimentEnvironment),
+            { storePath: statePath, experimentId: id, attempt: verifierAttempt, stage: "verification", executor: manifest.resources.executor },
+          );
+          if (checked.exitCode === 0) break;
+          const failureClass = classifyProcessFailure(checked) ?? "unknown";
+          const plan = recoveryPlan(failureClass);
+          if (!plan.retry || verifierAttempt >= plan.maxAttempts) break;
+          const delay = recoveryDelay(plan, verifierAttempt);
+          if (Date.now() + delay * 1_000 + 1_000 > verifierDeadline) break;
+          const retryStore = new ResearchStore(statePath);
+          retryStore.appendEvent("run.retry.scheduled", { experimentId: id, stage: "verification", verifierIndex: verifications.length + 1, attempt: verifierAttempt, delaySeconds: delay, failureClass, action: plan.action });
+          retryStore.close();
+          console.log(`Retrying verifier for ${id} (${verifierAttempt + 1}/${plan.maxAttempts}) after ${plan.action}; waiting ${delay}s...`);
+          await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, delay * 1000));
+          verifierAttempt += 1;
+        }
         const formal = classifyVerifier(verificationCommand, checked.exitCode, checked.stdout, checked.stderr);
         verifications.push({ command: verificationCommand, stdout: checked.stdout, stderr: checked.stderr, exitCode: checked.exitCode, formal });
         const verificationStore = new ResearchStore(statePath);
         verificationStore.appendEvent(checked.exitCode === 0 ? "experiment.verification.completed" : "experiment.verification.failed", { experimentId: id, runId: result.runId, verifierIndex: verifications.length, command: verificationCommand, exitCode: checked.exitCode, kind: formal.kind, evidence: formal.evidence, semanticMarker: formal.semanticMarker ?? null, summary: formal.summary, stdout: checked.stdout.slice(-4000), stderr: checked.stderr.slice(-4000) });
         verificationStore.close();
-        result = { ...result, status: checked.exitCode === 0 ? "completed" : "failed", exitCode: checked.exitCode, stdout: `${result.stdout ?? ""}\n[VERIFICATION ${verifications.length}]\n${checked.stdout}`, stderr: `${result.stderr ?? ""}\n[VERIFICATION ${verifications.length}]\n${checked.stderr}`, ...(checked.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
+        result = { ...result, status: checked.exitCode === 0 ? "completed" : "failed", exitCode: checked.exitCode, stdout: `${result.stdout ?? ""}\n[VERIFICATION ${verifications.length}]\n${checked.stdout}`, stderr: `${result.stderr ?? ""}\n[VERIFICATION ${verifications.length}]\n${checked.stderr}`, ...(checked.exitCode === 0 ? {} : { failureClass: classifyProcessFailure(checked) ?? "unknown" }) };
         if (checked.exitCode !== 0) break;
       }
     }
