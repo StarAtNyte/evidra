@@ -386,6 +386,9 @@ external evaluator.
 - Persisted-trace parser limits now fall back safely when callers provide
   non-finite event or byte bounds, preventing malformed recovery parameters
   from disabling the parser's safety ceiling.
+- Codex streamed turns now require the SDK's `turn.completed` event in addition
+  to a non-empty assistant message; a disconnected partial stream is rejected
+  and remains eligible for recovery rather than becoming a valid decision.
 
 ## Immediate next work
 

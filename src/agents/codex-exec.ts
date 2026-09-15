@@ -537,6 +537,7 @@ export class CodexExecAgent {
       let finalText = "";
       let usage: AgentResult["usage"];
       let threadId: string | undefined;
+      let turnCompleted = false;
       for await (const event of stream.events) {
         const value = event as unknown as { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string; query?: string; message?: string }; usage?: AgentResult["usage"]; message?: string; error?: { message?: string } };
         if (value.type === "thread.started" && value.thread_id) { threadId = value.thread_id; this.options.onThread?.(value.thread_id); }
@@ -556,12 +557,14 @@ export class CodexExecAgent {
           }
         }
         else if (value.type === "turn.completed") {
+          turnCompleted = true;
           usage = normalizeCodexUsage(value.usage);
           onProgress?.("Completed.");
         }
         else if (value.type === "turn.failed" || value.type === "error") throw new Error(codexEventErrorMessage(value));
       }
       settled = true;
+      if (!turnCompleted) throw new Error("Codex stream ended before the turn completed.");
       if (!finalText) throw new Error("Codex returned no assistant response.");
       this.options.onAssistant?.("codex", finalText);
       return { provider: this.options.provider, model, threadId: threadId ?? this.options.threadId, output: finalText, usage };
