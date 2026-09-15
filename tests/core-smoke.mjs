@@ -4074,6 +4074,22 @@ test("validation acceptance protects configured secondary objectives", () => {
   assert.match(acceptance.reasons.join(" "), /secondary metric gate failed.*safety/i);
 });
 
+test("multi-split validation protects secondary objectives on every split", () => {
+  const run = (id, score, safety) => ({ runId: id, status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score, safety }, metricsByFold: { score: [score, score], safety: [safety, safety] }, artifacts: {} });
+  const report = evaluateMultiSplitValidation({
+    runs: [
+      { split: "group", baseline: run("b-group", 0.5, 0.9), candidate: run("c-group", 0.55, 0.89) },
+      { split: "temporal", baseline: run("b-time", 0.5, 0.9), candidate: run("c-time", 0.54, 0.8) },
+    ],
+    metric: "score", direction: "maximize", minimumDelta: 0.01,
+    secondaryMetrics: [{ name: "safety", direction: "maximize", maximumRegression: 0.05 }],
+  });
+  assert.equal(report.accepted, false);
+  assert.equal(report.secondaryMetrics[0].splits[0].passed, true);
+  assert.equal(report.secondaryMetrics[0].splits[1].passed, false);
+  assert.match(report.reasons.join(" "), /secondary metric.*safety/i);
+});
+
 test("competition metric suites reject ambiguous objective names", () => {
   const base = { id: "metrics", name: "Metrics", taskType: "generic", datasetRevision: "v1", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } };
   assert.throws(() => CompetitionConfigSchema.parse({ ...base, secondaryMetrics: [{ name: "score", direction: "maximize" }] }), /unique.*duplicate/i);

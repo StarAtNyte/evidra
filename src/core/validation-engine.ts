@@ -82,6 +82,11 @@ export interface MultiSplitValidation {
   splits: Array<{ split: string; comparison: RunComparison; normalizedDelta: number | null; passed: boolean }>;
   worstNormalizedDelta: number | null;
   reasons: string[];
+  secondaryMetrics: Array<{
+    name: string;
+    splits: Array<{ split: string; normalizedDelta: number | null; passed: boolean }>;
+    passed: boolean;
+  }>;
 }
 
 /** Count every attempted metric candidate in a dataset family, not only wins. */
@@ -153,6 +158,7 @@ export function evaluateMultiSplitValidation(input: {
   metric: string;
   direction: "minimize" | "maximize";
   minimumDelta: number;
+  secondaryMetrics?: Array<{ name: string; direction: "minimize" | "maximize"; minimumDelta?: number; maximumRegression?: number }>;
 }): MultiSplitValidation {
   const lowerIsBetter = input.direction === "minimize";
   const splits = input.runs.map((entry) => {
@@ -163,5 +169,17 @@ export function evaluateMultiSplitValidation(input: {
   const observed = splits.map((entry) => entry.normalizedDelta).filter((delta): delta is number => delta !== null);
   const worstNormalizedDelta = observed.length ? Math.min(...observed) : null;
   const reasons = splits.filter((entry) => !entry.passed).map((entry) => `${entry.split}: normalized delta ${entry.normalizedDelta ?? "missing"} is below required ${input.minimumDelta}`);
-  return { accepted: splits.length > 0 && reasons.length === 0, splits, worstNormalizedDelta, reasons };
+  const secondaryMetrics = (input.secondaryMetrics ?? []).map((objective) => {
+    const objectiveSplits = input.runs.map((entry) => {
+      const comparison = compareRuns(entry.baseline, entry.candidate, objective.name, objective.direction === "minimize");
+      const normalizedDelta = comparison.delta === null ? null : objective.direction === "minimize" ? -comparison.delta : comparison.delta;
+      const passed = normalizedDelta !== null && normalizedDelta >= (objective.minimumDelta ?? 0) - (objective.maximumRegression ?? 0);
+      return { split: entry.split, normalizedDelta, passed };
+    });
+    return { name: objective.name, splits: objectiveSplits, passed: objectiveSplits.length > 0 && objectiveSplits.every((entry) => entry.passed) };
+  });
+  for (const objective of secondaryMetrics) {
+    if (!objective.passed) reasons.push(`secondary metric '${objective.name}' regressed or is missing on one or more validation splits`);
+  }
+  return { accepted: splits.length > 0 && reasons.length === 0, splits, worstNormalizedDelta, reasons, secondaryMetrics };
 }
