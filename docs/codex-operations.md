@@ -23,6 +23,10 @@ The controller never accepts a model's prose as proof. A result must pass the
 declared evaluator, artifact and integrity checks, validation policy, and any
 replication or reviewer gates.
 
+Director structured output also caps each reasoning round at eight tool calls,
+matching the local decision schema before Evidra executes anything. This keeps
+provider-side tool fan-out bounded as well as controller-side execution.
+
 Long-running context retrieval is hybrid: durable claims and hypotheses are
 ranked using the SQLite FTS index when available, then deterministic lexical
 overlap remains as a compatibility fallback. This keeps relevant old memory

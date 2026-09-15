@@ -60,7 +60,10 @@ const RESEARCH_DECISION_OUTPUT_SCHEMA = JSON.stringify({
     selectedHypothesis: { type: ["string", "null"] },
     searchOperator: { type: "string", enum: ["greedy", "ucb_portfolio", "evolutionary", "mcts", "ablation", "combination", "replication", "audit"] },
     nextAction: { type: "string" },
-    toolCalls: { type: "array", items: { type: "object", additionalProperties: true } },
+    // Keep the provider contract aligned with ResearchDecisionSchema. This
+    // bounds one director turn before controller execution, rather than
+    // relying only on local parsing after an oversized response arrives.
+    toolCalls: { type: "array", maxItems: 8, items: { type: "object", additionalProperties: true } },
   },
 });
 

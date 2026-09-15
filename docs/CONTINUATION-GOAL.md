@@ -201,6 +201,8 @@ external evaluator.
 - The TUI now performs the same partial-trace recovery as the CLI, preserving
   Codex provenance consistently when autonomous work is restarted from either
   interface.
+- The Codex director's provider output schema now caps each turn at eight tool
+  calls, matching the local decision schema before any tool is executed.
 - Autonomous memory context now uses hybrid FTS-plus-lexical retrieval for
   durable claims and hypotheses, so the existing SQLite index influences Codex
   research context instead of being used only by the interactive memory search.
