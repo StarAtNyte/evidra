@@ -3276,9 +3276,10 @@ test("generic score polling parses JSON and human-readable adapter output", asyn
     const observation = await pollSubmissionScore(root, bundle.path, "submission-42", competition);
     assert.equal(observation.score, 0.731);
     assert.equal(observation.platform, "command");
-    assert.equal(parseSubmissionScore("score: 0.812"), 0.812);
-    assert.equal(parseSubmissionScore("{\"result\":{\"score\":0.44}}"), 0.44);
-    assert.equal(parseSubmissionScore("no score here"), undefined);
+  assert.equal(parseSubmissionScore("score: 0.812"), 0.812);
+  assert.equal(parseSubmissionScore("{\"result\":{\"score\":0.44}}"), 0.44);
+  assert.equal(parseSubmissionScore("fileName,date,description,status,publicScore,privateScore\npred.csv,2026-09-15,test,complete,0.731,0.700"), 0.731);
+  assert.equal(parseSubmissionScore("no score here"), undefined);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

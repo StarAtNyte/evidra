@@ -586,6 +586,12 @@ When a manifest declares `submissionPolicy`, Evidra also enforces its external b
       "competition": "my-competition",
       "predictionFile": "submission.csv"
     }
+    
+For Kaggle, Evidra performs a read-only `competitions files` access preflight
+before the approved upload. This checks authentication and competition access
+without giving credentials to agents. Score polling defaults to Kaggle's
+`competitions submissions --csv` output, including its public-score column, so
+no custom polling command is required.
 
 Other platforms can use an argv-based command adapter. Supported placeholders are `{bundle}`, `{file}`, `{competition}`, and `{message}`; Evidra does not invoke a shell for adapter arguments:
 

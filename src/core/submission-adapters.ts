@@ -159,6 +159,33 @@ function commandWorkingDirectory(root: string, configured?: string): string {
   return checked;
 }
 
+function kaggleCompetition(config: NonNullable<CompetitionConfig["submission"]>, competition: CompetitionConfig): string {
+  const value = config.competition ?? competition.id;
+  if (!value.trim()) throw new Error("Kaggle submission requires a competition slug.");
+  return value;
+}
+
+function kaggleSubmitCommand(config: NonNullable<CompetitionConfig["submission"]>, competition: CompetitionConfig, file: string, message: string): string[] {
+  return ["kaggle", "competitions", "submit", "-c", kaggleCompetition(config, competition), "-f", file, "-m", message];
+}
+
+function kaggleScoreCommand(config: NonNullable<CompetitionConfig["submission"]>, competition: CompetitionConfig): string[] {
+  return ["kaggle", "competitions", "submissions", "-c", kaggleCompetition(config, competition), "--csv"];
+}
+
+async function verifyKaggleAccess(config: NonNullable<CompetitionConfig["submission"]>, competition: CompetitionConfig, cwd: string, onProcess?: (control: ProcessControl) => void): Promise<void> {
+  const command = ["kaggle", "competitions", "files", "-c", kaggleCompetition(config, competition)];
+  const guard = guardCommand(command);
+  if (!guard.allowed) throw new Error(`Kaggle access preflight refused: ${guard.reason}`);
+  let result;
+  try {
+    result = await runProcess(command, cwd, 2 * 60_000, undefined, onProcess);
+  } catch (error) {
+    throw new Error(`Kaggle authentication/access preflight could not start: ${redactSecrets(error instanceof Error ? error.message : String(error))}`);
+  }
+  if (result.exitCode !== 0) throw new Error(`Kaggle authentication or competition access failed: ${redactSecrets(result.stderr || result.stdout)}`);
+}
+
 /** Parse the intentionally small score protocol used by generic competition adapters. */
 export function parseSubmissionScore(output: string): number | undefined {
   const candidates: unknown[] = [];
@@ -174,6 +201,19 @@ export function parseSubmissionScore(output: string): number | undefined {
     } catch { /* permit human-readable adapter output below */ }
   }
   for (const match of output.matchAll(/(?:public[_ ]score|leaderboard[_ ]score|score)\s*[:=]\s*(-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/gi)) candidates.push(match[1]);
+  // Kaggle's `competitions submissions --csv` emits a header followed by
+  // rows, commonly using publicScore/privateScore columns without labels.
+  const lines = output.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length >= 2) {
+    const header = lines[0]!.split(",").map((value) => value.trim().toLowerCase().replaceAll(/[^a-z0-9]/g, ""));
+    const scoreIndex = header.findIndex((value) => value === "publicscore" || value === "leaderboardscore" || value === "score");
+    if (scoreIndex >= 0) {
+      for (const line of lines.slice(1).reverse()) {
+        const value = line.split(",")[scoreIndex]?.trim();
+        if (value) candidates.push(value.replace(/^"|"$/g, ""));
+      }
+    }
+  }
   for (const value of candidates) {
     const score = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
     if (Number.isFinite(score)) return score;
@@ -193,7 +233,7 @@ export async function submitApprovedBundle(root: string, bundlePath: string, com
   const file = needsFile ? predictionFile(bundlePath, config?.predictionFile) : "";
   const values = { bundle: bundlePath, file, competition: config?.competition ?? competition.id, message, submission: "" };
   const command = platform === "kaggle"
-    ? ["kaggle", "competitions", "submit", "-c", values.competition, "-f", values.file, "-m", values.message]
+    ? kaggleSubmitCommand(config!, competition, values.file, values.message)
     : substitute(config?.submitCommand ?? [], values);
   if (platform === "http") {
     if (!config) throw new Error("HTTP submission configuration is missing.");
@@ -209,6 +249,7 @@ export async function submitApprovedBundle(root: string, bundlePath: string, com
   const guard = guardCommand(command);
   if (!guard.allowed) throw new Error(`Submission command refused: ${guard.reason}`);
   const workingDirectory = commandWorkingDirectory(root, config?.workingDirectory);
+  if (platform === "kaggle") await verifyKaggleAccess(config!, competition, workingDirectory, onProcess);
   let result;
   try {
     result = await runProcess(command, workingDirectory, 10 * 60_000, undefined, onProcess);
@@ -227,7 +268,7 @@ export async function pollSubmissionScore(root: string, bundlePath: string, subm
   const validation = validateSubmissionBundle(bundlePath);
   if (!validation.valid) throw new Error("Submission bundle is invalid; refusing to poll its external score.");
   const config = competition.submission;
-  const template = config?.scoreCommand ?? [];
+  const template = config?.scoreCommand ?? (config?.platform === "kaggle" ? kaggleScoreCommand(config, competition) : []);
   if (config?.platform === "http") {
     try {
       const response = await httpScore(submissionId, config);
