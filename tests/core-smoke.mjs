@@ -4573,6 +4573,16 @@ test("benchmark runner bounds parallel arms while preserving protocol order", as
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("benchmark adapters receive a stable redacted environment contract", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-env-"));
+  try {
+    const command = [process.execPath, "-e", "console.log(JSON.stringify({score:process.env.EVIDRA_BENCHMARK_TASK === 'task-a' ? 0.8 : 0, task:process.env.EVIDRA_BENCHMARK_TASK, metric:process.env.EVIDRA_BENCHMARK_METRIC, seed:process.env.EVIDRA_BENCHMARK_SEED, metadata:JSON.parse(process.env.EVIDRA_BENCHMARK_TASK_METADATA)}))"];
+    const report = await runBenchmarkArms([{ harness: "adapter", task: "task-a", taskMetadata: { dataset: "demo", fold: 1 }, arm: "greedy", seed: 7, model: "test-model", reasoningEffort: "medium", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, metric: "score", command }], root);
+    assert.equal(report.trials[0].candidateMetric, 0.8);
+    assert.deepEqual(JSON.parse(report.runs[0].result.stdout), { score: 0.8, task: "task-a", metric: "score", seed: "7", metadata: { dataset: "demo", fold: 1 } });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("benchmark runner serializes parallel requests that share a workspace", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-shared-workspace-"));
   try {

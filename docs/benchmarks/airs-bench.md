@@ -100,6 +100,14 @@ identity, seed, model, budget, metric direction, and normalization bounds. At
 least two distinct harnesses are required so the generated file cannot be
 mistaken for comparative evidence when it contains only a single system.
 
+Every arm also receives the same adapter environment contract:
+`EVIDRA_BENCHMARK_TASK`, `EVIDRA_BENCHMARK_ARM`, `EVIDRA_BENCHMARK_MODEL`,
+`EVIDRA_BENCHMARK_SEED`, `EVIDRA_BENCHMARK_BUDGET_MINUTES`,
+`EVIDRA_BENCHMARK_METRIC`, `EVIDRA_BENCHMARK_DIRECTION`,
+`EVIDRA_BENCHMARK_TASK_METADATA`, and `EVIDRA_BENCHMARK_PROTOCOL`. This is
+useful for adapters that prefer environment configuration over argv, and makes
+the same contract usable by local, container, and remote workers.
+
 ```bash
 git clone https://github.com/facebookresearch/airs-bench.git
 cd airs-bench

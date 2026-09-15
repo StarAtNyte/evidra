@@ -130,6 +130,25 @@ export interface BenchmarkRunOptions {
   maxParallel?: number;
 }
 
+/** Stable provider-neutral metadata contract exposed to every benchmark adapter. */
+function benchmarkEnvironmentForArm(base: NodeJS.ProcessEnv, fingerprint: string, arm: BenchmarkArmSpec): NodeJS.ProcessEnv {
+  return safeWorkerEnvironment({
+    ...base,
+    EVIDRA_BENCHMARK_HARNESS: arm.harness,
+    EVIDRA_BENCHMARK_TASK: arm.task,
+    EVIDRA_BENCHMARK_ARM: arm.arm,
+    EVIDRA_BENCHMARK_PROVIDER: arm.provider ?? "",
+    EVIDRA_BENCHMARK_MODEL: arm.model,
+    EVIDRA_BENCHMARK_REASONING_EFFORT: arm.reasoningEffort ?? "medium",
+    EVIDRA_BENCHMARK_SEED: String(arm.seed),
+    EVIDRA_BENCHMARK_BUDGET_MINUTES: String(arm.budgetMinutes),
+    EVIDRA_BENCHMARK_METRIC: arm.metric,
+    EVIDRA_BENCHMARK_DIRECTION: arm.direction,
+    EVIDRA_BENCHMARK_TASK_METADATA: JSON.stringify(arm.taskMetadata ?? {}),
+    EVIDRA_BENCHMARK_PROTOCOL: fingerprint,
+  });
+}
+
 /** Hash only fairness-critical protocol fields; harness implementations remain free to use different commands. */
 export function benchmarkProtocolFingerprint(arms: BenchmarkArmSpec[]): string {
   const identity = arms.map((arm) => ({
@@ -189,6 +208,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
   });
   const startedAt = new Date().toISOString();
   const workerEnvironment = safeWorkerEnvironment({ HOME: prepareWorkerHome(root) });
+  const protocolFingerprint = benchmarkProtocolFingerprint(arms);
   const runOne = async ({ arm, cwd }: (typeof prepared)[number]): Promise<{ trial: HarnessTrial; run: BenchmarkRunReport["runs"][number] }> => {
     onProgress?.(`Benchmark · ${arm.harness} · ${arm.task} · ${arm.budgetMinutes}m`);
     const deadline = Date.now() + arm.budgetMinutes * 60_000;
@@ -221,7 +241,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
           outputBuffer = `${outputBuffer}${chunk}`.slice(-128_000);
           const observed = parseMetricOutput(outputBuffer, arm.metric).metrics[arm.metric];
           if (Number.isFinite(observed)) attemptEvidenceMs = Date.now() - attemptStartedAt;
-        }, undefined, workerEnvironment);
+        }, undefined, benchmarkEnvironmentForArm(workerEnvironment, protocolFingerprint, arm));
       } catch (error) {
         result = processFailureResult(command, cwd, error);
       }
@@ -255,7 +275,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
         onProgress?.(`Benchmark · ${arm.harness} · independent reproducibility check`);
         let checkResult: ProcessResult;
         try {
-          checkResult = await runProcess(arm.reproducibilityCommand, cwd, remainingMs, undefined, undefined, workerEnvironment);
+          checkResult = await runProcess(arm.reproducibilityCommand, cwd, remainingMs, undefined, undefined, benchmarkEnvironmentForArm(workerEnvironment, protocolFingerprint, arm));
         } catch (error) {
           checkResult = processFailureResult(arm.reproducibilityCommand, cwd, error);
         }
@@ -323,5 +343,5 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     }
   };
   await Promise.all(Array.from({ length: concurrency }, () => worker()));
-  return { schemaVersion: 1, startedAt, protocolFingerprint: benchmarkProtocolFingerprint(arms), trials: results.map((result) => result!.trial), runs: results.map((result) => result!.run) };
+  return { schemaVersion: 1, startedAt, protocolFingerprint, trials: results.map((result) => result!.trial), runs: results.map((result) => result!.run) };
 }
