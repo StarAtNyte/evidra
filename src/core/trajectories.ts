@@ -33,6 +33,8 @@ export interface ToolTraceRecorderOptions {
   onEvent?: (event: TrajectoryEvent) => void;
 }
 
+export const MAX_TRACE_EVENTS = 256;
+
 /** Parse a crash-surviving JSONL trace without trusting arbitrary file data. */
 export function parsePersistedTrace(text: string, maxEvents = 256): { events: TrajectoryEvent[]; invalidLines: number } {
   const events: TrajectoryEvent[] = [];
@@ -65,6 +67,7 @@ export function createToolTraceRecorder(prefix = "research", options: ToolTraceR
   const events: TrajectoryEvent[] = [];
   let sequence = 0;
   const record = (event: TrajectoryEvent): void => {
+    if (events.length >= MAX_TRACE_EVENTS) return;
     events.push(event);
     try { options.onEvent?.(event); } catch { /* Trace persistence must not break the active agent turn. */ }
   };
@@ -79,7 +82,7 @@ export function createToolTraceRecorder(prefix = "research", options: ToolTraceR
       record({ id: `${callId}-result`, kind: "tool_result", callId, at: new Date().toISOString(), payload: redactStructured({ tool: result.name, ok: result.ok, output: result.output, error: result.error, trust: result.trust, securityWarnings: result.securityWarnings, permissionChecked: result.trust === "permission_boundary", permissionDenied: result.trust === "permission_boundary" && result.ok === false, source }) });
     },
     onActivity: (source, activity) => {
-      if (!activity.trim() || events.length >= 256) return;
+      if (!activity.trim()) return;
       record({ id: `${prefix}-activity-${++sequence}`, kind: "process", at: new Date().toISOString(), payload: redactStructured({ activity: activity.slice(0, 240), source, providerActivity: true }) });
     },
   };

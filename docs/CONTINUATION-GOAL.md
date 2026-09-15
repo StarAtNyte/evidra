@@ -343,6 +343,9 @@ external evaluator.
 - CLI and TUI now share one bounded, checksum-aware Codex trace-recovery helper;
   orphaned traces are registered once at startup and malformed artifacts cannot
   prevent either controller from opening.
+- Trace bounding is enforced at the recorder append boundary for every event
+  type, not only native activity, so long Codex turns cannot grow in-memory or
+  persisted traces without limit.
 
 ## Immediate next work
 

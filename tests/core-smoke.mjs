@@ -36,7 +36,7 @@ import { estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.j
 import { auditData, dataAuditFingerprint } from "../dist/core/data-audit.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { runReducedValidation } from "../dist/core/stage-executor.js";
-import { createToolTraceRecorder, evaluateTrajectory, parsePersistedTrace, capabilityGaps, providerActivityFailureClass, validateTrajectoryStructure } from "../dist/core/trajectories.js";
+import { createToolTraceRecorder, evaluateTrajectory, MAX_TRACE_EVENTS, parsePersistedTrace, capabilityGaps, providerActivityFailureClass, validateTrajectoryStructure } from "../dist/core/trajectories.js";
 import { recoverUncommittedTraceFiles } from "../dist/core/trajectory-recovery.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
 import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, selectCurriculum } from "../dist/core/experience.js";
@@ -652,6 +652,15 @@ test("Codex agent messages are extracted before generic item progress", () => {
   assert.equal(codexAgentMessageText(item, "item.updated"), item.text);
   assert.equal(codexAgentMessageText(item, "item.completed"), item.text);
   assert.equal(codexAgentMessageText({ type: "reasoning", text: "internal" }, "item.completed"), undefined);
+});
+
+test("tool traces cap all event kinds, including tool calls and results", () => {
+  const trace = createToolTraceRecorder("bounded");
+  for (let index = 0; index < MAX_TRACE_EVENTS + 40; index += 1) {
+    const callId = trace.onToolCall("director", { name: "workspace.files", arguments: { index } });
+    trace.onToolResult("director", callId, { name: "workspace.files", ok: true, output: { index }, trust: "workspace_observation" });
+  }
+  assert.equal(trace.events.length, MAX_TRACE_EVENTS);
 });
 
 test("persisted trace parser bounds malformed crash artifacts and redacts payloads", () => {
