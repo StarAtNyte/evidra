@@ -3255,6 +3255,9 @@ test("environment snapshots preserve reproducibility metadata without secrets", 
     assert.ok(snapshot.probes.node);
     assert.match(snapshot.entropyAudit.reproducibilityFingerprint, /^sha256:/);
     assert.ok(snapshot.entropyAudit.uncontrolledInputs.some((item) => item.includes("seed")));
+    const secretCommand = await captureEnvironment(root, join(root, "nested", "workspace"), ["python", "train.py", "--token", "sk-test-secret-value-123456789"], "local", "none");
+    assert.deepEqual(secretCommand.command.slice(-2), ["--token", "[REDACTED_ARGUMENT]"]);
+    assert.doesNotMatch(JSON.stringify(secretCommand), /sk-test-secret-value-123456789/);
     const seeded = await captureEnvironment(root, join(root, "nested", "workspace"), ["python", "train.py", "--seed", "7"], "local", "none");
     assert.ok(seeded.entropyAudit.explicitSeedSignals.includes("--seed"));
   } finally { delete process.env.EVIDRA_SMOKE_SECRET; delete process.env.EVIDRA_SMOKE_URL; rmSync(root, { recursive: true, force: true }); }
