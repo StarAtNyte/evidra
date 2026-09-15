@@ -48,6 +48,31 @@ and a durable run record can improve the scorecard.
 
 Source: [MLR-Bench](https://arxiv.org/abs/2505.19955).
 
+## Externalize state; audit before advancing
+
+LongHorizon-Harness reports a strong general pattern: a manager maintains task
+state outside the executor, a fresh-context executor performs one bounded
+subtask, and a read-only auditor verifies environment facts before the next
+subtask. Its gains transfer across GUI, terminal, and software tasks, which is
+especially relevant to Evidra's general-purpose scope. Evidra already has the
+same separation in its durable phase goals, immutable run records, evaluator
+gates, and fresh autonomous turns. The remaining implementation target is to
+make the auditor explicit for every generic subtask—not merely rely on a final
+evaluator—by persisting unmet acceptance criteria and verified state deltas.
+
+Source: [LongHorizon-Harness](https://arxiv.org/abs/2608.01964), especially its
+Manage–Execute–Audit loop and matched backend experiments.
+
+Test-time scaling work also supports Evidra's bounded lanes and peer board:
+diverse parallel rollouts, sequential revision, and list-wise verification can
+improve agent outcomes, but reflection should be triggered by evidence rather
+than inserted after every step. Evidra therefore treats lanes as a costed
+portfolio, uses critics and independent replication as verification, and lets
+failure/stagnation signals increase search breadth. This must be benchmarked as
+an ablation; more agents or more tokens are not evidence of a better harness.
+
+Source: [Scaling Test-time Compute for LLM Agents](https://arxiv.org/abs/2506.12928).
+
 ## Diversity, cross-pollination, verification
 
 OpenAI's report on its Navier–Stokes effort describes heterogeneous groups,
