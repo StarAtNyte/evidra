@@ -7,7 +7,7 @@ import { ResearchStore } from "../core/store.js";
 import { runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
-import { executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "../core/executors.js";
+import { classifyProcessFailure, executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
 import { auditExperiment, validateEvaluationMatrix } from "../core/validation.js";
 import { sha256File } from "../core/evidence.js";
@@ -1396,10 +1396,25 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const sameCommand = evaluatorCommand.length === command.length && evaluatorCommand.every((part, index) => part === command[index]);
     if (result.status === "completed" && !sameCommand) {
       setProgress(`Experiment ${id} · running canonical evaluator...`);
-      const evaluated = await withExecutionHeartbeat(
-        () => runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, registerProcess, experimentEnvironment),
-        { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "evaluator", executor: manifest.resources.executor },
-      );
+      let evaluated: Awaited<ReturnType<typeof runProcess>>;
+      let evaluatorAttempt = 1;
+      while (true) {
+        evaluated = await withExecutionHeartbeat(
+          () => runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, registerProcess, experimentEnvironment),
+          { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt: evaluatorAttempt, stage: "evaluator", executor: manifest.resources.executor },
+        );
+        if (evaluated.exitCode === 0) break;
+        const failureClass = classifyProcessFailure(evaluated) ?? "unknown";
+        const plan = recoveryPlan(failureClass);
+        if (!plan.retry || evaluatorAttempt >= plan.maxAttempts) break;
+        const delay = recoveryDelay(plan, evaluatorAttempt);
+        const retryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        retryStore.appendEvent("run.retry.scheduled", { experimentId: id, stage: "evaluator", attempt: evaluatorAttempt, delaySeconds: delay, failureClass, action: plan.action });
+        retryStore.close();
+        setProgress(`Evaluator retry ${evaluatorAttempt + 1}/${plan.maxAttempts} after ${plan.action}...`);
+        await new Promise<void>((resolve) => setTimeout(resolve, delay * 1000));
+        evaluatorAttempt += 1;
+      }
       activeProcess.current = null;
       evaluatorOutput = { stdout: evaluated.stdout, stderr: evaluated.stderr, exitCode: evaluated.exitCode };
       const metrics = parseMetricOutput(evaluated.stdout, adapter.config.metric.name);
@@ -1412,7 +1427,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         subgroupDeltas: metrics.subgroupDeltas,
         stdout: `${result.stdout ?? ""}\n[EVALUATOR]\n${evaluated.stdout}`,
         stderr: `${result.stderr ?? ""}\n[EVALUATOR]\n${evaluated.stderr}`,
-        ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }),
+        ...(evaluated.exitCode === 0 ? {} : { failureClass: classifyProcessFailure(evaluated) ?? "unknown" }),
       };
     }
     const verificationCommands = [...(manifest.evaluation.verificationCommand ? [manifest.evaluation.verificationCommand] : []), ...(manifest.evaluation.verificationCommands ?? [])];

@@ -32,7 +32,7 @@ import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateVali
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
-import { executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "./core/executors.js";
+import { classifyProcessFailure, executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "./core/executors.js";
 import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
@@ -3259,13 +3259,28 @@ experiment.command("run")
     let evaluator: { stdout: string; stderr: string; exitCode: number } | undefined;
     const verifications: Array<{ command: string[]; stdout: string; stderr: string; exitCode: number; formal: ReturnType<typeof classifyVerifier> }> = [];
     if (result.status === "completed" && !sameCommand) {
-      const evaluated = await withExecutionHeartbeat(
-        () => runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, undefined, experimentEnvironment),
-        { storePath: statePath, experimentId: id, attempt, stage: "evaluator", executor: manifest.resources.executor },
-      );
+      let evaluated: Awaited<ReturnType<typeof runProcess>>;
+      let evaluatorAttempt = 1;
+      while (true) {
+        evaluated = await withExecutionHeartbeat(
+          () => runProcess(evaluatorCommand, experimentCwd, manifest.resources.timeoutMinutes * 60_000, undefined, undefined, experimentEnvironment),
+          { storePath: statePath, experimentId: id, attempt: evaluatorAttempt, stage: "evaluator", executor: manifest.resources.executor },
+        );
+        if (evaluated.exitCode === 0) break;
+        const failureClass = classifyProcessFailure(evaluated) ?? "unknown";
+        const plan = recoveryPlan(failureClass);
+        if (!plan.retry || evaluatorAttempt >= plan.maxAttempts) break;
+        const delay = recoveryDelay(plan, evaluatorAttempt);
+        const retryStore = new ResearchStore(statePath);
+        retryStore.appendEvent("run.retry.scheduled", { experimentId: id, stage: "evaluator", attempt: evaluatorAttempt, delaySeconds: delay, failureClass, action: plan.action });
+        retryStore.close();
+        console.log(`Retrying evaluator for ${id} (${evaluatorAttempt + 1}/${plan.maxAttempts}) after ${plan.action}; waiting ${delay}s...`);
+        await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, delay * 1000));
+        evaluatorAttempt += 1;
+      }
       evaluator = { stdout: evaluated.stdout, stderr: evaluated.stderr, exitCode: evaluated.exitCode };
       const parsed = parseMetricOutput(evaluated.stdout, adapter.config.metric.name);
-      result = { ...result, status: evaluated.exitCode === 0 ? "completed" : "failed", exitCode: evaluated.exitCode, metrics: { ...result.metrics, ...parsed.metrics }, metricsByFold: { ...result.metricsByFold, ...parsed.metricsByFold }, subgroupDeltas: parsed.subgroupDeltas, stdout: `${result.stdout ?? ""}\n[EVALUATOR]\n${evaluated.stdout}`, stderr: `${result.stderr ?? ""}\n[EVALUATOR]\n${evaluated.stderr}`, ...(evaluated.exitCode === 0 ? {} : { failureClass: "unknown" as const }) };
+      result = { ...result, status: evaluated.exitCode === 0 ? "completed" : "failed", exitCode: evaluated.exitCode, metrics: { ...result.metrics, ...parsed.metrics }, metricsByFold: { ...result.metricsByFold, ...parsed.metricsByFold }, subgroupDeltas: parsed.subgroupDeltas, stdout: `${result.stdout ?? ""}\n[EVALUATOR]\n${evaluated.stdout}`, stderr: `${result.stderr ?? ""}\n[EVALUATOR]\n${evaluated.stderr}`, ...(evaluated.exitCode === 0 ? {} : { failureClass: classifyProcessFailure(evaluated) ?? "unknown" }) };
     }
     const verificationCommands = [...(manifest.evaluation.verificationCommand ? [manifest.evaluation.verificationCommand] : []), ...(manifest.evaluation.verificationCommands ?? [])];
     if (result.status === "completed") {
