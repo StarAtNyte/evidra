@@ -76,7 +76,7 @@ type AutonomyLevel = "safe" | "fast" | "yolo";
 type ResearchCampaign = { goal: string; budgetMinutes: number; gpuBudgetHours?: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean };
 type LimitPolicy = "auto" | "wait" | "fallback" | "stop";
 type ExperimentExecutorKind = "local" | "container" | "modal";
-type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; limitPolicy: LimitPolicy; fallbackModel: string; experimentExecutor: ExperimentExecutorKind; campaign?: ResearchCampaign };
+type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; limitPolicy: LimitPolicy; fallbackModel: string; experimentExecutor: ExperimentExecutorKind; campaign?: ResearchCampaign; codexThreadId?: string };
 
 function candidateEstimatorPath(payload: unknown): string | undefined {
   const proposedChange = (payload as { proposedChange?: unknown } | null)?.proposedChange;
@@ -198,6 +198,9 @@ function loadConfig(path: string): SessionConfig {
   try {
     const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<SessionConfig>;
     const config = { ...defaultConfig, ...raw } as SessionConfig;
+    // A fresh terminal always starts a fresh Evidra session. The provider
+    // thread is restored only by an explicit /resume action below.
+    config.codexThreadId = undefined;
     // Permissions are intentionally session-scoped. Never inherit fast/YOLO from a prior terminal.
     config.autonomy = defaultConfig.autonomy;
     // Older Evidra sessions used a model name that ChatGPT-account Codex does not accept.
@@ -562,9 +565,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (key.return && choices.length > 0) {
         if (picker === "provider") {
           const provider = providerChoices[pickerIndex];
+          activeCodexThread.current = undefined;
           setConfig((current) => ({
             ...current,
             provider,
+            codexThreadId: undefined,
             model: provider === "local"
               ? (current.provider === "local" ? current.model : "qwen3.6:27b")
               : (current.provider === "codex" ? current.model : "default"),
@@ -581,7 +586,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         } else if (picker === "model") {
           const chosen = availableModels[pickerIndex];
           setSelectedModel(chosen);
-          setConfig((current) => ({ ...current, model: chosen.id }));
+          activeCodexThread.current = undefined;
+          setConfig((current) => ({ ...current, model: chosen.id, codexThreadId: undefined }));
           append("assistant", `Model selected: ${chosen.displayName} (${chosen.id})`);
           setPicker("reasoning");
           const chosenEfforts = chosen.supportedReasoningEfforts?.length ? chosen.supportedReasoningEfforts : REASONING_LEVELS;
@@ -1979,6 +1985,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const payload = saved.payload as { config?: Partial<SessionConfig>; messages?: Message[] };
       const resumedMessages = Array.isArray(payload.messages) ? payload.messages : [];
       const resumedConfig = { ...config, ...(payload.config ?? {}), autonomy: config.autonomy } as SessionConfig;
+      activeCodexThread.current = resumedConfig.provider === "codex" ? resumedConfig.codexThreadId : undefined;
       setMessages([...resumedMessages, { role: "system", text: `Resumed ${saved.id} · permissions remain ${config.autonomy.toUpperCase()} for this terminal.` }]);
       setConfig(resumedConfig);
       const campaign = resumedConfig.campaign;
@@ -3132,7 +3139,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           mode: config.mode,
           instruction: "This is ordinary conversation, not a research cycle. Answer directly and concisely. Do not inspect files, run commands, edit code, propose experiments, or claim fresh measurements. If the user wants autonomous research, tell them to use /research.",
         },
-      }, { provider: config.provider, model: config.model, cwd: root, threadId: config.provider === "codex" ? activeCodexThread.current : undefined, reasoningEffort: config.reasoningEffort, sandbox: "read-only", limitPolicy: config.limitPolicy, onThread: (threadId) => { activeCodexThread.current = threadId; activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, config.fallbackModel, setProgress, registerProcess);
+      }, { provider: config.provider, model: config.model, cwd: root, threadId: config.provider === "codex" ? (activeCodexThread.current ?? config.codexThreadId) : undefined, reasoningEffort: config.reasoningEffort, sandbox: "read-only", limitPolicy: config.limitPolicy, onThread: (threadId) => { activeCodexThread.current = threadId; setConfig((current) => ({ ...current, codexThreadId: threadId })); activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, config.fallbackModel, setProgress, registerProcess);
       append("assistant", String(result.output));
     } catch (error) {
       append("assistant", error instanceof Error ? error.message : String(error));
