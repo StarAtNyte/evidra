@@ -5,7 +5,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "./core/experiment-manifest.js";
-import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "./core/phase-goals.js";
+import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "./core/phase-goals.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "./core/types.js";
 import { loadCompetitionAdapter } from "./competitions/adapters.js";
 import { auditData, dataAuditFingerprint } from "./core/data-audit.js";
@@ -2801,7 +2801,9 @@ research
           artifacts: phaseGoalRecordsSince(phaseGoal, decisionStore.artifacts()),
           candidateHypotheses: decision.hypotheses.length,
         });
-        decisionStore.recordSubtaskAudit(auditPhaseGoalGate(phaseGoal, gate, phaseEvents.map((event) => event.type)));
+        const domainAudit = auditPhaseGoalGate(phaseGoal, gate, phaseEvents.map((event) => event.type));
+        decisionStore.recordSubtaskAudit(domainAudit);
+        if (semanticAudit) decisionStore.recordSubtaskAudit(mergePhaseGoalAudits(phaseGoal, domainAudit, semanticAudit.criteria));
         if (!gate.met) {
           decision = { ...decision, goalStatus: "active", nextAction: decision.nextAction + " (phase gate missing: " + gate.missing.join(", ") + ")" };
           decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal.phase, missing: gate.missing });

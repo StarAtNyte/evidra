@@ -27,7 +27,7 @@ import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist
 import { experienceReplayWorld } from "../dist/core/experience.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
-import { activePhaseGoal, auditPhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../dist/core/phase-goals.js";
+import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../dist/core/phase-goals.js";
 import { assertSubtaskContract, auditSubtask, subtaskStateFromAudit, validateSubtaskContract } from "../dist/core/subtask-state.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "../dist/core/decision-auditor.js";
 import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, submitApprovedBundle } from "../dist/core/submission-adapters.js";
@@ -2272,6 +2272,11 @@ test("phase goals expose the same auditable contract used by generic work", () =
   assert.equal(contract.acceptanceCriteria.length, goal.completionCriteria.length);
   const audit = auditPhaseGoal(goal, contract.acceptanceCriteria.map((criterion) => ({ criterionId: criterion.id, satisfied: true, source: "auditor", evidenceIds: [`event:${criterion.id}`] })));
   assert.equal(audit.complete, true);
+  const domain = auditPhaseGoalGate(goal, { met: true, missing: [] }, ["research.observation"]);
+  const merged = mergePhaseGoalAudits(goal, domain, contract.acceptanceCriteria.map((criterion) => ({ criterionId: criterion.id, verdict: "pass", evidence: ["research.observation"], reasoning: "independently checked" })));
+  assert.equal(merged.complete, true);
+  const semanticFailure = mergePhaseGoalAudits(goal, domain, [{ criterionId: "criterion_1", verdict: "reject", evidence: [], reasoning: "not supported" }]);
+  assert.equal(semanticFailure.complete, false);
 });
 
 test("subtask audits are durable controller evidence", () => {

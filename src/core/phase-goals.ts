@@ -60,6 +60,28 @@ export function auditPhaseGoalGate(goal: Pick<PhaseGoal, "id" | "objective" | "c
   return auditPhaseGoal(goal, observations, auditedAt);
 }
 
+/** Merge independent domain and semantic checks into one conservative audit. */
+export function mergePhaseGoalAudits(
+  goal: Pick<PhaseGoal, "id" | "objective" | "completionCriteria">,
+  domainAudit: SubtaskAudit,
+  semanticCriteria: Array<{ criterionId: string; verdict: "pass" | "revise" | "reject"; evidence?: string[]; reasoning?: string }>,
+  auditedAt?: string,
+): SubtaskAudit {
+  const contract = phaseGoalSubtaskContract(goal);
+  return auditPhaseGoal(goal, contract.acceptanceCriteria.map((criterion) => {
+    const domain = domainAudit.criteria.find((entry) => entry.id === criterion.id);
+    const semantic = semanticCriteria.find((entry) => entry.criterionId === criterion.id);
+    const evidenceIds = [...new Set([...(domain?.evidenceIds ?? []), ...(semantic?.evidence ?? [])])];
+    return {
+      criterionId: criterion.id,
+      satisfied: domain?.satisfied === true && semantic?.verdict === "pass",
+      source: "auditor" as const,
+      evidenceIds,
+      detail: semantic?.reasoning ?? "criterion required both domain and semantic verification",
+    };
+  }), auditedAt);
+}
+
 /** Event families that can satisfy phase completion; correctness must read the durable history. */
 export const PHASE_GOAL_EVENT_TYPES = [
   "research.observation", "project.created", "baseline.completed", "data.audit.completed", "data.audit.accepted",
