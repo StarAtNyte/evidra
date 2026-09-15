@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `c32112e` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `9bbab86` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -94,6 +94,9 @@ external evaluator.
 - Autonomous validation applies conservative alpha spending to repeated looks at
   the same hypothesis, combining the look number with existing family-wise
   correction and persisting the resulting threshold/alpha in evidence.
+- Research context now separates active claims from invalidated/superseded
+  `quarantinedClaims`; stale evidence remains auditable and useful as negative
+  evidence without being presented as current truth.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
