@@ -3012,10 +3012,10 @@ test("Codex usage preserves cache and reasoning-token accounting", () => {
 
 test("shared agent usage aggregation ignores malformed and negative counters", () => {
   assert.deepEqual(summarizeAgentUsage([
-    { payload: { inputTokens: 10, outputTokens: 5, cachedInputTokens: 3, reasoningOutputTokens: 2 } },
+    { payload: { inputTokens: 10, outputTokens: 5, cachedInputTokens: 3, cacheWriteInputTokens: 7, reasoningOutputTokens: 2 } },
     { payload: { inputTokens: -9, outputTokens: "bad", cachedInputTokens: 1 } },
     { payload: null },
-  ]), { calls: 3, inputTokens: 10, outputTokens: 5, cachedInputTokens: 4, reasoningOutputTokens: 2 });
+  ]), { calls: 3, inputTokens: 10, outputTokens: 5, cachedInputTokens: 4, cacheWriteInputTokens: 7, reasoningOutputTokens: 2 });
 });
 
 test("Codex model responses normalize reasoning-effort objects", () => {

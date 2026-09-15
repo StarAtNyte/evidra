@@ -23,12 +23,13 @@ export interface AgentUsageSummary {
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
+  cacheWriteInputTokens: number;
   reasoningOutputTokens: number;
 }
 
 /** Aggregate provider usage events consistently across CLI, TUI, and reports. */
 export function summarizeAgentUsage(events: Array<{ payload: unknown }>): AgentUsageSummary {
-  const total: AgentUsageSummary = { calls: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningOutputTokens: 0 };
+  const total: AgentUsageSummary = { calls: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, reasoningOutputTokens: 0 };
   for (const event of events) {
     const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
     const number = (key: string): number => typeof payload[key] === "number" && Number.isFinite(payload[key]) && (payload[key] as number) >= 0 ? payload[key] as number : 0;
@@ -36,6 +37,7 @@ export function summarizeAgentUsage(events: Array<{ payload: unknown }>): AgentU
     total.inputTokens += number("inputTokens");
     total.outputTokens += number("outputTokens");
     total.cachedInputTokens += number("cachedInputTokens");
+    total.cacheWriteInputTokens += number("cacheWriteInputTokens");
     total.reasoningOutputTokens += number("reasoningOutputTokens");
   }
   return total;

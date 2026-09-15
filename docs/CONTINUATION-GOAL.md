@@ -366,6 +366,8 @@ external evaluator.
   bound under corrupt-input conditions.
 - Codex usage normalization now retains the SDK's cache-write token count,
   keeping long-session cost and prompt-cache diagnostics complete.
+- Cache-write usage now flows through durable agent-usage events, aggregate
+  summaries, CLI status, and TUI usage output instead of stopping at parsing.
 
 ## Immediate next work
 

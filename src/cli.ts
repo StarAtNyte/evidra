@@ -570,7 +570,7 @@ program.command("usage").description("Show research, experiment, and campaign us
   console.log(`Wall time     ${usage.wallMinutes.toFixed(1)} minutes`);
   console.log(`Agent calls   ${agentUsage.calls}`);
   console.log(`Agent tokens  ${agentUsage.inputTokens + agentUsage.outputTokens} (${agentUsage.inputTokens} in / ${agentUsage.outputTokens} out)`);
-  console.log(`Agent cache   ${agentUsage.cachedInputTokens} cached input · ${agentUsage.reasoningOutputTokens} reasoning output`);
+  console.log(`Agent cache   ${agentUsage.cachedInputTokens} cached input · ${agentUsage.cacheWriteInputTokens} cache written · ${agentUsage.reasoningOutputTokens} reasoning output`);
   console.log(`GPU-tagged    ${usage.gpuWallHours.toFixed(3)} hours`);
   console.log(`GPU reserved  ${store.reservedComputeGpuHours().toFixed(3)} hours`);
   for (const [executor, bucket] of Object.entries(usage.byExecutor)) console.log(`  ${executor.padEnd(11)} ${bucket.runs} runs · ${bucket.wallMinutes.toFixed(1)}m · ${bucket.gpuWallHours.toFixed(3)} GPU-h`);
@@ -2317,9 +2317,9 @@ research
       const toolTrace = createToolTraceRecorder(tracePrefix, { onEvent: (event) => {
         try { appendFileSync(tracePath, `${JSON.stringify(event)}\n`, "utf8"); } catch { /* Partial trace persistence is best-effort. */ }
       } });
-      const recordAgentUsage = (usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; reasoningOutputTokens?: number } | undefined, provider: string, model: string, role: string): void => {
+      const recordAgentUsage = (usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningOutputTokens?: number } | undefined, provider: string, model: string, role: string): void => {
         const usageStore = new ResearchStore(statePath);
-        usageStore.appendEvent("research.agent.usage", { cycle, role, provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens });
+        usageStore.appendEvent("research.agent.usage", { cycle, role, provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, cacheWriteInputTokens: usage?.cacheWriteInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens });
         usageStore.close();
       };
       let researchAttempt = 0;
