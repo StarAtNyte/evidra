@@ -608,6 +608,11 @@ test("tool trace recorder preserves causal call/result pairs and redacts secrets
   assert.equal(trace.events[2].payload.source, "codex");
   trace.events.push({ id: "terminal", kind: "terminal", payload: { status: "completed" } });
   assert.equal(validateTrajectoryStructure(trace.events).status, "complete");
+  assert.equal(evaluateTrajectory(trace.events).errorRecovery.verdict, "PASS");
+  const failedActivity = createToolTraceRecorder("failed-activity");
+  failedActivity.onActivity("codex", "Command failed: npm test (exit 2)");
+  failedActivity.events.push({ id: "terminal", kind: "terminal", payload: { status: "completed" } });
+  assert.equal(evaluateTrajectory(failedActivity.events).errorRecovery.verdict, "WARN");
   const blocked = createToolTraceRecorder("blocked");
   const blockedCall = blocked.onToolCall("director", { name: "shell.exec" });
   blocked.onToolResult("director", blockedCall, { name: "shell.exec", ok: false, error: "blocked", trust: "permission_boundary" });

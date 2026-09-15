@@ -141,7 +141,9 @@ export function evaluateTrajectory(events: TrajectoryEvent[]): TrajectoryQuality
   const terminals = events.filter((event) => event.kind === "terminal");
   const processEvents = events.filter((event) => event.kind === "process");
   const evaluatorEvents = events.filter((event) => event.kind === "evaluator");
+  const nativeProviderFailures = processEvents.filter((event) => event.payload.providerActivity === true && typeof event.payload.activity === "string" && /^(?:Command failed|Tool failed|File change failed|Codex item error):?/i.test(event.payload.activity));
   const failures = events.filter((event) => event.payload.error || event.payload.status === "failed");
+  const failureCount = failures.length + nativeProviderFailures.length;
   const recoveries = events.filter((event) => event.kind === "recovery");
   const completed = events.some((event) => event.kind === "terminal" && event.payload.status === "completed");
   const goalMet = events.some((event) => event.payload.goalAttained === true || event.payload.goalStatus === "met");
@@ -183,11 +185,11 @@ export function evaluateTrajectory(events: TrajectoryEvent[]): TrajectoryQuality
     : evaluatorEvents.length
       ? dimension("PASS", "observed", "evaluator event recorded")
       : dimension("NOT_EVALUATED", "missing", "no evaluator evidence recorded");
-  const errorRecovery = failures.length === 0
+  const errorRecovery = failureCount === 0
     ? dimension("PASS", "observed", "no execution failures recorded")
-    : recoveries.length >= failures.length
-      ? dimension("PASS", "observed", `${recoveries.length} recovery event(s) for ${failures.length} failure(s)`)
-      : dimension("WARN", "partial", `${failures.length - recoveries.length} failure(s) lacked recovery`);
+    : recoveries.length >= failureCount
+      ? dimension("PASS", "observed", `${recoveries.length} recovery event(s) for ${failureCount} failure(s)`)
+      : dimension("WARN", "partial", `${failureCount - recoveries.length} failure(s) lacked recovery`);
   const termination = terminals.length === 0
     ? dimension("FAIL", "missing", "trajectory has no terminal event")
     : terminals.length > 1
