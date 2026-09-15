@@ -527,6 +527,7 @@ export class CodexExecAgent {
           modelReasoningEffort: this.options.reasoningEffort as "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "persistent" | undefined,
           networkAccessEnabled: this.options.networkAccessEnabled,
           webSearchMode: this.options.webSearchMode,
+          webSearchEnabled: this.options.webSearchMode !== undefined && this.options.webSearchMode !== "disabled",
           approvalPolicy: "never",
         })
         : codex.startThread({
@@ -537,6 +538,7 @@ export class CodexExecAgent {
         modelReasoningEffort: this.options.reasoningEffort as "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "persistent" | undefined,
         networkAccessEnabled: this.options.networkAccessEnabled,
         webSearchMode: this.options.webSearchMode,
+        webSearchEnabled: this.options.webSearchMode !== undefined && this.options.webSearchMode !== "disabled",
         approvalPolicy: "never",
       });
       let outputSchema: unknown;

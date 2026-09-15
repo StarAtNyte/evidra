@@ -3025,6 +3025,7 @@ test("Codex adapter accepts only a completed injected stream", async () => {
     assert.equal(result.output, "Evidra response");
     assert.equal(threadOptions.networkAccessEnabled, true);
     assert.equal(threadOptions.webSearchMode, "live");
+    assert.equal(threadOptions.webSearchEnabled, true);
     const incomplete = new CodexExecAgent({ provider: "codex", model: "gpt-test", cwd: root }, {
       isLoggedIn: async () => true,
       createClient: makeClient([{ type: "item.completed", item: { type: "agent_message", text: "partial" } }]),
