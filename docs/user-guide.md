@@ -182,6 +182,10 @@ events, credentials, and unbounded tool payloads are not persisted.
 Native command, file-change, and tool failures are also included in the
 trajectory's deterministic recovery score, so a cycle cannot look clean merely
 because the failed action came from Codex rather than Evidra's typed tool loop.
+Those failures are classified into the same generic recovery vocabulary used by
+experiment execution and fed into the next autonomous allocation: timeout,
+rate-limit, authentication, dependency, and unknown failures can therefore
+select different recovery guidance.
 
 Independent lanes explore different formulations and roles. Their evidence is
 cross-pollinated through a bounded board, while shared citations are not
