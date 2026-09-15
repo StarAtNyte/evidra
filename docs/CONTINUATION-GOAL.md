@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `47dd73d` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `149d2ad` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -106,7 +106,8 @@ external evaluator.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 388/388 tests passing, TypeScript check passing,
+- Portfolio scheduling now consumes the falsification agenda: untested directions receive an information-value bonus while rejected directions remain revisit-able only when their measured value warrants it.
+- Latest verified baseline: 389/389 tests passing, TypeScript check passing,
   and build passing. The worktree is clean; generated reports remain excluded
   from source changes.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
