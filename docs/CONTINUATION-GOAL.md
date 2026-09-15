@@ -57,26 +57,24 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit before this handoff: `ca06aec`.
-- The current working change adds bounded benchmark alternate routes after
-  same-route retries, with route and command provenance in each attempt. It is
-  covered by the benchmark runner test and should be committed/pushed after
-  verification.
-- The latest verified baseline before that change was 313/313 tests passing,
-  TypeScript check passing, build passing, and a clean worktree.
+- Latest pushed commit: `46f7e72`.
+- The benchmark runner supports bounded alternate routes after same-route
+  retries, with route and command provenance in each attempt. The change is
+  covered by the benchmark runner test.
+- Latest verified baseline: 314/314 tests passing, TypeScript check passing,
+  build passing, and a clean worktree.
 
 ## Immediate next work
 
-1. Verify and commit/push the alternate-route recovery change.
-2. Add/maintain real matched external benchmark adapters and run actual trials
+1. Add/maintain real matched external benchmark adapters and run actual trials
    when runnable harness commands and credentials are available; never fabricate
    comparative scores.
-3. Continue auditing all agent/controller boundaries for durable recovery,
+2. Continue auditing all agent/controller boundaries for durable recovery,
    cancellation, provider exhaustion, isolation, secret redaction, and restart
    correctness.
-4. Improve general objective handling and external evaluator adapters without
+3. Improve general objective handling and external evaluator adapters without
    introducing competition-specific assumptions into the core.
-5. For every harness change, add a focused regression test, run `npm run check`,
+4. For every harness change, add a focused regression test, run `npm run check`,
    `npm test`, `npm run build`, inspect `git diff --check`, then commit and push.
 
 ## Useful commands

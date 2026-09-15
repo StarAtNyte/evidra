@@ -86,8 +86,11 @@ when available, the checksummed environment fingerprint into these fields.
 
 An arm may declare `retries` from 0 to 3. Retries share the arm's total time
 budget, and a later successful attempt is recorded as `recovered: true`; total
-elapsed time includes failed attempts. This makes recovery behavior measurable
-without allowing retries to quietly expand the declared budget.
+elapsed time includes failed attempts. An arm may additionally declare up to
+three `alternateCommands`. After same-route retries are exhausted, Evidra tries
+each alternate route at most once within the same budget. Every attempt records
+its route and exact command, so recovery is measurable and cannot silently
+become an unbounded blind retry.
 
 An arm may also declare `reproducibilityCommand` and an optional
 `reproducibilityTolerance`. The command receives the remaining arm budget and
