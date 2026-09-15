@@ -896,6 +896,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const adapter = activeAdapter();
     let decision: Awaited<ReturnType<typeof runResearchDirector>>;
     let laneReports: ResearchLaneReport[] = [];
+    let crossPollination: ReturnType<typeof synthesizeLaneReports> | undefined;
     let criticReview: ResearchReview | undefined;
     const tracePrefix = `research-${Date.now()}`;
     const tracePath = join(root, ".sota", "traces", `${tracePrefix}.jsonl`);
@@ -958,7 +959,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       });
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
       setProgress("Research 4/4 · director is cross-pollinating lane findings...");
-      let crossPollination = synthesizeLaneReports(laneReports);
+      crossPollination = synthesizeLaneReports(laneReports);
       // Keep the TUI on the same bounded collaboration protocol as the CLI:
       // fast/YOLO campaigns can send a fresh lane set over contested findings
       // before director synthesis. Safe mode remains single-pass inspection.
@@ -1150,6 +1151,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const researchTrajectoryEvents: TrajectoryEvent[] = [
       { id: `research-${Date.now()}-observation`, kind: "process", payload: { status: "completed", observationKeys: Object.keys(observation) } },
       ...toolTrace.events,
+      ...(crossPollination ? [{ id: `research-${Date.now()}-cross-pollination`, kind: "process" as const, payload: { status: "completed", laneCount: crossPollination.laneCount, completedCount: crossPollination.completedCount, agreementPairs: crossPollination.agreementPairs, independentEvidenceCount: crossPollination.independentEvidenceCount, needsAdversarialReview: crossPollination.needsAdversarialReview } }] : []),
       ...laneReports.filter((lane) => lane.status === "failed").map((lane, index) => ({ id: `research-${Date.now()}-lane-${index}`, kind: "process" as const, payload: { status: "failed", error: lane.error ?? `${lane.role} failed` } })),
       { id: `research-${Date.now()}-evaluator`, kind: "evaluator", payload: { evidenceConsistent: criticReview?.verdict === "proceed", criticVerdict: criticReview?.verdict ?? "missing" } },
       { id: `research-${Date.now()}-terminal`, kind: "terminal", payload: { status: "completed", goalStatus: decision.goalStatus, goalAttained: decision.goalStatus === "met" || decision.decision === "stop" } },
@@ -1158,7 +1160,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const routingOutcome = capabilityOutcome({ objective, mode, route, provider: config.provider, model: config.model, quality: researchQuality, parallelLanes: laneReports.length });
     const trajectoryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const trajectoryId = `trajectory_research_${Date.now()}`;
-    const trajectoryPayload = { objective, observation, laneReports, criticReview, decision, tracePath: relative(root, tracePath), routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: config.provider, model: config.model }, events: researchTrajectoryEvents };
+    const trajectoryPayload = { objective, observation, laneReports, crossPollination, criticReview, decision, tracePath: relative(root, tracePath), routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: config.provider, model: config.model }, events: researchTrajectoryEvents };
     trajectoryStore.saveTrajectory({ id: trajectoryId, payload: trajectoryPayload, quality: researchQuality });
     const experience = buildExperienceRecord({ trajectoryId, payload: trajectoryPayload, quality: researchQuality, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: config.provider, model: config.model } });
     const priorExperiences = trajectoryStore.trajectories(100).filter((entry) => entry.id !== trajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));

@@ -161,6 +161,9 @@ external evaluator.
 - Literature adaptations now require every cited durable source to contain
   extracted claims; a retrieved URL with no claim evidence cannot ground an
   executable adaptation.
+- TUI trajectories now persist the synthesized cross-pollination board and its
+  evidence/agreement metrics, so later replay and audits retain exactly what
+  the director saw rather than only the raw lane reports.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
 - Codex command activity now includes an exit code only when the provider
