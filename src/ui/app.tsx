@@ -717,9 +717,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
 
   const persistCampaignCheckpoint = (campaign: ResearchCampaign, step: "research-lanes" | "experiment-execution" | "cycle-complete", cycle: number): void => {
     const updated = { ...campaign, currentCycle: cycle, currentStep: step, checkpointedAt: new Date().toISOString() };
-    persistCampaign(updated);
+    Object.assign(campaign, updated);
+    persistCampaign(campaign);
     updateControllerStep(step);
-    setConfig((current) => ({ ...current, campaign: current.campaign ? { ...current.campaign, ...updated } : updated }));
+    setConfig((current) => ({ ...current, campaign: current.campaign ? { ...current.campaign, ...campaign } : { ...campaign } }));
   };
 
   const performResearchObservation = async (): Promise<Record<string, unknown>> => {
