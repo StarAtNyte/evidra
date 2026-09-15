@@ -266,16 +266,19 @@ function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metric
   const parsed = parseMetricOutput(result.stdout, metricName);
   const matrix = parseEvaluationMatrix(result.stdout, metricName);
   const metrics = { ...parsed.metrics };
-  const matrixValues = matrix.map((cell) => cell.metrics[metricName]).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-  if (metrics[metricName] === undefined && matrixValues.length) metrics[metricName] = matrixValues.reduce((sum, value) => sum + value, 0) / matrixValues.length;
   const metricsByFold = { ...parsed.metricsByFold };
-  if (metricsByFold[metricName] === undefined && matrixValues.length) {
-    const byFold = new Map<number, number[]>();
-    for (const cell of matrix) {
-      const value = cell.metrics[metricName];
-      if (typeof value === "number" && Number.isFinite(value)) byFold.set(cell.fold, [...(byFold.get(cell.fold) ?? []), value]);
+  const objectiveNames = [...new Set([metricName, ...(manifest.evaluation?.metrics ?? []).map((objective) => objective.name)].filter(Boolean))];
+  for (const name of objectiveNames) {
+    const matrixValues = matrix.map((cell) => cell.metrics[name]).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    if (metrics[name] === undefined && matrixValues.length) metrics[name] = matrixValues.reduce((sum, value) => sum + value, 0) / matrixValues.length;
+    if (metricsByFold[name] === undefined && matrixValues.length) {
+      const byFold = new Map<number, number[]>();
+      for (const cell of matrix) {
+        const value = cell.metrics[name];
+        if (typeof value === "number" && Number.isFinite(value)) byFold.set(cell.fold, [...(byFold.get(cell.fold) ?? []), value]);
+      }
+      metricsByFold[name] = [...byFold.entries()].sort(([left], [right]) => left - right).flatMap(([, values]) => values);
     }
-    metricsByFold[metricName] = [...byFold.entries()].sort(([left], [right]) => left - right).flatMap(([, values]) => values);
   }
   const learningCurve = parseLearningCurve(result.stdout, metricName);
   const artifacts: Record<string, string> = {};

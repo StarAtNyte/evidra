@@ -2869,12 +2869,14 @@ test("evaluation matrix and evidence audit require every declared objective", ()
 test("matrix-only worker output derives the aggregate primary metric", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-matrix-worker-"));
   try {
-    const manifest = { id: "matrix-exp", datasetVersion: "data", splitVersion: "split", resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0, 1], seeds: [17], requiredArtifacts: [], matrixRequired: true }, change: { configPatch: {} }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 0, requireReplication: false }, createdAt: new Date().toISOString() };
-    const script = "console.log(JSON.stringify({evaluation:{results:[{fold:0,seed:17,metrics:{score:0.8}},{fold:1,seed:17,metrics:{score:0.9}}]}}))";
+    const manifest = { id: "matrix-exp", datasetVersion: "data", splitVersion: "split", resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0, 1], seeds: [17], requiredArtifacts: [], matrixRequired: true, metrics: [{ name: "score", direction: "maximize" }, { name: "safety", direction: "maximize" }] }, change: { configPatch: {} }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 0, requireReplication: false }, createdAt: new Date().toISOString() };
+    const script = "console.log(JSON.stringify({evaluation:{results:[{fold:0,seed:17,metrics:{score:0.8,safety:0.9}},{fold:1,seed:17,metrics:{score:0.9,safety:0.95}}]}}))";
     const result = await new LocalExecutor().run(manifest, root, [process.execPath, "-e", script], undefined, "score");
     assert.equal(result.status, "completed");
     assert.ok(Math.abs(result.metrics.score - 0.85) < 1e-12);
+    assert.ok(Math.abs(result.metrics.safety - 0.925) < 1e-12);
     assert.deepEqual(result.metricsByFold.score, [0.8, 0.9]);
+    assert.deepEqual(result.metricsByFold.safety, [0.9, 0.95]);
     assert.equal(validateEvaluationMatrix(manifest, result, "score").valid, true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
