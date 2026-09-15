@@ -156,7 +156,7 @@ import { ResearchDecisionSchema, RunResultSchema } from "../dist/core/types.js";
 import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../dist/core/validation-lock.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
-import { codexIsLoggedInAsync, createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexModel, effectiveCodexSandbox, isProviderFallbackEligible, MAX_PROVIDER_RESET_WAIT_MS, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveCodexModel } from "../dist/agents/codex-exec.js";
+import { codexIsLoggedInAsync, createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexModel, effectiveCodexSandbox, isProviderFallbackEligible, listCodexModels, MAX_PROVIDER_RESET_WAIT_MS, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveCodexModel } from "../dist/agents/codex-exec.js";
 import { analyzeHarnessComponentFailures, assessHarnessChangePresence, evaluateHarnessChange, inventoryHarnessComponents, parseHarnessChangeContract, planHarnessInterventions } from "../dist/core/harness-evolution.js";
 import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
 import { assessStopPolicy } from "../dist/core/stop-policy.js";
@@ -3068,6 +3068,29 @@ test("Codex model responses normalize reasoning-effort objects", () => {
   assert.deepEqual(models[0].supportedReasoningEfforts, ["low", "medium"]);
   assert.equal(models[0].displayName, "GPT-5.6-Luna");
   assert.deepEqual(normalizeCodexModels([{ model: "fallback", supportedReasoningEfforts: ["high", { reasoningEffort: "max" }, null] }])[0].supportedReasoningEfforts, ["high", "max"]);
+});
+
+test("Codex model discovery converts an early app-server exit into a bounded error", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-codex-models-"));
+  const bin = join(root, "codex");
+  writeFileSync(bin, "#!/bin/sh\nif [ \"$1\" = \"login\" ]; then exit 0; fi\nexit 1\n", { mode: 0o755 });
+  const previousBinary = process.env.EVIDRA_CODEX_BIN;
+  const previousCodexKey = process.env.CODEX_API_KEY;
+  const previousOpenAiKey = process.env.OPENAI_API_KEY;
+  process.env.EVIDRA_CODEX_BIN = bin;
+  delete process.env.CODEX_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  try {
+    await assert.rejects(() => listCodexModels(), /model listing (transport failed|exited)/i);
+  } finally {
+    if (previousBinary === undefined) delete process.env.EVIDRA_CODEX_BIN;
+    else process.env.EVIDRA_CODEX_BIN = previousBinary;
+    if (previousCodexKey === undefined) delete process.env.CODEX_API_KEY;
+    else process.env.CODEX_API_KEY = previousCodexKey;
+    if (previousOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousOpenAiKey;
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("Codex login is asynchronous and interruptible", async () => {

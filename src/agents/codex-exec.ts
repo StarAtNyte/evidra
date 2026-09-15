@@ -370,6 +370,7 @@ export function listCodexModels(): Promise<AvailableModel[]> {
       callback();
     };
     const timer = setTimeout(() => finish(() => reject(new Error("Timed out while loading Codex models."))), 12_000);
+    child.stdin.on("error", (error) => finish(() => reject(new Error(`Codex model listing transport failed: ${error.message}`))));
     child.stdout.on("data", (chunk: Buffer) => {
       buffer += chunk.toString();
       const lines = buffer.split("\n");
@@ -390,9 +391,13 @@ export function listCodexModels(): Promise<AvailableModel[]> {
     child.on("close", (code) => {
       if (!settled) finish(() => reject(new Error(`Codex model listing exited with ${code ?? 1}.`)));
     });
-    child.stdin.write(`${JSON.stringify({ method: "initialize", id: 1, params: { clientInfo: { name: "evidra", version: "0.1.0" } } })}\n`);
-    child.stdin.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
-    child.stdin.write(`${JSON.stringify({ method: "model/list", id: 2, params: { includeHidden: true } })}\n`);
+    try {
+      child.stdin.write(`${JSON.stringify({ method: "initialize", id: 1, params: { clientInfo: { name: "evidra", version: "0.1.0" } } })}\n`);
+      child.stdin.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
+      child.stdin.write(`${JSON.stringify({ method: "model/list", id: 2, params: { includeHidden: true } })}\n`);
+    } catch (error) {
+      finish(() => reject(new Error(`Codex model listing transport failed: ${error instanceof Error ? error.message : String(error)}`)));
+    }
     });
   });
 }
