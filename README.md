@@ -219,6 +219,7 @@ Implemented today:
 - every research cycle now emits a durable experience record: validated trajectory events, scene/goal/outcome metadata, independent quality verdicts, C0-C3 demand scores, admission status, capability-gap profile, and a three-stage curriculum for subsequent cycles;
 - local research lanes can use a bounded heterogeneous Ollama pool: installed local models are discovered at campaign start, assigned deterministically across independent roles, and the actual model used by every lane is recorded for replay and routing analysis;
 - independently replicated methods are also distilled into ranked, provenance-linked playbook leads with explicit transfer failure modes; playbooks guide new research but never count as current-workspace proof;
+- failed, invalid, rejected, and blocked experiment directions are retained as ranked negative experience, so future cycles must change the route instead of repeating an unchanged failure;
 - experiment proposals receive an explainable novelty score against prior directions, reducing redundant hypothesis families while preserving probability-of-success, information-value, risk, and compute-cost ranking;
 - ensemble proposals are durable, checksummed candidate artifacts with member-file checksums, provenance, and explicit candidate/validated/promoted/rejected status; source mutation blocks validation, and creating a blend never silently promotes or submits it;
 - local-model experiment implementation through bounded unified-diff proposals, checked and applied only inside the experiment worktree;

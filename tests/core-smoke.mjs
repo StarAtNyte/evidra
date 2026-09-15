@@ -43,6 +43,7 @@ import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js
 import { renderReport } from "../dist/core/reports.js";
 import { latestSourceEntries, latestSourcePayloads, repositoryLeadsFromEvents, researchMemoryContext } from "../dist/core/research-context.js";
 import { playbookFromMethod, verifiedPlaybooksFromEvents } from "../dist/core/playbooks.js";
+import { failedDirectionsFromExperiments } from "../dist/core/failure-memory.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "../dist/core/experiment-patches.js";
 import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js";
 import { compareClaims } from "../dist/core/claim-consistency.js";
@@ -1223,6 +1224,17 @@ test("replicated methods become bounded playbook leads with fresh-transfer warni
   assert.deepEqual(playbook.steps, ["fit calibration on out-of-fold predictions"]);
   assert.match(playbook.failureModes[0], /may not transfer/);
   assert.deepEqual(verifiedPlaybooksFromEvents([{ type: "research.method.transferable", payload: method }, { type: "research.method.transferable", payload: method }, { type: "research.method.transferable", payload: { ...method, id: "unreplicated", replicated: false } }], "calibration ranking").map((entry) => entry.id), ["playbook_method-playbook"]);
+});
+
+test("failed experiment directions become ranked negative research memory", () => {
+  const directions = failedDirectionsFromExperiments([
+    { id: "failed-unrelated", payload: { status: "failed", title: "Unrelated route", failureClass: "timeout" } },
+    { id: "failed-calibration", payload: { status: "invalid", title: "Calibration route", proposedChange: "fit calibration", failureClass: "invalid_metric", failureReason: "metric missing" } },
+    { id: "ignored-success", payload: { status: "completed", title: "Successful route" } },
+  ], "calibration metric");
+  assert.deepEqual(directions.map((direction) => direction.id), ["failed-calibration", "failed-unrelated"]);
+  assert.equal(directions[0].status, "failed_direction");
+  assert.equal(directions[0].reason, "metric missing");
 });
 
 test("ablation planner creates reproducible leave-one-factor-out controls", () => {

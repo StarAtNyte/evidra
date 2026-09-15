@@ -2,6 +2,7 @@ import type { ResearchStore } from "./store.js";
 import { transferableMethodsFromEvents, type TransferableMethod } from "./method-transfer.js";
 import { ablationPlansFromEvents, type AblationPlan } from "./ablation.js";
 import { verifiedPlaybooksFromEvents, type VerifiedPlaybook } from "./playbooks.js";
+import { failedDirectionsFromExperiments, type FailedDirection } from "./failure-memory.js";
 import { canonicalSourceUrl, type RepositorySearchResult } from "./sources.js";
 
 export type ResearchRepositoryLead = RepositorySearchResult;
@@ -12,6 +13,7 @@ export interface ResearchMemoryContext {
   contradictions: Array<{ fromId: string; toId: string; confidence: number }>;
   transferableMethods: TransferableMethod[];
   verifiedPlaybooks: VerifiedPlaybook[];
+  failedDirections: FailedDirection[];
   repositoryLeads: ResearchRepositoryLead[];
   ablationPlans: AblationPlan[];
 }
@@ -102,7 +104,8 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
   ]);
   const transferableMethods = transferableMethodsFromEvents(events, query, Math.min(8, bounded));
   const verifiedPlaybooks = verifiedPlaybooksFromEvents(events, query, Math.min(8, bounded));
+  const failedDirections = failedDirectionsFromExperiments(store.experiments(), query, Math.min(8, bounded));
   const repositoryLeads = repositoryLeadsFromEvents(events, query, Math.min(8, bounded));
   const ablationPlans = ablationPlansFromEvents(events, Math.min(8, bounded));
-  return { claims, hypotheses, contradictions, transferableMethods, verifiedPlaybooks, repositoryLeads, ablationPlans };
+  return { claims, hypotheses, contradictions, transferableMethods, verifiedPlaybooks, failedDirections, repositoryLeads, ablationPlans };
 }
