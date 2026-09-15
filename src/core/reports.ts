@@ -4,6 +4,7 @@ import { ResearchStore } from "./store.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "./claim-audit.js";
 import { redactCommand } from "./redaction.js";
 import { researchMemoryContext } from "./research-context.js";
+import { sourceFrontier } from "./sources.js";
 
 export type ReportKind = "research" | "challenge" | "final";
 
@@ -19,6 +20,11 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const decisions = store.decisions();
   const claims = store.claims();
   const sources = store.sources();
+  const sourceFrontierReport = sourceFrontier(store.eventsByTypes([
+    "research.source.search.completed",
+    "research.web.search.completed",
+    "research.source.retrieved",
+  ]));
   const experiments = store.experiments();
   const runs = store.runs();
   const attempts = store.runAttempts();
@@ -131,7 +137,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
       return `- ${event.createdAt} · ${components} checksummed components\n  ${interventions || "No targeted intervention yet; waiting for benchmark evidence."}`;
     }).join("\n")
     : "No harness evolution plan recorded.");
-  sections.push("", "## Sources", "", sources.length ? sources.map((source) => `- ${source.id}: ${line((source.payload as { title?: string; url?: string }).title ?? source.payload)} · ${(source.payload as { url?: string }).url ?? ""}`).join("\n") : "No sources recorded.");
+  sections.push("", "## Source frontier", "", `Works: ${sourceFrontierReport.uniqueWorks} · retrieved: ${sourceFrontierReport.retrievedWorks} · pending: ${sourceFrontierReport.pendingWorks}\nQuery coverage: ${(sourceFrontierReport.queryCoverage * 100).toFixed(0)}% · retrieval coverage: ${(sourceFrontierReport.retrievalCoverage * 100).toFixed(0)}% · claim coverage: ${(sourceFrontierReport.claimCoverage * 100).toFixed(0)}%\nEvidence classes: scholarly=${sourceFrontierReport.scholarlyWorks}, official=${sourceFrontierReport.officialWorks}, implementation=${sourceFrontierReport.implementationLeads}, discovery=${sourceFrontierReport.discoveryOnlyWorks}\nMean routing quality: ${(sourceFrontierReport.meanQualityScore * 100).toFixed(0)}%`, "", "## Sources", "", sources.length ? sources.map((source) => `- ${source.id}: ${line((source.payload as { title?: string; url?: string }).title ?? source.payload)} · ${(source.payload as { url?: string }).url ?? ""}`).join("\n") : "No sources recorded.");
   sections.push("", "## Ensemble candidates", "", ensembles.length ? ensembles.map((candidate) => `- ${candidate.id} · ${candidate.status} · ${candidate.checksum}\n  ${candidate.path}`).join("\n") : "No ensemble candidates recorded.");
   if (kind !== "research") sections.push("", "## Experiments and runs", "", experiments.length ? experiments.map((experiment) => {
     const payload = experiment.payload as { status?: string; executionPlan?: Array<{ id: string; status: string }> };
