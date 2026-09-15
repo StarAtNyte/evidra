@@ -401,7 +401,7 @@ function taskBalancedMean(entries: Array<{ task: string; value: number }>): numb
 }
 
 function protocolKey(trial: HarnessTrial): string {
-  return [trial.task, trial.arm ?? "", trial.seed ?? "", trial.provider ?? "", trial.model ?? "", trial.budgetMinutes ?? ""].join("\u001f");
+  return [trial.task, trial.arm ?? "", trial.seed ?? "", trial.provider ?? "", trial.model ?? "", trial.reasoningEffort ?? "<default-medium>", trial.budgetMinutes ?? ""].join("\u001f");
 }
 
 function fairPair(left: HarnessTrial, right: HarnessTrial): boolean {
@@ -409,6 +409,7 @@ function fairPair(left: HarnessTrial, right: HarnessTrial): boolean {
     taskMetadataKey(left.taskMetadata) === taskMetadataKey(right.taskMetadata) &&
     left.provider === right.provider &&
     left.slice === right.slice &&
+    (left.reasoningEffort ?? "medium") === (right.reasoningEffort ?? "medium") &&
     left.baselineMetric === right.baselineMetric &&
     left.dataRevision === right.dataRevision &&
     left.runtimeFingerprint === right.runtimeFingerprint &&

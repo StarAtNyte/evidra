@@ -4334,6 +4334,16 @@ test("direct harness comparison refuses hidden protocol mismatches", () => {
   assert.equal(comparison.challengerWins, false);
 });
 
+test("direct harness comparison refuses mismatched reasoning effort", () => {
+  const base = { task: "task", arm: "default", seed: 1, model: "same-model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 1, recovered: false, reproducible: true };
+  const comparison = compareHarnesses([
+    { harness: "evidra", reasoningEffort: "high", ...base },
+    { harness: "other", reasoningEffort: "medium", ...base },
+  ], "evidra", "other");
+  assert.equal(comparison.validPairedArms, 0);
+  assert.equal(comparison.challengerWins, false);
+});
+
 test("benchmark wins require matched successful reproducibility checks", () => {
   const trials = ["task-a", "task-b"].flatMap((task) => [
     { harness: "evidra", task, arm: "default", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0, candidateMetric: 0.8, validRun: true, durationSeconds: 1, recovered: false, reproducible: false, reproducibilityChecked: true },
