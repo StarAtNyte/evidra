@@ -4250,6 +4250,18 @@ test("cross-pollination does not call generic vocabulary consensus", () => {
   assert.equal(board.needsAdversarialReview, true);
 });
 
+test("cross-pollination groups independently worded recommendations conservatively", () => {
+  const board = synthesizeLaneReports([
+    { role: "data", status: "completed", recommendations: ["use grouped source folds to prevent leakage"], evidence: ["groups.csv"], confidence: 0.8 },
+    { role: "validation", status: "completed", recommendations: ["keep grouped source identities inside validation partitions"], evidence: ["split-report.json"], confidence: 0.7 },
+    { role: "model", status: "completed", recommendations: ["increase hidden-layer width"], evidence: ["model-notes.md"], confidence: 0.9 },
+  ]);
+  assert.equal(board.transferCandidates.length, 2);
+  assert.equal(board.transferCandidates[0].independentSupport, 2);
+  assert.deepEqual(board.transferCandidates[0].sourceRoles, ["data", "validation"]);
+  assert.deepEqual(board.transferCandidates[0].evidence, ["groups.csv", "split-report.json"]);
+});
+
 test("promotion learning stays conservative until paired evidence is sufficient", () => {
   const events = [];
   for (let index = 0; index < 8; index += 1) {

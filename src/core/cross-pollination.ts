@@ -53,19 +53,24 @@ export function synthesizeLaneReports(reports: LaneFinding[]): CrossPollinationB
     }
   }
   const recommendations = completed.flatMap((report) => (report.recommendations ?? []).map((recommendation) => `${report.role ?? "lane"}: ${recommendation}`));
-  const recommendationGroups = new Map<string, { recommendation: string; roles: Set<string>; evidence: Set<string>; confidence: number[] }>();
+  const recommendationGroups: Array<{ recommendation: string; roles: Set<string>; evidence: Set<string>; confidence: number[]; terms: Set<string> }> = [];
   for (const report of completed) {
     for (const recommendation of report.recommendations ?? []) {
-      const key = recommendation.trim().toLowerCase().replace(/\s+/g, " ");
-      if (!key) continue;
-      const group = recommendationGroups.get(key) ?? { recommendation, roles: new Set<string>(), evidence: new Set<string>(), confidence: [] };
-      group.roles.add(report.role ?? "lane");
-      for (const item of report.evidence ?? []) group.evidence.add(item);
-      group.confidence.push(report.confidence ?? 0.5);
-      recommendationGroups.set(key, group);
+      const normalized = recommendation.trim().toLowerCase().replace(/\s+/g, " ");
+      if (!normalized) continue;
+      const terms = words(recommendation);
+      // Exact matches remain the strongest signal. Otherwise require two
+      // discriminative shared terms before merging independently worded
+      // recommendations; one shared domain word is too easy to manufacture.
+      const group = recommendationGroups.find((candidate) => candidate.recommendation.trim().toLowerCase().replace(/\s+/g, " ") === normalized || intersectionSize(candidate.terms, terms) >= 2);
+      const target = group ?? { recommendation, roles: new Set<string>(), evidence: new Set<string>(), confidence: [], terms };
+      target.roles.add(report.role ?? "lane");
+      for (const item of report.evidence ?? []) target.evidence.add(item);
+      target.confidence.push(report.confidence ?? 0.5);
+      if (!group) recommendationGroups.push(target);
     }
   }
-  const transferCandidates = [...recommendationGroups.values()]
+  const transferCandidates = recommendationGroups
     .map((group) => ({
       recommendation: group.recommendation,
       sourceRoles: [...group.roles].sort(),
@@ -87,7 +92,7 @@ export function synthesizeLaneReports(reports: LaneFinding[]): CrossPollinationB
     completedCount: completed.length,
     agreements: unique(agreements).slice(0, 8),
     tensions: unique(tensions).slice(0, 8),
-    complementaryRecommendations: dedupeRecommendations(recommendations).slice(0, 12),
+    complementaryRecommendations: [...recommendationGroups].map((group) => group.recommendation).slice(0, 12),
     transferCandidates,
     evidence: unique(evidence).slice(0, 18),
     familyCoverage,
@@ -109,6 +114,12 @@ function words(value: string): Set<string> {
 function sharedTerms(left: string, right: string): string[] {
   const rightWords = words(right);
   return [...words(left)].filter((word) => rightWords.has(word));
+}
+
+function intersectionSize(left: Set<string>, right: Set<string>): number {
+  let size = 0;
+  for (const term of left) if (right.has(term)) size += 1;
+  return size;
 }
 
 function unique(values: string[]): string[] {
