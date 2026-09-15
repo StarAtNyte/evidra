@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
@@ -2305,7 +2305,12 @@ research
       let decision: Awaited<ReturnType<typeof runResearchDirector>>;
       let criticReview: Awaited<ReturnType<typeof runResearchCritic>> | undefined;
       let laneReports: Awaited<ReturnType<typeof runResearchLanes>> = [];
-      const toolTrace = createToolTraceRecorder(`research-${cycle}`);
+      const tracePrefix = `research-${cycle}-${Date.now()}`;
+      const tracePath = join(root, ".sota", "traces", `${tracePrefix}.jsonl`);
+      mkdirSync(dirname(tracePath), { recursive: true });
+      const toolTrace = createToolTraceRecorder(tracePrefix, { onEvent: (event) => {
+        try { appendFileSync(tracePath, `${JSON.stringify(event)}\n`, "utf8"); } catch { /* Partial trace persistence is best-effort. */ }
+      } });
       const recordAgentUsage = (usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; reasoningOutputTokens?: number } | undefined, provider: string, model: string, role: string): void => {
         const usageStore = new ResearchStore(statePath);
         usageStore.appendEvent("research.agent.usage", { cycle, role, provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens });
@@ -2521,7 +2526,7 @@ research
             const failure = researchFailureRecord(cycle, error, toolTrace.events, laneReports.filter((lane) => lane.status === "failed"));
             const failureStore = new ResearchStore(statePath);
             failureStore.appendEvent("research.agent.failed", { cycle, error: failure.error, attempts: researchAttempt, quality: failure.quality });
-            failureStore.saveTrajectory({ id: `trajectory_${failure.events.at(-1)?.id ?? Date.now()}`, payload: { objective, cycle, status: "failed", error: failure.error, events: failure.events }, quality: failure.quality });
+            failureStore.saveTrajectory({ id: `trajectory_${failure.events.at(-1)?.id ?? Date.now()}`, payload: { objective, cycle, status: "failed", error: failure.error, tracePath: relative(root, tracePath), events: failure.events }, quality: failure.quality });
             const savedCampaign = failureStore.campaign() as { status?: string } | undefined;
             if (savedCampaign?.status === "running") {
               const paused = pauseCampaign(savedCampaign as typeof campaign);
@@ -3060,7 +3065,7 @@ research
       const researchQuality = evaluateTrajectory(researchTrajectoryEvents);
       const routingOutcome = capabilityOutcome({ objective: allocatedObjective, mode, route, provider: options.provider, model: selectedModel, quality: researchQuality, parallelLanes: laneReports.length });
       const trajectoryId = `trajectory_research_${Date.now()}`;
-      const trajectoryPayload = { objective, observation, laneReports, criticReview, decision, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: options.provider, model: selectedModel }, events: researchTrajectoryEvents };
+      const trajectoryPayload = { objective, observation, laneReports, criticReview, decision, tracePath: relative(root, tracePath), routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: options.provider, model: selectedModel }, events: researchTrajectoryEvents };
       decisionStore.saveTrajectory({ id: trajectoryId, payload: trajectoryPayload, quality: researchQuality });
       const experience = buildExperienceRecord({ trajectoryId, payload: trajectoryPayload, quality: researchQuality, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: options.provider, model: selectedModel } });
       const priorExperiences = decisionStore.trajectoryHistory().filter((entry) => entry.id !== trajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));

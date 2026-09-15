@@ -207,6 +207,10 @@ the provider window to expire.
 Native Codex activity is normalized into concise progress and bounded,
 secret-redacted trajectory events. Raw protocol ids, credentials, and
 unbounded payloads are not shown in the TUI or stored in research context.
+During an autonomous cycle, the same bounded events are also appended to a
+cycle JSONL trace under `.sota/traces/` as they occur. If the controller crashes
+before the final trajectory is committed, the partial tool/command history is
+still available for restart diagnosis without trusting raw provider output.
 
 ## Production checklist
 

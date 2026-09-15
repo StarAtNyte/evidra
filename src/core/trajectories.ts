@@ -28,6 +28,11 @@ export interface ToolTraceRecorder {
   onActivity: (source: string, activity: string) => void;
 }
 
+export interface ToolTraceRecorderOptions {
+  /** Persist each already-redacted event for crash/restart inspection. */
+  onEvent?: (event: TrajectoryEvent) => void;
+}
+
 /** Map redacted native provider failures to the controller's generic recovery vocabulary. */
 export function providerActivityFailureClass(activity: string): "timeout" | "rate_limit" | "auth" | "dependency" | "unknown" | undefined {
   if (!/^(?:Command failed|Tool failed|File change failed|Codex item error):?/i.test(activity)) return undefined;
@@ -39,22 +44,26 @@ export function providerActivityFailureClass(activity: string): "timeout" | "rat
 }
 
 /** Capture interleaved tool activity without retaining provider protocol noise or credentials. */
-export function createToolTraceRecorder(prefix = "research"): ToolTraceRecorder {
+export function createToolTraceRecorder(prefix = "research", options: ToolTraceRecorderOptions = {}): ToolTraceRecorder {
   const events: TrajectoryEvent[] = [];
   let sequence = 0;
+  const record = (event: TrajectoryEvent): void => {
+    events.push(event);
+    try { options.onEvent?.(event); } catch { /* Trace persistence must not break the active agent turn. */ }
+  };
   return {
     events,
     onToolCall: (source, call) => {
       const callId = `${prefix}-tool-${++sequence}`;
-      events.push({ id: `${callId}-call`, kind: "tool_call", callId, at: new Date().toISOString(), payload: redactStructured({ tool: call.name, arguments: call.arguments ?? {}, source }) });
+      record({ id: `${callId}-call`, kind: "tool_call", callId, at: new Date().toISOString(), payload: redactStructured({ tool: call.name, arguments: call.arguments ?? {}, source }) });
       return callId;
     },
     onToolResult: (source, callId, result) => {
-      events.push({ id: `${callId}-result`, kind: "tool_result", callId, at: new Date().toISOString(), payload: redactStructured({ tool: result.name, ok: result.ok, output: result.output, error: result.error, trust: result.trust, securityWarnings: result.securityWarnings, permissionChecked: result.trust === "permission_boundary", permissionDenied: result.trust === "permission_boundary" && result.ok === false, source }) });
+      record({ id: `${callId}-result`, kind: "tool_result", callId, at: new Date().toISOString(), payload: redactStructured({ tool: result.name, ok: result.ok, output: result.output, error: result.error, trust: result.trust, securityWarnings: result.securityWarnings, permissionChecked: result.trust === "permission_boundary", permissionDenied: result.trust === "permission_boundary" && result.ok === false, source }) });
     },
     onActivity: (source, activity) => {
       if (!activity.trim() || events.length >= 256) return;
-      events.push({ id: `${prefix}-activity-${++sequence}`, kind: "process", at: new Date().toISOString(), payload: redactStructured({ activity: activity.slice(0, 240), source, providerActivity: true }) });
+      record({ id: `${prefix}-activity-${++sequence}`, kind: "process", at: new Date().toISOString(), payload: redactStructured({ activity: activity.slice(0, 240), source, providerActivity: true }) });
     },
   };
 }

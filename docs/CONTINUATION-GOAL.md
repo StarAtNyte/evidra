@@ -192,6 +192,9 @@ external evaluator.
 - CLI provider-reset waits now poll controller directives in bounded slices;
   a stop request interrupts a long Codex entitlement wait and records a
   terminal scheduler state immediately.
+- Autonomous CLI and TUI cycles now append bounded, redacted tool/provider
+  activity to `.sota/traces/*.jsonl` as it happens, preserving partial Codex
+  provenance when a controller crashes before its final trajectory commit.
 - Autonomous memory context now uses hybrid FTS-plus-lexical retrieval for
   durable claims and hypotheses, so the existing SQLite index influences Codex
   research context instead of being used only by the interactive memory search.

@@ -615,7 +615,8 @@ test("exhausted research-agent failures close a resumable failed trajectory", ()
 });
 
 test("tool trace recorder preserves causal call/result pairs and redacts secrets", () => {
-  const trace = createToolTraceRecorder("smoke");
+  const persisted = [];
+  const trace = createToolTraceRecorder("smoke", { onEvent: (event) => persisted.push(event) });
   const callId = trace.onToolCall("director", { name: "workspace.search", arguments: { token: "sk-test_12345678901234567890" } });
   trace.onToolResult("director", callId, { name: "workspace.search", ok: true, output: { value: "token=sk-test_12345678901234567890" }, trust: "untrusted_content" });
   assert.equal(trace.events[1].payload.output.value, "token=[REDACTED]");
@@ -625,6 +626,8 @@ test("tool trace recorder preserves causal call/result pairs and redacts secrets
   assert.equal(trace.events[2].payload.activity, "Running: upload --api-key=[REDACTED]");
   assert.equal(trace.events[2].payload.providerActivity, true);
   assert.equal(trace.events[2].payload.source, "codex");
+  assert.equal(persisted.length, 3);
+  assert.equal(persisted[1].payload.output.value, "token=[REDACTED]");
   trace.events.push({ id: "terminal", kind: "terminal", payload: { status: "completed" } });
   assert.equal(validateTrajectoryStructure(trace.events).status, "complete");
   assert.equal(evaluateTrajectory(trace.events).errorRecovery.verdict, "PASS");

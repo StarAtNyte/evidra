@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { dirname, join, relative, resolve } from "node:path";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
 import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
@@ -878,7 +878,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
     let decision: Awaited<ReturnType<typeof runResearchDirector>>;
     let laneReports: ResearchLaneReport[] = [];
     let criticReview: ResearchReview | undefined;
-    const toolTrace = createToolTraceRecorder(`research-${Date.now()}`);
+    const tracePrefix = `research-${Date.now()}`;
+    const tracePath = join(root, ".sota", "traces", `${tracePrefix}.jsonl`);
+    mkdirSync(dirname(tracePath), { recursive: true });
+    const toolTrace = createToolTraceRecorder(tracePrefix, { onEvent: (event) => {
+      try { appendFileSync(tracePath, `${JSON.stringify(event)}\n`, "utf8"); } catch { /* Partial trace persistence is best-effort. */ }
+    } });
     try {
       activeSteer.current = null;
       setProgress(`Research 3/4 · route ${route.tier} · ${route.reasoningEffort} reasoning · investigating...`);
@@ -1057,7 +1062,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const routingOutcome = capabilityOutcome({ objective, mode, route, provider: config.provider, model: config.model, quality: researchQuality, parallelLanes: laneReports.length });
     const trajectoryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const trajectoryId = `trajectory_research_${Date.now()}`;
-    const trajectoryPayload = { objective, observation, laneReports, criticReview, decision, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: config.provider, model: config.model }, events: researchTrajectoryEvents };
+    const trajectoryPayload = { objective, observation, laneReports, criticReview, decision, tracePath: relative(root, tracePath), routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: config.provider, model: config.model }, events: researchTrajectoryEvents };
     trajectoryStore.saveTrajectory({ id: trajectoryId, payload: trajectoryPayload, quality: researchQuality });
     const experience = buildExperienceRecord({ trajectoryId, payload: trajectoryPayload, quality: researchQuality, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: config.provider, model: config.model } });
     const priorExperiences = trajectoryStore.trajectories(100).filter((entry) => entry.id !== trajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
