@@ -413,7 +413,7 @@ function recordCampaignCheckpoint<T extends { status: string }>(campaign: T, mod
   const lease = store.controllerLease();
   if (lease?.status === "running" && lease.pid === process.pid && lease.controllerId) store.heartbeatControllerLease(lease.controllerId, mode, step);
   store.saveCampaign(withCampaignCheckpoint(campaign, step, cycle));
-  store.setSchedulerState({ status: campaign.status === "paused" ? "paused" : "running", mode, currentStep: step });
+  store.setSchedulerState({ status: campaign.status === "completed" ? "idle" : campaign.status === "paused" ? "paused" : "running", mode, currentStep: step });
   store.appendEvent("research.campaign.checkpoint", { cycle, step, mode });
   store.close();
 }

@@ -181,6 +181,8 @@ external evaluator.
   source ingestion, workspace inspection, baseline execution, or another
   Codex turn. An expired resumed campaign records a terminal budget checkpoint
   without starting new work.
+- Terminal campaign checkpoints now set scheduler state to `idle` rather than
+  incorrectly reporting a completed campaign as `running`.
 - Codex structured-output schemas now cover the research director, independent
   research lanes, and critic, so every research-role response is constrained
   before durable parsing and evidence gates.

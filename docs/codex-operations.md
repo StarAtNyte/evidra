@@ -163,6 +163,10 @@ workspace inspection, baseline execution, or another Codex turn. Resuming an
 already-expired campaign therefore records a terminal budget checkpoint instead
 of spending work after the deadline.
 
+Terminal checkpoints also set the durable scheduler to `idle`; status cannot
+report a completed campaign as still running merely because the checkpoint was
+written after the campaign transition.
+
 ## Usage exhaustion and recovery
 
 Codex subscription limits are finite. Select the desired behavior explicitly:
