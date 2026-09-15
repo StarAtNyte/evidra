@@ -2184,9 +2184,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (!provider) append("assistant", `Provider: ${config.provider}\nModel: ${config.model}\nUse /provider codex or /provider local.`);
       else if (provider !== "codex" && provider !== "local") append("assistant", "Choose codex or local.");
       else {
+        activeCodexThread.current = undefined;
         setConfig((current) => ({
           ...current,
           provider,
+          codexThreadId: undefined,
           model: provider === "local"
             ? (current.provider === "local" ? current.model : "qwen3.6:27b")
             : (current.provider === "codex" ? current.model : "default"),
@@ -2207,7 +2209,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
           append("assistant", `Provider: ${config.provider}\nModel: ${config.model}\nNo models loaded yet. Type /model again in a moment.`);
         }
       }
-      else { setConfig((current) => ({ ...current, model })); append("assistant", `Model selected: ${model}`); }
+      else {
+        activeCodexThread.current = undefined;
+        setConfig((current) => ({ ...current, model, codexThreadId: undefined }));
+        append("assistant", `Model selected: ${model}`);
+      }
       return;
     }
     if (request === "/login codex" || request === "/login codex device" || request === "/login codex browser") {
@@ -2221,7 +2227,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         process.stdin.resume();
         const status = loginCodex(mode);
         if (status === 0) {
-          setConfig((current) => ({ ...current, provider: "codex", model: current.provider === "codex" ? current.model : "default" }));
+          activeCodexThread.current = undefined;
+          setConfig((current) => ({ ...current, provider: "codex", model: current.provider === "codex" ? current.model : "default", codexThreadId: undefined }));
           setOnboardingComplete(true);
           append("assistant", "Codex login completed. Evidra is ready.");
         } else append("assistant", "Codex login did not complete. Setup remains available; run /login codex again when ready.");
