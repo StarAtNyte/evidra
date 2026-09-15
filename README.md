@@ -247,6 +247,7 @@ Implemented today:
 - code-health evidence is cumulative across the recent edit history, so repeated individually-small regressions can eventually trigger a repair gate;
 - validation uses a best-so-far ratchet: an experiment must beat the original baseline and every previously accepted result compatible with its dataset and split contract;
 - every research cycle now emits a durable experience record: validated trajectory events, scene/goal/outcome metadata, independent quality verdicts, C0-C3 demand scores, admission status, capability-gap profile, and a three-stage curriculum for subsequent cycles;
+- Codex-native commands, searches, file changes, plans, and reasoning milestones are captured as bounded, secret-redacted process events in the durable trajectory, so the provider's real work remains auditable after the TUI closes;
 - local research lanes can use a bounded heterogeneous Ollama pool: installed local models are discovered at campaign start, assigned deterministically across independent roles, and the actual model used by every lane is recorded for replay and routing analysis;
 - independently replicated methods are also distilled into ranked, provenance-linked playbook leads with explicit transfer failure modes; playbooks guide new research but never count as current-workspace proof;
 - failed, invalid, rejected, and blocked experiment directions are retained as ranked negative experience, so future cycles must change the route instead of repeating an unchanged failure;

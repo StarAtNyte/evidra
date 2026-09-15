@@ -174,6 +174,12 @@ structured-output schemas, so phase, decision, report, review, hypothesis, and
 tool-call fields are constrained at the model boundary before Evidra applies
 its own durable schemas and evidence gates.
 
+Codex-native activity is also copied into the cycle trajectory as bounded
+`process` events. Commands, searches, file changes, plans, and reasoning
+milestones remain available for audit and later harness adaptation after the
+TUI closes. The activity is compact and secret-redacted; raw provider protocol
+events, credentials, and unbounded tool payloads are not persisted.
+
 Independent lanes explore different formulations and roles. Their evidence is
 cross-pollinated through a bounded board, while shared citations are not
 counted as independent corroboration. A critic and replication gate review

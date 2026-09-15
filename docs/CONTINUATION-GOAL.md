@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `a4b5c54`.
+- Latest pushed commit: `0fc03df`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -129,6 +129,10 @@ external evaluator.
 - Codex command activity now includes an exit code only when the provider
   supplies one, keeping failure output concise; regression coverage remains
   green at 349/349.
+- Codex-native activity is now persisted as bounded, secret-redacted `process`
+  events in research trajectories. Commands, searches, file changes, plans,
+  and reasoning milestones therefore remain auditable and available to later
+  experience/replay logic after the interactive session closes.
 - Codex structured-output schemas now cover the research director, independent
   research lanes, and critic, so every research-role response is constrained
   before durable parsing and evidence gates.
