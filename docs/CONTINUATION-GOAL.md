@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `62c4c72` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `052c0ce` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -87,10 +87,12 @@ external evaluator.
   derived from durable scored-submission records as `externalScoreObserved`.
 - Recording or polling a score now refreshes only that external criterion in the
   persisted audit; all other failed criteria remain failed.
+- Prepared submission records persist the exact source run ID, and external
+  score evidence is accepted only when it matches that run.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 276/276 tests passing, TypeScript check passing,
+- Latest verified baseline: 271/271 tests passing, TypeScript check passing,
   and build passing. The worktree is clean; generated reports remain excluded
   from source changes.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
