@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `aa526f9`.
+- Latest pushed commit: `1e281d2`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -106,6 +106,9 @@ external evaluator.
 - Codex usage now preserves input, output, cached-input, and
   reasoning-output token counts through agent results, durable usage events,
   CLI/TUI summaries, and regression coverage.
+- The Codex adapter now resolves the legacy `default` sentinel to the explicit
+  Evidra Luna model at the provider boundary, so account-side defaults cannot
+  silently change the configured route.
 - Codex thread restoration is explicit: a new terminal starts a fresh Evidra
   chat, while `/resume <session-id>` restores the saved Codex thread and
   transcript. Provider/model changes invalidate the active chat thread.
