@@ -155,7 +155,7 @@ import { ResearchDecisionSchema, RunResultSchema } from "../dist/core/types.js";
 import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../dist/core/validation-lock.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
-import { createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexModel, effectiveCodexSandbox, isProviderFallbackEligible, MAX_PROVIDER_RESET_WAIT_MS, providerRetryAfterMs, resolveCodexModel } from "../dist/agents/codex-exec.js";
+import { createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexModel, effectiveCodexSandbox, isProviderFallbackEligible, MAX_PROVIDER_RESET_WAIT_MS, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel } from "../dist/agents/codex-exec.js";
 import { analyzeHarnessComponentFailures, assessHarnessChangePresence, evaluateHarnessChange, inventoryHarnessComponents, parseHarnessChangeContract, planHarnessInterventions } from "../dist/core/harness-evolution.js";
 import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
 import { assessStopPolicy } from "../dist/core/stop-policy.js";
@@ -426,6 +426,16 @@ test("Codex model resolution preserves explicit selections", async () => {
   assert.equal(effectiveCodexModel("default"), DEFAULT_CODEX_MODEL);
   assert.equal(effectiveCodexModel(undefined), DEFAULT_CODEX_MODEL);
   assert.equal(effectiveCodexModel("gpt-custom"), "gpt-custom");
+});
+
+test("Codex routes share a safe configured executable", () => {
+  const previous = process.env.EVIDRA_CODEX_BIN;
+  process.env.EVIDRA_CODEX_BIN = "/opt/codex/bin/codex";
+  assert.equal(resolveCodexBinary(), "/opt/codex/bin/codex");
+  process.env.EVIDRA_CODEX_BIN = "bad\npath";
+  assert.equal(resolveCodexBinary(), "codex");
+  if (previous === undefined) delete process.env.EVIDRA_CODEX_BIN;
+  else process.env.EVIDRA_CODEX_BIN = previous;
 });
 
 test("startup fallback eligibility distinguishes route failures from account model errors", () => {

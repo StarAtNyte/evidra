@@ -43,6 +43,10 @@ route is available when Ollama is installed and has a model. Evidra does not
 pretend that a provider is connected: unavailable routes are shown as
 unavailable and no model request is started.
 
+If Codex is installed outside `PATH`, set `EVIDRA_CODEX_BIN` to the executable
+path. Evidra uses that same binary for login, model discovery, steering, and
+SDK-backed turns.
+
 ## 2. The Codex-first TUI
 
 The full-screen interface uses a compact Codex-style transcript:

@@ -12,6 +12,12 @@ export type AgentProvider = "codex" | "local";
 /** Cost-conscious Codex default used by the CLI, TUI, and autonomous tests. */
 export const DEFAULT_CODEX_MODEL = "gpt-5.6-luna";
 
+/** Resolve one Codex executable for SDK and CLI subprocesses alike. */
+export function resolveCodexBinary(): string {
+  const configured = process.env.EVIDRA_CODEX_BIN?.trim();
+  return configured && !/[\r\n]/.test(configured) ? configured : "codex";
+}
+
 /** Never delegate Evidra's legacy default sentinel to a provider-side default. */
 export function effectiveCodexModel(preferred?: string): string {
   return !preferred || preferred === "default" ? DEFAULT_CODEX_MODEL : preferred;
@@ -188,7 +194,7 @@ export function providerRetryAfterMs(error: unknown): number {
 export function queueCodexMessage(threadId: string, message: string): boolean {
   // Steering is invoked from the TUI input handler. Never let a broken local
   // Codex transport block rendering or keyboard input indefinitely.
-  const result = spawnSync("codex", ["queue", "--thread", threadId, "--message", message], { stdio: "ignore", timeout: 5_000, killSignal: "SIGTERM" });
+  const result = spawnSync(resolveCodexBinary(), ["queue", "--thread", threadId, "--message", message], { stdio: "ignore", timeout: 5_000, killSignal: "SIGTERM" });
   return result.status === 0;
 }
 
@@ -231,7 +237,7 @@ export function loginCodex(
 ): Promise<number> {
   const args = mode === "device" ? ["login", "--device-auth"] : ["login"];
   return new Promise((resolve) => {
-    const child = spawn("codex", args, { stdio: "inherit", detached: false });
+    const child = spawn(resolveCodexBinary(), args, { stdio: "inherit", detached: false });
     let settled = false;
     let paused = false;
     const finish = (status: number): void => {
@@ -260,19 +266,19 @@ export function loginCodex(
 }
 
 export function codexLoginStatus(): string {
-  const result = spawnSync("codex", ["login", "status"], { encoding: "utf8", timeout: 5_000, killSignal: "SIGTERM" });
+  const result = spawnSync(resolveCodexBinary(), ["login", "status"], { encoding: "utf8", timeout: 5_000, killSignal: "SIGTERM" });
   return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
 }
 
 export function codexIsLoggedIn(): boolean {
   if (process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY) return true;
-  return spawnSync("codex", ["login", "status"], { stdio: "ignore", timeout: 5_000, killSignal: "SIGTERM" }).status === 0;
+  return spawnSync(resolveCodexBinary(), ["login", "status"], { stdio: "ignore", timeout: 5_000, killSignal: "SIGTERM" }).status === 0;
 }
 
 export function listCodexModels(): Promise<AvailableModel[]> {
   if (!codexIsLoggedIn()) return Promise.reject(new Error("Codex is not logged in. Use /login codex first."));
   return new Promise((resolve, reject) => {
-    const child = spawn("codex", ["app-server", "--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(resolveCodexBinary(), ["app-server", "--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
     let buffer = "";
     let settled = false;
     const finish = (callback: () => void): void => {
@@ -419,7 +425,7 @@ export class CodexExecAgent {
     const model = effectiveCodexModel(this.options.model);
 
     try {
-      const codex = new Codex();
+      const codex = new Codex({ codexPathOverride: resolveCodexBinary() });
       const thread = this.options.threadId
         ? codex.resumeThread(this.options.threadId, {
           workingDirectory: isolated?.path ?? this.options.cwd,
