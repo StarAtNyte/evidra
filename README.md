@@ -768,6 +768,8 @@ For agent-agnostic scientific evaluation, `evidra benchmark scientific task.json
 
 The research evaluation surface is designed to align with current scientific-agent benchmarks: `evidra benchmark literature-score` distinguishes deep target discovery from wide constrained collection, while scientific task contracts retain executable artifacts, intermediate verifier results, cost, and resume state. See the [literature evaluation map](docs/research/literature-synthesis-2026-09.md#external-evaluation-targets). These integrations provide protocols, not automatic claims of benchmark leadership; matched external runs are still required.
 
+Scientific stages and generic acceptance criteria may declare relative weights for progress diagnostics. Weights help compare partial multi-stage work and prioritize important evidence, but they never turn a failed required criterion or verifier into a passing result.
+
 Run `evidra benchmark safety` to execute Evidra's local lifecycle safety regression suite. It must pass before treating a harness change as benchmarkable; `--json` emits the machine-readable probe report for CI. This is an internal boundary regression suite, not an external HarnessRisk score.
 
 Durable events are now hash-chained. `evidra integrity events` (or `--json` for CI) verifies event payloads and
