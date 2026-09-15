@@ -57,7 +57,7 @@ import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/te
 import { summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
-import { assessForecast } from "../dist/core/forecast-calibration.js";
+import { assessForecast, summarizeForecastAssessments } from "../dist/core/forecast-calibration.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, ScientificTaskSchema } from "../dist/core/scientific-tasks.js";
@@ -4042,6 +4042,19 @@ test("forecast calibration records coverage and directional error", () => {
   assert.equal(missed.covered, false);
   assert.equal(missed.calibration, "overestimated");
   assert.throws(() => assessForecast({ low: 1, median: 0, high: 2 }, 0), /ordered/);
+});
+
+test("forecast calibration summary requires enough samples and preserves coverage", () => {
+  assert.equal(summarizeForecastAssessments([{ covered: true, calibration: "calibrated", normalizedError: 0.1 }, { covered: false, calibration: "overestimated", normalizedError: 0.7 }]), undefined);
+  const summary = summarizeForecastAssessments([
+    { covered: true, calibration: "calibrated", normalizedError: 0.1 },
+    { covered: false, calibration: "overestimated", normalizedError: 0.7 },
+    { covered: true, calibration: "underestimated", normalizedError: 0.3 },
+  ]);
+  assert.equal(summary?.samples, 3);
+  assert.equal(summary?.coverage, 2 / 3);
+  assert.equal(summary?.overestimates, 1);
+  assert.equal(summary?.underestimates, 1);
 });
 
 test("literature-derived hypotheses preserve explicit adaptation context", () => {

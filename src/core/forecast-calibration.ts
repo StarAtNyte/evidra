@@ -13,6 +13,29 @@ export interface ForecastAssessment {
   calibration: "underestimated" | "overestimated" | "calibrated";
 }
 
+export interface ForecastCalibrationSummary {
+  samples: number;
+  coverage: number;
+  overestimates: number;
+  underestimates: number;
+  meanNormalizedError: number;
+}
+
+/** Summarize recent assessments for controller policy without treating them as metric evidence. */
+export function summarizeForecastAssessments(
+  assessments: Array<Pick<ForecastAssessment, "covered" | "calibration" | "normalizedError">>,
+): ForecastCalibrationSummary | undefined {
+  const valid = assessments.filter((assessment) => Number.isFinite(assessment.normalizedError));
+  if (valid.length < 3) return undefined;
+  return {
+    samples: valid.length,
+    coverage: valid.filter((assessment) => assessment.covered).length / valid.length,
+    overestimates: valid.filter((assessment) => assessment.calibration === "overestimated").length,
+    underestimates: valid.filter((assessment) => assessment.calibration === "underestimated").length,
+    meanNormalizedError: valid.reduce((total, assessment) => total + assessment.normalizedError, 0) / valid.length,
+  };
+}
+
 /**
  * Compare a declared hypothesis forecast with the measured metric delta.
  * This is diagnostic evidence only: it never changes the evaluator or

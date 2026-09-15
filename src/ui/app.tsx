@@ -67,6 +67,7 @@ import { analyzePredictionRows, parsePredictionRows } from "../core/error-analys
 import { createTransferableMethod } from "../core/method-transfer.js";
 import { createAblationPlan } from "../core/ablation.js";
 import { buildMlflowRunExports } from "../core/mlflow.js";
+import { summarizeForecastAssessments } from "../core/forecast-calibration.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
@@ -802,7 +803,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return { mode: typeof payload.mode === "string" ? payload.mode : undefined, provider: typeof payload.servedProvider === "string" ? payload.servedProvider : undefined, model: typeof payload.servedModel === "string" ? payload.servedModel : undefined, outcome: typeof payload.outcome === "string" ? payload.outcome : undefined, quality: typeof payload.quality === "string" ? payload.quality : undefined };
     }), budgetRemainingMinutes: campaignRemaining, requestedParallel: 3 });
     store.appendEvent("research.capability_route", { route, objective, recentFailureCount, recentQuality, predictedTier: route.tier, servedProvider: config.provider, servedModel: config.model });
-    const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts });
+    const forecastAssessments = store.eventsByType("research.forecast.assessed")
+      .slice(-24)
+      .map((event) => event.payload && typeof event.payload === "object" ? (event.payload as { forecast?: { covered?: unknown; calibration?: unknown; normalizedError?: unknown } }).forecast : undefined)
+      .filter((forecast): forecast is { covered: boolean; calibration: "underestimated" | "overestimated" | "calibrated"; normalizedError: number } => {
+        if (!forecast || typeof forecast.covered !== "boolean" || typeof forecast.calibration !== "string" || typeof forecast.normalizedError !== "number") return false;
+        return Number.isFinite(forecast.normalizedError) && ["underestimated", "overestimated", "calibrated"].includes(forecast.calibration);
+      });
+    const forecastCalibration = summarizeForecastAssessments(forecastAssessments);
+    const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts, forecastCalibration });
     store.appendEvent("research.next_allocation", { allocation, objective });
     const adaptiveHarness = deriveAdaptiveHarnessPolicy({
       phase: phaseGoal?.phase,
@@ -810,6 +819,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       failureClasses: store.runs().slice(0, 20).map((entry) => (entry.payload as { failureClass?: unknown }).failureClass).filter((value): value is string => typeof value === "string"),
       evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
       budgetRemainingMinutes: campaignRemaining,
+      allocationFocus: allocation.focus,
+      allocationPriority: allocation.priority,
     });
     store.appendEvent("research.adaptive_harness.policy", { policy: adaptiveHarness, objective });
     const experienceRecords = recentTrajectories.map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));

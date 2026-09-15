@@ -63,7 +63,7 @@ import { allocateNextResearch } from "./core/allocation.js";
 import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, selectCurriculum } from "./core/experience.js";
 import { evaluateReducedPromotion } from "./core/scheduler.js";
 import { validateCompetitionContract } from "./core/competition-contract.js";
-import { assessForecast } from "./core/forecast-calibration.js";
+import { assessForecast, summarizeForecastAssessments } from "./core/forecast-calibration.js";
 import { candidateChangePath } from "./core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "./core/execution-heartbeat.js";
 import { researchFailureRecord } from "./core/research-failure.js";
@@ -1958,17 +1958,11 @@ research
       const forecastCalibrationEvents = store.eventsByType("research.forecast.assessed").slice(-24);
       const forecastAssessments = forecastCalibrationEvents
         .map((event) => event.payload && typeof event.payload === "object" ? (event.payload as { forecast?: { covered?: unknown; calibration?: unknown; normalizedError?: unknown } }).forecast : undefined)
-        .filter((forecast): forecast is { covered: boolean; calibration: string; normalizedError: number } => {
+        .filter((forecast): forecast is { covered: boolean; calibration: "underestimated" | "overestimated" | "calibrated"; normalizedError: number } => {
           if (!forecast || typeof forecast.covered !== "boolean" || typeof forecast.calibration !== "string" || typeof forecast.normalizedError !== "number") return false;
-          return Number.isFinite(forecast.normalizedError);
+          return Number.isFinite(forecast.normalizedError) && ["underestimated", "overestimated", "calibrated"].includes(forecast.calibration);
         });
-      const forecastCalibration = forecastAssessments.length >= 3 ? {
-        samples: forecastAssessments.length,
-        coverage: forecastAssessments.filter((forecast) => forecast.covered).length / forecastAssessments.length,
-        overestimates: forecastAssessments.filter((forecast) => forecast.calibration === "overestimated").length,
-        underestimates: forecastAssessments.filter((forecast) => forecast.calibration === "underestimated").length,
-        meanNormalizedError: forecastAssessments.reduce((total, forecast) => total + forecast.normalizedError, 0) / forecastAssessments.length,
-      } : undefined;
+      const forecastCalibration = summarizeForecastAssessments(forecastAssessments);
       const allocation = allocateNextResearch({ trajectories: recentTrajectories, phase: phaseGoal?.phase, evidenceConflicts, failureClasses, predictionAnalysis, ensembleAnalysis, forecastCalibration });
       store.appendEvent("research.next_allocation", { allocation, objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}` });
       const priorStagnation = detectStagnation(store.decisions().map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3));
