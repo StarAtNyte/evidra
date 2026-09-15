@@ -22,6 +22,14 @@ const PHASES: Array<{ phase: ResearchPhase; title: string; objective: string; cr
   { phase: "promotion", title: "Promote only verified work", objective: "Require leakage clearance, review approval, and complete provenance before promotion or submission.", criteria: ["all evidence gates pass", "review approval recorded", "promotion provenance written"] },
 ];
 
+/** Event families that can satisfy phase completion; correctness must read the durable history. */
+export const PHASE_GOAL_EVENT_TYPES = [
+  "research.observation", "project.created", "baseline.completed", "data.audit.completed", "data.audit.accepted",
+  "validation.policy.created", "validation.policy.locked", "validation.policy.unlocked", "hypothesis.created", "experiment.created", "experiment.stage.smoke.completed",
+  "experiment.stage.full_validation.completed", "run.completed", "experiment.comparison.completed", "replication.manifest.created", "experiment.autonomous.replication.completed",
+  "experiment.gates.updated", "experiment.validation.assessed", "research.ablation.plan", "research.ablation.evidence",
+] as const;
+
 export function definePhaseGoals(ultimateGoal: string, mode: "research" | "challenge"): PhaseGoal[] {
   const now = new Date().toISOString();
   const goalSetId = phaseGoalSetId(ultimateGoal, mode);

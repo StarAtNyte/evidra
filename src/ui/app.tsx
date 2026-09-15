@@ -25,7 +25,7 @@ import { auditData, dataAuditFingerprint } from "../core/data-audit.js";
 import { executeResearchTool } from "../core/tools.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { retrieveSource, searchResearchSources, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
-import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../core/phase-goals.js";
+import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../core/phase-goals.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
@@ -1119,7 +1119,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       gaps: decisionRubric.gaps,
       source: "tui",
     });
-    const phaseEvents = phaseGoal ? phaseGoalEventsSince(phaseGoal, decisionStore.recentEvents(500)) : [];
+    const phaseEvents = phaseGoal ? phaseGoalEventsSince(phaseGoal, decisionStore.eventsByTypes([...PHASE_GOAL_EVENT_TYPES])) : [];
     const phaseEvidence = phaseGoal ? {
       mode,
       eventTypes: phaseEvents.map((event) => event.type),

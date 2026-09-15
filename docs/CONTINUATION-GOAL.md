@@ -177,6 +177,9 @@ external evaluator.
 - Phase-gate event and record counts are now bounded by the active goal-set
   creation boundary, preventing historical hypotheses, runs, or artifacts from
   satisfying a new campaign's phase criteria.
+- TUI phase gates now read the complete durable phase-event families instead of
+  the last 500 timeline events, so long campaigns cannot lose valid evidence
+  merely because the UI history window rolled over.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
 - Codex command activity now includes an exit code only when the provider
