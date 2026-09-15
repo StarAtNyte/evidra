@@ -62,9 +62,10 @@ The input bar accepts pasted multiline text, `/` commands, and `!` shell
 commands. Command suggestions filter as each character is typed; Tab accepts a
 suggestion and moves the cursor to the end of the completed command.
 
-While work is active, Evidra displays concise progress for reasoning, source
-search, file changes, commands, and experiments. Raw provider event IDs and
-credential-bearing arguments are never shown in the transcript. Escape stops
+While work is active, Evidra displays concise progress for reasoning summaries,
+plans, source searches, MCP tools, file changes, commands, tool failures, and
+experiments. Raw provider event IDs and credential-bearing arguments are never
+shown in the transcript. Escape stops
 the active process and its child workers, records an interruption, and leaves
 the campaign resumable. Ctrl-C clears non-empty input; with an empty input it
 interrupts or exits according to the current state.

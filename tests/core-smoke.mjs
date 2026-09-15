@@ -20,7 +20,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
-import { CodexExecAgent, codexEventErrorMessage, loginCodex, normalizeCodexModels, progressLine } from "../dist/agents/codex-exec.js";
+import { CodexExecAgent, codexEventErrorMessage, codexItemProgress, loginCodex, normalizeCodexModels, progressLine } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
@@ -2792,6 +2792,13 @@ test("local provider enforces the configured turn timeout", async () => {
 test("Codex live progress redacts inline and separate-looking credentials", () => {
   assert.equal(progressLine("python run.py --token super-secret-value"), "python run.py --token [REDACTED_ARGUMENT]");
   assert.equal(progressLine("upload --api-key=sk-12345678901234567890"), "upload --api-key=[REDACTED_ARGUMENT]");
+});
+
+test("Codex item progress covers tools, plans, and file changes", () => {
+  assert.equal(codexItemProgress({ type: "mcp_tool_call", server: "research", tool: "source.retrieve" }), "Calling tool: research/source.retrieve");
+  assert.equal(codexItemProgress({ type: "todo_list", items: [{ completed: true }, { completed: false }] }, "item.updated"), "Plan progress: 1/2 steps");
+  assert.equal(codexItemProgress({ type: "file_change", changes: [{ kind: "update", path: "src/main.ts" }] }, "item.completed"), "Applied: update src/main.ts");
+  assert.match(codexItemProgress({ type: "command_execution", command: "run --token secret" }) ?? "", /Running: run --token \[REDACTED_ARGUMENT\]/);
 });
 
 test("Codex failure events preserve nested provider diagnostics", () => {

@@ -94,6 +94,56 @@ export function progressLine(value: string, limit = 180): string {
   return compact.length > limit ? `${compact.slice(0, limit - 1)}…` : compact;
 }
 
+/** Convert SDK item events into concise, secret-redacted TUI activity. */
+export function codexItemProgress(item: unknown, eventType = "item.started"): string | undefined {
+  if (!item || typeof item !== "object") return undefined;
+  const value = item as {
+    type?: unknown;
+    command?: unknown;
+    query?: unknown;
+    server?: unknown;
+    tool?: unknown;
+    status?: unknown;
+    changes?: unknown;
+    text?: unknown;
+    items?: unknown;
+    message?: unknown;
+  };
+  const type = typeof value.type === "string" ? value.type : "";
+  const completed = eventType === "item.completed";
+  if (type === "command_execution") {
+    const command = typeof value.command === "string" ? progressLine(value.command) : "command";
+    return completed ? `Finished: ${command}` : `Running: ${command}`;
+  }
+  if (type === "web_search") {
+    return `Searching: ${progressLine(typeof value.query === "string" ? value.query : "web")}`;
+  }
+  if (type === "file_change") {
+    const changes = Array.isArray(value.changes)
+      ? value.changes.filter((change): change is { path?: unknown; kind?: unknown } => Boolean(change) && typeof change === "object")
+        .map((change) => `${typeof change.kind === "string" ? change.kind : "update"} ${typeof change.path === "string" ? progressLine(change.path, 80) : "file"}`)
+        .slice(0, 3)
+      : [];
+    return changes.length ? `${completed ? "Applied" : "Applying"}: ${changes.join(", ")}` : "Applying a workspace change...";
+  }
+  if (type === "mcp_tool_call") {
+    const server = typeof value.server === "string" ? progressLine(value.server, 60) : "MCP";
+    const tool = typeof value.tool === "string" ? progressLine(value.tool, 100) : "tool";
+    if (value.status === "failed" || (typeof value.message === "string" && value.message.trim())) return `Tool failed: ${server}/${tool}`;
+    return `${completed ? "Tool completed" : "Calling tool"}: ${server}/${tool}`;
+  }
+  if (type === "todo_list") {
+    const entries = Array.isArray(value.items) ? value.items : [];
+    const done = entries.filter((entry) => Boolean(entry) && typeof entry === "object" && (entry as { completed?: unknown }).completed === true).length;
+    return `Plan progress: ${done}/${entries.length} step${entries.length === 1 ? "" : "s"}`;
+  }
+  if (type === "reasoning") {
+    return typeof value.text === "string" && value.text.trim() ? `Reasoning: ${progressLine(value.text, 140)}` : "Reasoning...";
+  }
+  if (type === "error") return `Codex item error: ${progressLine(typeof value.message === "string" ? value.message : "unknown error")}`;
+  return undefined;
+}
+
 /** Extract the useful diagnostic from either SDK failure event shape. */
 export function codexEventErrorMessage(event: unknown): string {
   if (!event || typeof event !== "object") return "Codex turn failed.";
@@ -375,10 +425,10 @@ export class CodexExecAgent {
         const value = event as unknown as { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string; query?: string; message?: string }; usage?: AgentResult["usage"]; message?: string; error?: { message?: string } };
         if (value.type === "thread.started" && value.thread_id) { threadId = value.thread_id; this.options.onThread?.(value.thread_id); }
         else if (value.type === "turn.started") onProgress?.("Thinking...");
-        else if (value.type === "item.started" && value.item?.type === "command_execution") onProgress?.(`Running: ${progressLine(value.item.command ?? "command")}`);
-        else if (value.type === "item.started" && value.item?.type === "web_search") onProgress?.(`Searching: ${progressLine(value.item.query ?? "web")}`);
-        else if (value.type === "item.started" && value.item?.type === "file_change") onProgress?.("Applying a workspace change...");
-        else if (value.type === "item.started" && value.item?.type === "reasoning") onProgress?.("Reasoning...");
+        else if (value.item && (value.type === "item.started" || value.type === "item.updated" || value.type === "item.completed")) {
+          const activity = codexItemProgress(value.item, value.type);
+          if (activity) onProgress?.(activity);
+        }
         else if ((value.type === "item.updated" || value.type === "item.completed") && value.item?.type === "agent_message" && value.item.text) {
           finalText = value.item.text;
           if (value.type === "item.updated") onProgress?.(`Codex · ${progressLine(value.item.text)}`);
