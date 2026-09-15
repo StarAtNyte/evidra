@@ -204,6 +204,9 @@ external evaluator.
 - Recovered trace evidence now includes a bounded redacted activity tail and
   recent tool-name summary, so the next Codex decision can use crash context
   without loading an unbounded raw transcript.
+- Recovered traces now feed `controller_crash` pressure into CLI/TUI allocation
+  and capability routing, prioritizing controlled reproduction before new
+  expensive exploration.
 - The Codex director's provider output schema now caps each turn at eight tool
   calls, matching the local decision schema before any tool is executed.
 - Autonomous memory context now uses hybrid FTS-plus-lexical retrieval for

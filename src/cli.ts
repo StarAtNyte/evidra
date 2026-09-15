@@ -2032,6 +2032,7 @@ research
         ...recentRuns.map((entry) => (entry.payload as { failureClass?: unknown }).failureClass).filter((failureClass): failureClass is string => typeof failureClass === "string" && failureClass.length > 0),
         ...nativeFailureClasses,
         ...(verificationPressure ? ["verification"] : []),
+        ...(durableEvents.some((event) => event.type === "research.trace.recovered") ? ["controller_crash"] : []),
       ];
       const recoveryRoutes = durableEvents
         .filter((event) => event.type === "experiment.recovery.route_changed")

@@ -222,6 +222,9 @@ startup recovery, so changing interfaces cannot hide an interrupted Codex
 cycle. Recovery metadata includes only a bounded redacted activity tail and
 tool-name summary, allowing the next decision to understand the failure
 surface without importing an unbounded transcript.
+Recovered traces also add controller-crash pressure to the next allocation,
+which prioritizes reproduction and an alternate route before new expensive
+exploration.
 
 ## Production checklist
 

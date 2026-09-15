@@ -1000,6 +1000,13 @@ test("executor failures change the next research allocation into a specific repa
   assert.match(allocation.reasons[0], /2 recent run/);
 });
 
+test("recovered controller traces create recovery pressure", () => {
+  const allocation = allocateNextResearch({ trajectories: [], failureClasses: ["controller_crash"] });
+  assert.equal(allocation.focus, "recovery");
+  assert.equal(allocation.priority, "high");
+  assert.match(allocation.strategy, /reproduce|controlled|failure/i);
+});
+
 test("prediction error analysis changes the next allocation to targeted slice validation", () => {
   const allocation = allocateNextResearch({ trajectories: [], predictionAnalysis: { errorRate: 0.31, worstSlices: 3, worstGroups: 1 } });
   assert.equal(allocation.focus, "evidence-validation");

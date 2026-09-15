@@ -860,6 +860,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           return failure ? [failure] : [];
         });
       }),
+      ...(store.eventsByType("research.trace.recovered", 5).length ? ["controller_crash"] : []),
     ];
     const campaignRemaining = campaign ? Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)) : undefined;
     const route = routeCapability({ objective, mode, provider: config.provider, model: config.model, autonomy: config.autonomy, recentFailureCount, failureClasses, recentQuality, recentOutcomes: store.recentEvents(500).filter((event) => event.type === "research.capability_outcome").slice(-12).map((event) => {
