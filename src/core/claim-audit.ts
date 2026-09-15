@@ -62,7 +62,7 @@ export function auditClaims(input: ClaimAuditInput): ClaimAuditReport {
     } else if (sourceType === "literature") {
       status = "literature_only";
       reasons.push("literature can motivate a hypothesis but does not verify a workspace result");
-    } else if (sourceType === "external_score" || (confidence >= 0.8 && ["observation", "experiment", "review"].includes(sourceType))) {
+    } else if (sourceType === "external_score" || (confidence >= 0.8 && ["observation", "run", "experiment", "review"].includes(sourceType))) {
       status = "verified";
       reasons.push(sourceType === "external_score" ? "external score is durably recorded" : "durable workspace evidence meets the confidence threshold");
     } else {

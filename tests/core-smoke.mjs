@@ -1162,6 +1162,7 @@ test("claim audit separates measured, literature, unsupported, and conflicted ev
   const report = auditClaims({
     claims: [
       { id: "measured", payload: { statement: "measured score", confidence: 0.9, sourceType: "observation", sourceId: "run-1" } },
+      { id: "run", payload: { statement: "run metric", confidence: 0.9, sourceType: "run", sourceId: "run-2" } },
       { id: "paper", payload: { statement: "paper technique", confidence: 0.35, sourceType: "literature", sourceId: "paper-1" } },
       { id: "missing", payload: { statement: "unsupported claim", confidence: 0.9, sourceType: "observation", sourceId: "missing-source" } },
       { id: "conflict", payload: { statement: "conflicted score", confidence: 0.9, sourceType: "experiment", sourceId: "run-2" } },
@@ -1169,7 +1170,7 @@ test("claim audit separates measured, literature, unsupported, and conflicted ev
     knownEvidenceIds: new Set(["run-1", "run-2", "paper-1"]),
     conflictedClaimIds: new Set(["conflict"]),
   });
-  assert.equal(report.verified, 1);
+  assert.equal(report.verified, 2);
   assert.equal(report.literatureOnly, 1);
   assert.equal(report.unsupported, 1);
   assert.equal(report.conflicted, 1);
