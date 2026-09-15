@@ -57,12 +57,22 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `866aa95`.
+- Latest pushed commit: `b159fae`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 326/326 tests passing, TypeScript check passing,
-  build passing, and a clean worktree.
+- Latest verified baseline: 334/334 tests passing, TypeScript check passing,
+  and build passing. The worktree has six intentionally untracked pilot reports
+  under `reports/`; do not confuse those generated artifacts with source edits.
+- Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
+  budgets remain supported. Model stages can use up to ten minutes when the
+  remaining campaign budget permits, and provider reset recovery can wait up to
+  24 hours while paused campaign time is excluded.
+- Source discovery now persists provenance classes and conservative quality
+  scores, backfills metadata for historical events, diversity-reranks providers,
+  and rejects instruction-like retrieved sentences before durable claim
+  extraction. These scores route evidence; retrieval and evaluator checks still
+  determine whether claims are publishable.
 - Benchmark report command argv is now redacted alongside process output, with
   coverage for primary, alternate, and reproducibility routes.
 - Baseline and scientific-task attempt evidence now applies the same command and
