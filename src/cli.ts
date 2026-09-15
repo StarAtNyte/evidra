@@ -1452,13 +1452,16 @@ submission.command("validate").argument("<bundle>").action((bundle: string) => {
 submission.command("prepare").argument("<experiment>").action((experimentId: string) => {
   const store = new ResearchStore(statePath);
   const experiment = store.experiments().find((entry) => entry.id === experimentId);
-  const run = store.runs().find((entry) => entry.experimentId === experimentId);
+  const experimentPayload = experiment?.payload as { runId?: unknown } | undefined;
+  const run = typeof experimentPayload?.runId === "string"
+    ? store.runs().find((entry) => entry.id === experimentPayload.runId)
+    : store.runs().filter((entry) => entry.experimentId === experimentId).at(-1);
   store.close();
   if (!experiment || !run) throw new Error(`Experiment ${experimentId} must have a recorded run before preparation.`);
   const adapter = activeCompetition();
   const bundle = prepareSubmission(root, experimentId, ExperimentManifestSchema.parse(experiment.payload), RunResultSchema.parse(run.payload), adapter.config);
   const recordStore = new ResearchStore(statePath);
-  recordStore.saveSubmission({ id: bundle.id, experimentId, path: bundle.path, status: "prepared", payload: { competition: adapter.id } });
+  recordStore.saveSubmission({ id: bundle.id, experimentId, path: bundle.path, status: "prepared", payload: { competition: adapter.id, runId: run.id } });
   recordStore.close();
   console.log(`Prepared ${bundle.id}\n${bundle.path}\nExternal submission remains approval-gated.`);
 });
@@ -3582,7 +3585,7 @@ experiment.command("gate")
       const runResult = RunResultSchema.safeParse(run.payload);
       if (manifest.success && runResult.success) {
         const checksums = Object.fromEntries(store.artifacts(run.id).map((artifact) => [artifact.name, artifact.checksum]));
-        const audit = auditExperiment(manifest.data, runResult.data, { currentCommit: manifest.data.gitCommit, datasetVersion: manifest.data.datasetVersion, splitVersion: manifest.data.splitVersion, metricName: activeCompetition().config.metric.name, leakageAuditPassed: gates.leakageAuditPassed, reviewerApproved: gates.reviewerApproved, independentReplicationObserved: independentReplicationObserved(experimentId, store.experiments(), store.runs()), externalScoreRequired: manifest.data.acceptance.requireExternalScore, externalScoreObserved: externalScoreObservedForExperiment(experimentId, store.submissions()), artifactChecksums: checksums });
+        const audit = auditExperiment(manifest.data, runResult.data, { currentCommit: manifest.data.gitCommit, datasetVersion: manifest.data.datasetVersion, splitVersion: manifest.data.splitVersion, metricName: activeCompetition().config.metric.name, leakageAuditPassed: gates.leakageAuditPassed, reviewerApproved: gates.reviewerApproved, independentReplicationObserved: independentReplicationObserved(experimentId, store.experiments(), store.runs()), externalScoreRequired: manifest.data.acceptance.requireExternalScore, externalScoreObserved: externalScoreObservedForExperiment(experimentId, store.submissions(), run.id), artifactChecksums: checksums });
         const subtaskAudit = auditExperimentSubtask(manifest.data, audit, [run.id, ...Object.keys(checksums)]);
         store.recordSubtaskAudit({ ...subtaskAudit, experimentId, runId: run.id });
         store.appendEvent("experiment.audit.refreshed", { experimentId, runId: run.id, trigger: "gate_update", accepted: audit.accepted, subtaskAudit });
@@ -3930,7 +3933,7 @@ experiment.command("run")
       reviewerApproved: resultStore.experimentGates(id).reviewerApproved,
       independentReplicationObserved: independentReplicationObserved(id, resultStore.experiments(), resultStore.runs()),
       externalScoreRequired: manifest.acceptance.requireExternalScore,
-      externalScoreObserved: externalScoreObservedForExperiment(id, resultStore.submissions()),
+      externalScoreObserved: externalScoreObservedForExperiment(id, resultStore.submissions(), result.runId),
       artifactChecksums: Object.fromEntries(Object.entries(artifactPaths).map(([name, path]) => [name, sha256File(path)])),
     });
     resultStore.recordSubtaskAudit({ ...auditExperimentSubtask(manifest, initialExperimentAudit, [result.runId, ...Object.keys(artifactPaths)]), experimentId: id, runId: result.runId });
@@ -4097,7 +4100,7 @@ experiment.command("audit")
       reviewerApproved: gates.reviewerApproved,
       independentReplicationObserved: replicationObserved,
       externalScoreRequired: manifest.acceptance.requireExternalScore,
-      externalScoreObserved: externalScoreObservedForExperiment(id, store.submissions()),
+      externalScoreObserved: externalScoreObservedForExperiment(id, store.submissions(), run.id),
       artifactChecksums,
     });
     const subtaskAudit = auditExperimentSubtask(manifest, audit, [run.id, ...Object.keys(artifactChecksums)]);

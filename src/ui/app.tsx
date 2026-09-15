@@ -1755,7 +1755,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       reviewerApproved: resultStore.experimentGates(id).reviewerApproved,
       independentReplicationObserved: independentReplicationObserved(id, resultStore.experiments(), resultStore.runs()),
       externalScoreRequired: manifest.acceptance.requireExternalScore,
-      externalScoreObserved: externalScoreObservedForExperiment(id, resultStore.submissions()),
+      externalScoreObserved: externalScoreObservedForExperiment(id, resultStore.submissions(), result.runId),
       artifactChecksums: Object.fromEntries(Object.entries(recordedResult.artifacts).map(([name, path]) => [name, sha256File(path)])),
     });
     resultStore.recordSubtaskAudit({ ...auditExperimentSubtask(manifest, initialExperimentAudit, [result.runId, ...Object.keys(recordedResult.artifacts)]), experimentId: id, runId: result.runId });
@@ -2815,7 +2815,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const manifest = ExperimentManifestSchema.parse(payload);
           const runResult = RunResultSchema.parse(run.payload);
           const adapter = activeAdapter();
-          const audit = auditExperiment(manifest, runResult, { currentCommit: currentCommit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, splitVersion: manifest.splitVersion, metricName: adapter.config.metric.name, leakageAuditPassed: storedGates.leakageAuditPassed, reviewerApproved: storedGates.reviewerApproved, independentReplicationObserved: replicationObserved, externalScoreRequired: manifest.acceptance.requireExternalScore, externalScoreObserved: externalScoreObservedForExperiment(id, store.submissions()), artifactChecksums });
+          const audit = auditExperiment(manifest, runResult, { currentCommit: currentCommit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, splitVersion: manifest.splitVersion, metricName: adapter.config.metric.name, leakageAuditPassed: storedGates.leakageAuditPassed, reviewerApproved: storedGates.reviewerApproved, independentReplicationObserved: replicationObserved, externalScoreRequired: manifest.acceptance.requireExternalScore, externalScoreObserved: externalScoreObservedForExperiment(id, store.submissions(), run.id), artifactChecksums });
           const subtaskAudit = auditExperimentSubtask(manifest, audit, [run.id, ...Object.keys(artifactChecksums)]);
           const auditStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
           auditStore.recordSubtaskAudit({ ...subtaskAudit, experimentId: id, runId: run.id });
@@ -2846,7 +2846,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const runResult = RunResultSchema.safeParse(run.payload);
           if (manifest.success && runResult.success) {
             const checksums = Object.fromEntries(store.artifacts(run.id).map((artifact) => [artifact.name, artifact.checksum]));
-            const audit = auditExperiment(manifest.data, runResult.data, { currentCommit: manifest.data.gitCommit, datasetVersion: manifest.data.datasetVersion, splitVersion: manifest.data.splitVersion, metricName: activeAdapter().config.metric.name, leakageAuditPassed: gates.leakageAuditPassed, reviewerApproved: gates.reviewerApproved, independentReplicationObserved: independentReplicationObserved(id, store.experiments(), store.runs()), externalScoreRequired: manifest.data.acceptance.requireExternalScore, externalScoreObserved: externalScoreObservedForExperiment(id, store.submissions()), artifactChecksums: checksums });
+            const audit = auditExperiment(manifest.data, runResult.data, { currentCommit: manifest.data.gitCommit, datasetVersion: manifest.data.datasetVersion, splitVersion: manifest.data.splitVersion, metricName: activeAdapter().config.metric.name, leakageAuditPassed: gates.leakageAuditPassed, reviewerApproved: gates.reviewerApproved, independentReplicationObserved: independentReplicationObserved(id, store.experiments(), store.runs()), externalScoreRequired: manifest.data.acceptance.requireExternalScore, externalScoreObserved: externalScoreObservedForExperiment(id, store.submissions(), run.id), artifactChecksums: checksums });
             const subtaskAudit = auditExperimentSubtask(manifest.data, audit, [run.id, ...Object.keys(checksums)]);
             store.recordSubtaskAudit({ ...subtaskAudit, experimentId: id, runId: run.id });
             store.appendEvent("experiment.audit.refreshed", { experimentId: id, runId: run.id, trigger: "gate_update", accepted: audit.accepted, subtaskAudit });
@@ -3031,13 +3031,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (!experimentId) { append("assistant", "Usage: /submission prepare <experiment-id>"); return; }
         const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
         const experiment = store.experiments().find((entry) => entry.id === experimentId);
-        const run = store.runs().find((entry) => entry.experimentId === experimentId);
+        const experimentPayload = experiment?.payload as { runId?: unknown } | undefined;
+        const run = typeof experimentPayload?.runId === "string"
+          ? store.runs().find((entry) => entry.id === experimentPayload.runId)
+          : store.runs().filter((entry) => entry.experimentId === experimentId).at(-1);
         store.close();
         if (!experiment || !run) { append("assistant", `Experiment ${experimentId} must have a recorded run before a bundle can be prepared.`); return; }
         try {
           const bundle = prepareSubmission(root, experimentId, ExperimentManifestSchema.parse(experiment.payload), RunResultSchema.parse(run.payload), activeAdapter().config);
           const recordStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-          recordStore.saveSubmission({ id: bundle.id, experimentId, path: bundle.path, status: "prepared", payload: { competition: activeAdapter().id } });
+          recordStore.saveSubmission({ id: bundle.id, experimentId, path: bundle.path, status: "prepared", payload: { competition: activeAdapter().id, runId: run.id } });
           recordStore.close();
           append("assistant", `Submission bundle prepared\n  id: ${bundle.id}\n  path: ${bundle.path}\n  next: /submission validate ${bundle.id}\n\nExternal submission remains approval-gated.`);
         } catch (error) { appendError(error); }

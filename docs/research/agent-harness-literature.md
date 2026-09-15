@@ -641,4 +641,5 @@ or external evaluator can additionally request an `externalScoreObserved`
 criterion by setting `acceptance.requireExternalScore: true`; the controller
 derives `externalScoreObserved` from a durable scored submission. Recording a
 score refreshes only that criterion in the existing audit and supplies
-provenance; it does not bypass the other gates.
+provenance; it does not bypass the other gates. Prepared bundles also persist
+the exact source run ID, and an external score is usable only for that run.

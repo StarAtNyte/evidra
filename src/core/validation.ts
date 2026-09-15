@@ -73,10 +73,12 @@ export function independentReplicationObserved(
 export function externalScoreObservedForExperiment(
   experimentId: string,
   submissions: Array<{ experimentId: string; status: string; payload: unknown }>,
+  runId?: string,
 ): boolean {
   return submissions.some((entry) => {
     if (entry.experimentId !== experimentId || (entry.status !== "scored" && entry.status !== "submitted")) return false;
-    const payload = entry.payload as { publicScore?: unknown; scoreObservation?: unknown };
+    const payload = entry.payload as { publicScore?: unknown; scoreObservation?: unknown; runId?: unknown };
+    if (runId !== undefined && payload.runId !== runId) return false;
     return (typeof payload.publicScore === "number" && Number.isFinite(payload.publicScore))
       || (payload.scoreObservation !== undefined && payload.scoreObservation !== null);
   });
