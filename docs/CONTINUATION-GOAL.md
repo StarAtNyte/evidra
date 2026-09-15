@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `07ac2d0`.
+- Latest pushed commit: `6f2376b`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -145,6 +145,9 @@ external evaluator.
 - Autonomous hypothesis scheduling now suppresses unchanged retries after a
   failed run. A retry must change executor, provider, model, or search operator;
   the failed attempt remains immutable evidence for recovery planning.
+- Suppressed duplicate/unchanged scheduling now emits durable controller
+  evidence containing the hypothesis, route, and reason, allowing the next
+  director cycle to replan explicitly rather than silently stall.
 - Codex structured-output schemas now cover the research director, independent
   research lanes, and critic, so every research-role response is constrained
   before durable parsing and evidence gates.

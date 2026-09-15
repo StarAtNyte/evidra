@@ -195,6 +195,9 @@ the same executor/provider/model/search-operator combination is suppressed until
 the director selects a materially different route. This prevents relabelled
 repetition while preserving controlled retries after a transient or environmental
 failure.
+When scheduling is suppressed, Evidra records the hypothesis, attempted route,
+and suppression reason as durable controller evidence; the next cycle can then
+replan explicitly instead of silently stalling.
 
 Independent lanes explore different formulations and roles. Their evidence is
 cross-pollinated through a bounded board, while shared citations are not
