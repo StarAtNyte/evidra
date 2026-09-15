@@ -171,6 +171,9 @@ external evaluator.
   keeping replay and audit parity between autonomous and interactive research.
 - Headless phase-goal initialization is now mode-scoped, so an existing
   research goal set cannot suppress challenge goals (or the reverse).
+- Phase goals now carry a deterministic objective-set identity; separate
+  campaigns in the same mode cannot inherit another campaign's active phase
+  or completion evidence, while legacy unscoped goals remain readable.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
 - Codex command activity now includes an exit code only when the provider

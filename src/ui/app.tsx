@@ -25,7 +25,7 @@ import { auditData, dataAuditFingerprint } from "../core/data-audit.js";
 import { executeResearchTool } from "../core/tools.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { retrieveSource, searchResearchSources, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
-import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalsForMode } from "../core/phase-goals.js";
+import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalSetId, phaseGoalsForMode } from "../core/phase-goals.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
@@ -813,11 +813,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
     setProgress("Research 3/3 · asking the director to analyze observed evidence and select the next experiment...");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const project = store.project();
+    const goalSet = phaseGoalSetId(objective, mode);
     const persistedGoals = store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));
-    if (!phaseGoalsForMode(persistedGoals, mode).length) {
+    if (!phaseGoalsForMode(persistedGoals, mode, goalSet).length) {
       for (const goal of definePhaseGoals(objective, mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
     }
-    const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode));
+    const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, goalSet));
     const recentEvents = store.recentEvents(20);
     const consistencyEvents = store.recentEvents(200);
     const evidenceConflicts = {
@@ -1140,7 +1141,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: nextStatus, payload: { ...phaseGoal, status: nextStatus, attempts: phaseGoal.attempts + 1, updatedAt: now } });
     }
     if (phaseGoal && effectiveDecision.goalStatus === "met") {
-      const goals = phaseGoalsForMode(decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode);
+      const goals = phaseGoalsForMode(decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, goalSet);
       const index = goals.findIndex((goal) => goal.id === phaseGoal.id);
       const now = new Date().toISOString();
       if (index >= 0) {

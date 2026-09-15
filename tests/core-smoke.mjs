@@ -27,7 +27,7 @@ import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist
 import { experienceReplayWorld } from "../dist/core/experience.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
-import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalsForMode } from "../dist/core/phase-goals.js";
+import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalSetId, phaseGoalsForMode } from "../dist/core/phase-goals.js";
 import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
@@ -2308,6 +2308,17 @@ test("research and challenge phase machines remain isolated in one durable proje
   assert.equal(phaseGoalsForMode(mixed, "challenge").length, challenge.length);
   const completedResearch = research.map((goal) => ({ ...goal, status: "met" }));
   assert.equal(activePhaseGoal([...completedResearch, ...challenge], "challenge")?.id, challenge[0].id);
+});
+
+test("phase goal sets isolate separate objectives within one mode", () => {
+  const first = definePhaseGoals("study optimizer stability", "research");
+  const second = definePhaseGoals("study theorem verification", "research");
+  const firstSet = phaseGoalSetId("study optimizer stability", "research");
+  const secondSet = phaseGoalSetId("study theorem verification", "research");
+  assert.notEqual(firstSet, secondSet);
+  assert.equal(phaseGoalsForMode([...first, ...second], "research", firstSet).length, first.length);
+  assert.equal(phaseGoalsForMode([...first, ...second], "research", secondSet).length, second.length);
+  assert.notEqual(first[0].id, second[0].id);
 });
 
 test("evaluation phase requires a measured primary metric", () => {

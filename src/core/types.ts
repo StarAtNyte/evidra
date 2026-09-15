@@ -158,6 +158,8 @@ export type ResearchPhase = z.infer<typeof ResearchPhaseSchema>;
 
 export const PhaseGoalSchema = z.object({
   id: z.string().min(1),
+  /** Stable objective identity so separate campaigns cannot share phase evidence. */
+  goalSetId: z.string().min(1).optional(),
   phase: ResearchPhaseSchema,
   title: z.string().min(1),
   objective: z.string().min(1),

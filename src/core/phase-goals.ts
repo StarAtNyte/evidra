@@ -1,5 +1,15 @@
 import { PhaseGoalSchema, type PhaseGoal, type ResearchPhase } from "./types.js";
 
+/** Create a short deterministic identity for one mode/objective goal set. */
+export function phaseGoalSetId(ultimateGoal: string, mode: "research" | "challenge"): string {
+  let hash = 2166136261;
+  for (const character of `${mode}\u0000${ultimateGoal.trim().replace(/\s+/g, " ").toLowerCase()}`) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36).padStart(7, "0");
+}
+
 const PHASES: Array<{ phase: ResearchPhase; title: string; objective: string; criteria: string[] }> = [
   { phase: "orientation", title: "Understand the workspace", objective: "Inventory the repository, research question, rules, data contract, and execution environment.", criteria: ["repository inventory recorded", "workspace configuration loaded", "execution environment checked"] },
   { phase: "baseline", title: "Establish a trusted baseline", objective: "Run the canonical evaluator and record reproducible baseline metrics and logs.", criteria: ["baseline exits successfully", "primary metric parsed", "baseline artifacts checksummed"] },
@@ -14,13 +24,15 @@ const PHASES: Array<{ phase: ResearchPhase; title: string; objective: string; cr
 
 export function definePhaseGoals(ultimateGoal: string, mode: "research" | "challenge"): PhaseGoal[] {
   const now = new Date().toISOString();
+  const goalSetId = phaseGoalSetId(ultimateGoal, mode);
   return PHASES.map((template, index) => {
     const researchBaseline = mode === "research" && template.phase === "baseline";
     const phase = researchBaseline
       ? { ...template, title: "Establish a trusted reference", objective: "Record a durable reference observation for the research workspace before forming conclusions.", criteria: ["reference observation recorded", "workspace state captured"] }
       : template;
     return PhaseGoalSchema.parse({
-    id: `goal_${mode}_${template.phase}`,
+    id: `goal_${mode}_${goalSetId}_${template.phase}`,
+    goalSetId,
     phase: phase.phase,
     title: phase.title,
     objective: `${phase.objective} Ultimate objective: ${ultimateGoal}`,
@@ -42,8 +54,10 @@ export function activePhaseGoal(goals: PhaseGoal[], mode?: "research" | "challen
 }
 
 /** Keep research and challenge phase machines independent in one project store. */
-export function phaseGoalsForMode(goals: PhaseGoal[], mode: "research" | "challenge"): PhaseGoal[] {
-  return goals.filter((goal) => goal.id.startsWith(`goal_${mode}_`));
+export function phaseGoalsForMode(goals: PhaseGoal[], mode: "research" | "challenge", goalSetId?: string): PhaseGoal[] {
+  const modeGoals = goals.filter((goal) => goal.id.startsWith(`goal_${mode}_`));
+  if (!goalSetId) return modeGoals;
+  return modeGoals.filter((goal) => goal.goalSetId === goalSetId || goal.id.startsWith(`goal_${mode}_${goalSetId}_`));
 }
 
 export interface PhaseGoalEvidence {

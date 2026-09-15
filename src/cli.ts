@@ -5,7 +5,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "./core/experiment-manifest.js";
-import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalsForMode } from "./core/phase-goals.js";
+import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalSetId, phaseGoalsForMode } from "./core/phase-goals.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "./core/types.js";
 import { loadCompetitionAdapter } from "./competitions/adapters.js";
 import { auditData, dataAuditFingerprint } from "./core/data-audit.js";
@@ -1847,6 +1847,7 @@ research
     if (options.resume && invalidSavedCheckpoint) console.log("Saved campaign checkpoint is invalid; preserving the campaign and restarting from a safe cycle boundary.");
     if (options.resume) console.log(savedCampaign && savedCampaign.status !== "completed" ? `Resuming durable research campaign from ${savedCampaign.startedAt ?? "saved state"}.` : "No resumable campaign found; starting a new research campaign.");
     const objective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}`;
+    const campaignGoalSetId = phaseGoalSetId(objective, mode);
     let cycle = options.resume ? nextCampaignCycle(savedCheckpoint) : 0;
     campaignLoop: do {
       recordCampaignCheckpoint(campaign, mode, cycle, "cycle-start");
@@ -1906,7 +1907,7 @@ research
         ? `\n\nOperator steering received at the cycle boundary. Incorporate these instructions into this cycle while preserving the evidence, reproducibility, and permission gates:\n${steering.map((item) => `- ${item.message}`).join("\n")}`
         : "";
       const storedGoals = store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));
-      if (!phaseGoalsForMode(storedGoals, mode).length) for (const goal of definePhaseGoals(objective, mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
+      if (!phaseGoalsForMode(storedGoals, mode, campaignGoalSetId).length) for (const goal of definePhaseGoals(objective, mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
       const staleExperiment = store.experiments().find((entry) => {
         const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { status?: unknown; stale?: unknown; recoveryAttempted?: unknown } : {};
         return payload.status === "failed" && payload.stale === true && payload.recoveryAttempted !== true;
@@ -1951,7 +1952,7 @@ research
         recoveryStore.close();
         continue;
       }
-      const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode));
+      const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, campaignGoalSetId));
       const durableEvents = store.recentEvents(500);
       // Keep the prompt/event window bounded, but never truncate the reward
       // history used for convergence decisions in a long-running campaign.
@@ -3141,7 +3142,7 @@ research
       decisionStore.appendEvent("research.stop_policy.assessed", { cycle, ...stopPolicy });
       if (phaseGoal) {
         const now = new Date().toISOString();
-        const goals = phaseGoalsForMode(decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode);
+        const goals = phaseGoalsForMode(decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, campaignGoalSetId);
         const index = goals.findIndex((goal) => goal.id === phaseGoal.id);
         if (index >= 0) {
           const met = decision.goalStatus === "met";
@@ -3210,10 +3211,11 @@ research.command("propose")
   .action(async (objective: string) => {
     const store = new ResearchStore(statePath);
     const project = store.project();
-    if (!phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), "research").length) {
+    const goalSet = phaseGoalSetId(objective, "research");
+    if (!phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), "research", goalSet).length) {
       for (const goal of definePhaseGoals(objective, "research")) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
     }
-    const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), "research"));
+    const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), "research", goalSet));
     console.log("Research 1/3 · inspecting repository...");
     const gitStatus = await runProcess(["git", "status", "--short"], root);
     const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
