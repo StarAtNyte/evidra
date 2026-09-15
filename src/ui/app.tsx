@@ -1365,6 +1365,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       () => executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name),
       { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
     );
+    if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [adapter.config.metric.name]);
     const recoveryEvents: TrajectoryEvent[] = [];
     while (result.status !== "completed") {
       const plan = recoveryPlan(result.failureClass);
@@ -1382,6 +1383,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         () => executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name),
         { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
       );
+      if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [adapter.config.metric.name]);
     }
     if (result.status !== "completed") {
       const route = recoveryRouteDirective(result.failureClass);

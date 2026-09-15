@@ -2805,6 +2805,14 @@ test("completed workers require the complete declared metric suite", () => {
   assert.equal(validateRunMetrics({ ...result, metrics: { score: 0.8, safety: 0.9 } }, ["score", "safety"]).status, "completed");
 });
 
+test("primary metric validation can classify a worker failure before recovery", () => {
+  const result = { runId: "early-invalid", status: "completed", exitCode: 0, durationSeconds: 1, metrics: {}, artifacts: {} };
+  const classified = validateRunMetrics(result, ["score"]);
+  assert.equal(classified.status, "failed");
+  assert.equal(classified.exitCode, 65);
+  assert.equal(classified.failureClass, "invalid_metric");
+});
+
 test("metric parser accepts evaluator JSON and keyed log output", () => {
   const parsed = parseMetricOutput('{"metrics":{"rmse":0.42},"metricsByFold":{"rmse":[0.4,0.44]},"subgroupDeltas":[0.1,-0.02]}\nrmse: 0.41\n', "rmse");
   assert.equal(parsed.metrics.rmse, 0.41);

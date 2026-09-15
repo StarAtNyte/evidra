@@ -3228,6 +3228,7 @@ experiment.command("run")
       () => executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name),
       { storePath: statePath, experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
     );
+    if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [adapter.config.metric.name]);
     recordAttempt(attempt, result);
     while (result.status !== "completed") {
       const plan = recoveryPlan(result.failureClass);
@@ -3244,6 +3245,7 @@ experiment.command("run")
         () => executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name),
         { storePath: statePath, experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
       );
+      if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [adapter.config.metric.name]);
       recordAttempt(attempt, result);
     }
     if (result.status !== "completed") {
