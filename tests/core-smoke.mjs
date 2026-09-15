@@ -5124,6 +5124,18 @@ test("portfolio planning rewards bounded value of information", () => {
   assert.equal(plan.selected[0]?.id, "uncertain");
 });
 
+test("portfolio planning prioritizes open falsification work without hard-blocking revisits", () => {
+  const plan = planPortfolio([
+    { id: "tested", title: "tested direction", operator: "greedy", expectedValue: 0.4, costMinutes: 1, family: "tested", falsificationStatus: "tested", falsificationPriority: 35 },
+    { id: "open", title: "open direction", operator: "audit", expectedValue: 0.4, costMinutes: 1, family: "open", falsificationStatus: "untested", falsificationPriority: 100 },
+  ], { maxCandidates: 1, maxParallel: 1, budgetMinutes: 2 });
+  assert.equal(plan.selected[0]?.id, "open");
+  const revisit = planPortfolio([
+    { id: "rejected-but-strong", title: "changed rejected direction", operator: "combination", expectedValue: 2, costMinutes: 1, family: "revisit", falsificationStatus: "rejected", falsificationPriority: 10 },
+  ], { maxCandidates: 1, maxParallel: 1, budgetMinutes: 2 });
+  assert.equal(revisit.selected[0]?.id, "rejected-but-strong");
+});
+
 test("successive halving promotes normalized objective values for non-metric outcomes", () => {
   const stage = { index: 0, fraction: 0.2, candidateIds: ["proof-a", "proof-b", "proof-c"], budgetMinutes: 1, retainCount: 2, rationale: "screen" };
   assert.deepEqual(promoteHalvingStage(stage, [

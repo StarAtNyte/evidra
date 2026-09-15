@@ -10,6 +10,9 @@ export interface PortfolioCandidate {
   risk?: number;
   family?: string;
   quality?: number;
+  /** Controller-derived evidence state for the hypothesis' falsification test. */
+  falsificationStatus?: "untested" | "tested" | "supported" | "rejected" | "inconclusive";
+  falsificationPriority?: number;
 }
 
 export interface PortfolioPlanOptions {
@@ -99,7 +102,17 @@ function score(candidate: PortfolioCandidate, history?: CostObservation[], conte
   const informationValue = Math.max(0, Math.min(1, candidate.informationValue ?? 0));
   const risk = Math.max(0, Math.min(1, candidate.risk ?? 0));
   const quality = Math.max(0.25, Math.min(1, candidate.quality ?? 1));
-  return (candidate.expectedValue * quality + novelty * 0.2 + informationValue * 0.25 - risk * 0.1) / cost;
+  const agendaPriority = Number.isFinite(candidate.falsificationPriority) ? Math.max(0, Math.min(100, candidate.falsificationPriority ?? 0)) / 100 : undefined;
+  const statusAdjustment = candidate.falsificationStatus === "untested" ? 0.35
+    : candidate.falsificationStatus === "inconclusive" ? 0.15
+      : candidate.falsificationStatus === "rejected" ? -0.2
+        : candidate.falsificationStatus === "tested" ? -0.08
+          : 0;
+  // Falsification state is a scheduling prior, not a hard gate: a strong
+  // changed route can still revisit a rejected direction, while untouched
+  // hypotheses receive the information-value boost they deserve.
+  const falsificationBonus = statusAdjustment + (agendaPriority ?? 0) * 0.15;
+  return (candidate.expectedValue * quality + novelty * 0.2 + informationValue * 0.25 - risk * 0.1 + falsificationBonus) / cost;
 }
 import { estimateCost, type CostContext, type CostEstimate, type CostObservation } from "./cost-model.js";
 import { planSuccessiveHalving, type SuccessiveHalvingPlan } from "./successive-halving.js";

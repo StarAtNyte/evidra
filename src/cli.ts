@@ -2860,6 +2860,8 @@ research
       const portfolioPlan = planPortfolio(decision.hypotheses.map((hypothesis, index) => ({
         id: materialized.hypothesisIds[index] ?? `hypothesis-${index}`,
         title: hypothesis.title,
+        falsificationStatus: researchMemory.falsificationAgenda.find((item) => item.hypothesisId === (materialized.hypothesisIds[index] ?? `hypothesis-${index}`))?.status,
+        falsificationPriority: researchMemory.falsificationAgenda.find((item) => item.hypothesisId === (materialized.hypothesisIds[index] ?? `hypothesis-${index}`))?.priority,
         // A single director operator describes the cycle; hypotheses still
         // need distinct search families so best-of-k does not collapse into
         // repeated variants of the same move.
