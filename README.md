@@ -274,6 +274,7 @@ Implemented today:
 - paper-derived adaptations require retrieved source claims before they can enter the durable research graph;
 - TUI trajectories preserve the synthesized cross-pollination board and its evidence/agreement metrics for replay and audit;
 - Escape cancellation is wired through TUI critic, lane, and director processes, so interruption stops the active provider work;
+- CLI trajectories preserve the synthesized cross-pollination board for the same replay and audit parity as the TUI;
 - failed hypotheses cannot silently consume budget on an unchanged route: retries must change the executor, provider, model, or search operator, while the failed attempt remains immutable evidence;
 - suppressed duplicate or unchanged retries emit a durable scheduling event with the route and reason, so the next research cycle can replan from an explicit controller decision;
 - autonomous campaigns persist phase-level checkpoints (cycle start, lanes, director, critic, execution, and terminal/completion) into campaign state, scheduler state, and the controller lease for reliable restart and status reporting;

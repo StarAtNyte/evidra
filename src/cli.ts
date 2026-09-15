@@ -2348,6 +2348,7 @@ research
       let decision: Awaited<ReturnType<typeof runResearchDirector>>;
       let criticReview: Awaited<ReturnType<typeof runResearchCritic>> | undefined;
       let laneReports: Awaited<ReturnType<typeof runResearchLanes>> = [];
+      let crossPollination: ReturnType<typeof synthesizeLaneReports> | undefined;
       const tracePrefix = `research-${cycle}-${Date.now()}`;
       const tracePath = join(root, ".sota", "traces", `${tracePrefix}.jsonl`);
       mkdirSync(dirname(tracePath), { recursive: true });
@@ -2426,7 +2427,7 @@ research
             onAssistant: toolTrace.onAssistant,
             onUsage: recordAgentUsage,
           });
-          let crossPollination = synthesizeLaneReports(laneReports);
+          crossPollination = synthesizeLaneReports(laneReports);
           // Independent groups should be able to challenge one another before
           // the director commits to an experiment. Keep this bounded: the
           // second pass is only activated for a genuinely uncertain board and
@@ -3101,6 +3102,7 @@ research
       const researchTrajectoryEvents: TrajectoryEvent[] = [
         { id: `${trajectoryStamp}-observation`, kind: "process", payload: { status: "completed", observationKeys: Object.keys(observation) } },
         ...toolTrace.events,
+        ...(crossPollination ? [{ id: `${trajectoryStamp}-cross-pollination`, kind: "process" as const, payload: { status: "completed", laneCount: crossPollination.laneCount, completedCount: crossPollination.completedCount, agreementPairs: crossPollination.agreementPairs, independentEvidenceCount: crossPollination.independentEvidenceCount, needsAdversarialReview: crossPollination.needsAdversarialReview } }] : []),
         ...laneReports.filter((lane) => lane.status === "failed").map((lane, index) => ({ id: `${trajectoryStamp}-lane-${index}`, kind: "process" as const, payload: { status: "failed", error: lane.error ?? `${lane.role} failed` } })),
         { id: `${trajectoryStamp}-evaluator`, kind: "evaluator", payload: {
           evidenceConsistent: criticReview?.verdict === "proceed",
@@ -3116,7 +3118,7 @@ research
       const researchQuality = evaluateTrajectory(researchTrajectoryEvents);
       const routingOutcome = capabilityOutcome({ objective: allocatedObjective, mode, route, provider: options.provider, model: selectedModel, quality: researchQuality, parallelLanes: laneReports.length });
       const trajectoryId = `trajectory_research_${Date.now()}`;
-      const trajectoryPayload = { objective, observation, laneReports, criticReview, decision, tracePath: relative(root, tracePath), routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: options.provider, model: selectedModel }, events: researchTrajectoryEvents };
+      const trajectoryPayload = { objective, observation, laneReports, crossPollination, criticReview, decision, tracePath: relative(root, tracePath), routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: options.provider, model: selectedModel }, events: researchTrajectoryEvents };
       decisionStore.saveTrajectory({ id: trajectoryId, payload: trajectoryPayload, quality: researchQuality });
       const experience = buildExperienceRecord({ trajectoryId, payload: trajectoryPayload, quality: researchQuality, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: options.provider, model: selectedModel } });
       const priorExperiences = decisionStore.trajectoryHistory().filter((entry) => entry.id !== trajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));

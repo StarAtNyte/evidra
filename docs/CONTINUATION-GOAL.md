@@ -167,6 +167,8 @@ external evaluator.
 - TUI Escape cancellation now covers the independent critic stage as well as
   lanes and director turns, terminating its provider process instead of merely
   updating the visual status.
+- CLI trajectories now persist the synthesized cross-pollination board too,
+  keeping replay and audit parity between autonomous and interactive research.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
 - Codex command activity now includes an exit code only when the provider
