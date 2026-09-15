@@ -61,7 +61,7 @@ external evaluator.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 363/363 tests passing, TypeScript check passing,
+- Latest verified baseline: 364/364 tests passing, TypeScript check passing,
   and build passing. The worktree has six intentionally untracked pilot reports
   under `reports/`; do not confuse those generated artifacts with source edits.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
@@ -417,6 +417,10 @@ external evaluator.
 - Codex model discovery flushes a final JSON-RPC response even when the
   app-server omits its trailing newline, avoiding a false timeout on valid
   model-list responses.
+- Active Codex turns now use the same fallback eligibility policy as startup:
+  `auto` and `fallback` can change route after classified quota/network
+  failures, while `wait`, `stop`, and account-model configuration errors stay
+  explicit and do not silently switch providers.
 
 ## Immediate next work
 

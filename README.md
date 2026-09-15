@@ -510,7 +510,7 @@ Inspect a long-running campaign without reading raw event payloads:
 
     evidra timeline --limit 40
 
-The command checks the selected provider before starting repository inspection or baseline execution. The default Codex path can fall back to the configured local model only for recognized usage-limit failures; authentication and configuration errors are reported instead of silently starting an unconfigured run.
+The command checks the selected provider before starting repository inspection or baseline execution. Under `auto` or `fallback`, the default Codex path can change to a healthy configured local model after recognized usage-limit, network, or route-availability failures; authentication and model-configuration errors remain explicit instead of silently starting an unconfigured run.
 
 ## General workspace manifests
 
@@ -693,7 +693,7 @@ The provider is an implementation detail behind the same research protocol:
 - **Codex:** the installed official codex CLI, authenticated ChatGPT/Codex account, JSON event output, persisted threads, and thread queue support.
 - **Local:** Ollama's local chat endpoint and the selected installed model.
 
-Evidra never extracts subscription tokens or implements unofficial ChatGPT API calls. Provider availability is checked before work begins, and local fallback is used only for configured usage-limit cases where a local model is available.
+Evidra never extracts subscription tokens or implements unofficial ChatGPT API calls. Provider availability is checked before work begins, and local fallback is used only for configured `auto`/`fallback` policies when a local model is available and the Codex failure is classified as safely route-changeable.
 
 ## Development
 

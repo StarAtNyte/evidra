@@ -124,6 +124,14 @@ export function isRetryableAgentError(error: unknown): boolean {
   return isProviderUsageLimit(error) || /network|unreachable|timed out|timeout|stream disconnected|connection termination|temporarily|did not return|invalid decision|returned invalid|turn failed|econnreset|ePIPE|503|502|504/i.test(text);
 }
 
+/** Decide whether an active Codex failure may change to the configured local route. */
+export function shouldUseLocalFallback(error: unknown, options: Pick<ExecAgentOptions, "provider" | "limitPolicy">, fallbackModel?: string): boolean {
+  return options.provider === "codex"
+    && Boolean(fallbackModel)
+    && (options.limitPolicy === "auto" || options.limitPolicy === "fallback")
+    && isProviderFallbackEligible(error);
+}
+
 /** Keep live provider activity useful in a one-line TUI status rail. */
 export function progressLine(value: string, limit = 180): string {
   const compact = redactSecrets(value.replace(/\s+/g, " ").trim())
@@ -672,9 +680,8 @@ export async function runWithLocalFallback(
   try {
     return await new CodexExecAgent(options).run(task, onProgress, onProcess);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     const limitReached = isProviderUsageLimit(error);
-    if (options.provider !== "codex" || !fallbackModel || !limitReached || options.limitPolicy === "wait" || options.limitPolicy === "stop") throw error;
+    if (!shouldUseLocalFallback(error, options, fallbackModel)) throw error;
     let localModel: string;
     try {
       localModel = await resolveLocalFallbackModel(fallbackModel);
@@ -686,7 +693,7 @@ export async function runWithLocalFallback(
       // boundary; an inner six-hour wait could outlive the campaign.
       throw error;
     }
-    onProgress?.(`Codex limit reached; switching to local/${localModel}...`);
+    onProgress?.(`${limitReached ? "Codex usage limit reached" : "Codex route unavailable"}; switching to local/${localModel}...`);
     try {
       await checkProvider({ provider: "local", model: localModel, cwd: options.cwd });
       return await new CodexExecAgent({
