@@ -34,7 +34,10 @@ export function redactStructured<T>(value: T): T {
       // Command-shaped fields are argv, not ordinary string arrays. Redact
       // separate sensitive arguments such as ["--token", "value"] as well
       // as inline forms, while keeping other structured data intact.
-      if (/(?:^|_)commands?$|command$/i.test(key) && Array.isArray(entry) && entry.every((part) => typeof part === "string")) return [key, redactCommand(entry as string[])];
+      if (/commands?$/i.test(key) && Array.isArray(entry)) {
+        if (entry.every((part) => typeof part === "string")) return [key, redactCommand(entry as string[])];
+        if (entry.every((part) => Array.isArray(part) && part.every((item) => typeof item === "string"))) return [key, (entry as string[][]).map((command) => redactCommand(command))];
+      }
       return [key, redactStructured(entry)];
     })) as T;
   }
