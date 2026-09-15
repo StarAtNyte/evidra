@@ -145,6 +145,9 @@ Retries are bounded. Transient provider, timeout, stream, and tool failures
 retry with backoff; exhausted routes are recorded and the director can choose
 another route. A campaign's remaining time and compute budget remain hard
 limits, even when the provider reset window is long.
+If an ordinary Codex chat turn falls back to local Ollama, Evidra announces the
+route change and resets the Codex conversation thread so later messages do not
+resume context that omitted the fallback response.
 
 ## 5. Research mode
 

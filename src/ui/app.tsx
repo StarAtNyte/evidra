@@ -3168,6 +3168,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
           instruction: "This is ordinary conversation, not a research cycle. Answer directly and concisely. Do not inspect files, run commands, edit code, propose experiments, or claim fresh measurements. If the user wants autonomous research, tell them to use /research.",
         },
       }, { provider: config.provider, model: config.model, cwd: root, threadId: config.provider === "codex" ? (activeCodexThread.current ?? config.codexThreadId) : undefined, reasoningEffort: config.reasoningEffort, sandbox: "read-only", limitPolicy: config.limitPolicy, onThread: (threadId) => { activeCodexThread.current = threadId; setConfig((current) => ({ ...current, codexThreadId: threadId })); activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, config.fallbackModel, setProgress, registerProcess);
+      if (result.provider !== config.provider) {
+        activeCodexThread.current = undefined;
+        setConfig((current) => ({ ...current, codexThreadId: undefined }));
+        append("assistant", `Provider fallback active: ${result.provider}/${result.model ?? "default"}. The Codex conversation thread was reset so messages cannot silently diverge across providers.`);
+      }
       append("assistant", String(result.output));
     } catch (error) {
       append("assistant", error instanceof Error ? error.message : String(error));
