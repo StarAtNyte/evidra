@@ -213,7 +213,9 @@ before the final trajectory is committed, the partial tool/command history is
 still available for restart diagnosis without trusting raw provider output. On
 the next controller start, Evidra validates and checksums uncommitted traces,
 then records their recovery metadata as durable evidence; traces already linked
-to a completed trajectory are not duplicated.
+to a completed trajectory are not duplicated. The CLI and TUI perform the same
+startup recovery, so changing interfaces cannot hide an interrupted Codex
+cycle.
 
 ## Production checklist
 

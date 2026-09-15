@@ -198,6 +198,9 @@ external evaluator.
 - Controller startup now validates and checksums uncommitted trace files,
   records `research.trace.recovered` evidence, and avoids duplicating traces
   already linked to a committed trajectory.
+- The TUI now performs the same partial-trace recovery as the CLI, preserving
+  Codex provenance consistently when autonomous work is restarted from either
+  interface.
 - Autonomous memory context now uses hybrid FTS-plus-lexical retrieval for
   durable claims and hypotheses, so the existing SQLite index influences Codex
   research context instead of being used only by the interactive memory search.
