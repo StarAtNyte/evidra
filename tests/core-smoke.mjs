@@ -3862,6 +3862,19 @@ test("benchmark runner changes to a declared alternate route after retries", asy
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("benchmark runner records spawn failures and recovers through an alternate route", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-spawn-recovery-"));
+  try {
+    const alternate = [process.execPath, "-e", "console.log(JSON.stringify({score:0.91}))"];
+    const report = await runBenchmarkArms([{ harness: "spawn-recovering", task: "task-a", arm: "default", seed: 1, model: "test-model", budgetMinutes: 1, alternateCommands: [alternate], direction: "maximize", baselineMetric: 0.5, metric: "score", command: ["evidra-command-does-not-exist"] }], root);
+    assert.equal(report.trials[0].validRun, true);
+    assert.equal(report.runs[0].attempts, 2);
+    assert.equal(report.runs[0].attemptDetails[0].route, "primary");
+    assert.match(report.runs[0].attemptDetails[0].stderrTail, /could not start|not found|ENOENT/i);
+    assert.equal(report.runs[0].attemptDetails[1].route, "alternate");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("benchmark runner measures an explicit independent reproducibility command", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-reproducibility-"));
   try {

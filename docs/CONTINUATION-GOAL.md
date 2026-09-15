@@ -77,6 +77,8 @@ external evaluator.
 - A provider-neutral HTTP submission/score adapter supports multipart uploads,
   `{submission}` score URLs, environment-referenced bearer credentials, HTTPS
   enforcement, bounded responses, and redacted durable receipts.
+- Benchmark worker spawn failures now become structured attempts and can recover
+  through declared alternate routes instead of aborting the whole protocol.
 
 ## Immediate next work
 

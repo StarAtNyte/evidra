@@ -158,6 +158,10 @@ scorecard exposes a `failureProfile` counter. This makes benchmark results usefu
 for harness evolution: a lower score is not just a loss, but a concrete route to
 repair and retest.
 
+Worker spawn errors are converted into structured failed attempts instead of
+aborting the protocol, allowing declared alternate routes to recover from
+missing executables or launch failures while preserving the original error.
+
 ## Initial AIRS-Bench trial
 
 On the official AIRS-Bench SICK Accuracy task, Evidra reproduced the majority

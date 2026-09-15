@@ -4,7 +4,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { z } from "zod";
 import { parseMetricOutput, prepareWorkerHome, safeWorkerEnvironment } from "./executors.js";
 import { classifyProcessFailure } from "./executors.js";
-import { runProcess } from "./process.js";
+import { processFailureResult, runProcess } from "./process.js";
 import type { HarnessTrial, ScoreDirection } from "./harness-scorecard.js";
 import type { ProcessResult } from "./types.js";
 import { redactCommand, redactSecrets } from "./redaction.js";
@@ -211,12 +211,16 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       if (route === "alternate") onProgress?.(`Benchmark · ${arm.harness} switching to alternate route ${attempt - sameRouteAttempts + 1}/${alternateCommands.length}`);
       let attemptEvidenceMs: number | undefined;
       let outputBuffer = "";
-      result = await runProcess(command, cwd, remainingMs, (_stream, chunk) => {
-        if (attemptEvidenceMs !== undefined) return;
-        outputBuffer = `${outputBuffer}${chunk}`.slice(-128_000);
-        const observed = parseMetricOutput(outputBuffer, arm.metric).metrics[arm.metric];
-        if (Number.isFinite(observed)) attemptEvidenceMs = Date.now() - attemptStartedAt;
-      }, undefined, workerEnvironment);
+      try {
+        result = await runProcess(command, cwd, remainingMs, (_stream, chunk) => {
+          if (attemptEvidenceMs !== undefined) return;
+          outputBuffer = `${outputBuffer}${chunk}`.slice(-128_000);
+          const observed = parseMetricOutput(outputBuffer, arm.metric).metrics[arm.metric];
+          if (Number.isFinite(observed)) attemptEvidenceMs = Date.now() - attemptStartedAt;
+        }, undefined, workerEnvironment);
+      } catch (error) {
+        result = processFailureResult(command, cwd, error);
+      }
       totalDurationMs += result.durationMs;
       const parsed = parseMetricOutput(result.stdout, arm.metric);
       const requiredMetrics = [...new Set([arm.metric, ...(arm.requiredMetrics ?? []), ...(arm.metricGates ?? []).map((gate) => gate.name)])];
@@ -245,7 +249,12 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       const remainingMs = deadline - Date.now();
       if (remainingMs >= 1_000) {
         onProgress?.(`Benchmark · ${arm.harness} · independent reproducibility check`);
-        const checkResult = await runProcess(arm.reproducibilityCommand, cwd, remainingMs, undefined, undefined, workerEnvironment);
+        let checkResult: ProcessResult;
+        try {
+          checkResult = await runProcess(arm.reproducibilityCommand, cwd, remainingMs, undefined, undefined, workerEnvironment);
+        } catch (error) {
+          checkResult = processFailureResult(arm.reproducibilityCommand, cwd, error);
+        }
         totalDurationMs += checkResult.durationMs;
         const checkMetrics = parseMetricOutput(checkResult.stdout, arm.metric).metrics;
         const requiredMetrics = [...new Set([arm.metric, ...(arm.requiredMetrics ?? []), ...(arm.metricGates ?? []).map((gate) => gate.name)])];
