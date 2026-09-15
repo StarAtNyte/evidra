@@ -135,7 +135,7 @@ import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } fro
 import { createTransferableMethod, transferableMethodsFromEvents } from "../dist/core/method-transfer.js";
 import { createAblationPlan, ablationPlansFromEvents, evaluateAblationEvidence } from "../dist/core/ablation.js";
 import { benchmarkProtocolFingerprint, runBenchmarkArms } from "../dist/core/benchmark-runner.js";
-import { createAirsBenchmarkProtocol, discoverAirsBenchTasks } from "../dist/core/airs-bench.js";
+import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, parseAirsBenchDiscovery } from "../dist/core/airs-bench.js";
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
 import { advanceEvolutionaryGeneration, planEvolutionaryIslands } from "../dist/core/evolution.js";
@@ -3872,6 +3872,15 @@ test("AIRS protocol generation creates matched task arms with safe template expa
   assert.equal(protocol.arms[0].taskBestMetric, 1);
   assert.equal(protocol.arms[0].task, "airsbench:rad/TaskA");
   assert.throws(() => createAirsBenchmarkProtocol(discovery, { templates: [{ harness: "evidra", command: ["run"] }], model: "m", seed: 0, budgetMinutes: 1, baselineMetric: 0 }), /at least two distinct/);
+});
+
+test("AIRS discovery parser rejects inconsistent external inventories", () => {
+  const task = { id: "TaskA", family: "rad", path: "a", metadataPath: "m", descriptionPath: "d", preparePath: "p", evaluatePath: "e", evaluatePreparePath: "ep", valid: true, missingFiles: [], metric: "Accuracy", direction: "maximize" };
+  const inventory = { schemaVersion: 1, repository: "/bench/airs", family: "rad", tasks: [task], validTasks: 1, invalidTasks: 0 };
+  assert.equal(parseAirsBenchDiscovery(inventory).validTasks, 1);
+  assert.throws(() => parseAirsBenchDiscovery({ ...inventory, validTasks: 0 }), /validTasks/);
+  assert.throws(() => parseAirsBenchDiscovery({ ...inventory, tasks: [task, task], validTasks: 2 }), /unique/);
+  assert.throws(() => parseAirsBenchDiscovery({ ...inventory, tasks: [{ ...task, valid: true, missingFiles: ["evaluatePath"] }], validTasks: 1 }), /missing files/);
 });
 
 test("AIRS protocol generation preserves task-specific baselines", () => {

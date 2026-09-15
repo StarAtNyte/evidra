@@ -80,7 +80,7 @@ import { assessResearchDecisionRubric } from "./core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "./core/validation-lock.js";
 import { runBenchmarkArms, type BenchmarkArmSpec } from "./core/benchmark-runner.js";
 import { analyzeHarnessComponentFailures, assessHarnessChangePresence, evaluateHarnessChange, parseHarnessChangeContract, type HarnessChangeContract } from "./core/harness-evolution.js";
-import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, type AirsBenchFamily, type AirsBenchDiscovery, type AirsHarnessTemplate } from "./core/airs-bench.js";
+import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, parseAirsBenchDiscovery, type AirsBenchFamily, type AirsHarnessTemplate } from "./core/airs-bench.js";
 import { inventoryHarnessComponents, planHarnessInterventions } from "./core/harness-evolution.js";
 import { advanceEvolutionaryGeneration } from "./core/evolution.js";
 import { materializeHarnessRetestTask, planHarnessAdaptation, validateHarnessRetestProtocol, type HarnessAdaptationPlan } from "./core/harness-adaptation.js";
@@ -1102,7 +1102,7 @@ airsBenchmark.command("protocol")
   .option("--out <file>", "write the generated protocol to JSON")
   .description("Generate matched AIRS benchmark arms from explicit harness command templates")
   .action((inventory: string, options: { arm: string[]; model: string; seed: string; budget: string; baseline?: string; baselineMap?: string; out?: string }) => {
-    const parsed = JSON.parse(readFileSync(resolve(inventory), "utf8")) as AirsBenchDiscovery;
+    const parsed = parseAirsBenchDiscovery(JSON.parse(readFileSync(resolve(inventory), "utf8")));
     const templates = options.arm.map((raw) => {
       const value = JSON.parse(raw) as Partial<AirsHarnessTemplate>;
       if (typeof value.harness !== "string" || !Array.isArray(value.command) || !value.command.every((part) => typeof part === "string")) throw new Error("Each --arm value must be JSON like {\"harness\":\"evidra\",\"command\":[\"...\"]}.");

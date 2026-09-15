@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
+import { z } from "zod";
 import type { BenchmarkArmSpec } from "./benchmark-runner.js";
 
 export type AirsBenchFamily = "rad" | "mlgym" | "all";
@@ -50,6 +51,50 @@ export interface AirsProtocolOptions {
   baselineMetric?: number;
   /** Preferred for AIRS: measured baseline keyed by task id or family/task id. */
   baselineMetrics?: Record<string, number>;
+}
+
+const AirsBenchTaskSchema = z.object({
+  id: z.string().min(1),
+  family: z.enum(["rad", "mlgym"]),
+  path: z.string().min(1),
+  metadataPath: z.string().min(1),
+  descriptionPath: z.string().min(1),
+  preparePath: z.string().min(1),
+  evaluatePath: z.string().min(1),
+  evaluatePreparePath: z.string().min(1),
+  valid: z.boolean(),
+  missingFiles: z.array(z.string()),
+  metric: z.string().min(1).optional(),
+  direction: z.enum(["maximize", "minimize"]).optional(),
+  dataset: z.string().optional(),
+  researchProblem: z.string().optional(),
+  category: z.string().optional(),
+  estimatedWorstScore: z.number().finite().optional(),
+  optimalScore: z.number().finite().optional(),
+  sotaScore: z.number().finite().optional(),
+  sotaPaperUrl: z.string().url().optional(),
+}).passthrough();
+
+export const AirsBenchDiscoverySchema = z.object({
+  schemaVersion: z.number().int().positive(),
+  repository: z.string().min(1),
+  family: z.enum(["rad", "mlgym", "all"]),
+  tasks: z.array(AirsBenchTaskSchema),
+  validTasks: z.number().int().nonnegative(),
+  invalidTasks: z.number().int().nonnegative(),
+}).passthrough().superRefine((discovery, context) => {
+  if (discovery.validTasks !== discovery.tasks.filter((task) => task.valid).length) context.addIssue({ code: z.ZodIssueCode.custom, path: ["validTasks"], message: "must equal the number of valid tasks" });
+  if (discovery.invalidTasks !== discovery.tasks.filter((task) => !task.valid).length) context.addIssue({ code: z.ZodIssueCode.custom, path: ["invalidTasks"], message: "must equal the number of invalid tasks" });
+  const ids = new Set<string>();
+  for (const [index, task] of discovery.tasks.entries()) {
+    if (ids.has(`${task.family}/${task.id}`)) context.addIssue({ code: z.ZodIssueCode.custom, path: ["tasks", index, "id"], message: "task identities must be unique" });
+    ids.add(`${task.family}/${task.id}`);
+    if (task.valid && task.missingFiles.length) context.addIssue({ code: z.ZodIssueCode.custom, path: ["tasks", index, "valid"], message: "valid tasks cannot list missing files" });
+  }
+});
+
+export function parseAirsBenchDiscovery(value: unknown): AirsBenchDiscovery {
+  return AirsBenchDiscoverySchema.parse(value) as AirsBenchDiscovery;
 }
 
 export interface AirsBenchmarkProtocol {
@@ -133,6 +178,7 @@ function expandTemplate(part: string, task: AirsBenchTask, repository: string, o
  * task identity, scoring metadata, and budget controls are fixed by Evidra.
  */
 export function createAirsBenchmarkProtocol(discovery: AirsBenchDiscovery, options: AirsProtocolOptions): AirsBenchmarkProtocol {
+  discovery = parseAirsBenchDiscovery(discovery);
   const harnesses = new Set(options.templates.map((template) => template.harness.trim()).filter(Boolean));
   if (harnesses.size < 2) throw new Error("A matched AIRS protocol requires at least two distinct harness command templates.");
   if (!Number.isFinite(options.budgetMinutes) || options.budgetMinutes <= 0) throw new Error("AIRS benchmark budget must be positive.");
