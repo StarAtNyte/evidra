@@ -57,13 +57,13 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` (verify the exact commit with `git log`).
+- Latest pushed state: `origin/master` at commit `54662de` (verify with `git log`).
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 371/371 tests passing, TypeScript check passing,
-  and build passing. The worktree has six intentionally untracked pilot reports
-  under `reports/`; do not confuse those generated artifacts with source edits.
+- Latest verified baseline: 379/379 tests passing, TypeScript check passing,
+  and build passing. The worktree is clean; generated reports remain excluded
+  from source changes.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
   budgets remain supported. Model stages can use up to thirty minutes when the
   remaining campaign budget permits, and provider reset recovery can wait up to
@@ -109,6 +109,23 @@ external evaluator.
 - The Codex adapter now resolves the legacy `default` sentinel to the explicit
   Evidra Luna model at the provider boundary, so account-side defaults cannot
   silently change the configured route.
+
+### Current empirical evidence
+
+- On AIRS-Bench SICK, two matched local Codex runs using `gpt-5.6-luna`, medium
+  effort, and ten minutes each scored `0.8065633918` and `0.7702812882` against
+  the same official evaluator; the majority baseline was `0.5686913983`.
+- The generic AIRS lifecycle also prepared and evaluated the task-disjoint
+  SVAMP task with a valid majority baseline of `0.0733333333`.
+- AIRS Codex workers remain on `workspace-write` with network disabled. A
+  temporary full-access experiment was stopped after it demonstrated that
+  unrelated host paths could be inspected; it is not an accepted design.
+- AIRS workspace seeding is non-destructive. Lifecycle results expose
+  `resumed`, `initialArtifactBytes`, and `finalArtifactBytes`, and a failed
+  partial workspace is covered by a resume regression test.
+- The next evidence gate is a valid Codex SVAMP run or another task-disjoint
+  task, followed by matched multi-task harness comparison. Do not call the
+  current SICK improvement SOTA.
 - TUI model discovery failures now distinguish unavailable Codex versus local
   routes and provide actionable recovery text instead of a misleading loading
   message or raw provider protocol output.
