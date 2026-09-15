@@ -148,6 +148,8 @@ export interface PhaseGoalEvidence {
   runs: number;
   artifacts: number;
   candidateHypotheses?: number;
+  falsifiableHypotheses?: number;
+  selectedHypothesisFalsifiable?: boolean;
 }
 
 export interface PhaseGoalGate {
@@ -196,7 +198,12 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
       if (latestPolicyEvent !== "validation.policy.locked") missing.push("validation policy locked");
       break;
     }
-    case "hypothesis": if ((evidence.hypotheses + (evidence.candidateHypotheses ?? 0)) < 1) missing.push("durable hypothesis"); if (evidence.experiments < 1 && !has("experiment.created")) missing.push("experiment manifest"); break;
+    case "hypothesis":
+      if ((evidence.hypotheses + (evidence.candidateHypotheses ?? 0)) < 1) missing.push("durable hypothesis");
+      if ((evidence.falsifiableHypotheses ?? 0) < 1) missing.push("falsifiable hypothesis");
+      if (evidence.selectedHypothesisFalsifiable !== true) missing.push("selected hypothesis has a falsification test");
+      if (evidence.experiments < 1 && !has("experiment.created")) missing.push("experiment manifest");
+      break;
     case "implementation": if (!has("experiment.stage.smoke.completed") && !has("experiment.stage.full_validation.completed")) missing.push("completed implementation or smoke stage"); break;
     case "evaluation": {
       const validated = payloads("experiment.stage.full_validation.completed").some((payload) => {

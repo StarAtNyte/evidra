@@ -2302,6 +2302,13 @@ test("phase goals expose the same auditable contract used by generic work", () =
   assert.equal(semanticFailure.complete, false);
 });
 
+test("hypothesis phase gates require a falsifiable selected direction", () => {
+  const goal = definePhaseGoals("test", "research").find((entry) => entry.phase === "hypothesis");
+  const base = { eventTypes: ["experiment.created"], eventPayloads: [], hypotheses: 1, experiments: 1, runs: 0, artifacts: 0, candidateHypotheses: 1, falsifiableHypotheses: 0, selectedHypothesisFalsifiable: false };
+  assert.deepEqual(evaluatePhaseGoalEvidence(goal, base).missing, ["falsifiable hypothesis", "selected hypothesis has a falsification test"]);
+  assert.equal(evaluatePhaseGoalEvidence(goal, { ...base, falsifiableHypotheses: 1, selectedHypothesisFalsifiable: true }).met, true);
+});
+
 test("subtask audits are durable controller evidence", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-subtask-audit-"));
   try {

@@ -2822,6 +2822,8 @@ research
           runs: phaseGoalRecordsSince(phaseGoal, decisionStore.runs()),
           artifacts: phaseGoalRecordsSince(phaseGoal, decisionStore.artifacts()),
           candidateHypotheses: decision.hypotheses.length,
+          falsifiableHypotheses: decision.hypotheses.filter((hypothesis) => hypothesis.falsificationTest.trim().length > 0).length,
+          selectedHypothesisFalsifiable: Boolean(decision.selectedHypothesis && decision.hypotheses.some((hypothesis) => hypothesis.title === decision.selectedHypothesis && hypothesis.falsificationTest.trim().length > 0)),
         });
         const domainAudit = auditPhaseGoalGate(phaseGoal, gate, phaseEvents.map((event) => event.type));
         decisionStore.recordSubtaskAudit(domainAudit);
@@ -3456,6 +3458,8 @@ research.command("propose")
         runs: phaseGoalRecordsSince(phaseGoal, decisionStore.runs()),
         artifacts: phaseGoalRecordsSince(phaseGoal, decisionStore.artifacts()),
         candidateHypotheses: decision.hypotheses.length,
+        falsifiableHypotheses: decision.hypotheses.filter((hypothesis) => hypothesis.falsificationTest.trim().length > 0).length,
+        selectedHypothesisFalsifiable: Boolean(decision.selectedHypothesis && decision.hypotheses.some((hypothesis) => hypothesis.title === decision.selectedHypothesis && hypothesis.falsificationTest.trim().length > 0)),
       });
       decisionStore.recordSubtaskAudit(auditPhaseGoalGate(phaseGoal, gate, phaseEvents.map((event) => event.type)));
       if (!gate.met) {

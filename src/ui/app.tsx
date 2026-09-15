@@ -1178,6 +1178,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       runs: phaseGoalRecordsSince(phaseGoal, decisionStore.runs()),
       artifacts: phaseGoalRecordsSince(phaseGoal, decisionStore.artifacts()),
       candidateHypotheses: decision.hypotheses.length,
+      falsifiableHypotheses: decision.hypotheses.filter((hypothesis) => hypothesis.falsificationTest.trim().length > 0).length,
+      selectedHypothesisFalsifiable: Boolean(decision.selectedHypothesis && decision.hypotheses.some((hypothesis) => hypothesis.title === decision.selectedHypothesis && hypothesis.falsificationTest.trim().length > 0)),
     } : undefined;
     const phaseGate = phaseGoal && decision.goalStatus === "met" && phaseEvidence
       ? evaluatePhaseGoalEvidence(phaseGoal, phaseEvidence)
