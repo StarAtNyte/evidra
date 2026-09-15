@@ -63,6 +63,7 @@ import { allocateNextResearch } from "./core/allocation.js";
 import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, selectCurriculum } from "./core/experience.js";
 import { evaluateReducedPromotion } from "./core/scheduler.js";
 import { validateCompetitionContract } from "./core/competition-contract.js";
+import { assessForecast } from "./core/forecast-calibration.js";
 import { candidateChangePath } from "./core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "./core/execution-heartbeat.js";
 import { researchFailureRecord } from "./core/research-failure.js";
@@ -3385,6 +3386,14 @@ experiment.command("run")
           subgroupAnalysisObserved: recorded.subgroupDeltas.length > 0,
         });
         resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, comparisonCount, adjustedProbabilityThreshold: acceptance.adjustedProbabilityThreshold, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });
+        const declaredForecast = hypothesis?.payload && typeof hypothesis.payload === "object"
+          ? (hypothesis.payload as { expectedMetricDelta?: { low?: unknown; median?: unknown; high?: unknown } }).expectedMetricDelta
+          : undefined;
+        if (declaredForecast && typeof comparison.delta === "number" && Number.isFinite(comparison.delta)
+          && typeof declaredForecast.low === "number" && typeof declaredForecast.median === "number" && typeof declaredForecast.high === "number") {
+          const forecast = assessForecast({ low: declaredForecast.low, median: declaredForecast.median, high: declaredForecast.high }, comparison.delta);
+          resultStore.appendEvent("research.forecast.assessed", { experimentId: id, hypothesisId: manifest.hypothesisId, forecast });
+        }
         if (operator) {
           const improvementDelta = ratchetComparison.delta === null ? undefined : adapter.config.metric.direction === "minimize" ? -ratchetComparison.delta : ratchetComparison.delta;
           const runtimeContext = entryPayload.runtimeContext && typeof entryPayload.runtimeContext === "object" ? entryPayload.runtimeContext as { provider?: string; model?: string; phase?: string } : {};

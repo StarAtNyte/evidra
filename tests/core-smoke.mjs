@@ -57,6 +57,7 @@ import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/te
 import { summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
+import { assessForecast } from "../dist/core/forecast-calibration.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, ScientificTaskSchema } from "../dist/core/scientific-tasks.js";
@@ -4001,6 +4002,16 @@ test("research decisions support non-metric outcomes without fabricated GPU esti
     ...decision,
     hypotheses: [{ ...decision.hypotheses[0], expectedMetricDelta: { low: 0.4, median: 0.2, high: 0.3 } }],
   }), /less than or equal to median|greater than or equal to median/);
+});
+
+test("forecast calibration records coverage and directional error", () => {
+  const covered = assessForecast({ low: 0.01, median: 0.03, high: 0.06 }, 0.031);
+  assert.equal(covered.covered, true);
+  assert.equal(covered.calibration, "calibrated");
+  const missed = assessForecast({ low: 0.01, median: 0.03, high: 0.06 }, -0.02);
+  assert.equal(missed.covered, false);
+  assert.equal(missed.calibration, "overestimated");
+  assert.throws(() => assessForecast({ low: 1, median: 0, high: 2 }, 0), /ordered/);
 });
 
 test("literature-derived hypotheses preserve explicit adaptation context", () => {
