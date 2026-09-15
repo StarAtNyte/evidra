@@ -6,7 +6,7 @@ import { classifyProcessFailure } from "./executors.js";
 import { runProcess } from "./process.js";
 import type { HarnessTrial, ScoreDirection } from "./harness-scorecard.js";
 import type { ProcessResult } from "./types.js";
-import { redactSecrets } from "./redaction.js";
+import { redactCommand, redactSecrets } from "./redaction.js";
 
 export interface BenchmarkArmSpec {
   harness: string;
@@ -175,7 +175,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       attemptDetails.push({
         attempt: attempt + 1,
         route,
-        command: [...command],
+        command: redactCommand([...command]),
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         ...(Number.isFinite(metric) ? { metric } : {}),
@@ -206,11 +206,11 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     const finalFailure = attemptDetails.at(-1)?.failureClass;
     // Metric parsing above intentionally uses the in-memory process result;
     // persisted benchmark reports must not carry raw worker output.
-    const reportResult = { ...result, stdout: redactSecrets(result.stdout), stderr: redactSecrets(result.stderr) };
+    const reportResult = { ...result, command: redactCommand(result.command), stdout: redactSecrets(result.stdout), stderr: redactSecrets(result.stderr) };
     const reportReproducibility = reproducibility
-      ? { ...reproducibility, result: { ...reproducibility.result, stdout: redactSecrets(reproducibility.result.stdout), stderr: redactSecrets(reproducibility.result.stderr) } }
+      ? { ...reproducibility, command: redactCommand(reproducibility.command), result: { ...reproducibility.result, command: redactCommand(reproducibility.result.command), stdout: redactSecrets(reproducibility.result.stdout), stderr: redactSecrets(reproducibility.result.stderr) } }
       : undefined;
-    const run: BenchmarkRunReport["runs"][number] = { harness: arm.harness, command: arm.command, cwd, result: reportResult, metric: Number.isFinite(metric) ? metric : undefined, ...(Object.keys(metrics).length ? { metrics: { ...metrics } } : {}), attempts, attemptDetails, ...(finalFailure ? { failureClass: finalFailure } : {}), ...(reportReproducibility ? { reproducibility: reportReproducibility } : {}) };
+    const run: BenchmarkRunReport["runs"][number] = { harness: arm.harness, command: redactCommand(arm.command), cwd, result: reportResult, metric: Number.isFinite(metric) ? metric : undefined, ...(Object.keys(metrics).length ? { metrics: { ...metrics } } : {}), attempts, attemptDetails, ...(finalFailure ? { failureClass: finalFailure } : {}), ...(reportReproducibility ? { reproducibility: reportReproducibility } : {}) };
     const trial: HarnessTrial = {
       harness: arm.harness,
       ...(arm.policy ? { policy: arm.policy } : {}),

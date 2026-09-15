@@ -3736,6 +3736,19 @@ test("benchmark reports redact nested worker process output", async () => {
     assert.equal(report.trials[0].candidateMetric, 0.5);
     assert.doesNotMatch(report.runs[0].result.stdout, /sk-report-secret/);
     assert.match(report.runs[0].result.stdout, /REDACTED_TOKEN/);
+    assert.doesNotMatch(JSON.stringify(report.runs[0]), /sk-report-secret/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("benchmark reports redact credentials in alternate and reproducibility commands", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-command-redaction-"));
+  try {
+    const secret = "sk-command-secret-12345678901234567890";
+    const primary = [process.execPath, "-e", "process.exit(1)", "--token", secret];
+    const alternate = [process.execPath, "-e", "console.log(JSON.stringify({score:0.8}))", "--api-key", secret];
+    const report = await runBenchmarkArms([{ harness: "redacted-routes", task: "task-a", arm: "default", seed: 1, model: "test-model", budgetMinutes: 1, retries: 0, alternateCommands: [alternate], direction: "maximize", baselineMetric: 0, metric: "score", command: primary, reproducibilityCommand: alternate }], root);
+    assert.doesNotMatch(JSON.stringify(report), /sk-command-secret/);
+    assert.equal(report.runs[0].attemptDetails[1].command.at(-1), "[REDACTED_ARGUMENT]");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

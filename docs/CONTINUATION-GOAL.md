@@ -63,6 +63,8 @@ external evaluator.
   covered by the benchmark runner test.
 - Latest verified baseline: 314/314 tests passing, TypeScript check passing,
   build passing, and a clean worktree.
+- Benchmark report command argv is now redacted alongside process output, with
+  coverage for primary, alternate, and reproducibility routes.
 
 ## Immediate next work
 

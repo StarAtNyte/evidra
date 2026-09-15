@@ -61,8 +61,10 @@ that the comparison protocol was unchanged.
 Each arm declares the same protocol metadata plus a bounded command, working
 directory, metric name, and baseline. Evidra executes the commands with their
 declared time budgets, parses the declared metric, and writes raw process
-evidence—including bounded, redacted stdout/stderr and metric data for every
-attempt—alongside the scorecards. The runner does not claim reproducibility;
+evidence—including bounded, redacted stdout/stderr, redacted command argv, and
+metric data for every attempt—alongside the scorecards. Secrets in primary,
+alternate, and reproducibility commands are redacted before report persistence.
+The runner does not claim reproducibility;
 independent repeats must be declared as separate matched arms.
 
 An arm may optionally declare `policy` (for example `greedy`, `ucb_portfolio`,
