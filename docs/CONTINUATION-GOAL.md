@@ -378,6 +378,9 @@ external evaluator.
   network capabilities for lanes, director, and critic turns; ordinary chat
   remains unchanged, and retrieved material still enters Evidra only through
   its provenance/evidence gates.
+- Codex provider turns and entitlement-reset waits now accept one interrupt
+  signal, so cancellation remains effective after a usage-limit error instead
+  of leaving a controller asleep until the retry delay ends.
 
 ## Immediate next work
 

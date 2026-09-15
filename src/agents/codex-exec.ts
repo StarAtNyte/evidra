@@ -88,6 +88,8 @@ export interface ExecAgentOptions {
   /** Receive the bounded, redacted assistant message for replay diagnostics. */
   onAssistant?: (source: string, text: string) => void;
   onUsage?: (usage: AgentResult["usage"], provider: string, model: string, role: string) => void;
+  /** Abort the provider turn and any entitlement-reset wait immediately. */
+  interruptSignal?: AbortSignal;
 }
 
 export class ProviderUsageLimitError extends Error {
@@ -485,6 +487,8 @@ export class CodexExecAgent {
     const signalHandler = (): void => { abort.abort(); };
     process.once("SIGTERM", signalHandler);
     process.once("SIGINT", signalHandler);
+    const interruptHandler = (): void => { abort.abort(); };
+    this.options.interruptSignal?.addEventListener("abort", interruptHandler, { once: true });
     let paused = false;
     let settled = false;
     const control: ProcessControl = {
@@ -576,6 +580,7 @@ export class CodexExecAgent {
       clearTimeout(timeout);
       process.removeListener("SIGTERM", signalHandler);
       process.removeListener("SIGINT", signalHandler);
+      this.options.interruptSignal?.removeEventListener("abort", interruptHandler);
       isolated?.cleanup();
     }
   }
@@ -588,6 +593,8 @@ export class CodexExecAgent {
     const signalHandler = (): void => { abort.abort(); };
     process.once("SIGTERM", signalHandler);
     process.once("SIGINT", signalHandler);
+    const interruptHandler = (): void => { abort.abort(); };
+    this.options.interruptSignal?.addEventListener("abort", interruptHandler, { once: true });
     let paused = false;
     const control: ProcessControl = {
       pause: () => { paused = true; },
@@ -622,6 +629,7 @@ export class CodexExecAgent {
       clearTimeout(timeout);
       process.removeListener("SIGTERM", signalHandler);
       process.removeListener("SIGINT", signalHandler);
+      this.options.interruptSignal?.removeEventListener("abort", interruptHandler);
     }
   }
 }
@@ -676,6 +684,19 @@ export async function runWithUsageLimitWait(
   maxWaitMs = MAX_PROVIDER_RESET_WAIT_MS,
 ): Promise<AgentResult> {
   const started = Date.now();
+  const wait = (delayMs: number): Promise<void> => new Promise((resolve, reject) => {
+    if (options.interruptSignal?.aborted) { reject(new Error("Codex request interrupted.")); return; }
+    const timer = setTimeout(() => {
+      options.interruptSignal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      options.interruptSignal?.removeEventListener("abort", onAbort);
+      reject(new Error("Codex request interrupted."));
+    };
+    options.interruptSignal?.addEventListener("abort", onAbort, { once: true });
+  });
   while (true) {
     try {
       return await new CodexExecAgent(options).run(task, onProgress, onProcess);
@@ -685,7 +706,7 @@ export async function runWithUsageLimitWait(
       if (remaining <= 0) throw new Error("Provider usage limit did not reset within the engineer wait budget.");
       const delay = Math.min(providerRetryAfterMs(error), remaining);
       onProgress?.(`Codex usage limit reached; waiting ${Math.ceil(delay / 60_000)} minute(s) before retrying the experiment engineer.`);
-      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      await wait(delay);
     }
   }
 }
