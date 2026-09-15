@@ -12,6 +12,12 @@ export interface RubricCriterion {
 export interface ResearchRubricContext {
   baselineAvailable?: boolean;
   sourceCount?: number;
+  /** Mean retrieval-quality heuristic from the durable source frontier. */
+  sourceQuality?: number;
+  /** Fraction of retrieved candidates with extracted claims. */
+  sourceClaimCoverage?: number;
+  /** Normalized diversity across scholarly, official, and implementation evidence. */
+  sourceDiversity?: number;
   evidenceConflicts?: number;
 }
 
@@ -39,6 +45,12 @@ export function assessResearchDecisionRubric(decision: ResearchDecision, context
     hypothesis.mechanism.trim() && hypothesis.proposedChange.trim() && hypothesis.falsificationTest.trim()).length;
   const families = new Set(hypotheses.map((hypothesis) => hypothesis.formulationFamily));
   const evidenceCount = hypotheses.reduce((sum, hypothesis) => sum + hypothesis.evidence.length, 0);
+  const sourceQuality = context.sourceCount && context.sourceCount > 0
+    ? context.sourceQuality === undefined ? 1 : bounded(context.sourceQuality)
+    : 0;
+  const sourceClaimCoverage = context.sourceCount && context.sourceCount > 0
+    ? context.sourceClaimCoverage === undefined ? 1 : bounded(context.sourceClaimCoverage)
+    : 0;
   const criteria: RubricCriterion[] = [
     {
       id: "action-closure",
@@ -60,8 +72,8 @@ export function assessResearchDecisionRubric(decision: ResearchDecision, context
       id: "evidence",
       title: "Evidence grounding",
       weight: 0.2,
-      score: bounded((evidenceCount > 0 ? 0.6 : 0) + (context.baselineAvailable ? 0.25 : 0) + (context.sourceCount && context.sourceCount > 0 ? 0.15 : 0)),
-      rationale: evidenceCount || context.baselineAvailable || context.sourceCount ? "The decision has observable evidence or source context." : "No baseline, source, or hypothesis evidence is attached.",
+      score: bounded((evidenceCount > 0 ? 0.6 : 0) + (context.baselineAvailable ? 0.25 : 0) + sourceQuality * 0.1 + sourceClaimCoverage * 0.05),
+      rationale: evidenceCount || context.baselineAvailable || context.sourceCount ? `The decision has observable evidence or source context${context.sourceCount ? ` (source quality ${(sourceQuality * 100).toFixed(0)}%, claim coverage ${(sourceClaimCoverage * 100).toFixed(0)}%)` : ""}.` : "No baseline, source, or hypothesis evidence is attached.",
       required: executable || decision.decision === "propose",
     },
     {
@@ -76,8 +88,8 @@ export function assessResearchDecisionRubric(decision: ResearchDecision, context
       id: "diversity",
       title: "Formulation diversity",
       weight: 0.1,
-      score: hypotheses.length ? bounded(families.size / Math.min(3, hypotheses.length)) : 1,
-      rationale: `${families.size} formulation family/families are represented.`,
+      score: hypotheses.length ? bounded(families.size / Math.min(3, hypotheses.length)) : context.sourceDiversity === undefined ? 1 : bounded(context.sourceDiversity),
+      rationale: hypotheses.length ? `${families.size} formulation family/families are represented.` : context.sourceDiversity === undefined ? "No source diversity signal was supplied." : `Evidence diversity is ${(bounded(context.sourceDiversity) * 100).toFixed(0)}%.`,
       required: hypotheses.length > 1,
     },
     {

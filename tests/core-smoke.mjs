@@ -4783,6 +4783,18 @@ test("research decision rubric exposes actionable evidence gaps", () => {
   assert.equal(weakAssessment.verdict, "weak");
 });
 
+test("research rubric distinguishes retrieved diverse evidence from bare source presence", () => {
+  const decision = {
+    decision: "propose", nextAction: "Run the proposed validation experiment", goalStatus: "active", hypotheses: [{
+      title: "Test method", mechanism: "mechanism", proposedChange: "change", falsificationTest: "test", formulationFamily: "ablation", outcomeType: "metric", expectedMetricDelta: { median: 0.1, lower: 0, upper: 0.2 }, evidence: [{ statement: "Observed signal", source: "source" }], evidenceSourceIds: [], implementationRisk: "low", leakageRisk: "low", computeCostGpuHours: 0, expectedOutcome: "improve",
+    }],
+  };
+  const weak = assessResearchDecisionRubric(decision, { sourceCount: 3, sourceQuality: 0.1, sourceClaimCoverage: 0, sourceDiversity: 0.33 });
+  const strong = assessResearchDecisionRubric(decision, { sourceCount: 3, sourceQuality: 0.9, sourceClaimCoverage: 1, sourceDiversity: 1 });
+  assert.ok(strong.score > weak.score);
+  assert.match(weak.criteria.find((criterion) => criterion.id === "evidence").rationale, /quality 10%/);
+});
+
 test("non-metric experiments can pass evidence audit through verified completion", () => {
   const competition = { id: "proof", name: "Proof", taskType: "formal", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["true"], experimentCommand: ["true"] };
   const manifest = createExperimentManifest({ id: "proof-exp", hypothesisId: "hyp-proof", outcomeType: "proof", gitCommit: "abc", datasetVersion: "data", verificationCommand: ["true"] }, competition);

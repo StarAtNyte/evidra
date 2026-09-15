@@ -2503,6 +2503,9 @@ research
       const decisionRubric = assessResearchDecisionRubric(decision, {
         baselineAvailable: Boolean(observation.baseline?.exitCode === 0),
         sourceCount: researchSources.length,
+        sourceQuality: literatureFrontier.meanQualityScore,
+        sourceClaimCoverage: literatureFrontier.claimCoverage,
+        sourceDiversity: Math.min(1, new Set(literatureFrontier.candidates.map((candidate) => candidate.evidenceClass).filter(Boolean)).size / 3),
         evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
       });
       decisionStore.appendEvent("research.rubric.assessed", {
