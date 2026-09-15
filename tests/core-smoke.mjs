@@ -3047,6 +3047,13 @@ test("paired statistics and recovery are deterministic", () => {
   assert.match(recoveryRouteDirective("timeout").instruction, /lower-resource|split-workload/);
 });
 
+test("paired statistics reject malformed numeric evidence", () => {
+  assert.throws(() => compareMetricSeries([1, Number.NaN], [1, 2]), /finite numbers/);
+  assert.throws(() => compareMetricSeries([1], [2], true, 0), /positive integer/);
+  assert.throws(() => pairedPermutationPValue([1, Number.POSITIVE_INFINITY], [1, 2]), /finite numbers/);
+  assert.throws(() => pairedPermutationPValue([1], [2], true, 0), /positive integer/);
+});
+
 test("terminal experiments cannot replay an immutable manifest", () => {
   assert.equal(experimentReplayDecision("proposed").allowed, true);
   assert.equal(experimentReplayDecision("screened").allowed, true);

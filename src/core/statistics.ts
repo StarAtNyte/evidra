@@ -29,6 +29,8 @@ function quantile(values: number[], probability: number): number {
 export function compareMetricSeries(baseline: number[], candidate: number[], lowerIsBetter = true, resamples = 2000): { delta: number; probabilityImproved: number; confidenceInterval: [number, number]; samples: number } {
   if (baseline.length === 0 || candidate.length === 0) throw new Error("Metric series are empty.");
   if (baseline.length !== candidate.length) throw new Error("Metric series must have matching fold/seed cardinality before paired comparison.");
+  if (!baseline.every(Number.isFinite) || !candidate.every(Number.isFinite)) throw new Error("Metric series must contain only finite numbers.");
+  if (!Number.isInteger(resamples) || resamples < 1) throw new Error("Bootstrap resamples must be a positive integer.");
   const length = baseline.length;
   const differences = Array.from({ length }, (_, index) => candidate[index] - baseline[index]);
   const observed = differences.reduce((sum, value) => sum + value, 0) / length;
@@ -52,6 +54,8 @@ export function compareMetricSeries(baseline: number[], candidate: number[], low
 /** Deterministic paired sign-permutation p-value for the one-sided improvement hypothesis. */
 export function pairedPermutationPValue(baseline: number[], candidate: number[], lowerIsBetter = true, samples = 10_000): number {
   if (baseline.length === 0 || candidate.length === 0 || baseline.length !== candidate.length) throw new Error("Permutation inputs must have matching non-empty cardinality.");
+  if (!baseline.every(Number.isFinite) || !candidate.every(Number.isFinite)) throw new Error("Permutation inputs must contain only finite numbers.");
+  if (!Number.isInteger(samples) || samples < 1) throw new Error("Permutation samples must be a positive integer.");
   const improvements = baseline.map((value, index) => lowerIsBetter ? value - candidate[index] : candidate[index] - value);
   const observed = improvements.reduce((sum, value) => sum + value, 0) / improvements.length;
   let favorable = 0;
