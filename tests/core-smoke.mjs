@@ -20,7 +20,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
-import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine } from "../dist/agents/codex-exec.js";
+import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
@@ -3008,6 +3008,17 @@ test("Codex usage preserves cache and reasoning-token accounting", () => {
     inputTokens: 100, cachedInputTokens: 40, cacheWriteInputTokens: 8, outputTokens: 20, reasoningOutputTokens: 12,
   });
   assert.equal(normalizeCodexUsage({ input_tokens: "unknown" }), undefined);
+});
+
+test("Codex reset wait is interruptible", async () => {
+  const controller = new AbortController();
+  const pending = waitForInterrupt(5_000, controller.signal);
+  controller.abort();
+  await assert.rejects(pending, /Codex request interrupted/);
+  const started = Date.now();
+  await waitForInterrupt(5);
+  assert.ok(Date.now() - started < 500);
+  await assert.rejects(waitForInterrupt(100, AbortSignal.abort()), /Codex request interrupted/);
 });
 
 test("shared agent usage aggregation ignores malformed and negative counters", () => {

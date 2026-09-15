@@ -381,6 +381,8 @@ external evaluator.
 - Codex provider turns and entitlement-reset waits now accept one interrupt
   signal, so cancellation remains effective after a usage-limit error instead
   of leaving a controller asleep until the retry delay ends.
+- The reset-wait primitive is directly tested for immediate abort, normal
+  completion, and already-aborted signals.
 
 ## Immediate next work
 

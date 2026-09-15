@@ -684,19 +684,6 @@ export async function runWithUsageLimitWait(
   maxWaitMs = MAX_PROVIDER_RESET_WAIT_MS,
 ): Promise<AgentResult> {
   const started = Date.now();
-  const wait = (delayMs: number): Promise<void> => new Promise((resolve, reject) => {
-    if (options.interruptSignal?.aborted) { reject(new Error("Codex request interrupted.")); return; }
-    const timer = setTimeout(() => {
-      options.interruptSignal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, delayMs);
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      options.interruptSignal?.removeEventListener("abort", onAbort);
-      reject(new Error("Codex request interrupted."));
-    };
-    options.interruptSignal?.addEventListener("abort", onAbort, { once: true });
-  });
   while (true) {
     try {
       return await new CodexExecAgent(options).run(task, onProgress, onProcess);
@@ -706,7 +693,25 @@ export async function runWithUsageLimitWait(
       if (remaining <= 0) throw new Error("Provider usage limit did not reset within the engineer wait budget.");
       const delay = Math.min(providerRetryAfterMs(error), remaining);
       onProgress?.(`Codex usage limit reached; waiting ${Math.ceil(delay / 60_000)} minute(s) before retrying the experiment engineer.`);
-      await wait(delay);
+      await waitForInterrupt(delay, options.interruptSignal);
     }
   }
+}
+
+/** Sleep without losing the operator's ability to interrupt a reset wait. */
+export function waitForInterrupt(delayMs: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new Error("Codex request interrupted.")); return; }
+    let settled = false;
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      if (error) reject(error); else resolve();
+    };
+    const onAbort = (): void => finish(new Error("Codex request interrupted."));
+    const timer = setTimeout(() => finish(), Math.max(0, delayMs));
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
