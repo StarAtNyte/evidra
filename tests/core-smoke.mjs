@@ -3139,6 +3139,11 @@ test("experience replay adapter preserves generic evaluator utility and quaranti
   assert.equal(world?.nodes.find((node) => node.id === "clean")?.utility, 7);
   assert.equal(world?.nodes.find((node) => node.id === "weak")?.valid, false);
   assert.equal(world?.nodes.some((node) => node.id === "unsafe"), false);
+  const evaluatorWorld = experienceReplayWorld([
+    { trajectoryId: "metric", admission: "candidate", events: [{ id: "metric-evaluator", kind: "evaluator", payload: { replayUtility: -0.25, durationMinutes: 3 } }], quality: quality("PASS") },
+  ], (record) => record.events.find((event) => event.kind === "evaluator")?.payload.replayUtility);
+  assert.equal(evaluatorWorld?.nodes.find((node) => node.id === "metric")?.utility, -0.25);
+  assert.equal(evaluatorWorld?.nodes.find((node) => node.id === "metric")?.costMinutes, 3);
 });
 
 test("ensemble analysis exposes diversity and deterministic blends", () => {

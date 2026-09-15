@@ -2103,6 +2103,9 @@ research
       // this adapter remains usable for both research and challenges; the
       // task evaluator still owns the objective-specific utility.
       const replayWorld = experienceReplayWorld(experienceRecords, (record) => {
+        const evaluator = record.events.find((event) => event.kind === "evaluator");
+        const replayUtility = evaluator?.payload.replayUtility;
+        if (typeof replayUtility === "number" && Number.isFinite(replayUtility)) return replayUtility;
         if (record.quality.overall === "PASS") return 1;
         if (record.quality.overall === "WARN") return 0.5;
         if (record.quality.overall === "FAIL") return 0;
@@ -3468,10 +3471,21 @@ experiment.command("run")
     const resultStore = new ResearchStore(statePath);
     resultStore.saveRun({ id: result.runId, experimentId: id, status: recorded.status, payload: recorded });
     for (const [name, path] of Object.entries(artifactPaths)) resultStore.saveArtifact({ id: `${result.runId}-${name}`, runId: result.runId, name, path, checksum: sha256File(path) });
-    const experimentTrajectoryEvents: TrajectoryEvent[] = [
-      { id: `${result.runId}-process`, kind: "process", payload: { status: recorded.status, exitCode: recorded.exitCode, failureClass: recorded.failureClass ?? null } },
-      ...Array.from({ length: Math.max(0, attempt - 1) }, (_, index) => ({ id: `${result.runId}-recovery-${index + 1}`, kind: "recovery" as const, payload: { attempt: index + 1, status: "completed" } })),
-      { id: `${result.runId}-evaluator`, kind: "evaluator", payload: { metric: recorded.metrics[adapter.config.metric.name] ?? null, evidenceConsistent: recorded.status === "completed" } },
+      const experimentTrajectoryEvents: TrajectoryEvent[] = [
+        { id: `${result.runId}-process`, kind: "process", payload: { status: recorded.status, exitCode: recorded.exitCode, failureClass: recorded.failureClass ?? null } },
+        ...Array.from({ length: Math.max(0, attempt - 1) }, (_, index) => ({ id: `${result.runId}-recovery-${index + 1}`, kind: "recovery" as const, payload: { attempt: index + 1, status: "completed" } })),
+      { id: `${result.runId}-evaluator`, kind: "evaluator", payload: {
+        metric: recorded.metrics[adapter.config.metric.name] ?? null,
+        metrics: recorded.metrics,
+        outcomeType: manifest.outcomeType,
+        durationMinutes: recorded.durationSeconds / 60,
+        // Replay utility is normalized to the simulator's higher-is-better
+        // convention, but remains merely an offline policy signal.
+        ...(manifest.outcomeType === "metric" && typeof recorded.metrics[adapter.config.metric.name] === "number" && Number.isFinite(recorded.metrics[adapter.config.metric.name])
+          ? { replayUtility: adapter.config.metric.direction === "minimize" ? -recorded.metrics[adapter.config.metric.name] : recorded.metrics[adapter.config.metric.name] }
+          : {}),
+        evidenceConsistent: recorded.status === "completed",
+      } },
       { id: `${result.runId}-terminal`, kind: "terminal", payload: { status: recorded.status, goalAttained: recorded.status === "completed" && (manifest.outcomeType !== "metric" || recorded.metrics[adapter.config.metric.name] !== undefined) } },
     ];
     const experimentQuality = evaluateTrajectory(experimentTrajectoryEvents);

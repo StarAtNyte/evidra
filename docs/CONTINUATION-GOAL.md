@@ -121,6 +121,9 @@ external evaluator.
 - The autonomous controller now ranks bounded breadth/depth/low-cost policies
   over durable experience trajectories and injects the ranking as advisory
   allocation context; replay never replaces fresh evaluator evidence.
+- Experiment trajectories now retain normalized primary evaluator utility and
+  measured duration for replay diagnostics; non-metric research still requires
+  an explicit evaluator-provided utility.
 
 ## Immediate next work
 
