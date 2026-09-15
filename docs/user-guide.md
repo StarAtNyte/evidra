@@ -179,6 +179,9 @@ Codex-native activity is also copied into the cycle trajectory as bounded
 milestones remain available for audit and later harness adaptation after the
 TUI closes. The activity is compact and secret-redacted; raw provider protocol
 events, credentials, and unbounded tool payloads are not persisted.
+Native command, file-change, and tool failures are also included in the
+trajectory's deterministic recovery score, so a cycle cannot look clean merely
+because the failed action came from Codex rather than Evidra's typed tool loop.
 
 Independent lanes explore different formulations and roles. Their evidence is
 cross-pollinated through a bounded board, while shared citations are not

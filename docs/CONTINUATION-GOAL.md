@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `0fc03df`.
+- Latest pushed commit: `66025c8`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -133,6 +133,9 @@ external evaluator.
   events in research trajectories. Commands, searches, file changes, plans,
   and reasoning milestones therefore remain auditable and available to later
   experience/replay logic after the interactive session closes.
+- Native Codex command, file-change, and tool failures now feed deterministic
+  trajectory error-recovery scoring, so provider-originated failures influence
+  capability gaps and future routing instead of being treated as clean cycles.
 - Codex structured-output schemas now cover the research director, independent
   research lanes, and critic, so every research-role response is constrained
   before durable parsing and evidence gates.
