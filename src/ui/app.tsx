@@ -338,6 +338,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const progressLastPaint = useRef(0);
   const progressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+  const [modelLoadError, setModelLoadError] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<AvailableModel | null>(null);
   const [picker, setPicker] = useState<"provider" | "model" | "reasoning" | "mode" | "permissions" | null>(null);
   const [pickerIndex, setPickerIndex] = useState(0);
@@ -514,6 +515,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   useEffect(() => {
     let active = true;
     const loadModels = async (): Promise<void> => {
+      setModelLoadError(null);
       try {
         const models = config.provider === "codex" ? await listCodexModels() : await listLocalModels();
         if (active) {
@@ -525,6 +527,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       } catch {
         if (active) {
           setAvailableModels([]);
+          setModelLoadError(config.provider === "codex"
+            ? "Codex models are unavailable. Confirm /login status, then try /model again."
+            : "Local models are unavailable. Start Ollama, then try /model again.");
           if (config.provider === "local") setConfig((current) => ({ ...current, model: "unconfigured" }));
         }
       }
@@ -2206,7 +2211,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           setPickerIndex(Math.max(0, availableModels.findIndex((entry) => entry.id === config.model)));
           append("assistant", `Choose a ${config.provider} model with ↑/↓ and Enter. Esc cancels.`);
         } else {
-          append("assistant", `Provider: ${config.provider}\nModel: ${config.model}\nNo models loaded yet. Type /model again in a moment.`);
+          append("assistant", `Provider: ${config.provider}\nModel: ${config.model}\n${modelLoadError ?? "No models loaded yet. Type /model again in a moment."}`);
         }
       }
       else {
@@ -2229,7 +2234,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (status === 0) {
           activeCodexThread.current = undefined;
           setConfig((current) => ({ ...current, provider: "codex", model: current.provider === "codex" ? current.model : DEFAULT_CODEX_MODEL, codexThreadId: undefined }));
-          void listCodexModels().then((models) => setAvailableModels(models)).catch(() => setAvailableModels([]));
+          void listCodexModels()
+            .then((models) => { setAvailableModels(models); setModelLoadError(models.length ? null : "Codex returned no selectable models. Check the Codex account, then try /model again."); })
+            .catch(() => { setAvailableModels([]); setModelLoadError("Codex login succeeded, but the model list is unavailable. Try /model again."); });
           setOnboardingComplete(true);
           append("assistant", "Codex login completed. Evidra is ready.");
         } else append("assistant", "Codex login did not complete. Setup remains available; run /login codex again when ready.");
