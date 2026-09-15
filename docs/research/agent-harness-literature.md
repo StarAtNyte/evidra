@@ -593,3 +593,12 @@ research, software tasks, scientific proofs, and competitions rather than a
 single benchmark format. The CLI and TUI now persist `subtask.audit` events at
 the live phase gate before advancing a phase, making the audit visible to
 restart/recovery logic instead of leaving it as an in-memory check.
+
+The controller also has a separate deterministic decision-auditor boundary.
+It checks typed action legality, active-phase alignment, stop conditions, and
+whether completion has a successful durable phase audit. A failing audit is
+recorded as `research.decision.audit` and downgrades the decision to inspection;
+the director cannot override this with rationale text. This is the first
+Manage–Execute–Audit separation in the live control path; a future provider
+auditor can add independent semantic review without weakening these hard
+controller checks.
