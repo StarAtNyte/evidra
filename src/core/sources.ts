@@ -21,9 +21,47 @@ export interface SourceSearchResult {
   abstract?: string;
   /** Probe(s) that returned this work during a deep search. */
   queries?: string[];
+  /** Deterministic provenance class used to prioritize evidence over discovery noise. */
+  evidenceClass?: "scholarly" | "official" | "implementation" | "discovery";
+  /** 0..1 ranking signal; this is a retrieval heuristic, never a truth score. */
+  qualityScore?: number;
 }
 
 export type SourceSearchDepth = "shallow" | "deep";
+
+function hostFor(url: string): string {
+  try { return new URL(url).hostname.toLowerCase(); } catch { return ""; }
+}
+
+/**
+ * Rank candidates by provenance before relevance. Search engines and indexes
+ * are useful for discovery, but they must not crowd out a retrievable paper,
+ * official specification, or implementation repository. The score is only a
+ * routing heuristic; retrieved content and claims remain independently audited.
+ */
+export function rankSourceSearchResults(results: SourceSearchResult[], query?: string, limit = 20): SourceSearchResult[] {
+  const queryTokens = new Set((query ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3));
+  const seen = new Set<string>();
+  return results.flatMap((result, index) => {
+    const key = (result.doi ?? canonicalSourceUrl(result.url)).toLowerCase();
+    if (seen.has(key)) return [];
+    seen.add(key);
+    const host = hostFor(result.url);
+    const scholarly = result.provider === "arxiv" || result.provider === "openalex" || result.provider === "crossref";
+    const official = /(^|\.)((gov|edu)|wikipedia\.org|openai\.com|deepmind\.google|ai\.google|nasa\.gov|who\.int)$/i.test(host)
+      || /(^|\.)github\.com$/i.test(host);
+    const implementation = /(^|\.)github\.com$/i.test(host) || /(^|\.)gitlab\.com$/i.test(host);
+    const discovery = result.provider === "web" || /(^|\.)scholar\.google\./i.test(host) || /(^|\.)researchgate\.net$/i.test(host);
+    const evidenceClass: SourceSearchResult["evidenceClass"] = scholarly ? "scholarly" : implementation ? "implementation" : official ? "official" : discovery ? "discovery" : "discovery";
+    const base = scholarly ? 0.72 : official ? 0.62 : implementation ? 0.52 : 0.2;
+    const metadata = (result.doi ? 0.08 : 0) + (result.abstract ? 0.06 : 0) + (result.authors.length ? 0.04 : 0) + (result.venue ? 0.03 : 0);
+    const overlap = queryTokens.size ? [...queryTokens].filter((token) => `${result.title} ${result.abstract ?? ""}`.toLowerCase().includes(token)).length / queryTokens.size : 0;
+    const score = Math.max(0, Math.min(1, base + metadata + overlap * 0.07 + (result.queries?.length ?? 0) * 0.01));
+    return [{ ...result, evidenceClass, qualityScore: Number(score.toFixed(4)), _rank: score, _index: index }];
+  }).sort((left, right) => right._rank - left._rank || right.qualityScore - left.qualityScore || left._index - right._index)
+    .slice(0, Math.max(1, Math.min(limit, 100)))
+    .map(({ _rank: _ignoredRank, _index: _ignoredIndex, ...result }) => result);
+}
 
 /** Build bounded, deterministic probes for deep literature search. */
 export function researchSearchQueries(query: string, depth: SourceSearchDepth = "shallow"): string[] {
@@ -202,7 +240,7 @@ export async function searchResearchWeb(query: string, limit = 8, signal?: Abort
   if (!response.ok) throw new Error(`Web search failed (${response.status} ${response.statusText}).`);
   const results = parseWebSearchResults(await response.text(), limit);
   if (!results.length) throw new Error("Web search returned no candidates.");
-  return results;
+  return rankSourceSearchResults(results, query, limit);
 }
 
 /** Search scholarly works; retrieval and claim extraction remain a separate step. */
@@ -252,7 +290,7 @@ export async function searchResearchSources(query: string, limit = 8, signal?: A
     byKey.set(key, normalized);
     deduplicated.push(normalized);
   }
-  return deduplicated.slice(0, Math.max(1, Math.min(limit, 20)));
+  return rankSourceSearchResults(deduplicated, query, Math.max(1, Math.min(limit, 20)));
 }
 
 /** Parse GitHub repository search output as implementation leads, not evidence. */
@@ -472,6 +510,11 @@ export interface SourceFrontierReport {
   retrievalCoverage: number;
   retrievedWithClaims: number;
   claimCoverage: number;
+  scholarlyWorks: number;
+  officialWorks: number;
+  implementationLeads: number;
+  discoveryOnlyWorks: number;
+  meanQualityScore: number;
 }
 
 function sourceWorkKey(result: { url: string; doi?: string }): string {
@@ -505,6 +548,8 @@ export function sourceFrontier(events: Array<{ type: string; payload: unknown }>
           ...(prior?.publicationDate ?? result.publicationDate ? { publicationDate: prior?.publicationDate ?? result.publicationDate } : {}),
           authors: prior?.authors?.length ? prior.authors : Array.isArray(result.authors) ? result.authors.filter((author): author is string => typeof author === "string").slice(0, 8) : [],
           ...(prior?.abstract ?? result.abstract ? { abstract: prior?.abstract ?? result.abstract } : {}),
+          ...(prior?.evidenceClass ?? result.evidenceClass ? { evidenceClass: prior?.evidenceClass ?? result.evidenceClass } : {}),
+          ...(prior?.qualityScore ?? result.qualityScore !== undefined ? { qualityScore: prior?.qualityScore ?? result.qualityScore } : {}),
           key,
           queries: [...new Set([...(prior?.queries ?? []), ...(Array.isArray(result.queries) ? result.queries.filter((value): value is string => typeof value === "string" && value.trim().length > 0) : query ? [query] : [])])].slice(0, 12),
           retrieved: prior?.retrieved ?? false,
@@ -520,10 +565,14 @@ export function sourceFrontier(events: Array<{ type: string; payload: unknown }>
       }
     }
   }
-  const candidates = [...byKey.values()].map((candidate) => ({ ...candidate, retrieved: candidate.retrieved || retrieved.has(candidate.key) || retrieved.has(sourceWorkKey({ url: candidate.url })) })).slice(0, Math.max(1, limit));
+  const candidates = [...byKey.values()]
+    .map((candidate) => ({ ...candidate, retrieved: candidate.retrieved || retrieved.has(candidate.key) || retrieved.has(sourceWorkKey({ url: candidate.url })) }))
+    .sort((left, right) => (right.qualityScore ?? 0) - (left.qualityScore ?? 0) || Number(right.retrieved) - Number(left.retrieved))
+    .slice(0, Math.max(1, limit));
   const queriesWithCandidates = new Set(candidates.flatMap((candidate) => candidate.queries)).size;
   const retrievedCandidates = candidates.filter((candidate) => candidate.retrieved);
   const retrievedWithClaims = retrievedCandidates.filter((candidate) => retrievedClaimCounts.has(candidate.key) || retrievedClaimCounts.has(sourceWorkKey({ url: candidate.url }))).length;
+  const qualityCandidates = candidates.filter((candidate) => typeof candidate.qualityScore === "number");
   return {
     candidates,
     queryCount: queries.size,
@@ -535,5 +584,10 @@ export function sourceFrontier(events: Array<{ type: string; payload: unknown }>
     retrievalCoverage: candidates.length ? retrievedCandidates.length / candidates.length : 0,
     retrievedWithClaims,
     claimCoverage: retrievedCandidates.length ? retrievedWithClaims / retrievedCandidates.length : 0,
+    scholarlyWorks: candidates.filter((candidate) => candidate.evidenceClass === "scholarly").length,
+    officialWorks: candidates.filter((candidate) => candidate.evidenceClass === "official").length,
+    implementationLeads: candidates.filter((candidate) => candidate.evidenceClass === "implementation").length,
+    discoveryOnlyWorks: candidates.filter((candidate) => candidate.evidenceClass === "discovery").length,
+    meanQualityScore: qualityCandidates.length ? qualityCandidates.reduce((sum, candidate) => sum + (candidate.qualityScore ?? 0), 0) / qualityCandidates.length : 0,
   };
 }

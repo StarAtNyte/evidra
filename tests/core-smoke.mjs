@@ -10,7 +10,7 @@ import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../di
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
-import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, researchSearchQueries, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
+import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { CompetitionConfigSchema, ExperimentManifestSchema } from "../dist/core/types.js";
 import { processFailureResult, runProcess } from "../dist/core/process.js";
@@ -2472,6 +2472,18 @@ test("scholarly source discovery returns candidates without trusting them", () =
   assert.equal(parsed[0].title, "Adaptive research agents");
   assert.equal(parsed[0].abstract, "Adaptive agents improve");
   assert.equal(parsed[0].authors[0], "A. Researcher");
+});
+
+test("source ranking prefers provenance-rich evidence over web discovery noise", () => {
+  const ranked = rankSourceSearchResults([
+    { title: "Search result mirror", url: "https://example.org/mirror", provider: "web", authors: [] },
+    { title: "Primary reproducible study", url: "https://arxiv.org/abs/2601.12345", provider: "arxiv", doi: "https://doi.org/10.1234/study", venue: "arXiv", authors: ["A. Author"], abstract: "A reproducible study with measured validation." },
+    { title: "Official benchmark specification", url: "https://github.com/example/benchmark", provider: "web", authors: [] },
+  ], "reproducible validation", 3);
+  assert.equal(ranked[0].title, "Primary reproducible study");
+  assert.equal(ranked[0].evidenceClass, "scholarly");
+  assert.ok((ranked[0].qualityScore ?? 0) > (ranked[2].qualityScore ?? 0));
+  assert.equal(ranked[2].evidenceClass, "discovery");
 });
 
 test("arXiv search parsing preserves primary paper metadata", () => {
