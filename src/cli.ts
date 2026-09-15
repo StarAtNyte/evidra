@@ -1174,7 +1174,7 @@ airsBenchmark.command("execute")
       const agent = new CodexExecAgent({
         provider: "codex", model: options.model, cwd: context.workspace,
         reasoningEffort: options.effort, sandbox: "workspace-write", networkAccessEnabled: false,
-        timeoutMs: context.timeoutMs,
+        timeoutMs: context.timeoutMs, maxRepeatedCommands: 3,
       });
       const started = Date.now();
       const response = await agent.run({

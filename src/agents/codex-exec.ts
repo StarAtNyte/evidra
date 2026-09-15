@@ -83,6 +83,8 @@ export interface ExecAgentOptions {
   onThread?: (threadId: string) => void;
   limitPolicy?: "auto" | "wait" | "fallback" | "stop";
   timeoutMs?: number;
+  /** Abort autonomous turns that repeat the exact same shell command. Zero disables it. */
+  maxRepeatedCommands?: number;
   /** Receive concise, redacted native provider activity for durable traces. */
   onActivity?: (source: string, activity: string) => void;
   /** Receive the bounded, redacted assistant message for replay diagnostics. */
@@ -544,6 +546,7 @@ export class CodexExecAgent {
   private async runCodexSdkAttempt(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void, outputSchemaText?: string, role = "conversation assistant", sandboxOverride?: CodexSandboxMode): Promise<AgentResult> {
     const abort = new AbortController();
     let timedOut = false;
+    let abortReason: string | undefined;
     // Serious research turns may include several tool calls and should not be
     // cut off by a five-minute conversational ceiling. Campaigns still pass
     // their remaining-budget-aware timeout explicitly.
@@ -608,8 +611,20 @@ export class CodexExecAgent {
       let usage: AgentResult["usage"];
       let threadId: string | undefined;
       let turnCompleted = false;
+      let lastCommand: string | undefined;
+      let repeatedCommands = 0;
       for await (const event of stream.events) {
         const value = event as unknown as { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string; query?: string; message?: string }; usage?: AgentResult["usage"]; message?: string; error?: { message?: string } };
+        if (value.type === "item.started" && value.item?.type === "command_execution" && typeof value.item.command === "string") {
+          if (value.item.command === lastCommand) repeatedCommands += 1;
+          else { lastCommand = value.item.command; repeatedCommands = 1; }
+          const limit = Math.max(0, Math.floor(this.options.maxRepeatedCommands ?? 0));
+          if (limit > 0 && repeatedCommands >= limit) {
+            abortReason = `Codex agent stuck: repeated the same command ${repeatedCommands} times (${progressLine(value.item.command)}).`;
+            onProgress?.("Agent appears stuck · stopping the repeated command loop.");
+            abort.abort();
+          }
+        }
         if (value.type === "thread.started" && value.thread_id) { threadId = value.thread_id; this.options.onThread?.(value.thread_id); }
         else if (value.type === "turn.started") onProgress?.("Thinking...");
         else if ((value.type === "item.updated" || value.type === "item.completed") && value.item?.type === "agent_message") {
@@ -640,7 +655,7 @@ export class CodexExecAgent {
       return { provider: this.options.provider, model, threadId: threadId ?? this.options.threadId, output: finalText, usage };
     } catch (error) {
       settled = true;
-      if (abort.signal.aborted) throw new Error(timedOut ? "Codex request timed out." : "Codex request interrupted.");
+      if (abort.signal.aborted) throw new Error(timedOut ? "Codex request timed out." : abortReason ?? "Codex request interrupted.");
       const diagnostic = error instanceof Error ? error.message : String(error);
       if (isProviderUsageLimit(error) || /429/i.test(diagnostic)) {
         const retryAfterMs = providerRetryAfterMs(new Error(diagnostic));

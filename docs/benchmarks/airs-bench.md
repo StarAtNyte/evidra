@@ -152,6 +152,12 @@ failure and does not spend evaluator time on an invalid run. This is useful
 negative evidence for improving the task prompt and agent progress watchdog,
 not a benchmark score.
 
+Embedded AIRS Codex runs now use a repeated-command watchdog: three identical
+shell commands in succession terminate the agent stage with an explicit stuck
+diagnostic, allowing the outer retry/route policy to recover instead of
+silently consuming the entire experiment budget. The watchdog is opt-in in
+the general Codex provider and enabled for autonomous AIRS runs.
+
 ```bash
 git clone https://github.com/facebookresearch/airs-bench.git
 cd airs-bench
