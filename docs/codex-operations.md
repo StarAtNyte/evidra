@@ -224,6 +224,9 @@ When a Codex entitlement reset is required, the campaign is durably paused and
 the wait interval is excluded from its research-time budget. Retry guards use
 that pause-aware clock as well, so a long provider wait cannot consume the
 active campaign budget merely because calendar time elapsed.
+Reset hints are parsed from common provider forms including `retry after`,
+`retry-after`, `try again in`, and `available in`, with a bounded 24-hour cap;
+when no hint is supplied Evidra uses its conservative default delay.
 
 The interactive TUI follows the same policy: `auto` and `wait` schedule a
 durable paused retry, `fallback` requires the local route, and `stop` leaves the

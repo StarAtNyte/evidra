@@ -235,7 +235,7 @@ export const MAX_PROVIDER_RESET_WAIT_MS = 24 * 60 * 60_000;
 export function providerRetryAfterMs(error: unknown): number {
   if (error instanceof ProviderUsageLimitError) return error.retryAfterMs;
   const text = error instanceof Error ? error.message : String(error);
-  const match = text.match(/(?:retry|reset)[^\d]*(\d+(?:\.\d+)?)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)/i);
+  const match = text.match(/(?:retry(?:-after)?|reset|try\s+again|available)[^\d]*(\d+(?:\.\d+)?)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)/i);
   if (!match) return 15 * 60_000;
   const amount = Number(match[1]);
   const unit = match[2].toLowerCase();

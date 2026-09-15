@@ -421,6 +421,9 @@ external evaluator.
   `auto` and `fallback` can change route after classified quota/network
   failures, while `wait`, `stop`, and account-model configuration errors stay
   explicit and do not silently switch providers.
+- Codex reset-delay parsing now understands `retry-after`, `try again in`, and
+  `available in` provider hints in addition to `retry` and `reset`, while
+  retaining the bounded 24-hour maximum.
 
 ## Immediate next work
 

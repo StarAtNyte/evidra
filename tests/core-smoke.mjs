@@ -522,6 +522,9 @@ test("provider reset waits support long campaigns without unbounded timers", () 
   assert.equal(MAX_PROVIDER_RESET_WAIT_MS, 24 * 60 * 60_000);
   assert.equal(providerRetryAfterMs(new Error("retry after 48 hours")), MAX_PROVIDER_RESET_WAIT_MS);
   assert.equal(providerRetryAfterMs(new Error("retry after 30 seconds")), 30_000);
+  assert.equal(providerRetryAfterMs(new Error("try again in 42 seconds")), 42_000);
+  assert.equal(providerRetryAfterMs(new Error("quota available in 2 minutes")), 120_000);
+  assert.equal(providerRetryAfterMs(new Error("retry-after: 1 hour")), 3_600_000);
 });
 
 test("full-access research workspaces cannot modify the controller checkout", () => {
