@@ -3023,6 +3023,7 @@ test("Codex adapter accepts only a completed injected stream", async () => {
     });
     const result = await completed.run(task);
     assert.equal(result.output, "Evidra response");
+    assert.equal(threadOptions.threadSource, "evidra-chat");
     assert.equal(threadOptions.networkAccessEnabled, true);
     assert.equal(threadOptions.webSearchMode, "live");
     assert.equal(threadOptions.webSearchEnabled, true);

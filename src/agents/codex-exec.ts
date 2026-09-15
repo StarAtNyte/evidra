@@ -486,12 +486,12 @@ export class CodexExecAgent {
 
     const loggedIn = await (this.dependencies.isLoggedIn?.() ?? codexIsLoggedInAsync());
     if (!loggedIn) throw new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription.");
-    const result = await this.runCodexSdk(prompt, onProgress, onProcess, task.outputSchema);
+    const result = await this.runCodexSdk(prompt, onProgress, onProcess, task.outputSchema, task.role);
     this.options.onUsage?.(result.usage, result.provider, result.model ?? this.options.model, task.role);
     return result;
   }
 
-  private async runCodexSdk(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void, outputSchemaText?: string): Promise<AgentResult> {
+  private async runCodexSdk(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void, outputSchemaText?: string, role = "conversation assistant"): Promise<AgentResult> {
     const abort = new AbortController();
     let timedOut = false;
     // Serious research turns may include several tool calls and should not be
@@ -525,6 +525,7 @@ export class CodexExecAgent {
         : new Codex({ codexPathOverride: resolveCodexBinary() });
       const thread = this.options.threadId
         ? codex.resumeThread(this.options.threadId, {
+          threadSource: role === "research director" ? "evidra-research" : role === "experiment engineer" ? "evidra-experiment" : "evidra-chat",
           workingDirectory: isolated?.path ?? this.options.cwd,
           skipGitRepoCheck: true,
           model,
@@ -536,6 +537,7 @@ export class CodexExecAgent {
           approvalPolicy: "never",
         })
         : codex.startThread({
+        threadSource: role === "research director" ? "evidra-research" : role === "experiment engineer" ? "evidra-experiment" : "evidra-chat",
         workingDirectory: isolated?.path ?? this.options.cwd,
         skipGitRepoCheck: true,
         model,
