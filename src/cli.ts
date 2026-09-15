@@ -37,7 +37,7 @@ import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { compareRuns } from "./core/statistics.js";
-import { createToolTraceRecorder, evaluateTrajectory, providerActivityFailureClass, type TrajectoryEvent } from "./core/trajectories.js";
+import { createToolTraceRecorder, evaluateTrajectory, parsePersistedTrace, providerActivityFailureClass, type TrajectoryEvent } from "./core/trajectories.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "./core/experiment-patches.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "./core/critic-gate.js";
 import { recordBaselineEvidence } from "./core/baseline.js";
@@ -388,6 +388,28 @@ async function acquireCliControllerLease(mode: "research" | "challenge"): Promis
   }
   const recoveredStore = new ResearchStore(statePath);
   const recoveredExperiments = recoveredStore.recoverStaleExperiments();
+  const recoveredTrajectoryPaths = new Set(recoveredStore.trajectories().flatMap((entry) => {
+    const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { tracePath?: unknown } : {};
+    return typeof payload.tracePath === "string" ? [payload.tracePath] : [];
+  }));
+  const recoveredTraceEvents = new Set(recoveredStore.eventsByType("research.trace.recovered").flatMap((event) => {
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as { path?: unknown; checksum?: unknown } : {};
+    return typeof payload.path === "string" && typeof payload.checksum === "string" ? [`${payload.path}:${payload.checksum}`] : [];
+  }));
+  const traceDirectory = join(root, ".sota", "traces");
+  if (existsSync(traceDirectory)) {
+    for (const name of readdirSync(traceDirectory).filter((entry) => entry.endsWith(".jsonl")).slice(-100)) {
+      const absolute = join(traceDirectory, name);
+      try {
+        const path = relative(root, absolute);
+        const checksum = sha256File(absolute);
+        if (recoveredTrajectoryPaths.has(path) || recoveredTraceEvents.has(`${path}:${checksum}`)) continue;
+        const parsed = parsePersistedTrace(readFileSync(absolute, "utf8"));
+        if (!parsed.events.length) continue;
+        recoveredStore.appendEvent("research.trace.recovered", { path, checksum, eventCount: parsed.events.length, invalidLines: parsed.invalidLines, firstEvent: parsed.events[0]?.id, lastEvent: parsed.events.at(-1)?.id, reason: "uncommitted cycle trace found during controller startup" });
+      } catch { /* A corrupt or concurrently unavailable trace must not block startup. */ }
+    }
+  }
   recoveredStore.close();
   if (recoveredExperiments.length) console.log(`Recovered ${recoveredExperiments.length} stale experiment(s) from a previous controller.`);
   let released = false;

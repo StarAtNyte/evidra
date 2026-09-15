@@ -210,7 +210,10 @@ unbounded payloads are not shown in the TUI or stored in research context.
 During an autonomous cycle, the same bounded events are also appended to a
 cycle JSONL trace under `.sota/traces/` as they occur. If the controller crashes
 before the final trajectory is committed, the partial tool/command history is
-still available for restart diagnosis without trusting raw provider output.
+still available for restart diagnosis without trusting raw provider output. On
+the next controller start, Evidra validates and checksums uncommitted traces,
+then records their recovery metadata as durable evidence; traces already linked
+to a completed trajectory are not duplicated.
 
 ## Production checklist
 

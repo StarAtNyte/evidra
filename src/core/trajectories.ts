@@ -33,6 +33,23 @@ export interface ToolTraceRecorderOptions {
   onEvent?: (event: TrajectoryEvent) => void;
 }
 
+/** Parse a crash-surviving JSONL trace without trusting arbitrary file data. */
+export function parsePersistedTrace(text: string, maxEvents = 256): { events: TrajectoryEvent[]; invalidLines: number } {
+  const events: TrajectoryEvent[] = [];
+  let invalidLines = 0;
+  for (const line of text.split(/\r?\n/).filter(Boolean).slice(0, Math.max(1, Math.min(maxEvents, 256)))) {
+    try {
+      const value = JSON.parse(line) as Partial<TrajectoryEvent>;
+      if (!value || typeof value !== "object" || typeof value.id !== "string" || typeof value.kind !== "string" || !["user", "assistant", "tool_call", "tool_result", "process", "evaluator", "recovery", "terminal"].includes(value.kind) || !value.payload || typeof value.payload !== "object" || Array.isArray(value.payload)) {
+        invalidLines += 1;
+        continue;
+      }
+      events.push({ id: value.id, kind: value.kind as TrajectoryEventKind, ...(typeof value.at === "string" ? { at: value.at } : {}), ...(typeof value.callId === "string" ? { callId: value.callId } : {}), payload: redactStructured(value.payload) });
+    } catch { invalidLines += 1; }
+  }
+  return { events, invalidLines };
+}
+
 /** Map redacted native provider failures to the controller's generic recovery vocabulary. */
 export function providerActivityFailureClass(activity: string): "timeout" | "rate_limit" | "auth" | "dependency" | "unknown" | undefined {
   if (!/^(?:Command failed|Tool failed|File change failed|Codex item error):?/i.test(activity)) return undefined;

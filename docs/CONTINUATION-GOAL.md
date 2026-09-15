@@ -195,6 +195,9 @@ external evaluator.
 - Autonomous CLI and TUI cycles now append bounded, redacted tool/provider
   activity to `.sota/traces/*.jsonl` as it happens, preserving partial Codex
   provenance when a controller crashes before its final trajectory commit.
+- Controller startup now validates and checksums uncommitted trace files,
+  records `research.trace.recovered` evidence, and avoids duplicating traces
+  already linked to a committed trajectory.
 - Autonomous memory context now uses hybrid FTS-plus-lexical retrieval for
   durable claims and hypotheses, so the existing SQLite index influences Codex
   research context instead of being used only by the interactive memory search.

@@ -36,7 +36,7 @@ import { estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.j
 import { auditData, dataAuditFingerprint } from "../dist/core/data-audit.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { runReducedValidation } from "../dist/core/stage-executor.js";
-import { createToolTraceRecorder, evaluateTrajectory, capabilityGaps, providerActivityFailureClass, validateTrajectoryStructure } from "../dist/core/trajectories.js";
+import { createToolTraceRecorder, evaluateTrajectory, parsePersistedTrace, capabilityGaps, providerActivityFailureClass, validateTrajectoryStructure } from "../dist/core/trajectories.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
 import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, selectCurriculum } from "../dist/core/experience.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
@@ -640,6 +640,17 @@ test("tool trace recorder preserves causal call/result pairs and redacts secrets
   blocked.onToolResult("director", blockedCall, { name: "shell.exec", ok: false, error: "blocked", trust: "permission_boundary" });
   blocked.events.push({ id: "terminal", kind: "terminal", payload: { status: "completed" } });
   assert.equal(evaluateTrajectory(blocked.events).safetyControl.verdict, "PASS");
+});
+
+test("persisted trace parser bounds malformed crash artifacts and redacts payloads", () => {
+  const parsed = parsePersistedTrace([
+    JSON.stringify({ id: "ok", kind: "process", payload: { activity: "token=sk-test_12345678901234567890" } }),
+    "not-json",
+    JSON.stringify({ id: "bad", kind: "unknown", payload: {} }),
+  ].join("\n"));
+  assert.equal(parsed.events.length, 1);
+  assert.equal(parsed.invalidLines, 2);
+  assert.equal(parsed.events[0].payload.activity, "token=[REDACTED]");
 });
 
 test("capability outcomes preserve prediction, serving action, and result", () => {
