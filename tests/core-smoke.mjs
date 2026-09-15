@@ -910,6 +910,7 @@ test("campaign child timeout is bounded by remaining active budget", () => {
 test("research model stages scale with long campaigns without exceeding their budget share", () => {
   assert.equal(researchTurnTimeoutMs(5 * 60_000), 75_000);
   assert.equal(researchTurnTimeoutMs(4 * 60 * 60_000), 30 * 60_000);
+  assert.equal(researchTurnTimeoutMs(10_000), 2_500);
   assert.equal(researchTurnTimeoutMs(0), 0);
 });
 

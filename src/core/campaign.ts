@@ -120,8 +120,11 @@ export function campaignRemainingMs(campaign: CampaignTimeState & { budgetMinute
  */
 export function researchTurnTimeoutMs(remainingBudgetMs: number, maxTimeoutMs = 30 * 60_000): number {
   if (!Number.isFinite(remainingBudgetMs) || remainingBudgetMs <= 0) return 0;
-  const ceiling = Math.max(15_000, Number.isFinite(maxTimeoutMs) ? maxTimeoutMs : 30 * 60_000);
-  return Math.max(15_000, Math.min(ceiling, Math.floor(remainingBudgetMs / 4)));
+  const ceiling = Math.max(1_000, Number.isFinite(maxTimeoutMs) ? maxTimeoutMs : 30 * 60_000);
+  // The minimum applies only while meaningful budget remains. Once a short
+  // campaign is nearly exhausted, the hard campaign budget must win over a
+  // provider-stage convenience floor.
+  return Math.max(1, Math.min(ceiling, Math.floor(remainingBudgetMs / 4)));
 }
 
 export function pauseCampaign<T extends CampaignTimeState>(campaign: T, now = new Date().toISOString()): T {
