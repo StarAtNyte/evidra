@@ -57,11 +57,11 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `7d29b38`.
+- Latest pushed commit: `f8a25fd`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 322/322 tests passing, TypeScript check passing,
+- Latest verified baseline: 323/323 tests passing, TypeScript check passing,
   build passing, and a clean worktree.
 - Benchmark report command argv is now redacted alongside process output, with
   coverage for primary, alternate, and reproducibility routes.
@@ -95,6 +95,8 @@ external evaluator.
   values and invalid sample counts instead of emitting misleading evidence.
 - Direct fair-pair comparisons require complete task, arm, seed, model, and
   budget metadata, even when callers bypass the external trial parser.
+- Benchmark arms and trials can carry an evaluator fingerprint; protocol
+  fingerprints, direct pairing, and held-out parity now reject evaluator drift.
 
 ## Immediate next work
 
