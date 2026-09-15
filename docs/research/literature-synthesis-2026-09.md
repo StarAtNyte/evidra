@@ -201,7 +201,9 @@ and a fluent research writer measurable:
   scientific rediscovery with weighted artifact-level criteria. This supports
   Evidra's choice to represent proof, behavior, artifact, and system outcomes
   without fabricating a scalar metric; an adapter should translate each rubric
-  criterion into a typed verifier and retain criterion-level evidence.
+  criterion into a typed verifier and retain criterion-level evidence. Generic
+  subtask audits now also expose a normalized weighted completion score for
+  diagnostics, while every required criterion remains a hard gate.
 - [AutoExperiment](https://arxiv.org/abs/2506.19724) and [AutoMat](https://arxiv.org/abs/2605.00803)
   test reconstruction and execution of paper workflows. They reinforce the
   need for immutable paper/source identities, environment capture, intermediate
