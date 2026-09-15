@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `75c49b5` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `da413e2` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -80,10 +80,14 @@ external evaluator.
   CLI and TUI flows.
 - Replication completion and external evaluator score observations now refresh
   the affected experiment audit with trigger provenance.
+- Replication is a required criterion whenever a manifest declares it: only a
+  completed run for the exact current linked child manifest satisfies the gate;
+  stale child runs and unrelated experiments do not. External evaluator
+  requirements can be represented as a separate `externalScoreObserved` gate.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 379/379 tests passing, TypeScript check passing,
+- Latest verified baseline: 271/271 tests passing, TypeScript check passing,
   and build passing. The worktree is clean; generated reports remain excluded
   from source changes.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
