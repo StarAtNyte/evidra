@@ -20,7 +20,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
-import { CodexExecAgent, progressLine } from "../dist/agents/codex-exec.js";
+import { CodexExecAgent, codexEventErrorMessage, progressLine } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
@@ -2792,6 +2792,12 @@ test("local provider enforces the configured turn timeout", async () => {
 test("Codex live progress redacts inline and separate-looking credentials", () => {
   assert.equal(progressLine("python run.py --token super-secret-value"), "python run.py --token [REDACTED_ARGUMENT]");
   assert.equal(progressLine("upload --api-key=sk-12345678901234567890"), "upload --api-key=[REDACTED_ARGUMENT]");
+});
+
+test("Codex failure events preserve nested provider diagnostics", () => {
+  assert.equal(codexEventErrorMessage({ type: "turn.failed", error: { message: "rate limit reached; retry in 42 seconds" } }), "rate limit reached; retry in 42 seconds");
+  assert.equal(codexEventErrorMessage({ type: "error", message: "network disconnected" }), "network disconnected");
+  assert.equal(codexEventErrorMessage({ type: "turn.failed" }), "Codex turn failed.");
 });
 
 test("research director honors the bounded provider-attempt policy", async () => {

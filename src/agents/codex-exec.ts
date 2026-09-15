@@ -94,6 +94,15 @@ export function progressLine(value: string, limit = 180): string {
   return compact.length > limit ? `${compact.slice(0, limit - 1)}…` : compact;
 }
 
+/** Extract the useful diagnostic from either SDK failure event shape. */
+export function codexEventErrorMessage(event: unknown): string {
+  if (!event || typeof event !== "object") return "Codex turn failed.";
+  const value = event as { message?: unknown; error?: { message?: unknown } };
+  if (typeof value.error?.message === "string" && value.error.message.trim()) return value.error.message;
+  if (typeof value.message === "string" && value.message.trim()) return value.message;
+  return "Codex turn failed.";
+}
+
 export const MAX_PROVIDER_RESET_WAIT_MS = 24 * 60 * 60_000;
 
 export function providerRetryAfterMs(error: unknown): number {
@@ -311,7 +320,7 @@ export class CodexExecAgent {
       let usage: AgentResult["usage"];
       let threadId: string | undefined;
       for await (const event of stream.events) {
-        const value = event as unknown as { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string; query?: string }; usage?: AgentResult["usage"]; message?: string };
+        const value = event as unknown as { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string; query?: string; message?: string }; usage?: AgentResult["usage"]; message?: string; error?: { message?: string } };
         if (value.type === "thread.started" && value.thread_id) { threadId = value.thread_id; this.options.onThread?.(value.thread_id); }
         else if (value.type === "turn.started") onProgress?.("Thinking...");
         else if (value.type === "item.started" && value.item?.type === "command_execution") onProgress?.(`Running: ${progressLine(value.item.command ?? "command")}`);
@@ -327,7 +336,7 @@ export class CodexExecAgent {
           usage = raw ? { inputTokens: raw.input_tokens, outputTokens: raw.output_tokens } : undefined;
           onProgress?.("Completed.");
         }
-        else if (value.type === "turn.failed" || value.type === "error") throw new Error(value.message ?? "Codex turn failed.");
+        else if (value.type === "turn.failed" || value.type === "error") throw new Error(codexEventErrorMessage(value));
       }
       settled = true;
       if (!finalText) throw new Error("Codex returned no assistant response.");
