@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { z } from "zod";
 
 /** A stable, file-level view of the harness action space. */
 export interface HarnessComponent {
@@ -38,6 +39,23 @@ export interface HarnessChangeContract {
   prediction: string;
   falsification: string;
   acceptance: string;
+}
+
+export const HarnessChangeContractSchema = z.object({
+  id: z.string().min(1).max(160),
+  componentIds: z.array(z.string().min(1).max(200)).min(1).max(100).refine((ids) => new Set(ids).size === ids.length, "component IDs must be unique"),
+  baselineScore: z.number().finite().optional(),
+  predictedDelta: z.object({ low: z.number().finite(), median: z.number().finite(), high: z.number().finite() }).superRefine((delta, context) => {
+    if (delta.low > delta.median) context.addIssue({ code: z.ZodIssueCode.custom, path: ["low"], message: "must be less than or equal to median" });
+    if (delta.median > delta.high) context.addIssue({ code: z.ZodIssueCode.custom, path: ["high"], message: "must be greater than or equal to median" });
+  }),
+  prediction: z.string().min(1).max(2_000),
+  falsification: z.string().min(1).max(2_000),
+  acceptance: z.string().min(1).max(2_000),
+});
+
+export function parseHarnessChangeContract(value: unknown): HarnessChangeContract {
+  return HarnessChangeContractSchema.parse(value);
 }
 
 export interface HarnessChangeOutcome {

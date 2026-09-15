@@ -153,7 +153,7 @@ import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../dist/core/validation-lock.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexSandbox, isProviderFallbackEligible, resolveCodexModel } from "../dist/agents/codex-exec.js";
-import { assessHarnessChangePresence, evaluateHarnessChange, inventoryHarnessComponents, planHarnessInterventions } from "../dist/core/harness-evolution.js";
+import { assessHarnessChangePresence, evaluateHarnessChange, inventoryHarnessComponents, parseHarnessChangeContract, planHarnessInterventions } from "../dist/core/harness-evolution.js";
 import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
 import { assessStopPolicy } from "../dist/core/stop-policy.js";
 import { classifyVerifier, verifierKind } from "../dist/core/formal-verification.js";
@@ -3421,6 +3421,9 @@ test("harness evolution inventories editable components and enforces prediction 
     assert.equal(interventions[0].failureClass, "invalid_metric");
     assert.ok(interventions[0].components.some((id) => id.includes("executors.ts")));
     const contract = { id: "change-1", componentIds: interventions[0].components, baselineScore: 0.5, predictedDelta: { low: 0.02, median: 0.05, high: 0.1 }, prediction: "score improves", falsification: "no improvement", acceptance: "paired" };
+    assert.equal(parseHarnessChangeContract(contract).id, "change-1");
+    assert.throws(() => parseHarnessChangeContract({ ...contract, predictedDelta: { low: 0.2, median: 0.1, high: 0.3 } }), /less than or equal/);
+    assert.throws(() => parseHarnessChangeContract({ ...contract, componentIds: ["component:x", "component:x"] }), /unique/);
     assert.equal(evaluateHarnessChange(contract, { candidateScore: 0.57, valid: true }).status, "confirmed");
     assert.equal(evaluateHarnessChange(contract, { candidateScore: 0.9, valid: true, changePresence: { status: "unchanged", changedPaths: [], addedPaths: [], removedPaths: [], reason: "no targeted source changed" } }).status, "unobserved");
     assert.equal(evaluateHarnessChange(contract, { candidateScore: 0.51, valid: true }).status, "refuted");

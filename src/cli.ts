@@ -79,7 +79,7 @@ import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "./core/validation-lock.js";
 import { runBenchmarkArms, type BenchmarkArmSpec } from "./core/benchmark-runner.js";
-import { assessHarnessChangePresence, evaluateHarnessChange, type HarnessChangeContract } from "./core/harness-evolution.js";
+import { assessHarnessChangePresence, evaluateHarnessChange, parseHarnessChangeContract, type HarnessChangeContract } from "./core/harness-evolution.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, type AirsBenchFamily, type AirsBenchDiscovery, type AirsHarnessTemplate } from "./core/airs-bench.js";
 import { inventoryHarnessComponents, planHarnessInterventions } from "./core/harness-evolution.js";
 import { advanceEvolutionaryGeneration } from "./core/evolution.js";
@@ -586,9 +586,10 @@ benchmark.command("run")
     const raw = parsed && typeof parsed === "object" && Array.isArray((parsed as { arms?: unknown }).arms) ? (parsed as { arms: unknown[] }).arms : undefined;
     if (!raw?.length) throw new Error("Benchmark protocol must contain a non-empty arms array.");
     const changeValue = parsed && typeof parsed === "object" ? (parsed as { change?: unknown }).change : undefined;
-    const change = changeValue && typeof changeValue === "object" ? changeValue as Partial<HarnessChangeContract> : undefined;
-    if (change && (typeof change.id !== "string" || !Array.isArray(change.componentIds) || !change.componentIds.every((item) => typeof item === "string") || !change.predictedDelta || typeof change.predictedDelta.low !== "number" || typeof change.predictedDelta.median !== "number" || typeof change.predictedDelta.high !== "number" || typeof change.prediction !== "string" || typeof change.falsification !== "string" || typeof change.acceptance !== "string")) {
-      throw new Error("Benchmark change contract must declare id, componentIds, predictedDelta, prediction, falsification, and acceptance.");
+    let change: HarnessChangeContract | undefined;
+    if (changeValue !== undefined) {
+      try { change = parseHarnessChangeContract(changeValue); }
+      catch (error) { throw new Error(`Benchmark change contract is invalid: ${error instanceof Error ? error.message : String(error)}`); }
     }
     const baselineComponentsValue = parsed && typeof parsed === "object" ? (parsed as { baselineComponents?: unknown }).baselineComponents : undefined;
     const baselineComponents = baselineComponentsValue === undefined ? undefined : Array.isArray(baselineComponentsValue) && baselineComponentsValue.every((entry) => entry && typeof entry === "object" && typeof (entry as { path?: unknown }).path === "string" && typeof (entry as { checksum?: unknown }).checksum === "string")
@@ -640,7 +641,7 @@ benchmark.command("run")
     const targetComponentIds = [...new Set(arms.filter((arm) => arm.harness === options.challenger).flatMap((arm) => arm.componentIds ?? []))];
     const changePresence = change && baselineComponents ? assessHarnessChangePresence(baselineComponents, inventoryHarnessComponents(benchmarkWorkspace), targetComponentIds) : undefined;
     const changeOutcomes = change
-      ? comparisons.map((comparison) => ({ incumbent: comparison.incumbent, outcome: evaluateHarnessChange({ ...change, id: change.id!, componentIds: change.componentIds!, predictedDelta: change.predictedDelta!, prediction: change.prediction!, falsification: change.falsification!, acceptance: change.acceptance! }, { baselineScore: change.baselineScore, candidateScore: comparison.pairedMeanDelta === null ? undefined : (change.baselineScore ?? 0) + comparison.pairedMeanDelta, valid: comparison.validPairedArms > 0 && comparison.pairedLower95 !== null, changePresence }) }))
+      ? comparisons.map((comparison) => ({ incumbent: comparison.incumbent, outcome: evaluateHarnessChange(change, { baselineScore: change.baselineScore, candidateScore: comparison.pairedMeanDelta === null ? undefined : (change.baselineScore ?? 0) + comparison.pairedMeanDelta, valid: comparison.validPairedArms > 0 && comparison.pairedLower95 !== null, changePresence }) }))
       : undefined;
     let generalization: ReturnType<typeof evaluateHarnessGeneralization>[] | undefined;
     if (options.holdout) {
@@ -773,7 +774,7 @@ benchmark.command("retest")
       const adaptation = planHarnessAdaptation(report.trials, scorecards, comparisons, challenger);
       const changeValue = payload.benchmarkEvidence?.change;
       const change = changeValue && typeof changeValue === "object" ? changeValue as Partial<HarnessChangeContract> : undefined;
-      const validChange = change && typeof change.id === "string" && Array.isArray(change.componentIds) && change.componentIds.every((item) => typeof item === "string") && change.predictedDelta && typeof change.predictedDelta.low === "number" && typeof change.predictedDelta.median === "number" && typeof change.predictedDelta.high === "number" && typeof change.prediction === "string" && typeof change.falsification === "string" && typeof change.acceptance === "string" ? change as HarnessChangeContract : undefined;
+      const validChange = change && (() => { try { return parseHarnessChangeContract(change); } catch { return undefined; } })();
       const changeOutcomes = validChange
         ? comparisons.map((comparison) => ({ incumbent: comparison.incumbent, outcome: evaluateHarnessChange(validChange, { baselineScore: validChange.baselineScore, candidateScore: comparison.pairedMeanDelta === null ? undefined : (validChange.baselineScore ?? 0) + comparison.pairedMeanDelta, valid: comparison.validPairedArms > 0 && comparison.pairedLower95 !== null }) }))
         : undefined;
