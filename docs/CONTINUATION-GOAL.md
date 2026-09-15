@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `ed19d87`.
+- Latest pushed commit: `0a7703b`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -126,6 +126,9 @@ external evaluator.
   Codex executable used by login, model discovery, steering, and SDK turns.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
+- Normal Codex chat no longer performs a duplicate UI-level auth preflight;
+  the provider boundary performs the single asynchronous check before the turn,
+  reducing startup latency without allowing unauthenticated execution.
 - Codex thread restoration is explicit: a new terminal starts a fresh Evidra
   chat, while `/resume <session-id>` restores the saved Codex thread and
   transcript. Provider/model changes invalidate the active chat thread.
