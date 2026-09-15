@@ -364,6 +364,7 @@ test("run attempts remain separately queryable across retries and reopen", () =>
     assert.deepEqual(attempts.map((attempt) => [attempt.attempt, attempt.status, attempt.failureClass]), [[1, "failed", "timeout"], [2, "completed", null]]);
     assert.equal(reopened.runAttempts()[0].command[0], "python");
     assert.deepEqual(reopened.runAttempts()[1].metrics, { score: 0.8, safety: 0.9 });
+    assert.match(renderReport(reopened, "final"), /metrics score=0\.8, safety=0\.9/);
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
