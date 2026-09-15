@@ -4,6 +4,7 @@ export interface LaneFinding {
   findings?: string[];
   recommendations?: string[];
   uncertainties?: string[];
+  discriminatingTests?: string[];
   evidence?: string[];
   confidence?: number;
   status?: string;
@@ -15,6 +16,8 @@ export interface CrossPollinationBoard {
   agreements: string[];
   tensions: string[];
   complementaryRecommendations: string[];
+  /** Concrete tests proposed by lanes to resolve disagreement or uncertainty. */
+  discriminatingTests: string[];
   transferCandidates: Array<{
     recommendation: string;
     sourceRoles: string[];
@@ -81,18 +84,20 @@ export function synthesizeLaneReports(reports: LaneFinding[]): CrossPollinationB
     .sort((left, right) => right.independentSupport - left.independentSupport || right.evidence.length - left.evidence.length || right.confidence - left.confidence || left.recommendation.localeCompare(right.recommendation))
     .slice(0, 8);
   const tensions = completed.flatMap((report) => (report.uncertainties ?? []).map((uncertainty) => `${report.role ?? "lane"}: ${uncertainty}`));
+  const discriminatingTests = unique(completed.flatMap((report) => report.discriminatingTests ?? [])).slice(0, 12);
   const evidence = completed.flatMap((report) => report.evidence ?? []).slice(0, 18);
   const familyCoverage = completed.map((report) => report.role ?? "unknown").filter((role, index, values) => values.indexOf(role) === index);
   const independentEvidenceCount = unique(completed.flatMap((report) => report.evidence ?? [])).length;
   const agreementPairs = agreementScores.length;
   const agreementStrength = agreementPairs ? agreementScores.reduce((sum, score) => sum + score, 0) / agreementPairs : 0;
-  const needsAdversarialReview = completed.length < 2 || tensions.length > 0 || independentEvidenceCount < completed.length || agreementStrength < 0.6;
+  const needsAdversarialReview = completed.length < 2 || tensions.length > 0 || independentEvidenceCount < completed.length || agreementStrength < 0.6 || (tensions.length > 0 && discriminatingTests.length === 0);
   return {
     laneCount: reports.length,
     completedCount: completed.length,
     agreements: unique(agreements).slice(0, 8),
     tensions: unique(tensions).slice(0, 8),
     complementaryRecommendations: [...recommendationGroups].map((group) => group.recommendation).slice(0, 12),
+    discriminatingTests,
     transferCandidates,
     evidence: unique(evidence).slice(0, 18),
     familyCoverage,

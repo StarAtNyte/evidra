@@ -170,6 +170,10 @@ Retrieval now also considers target objective, task family, and provenance
 context, while retaining weak matches as explicitly labeled leads so the
 system can still discover cross-domain analogies without pretending they are
 already applicable.
+Independent lanes also return concrete discriminating tests for material
+uncertainties. The cross-pollination board preserves these tests and requires
+adversarial review when a contested board has no proposed resolution test,
+turning disagreement into an executable research question rather than a vote.
 
 Primary sources:
 

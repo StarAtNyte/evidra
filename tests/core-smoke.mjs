@@ -4517,8 +4517,8 @@ test("harness generalization requires a task-disjoint held-out win", () => {
 
 test("cross-pollination preserves agreement, tension, and evidence provenance", () => {
   const board = synthesizeLaneReports([
-    { role: "data", status: "completed", findings: ["group leakage affects validation"], recommendations: ["lock grouped folds"], uncertainties: ["site shift is unknown"], evidence: ["audit.csv"] },
-    { role: "validation", status: "completed", findings: ["validation leakage affects score"], recommendations: ["lock grouped folds"], uncertainties: ["seed stability is unknown"], evidence: ["fold-report.json"] },
+    { role: "data", status: "completed", findings: ["group leakage affects validation"], recommendations: ["lock grouped folds"], uncertainties: ["site shift is unknown"], discriminatingTests: ["compare grouped and random splits on a locked site-disjoint holdout"], evidence: ["audit.csv"] },
+    { role: "validation", status: "completed", findings: ["validation leakage affects score"], recommendations: ["lock grouped folds"], uncertainties: ["seed stability is unknown"], discriminatingTests: ["compare grouped and random splits on a locked site-disjoint holdout"], evidence: ["fold-report.json"] },
   ]);
   assert.equal(board.completedCount, 2);
   assert.ok(board.agreements.length >= 1);
@@ -4532,6 +4532,7 @@ test("cross-pollination preserves agreement, tension, and evidence provenance", 
   assert.deepEqual(board.transferCandidates[0].evidence, ["audit.csv", "fold-report.json"]);
   assert.deepEqual(board.evidence, ["audit.csv", "fold-report.json"]);
   assert.ok(board.tensions.some((value) => value.includes("site shift")));
+  assert.deepEqual(board.discriminatingTests, ["compare grouped and random splits on a locked site-disjoint holdout"]);
 });
 
 test("cross-pollination does not call generic vocabulary consensus", () => {

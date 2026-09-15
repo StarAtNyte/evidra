@@ -34,6 +34,7 @@ export const ResearchLaneReportSchema = z.object({
   findings: z.array(z.string()).max(12),
   recommendations: z.array(z.string()).max(8),
   uncertainties: z.array(z.string()).max(8),
+  discriminatingTests: z.array(z.string()).max(8).default([]),
   evidence: z.array(z.string()).max(12),
   evidenceSourceIds: z.array(z.string().min(1)).max(8).default([]),
   confidence: z.number().min(0).max(1),
@@ -246,8 +247,8 @@ function lanePrompt(role: ResearchLaneRole, objective: string): string {
           : "Investigate alternative methods, mechanisms, procedures, and implementation paths; propose falsifiable comparisons.";
   return `${focus}\n\nObjective: ${objective}\n\n` +
     "You are an independent Evidra research lane. Use the supplied workspace and evidence context; run only read-only inspection when tools are available. Do not edit files, submit anything, or claim measurements you did not observe. Return ONLY JSON with this shape: " +
-    '{"role":"...","summary":"...","findings":["..."],"recommendations":["..."],"uncertainties":["..."],"evidence":["command, artifact, or source supporting each important statement"],"evidenceSourceIds":["exact durable source IDs for literature-derived evidence"],"confidence":0.0}. ' +
-    "Recommendations must be testable and should state what would falsify them. A bounded prior-peer board may be present in the context: use it to challenge, extend, or explicitly reject earlier findings, but never treat it as stronger than primary evidence.";
+    '{"role":"...","summary":"...","findings":["..."],"recommendations":["..."],"uncertainties":["..."],"discriminatingTests":["cheapest observation or experiment that would distinguish competing explanations"],"evidence":["command, artifact, or source supporting each important statement"],"evidenceSourceIds":["exact durable source IDs for literature-derived evidence"],"confidence":0.0}. ' +
+    "Recommendations must be testable and should state what would falsify them. For every material uncertainty or disagreement, propose a concrete discriminating test. A bounded prior-peer board may be present in the context: use it to challenge, extend, or explicitly reject earlier findings, but never treat it as stronger than primary evidence.";
 }
 
 /** Keep cross-cycle peer communication useful without replaying unbounded transcripts. */
@@ -263,6 +264,7 @@ export function boundedPeerBoard(events: Array<{ type: string; payload: unknown 
         findings: Array.isArray(report.findings) ? report.findings.slice(0, 5) : [],
         recommendations: Array.isArray(report.recommendations) ? report.recommendations.slice(0, 4) : [],
         uncertainties: Array.isArray(report.uncertainties) ? report.uncertainties.slice(0, 3) : [],
+        discriminatingTests: Array.isArray(report.discriminatingTests) ? report.discriminatingTests.slice(0, 3) : [],
         evidence: Array.isArray(report.evidence) ? report.evidence.slice(0, 5) : [],
         evidenceSourceIds: Array.isArray(report.evidenceSourceIds) ? report.evidenceSourceIds.slice(0, 5) : [],
         confidence: typeof report.confidence === "number" && Number.isFinite(report.confidence) ? report.confidence : 0,
@@ -450,7 +452,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     return report;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const report: ResearchLaneReport = { role, summary: "Lane failed before producing a validated report.", findings: [], recommendations: [], uncertainties: [message], evidence: [], evidenceSourceIds: [], confidence: 0, status: "failed", error: message };
+    const report: ResearchLaneReport = { role, summary: "Lane failed before producing a validated report.", findings: [], recommendations: [], uncertainties: [message], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0, status: "failed", error: message };
     saveLaneEvent(options.storePath, role, report);
     const failed = new ResearchStore(options.storePath);
     failed.updateAgentLane({ role, status: "failed", provider: laneRoute.provider, model: laneRoute.model, task: objective, error: message });

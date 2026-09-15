@@ -137,6 +137,9 @@ external evaluator.
 - Transfer-memory retrieval now scores objective, task-family, and provenance
   context fit and exposes matched/missing signals; low-fit methods remain
   visible as weak leads instead of being auto-applied.
+- Research lanes now return bounded discriminating tests; cross-pollination
+  persists them and keeps adversarial review active when uncertainty has no
+  concrete resolution test.
 
 ## Immediate next work
 
