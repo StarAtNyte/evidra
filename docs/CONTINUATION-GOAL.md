@@ -57,11 +57,11 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `1e032bd`.
+- Latest pushed commit: `50c3843`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 323/323 tests passing, TypeScript check passing,
+- Latest verified baseline: 324/324 tests passing, TypeScript check passing,
   build passing, and a clean worktree.
 - Benchmark report command argv is now redacted alongside process output, with
   coverage for primary, alternate, and reproducibility routes.
@@ -105,6 +105,8 @@ external evaluator.
 - The local safety benchmark currently passes all 9/9 lifecycle probes.
 - Kaggle score polling now uses a bounded quote-aware CSV parser, so commas in
   descriptions or other quoted fields cannot shift the public-score column.
+- Submission polling resolves the provider submission ID from the persisted
+  receipt, with a bundle-ID fallback for legacy records.
 
 ## Immediate next work
 
