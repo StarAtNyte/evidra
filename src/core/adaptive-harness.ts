@@ -22,6 +22,9 @@ export interface AdaptiveHarnessInput {
   environmentDrift?: boolean;
   /** The controller repeated the same active decision and must widen search. */
   searchStagnation?: boolean;
+  /** The deterministic allocator's current focus, derived from durable evidence. */
+  allocationFocus?: "breadth" | "tool-reliability" | "evidence-validation" | "recovery" | "goal-clarity" | "termination";
+  allocationPriority?: "normal" | "high" | "critical";
 }
 
 export type AdaptiveHarnessProfile = "exploration" | "evidence" | "recovery" | "budget";
@@ -127,6 +130,24 @@ export function deriveAdaptiveHarnessPolicy(input: AdaptiveHarnessInput): Adapti
     peerReview = true;
     requireReplication = true;
     reasons.push(`phase ${input.phase} selects evidence-preserving harness policy`);
+  }
+
+  // Allocation is a controller-level signal, not model prose. Apply it before
+  // lower-level failure rules so those rules can add stricter recovery or
+  // verification pressure when necessary.
+  if (input.allocationFocus === "evidence-validation" && input.allocationPriority !== "normal") {
+    profile = "evidence";
+    peerReview = true;
+    independentCritic = true;
+    requireReplication = true;
+    reasons.push(`allocation pressure: ${input.allocationPriority ?? "high"}-priority evidence validation`);
+  } else if (input.allocationFocus === "recovery") {
+    profile = "recovery";
+    recoveryRoute = "alternate_route";
+    reasons.push("allocation pressure: route recovery before new exploration");
+  } else if (input.allocationFocus === "breadth") {
+    preferDiverseSearch = true;
+    reasons.push("allocation focus: preserve diverse search breadth");
   }
 
   if (toolGaps > 0) {

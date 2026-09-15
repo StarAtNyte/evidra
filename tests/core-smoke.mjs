@@ -1085,6 +1085,19 @@ test("adaptive harness policy changes routing from measured failure pressure", (
   assert.match(drift.reasons.join(" "), /environment drift/i);
 });
 
+test("allocation pressure reaches the adaptive harness posture", () => {
+  const policy = deriveAdaptiveHarnessPolicy({
+    quality: [],
+    allocationFocus: "evidence-validation",
+    allocationPriority: "high",
+    budgetRemainingMinutes: 60,
+  });
+  assert.equal(policy.profile, "evidence");
+  assert.equal(policy.peerReview, true);
+  assert.equal(policy.requireReplication, true);
+  assert.match(policy.reasons.join(" "), /allocation pressure/i);
+});
+
 test("collaboration utility gates repeated no-value peer review but preserves hard pressure", () => {
   const early = collaborationUtility([{ useful: false }, { useful: false }]);
   assert.equal(early.recommendTeam, true);

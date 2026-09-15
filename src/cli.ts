@@ -1982,6 +1982,8 @@ research
         benchmarkRegression,
         environmentDrift,
         searchStagnation: priorStagnation.stagnant,
+        allocationFocus: allocation.focus,
+        allocationPriority: allocation.priority,
         benchmarkInterventions: [
           ...harnessEvolutionPlan.map((item) => ({ kind: item.failureClass, priority: item.priority >= 8 ? "critical" : item.priority >= 5 ? "high" : "normal" })),
           ...(Array.isArray(harnessAdaptationAgenda?.interventions)
