@@ -2490,6 +2490,12 @@ test("source ranking prefers provenance-rich evidence over web discovery noise",
   assert.equal(ranked[0].evidenceClass, "scholarly");
   assert.ok((ranked[0].qualityScore ?? 0) > (ranked[2].qualityScore ?? 0));
   assert.equal(ranked[2].evidenceClass, "discovery");
+  const diversified = rankSourceSearchResults([
+    { title: "ArXiv result one", url: "https://arxiv.org/abs/2601.00001", provider: "arxiv", authors: [], abstract: "validation study" },
+    { title: "ArXiv result two", url: "https://arxiv.org/abs/2601.00002", provider: "arxiv", authors: [], abstract: "validation study" },
+    { title: "Crossref result", url: "https://publisher.example/paper", provider: "crossref", doi: "https://doi.org/10.1234/cross", authors: [], venue: "Journal" },
+  ], "validation", 2);
+  assert.equal(diversified[1].provider, "crossref");
 });
 
 test("direct source provenance remains classifiable without a search event", () => {

@@ -59,7 +59,7 @@ export function sourceEvidenceQuality(input: Pick<SourceSearchResult, "url" | "p
 export function rankSourceSearchResults(results: SourceSearchResult[], query?: string, limit = 20): SourceSearchResult[] {
   const queryTokens = new Set((query ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3));
   const seen = new Set<string>();
-  return results.flatMap((result, index) => {
+  const scored = results.flatMap((result, index) => {
     const key = (result.doi ?? canonicalSourceUrl(result.url)).toLowerCase();
     if (seen.has(key)) return [];
     seen.add(key);
@@ -69,9 +69,33 @@ export function rankSourceSearchResults(results: SourceSearchResult[], query?: s
     const overlap = queryTokens.size ? [...queryTokens].filter((token) => `${result.title} ${result.abstract ?? ""}`.toLowerCase().includes(token)).length / queryTokens.size : 0;
     const score = Math.max(0, Math.min(1, base + metadata + overlap * 0.07 + (result.queries?.length ?? 0) * 0.01));
     return [{ ...result, evidenceClass, qualityScore: Number(score.toFixed(4)), _rank: score, _index: index }];
-  }).sort((left, right) => right._rank - left._rank || right.qualityScore - left.qualityScore || left._index - right._index)
-    .slice(0, Math.max(1, Math.min(limit, 100)))
-    .map(({ _rank: _ignoredRank, _index: _ignoredIndex, ...result }) => result);
+  }).sort((left, right) => right._rank - left._rank || right.qualityScore - left.qualityScore || left._index - right._index);
+  const selected: typeof scored = [];
+  const providers = new Set<string>();
+  const classes = new Set<SourceEvidenceClass>();
+  const target = Math.max(1, Math.min(limit, 100));
+  // Greedy diversity-aware reranking prevents a deep search from filling the
+  // whole frontier with one index/provider. Small bonuses preserve relevance
+  // while encouraging independent retrieval routes and evidence classes.
+  while (selected.length < target && scored.length) {
+    let bestIndex = 0;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    for (let index = 0; index < scored.length; index += 1) {
+      const candidate = scored[index];
+      const provider = candidate.provider ?? "direct";
+      const diversityBonus = (providers.has(provider) ? 0 : 0.06) + (candidate.evidenceClass && classes.has(candidate.evidenceClass) ? 0 : 0.04);
+      const adjusted = candidate._rank + diversityBonus;
+      if (adjusted > bestScore || (adjusted === bestScore && candidate._index < scored[bestIndex]._index)) {
+        bestIndex = index;
+        bestScore = adjusted;
+      }
+    }
+    const [chosen] = scored.splice(bestIndex, 1);
+    selected.push(chosen);
+    providers.add(chosen.provider ?? "direct");
+    if (chosen.evidenceClass) classes.add(chosen.evidenceClass);
+  }
+  return selected.map(({ _rank: _ignoredRank, _index: _ignoredIndex, ...result }) => result);
 }
 
 /** Build bounded, deterministic probes for deep literature search. */
