@@ -79,6 +79,8 @@ external evaluator.
   enforcement, bounded responses, and redacted durable receipts.
 - Benchmark worker spawn failures now become structured attempts and can recover
   through declared alternate routes instead of aborting the whole protocol.
+- HTTP score polling retries bounded transient reads, while HTTP submission POST
+  requests remain single-attempt to prevent duplicate external actions.
 
 ## Immediate next work
 

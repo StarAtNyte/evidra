@@ -3193,6 +3193,7 @@ test("HTTP submission adapter uploads artifacts and polls scores without persist
   process.env.EVIDRA_TEST_HTTP_TOKEN = "http-secret-token";
   let server;
   let authorization;
+  let scoreRequests = 0;
   try {
     server = createServer((request, response) => {
       authorization = request.headers.authorization;
@@ -3202,6 +3203,8 @@ test("HTTP submission adapter uploads artifacts and polls scores without persist
         return;
       }
       if (request.method === "GET" && request.url === "/score/http-sub-1") {
+        scoreRequests += 1;
+        if (scoreRequests === 1) { response.statusCode = 503; response.end("temporarily unavailable"); return; }
         response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ publicScore: 0.876 }));
         return;
       }
@@ -3220,6 +3223,7 @@ test("HTTP submission adapter uploads artifacts and polls scores without persist
     assert.equal(authorization, "Bearer http-secret-token");
     const observation = await pollSubmissionScore(root, bundle.path, "http-sub-1", competition);
     assert.equal(observation.score, 0.876);
+    assert.equal(scoreRequests, 2);
     assert.doesNotMatch(JSON.stringify({ receipt, observation }), /http-secret-token/);
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));

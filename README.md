@@ -615,7 +615,10 @@ agent:
 HTTP endpoints must use HTTPS; localhost HTTP is allowed for local adapters and
 tests. Responses are bounded, parsed for a submission identifier or finite
 score, redacted, and recorded through the same approval and external-action
-ledger as command/Kaggle submissions.
+ledger as command/Kaggle submissions. Score polling retries transient GET and
+network failures at most twice with backoff; submission POSTs are intentionally
+single-attempt because a timeout cannot prove that the remote service rejected
+the submission.
 
 ## Provider architecture
 

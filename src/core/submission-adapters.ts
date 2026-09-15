@@ -51,6 +51,32 @@ async function httpResponse(response: Response, label: string): Promise<string> 
   return body;
 }
 
+function retryableHttpStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+/** Retry only safe/idempotent HTTP reads; callers must opt into the bound. */
+async function fetchWithRetry(url: string, init: RequestInit, label: string, maxAttempts: number): Promise<Response> {
+  const attempts = Math.max(1, Math.min(3, Math.floor(maxAttempts)));
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, { ...init, signal: AbortSignal.timeout(10 * 60_000) });
+      if (attempt < attempts && retryableHttpStatus(response.status)) {
+        await response.arrayBuffer();
+        await new Promise<void>((resolve) => setTimeout(resolve, 100 * 2 ** (attempt - 1)));
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, 100 * 2 ** (attempt - 1)));
+    }
+  }
+  throw new Error(`${label} failed: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+}
+
 function httpResponseId(body: string): string | undefined {
   try {
     const parsed: unknown = JSON.parse(body);
@@ -67,7 +93,9 @@ async function httpSubmit(file: string, config: NonNullable<CompetitionConfig["s
   const url = validateHttpUrl(config.submitUrl, "submission.submitUrl");
   const form = new FormData();
   form.append(config.fileField ?? "file", new Blob([readFileSync(file)]), basename(file));
-  const response = await fetch(url, { method: "POST", headers: httpAuthHeaders(config.authEnv), body: form, signal: AbortSignal.timeout(10 * 60_000) });
+  // POST is intentionally single-attempt: a timeout does not prove that the
+  // remote service did not accept the submission, and replay could duplicate it.
+  const response = await fetchWithRetry(url, { method: "POST", headers: httpAuthHeaders(config.authEnv), body: form }, "HTTP submission", 1);
   const body = await httpResponse(response, "HTTP submission");
   return { body, ...(httpResponseId(body) ? { submissionId: httpResponseId(body) } : {}) };
 }
@@ -75,7 +103,7 @@ async function httpSubmit(file: string, config: NonNullable<CompetitionConfig["s
 async function httpScore(submissionId: string, config: NonNullable<CompetitionConfig["submission"]>): Promise<{ score: number; body: string; url: string }> {
   if (!config.scoreUrl) throw new Error("HTTP score polling requires submission.scoreUrl.");
   const url = validateHttpUrl(config.scoreUrl.replaceAll("{submission}", encodeURIComponent(submissionId)), "submission.scoreUrl");
-  const response = await fetch(url, { method: "GET", headers: httpAuthHeaders(config.authEnv), signal: AbortSignal.timeout(10 * 60_000) });
+  const response = await fetchWithRetry(url, { method: "GET", headers: httpAuthHeaders(config.authEnv) }, "HTTP score polling", 3);
   const body = await httpResponse(response, "HTTP score polling");
   const score = parseSubmissionScore(body);
   if (score === undefined) throw new Error("HTTP score polling completed but emitted no finite score.");
