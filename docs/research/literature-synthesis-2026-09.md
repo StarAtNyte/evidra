@@ -125,7 +125,8 @@ that Evidra beats another harness.
 Dream-RSI describes completed discovery histories as replay simulators: a policy
 can choose which recorded leaf or branch to open, how to batch work, and when to
 stop, while replay exposes only already-recorded outcomes. Evidra now captures
-that boundary in `src/core/replay-simulator.ts`. `validateReplayWorld` rejects
+that boundary in `src/core/replay-simulator.ts`. Policies can choose expansion
+order and, when needed, a specific recorded child branch. `validateReplayWorld` rejects
 duplicate IDs, missing parents, invalid roots, and cycles; `simulateReplay` is
 offline-only and bounded by policy rounds and parallelism; `rankReplayPolicies`
 compares candidate exploration policies using best valid outcome, cost, and

@@ -46,6 +46,8 @@ export interface ReplayPolicy {
   maxRounds: number;
   maxParallel: number;
   select(state: ReplayPolicyState): string[];
+  /** Optional branch choice among already-recorded children of a selected parent. */
+  selectChild?(parentId: string, candidates: ReplayNode[], state: ReplayPolicyState): string | undefined;
 }
 
 export interface ReplayResult {
@@ -118,7 +120,9 @@ export function simulateReplay(worldInput: ReplayWorld, policy: ReplayPolicy, sc
     rounds += 1;
     let revealedThisRound = 0;
     for (const parentId of selected) {
-      const child = (byParent.get(parentId) ?? []).find((candidate) => !revealed.has(candidate.id));
+      const candidates = (byParent.get(parentId) ?? []).filter((candidate) => !revealed.has(candidate.id));
+      const requestedChild = policy.selectChild?.(parentId, candidates, { frontier: [...frontier].sort(), revealed: [...revealed].sort(), round: rounds });
+      const child = (requestedChild ? candidates.find((candidate) => candidate.id === requestedChild) : undefined) ?? candidates[0];
       frontier.delete(parentId);
       if (!child) continue;
       revealed.add(child.id); frontier.add(child.id); revealedThisRound += 1; totalCostMinutes += child.costMinutes;

@@ -3102,6 +3102,14 @@ test("replay simulator evaluates alternate branch and batch policies without exe
     { id: "batch", maxRounds: 2, maxParallel: 2, select: ({ frontier }) => frontier },
   ], { costPenalty: 0 })[0].policyId, "batch");
   assert.equal(batch.totalCostMinutes, 5);
+  const chosenBranch = simulateReplay(world, {
+    id: "choose-b",
+    maxRounds: 1,
+    maxParallel: 1,
+    select: ({ frontier }) => frontier,
+    selectChild: (_parentId, candidates) => candidates.find((candidate) => candidate.id === "b")?.id,
+  }, { costPenalty: 0 });
+  assert.deepEqual(chosenBranch.revealed, ["b", "root"]);
   const nonMetric = simulateReplay({ rootId: "root", nodes: [
     { id: "root", parentId: null, utility: 0, outcomeType: "proof", costMinutes: 0, valid: true },
     { id: "proof", parentId: "root", utility: 1, outcomeType: "proof", costMinutes: 1, valid: true },

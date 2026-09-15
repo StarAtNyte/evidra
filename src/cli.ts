@@ -2130,6 +2130,7 @@ research
             const rightCost = replayWorld.nodes.find((node) => node.id === right)?.costMinutes ?? Number.POSITIVE_INFINITY;
             return leftCost - rightCost || left.localeCompare(right);
           }),
+          selectChild: (_parentId, candidates) => candidates.slice().sort((left, right) => left.costMinutes - right.costMinutes || left.id.localeCompare(right.id))[0]?.id,
         },
       ] : [];
       const replayRanking = replayWorld ? rankReplayPolicies(replayWorld, replayPolicies, { costPenalty: 0.01, parallelismBonus: 0.02 }) : [];
