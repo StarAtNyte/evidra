@@ -216,6 +216,9 @@ consistent regardless of how a campaign is inspected.
 If resume encounters malformed checkpoint metadata, it records
 `research.campaign.checkpoint.invalid` and reports the recovery decision before
 continuing from a safe boundary.
+Interactive TUI campaigns write the same research, execution, and
+cycle-complete checkpoints as CLI campaigns, so switching interfaces does not
+lose resume context.
 
 Independent lanes explore different formulations and roles. Their evidence is
 cross-pollinated through a bounded board, while shared citations are not
