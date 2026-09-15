@@ -37,6 +37,8 @@ submission.
    preventing short campaigns from multiplying one timeout across stages.
 3. A campaign that reaches its deadline before a new turn is marked completed,
    persisted, and reported as a durable checkpoint.
+4. The ARC manifest now declares a one-MLP streaming reduced-validation screen,
+   allowing Evidra to reject broken candidates before full dataset evaluation.
 
 The next proving run should use a small, real research contract with an
 executable verifier and a challenge evaluator configured with a cheap screen

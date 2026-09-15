@@ -25,6 +25,23 @@
   },
   "baselineCommand": ["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"],
   "experimentCommand": ["uv", "run", "python", "estimator.py"],
+  "execution": {
+    "reducedValidationCommand": [
+      "uv", "run", "whest", "run",
+      "--estimator", "estimator.py",
+      "--dataset", "hf://aicrowd/arc-whestbench-public-2026@v2-phase2",
+      "--split", "mini",
+      "--runner", "local",
+      "--n-mlps", "1",
+      "--streaming",
+      "--format", "json"
+    ],
+    "reducedPromotion": {
+      "enabled": true,
+      "minimumDelta": 0,
+      "tolerance": 0
+    }
+  },
   "researchSources": [
     "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026",
     "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026/discussion",
