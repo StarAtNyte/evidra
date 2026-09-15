@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync, readSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { parseMetricOutput, safeWorkerEnvironment } from "./executors.js";
 import { processFailureResult, runProcess, splitCommandLine } from "./process.js";
@@ -60,7 +60,7 @@ function usableSubmission(path: string): boolean {
 
 /** Fingerprint prepared data without reading potentially multi-gigabyte files. */
 function directoryRevision(root: string): string {
-  const entries: string[] = [];
+  const hash = createHash("sha256");
   const visit = (current: string, prefix: string): void => {
     for (const entry of readdirSync(current, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
       const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
@@ -68,12 +68,24 @@ function directoryRevision(root: string): string {
       if (entry.isDirectory()) visit(path, relativePath);
       else if (entry.isFile()) {
         const stats = statSync(path);
-        entries.push(`${relativePath}:${stats.size}:${stats.mtimeMs}`);
+        hash.update(`${relativePath}:${stats.size}\n`);
+        const sampleBytes = Math.min(64 * 1024, stats.size);
+        const descriptor = openSync(path, "r");
+        try {
+          const head = Buffer.alloc(sampleBytes);
+          readSync(descriptor, head, 0, sampleBytes, 0);
+          hash.update(head);
+          if (stats.size > sampleBytes) {
+            const tail = Buffer.alloc(sampleBytes);
+            readSync(descriptor, tail, 0, sampleBytes, stats.size - sampleBytes);
+            hash.update(tail);
+          }
+        } finally { closeSync(descriptor); }
       }
     }
   };
   visit(root, "");
-  return `sha256:${createHash("sha256").update(entries.join("\n")).digest("hex")}`;
+  return `sha256:${hash.digest("hex")}`;
 }
 
 function readAgentCheckpoint(path: string, contract: string): boolean {

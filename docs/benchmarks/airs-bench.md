@@ -213,7 +213,8 @@ paths.
 
 After a successful agent stage, the adapter writes a contract-bound
 `.evidra-airs-agent.json` checkpoint, including hashes of the preparation and
-evaluation scripts and a revision fingerprint of the prepared data tree. A
+evaluation scripts and a content-based revision fingerprint of the prepared
+data tree. A
 later invocation with the same task, evaluator scripts, prepared data, metric,
 model, seed, and effort restores the completed artifact and reruns evaluation
 without launching another agent. Changing an evaluator or prepared data

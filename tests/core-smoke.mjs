@@ -4779,7 +4779,8 @@ test("AIRS lifecycle rejects the seeded empty submission and accepts a real arti
     const globalData = join(root, "global-data");
     mkdirSync(task, { recursive: true });
     mkdirSync(globalData, { recursive: true });
-    for (const file of ["prepare.py", "evaluate_prepare.py"]) writeFileSync(join(task, file), "process.exitCode = 0;\n");
+    writeFileSync(join(task, "prepare.py"), "const fs=require('node:fs'); const index=process.argv.indexOf('--agent-data-mount-dir'); fs.writeFileSync(process.argv[index+1]+'/prepared.txt','stable\\n');\n");
+    writeFileSync(join(task, "evaluate_prepare.py"), "process.exitCode = 0;\n");
     writeFileSync(join(task, "evaluate.py"), "console.log('Accuracy: 0.5');\n");
     const result = (exitCode = 0) => ({ command: ["agent"], cwd: root, exitCode, durationMs: 1, stdout: "", stderr: "" });
     const empty = await runAirsTaskLifecycle({
