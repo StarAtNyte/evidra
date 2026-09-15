@@ -54,6 +54,8 @@ export interface ResearchToolSpec {
   description: string;
   input: Record<string, string>;
   readOnly: boolean;
+  /** Whether an identical call may reuse an observation within one director turn. */
+  cacheable?: boolean;
 }
 
 /** Apply the safest default when a provider or test double omits provenance metadata. */
@@ -109,7 +111,10 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   { name: "workspace.search", description: "Search text or regular expressions in the workspace.", input: { query: "text or regular expression", path: "optional relative path" }, readOnly: true },
   { name: "workspace.read", description: "Read a bounded text file inside the workspace.", input: { path: "relative file path", maxBytes: "optional byte limit" }, readOnly: true },
   { name: "git.status", description: "Read the current Git status and HEAD commit.", input: {}, readOnly: true },
-  { name: "shell.exec", description: "Run an allowlisted shell command with captured output.", input: { command: "argv array or shell string", timeoutMs: "optional timeout" }, readOnly: true },
+  // Shell execution is inspection-compatible in SAFE mode, but it is not
+  // cacheable: FAST/YOLO may run commands whose filesystem/process state can
+  // change between rounds.
+  { name: "shell.exec", description: "Run an allowlisted shell command with captured output.", input: { command: "argv array or shell string", timeoutMs: "optional timeout" }, readOnly: true, cacheable: false },
   // Retrieval writes only durable local evidence; it does not mutate the
   // workspace or perform an external action, so safe research may use it.
   { name: "source.retrieve", description: "Retrieve, hash, excerpt, and store a research source with extracted claims; reuse a fresh cached copy unless refresh is requested.", input: { url: "HTTP(S) URL", refresh: "optional boolean to bypass the fresh-source cache" }, readOnly: true },

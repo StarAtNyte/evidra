@@ -26,6 +26,9 @@ replication or reviewer gates.
 Director structured output also caps each reasoning round at eight tool calls,
 matching the local decision schema before Evidra executes anything. This keeps
 provider-side tool fan-out bounded as well as controller-side execution.
+Read-only observations may be reused within a turn, but shell results are
+never cached because fast/YOLO commands can observe changing process or
+filesystem state.
 
 Long-running context retrieval is hybrid: durable claims and hypotheses are
 ranked using the SQLite FTS index when available, then deterministic lexical

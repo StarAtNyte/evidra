@@ -158,7 +158,8 @@ export async function runResearchDirector(
       const callId = options.onToolCall?.("director", call) ?? `director-${call.name}-${results.length + 1}`;
       const toolSpec = RESEARCH_TOOLS.find((tool) => tool.name === call.name);
       const cacheKey = toolCacheKey(call);
-      let result: ResearchToolResult | undefined = toolSpec?.readOnly ? readOnlyToolCache.get(cacheKey) : undefined;
+      const cacheable = toolSpec?.readOnly === true && toolSpec.cacheable !== false;
+      let result: ResearchToolResult | undefined = cacheable ? readOnlyToolCache.get(cacheKey) : undefined;
       if (result) {
         onProgress?.(`Research tool · ${call.name} reused the read-only observation from this turn.`);
       } else {
@@ -178,7 +179,7 @@ export async function runResearchDirector(
           onProgress?.(`Tool ${call.name} failed transiently; retrying ${attempt}/${maxToolAttempts - 1} in ${delayMs}ms...`);
           await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
         }
-        if (result?.ok && toolSpec?.readOnly) readOnlyToolCache.set(cacheKey, result);
+        if (result?.ok && cacheable) readOnlyToolCache.set(cacheKey, result);
       }
       if (!result) throw new Error(`Research tool ${call.name} returned no result.`);
       options.onToolResult?.("director", callId, result);

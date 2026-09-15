@@ -209,6 +209,9 @@ external evaluator.
   expensive exploration.
 - The Codex director's provider output schema now caps each turn at eight tool
   calls, matching the local decision schema before any tool is executed.
+- Director tool caching now distinguishes safe inspection from cacheability;
+  `shell.exec` observations are never reused across rounds because fast/YOLO
+  commands may see changing state.
 - Autonomous memory context now uses hybrid FTS-plus-lexical retrieval for
   durable claims and hypotheses, so the existing SQLite index influences Codex
   research context instead of being used only by the interactive memory search.

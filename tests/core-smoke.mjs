@@ -2543,8 +2543,9 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.equal(ensembleAnalysis.output.diversity.length, 1);
     assert(RESEARCH_TOOLS.some((tool) => tool.name === "source.retrieve" && tool.readOnly));
     assert(RESEARCH_TOOLS.some((tool) => tool.name === "source.search" && tool.readOnly));
-    assert(RESEARCH_TOOLS.some((tool) => tool.name === "artifact.audit" && tool.readOnly));
-    assert(RESEARCH_TOOLS.some((tool) => tool.name === "ensemble.analyze" && tool.readOnly));
+  assert(RESEARCH_TOOLS.some((tool) => tool.name === "artifact.audit" && tool.readOnly));
+  assert(RESEARCH_TOOLS.some((tool) => tool.name === "ensemble.analyze" && tool.readOnly));
+  assert.equal(RESEARCH_TOOLS.find((tool) => tool.name === "shell.exec")?.cacheable, false);
     const eventStore = new ResearchStore(db);
     const events = eventStore.recentEvents(10).map((event) => event.type);
     eventStore.close();
