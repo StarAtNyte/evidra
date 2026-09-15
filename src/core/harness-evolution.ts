@@ -180,16 +180,24 @@ function componentsOf(inventory: HarnessComponent[], patterns: RegExp[]): string
 export function planHarnessInterventions(input: {
   inventory: HarnessComponent[];
   failureProfile?: Record<string, number>;
+  componentFailureEvidence?: HarnessComponentFailureEvidence[];
   qualityGaps?: string[];
   benchmarkAvailable?: boolean;
 }): HarnessIntervention[] {
   const failures = Object.entries(input.failureProfile ?? {}).filter(([, count]) => Number.isFinite(count) && count > 0);
   const gapText = (input.qualityGaps ?? []).join(" ").toLowerCase();
   const plans: HarnessIntervention[] = [];
+  const componentsFor = (failureClass: string, patterns: RegExp[]): string[] => {
+    const attributed = (input.componentFailureEvidence ?? [])
+      .filter((item) => (item.failureClasses[failureClass] ?? 0) > 0)
+      .sort((left, right) => (right.failureClasses[failureClass] ?? 0) - (left.failureClasses[failureClass] ?? 0) || right.failureLift - left.failureLift || left.componentId.localeCompare(right.componentId))
+      .map((item) => item.componentId);
+    return (attributed.length ? attributed : componentsOf(input.inventory, patterns)).slice(0, 6);
+  };
   const add = (failureClass: string, priority: number, patterns: RegExp[], prediction: string, falsification: string, acceptance: string): void => {
     const count = failures.find(([name]) => name === failureClass)?.[1] ?? 0;
     if (!count && !gapText.includes(failureClass.replace(/_/g, " "))) return;
-    plans.push({ id: `intervention:${failureClass}`, priority: priority + count, failureClass, components: componentsOf(input.inventory, patterns), prediction, falsification, acceptance });
+    plans.push({ id: `intervention:${failureClass}`, priority: priority + count, failureClass, components: componentsFor(failureClass, patterns), prediction, falsification, acceptance });
   };
   add("timeout", 8, [/executor|process|recovery|scheduler|benchmark-runner/], "bounded retries and adaptive timeout routing will increase valid-run rate without increasing duplicate work", "paired runs show no valid-run or time-efficiency improvement", "same-task matched benchmark: valid-run rate improves and reproducibility does not regress");
   add("transient_cloud", 8, [/executor|process|modal|recovery/], "cloud retry classification and checkpoint-aware recovery will reduce transient failures", "recovery attempts repeat the same failure class at the same rate", "same seed and budget: lower transient failure rate with preserved artifact checksums");

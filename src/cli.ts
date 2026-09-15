@@ -1907,16 +1907,21 @@ research
         .flatMap((payload) => Array.isArray((payload as { scorecards?: unknown }).scorecards) ? (payload as { scorecards: Array<{ failureProfile?: Record<string, number> }> }).scorecards : [])
         .flatMap((scorecard) => Object.entries(scorecard.failureProfile ?? {}))
         .reduce((counts, [failureClass, count]) => counts.set(failureClass, (counts.get(failureClass) ?? 0) + Number(count)), new Map<string, number>())));
+      const componentFailureEvidence = (harnessBenchmarkEvidence
+        .map((payload) => (payload as { componentFailureEvidence?: unknown }).componentFailureEvidence)
+        .filter((value): value is Array<{ componentId: string; samples: number; failures: number; failureRate: number; overallFailureRate: number; failureLift: number; failureClasses: Record<string, number>; interpretation: "correlational" }> => Array.isArray(value))
+        .at(-1)) ?? [];
       const harnessEvolutionPlan = planHarnessInterventions({
         inventory: harnessComponents,
         failureProfile: harnessFailureProfile,
+        componentFailureEvidence,
         qualityGaps: durableEvents.slice(-20).filter((event) => event.type === "trajectory.capability_gaps").flatMap((event) => {
           const quality = (event.payload as { quality?: Record<string, { verdict?: string }> }).quality ?? {};
           return Object.entries(quality).filter(([, value]) => value?.verdict === "FAIL" || value?.verdict === "WARN").map(([key]) => key);
         }),
         benchmarkAvailable: harnessBenchmarkEvidence.length > 0,
       });
-      store.appendEvent("harness.evolution.plan", { cycle, components: harnessComponents.map((component) => ({ id: component.id, path: component.path, kind: component.kind, checksum: component.checksum })), interventions: harnessEvolutionPlan, failureProfile: harnessFailureProfile });
+      store.appendEvent("harness.evolution.plan", { cycle, components: harnessComponents.map((component) => ({ id: component.id, path: component.path, kind: component.kind, checksum: component.checksum })), interventions: harnessEvolutionPlan, failureProfile: harnessFailureProfile, componentFailureEvidence });
       const harnessGuidance = harnessBenchmarkEvidence.length
         ? `Harness-evolution evidence from matched benchmark runs (diagnostic, not workspace task evidence): ${JSON.stringify(harnessBenchmarkEvidence).slice(0, 8_000)}. Prioritize these checksummed, falsifiable interventions and remeasure them under the same protocol: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}${harnessAdaptationAgenda ? `\n\nLocked adaptive retest agenda (must be addressed before claiming a win): ${JSON.stringify(harnessAdaptationAgenda).slice(0, 8_000)}` : ""}${queuedHarnessRetest ? `\n\nDurable retest task queued for controller execution: ${queuedHarnessRetest.id}. It is not proof; select or reject it through the normal experiment and validation gates.` : ""}`
         : `No matched harness benchmark evidence is recorded yet; preserve failure telemetry for the first comparison. The harness action space is inventory-backed; use these candidate intervention contracts when a failure is observed: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}`;
