@@ -12,6 +12,7 @@ import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, researchSearchQueries, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
+import { CompetitionConfigSchema } from "../dist/core/types.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
@@ -4069,6 +4070,13 @@ test("validation acceptance protects configured secondary objectives", () => {
   assert.equal(acceptance.secondaryAssessments[0].maximumRegression, 0.05);
   assert.equal(acceptance.secondaryAssessments[0].evidence, "replicated");
   assert.match(acceptance.reasons.join(" "), /secondary metric gate failed.*safety/i);
+});
+
+test("competition metric suites reject ambiguous objective names", () => {
+  const base = { id: "metrics", name: "Metrics", taskType: "generic", datasetRevision: "v1", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } };
+  assert.throws(() => CompetitionConfigSchema.parse({ ...base, secondaryMetrics: [{ name: "score", direction: "maximize" }] }), /unique.*duplicate/i);
+  const parsed = CompetitionConfigSchema.parse({ ...base, secondaryMetrics: [{ name: "latency_ms", direction: "minimize", maximumRegression: 5 }] });
+  assert.equal(parsed.secondaryMetrics[0].minimumDelta, 0);
 });
 
 test("research decisions support non-metric outcomes without fabricated GPU estimates", () => {

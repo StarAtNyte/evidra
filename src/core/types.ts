@@ -13,7 +13,7 @@ export const CompetitionConfigSchema = z.object({
   secondaryMetrics: z.array(z.object({
     name: z.string().min(1),
     direction: z.enum(["minimize", "maximize"]),
-    minimumDelta: z.number().default(0),
+    minimumDelta: z.number().nonnegative().default(0),
     maximumRegression: z.number().nonnegative().default(0),
   })).default([]),
   evaluator: z.object({
@@ -63,6 +63,12 @@ export const CompetitionConfigSchema = z.object({
     seeds: z.array(z.number().int()).min(1).default([0, 1, 2]),
     secondarySplits: z.array(z.string().min(1)).default([]),
   }).optional(),
+}).superRefine((config, context) => {
+  const names = new Set([config.metric.name]);
+  for (const [index, objective] of config.secondaryMetrics.entries()) {
+    if (names.has(objective.name)) context.addIssue({ code: z.ZodIssueCode.custom, path: ["secondaryMetrics", index, "name"], message: "metric objective names must be unique and cannot duplicate the primary metric" });
+    names.add(objective.name);
+  }
 });
 
 export type CompetitionConfig = z.infer<typeof CompetitionConfigSchema>;
