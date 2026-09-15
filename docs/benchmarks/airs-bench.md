@@ -110,3 +110,20 @@ Full AIRS-Bench scoring still requires running the agent-facing task workflow
 for each task and aggregating its normalized score, valid-submission rate, and
 Elo-style statistics. The inventory removes hand-written task discovery; the
 next step is an explicit adapter for each agent harness command surface.
+
+## Runner protocol validation
+
+On 2026-09-16, the generated inventory was expanded into an 80-arm matched
+protocol: two routes (`evidra` and `reference`) across the 40 discovered task
+contracts. The generic runner executed all 80 arms, parsed each task-specific
+metric, produced a report, and scored 40 valid paired comparisons with 100%
+paired coverage. It preserved the fixed task, seed, model, effort, budget,
+direction, baseline, and protocol fingerprint in the report.
+
+This was a deterministic runner probe: each command emitted a known metric
+suite rather than training an agent or downloading every task dataset. Its
+result validates protocol expansion, isolation-aware scheduling, metric
+parsing, normalization, scoring, and report persistence. It must not be read as
+evidence that Evidra beats another research harness. A genuine comparison
+requires replacing both command templates with runnable agent adapters and
+using measured per-task baselines under the same budget.
