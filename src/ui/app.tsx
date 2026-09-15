@@ -9,7 +9,7 @@ import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
 import { classifyProcessFailure, executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
-import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshExperimentAudit, validateEvaluationMatrix } from "../core/validation.js";
+import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "../core/validation.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "../core/decision-auditor.js";
 import { sha256File } from "../core/evidence.js";
 import { captureEnvironment } from "../core/environment.js";
@@ -3119,7 +3119,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           store.appendEvent("submission.score.polled", { id: bundleId, score: observation.score, platform: observation.platform, recordedAt });
           const currentAudit = store.latestSubtaskAudit(`experiment_audit:${entry.experimentId}`);
           if (currentAudit) {
-            store.recordSubtaskAudit({ ...(currentAudit.payload as Record<string, unknown>), refreshTrigger: "external_score", externalScore: observation.score, externalPlatform: observation.platform, externalObservedAt: recordedAt });
+            store.recordSubtaskAudit({ ...refreshAuditWithExternalScore(currentAudit.payload as import("../core/subtask-state.js").SubtaskAudit, `submission:${bundleId}`), refreshTrigger: "external_score", externalScore: observation.score, externalPlatform: observation.platform, externalObservedAt: recordedAt });
             store.appendEvent("experiment.audit.refreshed", { experimentId: entry.experimentId, runId: (currentAudit.payload as { runId?: unknown }).runId ?? null, trigger: "external_score", score: observation.score, platform: observation.platform });
           }
           append("assistant", `Polled ${observation.platform} score ${observation.score} for ${bundleId}.`);
@@ -3150,7 +3150,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           store.appendEvent("submission.score.recorded", { id: bundleId, score, platform, recordedAt });
           const currentAudit = store.latestSubtaskAudit(`experiment_audit:${entry.experimentId}`);
           if (currentAudit) {
-            store.recordSubtaskAudit({ ...(currentAudit.payload as Record<string, unknown>), refreshTrigger: "external_score", externalScore: score, externalPlatform: platform, externalObservedAt: recordedAt });
+            store.recordSubtaskAudit({ ...refreshAuditWithExternalScore(currentAudit.payload as import("../core/subtask-state.js").SubtaskAudit, `submission:${bundleId}`), refreshTrigger: "external_score", externalPlatform: platform, externalScore: score, externalObservedAt: recordedAt });
             store.appendEvent("experiment.audit.refreshed", { experimentId: entry.experimentId, runId: (currentAudit.payload as { runId?: unknown }).runId ?? null, trigger: "external_score", score, platform });
           }
         store.close();

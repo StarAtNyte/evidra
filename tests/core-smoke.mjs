@@ -59,7 +59,7 @@ import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
-import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
+import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
 import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
@@ -5703,6 +5703,9 @@ test("external evaluator evidence can be required as a separate experiment gate"
   assert.equal(accepted.gates.externalScoreObserved, true);
   assert.equal(externalScoreObservedForExperiment("external-exp", [{ experimentId: "external-exp", status: "scored", payload: { publicScore: 0.91 } }]), true);
   assert.equal(externalScoreObservedForExperiment("external-exp", [{ experimentId: "external-exp", status: "prepared", payload: { publicScore: 0.91 } }]), false);
+  const externalAudit = auditExperimentSubtask(manifest, pending, ["external-run"]);
+  const refreshed = refreshAuditWithExternalScore(externalAudit, "submission:external-bundle");
+  assert.equal(refreshed.criteria.find((criterion) => criterion.id === "gate:externalScoreObserved")?.satisfied, true);
 });
 
 test("scientific task runner verifies intermediate stages and resumes verified snapshots", async () => {

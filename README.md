@@ -211,6 +211,8 @@ Fold/seed bootstrap replication and independent child-experiment replication are
 
 This requirement is enforced by the durable evidence audit: `replicationObserved` is derived from the linked child experiment and its exact current completed run, and is refreshed automatically when replication finishes or an operator reruns the audit. A manifest can additionally set `acceptance.requireExternalScore: true`; the audit then requires a durable scored submission (`externalScoreObserved`) for that experiment. External scores are recorded with platform and timestamp provenance, but never substitute for reproducibility, leakage, review, or evaluator-integrity checks.
 
+When a score is recorded or polled, Evidra refreshes only the external-score criterion in the existing audit and preserves every other unmet gate. A leaderboard result therefore cannot accidentally turn an unreproducible or leaked experiment into an accepted one.
+
 Paired statistical comparisons also require complete, matching fold/seed cardinality and at least two paired observations. Evidra refuses to truncate unequal series or treat a single observation as replication; incomplete evidence becomes an explicit `insufficient_data` outcome for the next research decision.
 
 Benchmark process and efficiency gates are task-balanced too: extra arms on one task cannot outweigh another task when evaluating reliability, alignment, or time use.

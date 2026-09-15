@@ -640,4 +640,5 @@ successful runs cannot satisfy it. Adapters that depend on a remote leaderboard
 or external evaluator can additionally request an `externalScoreObserved`
 criterion by setting `acceptance.requireExternalScore: true`; the controller
 derives `externalScoreObserved` from a durable scored submission. Recording a
-score supplies provenance but does not bypass the other gates.
+score refreshes only that criterion in the existing audit and supplies
+provenance; it does not bypass the other gates.

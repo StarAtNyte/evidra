@@ -82,6 +82,16 @@ export function externalScoreObservedForExperiment(
   });
 }
 
+/** Apply a newly recorded external score to an existing audit without trusting
+ * the score as proof of any other experiment criterion. */
+export function refreshAuditWithExternalScore(audit: SubtaskAudit, evidenceId: string, detail = "durable external evaluator score observed"): SubtaskAudit {
+  const criteria = audit.criteria.map((criterion) => criterion.id === "gate:externalScoreObserved"
+    ? { ...criterion, satisfied: true, evidenceIds: [...new Set([...criterion.evidenceIds, evidenceId])], source: "auditor" as const, detail }
+    : criterion);
+  const unmetRequired = criteria.filter((criterion) => criterion.required !== false && !criterion.satisfied).map((criterion) => criterion.id);
+  return { ...audit, status: unmetRequired.length === 0 ? "completed" : "blocked", complete: unmetRequired.length === 0, criteria, unmetRequired, auditedAt: new Date().toISOString() };
+}
+
 export function validateEvaluationMatrix(manifest: Pick<ExperimentManifest, "evaluation">, run: Pick<RunResult, "matrix">, metricName: string): { valid: boolean; expected: number; observed: number; missing: string[]; invalidMetric: string[] } {
   if (!manifest.evaluation.matrixRequired) return { valid: true, expected: 0, observed: run.matrix?.length ?? 0, missing: [], invalidMetric: [] };
   const cells = run.matrix ?? [];

@@ -27,7 +27,7 @@ import { detectRouteDrift } from "./core/drift-detection.js";
 import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
 import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readCampaignRuntime, researchTurnTimeoutMs, resumeCampaign, withCampaignCheckpoint, type CampaignCheckpointStep, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
-import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshExperimentAudit, validateEvaluationMatrix } from "./core/validation.js";
+import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "./core/validation.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "./core/decision-auditor.js";
 import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance } from "./core/validation-engine.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
@@ -1552,7 +1552,7 @@ submission.command("poll").argument("<bundle>").description("Poll a configured e
     store.appendEvent("submission.score.polled", { id: bundle, score: observation.score, platform: observation.platform, recordedAt });
     const currentAudit = store.latestSubtaskAudit(`experiment_audit:${entry.experimentId}`);
     if (currentAudit) {
-      store.recordSubtaskAudit({ ...(currentAudit.payload as Record<string, unknown>), refreshTrigger: "external_score", externalScore: observation.score, externalPlatform: observation.platform, externalObservedAt: recordedAt });
+      store.recordSubtaskAudit({ ...refreshAuditWithExternalScore(currentAudit.payload as import("./core/subtask-state.js").SubtaskAudit, `submission:${bundle}`), refreshTrigger: "external_score", externalScore: observation.score, externalPlatform: observation.platform, externalObservedAt: recordedAt });
       store.appendEvent("experiment.audit.refreshed", { experimentId: entry.experimentId, runId: (currentAudit.payload as { runId?: unknown }).runId ?? null, trigger: "external_score", score: observation.score, platform: observation.platform });
     }
     console.log(`Polled ${observation.platform} score ${observation.score} for ${bundle}.`);
@@ -1577,7 +1577,7 @@ submission.command("record").argument("<bundle>").requiredOption("--public-score
   store.appendEvent("submission.score.recorded", { id: bundle, score, platform: options.platform, recordedAt });
   const currentAudit = store.latestSubtaskAudit(`experiment_audit:${entry.experimentId}`);
   if (currentAudit) {
-    store.recordSubtaskAudit({ ...(currentAudit.payload as Record<string, unknown>), refreshTrigger: "external_score", externalScore: score, externalPlatform: options.platform, externalObservedAt: recordedAt });
+    store.recordSubtaskAudit({ ...refreshAuditWithExternalScore(currentAudit.payload as import("./core/subtask-state.js").SubtaskAudit, `submission:${bundle}`), refreshTrigger: "external_score", externalScore: score, externalPlatform: options.platform, externalObservedAt: recordedAt });
     store.appendEvent("experiment.audit.refreshed", { experimentId: entry.experimentId, runId: (currentAudit.payload as { runId?: unknown }).runId ?? null, trigger: "external_score", score, platform: options.platform });
   }
   store.close();
