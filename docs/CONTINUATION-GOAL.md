@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `c8874d6`.
+- Latest pushed commit: `518503e`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -92,6 +92,8 @@ external evaluator.
 - Codex app-server model responses are normalized before reaching the TUI;
   object-form reasoning efforts are converted to unique string choices for
   reliable `/model` and thinking selection.
+- Provider/model changes clear the active Codex thread, preventing stale
+  conversation context from crossing routes or model selections.
 - Codex thread restoration is explicit: a new terminal starts a fresh Evidra
   chat, while `/resume <session-id>` restores the saved Codex thread and
   transcript. Provider/model changes invalidate the active chat thread.
