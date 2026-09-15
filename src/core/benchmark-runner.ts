@@ -110,6 +110,8 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
   // cannot leave a partially executed benchmark protocol behind.
   const prepared = arms.map((arm) => {
     if (!arm.command.length || arm.command.some((part) => !part.trim())) throw new Error(`Benchmark arm '${arm.harness}' has an empty command.`);
+    if (arm.provider !== undefined && (!arm.provider.trim() || arm.provider.length > 80)) throw new Error(`Benchmark arm '${arm.harness}' has an invalid provider label.`);
+    if (arm.requiredMetrics !== undefined && (!Array.isArray(arm.requiredMetrics) || arm.requiredMetrics.some((name) => typeof name !== "string" || !name.trim()))) throw new Error(`Benchmark arm '${arm.harness}' has invalid required metric names.`);
     if (!Number.isFinite(arm.budgetMinutes) || arm.budgetMinutes <= 0) throw new Error(`Benchmark arm '${arm.harness}' must have a positive budget.`);
     if (arm.policy !== undefined && (!arm.policy.trim() || arm.policy.length > 80)) throw new Error(`Benchmark arm '${arm.harness}' has an invalid policy label.`);
     if (arm.retries !== undefined && (!Number.isInteger(arm.retries) || arm.retries < 0 || arm.retries > 3)) throw new Error(`Benchmark arm '${arm.harness}' retries must be an integer from 0 to 3.`);

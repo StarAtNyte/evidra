@@ -73,7 +73,7 @@ import { promoteHalvingStage } from "./core/successive-halving.js";
 import type { CostObservation } from "./core/cost-model.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
-import { compareHarnesses, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
+import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
 import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.js";
 import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
@@ -578,8 +578,9 @@ benchmark.command("run")
   .option("--retention <file>", "previous benchmark report whose challenger performance must be retained")
   .option("--retention-regression <delta>", "maximum allowed task-level regression for retention", "0")
   .option("--holdout <file>", "task-disjoint held-out benchmark report required to validate transfer")
+  .option("--compare-providers <routes>", "explicit provider diagnostic, e.g. codex,local; allows intentional mixed-provider arms")
   .description("Execute matched arms, score the evidence, and verify the challenger beats incumbents")
-  .action(async (file: string, options: { out?: string; workspace?: string; challenger: string; incumbent?: string; parallel: string; retention?: string; retentionRegression: string; holdout?: string }) => {
+  .action(async (file: string, options: { out?: string; workspace?: string; challenger: string; incumbent?: string; parallel: string; retention?: string; retentionRegression: string; holdout?: string; compareProviders?: string }) => {
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
     const raw = parsed && typeof parsed === "object" && Array.isArray((parsed as { arms?: unknown }).arms) ? (parsed as { arms: unknown[] }).arms : undefined;
     if (!raw?.length) throw new Error("Benchmark protocol must contain a non-empty arms array.");
@@ -596,13 +597,17 @@ benchmark.command("run")
       if (typeof arm.harness !== "string" || typeof arm.task !== "string" || typeof arm.arm !== "string" || arm.seed === undefined || typeof arm.model !== "string" || typeof arm.budgetMinutes !== "number" || (arm.retries !== undefined && (!Number.isInteger(arm.retries) || arm.retries < 0 || arm.retries > 3)) || typeof arm.metric !== "string" || !Array.isArray(arm.command) || !arm.command.every((part) => typeof part === "string") || invalidReproducibility || invalidTolerance) throw new Error(`Benchmark arm ${index + 1} is missing a required field or has invalid retry/reproducibility settings.`);
       return { ...arm, reasoningEffort: arm.reasoningEffort ?? "medium" } as BenchmarkArmSpec;
     });
+    const providerPair = options.compareProviders?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
+    if (providerPair.length !== 0 && providerPair.length !== 2) throw new Error("--compare-providers must contain exactly two comma-separated provider names.");
     const protocol = validateBenchmarkProtocol(arms.map((arm) => ({ ...arm, validRun: false, durationSeconds: 0, recovered: false, reproducible: false })));
-    if (!protocol.valid) throw new Error(`Benchmark protocol is not matched:\n${protocol.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
+    const protocolIssues = providerPair.length === 2 ? protocol.issues.filter((issue) => issue.field !== "provider") : protocol.issues;
+    if (!protocol.valid && protocolIssues.length) throw new Error(`Benchmark protocol is not matched:\n${protocolIssues.map((issue) => `- ${issue.message}`).join("\n")}`);
     const benchmarkWorkspace = options.workspace ? resolve(options.workspace) : root;
     const maxParallel = Math.max(1, Math.min(32, Number.parseInt(options.parallel, 10) || 1));
     const report = await runBenchmarkArms(arms, benchmarkWorkspace, (message) => console.log(`· ${message}`), { maxParallel });
     const matched = validateBenchmarkProtocol(report.trials);
-    if (!matched.valid) throw new Error(`Benchmark results are not matched:\n${matched.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
+    const matchedIssues = providerPair.length === 2 ? matched.issues.filter((issue) => issue.field !== "provider") : matched.issues;
+    if (!matched.valid && matchedIssues.length) throw new Error(`Benchmark results are not matched:\n${matchedIssues.map((issue) => `- ${issue.message}`).join("\n")}`);
     const scorecards = scoreHarnessTrials(report.trials);
     const policyNames = [...new Set(report.trials.map((trial) => trial.policy).filter((policy): policy is string => typeof policy === "string" && policy.trim().length > 0))].sort();
     const policyScorecards = policyNames.length >= 2 ? scoreSearchPolicies(report.trials) : undefined;
@@ -613,6 +618,7 @@ benchmark.command("run")
     const harnesses = [...new Set(report.trials.map((trial) => trial.harness))];
     const incumbents = options.incumbent ? [options.incumbent] : harnesses.filter((harness) => harness !== options.challenger);
     const comparisons = incumbents.map((incumbent) => compareHarnesses(report.trials, options.challenger, incumbent));
+    const providerComparison = providerPair.length === 2 ? compareProviderRoutes(report.trials, providerPair[0], providerPair[1]) : undefined;
     const adaptation = planHarnessAdaptation(report.trials, scorecards, comparisons, options.challenger);
     const challengerTrials = report.trials.filter((trial) => trial.harness === options.challenger);
     const componentAblations = challengerTrials.length > 0 && challengerTrials.every((trial) => Array.isArray(trial.componentIds))
@@ -640,7 +646,7 @@ benchmark.command("run")
       const maximumRegression = Number(options.retentionRegression);
       retention = evaluateHarnessRetention(priorTrials, report.trials, options.challenger, maximumRegression);
     }
-    const output = { ...report, scorecards, ...(policyScorecards ? { policyScorecards, policyComparisons } : {}), pareto, protocol: matched, challenger: options.challenger, comparisons, adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
+    const output = { ...report, scorecards, ...(policyScorecards ? { policyScorecards, policyComparisons } : {}), pareto, protocol: matched, challenger: options.challenger, comparisons, ...(providerComparison ? { providerComparison } : {}), adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
     if (options.out) writeFileSync(resolve(options.out), `${JSON.stringify(output, null, 2)}\n`);
     const benchmarkStore = new ResearchStore(statePath);
     benchmarkStore.appendEvent("harness.benchmark.completed", {
@@ -656,6 +662,7 @@ benchmark.command("run")
       ...(policyScorecards ? { policyScorecards, policyComparisons: policyComparisons?.map((comparison) => ({ challenger: comparison.challenger, incumbent: comparison.incumbent, challengerWins: comparison.challengerWins, reason: comparison.reason, pairedLower95: comparison.pairedLower95 })) } : {}),
       pareto,
       comparisons: comparisons.map((comparison) => ({ incumbent: comparison.incumbent, challengerWins: comparison.challengerWins, reason: comparison.reason, pairedLower95: comparison.pairedLower95, sliceRegressions: comparison.sliceRegressions, sliceLower95: comparison.sliceLower95 })),
+      ...(providerComparison ? { providerComparison } : {}),
       adaptation,
       ...(componentAblations ? { componentAblations: componentAblations.map((item) => ({ variant: item.variant, removedComponents: item.removedComponents, valid: item.valid, challengerWins: item.comparison.challengerWins, reason: item.reason })) } : {}),
       ...(change ? { change, changeOutcomes } : {}),
@@ -665,6 +672,7 @@ benchmark.command("run")
     benchmarkStore.close();
     console.log(`Harness benchmark run complete\n${scorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})${Object.keys(scorecard.failureProfile).length ? ` · failures ${JSON.stringify(scorecard.failureProfile)}` : ""}`).join("\n")}`);
     if (policyScorecards) console.log(`\nSearch-policy scorecards\n${policyScorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})`).join("\n")}`);
+    if (providerComparison) console.log(`\nProvider route diagnostic · ${providerPair[0]} vs ${providerPair[1]}: ${providerComparison.pairedMeanDelta === null ? "no valid paired outcomes" : `mean primary delta ${providerComparison.pairedMeanDelta.toFixed(6)}`} · ${providerComparison.reason}`);
     console.log(`\nPareto frontier · ${pareto.filter((point) => point.onFrontier).map((point) => `${point.harness}${point.medianTimeToEvidenceSeconds === null ? "" : ` (${point.medianTimeToEvidenceSeconds.toFixed(1)}s)`}`).join(", ") || "none"}`);
     if (comparisons.length) {
       console.log(`\nCompetitive gate · challenger ${options.challenger}`);
