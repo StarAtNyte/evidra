@@ -358,6 +358,9 @@ external evaluator.
 - Codex and local provider turns now persist bounded, redacted assistant
   messages alongside tool activity, improving replay and failure attribution
   without treating generated prose as workspace evidence.
+- Persisted trace parsing and startup recovery now cap input bytes as well as
+  event count, use bounded file-prefix reads, and record byte truncation
+  explicitly to protect long campaigns from oversized or corrupt artifacts.
 
 ## Immediate next work
 

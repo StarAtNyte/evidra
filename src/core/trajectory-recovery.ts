@@ -1,7 +1,7 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { sha256File } from "./evidence.js";
-import { parsePersistedTrace } from "./trajectories.js";
+import { MAX_TRACE_BYTES, parsePersistedTrace } from "./trajectories.js";
 import type { ResearchStore } from "./store.js";
 
 /** Register crash-surviving traces exactly once for either controller surface. */
@@ -23,11 +23,22 @@ export function recoverUncommittedTraceFiles(root: string, store: ResearchStore,
       const path = relative(root, absolute);
       const checksum = sha256File(absolute);
       if (recoveredTrajectoryPaths.has(path) || recoveredTraceEvents.has(`${path}:${checksum}`)) continue;
-      const parsed = parsePersistedTrace(readFileSync(absolute, "utf8"));
+      const descriptor = openSync(absolute, "r");
+      let text: string;
+      try {
+        const size = fstatSync(descriptor).size;
+        const length = Math.min(size, MAX_TRACE_BYTES);
+        const buffer = Buffer.alloc(length);
+        const bytesRead = readSync(descriptor, buffer, 0, length, 0);
+        text = buffer.subarray(0, bytesRead).toString("utf8");
+      } finally {
+        closeSync(descriptor);
+      }
+      const parsed = parsePersistedTrace(text);
       if (!parsed.events.length) continue;
       const activityTail = parsed.events.filter((event) => typeof event.payload.activity === "string").slice(-8).map((event) => String(event.payload.activity).slice(0, 240));
       const toolNames = [...new Set(parsed.events.filter((event) => typeof event.payload.tool === "string").map((event) => String(event.payload.tool)).slice(-16))];
-      store.appendEvent("research.trace.recovered", { path, checksum, eventCount: parsed.events.length, invalidLines: parsed.invalidLines, firstEvent: parsed.events[0]?.id, lastEvent: parsed.events.at(-1)?.id, ...(activityTail.length ? { activityTail } : {}), ...(toolNames.length ? { toolNames } : {}), reason: "uncommitted cycle trace found during controller startup" });
+      store.appendEvent("research.trace.recovered", { path, checksum, eventCount: parsed.events.length, invalidLines: parsed.invalidLines, truncated: parsed.truncated, firstEvent: parsed.events[0]?.id, lastEvent: parsed.events.at(-1)?.id, ...(activityTail.length ? { activityTail } : {}), ...(toolNames.length ? { toolNames } : {}), reason: "uncommitted cycle trace found during controller startup" });
       recovered += 1;
     } catch { /* A corrupt or unavailable trace must not block controller startup. */ }
   }

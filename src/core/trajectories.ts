@@ -35,12 +35,17 @@ export interface ToolTraceRecorderOptions {
 }
 
 export const MAX_TRACE_EVENTS = 256;
+export const MAX_TRACE_BYTES = 2_000_000;
 
 /** Parse a crash-surviving JSONL trace without trusting arbitrary file data. */
-export function parsePersistedTrace(text: string, maxEvents = 256): { events: TrajectoryEvent[]; invalidLines: number } {
+export function parsePersistedTrace(text: string, maxEvents = 256, maxBytes = MAX_TRACE_BYTES): { events: TrajectoryEvent[]; invalidLines: number; truncated: boolean } {
   const events: TrajectoryEvent[] = [];
   let invalidLines = 0;
-  for (const line of text.split(/\r?\n/).filter(Boolean).slice(0, Math.max(1, Math.min(maxEvents, 256)))) {
+  const boundedBytes = Math.max(1, Math.min(maxBytes, MAX_TRACE_BYTES));
+  const rawBytes = Buffer.byteLength(text, "utf8");
+  const truncated = rawBytes > boundedBytes;
+  const boundedText = truncated ? Buffer.from(text, "utf8").subarray(0, boundedBytes).toString("utf8") : text;
+  for (const line of boundedText.split(/\r?\n/).filter(Boolean).slice(0, Math.max(1, Math.min(maxEvents, MAX_TRACE_EVENTS)))) {
     try {
       const value = JSON.parse(line) as Partial<TrajectoryEvent>;
       if (!value || typeof value !== "object" || typeof value.id !== "string" || typeof value.kind !== "string" || !["user", "assistant", "tool_call", "tool_result", "process", "evaluator", "recovery", "terminal"].includes(value.kind) || !value.payload || typeof value.payload !== "object" || Array.isArray(value.payload)) {
@@ -50,7 +55,7 @@ export function parsePersistedTrace(text: string, maxEvents = 256): { events: Tr
       events.push({ id: value.id, kind: value.kind as TrajectoryEventKind, ...(typeof value.at === "string" ? { at: value.at } : {}), ...(typeof value.callId === "string" ? { callId: value.callId } : {}), payload: redactStructured(value.payload) });
     } catch { invalidLines += 1; }
   }
-  return { events, invalidLines };
+  return { events, invalidLines, truncated };
 }
 
 /** Map redacted native provider failures to the controller's generic recovery vocabulary. */

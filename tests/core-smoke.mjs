@@ -36,7 +36,7 @@ import { estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.j
 import { auditData, dataAuditFingerprint } from "../dist/core/data-audit.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { runReducedValidation } from "../dist/core/stage-executor.js";
-import { createToolTraceRecorder, evaluateTrajectory, MAX_TRACE_EVENTS, parsePersistedTrace, capabilityGaps, providerActivityFailureClass, validateTrajectoryStructure } from "../dist/core/trajectories.js";
+import { createToolTraceRecorder, evaluateTrajectory, MAX_TRACE_BYTES, MAX_TRACE_EVENTS, parsePersistedTrace, capabilityGaps, providerActivityFailureClass, validateTrajectoryStructure } from "../dist/core/trajectories.js";
 import { recoverUncommittedTraceFiles } from "../dist/core/trajectory-recovery.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
 import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, selectCurriculum } from "../dist/core/experience.js";
@@ -679,6 +679,8 @@ test("persisted trace parser bounds malformed crash artifacts and redacts payloa
   assert.equal(parsed.events.length, 1);
   assert.equal(parsed.invalidLines, 2);
   assert.equal(parsed.events[0].payload.activity, "token=[REDACTED]");
+  assert.equal(parsePersistedTrace(`${JSON.stringify({ id: "large", kind: "process", payload: { activity: "x".repeat(100) } })}\n`, 256, 32).truncated, true);
+  assert.equal(MAX_TRACE_BYTES > MAX_TRACE_EVENTS, true);
 });
 
 test("shared trace recovery registers orphaned traces once", () => {
