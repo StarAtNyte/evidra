@@ -3605,7 +3605,11 @@ test("harness component failure analysis exposes correlational failure lifts", (
   assert.equal(evidence.find((item) => item.componentId === "validator")?.failureLift, -0.25);
   assert.equal(evidence[0].interpretation, "correlational");
   assert.deepEqual(evidence[0].failureClasses, { timeout: 1 });
-  const plan = planHarnessInterventions({ inventory: [], failureProfile: { timeout: 1 }, componentFailureEvidence: evidence });
+  const withUnmanifested = analyzeHarnessComponentFailures([...[
+    { validRun: false, failureClass: "unknown" },
+  ], { componentIds: ["validator"], validRun: true }]);
+  assert.equal(withUnmanifested[0].overallFailureRate, 0);
+  const plan = planHarnessInterventions({ inventory: [{ id: "executor", path: "src/executor.ts", kind: "execution", checksum: "a", bytes: 1, editable: true }, { id: "router", path: "src/router.ts", kind: "orchestration", checksum: "b", bytes: 1, editable: true }], failureProfile: { timeout: 1 }, componentFailureEvidence: evidence });
   assert.deepEqual(plan[0].components, ["executor", "router"]);
 });
 

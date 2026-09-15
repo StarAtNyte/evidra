@@ -83,11 +83,12 @@ export interface HarnessComponentFailureEvidence {
 export function analyzeHarnessComponentFailures(
   trials: Array<{ componentIds?: string[]; validRun: boolean; failureClass?: string }>,
 ): HarnessComponentFailureEvidence[] {
-  const overallFailures = trials.filter((trial) => !trial.validRun).length;
-  const overallFailureRate = trials.length ? overallFailures / trials.length : 0;
-  const componentIds = [...new Set(trials.flatMap((trial) => trial.componentIds ?? []))].sort();
+  const manifestTrials = trials.filter((trial) => Array.isArray(trial.componentIds) && trial.componentIds.length > 0);
+  const overallFailures = manifestTrials.filter((trial) => !trial.validRun).length;
+  const overallFailureRate = manifestTrials.length ? overallFailures / manifestTrials.length : 0;
+  const componentIds = [...new Set(manifestTrials.flatMap((trial) => trial.componentIds ?? []))].sort();
   return componentIds.map((componentId) => {
-    const members = trials.filter((trial) => trial.componentIds?.includes(componentId));
+    const members = manifestTrials.filter((trial) => trial.componentIds?.includes(componentId));
     const failures = members.filter((trial) => !trial.validRun);
     const failureClasses: Record<string, number> = {};
     for (const failure of failures) {
@@ -187,11 +188,13 @@ export function planHarnessInterventions(input: {
   const failures = Object.entries(input.failureProfile ?? {}).filter(([, count]) => Number.isFinite(count) && count > 0);
   const gapText = (input.qualityGaps ?? []).join(" ").toLowerCase();
   const plans: HarnessIntervention[] = [];
+  const availableComponentIds = new Set(input.inventory.map((component) => component.id));
   const componentsFor = (failureClass: string, patterns: RegExp[]): string[] => {
     const attributed = (input.componentFailureEvidence ?? [])
       .filter((item) => (item.failureClasses[failureClass] ?? 0) > 0)
       .sort((left, right) => (right.failureClasses[failureClass] ?? 0) - (left.failureClasses[failureClass] ?? 0) || right.failureLift - left.failureLift || left.componentId.localeCompare(right.componentId))
-      .map((item) => item.componentId);
+      .map((item) => item.componentId)
+      .filter((componentId) => availableComponentIds.has(componentId));
     return (attributed.length ? attributed : componentsOf(input.inventory, patterns)).slice(0, 6);
   };
   const add = (failureClass: string, priority: number, patterns: RegExp[], prediction: string, falsification: string, acceptance: string): void => {
