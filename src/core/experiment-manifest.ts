@@ -52,6 +52,10 @@ export function createExperimentManifest(input: ManifestInput, competition: Comp
       seeds: input.seeds ?? [0],
       matrixRequired: input.matrixRequired ?? competition.execution?.matrixRequired ?? false,
       requiredArtifacts: input.requiredArtifacts ?? competition.execution?.requiredArtifacts ?? [],
+      metrics: [
+        { name: competition.metric.name, direction: competition.metric.direction },
+        ...(competition.secondaryMetrics ?? []),
+      ],
       ...(input.verificationCommand ?? competition.execution?.verificationCommand ? { verificationCommand: input.verificationCommand ?? competition.execution?.verificationCommand } : {}),
       ...(input.verificationCommands ?? competition.execution?.verificationCommands ? { verificationCommands: input.verificationCommands ?? competition.execution?.verificationCommands } : {}),
     },
@@ -72,6 +76,7 @@ export function manifestSummary(manifest: ExperimentManifest): string {
     `commit ${manifest.gitCommit} · data ${manifest.datasetVersion} · split ${manifest.splitVersion}`,
     `executor ${manifest.resources.executor}${manifest.resources.image ? ` (${manifest.resources.image})` : ""} · timeout ${manifest.resources.timeoutMinutes}m`,
     `folds [${manifest.evaluation.folds.join(", ")}] · seeds [${manifest.evaluation.seeds.join(", ")}] · matrix ${manifest.evaluation.matrixRequired ? "required" : "optional"}`,
+    `metrics ${manifest.evaluation.metrics.map((metric) => `${metric.name} (${metric.direction})`).join(", ") || "not declared"}`,
     `replication ${manifest.acceptance.requireReplication ? "required" : "not required"}`,
   ].join("\n");
 }

@@ -66,6 +66,7 @@ export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: 
       folds,
       seeds,
       matrixRequired: manifest.evaluation?.matrixRequired ?? false,
+      metrics: manifest.evaluation?.metrics ?? [],
     },
     resources: {
       executor: manifest.resources.executor,

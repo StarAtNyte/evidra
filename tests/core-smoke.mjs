@@ -2726,7 +2726,7 @@ test("experiment executors expose a redacted generic config contract", async () 
     const config = JSON.parse(readFileSync(join(root, ".sota", "experiment-config.json"), "utf8"));
     assert.equal(config.experimentId, "ablation-1");
     assert.equal(config.datasetVersion, "data-v1");
-    assert.deepEqual(config.evaluation, { folds: [0, 1], seeds: [17, 41], matrixRequired: true });
+    assert.deepEqual(config.evaluation, { folds: [0, 1], seeds: [17, 41], matrixRequired: true, metrics: [] });
     assert.match(result.stdout, /"matrix":"1"/);
     assert.equal(config.configPatch.apiKey, "[REDACTED_TOKEN]");
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -4077,6 +4077,13 @@ test("competition metric suites reject ambiguous objective names", () => {
   assert.throws(() => CompetitionConfigSchema.parse({ ...base, secondaryMetrics: [{ name: "score", direction: "maximize" }] }), /unique.*duplicate/i);
   const parsed = CompetitionConfigSchema.parse({ ...base, secondaryMetrics: [{ name: "latency_ms", direction: "minimize", maximumRegression: 5 }] });
   assert.equal(parsed.secondaryMetrics[0].minimumDelta, 0);
+});
+
+test("experiment manifests carry the complete metric contract to workers", () => {
+  const competition = { id: "multi", name: "Multi", taskType: "generic", datasetRevision: "v1", metric: { name: "score", direction: "maximize" }, secondaryMetrics: [{ name: "latency_ms", direction: "minimize", maximumRegression: 5 }], evaluator: { command: ["true"], estimatorPath: "" } };
+  const manifest = createExperimentManifest({ id: "metric-contract", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "v1" }, competition);
+  assert.deepEqual(manifest.evaluation.metrics.map((metric) => metric.name), ["score", "latency_ms"]);
+  assert.match(manifestSummary(manifest), /latency_ms \(minimize\)/);
 });
 
 test("research decisions support non-metric outcomes without fabricated GPU estimates", () => {
