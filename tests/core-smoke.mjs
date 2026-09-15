@@ -154,7 +154,7 @@ import { ResearchDecisionSchema, RunResultSchema } from "../dist/core/types.js";
 import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../dist/core/validation-lock.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
-import { createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexSandbox, isProviderFallbackEligible, resolveCodexModel } from "../dist/agents/codex-exec.js";
+import { createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexSandbox, isProviderFallbackEligible, MAX_PROVIDER_RESET_WAIT_MS, providerRetryAfterMs, resolveCodexModel } from "../dist/agents/codex-exec.js";
 import { analyzeHarnessComponentFailures, assessHarnessChangePresence, evaluateHarnessChange, inventoryHarnessComponents, parseHarnessChangeContract, planHarnessInterventions } from "../dist/core/harness-evolution.js";
 import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
 import { assessStopPolicy } from "../dist/core/stop-policy.js";
@@ -428,6 +428,12 @@ test("startup fallback eligibility distinguishes route failures from account mod
   assert.equal(isProviderFallbackEligible(new Error("Codex is not logged in")), true);
   assert.equal(isProviderFallbackEligible(new Error("Codex is unreachable right now")), true);
   assert.equal(isProviderFallbackEligible(new Error("The selected model is not available for your account")), false);
+});
+
+test("provider reset waits support long campaigns without unbounded timers", () => {
+  assert.equal(MAX_PROVIDER_RESET_WAIT_MS, 24 * 60 * 60_000);
+  assert.equal(providerRetryAfterMs(new Error("retry after 48 hours")), MAX_PROVIDER_RESET_WAIT_MS);
+  assert.equal(providerRetryAfterMs(new Error("retry after 30 seconds")), 30_000);
 });
 
 test("full-access research workspaces cannot modify the controller checkout", () => {

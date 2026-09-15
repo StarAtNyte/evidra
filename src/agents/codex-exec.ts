@@ -83,6 +83,8 @@ export function isRetryableAgentError(error: unknown): boolean {
   return isProviderUsageLimit(error) || /network|unreachable|timed out|timeout|stream disconnected|connection termination|temporarily|did not return|invalid decision|returned invalid|turn failed|econnreset|ePIPE|503|502|504/i.test(text);
 }
 
+export const MAX_PROVIDER_RESET_WAIT_MS = 24 * 60 * 60_000;
+
 export function providerRetryAfterMs(error: unknown): number {
   if (error instanceof ProviderUsageLimitError) return error.retryAfterMs;
   const text = error instanceof Error ? error.message : String(error);
@@ -91,7 +93,7 @@ export function providerRetryAfterMs(error: unknown): number {
   const amount = Number(match[1]);
   const unit = match[2].toLowerCase();
   const multiplier = unit.startsWith("hour") || unit.startsWith("hr") ? 3_600_000 : unit.startsWith("min") ? 60_000 : 1_000;
-  return Math.max(5_000, Math.min(6 * 60 * 60_000, Math.round(amount * multiplier)));
+  return Math.max(5_000, Math.min(MAX_PROVIDER_RESET_WAIT_MS, Math.round(amount * multiplier)));
 }
 
 export function queueCodexMessage(threadId: string, message: string): boolean {
@@ -396,7 +398,7 @@ export async function runWithUsageLimitWait(
   options: ExecAgentOptions,
   onProgress?: (message: string) => void,
   onProcess?: (control: ProcessControl) => void,
-  maxWaitMs = 6 * 60 * 60_000,
+  maxWaitMs = MAX_PROVIDER_RESET_WAIT_MS,
 ): Promise<AgentResult> {
   const started = Date.now();
   while (true) {
