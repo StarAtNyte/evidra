@@ -202,6 +202,9 @@ Long-running campaigns also checkpoint each major phase in durable campaign and
 scheduler state, while updating the controller lease step. If a terminal is
 interrupted, `/status` and `/research resume` can identify the last phase reached
 without treating an in-progress cycle as completed.
+Checkpoint heartbeats are process-bound: a stale controller cannot refresh or
+overwrite the lease of a replacement controller. Status output includes the
+checkpoint cycle, phase, and timestamp for operational diagnosis.
 
 Independent lanes explore different formulations and roles. Their evidence is
 cross-pollinated through a bounded board, while shared citations are not

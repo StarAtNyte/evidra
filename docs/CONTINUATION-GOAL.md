@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `df44e95`.
+- Latest pushed commit: `8b950e6`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -152,6 +152,9 @@ external evaluator.
   lanes, director, critic, execution, and terminal/completion. Campaign state,
   scheduler state, and the controller lease share the checkpoint step for
   restart/status recovery.
+- Checkpoint heartbeats are process-bound, and CLI/TUI status output exposes the
+  saved cycle, phase, and timestamp, preventing stale controllers from
+  overwriting live progress.
 - Codex structured-output schemas now cover the research director, independent
   research lanes, and critic, so every research-role response is constrained
   before durable parsing and evidence gates.
