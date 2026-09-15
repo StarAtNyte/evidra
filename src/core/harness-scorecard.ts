@@ -22,6 +22,8 @@ export interface HarnessTrial {
   direction: ScoreDirection;
   baselineMetric: number;
   candidateMetric?: number;
+  /** Complete evaluator-backed metric suite when the benchmark declares one. */
+  candidateMetrics?: Record<string, number>;
   /** Optional task-level bounds for cross-task metric normalization. */
   taskWorstMetric?: number;
   taskBestMetric?: number;

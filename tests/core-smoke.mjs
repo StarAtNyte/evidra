@@ -3576,6 +3576,20 @@ test("benchmark runner executes matched arms and records evaluator-backed metric
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("benchmark runner enforces and preserves general metric suites", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-metric-suite-"));
+  try {
+    const command = [process.execPath, "-e", "console.log(JSON.stringify({score:0.8, latency_ms:42, safety:0.99}))"];
+    const report = await runBenchmarkArms([{ harness: "suite", task: "task-a", arm: "default", seed: 1, model: "test-model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, metric: "score", requiredMetrics: ["latency_ms", "safety"], command }], root);
+    assert.equal(report.trials[0].validRun, true);
+    assert.deepEqual(report.trials[0].candidateMetrics, { score: 0.8, latency_ms: 42, safety: 0.99 });
+    assert.deepEqual(report.runs[0].metrics, { score: 0.8, latency_ms: 42, safety: 0.99 });
+    const missing = await runBenchmarkArms([{ harness: "suite", task: "task-b", arm: "default", seed: 1, model: "test-model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, metric: "score", requiredMetrics: ["safety"], command: [process.execPath, "-e", "console.log(JSON.stringify({score:0.8}))"] }], root);
+    assert.equal(missing.trials[0].validRun, false);
+    assert.equal(missing.trials[0].failureClass, "invalid_metric_suite");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("benchmark workers do not inherit controller credentials", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-benchmark-env-"));
   const previous = process.env.OPENAI_API_KEY;

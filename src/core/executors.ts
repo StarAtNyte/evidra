@@ -216,6 +216,16 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
     const primary = object[metricName];
     const parsedPrimary = finiteMetricValue(primary);
     if (parsedPrimary !== undefined) metrics[metricName] = parsedPrimary;
+    // Structured evaluators commonly emit a primary metric beside auxiliary
+    // objectives at the top level, e.g. {score, latency_ms, safety}. Preserve
+    // every finite scalar here; callers decide which names are required by
+    // their metric contract, while unknown metadata remains harmlessly
+    // available for diagnostics.
+    for (const [name, metric] of Object.entries(object)) {
+      if (name === "metrics" || name === metricName || name === "metricsByFold" || name === "byFold" || name === "subgroupDeltas" || name === "bySubgroupDelta" || name === "subgroupDelta") continue;
+      const parsedMetric = finiteMetricValue(metric);
+      if (parsedMetric !== undefined) metrics[name] = parsedMetric;
+    }
     const byFold = object.metricsByFold ?? object.byFold;
     if (byFold && typeof byFold === "object" && !Array.isArray(byFold)) {
       for (const [name, series] of Object.entries(byFold as Record<string, unknown>)) {

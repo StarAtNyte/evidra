@@ -34,6 +34,8 @@ export interface BenchmarkArmSpec {
   reproducibilityCommand?: string[];
   reproducibilityTolerance?: number;
   metric: string;
+  /** Additional metrics that must be emitted for this arm to be valid. */
+  requiredMetrics?: string[];
   command: string[];
   cwd?: string;
 }
@@ -44,7 +46,7 @@ export interface BenchmarkRunReport {
   /** Stable identity of the matched comparison contract, independent of harness commands. */
   protocolFingerprint: string;
   trials: HarnessTrial[];
-  runs: Array<{ harness: string; command: string[]; cwd: string; result: ProcessResult; metric?: number; attempts: number; attemptDetails: BenchmarkAttemptRecord[]; failureClass?: string; reproducibility?: { command: string[]; result: ProcessResult; metric?: number; tolerance: number; matched: boolean } }>;
+  runs: Array<{ harness: string; command: string[]; cwd: string; result: ProcessResult; metric?: number; metrics?: Record<string, number>; attempts: number; attemptDetails: BenchmarkAttemptRecord[]; failureClass?: string; reproducibility?: { command: string[]; result: ProcessResult; metric?: number; metrics?: Record<string, number>; tolerance: number; matched: boolean } }>;
 }
 
 export interface BenchmarkAttemptRecord {
@@ -52,6 +54,7 @@ export interface BenchmarkAttemptRecord {
   exitCode: number;
   durationMs: number;
   metric?: number;
+  metrics?: Record<string, number>;
   stdoutTail: string;
   stderrTail: string;
   failureClass?: string;
@@ -79,6 +82,7 @@ export function benchmarkProtocolFingerprint(arms: BenchmarkArmSpec[]): string {
     taskWorstMetric: arm.taskWorstMetric ?? null,
     taskBestMetric: arm.taskBestMetric ?? null,
     metric: arm.metric,
+    requiredMetrics: [...new Set([arm.metric, ...(arm.requiredMetrics ?? [])])].sort(),
   })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
   return `sha256:${createHash("sha256").update(JSON.stringify(identity)).digest("hex")}`;
 }
@@ -118,6 +122,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     const maxAttempts = 1 + Math.min(3, Math.max(0, Math.floor(arm.retries ?? 0)));
     let result: ProcessResult | undefined;
     let metric: number | undefined;
+    let metrics: Record<string, number> = {};
     let validRun = false;
     let attempts = 0;
     let totalDurationMs = 0;
@@ -139,17 +144,20 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       }, undefined, workerEnvironment);
       totalDurationMs += result.durationMs;
       const parsed = parseMetricOutput(result.stdout, arm.metric);
+      const requiredMetrics = [...new Set([arm.metric, ...(arm.requiredMetrics ?? [])])];
+      metrics = Object.fromEntries(Object.entries(parsed.metrics).filter(([name, value]) => requiredMetrics.includes(name) && Number.isFinite(value)));
       metric = parsed.metrics[arm.metric];
-      validRun = result.exitCode === 0 && Number.isFinite(metric);
+      validRun = result.exitCode === 0 && requiredMetrics.every((name) => Number.isFinite(metrics[name]));
       if (validRun && attemptEvidenceMs !== undefined) timeToEvidenceSeconds = (totalDurationMs - result.durationMs + attemptEvidenceMs) / 1000;
       attemptDetails.push({
         attempt: attempt + 1,
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         ...(Number.isFinite(metric) ? { metric } : {}),
+        ...(Object.keys(metrics).length ? { metrics: { ...metrics } } : {}),
         stdoutTail: redactSecrets(result.stdout.slice(-4_000)),
         stderrTail: redactSecrets(result.stderr.slice(-4_000)),
-        ...(result.exitCode !== 0 ? { failureClass: classifyProcessFailure(result) ?? "unknown" } : !Number.isFinite(metric) ? { failureClass: "invalid_metric" } : {}),
+        ...(result.exitCode !== 0 ? { failureClass: classifyProcessFailure(result) ?? "unknown" } : !validRun ? { failureClass: "invalid_metric_suite" } : {}),
       });
       if (validRun || attempt === maxAttempts - 1) break;
       onProgress?.(`Benchmark · ${arm.harness} failed; retrying ${attempt + 1}/${maxAttempts - 1}`);
@@ -162,10 +170,12 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
         onProgress?.(`Benchmark · ${arm.harness} · independent reproducibility check`);
         const checkResult = await runProcess(arm.reproducibilityCommand, cwd, remainingMs, undefined, undefined, workerEnvironment);
         totalDurationMs += checkResult.durationMs;
-        const checkMetric = parseMetricOutput(checkResult.stdout, arm.metric).metrics[arm.metric];
+        const checkMetrics = parseMetricOutput(checkResult.stdout, arm.metric).metrics;
+        const requiredMetrics = [...new Set([arm.metric, ...(arm.requiredMetrics ?? [])])];
+        const checkMetric = checkMetrics[arm.metric];
         const tolerance = arm.reproducibilityTolerance ?? 0;
-        reproducible = checkResult.exitCode === 0 && Number.isFinite(checkMetric) && Math.abs(checkMetric - metric!) <= tolerance;
-        reproducibility = { command: arm.reproducibilityCommand, result: checkResult, metric: Number.isFinite(checkMetric) ? checkMetric : undefined, tolerance, matched: reproducible };
+        reproducible = checkResult.exitCode === 0 && requiredMetrics.every((name) => Number.isFinite(checkMetrics[name])) && Number.isFinite(checkMetric) && Math.abs(checkMetric - metric!) <= tolerance;
+        reproducibility = { command: arm.reproducibilityCommand, result: checkResult, metric: Number.isFinite(checkMetric) ? checkMetric : undefined, metrics: Object.fromEntries(Object.entries(checkMetrics).filter(([name, value]) => requiredMetrics.includes(name) && Number.isFinite(value))), tolerance, matched: reproducible };
       }
     }
     const finalFailure = attemptDetails.at(-1)?.failureClass;
@@ -175,7 +185,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
     const reportReproducibility = reproducibility
       ? { ...reproducibility, result: { ...reproducibility.result, stdout: redactSecrets(reproducibility.result.stdout), stderr: redactSecrets(reproducibility.result.stderr) } }
       : undefined;
-    const run: BenchmarkRunReport["runs"][number] = { harness: arm.harness, command: arm.command, cwd, result: reportResult, metric: Number.isFinite(metric) ? metric : undefined, attempts, attemptDetails, ...(finalFailure ? { failureClass: finalFailure } : {}), ...(reportReproducibility ? { reproducibility: reportReproducibility } : {}) };
+    const run: BenchmarkRunReport["runs"][number] = { harness: arm.harness, command: arm.command, cwd, result: reportResult, metric: Number.isFinite(metric) ? metric : undefined, ...(Object.keys(metrics).length ? { metrics: { ...metrics } } : {}), attempts, attemptDetails, ...(finalFailure ? { failureClass: finalFailure } : {}), ...(reportReproducibility ? { reproducibility: reportReproducibility } : {}) };
     const trial: HarnessTrial = {
       harness: arm.harness,
       ...(arm.policy ? { policy: arm.policy } : {}),
@@ -194,6 +204,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       ...(arm.taskWorstMetric !== undefined ? { taskWorstMetric: arm.taskWorstMetric } : {}),
       ...(arm.taskBestMetric !== undefined ? { taskBestMetric: arm.taskBestMetric } : {}),
       candidateMetric: Number.isFinite(metric) ? metric : undefined,
+      ...(Object.keys(metrics).length ? { candidateMetrics: { ...metrics } } : {}),
       validRun,
       durationSeconds: totalDurationMs / 1000,
       ...(timeToEvidenceSeconds !== undefined ? { timeToEvidenceSeconds } : {}),
