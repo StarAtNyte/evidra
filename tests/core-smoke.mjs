@@ -140,6 +140,7 @@ import { assessTransferApplicability, createTransferableMethod, transferableMeth
 import { createAblationPlan, ablationPlansFromEvents, evaluateAblationEvidence } from "../dist/core/ablation.js";
 import { benchmarkProtocolFingerprint, parseBenchmarkArm, runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, parseAirsBenchDiscovery } from "../dist/core/airs-bench.js";
+import { runAirsTaskLifecycle } from "../dist/core/airs-adapter.js";
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
 import { advanceEvolutionaryGeneration, planEvolutionaryIslands } from "../dist/core/evolution.js";
@@ -4746,6 +4747,33 @@ test("AIRS protocol generation preserves task-specific baselines", () => {
   const protocol = createAirsBenchmarkProtocol(discovery, { templates: [{ harness: "evidra", command: ["run", "{taskId}"] }, { harness: "other", command: ["run", "{taskId}"] }], model: "m", seed: 1, budgetMinutes: 1, baselineMetrics: { TaskA: 0.8, "rad/TaskB": 2.5 } });
   assert.deepEqual([...new Set(protocol.arms.filter((arm) => arm.task.endsWith("TaskA")).map((arm) => arm.baselineMetric))], [0.8]);
   assert.deepEqual([...new Set(protocol.arms.filter((arm) => arm.task.endsWith("TaskB")).map((arm) => arm.baselineMetric))], [2.5]);
+});
+
+test("AIRS lifecycle rejects the seeded empty submission and accepts a real artifact", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-airs-lifecycle-"));
+  try {
+    const task = join(root, "task");
+    const globalData = join(root, "global-data");
+    mkdirSync(task, { recursive: true });
+    mkdirSync(globalData, { recursive: true });
+    for (const file of ["prepare.py", "evaluate_prepare.py"]) writeFileSync(join(task, file), "process.exitCode = 0;\n");
+    writeFileSync(join(task, "evaluate.py"), "console.log('Accuracy: 0.5');\n");
+    const result = (exitCode = 0) => ({ command: ["agent"], cwd: root, exitCode, durationMs: 1, stdout: "", stderr: "" });
+    const empty = await runAirsTaskLifecycle({
+      repository: root, taskPath: "task", preparePath: "task/prepare.py", evaluatePreparePath: "task/evaluate_prepare.py", evaluatePath: "task/evaluate.py",
+      globalSharedDataDir: globalData, python: process.execPath, workspace: join(root, "empty"), timeoutMs: 30_000,
+      agentRunner: async () => result(), metric: "Accuracy",
+    });
+    assert.equal(empty.valid, false);
+    assert.equal(empty.failureStage, "agent");
+    const complete = await runAirsTaskLifecycle({
+      repository: root, taskPath: "task", preparePath: "task/prepare.py", evaluatePreparePath: "task/evaluate_prepare.py", evaluatePath: "task/evaluate.py",
+      globalSharedDataDir: globalData, python: process.execPath, workspace: join(root, "complete"), timeoutMs: 30_000,
+      agentRunner: async ({ agentLogDir }) => { writeFileSync(join(agentLogDir, "submission.csv"), "id,prediction\n1,ok\n"); return result(); }, metric: "Accuracy",
+    });
+    assert.equal(complete.valid, true);
+    assert.equal(complete.metrics.Accuracy, 0.5);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("search policy explores untried operators and penalizes invalid evidence", () => {

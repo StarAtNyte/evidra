@@ -146,17 +146,11 @@ quality or leaderboard performance.
 A bounded embedded-Codex probe was also attempted with `gpt-5.6-luna` at
 medium effort. Codex authenticated and entered the isolated workspace, but
 repeatedly inspected the working directory without producing the required
-submission; the operator interrupted it before the five-minute agent budget
-expired. Evidra now treats a missing submission as an immediate `agent`-stage
-failure and does not spend evaluator time on an invalid run. This is useful
-negative evidence for improving the task prompt and agent progress watchdog,
-not a benchmark score.
-
-Embedded Codex execution gets one bounded repair turn when the first turn
-fails or returns without the required submission artifact. The repair turn is
-fresh, explicitly told to inspect the existing workspace and produce the
-artifact, and remains inside the original stage deadline; Evidra never starts
-concurrent agent turns.
+submission. Evidra now supervises three fresh bounded phases—inspect/plan,
+implement, and verify—within one total deadline, and treats an empty or missing
+submission as an immediate `agent`-stage failure. It does not spend evaluator
+time on an invalid run. This is useful negative evidence for improving the
+task prompt and agent progress watchdog, not a benchmark score.
 
 Experiment-engineer prompts explicitly permit local evaluator artifacts such as
 `submission.csv`; the external-submission boundary remains disabled. This keeps
