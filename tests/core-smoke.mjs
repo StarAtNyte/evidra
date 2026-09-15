@@ -2548,6 +2548,8 @@ test("source frontier includes durable web candidates and tracks their retrieval
   assert.equal(report.uniqueWorks, 1);
   assert.equal(report.retrievedWorks, 1);
   assert.equal(report.claimCoverage, 1);
+  assert.equal(report.discoveryOnlyWorks, 1);
+  assert.ok(report.meanQualityScore > 0);
 });
 
 test("source identity canonicalizes fragments, host casing, default ports, and trailing slashes", () => {

@@ -582,16 +582,23 @@ export function sourceFrontier(events: Array<{ type: string; payload: unknown }>
         if (typeof result.title !== "string" || typeof result.url !== "string") continue;
         const key = sourceWorkKey({ url: result.url, doi: typeof result.doi === "string" ? result.doi : undefined });
         const prior = byKey.get(key);
+        const provider = result.provider;
+        const doi = typeof result.doi === "string" ? result.doi : undefined;
+        const abstract = typeof result.abstract === "string" ? result.abstract : undefined;
+        const authors = Array.isArray(result.authors) ? result.authors.filter((author): author is string => typeof author === "string").slice(0, 8) : [];
+        const venue = typeof result.venue === "string" ? result.venue : undefined;
+        const evidenceClass = prior?.evidenceClass ?? result.evidenceClass ?? sourceEvidenceClass(result.url, provider, doi);
+        const qualityScore = prior?.qualityScore ?? result.qualityScore ?? sourceEvidenceQuality({ url: result.url, provider, doi, abstract, authors, venue });
         byKey.set(key, {
           title: prior?.title ?? result.title,
           url: prior?.url ?? result.url,
           ...(prior?.doi ?? result.doi ? { doi: prior?.doi ?? result.doi } : {}),
           ...(prior?.venue ?? result.venue ? { venue: prior?.venue ?? result.venue } : {}),
           ...(prior?.publicationDate ?? result.publicationDate ? { publicationDate: prior?.publicationDate ?? result.publicationDate } : {}),
-          authors: prior?.authors?.length ? prior.authors : Array.isArray(result.authors) ? result.authors.filter((author): author is string => typeof author === "string").slice(0, 8) : [],
+          authors: prior?.authors?.length ? prior.authors : authors,
           ...(prior?.abstract ?? result.abstract ? { abstract: prior?.abstract ?? result.abstract } : {}),
-          ...(prior?.evidenceClass ?? result.evidenceClass ? { evidenceClass: prior?.evidenceClass ?? result.evidenceClass } : {}),
-          ...(prior?.qualityScore ?? result.qualityScore !== undefined ? { qualityScore: prior?.qualityScore ?? result.qualityScore } : {}),
+          evidenceClass,
+          qualityScore,
           key,
           queries: [...new Set([...(prior?.queries ?? []), ...(Array.isArray(result.queries) ? result.queries.filter((value): value is string => typeof value === "string" && value.trim().length > 0) : query ? [query] : [])])].slice(0, 12),
           retrieved: prior?.retrieved ?? false,
