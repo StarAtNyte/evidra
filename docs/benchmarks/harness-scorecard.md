@@ -84,11 +84,12 @@ directories overlap. Parallel execution is retained only for genuinely
 separate workspaces, preventing concurrent harnesses from contaminating one
 another through shared files, caches, or generated artifacts.
 
-Trials may also declare `dataRevision` and `runtimeFingerprint`. When either is
-present, every harness on the matched arm must agree; a hidden dataset or
-runtime mismatch invalidates the protocol instead of becoming a silent source
-of advantage. `benchmark export` carries the experiment dataset revision and,
-when available, the checksummed environment fingerprint into these fields.
+Trials may also declare `dataRevision`, `runtimeFingerprint`, and an
+`evaluatorFingerprint`. When any is present, every harness on the matched arm
+must agree; a hidden dataset, runtime, or evaluator mismatch invalidates the
+protocol instead of becoming a silent source of advantage. `benchmark export`
+carries the experiment dataset revision and, when available, the checksummed
+environment fingerprint into these fields.
 
 An arm may declare `retries` from 0 to 3. Retries share the arm's total time
 budget, and a later successful attempt is recorded as `recovered: true`; total

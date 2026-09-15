@@ -4343,6 +4343,16 @@ test("direct harness comparison refuses hidden protocol mismatches", () => {
   assert.equal(comparison.challengerWins, false);
 });
 
+test("direct harness comparison refuses mismatched evaluator fingerprints", () => {
+  const base = { task: "task", arm: "default", seed: 1, model: "same-model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 1, recovered: false, reproducible: true };
+  const comparison = compareHarnesses([
+    { harness: "evidra", evaluatorFingerprint: "sha256:evaluator-a", ...base },
+    { harness: "other", evaluatorFingerprint: "sha256:evaluator-b", ...base },
+  ], "evidra", "other");
+  assert.equal(comparison.validPairedArms, 0);
+  assert.equal(comparison.challengerWins, false);
+});
+
 test("direct harness comparison refuses mismatched reasoning effort", () => {
   const base = { task: "task", arm: "default", seed: 1, model: "same-model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 1, recovered: false, reproducible: true };
   const comparison = compareHarnesses([

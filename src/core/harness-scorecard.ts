@@ -25,6 +25,8 @@ export interface HarnessTrial {
   /** Optional fairness metadata; when supplied it must match across harnesses. */
   dataRevision?: string;
   runtimeFingerprint?: string;
+  /** Optional immutable evaluator/version identity used for the score. */
+  evaluatorFingerprint?: string;
   direction: ScoreDirection;
   baselineMetric: number;
   candidateMetric?: number;
@@ -66,6 +68,7 @@ const HarnessTrialSchema = z.object({
   budgetMinutes: z.number().finite().positive().optional(),
   dataRevision: z.string().min(1).optional(),
   runtimeFingerprint: z.string().min(1).optional(),
+  evaluatorFingerprint: z.string().min(1).optional(),
   direction: z.enum(["maximize", "minimize"]),
   baselineMetric: z.number().finite(),
   candidateMetric: z.number().finite().optional(),
@@ -111,7 +114,7 @@ export function parseHarnessTrial(value: unknown, label = "Benchmark trial"): Ha
 
 export interface BenchmarkProtocolIssue {
   key: string;
-  field: "task" | "taskMetadata" | "slice" | "arm" | "seed" | "provider" | "model" | "reasoningEffort" | "budgetMinutes" | "dataRevision" | "runtimeFingerprint" | "direction" | "baselineMetric" | "taskWorstMetric" | "taskBestMetric";
+  field: "task" | "taskMetadata" | "slice" | "arm" | "seed" | "provider" | "model" | "reasoningEffort" | "budgetMinutes" | "dataRevision" | "runtimeFingerprint" | "evaluatorFingerprint" | "direction" | "baselineMetric" | "taskWorstMetric" | "taskBestMetric";
   values: string[];
   message: string;
 }
@@ -183,6 +186,7 @@ export function validateBenchmarkProtocol(trials: HarnessTrial[]): BenchmarkProt
       ["budgetMinutes", (trial) => trial.budgetMinutes === undefined ? "<missing>" : String(trial.budgetMinutes)],
       ["dataRevision", (trial) => trial.dataRevision ?? "<missing>"],
       ["runtimeFingerprint", (trial) => trial.runtimeFingerprint ?? "<missing>"],
+      ["evaluatorFingerprint", (trial) => trial.evaluatorFingerprint ?? "<missing>"],
       ["direction", (trial) => trial.direction],
       ["baselineMetric", (trial) => Number.isFinite(trial.baselineMetric) ? String(trial.baselineMetric) : "<invalid>"],
       ["taskWorstMetric", (trial) => trial.taskWorstMetric === undefined ? "<missing>" : String(trial.taskWorstMetric)],
@@ -418,6 +422,7 @@ function fairPair(left: HarnessTrial, right: HarnessTrial): boolean {
     left.baselineMetric === right.baselineMetric &&
     left.dataRevision === right.dataRevision &&
     left.runtimeFingerprint === right.runtimeFingerprint &&
+    left.evaluatorFingerprint === right.evaluatorFingerprint &&
     left.taskWorstMetric === right.taskWorstMetric &&
     left.taskBestMetric === right.taskBestMetric &&
     left.reproducibilityChecked === right.reproducibilityChecked &&
@@ -448,6 +453,7 @@ function compareProtocolParity(training: HarnessTrial[], heldOut: HarnessTrial[]
     ["direction", (trial) => trial.direction],
     ["dataRevision", (trial) => trial.dataRevision ?? "<missing>"],
     ["runtimeFingerprint", (trial) => trial.runtimeFingerprint ?? "<missing>"],
+    ["evaluatorFingerprint", (trial) => trial.evaluatorFingerprint ?? "<missing>"],
   ];
   return fields.flatMap(([name, read]) => {
     const left = protocolValues(training, read);

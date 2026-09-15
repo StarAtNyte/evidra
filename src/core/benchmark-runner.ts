@@ -29,6 +29,8 @@ export interface BenchmarkArmSpec {
   budgetMinutes: number;
   dataRevision?: string;
   runtimeFingerprint?: string;
+  /** Immutable evaluator/version identity used for the score. */
+  evaluatorFingerprint?: string;
   direction: ScoreDirection;
   baselineMetric: number;
   taskWorstMetric?: number;
@@ -64,6 +66,7 @@ const BenchmarkArmSchema = z.object({
   budgetMinutes: z.number().finite().positive(),
   dataRevision: z.string().min(1).optional(),
   runtimeFingerprint: z.string().min(1).optional(),
+  evaluatorFingerprint: z.string().min(1).optional(),
   direction: z.enum(["maximize", "minimize"]),
   baselineMetric: z.number().finite(),
   taskWorstMetric: z.number().finite().optional(),
@@ -140,6 +143,7 @@ export function benchmarkProtocolFingerprint(arms: BenchmarkArmSpec[]): string {
     budgetMinutes: arm.budgetMinutes,
     dataRevision: arm.dataRevision ?? null,
     runtimeFingerprint: arm.runtimeFingerprint ?? null,
+    evaluatorFingerprint: arm.evaluatorFingerprint ?? null,
     direction: arm.direction,
     baselineMetric: arm.baselineMetric,
     taskWorstMetric: arm.taskWorstMetric ?? null,
@@ -287,6 +291,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       budgetMinutes: arm.budgetMinutes,
       ...(arm.dataRevision ? { dataRevision: arm.dataRevision } : {}),
       ...(arm.runtimeFingerprint ? { runtimeFingerprint: arm.runtimeFingerprint } : {}),
+      ...(arm.evaluatorFingerprint ? { evaluatorFingerprint: arm.evaluatorFingerprint } : {}),
       direction: arm.direction,
       baselineMetric: arm.baselineMetric,
       ...(arm.taskWorstMetric !== undefined ? { taskWorstMetric: arm.taskWorstMetric } : {}),
