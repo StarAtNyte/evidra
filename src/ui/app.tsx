@@ -56,7 +56,7 @@ import { recordBaselineEvidence } from "../core/baseline.js";
 import { redactSecrets } from "../core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "../core/claim-audit.js";
-import { summarizeUsage } from "../core/usage.js";
+import { summarizeAgentUsage, summarizeUsage } from "../core/usage.js";
 import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "../core/literature-bench.js";
 import { parseAutoResearchBenchEvaluation } from "../core/autoresearch-bench.js";
 import { assessResearchDecisionRubric } from "../core/research-rubric.js";
@@ -2302,14 +2302,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (request === "/usage") {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const counts = store.counts(); const events = store.eventCount(); const state = store.schedulerState(); const campaign = config.campaign; const usage = summarizeUsage(store.runs(), store.experiments()); const gpuUsed = observedGpuHours(store.runAttempts(), store.experiments(), store.hypotheses()); const gpuReserved = store.reservedComputeGpuHours();
-      const agentUsage = store.eventsByType("research.agent.usage").reduce((total, event) => {
-        const payload = event.payload as { inputTokens?: unknown; outputTokens?: unknown; cachedInputTokens?: unknown; reasoningOutputTokens?: unknown };
-        const input = typeof payload.inputTokens === "number" && Number.isFinite(payload.inputTokens) ? payload.inputTokens : 0;
-        const output = typeof payload.outputTokens === "number" && Number.isFinite(payload.outputTokens) ? payload.outputTokens : 0;
-        const cached = typeof payload.cachedInputTokens === "number" && Number.isFinite(payload.cachedInputTokens) ? payload.cachedInputTokens : 0;
-        const reasoning = typeof payload.reasoningOutputTokens === "number" && Number.isFinite(payload.reasoningOutputTokens) ? payload.reasoningOutputTokens : 0;
-        return { calls: total.calls + 1, inputTokens: total.inputTokens + input, outputTokens: total.outputTokens + output, cachedInputTokens: total.cachedInputTokens + cached, reasoningOutputTokens: total.reasoningOutputTokens + reasoning };
-      }, { calls: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningOutputTokens: 0 });
+      const agentUsage = summarizeAgentUsage(store.eventsByType("research.agent.usage"));
       store.close();
       const elapsed = campaign ? campaignElapsedMinutes(campaign) : 0;
       const executorUsage = Object.entries(usage.byExecutor).map(([executor, bucket]) => `  ${executor}: ${bucket.runs} runs · ${bucket.wallMinutes.toFixed(1)}m · ${bucket.gpuWallHours.toFixed(3)} GPU-h`).join("\n");

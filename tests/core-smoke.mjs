@@ -60,7 +60,7 @@ import { auditExperiment, validateEvaluationMatrix } from "../dist/core/validati
 import { assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, ResearchLaneReportSchema, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
-import { summarizeUsage } from "../dist/core/usage.js";
+import { summarizeAgentUsage, summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { assessForecast, summarizeForecastAssessments } from "../dist/core/forecast-calibration.js";
@@ -2867,6 +2867,14 @@ test("Codex usage preserves cache and reasoning-token accounting", () => {
     inputTokens: 100, cachedInputTokens: 40, outputTokens: 20, reasoningOutputTokens: 12,
   });
   assert.equal(normalizeCodexUsage({ input_tokens: "unknown" }), undefined);
+});
+
+test("shared agent usage aggregation ignores malformed and negative counters", () => {
+  assert.deepEqual(summarizeAgentUsage([
+    { payload: { inputTokens: 10, outputTokens: 5, cachedInputTokens: 3, reasoningOutputTokens: 2 } },
+    { payload: { inputTokens: -9, outputTokens: "bad", cachedInputTokens: 1 } },
+    { payload: null },
+  ]), { calls: 3, inputTokens: 10, outputTokens: 5, cachedInputTokens: 4, reasoningOutputTokens: 2 });
 });
 
 test("Codex model responses normalize reasoning-effort objects", () => {

@@ -318,7 +318,8 @@ runtime, failure classes, and the quality/reliability/time frontier. Reports
 are diagnostic evidence; they do not replace an evaluator or replication.
 Codex usage telemetry preserves input, output, cached-input, and
 reasoning-output token counts so model and thinking-effort comparisons include
-context reuse and reasoning cost.
+context reuse and reasoning cost. The CLI and TUI use the same durable usage
+aggregator, so their totals cannot drift as provider fields evolve.
 
 ## 10. Safety and operational rules
 

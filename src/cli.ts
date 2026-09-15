@@ -46,7 +46,7 @@ import { observedGpuHours } from "./core/compute-budget.js";
 import { enforceClaimTermination, enforceGoalTermination } from "./core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds, type ClaimAuditReport } from "./core/claim-audit.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "./core/error-analysis.js";
-import { summarizeUsage } from "./core/usage.js";
+import { summarizeAgentUsage, summarizeUsage } from "./core/usage.js";
 import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "./core/ensemble.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
@@ -532,14 +532,7 @@ program.command("usage").description("Show research, experiment, and campaign us
   const counts = store.counts();
   const project = store.project();
   const usage = summarizeUsage(store.runs(), store.experiments());
-  const agentUsage = store.eventsByType("research.agent.usage").reduce((total, event) => {
-    const payload = event.payload as { inputTokens?: unknown; outputTokens?: unknown; cachedInputTokens?: unknown; reasoningOutputTokens?: unknown };
-    const input = typeof payload.inputTokens === "number" && Number.isFinite(payload.inputTokens) ? payload.inputTokens : 0;
-    const output = typeof payload.outputTokens === "number" && Number.isFinite(payload.outputTokens) ? payload.outputTokens : 0;
-    const cached = typeof payload.cachedInputTokens === "number" && Number.isFinite(payload.cachedInputTokens) ? payload.cachedInputTokens : 0;
-    const reasoning = typeof payload.reasoningOutputTokens === "number" && Number.isFinite(payload.reasoningOutputTokens) ? payload.reasoningOutputTokens : 0;
-    return { calls: total.calls + 1, inputTokens: total.inputTokens + input, outputTokens: total.outputTokens + output, cachedInputTokens: total.cachedInputTokens + cached, reasoningOutputTokens: total.reasoningOutputTokens + reasoning };
-  }, { calls: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningOutputTokens: 0 });
+  const agentUsage = summarizeAgentUsage(store.eventsByType("research.agent.usage"));
   console.log(`Project       ${project?.name ?? "not initialized"}`);
   console.log(`Events        ${store.eventCount()}`);
   console.log(`Hypotheses    ${counts.hypotheses}`);
