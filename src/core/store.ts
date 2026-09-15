@@ -442,6 +442,19 @@ export class ResearchStore {
     return (rows as Array<{ type: string; payload_json: string; created_at: string; event_hash: string | null }>).map((row) => ({ type: row.type, payload: JSON.parse(row.payload_json), createdAt: row.created_at, eventHash: row.event_hash }));
   }
 
+  /** Read structured subtask audits from the complete event history. */
+  subtaskAudits(subtaskId?: string): Array<{ subtaskId: string; complete: boolean; status: string; payload: unknown; createdAt: string }> {
+    return this.eventsByType("subtask.audit").flatMap((event) => {
+      const payload = event.payload as { subtaskId?: unknown; complete?: unknown; status?: unknown };
+      if (typeof payload.subtaskId !== "string" || (subtaskId !== undefined && payload.subtaskId !== subtaskId)) return [];
+      return [{ subtaskId: payload.subtaskId, complete: payload.complete === true, status: typeof payload.status === "string" ? payload.status : "blocked", payload: event.payload, createdAt: event.createdAt }];
+    });
+  }
+
+  latestSubtaskAudit(subtaskId: string): { subtaskId: string; complete: boolean; status: string; payload: unknown; createdAt: string } | undefined {
+    return this.subtaskAudits(subtaskId).at(-1);
+  }
+
   eventsByTypes(types: string[]): Array<{ type: string; payload: unknown; createdAt: string; eventHash?: string | null }> {
     const uniqueTypes = [...new Set(types.filter((type) => type.trim()))];
     if (!uniqueTypes.length) return [];

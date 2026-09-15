@@ -2279,12 +2279,14 @@ test("subtask audits are durable controller evidence", () => {
     const store = new ResearchStore(join(root, "state.sqlite"));
     const audit = auditSubtask({ id: "durable-1", objective: "check a result", acceptanceCriteria: [{ id: "check", description: "check passes" }] }, [{ criterionId: "check", satisfied: true, source: "verifier", evidenceIds: ["run:1"] }]);
     store.recordSubtaskAudit(audit);
+    assert.equal(store.latestSubtaskAudit("durable-1").complete, true);
     store.close();
     const reopened = new ResearchStore(join(root, "state.sqlite"));
     const events = reopened.eventsByType("subtask.audit");
     assert.equal(events.length, 1);
     assert.equal(events[0].payload.subtaskId, "durable-1");
     assert.equal(events[0].payload.complete, true);
+    assert.equal(reopened.latestSubtaskAudit("durable-1").status, "completed");
     reopened.close();
   } finally {
     rmSync(root, { recursive: true, force: true });

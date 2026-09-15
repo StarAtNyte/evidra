@@ -3253,7 +3253,12 @@ research
         const goals = phaseGoalsForMode(decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, campaignGoalSetId);
         const index = goals.findIndex((goal) => goal.id === phaseGoal.id);
         if (index >= 0) {
-          const met = decision.goalStatus === "met";
+          // Consume the persisted audit before advancing. This remains safe
+          // across controller restart and protects against stale in-memory
+          // decisions claiming a phase was met.
+          const durableAudit = decisionStore.latestSubtaskAudit(phaseGoal.id);
+          const met = decision.goalStatus === "met" && durableAudit?.complete === true;
+          if (decision.goalStatus === "met" && !met) decisionStore.appendEvent("research.phase_transition.rejected", { phase: phaseGoal.phase, reason: "missing successful durable subtask audit", audit: durableAudit?.payload ?? null });
           const nextStatus = met ? "met" : decision.goalStatus === "blocked" ? "blocked" : "active";
           decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: nextStatus, payload: { ...goals[index], status: nextStatus, attempts: phaseGoal.attempts + 1, updatedAt: now } });
           if (met && goals[index + 1]) {
@@ -3392,10 +3397,12 @@ research.command("propose")
     materializeResearchDecision(decisionStore, decision);
     if (phaseGoal) {
       const now = new Date().toISOString();
-      const nextStatus = decision.goalStatus === "met" ? "met" : decision.goalStatus === "blocked" ? "blocked" : "active";
+      const durableAudit = phaseGoal ? decisionStore.latestSubtaskAudit(phaseGoal.id) : undefined;
+      const auditedMet = decision.goalStatus === "met" && durableAudit?.complete === true;
+      const nextStatus = auditedMet ? "met" : decision.goalStatus === "blocked" ? "blocked" : "active";
       decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: nextStatus, payload: { ...phaseGoal, status: nextStatus, attempts: phaseGoal.attempts + 1, updatedAt: now } });
     }
-    if (phaseGoal && decision.goalStatus === "met") {
+    if (phaseGoal && decision.goalStatus === "met" && decisionStore.latestSubtaskAudit(phaseGoal.id)?.complete === true) {
       const goals = decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));
       const index = goals.findIndex((goal) => goal.id === phaseGoal.id);
       const now = new Date().toISOString();

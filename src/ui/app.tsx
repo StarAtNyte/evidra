@@ -1145,10 +1145,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
     materializeResearchDecision(decisionStore, effectiveDecision);
     if (phaseGoal) {
       const now = new Date().toISOString();
-      const nextStatus = effectiveDecision.goalStatus === "met" ? "met" : effectiveDecision.goalStatus === "blocked" ? "blocked" : "active";
+      const durableAudit = decisionStore.latestSubtaskAudit(phaseGoal.id);
+      const auditedMet = effectiveDecision.goalStatus === "met" && durableAudit?.complete === true;
+      const nextStatus = auditedMet ? "met" : effectiveDecision.goalStatus === "blocked" ? "blocked" : "active";
       decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: nextStatus, payload: { ...phaseGoal, status: nextStatus, attempts: phaseGoal.attempts + 1, updatedAt: now } });
     }
-    if (phaseGoal && effectiveDecision.goalStatus === "met") {
+    if (phaseGoal && effectiveDecision.goalStatus === "met" && decisionStore.latestSubtaskAudit(phaseGoal.id)?.complete === true) {
       const goals = phaseGoalsForMode(decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, goalSet);
       const index = goals.findIndex((goal) => goal.id === phaseGoal.id);
       const now = new Date().toISOString();
