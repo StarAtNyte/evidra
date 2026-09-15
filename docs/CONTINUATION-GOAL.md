@@ -57,11 +57,11 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `8d74c72`.
+- Latest pushed commit: `46f8135`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 319/319 tests passing, TypeScript check passing,
+- Latest verified baseline: 320/320 tests passing, TypeScript check passing,
   build passing, and a clean worktree.
 - Benchmark report command argv is now redacted alongside process output, with
   coverage for primary, alternate, and reproducibility routes.
@@ -86,6 +86,11 @@ external evaluator.
 - Direct harness comparisons now include reasoning effort in pairing identity
   and fair-pair checks, preventing high/medium-effort routes from being treated
   as matched evidence.
+- Held-out protocol parity also checks reasoning effort, and literature
+  benchmark input rejects duplicate task observations instead of silently
+  overwriting them.
+- Built-in AUROC now uses average ranks for tied scores, avoiding input-order
+  bias in the generic metric layer.
 
 ## Immediate next work
 
