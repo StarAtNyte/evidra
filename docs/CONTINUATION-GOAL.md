@@ -346,6 +346,9 @@ external evaluator.
 - Trace bounding is enforced at the recorder append boundary for every event
   type, not only native activity, so long Codex turns cannot grow in-memory or
   persisted traces without limit.
+- Bounded traces now reserve a final `traceTruncated` marker, making dropped
+  tail evidence explicit to recovery and trajectory-quality evaluation instead
+  of silently presenting an incomplete trace as complete.
 
 ## Immediate next work
 

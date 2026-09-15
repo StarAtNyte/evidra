@@ -66,8 +66,27 @@ export function providerActivityFailureClass(activity: string): "timeout" | "rat
 export function createToolTraceRecorder(prefix = "research", options: ToolTraceRecorderOptions = {}): ToolTraceRecorder {
   const events: TrajectoryEvent[] = [];
   let sequence = 0;
+  let traceTruncated = false;
+  let droppedEvents = 0;
   const record = (event: TrajectoryEvent): void => {
-    if (events.length >= MAX_TRACE_EVENTS) return;
+    if (events.length >= MAX_TRACE_EVENTS - 1) {
+      droppedEvents += 1;
+      if (!traceTruncated) {
+        traceTruncated = true;
+        const marker: TrajectoryEvent = {
+          id: `${prefix}-trace-truncated`,
+          kind: "process",
+          at: new Date().toISOString(),
+          payload: { source: "evidra", traceTruncated: true, droppedEvents },
+        };
+        events.push(marker);
+        try { options.onEvent?.(marker); } catch { /* Trace persistence must not break the active agent turn. */ }
+      } else {
+        const marker = events.at(-1);
+        if (marker?.payload.traceTruncated === true) marker.payload.droppedEvents = droppedEvents;
+      }
+      return;
+    }
     events.push(event);
     try { options.onEvent?.(event); } catch { /* Trace persistence must not break the active agent turn. */ }
   };

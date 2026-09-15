@@ -661,6 +661,9 @@ test("tool traces cap all event kinds, including tool calls and results", () => 
     trace.onToolResult("director", callId, { name: "workspace.files", ok: true, output: { index }, trust: "workspace_observation" });
   }
   assert.equal(trace.events.length, MAX_TRACE_EVENTS);
+  const marker = trace.events.at(-1);
+  assert.equal(marker?.payload.traceTruncated, true);
+  assert.ok(Number(marker?.payload.droppedEvents) > 1);
 });
 
 test("persisted trace parser bounds malformed crash artifacts and redacts payloads", () => {
