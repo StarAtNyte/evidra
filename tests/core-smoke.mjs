@@ -20,7 +20,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
-import { CodexExecAgent, codexEventErrorMessage, progressLine } from "../dist/agents/codex-exec.js";
+import { CodexExecAgent, codexEventErrorMessage, normalizeCodexModels, progressLine } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
@@ -2798,6 +2798,13 @@ test("Codex failure events preserve nested provider diagnostics", () => {
   assert.equal(codexEventErrorMessage({ type: "turn.failed", error: { message: "rate limit reached; retry in 42 seconds" } }), "rate limit reached; retry in 42 seconds");
   assert.equal(codexEventErrorMessage({ type: "error", message: "network disconnected" }), "network disconnected");
   assert.equal(codexEventErrorMessage({ type: "turn.failed" }), "Codex turn failed.");
+});
+
+test("Codex model responses normalize reasoning-effort objects", () => {
+  const models = normalizeCodexModels([{ id: "gpt-5.6-luna", displayName: "GPT-5.6-Luna", supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "medium" }, { reasoningEffort: "medium" }] }]);
+  assert.deepEqual(models[0].supportedReasoningEfforts, ["low", "medium"]);
+  assert.equal(models[0].displayName, "GPT-5.6-Luna");
+  assert.deepEqual(normalizeCodexModels([{ model: "fallback", supportedReasoningEfforts: ["high", { reasoningEffort: "max" }, null] }])[0].supportedReasoningEfforts, ["high", "max"]);
 });
 
 test("research director honors the bounded provider-attempt policy", async () => {

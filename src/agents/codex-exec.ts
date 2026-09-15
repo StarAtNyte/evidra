@@ -132,6 +132,25 @@ export interface AvailableModel {
   supportedReasoningEfforts?: string[];
 }
 
+/** Normalize the app-server model schema for the TUI's string-based picker. */
+export function normalizeCodexModels(value: unknown): AvailableModel[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry): AvailableModel[] => {
+    if (!entry || typeof entry !== "object") return [];
+    const raw = entry as { id?: unknown; model?: unknown; displayName?: unknown; description?: unknown; hidden?: unknown; isDefault?: unknown; supportedReasoningEfforts?: unknown };
+    const id = typeof raw.id === "string" && raw.id.trim() ? raw.id : typeof raw.model === "string" && raw.model.trim() ? raw.model : undefined;
+    if (!id) return [];
+    const efforts = Array.isArray(raw.supportedReasoningEfforts)
+      ? raw.supportedReasoningEfforts.flatMap((effort) => {
+        if (typeof effort === "string" && effort.trim()) return [effort];
+        if (effort && typeof effort === "object" && typeof (effort as { reasoningEffort?: unknown }).reasoningEffort === "string") return [(effort as { reasoningEffort: string }).reasoningEffort];
+        return [];
+      })
+      : [];
+    return [{ id, displayName: typeof raw.displayName === "string" && raw.displayName.trim() ? raw.displayName : id, ...(typeof raw.description === "string" ? { description: raw.description } : {}), ...(typeof raw.hidden === "boolean" ? { hidden: raw.hidden } : {}), ...(typeof raw.isDefault === "boolean" ? { isDefault: raw.isDefault } : {}), ...(efforts.length ? { supportedReasoningEfforts: [...new Set(efforts)] } : {}) }];
+  });
+}
+
 export function loginCodex(mode: "device" | "browser" = "device"): number {
   const args = mode === "device" ? ["login", "--device-auth"] : ["login"];
   const result = spawnSync("codex", args, { stdio: "inherit" });
@@ -168,10 +187,10 @@ export function listCodexModels(): Promise<AvailableModel[]> {
       buffer = lines.pop() ?? "";
       for (const line of lines) {
         try {
-          const event = JSON.parse(line) as { id?: number; result?: { data?: AvailableModel[] }; error?: { message?: string } };
+          const event = JSON.parse(line) as { id?: number; result?: { data?: unknown }; error?: { message?: string } };
           if (event.id !== 2) continue;
           if (event.error) finish(() => reject(new Error(event.error?.message ?? "Codex model listing failed.")));
-          else finish(() => resolve(event.result?.data ?? []));
+          else finish(() => resolve(normalizeCodexModels(event.result?.data)));
           return;
         } catch {
           // App-server emits one JSON object per line; ignore startup noise.
