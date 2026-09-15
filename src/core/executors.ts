@@ -114,6 +114,17 @@ export interface EvaluationMatrixCell {
   metrics: Record<string, number>;
 }
 
+/** Parse evaluator scalar conventions without accepting arbitrary prose. */
+function finiteMetricValue(value: unknown): number | undefined {
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value !== "string") return undefined;
+  const match = value.trim().match(/^(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(%)?$/);
+  if (!match) return undefined;
+  const parsed = Number(match[1]);
+  if (!Number.isFinite(parsed)) return undefined;
+  return match[2] ? parsed / 100 : parsed;
+}
+
 /** Parse an optional worker-emitted fold/seed matrix from JSON or JSONL. */
 export function parseEvaluationMatrix(stdout: string, metricName: string): EvaluationMatrixCell[] {
   const candidates: unknown[] = [];
@@ -136,8 +147,11 @@ export function parseEvaluationMatrix(stdout: string, metricName: string): Evalu
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
     const value = candidate as Record<string, unknown>;
     if (!Number.isInteger(value.fold) || Number(value.fold) < 0 || !Number.isInteger(value.seed)) continue;
-    const rawMetrics = value.metrics && typeof value.metrics === "object" && !Array.isArray(value.metrics) ? value.metrics as Record<string, unknown> : typeof value.metric === "number" ? { [metricName]: value.metric } : {};
-    const metrics = Object.fromEntries(Object.entries(rawMetrics).filter(([, metric]) => typeof metric === "number" && Number.isFinite(metric))) as Record<string, number>;
+    const rawMetrics = value.metrics && typeof value.metrics === "object" && !Array.isArray(value.metrics) ? value.metrics as Record<string, unknown> : value.metric !== undefined ? { [metricName]: value.metric } : {};
+    const metrics = Object.fromEntries(Object.entries(rawMetrics).flatMap(([name, metric]) => {
+      const parsed = finiteMetricValue(metric);
+      return parsed === undefined ? [] : [[name, parsed]];
+    })) as Record<string, number>;
     if (Object.keys(metrics).length) cells.push({ fold: Number(value.fold), seed: Number(value.seed), metrics });
   }
   // Canonical ordering makes paired comparisons independent of worker log
@@ -188,40 +202,31 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
   const metrics: Record<string, number> = {};
   const metricsByFold: Record<string, number[]> = {};
   let subgroupDeltas: number[] = [];
-  const finiteMetric = (value: unknown): number | undefined => {
-    if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
-    if (typeof value !== "string") return undefined;
-    const match = value.trim().match(/^(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(%)?$/);
-    if (!match) return undefined;
-    const parsed = Number(match[1]);
-    if (!Number.isFinite(parsed)) return undefined;
-    return match[2] ? parsed / 100 : parsed;
-  };
   const addObject = (value: unknown): void => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return;
     const object = value as Record<string, unknown>;
     const nested = object.metrics;
     if (nested && typeof nested === "object" && !Array.isArray(nested)) {
       for (const [name, metric] of Object.entries(nested as Record<string, unknown>)) {
-        const parsed = finiteMetric(metric);
+        const parsed = finiteMetricValue(metric);
         if (parsed !== undefined) metrics[name] = parsed;
       }
       addObject(nested);
     }
     const primary = object[metricName];
-    const parsedPrimary = finiteMetric(primary);
+    const parsedPrimary = finiteMetricValue(primary);
     if (parsedPrimary !== undefined) metrics[metricName] = parsedPrimary;
     const byFold = object.metricsByFold ?? object.byFold;
     if (byFold && typeof byFold === "object" && !Array.isArray(byFold)) {
       for (const [name, series] of Object.entries(byFold as Record<string, unknown>)) {
         if (Array.isArray(series)) {
-          const finite = series.map(finiteMetric).filter((item): item is number => item !== undefined);
+          const finite = series.map(finiteMetricValue).filter((item): item is number => item !== undefined);
           if (finite.length) metricsByFold[name] = finite;
         }
       }
     }
     const subgroup = object.subgroupDeltas ?? object.bySubgroupDelta ?? object.subgroupDelta;
-    if (Array.isArray(subgroup)) subgroupDeltas = subgroup.map(finiteMetric).filter((item): item is number => item !== undefined);
+    if (Array.isArray(subgroup)) subgroupDeltas = subgroup.map(finiteMetricValue).filter((item): item is number => item !== undefined);
   };
   try { addObject(JSON.parse(stdout)); } catch { /* output may be a log stream */ }
   for (const line of stdout.split("\n")) {
