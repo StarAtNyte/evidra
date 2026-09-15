@@ -447,6 +447,9 @@ external evaluator.
   models, keep the configured model as the primary route, assign alternatives
   deterministically to independent lanes, and exclude Astra from that automatic
   pool unless a future policy explicitly opts in.
+- Codex research timeouts now receive one bounded alternate-route replan while
+  campaign budget remains; a second timeout or budget exhaustion pauses the
+  campaign with the failure trajectory preserved.
 
 ## Immediate next work
 

@@ -2534,15 +2534,18 @@ research
             continue;
           }
           const routeError = error instanceof Error ? error.message : String(error);
-          // A provider timeout is already the bounded alternate route. Do not
-          // multiply it through lane, director, and outer-cycle retries after
-          // the campaign has spent its allotted turn budget.
+          // A timeout consumes a provider turn, but is not by itself proof that
+          // the alternate research route should be abandoned. Allow one
+          // bounded replan while budget remains; the retry objective below
+          // explicitly changes the route and the second timeout is terminal.
           const routeTimedOut = /request timed out|campaign budget expired/i.test(routeError);
           researchAttempt += 1;
           // Use pause-aware campaign time here. Provider entitlement waits
           // deliberately pause the campaign, so raw wall-clock time would
           // incorrectly exhaust the research budget while Codex is waiting.
-          if (routeTimedOut || campaignElapsedMinutes(campaign) >= budget || !isRetryableAgentError(error) || researchAttempt >= 3) {
+          const budgetExpired = campaignElapsedMinutes(campaign) >= budget;
+          const timeoutRetriesExhausted = routeTimedOut && researchAttempt >= 2;
+          if (budgetExpired || timeoutRetriesExhausted || !isRetryableAgentError(error) || researchAttempt >= 3) {
             const failure = researchFailureRecord(cycle, error, toolTrace.events, laneReports.filter((lane) => lane.status === "failed"));
             const failureStore = new ResearchStore(statePath);
             failureStore.appendEvent("research.agent.failed", { cycle, error: failure.error, attempts: researchAttempt, quality: failure.quality });

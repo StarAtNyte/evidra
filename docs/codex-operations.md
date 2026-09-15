@@ -236,6 +236,9 @@ When a Codex entitlement reset is required, the campaign is durably paused and
 the wait interval is excluded from its research-time budget. Retry guards use
 that pause-aware clock as well, so a long provider wait cannot consume the
 active campaign budget merely because calendar time elapsed.
+Provider timeouts receive one bounded alternate-route replan while campaign
+budget remains; a second timeout is recorded as terminal route failure rather
+than multiplying provider calls indefinitely.
 Provider responses such as “selected model is at capacity”, “overloaded”, and
 “server busy” are classified as usage-limit conditions, so the configured
 `auto`, `wait`, or `fallback` policy can take effect instead of treating them
