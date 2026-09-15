@@ -20,6 +20,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
+import { CodexExecAgent } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
@@ -2760,6 +2761,26 @@ test("research director executes typed tools and reasons over returned evidence"
     assert.equal(observedSteering, true);
     assert.equal(decision.decision, "propose");
     assert.equal(decision.toolCalls.length, 0);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("local provider enforces the configured turn timeout", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-local-timeout-"));
+  const previousHost = process.env.OLLAMA_HOST;
+  const server = createServer((_request, _response) => {
+    // Deliberately leave the response open: the provider must abort it.
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${address.port}`;
+  try {
+    const agent = new CodexExecAgent({ provider: "local", model: "test", cwd: root, timeoutMs: 50 });
+    await assert.rejects(() => agent.run({ role: "research director", objective: "wait", context: {} }), /Local model request timed out/);
   } finally {
     if (previousHost === undefined) delete process.env.OLLAMA_HOST;
     else process.env.OLLAMA_HOST = previousHost;
