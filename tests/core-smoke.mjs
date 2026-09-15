@@ -58,7 +58,7 @@ import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment, validateEvaluationMatrix } from "../dist/core/validation.js";
-import { assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, ResearchLaneReportSchema, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
+import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, ResearchLaneReportSchema, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
 import { summarizeAgentUsage, summarizeUsage } from "../dist/core/usage.js";
@@ -1828,6 +1828,13 @@ test("research lanes assign a bounded heterogeneous model pool deterministically
   const routes = assignResearchLaneRoutes(roles, { provider: "local", model: "primary", modelPool: [{ provider: "local", model: "qwen3.5:4b" }, { provider: "local", model: "qwen3.5:9b" }] });
   assert.deepEqual(routes.map((route) => route.model), ["qwen3.5:4b", "qwen3.5:9b", "qwen3.5:4b"]);
   assert.deepEqual(assignResearchLaneRoutes(roles, { provider: "codex", model: "default" }).map((route) => route.model), ["default", "default", "default"]);
+});
+
+test("research lane recovery selects an untried route before repeating", () => {
+  const pool = [{ provider: "codex", model: "primary" }, { provider: "codex", model: "alternate" }, { provider: "local", model: "fallback" }];
+  assert.deepEqual(alternateResearchLaneRoute({ provider: "codex", model: "primary" }, pool, new Set(["codex\u0000primary"])), { provider: "codex", model: "alternate" });
+  assert.deepEqual(alternateResearchLaneRoute({ provider: "codex", model: "alternate" }, pool, new Set(["codex\u0000primary", "codex\u0000alternate"])), { provider: "local", model: "fallback" });
+  assert.equal(alternateResearchLaneRoute({ provider: "local", model: "fallback" }, pool, new Set(pool.map((route) => `${route.provider}\u0000${route.model}`))), undefined);
 });
 
 test("Codex research model pools preserve the primary route and exclude Astra by default", () => {

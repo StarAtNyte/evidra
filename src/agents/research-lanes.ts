@@ -158,6 +158,23 @@ export function assignResearchLaneRoutes(roles: ResearchLaneRole[], options: Pic
   return roles.map((role, index) => ({ role, ...routes[index % routes.length] }));
 }
 
+function laneRouteKey(route: Pick<ResearchLaneRoute, "provider" | "model">): string {
+  return `${route.provider}\u0000${route.model}`;
+}
+
+/** Select the first untried route for bounded recovery of a failed lane. */
+export function alternateResearchLaneRoute(
+  current: Pick<ResearchLaneRoute, "provider" | "model">,
+  pool: Array<{ provider: AgentProvider; model: string }> | undefined,
+  attempted: ReadonlySet<string> = new Set(),
+): Omit<ResearchLaneRoute, "role"> | undefined {
+  const currentKey = laneRouteKey(current);
+  return (pool ?? []).find((route) => {
+    const key = laneRouteKey(route);
+    return route.model.trim().length > 0 && key !== currentKey && !attempted.has(key);
+  });
+}
+
 /** Keep lane observations bounded and role-specific before model synthesis. */
 export function laneToolCalls(role: ResearchLaneRole, objective = ""): ResearchToolCall[] {
   const focus = role === "data detective"
@@ -448,8 +465,10 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     let model = laneRoute.model;
     let parsed: z.infer<typeof ResearchLaneReportSchema> | undefined;
     let lastError: unknown;
+    const attemptedRoutes = new Set<string>();
     for (let attempt = 1; attempt <= 3 && !parsed; attempt += 1) {
       if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
+      attemptedRoutes.add(laneRouteKey({ provider, model }));
       try {
         const bounded = boundResearchContext({ ...context, laneToolResults: toolResults });
         const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective), context: bounded.context, outputSchema: RESEARCH_LANE_OUTPUT_SCHEMA }, {
@@ -471,16 +490,21 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         lastError = error;
         if (options.isCancelled?.()) throw error;
         if (!isRetryableAgentError(error) || attempt === 3 || (isProviderUsageLimit(error) && options.limitPolicy === "wait")) throw error;
-        // A network/SDK failure is not evidence that a local model is healthy.
-        // Only provider-entitlement exhaustion may switch routes; the fallback
-        // helper handles that path and validates local availability. Blindly
-        // switching on every retryable error can turn one Codex outage into
-        // several opaque Ollama failures and poison the whole campaign.
         if (attempt === 1 && provider === "codex" && options.fallbackLocalModel && (options.limitPolicy === "fallback" || options.limitPolicy === "auto") && isProviderUsageLimit(error)) {
           model = await resolveLocalFallbackModel(options.fallbackLocalModel);
           provider = "local";
           options.onProgress?.(`Research lane · ${role} · changing route to local/${model}...`);
         } else {
+          const alternate = alternateResearchLaneRoute({ provider, model }, options.modelPool, attemptedRoutes);
+          if (alternate) {
+            provider = alternate.provider;
+            model = alternate.model;
+            options.onProgress?.(`Research lane · ${role} · changing route to ${provider}/${model}...`);
+            continue;
+          }
+          // If no untried route exists, retain the bounded same-route retry.
+          // This is useful for transient transport failures and avoids
+          // fabricating diversity when the configured pool has one member.
           const delayMs = attempt * 1_000;
           options.onProgress?.(`Research lane · ${role} · retry ${attempt}/2 in ${delayMs / 1000}s...`);
           await new Promise<void>((resolve) => setTimeout(resolve, delayMs));

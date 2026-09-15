@@ -61,7 +61,7 @@ external evaluator.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 368/368 tests passing, TypeScript check passing,
+- Latest verified baseline: 369/369 tests passing, TypeScript check passing,
   and build passing. The worktree has six intentionally untracked pilot reports
   under `reports/`; do not confuse those generated artifacts with source edits.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
@@ -129,6 +129,10 @@ external evaluator.
   authenticated provider, filtered by the requested reasoning capability, and
   assigned deterministically; Astra is excluded from automatic diversification
   under the current cost policy while remaining directly selectable.
+- A retryable lane transport or timeout failure now selects the first untried
+  route in that pool before repeating a route. Single-route configurations keep
+  bounded same-route retries, while every route change remains visible in the
+  activity stream and the failed observation remains durable evidence.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
 - Codex command activity now includes an exit code only when the provider
