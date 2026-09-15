@@ -2852,6 +2852,7 @@ test("Codex item progress covers tools, plans, and file changes", () => {
   assert.equal(codexItemProgress({ type: "todo_list", items: [{ completed: true }, { completed: false }] }, "item.updated"), "Plan progress: 1/2 steps");
   assert.equal(codexItemProgress({ type: "file_change", changes: [{ kind: "update", path: "src/main.ts" }] }, "item.completed"), "Applied: update src/main.ts");
   assert.equal(codexItemProgress({ type: "command_execution", command: "npm test", status: "failed" }, "item.completed"), "Command failed: npm test");
+  assert.equal(codexItemProgress({ type: "command_execution", command: "npm test", status: "completed", exit_code: 2 }, "item.completed"), "Command failed: npm test (exit 2)");
   assert.equal(codexItemProgress({ type: "file_change", status: "failed", changes: [{ kind: "update", path: "src/main.ts" }] }, "item.completed"), "File change failed: update src/main.ts");
   assert.match(codexItemProgress({ type: "command_execution", command: "run --token secret" }) ?? "", /Running: run --token \[REDACTED_ARGUMENT\]/);
 });

@@ -111,6 +111,7 @@ export function codexItemProgress(item: unknown, eventType = "item.started"): st
   const value = item as {
     type?: unknown;
     command?: unknown;
+    exit_code?: unknown;
     query?: unknown;
     server?: unknown;
     tool?: unknown;
@@ -124,7 +125,9 @@ export function codexItemProgress(item: unknown, eventType = "item.started"): st
   const completed = eventType === "item.completed";
   if (type === "command_execution") {
     const command = typeof value.command === "string" ? progressLine(value.command) : "command";
-    if (value.status === "failed") return `Command failed: ${command}`;
+    if (value.status === "failed" || (typeof value.exit_code === "number" && value.exit_code !== 0)) {
+      return `Command failed: ${command}${typeof value.exit_code === "number" ? ` (exit ${value.exit_code})` : ""}`;
+    }
     return completed ? `Finished: ${command}` : `Running: ${command}`;
   }
   if (type === "web_search") {
