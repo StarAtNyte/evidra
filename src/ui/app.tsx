@@ -4,7 +4,7 @@ import TextInput from "ink-text-input";
 import { dirname, join, relative, resolve } from "node:path";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
-import { runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
+import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
 import { classifyProcessFailure, executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "../core/executors.js";
@@ -1401,10 +1401,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const evaluatorDeadline = Date.now() + manifest.resources.timeoutMinutes * 60_000;
       while (true) {
         const remainingMs = Math.max(1_000, evaluatorDeadline - Date.now());
-        evaluated = await withExecutionHeartbeat(
-          () => runProcess(evaluatorCommand, experimentCwd, remainingMs, undefined, registerProcess, experimentEnvironment),
-          { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt: evaluatorAttempt, stage: "evaluator", executor: manifest.resources.executor },
-        );
+        try {
+          evaluated = await withExecutionHeartbeat(
+            () => runProcess(evaluatorCommand, experimentCwd, remainingMs, undefined, registerProcess, experimentEnvironment),
+            { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt: evaluatorAttempt, stage: "evaluator", executor: manifest.resources.executor },
+          );
+        } catch (error) {
+          evaluated = processFailureResult(evaluatorCommand, experimentCwd, error);
+        }
         if (evaluated.exitCode === 0) break;
         const failureClass = classifyProcessFailure(evaluated) ?? "unknown";
         const plan = recoveryPlan(failureClass);
@@ -1442,10 +1446,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const verifierDeadline = Date.now() + manifest.resources.timeoutMinutes * 60_000;
         while (true) {
           const remainingMs = Math.max(1_000, verifierDeadline - Date.now());
-          checked = await withExecutionHeartbeat(
-            () => runProcess(verificationCommand, experimentCwd, remainingMs, undefined, registerProcess, experimentEnvironment),
-            { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt: verifierAttempt, stage: "verification", executor: manifest.resources.executor },
-          );
+          try {
+            checked = await withExecutionHeartbeat(
+              () => runProcess(verificationCommand, experimentCwd, remainingMs, undefined, registerProcess, experimentEnvironment),
+              { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt: verifierAttempt, stage: "verification", executor: manifest.resources.executor },
+            );
+          } catch (error) {
+            checked = processFailureResult(verificationCommand, experimentCwd, error);
+          }
           if (checked.exitCode === 0) break;
           const failureClass = classifyProcessFailure(checked) ?? "unknown";
           const plan = recoveryPlan(failureClass);

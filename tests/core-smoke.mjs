@@ -13,7 +13,7 @@ import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submis
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, researchSearchQueries, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { CompetitionConfigSchema, ExperimentManifestSchema } from "../dist/core/types.js";
-import { runProcess } from "../dist/core/process.js";
+import { processFailureResult, runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
 import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInspection, guardWorkspaceCommand } from "../dist/core/permissions.js";
@@ -2808,6 +2808,13 @@ test("executor spawn failures become classified durable run failures", async () 
     assert.equal(result.failureClass, "dependency");
     assert.equal(result.exitCode, 127);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("direct process spawn failures become structured process evidence", () => {
+  const failure = processFailureResult(["missing-tool"], "/tmp", new Error("spawn missing-tool ENOENT"));
+  assert.equal(failure.exitCode, 127);
+  assert.match(failure.stderr, /ENOENT/);
+  assert.deepEqual(failure.command, ["missing-tool"]);
 });
 
 test("completed workers require the complete declared metric suite", () => {

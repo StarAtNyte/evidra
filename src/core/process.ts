@@ -22,6 +22,18 @@ export interface ProcessControl {
   readonly paused: boolean;
 }
 
+/** Convert a subprocess spawn error into evidence the recovery layer can classify. */
+export function processFailureResult(command: string[], cwd: string, error: unknown): ProcessResult {
+  return {
+    command,
+    cwd,
+    exitCode: 127,
+    durationMs: 0,
+    stdout: "",
+    stderr: error instanceof Error ? error.message : String(error),
+  };
+}
+
 export function runProcess(
   command: string[],
   cwd: string,

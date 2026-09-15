@@ -30,7 +30,7 @@ import { runReducedValidation } from "./core/stage-executor.js";
 import { auditExperiment, validateEvaluationMatrix } from "./core/validation.js";
 import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance } from "./core/validation-engine.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
-import { runProcess } from "./core/process.js";
+import { processFailureResult, runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
 import { classifyProcessFailure, executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "./core/executors.js";
 import { sha256File } from "./core/evidence.js";
@@ -3264,10 +3264,14 @@ experiment.command("run")
       const evaluatorDeadline = Date.now() + manifest.resources.timeoutMinutes * 60_000;
       while (true) {
         const remainingMs = Math.max(1_000, evaluatorDeadline - Date.now());
-        evaluated = await withExecutionHeartbeat(
-          () => runProcess(evaluatorCommand, experimentCwd, remainingMs, undefined, undefined, experimentEnvironment),
-          { storePath: statePath, experimentId: id, attempt: evaluatorAttempt, stage: "evaluator", executor: manifest.resources.executor },
-        );
+        try {
+          evaluated = await withExecutionHeartbeat(
+            () => runProcess(evaluatorCommand, experimentCwd, remainingMs, undefined, undefined, experimentEnvironment),
+            { storePath: statePath, experimentId: id, attempt: evaluatorAttempt, stage: "evaluator", executor: manifest.resources.executor },
+          );
+        } catch (error) {
+          evaluated = processFailureResult(evaluatorCommand, experimentCwd, error);
+        }
         if (evaluated.exitCode === 0) break;
         const failureClass = classifyProcessFailure(evaluated) ?? "unknown";
         const plan = recoveryPlan(failureClass);
@@ -3293,10 +3297,14 @@ experiment.command("run")
         const verifierDeadline = Date.now() + manifest.resources.timeoutMinutes * 60_000;
         while (true) {
           const remainingMs = Math.max(1_000, verifierDeadline - Date.now());
-          checked = await withExecutionHeartbeat(
-            () => runProcess(verificationCommand, experimentCwd, remainingMs, undefined, undefined, experimentEnvironment),
-            { storePath: statePath, experimentId: id, attempt: verifierAttempt, stage: "verification", executor: manifest.resources.executor },
-          );
+          try {
+            checked = await withExecutionHeartbeat(
+              () => runProcess(verificationCommand, experimentCwd, remainingMs, undefined, undefined, experimentEnvironment),
+              { storePath: statePath, experimentId: id, attempt: verifierAttempt, stage: "verification", executor: manifest.resources.executor },
+            );
+          } catch (error) {
+            checked = processFailureResult(verificationCommand, experimentCwd, error);
+          }
           if (checked.exitCode === 0) break;
           const failureClass = classifyProcessFailure(checked) ?? "unknown";
           const plan = recoveryPlan(failureClass);
