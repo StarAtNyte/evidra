@@ -57,11 +57,11 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `2a51aa2`.
+- Latest pushed commit: `b70c6a8`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 342/342 tests passing, TypeScript check passing,
+- Latest verified baseline: 361/361 tests passing, TypeScript check passing,
   and build passing. The worktree has six intentionally untracked pilot reports
   under `reports/`; do not confuse those generated artifacts with source edits.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
@@ -401,6 +401,10 @@ external evaluator.
 - The same stream-contract coverage verifies research web-search/network
   settings reach the SDK thread boundary rather than existing only in controller
   configuration.
+- Codex research threads now pass both the SDK's `webSearchMode` and its
+  compatibility `webSearchEnabled` flag. This keeps live web retrieval active
+  across installed Codex CLI versions; ordinary conversation leaves both flags
+  unset.
 
 ## Immediate next work
 

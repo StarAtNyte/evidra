@@ -31,7 +31,8 @@ never cached because fast/YOLO commands can observe changing process or
 filesystem state.
 
 Research-role Codex threads opt into the official SDK's live web-search and
-network options so lanes, director, and critic can investigate current papers,
+network options (`webSearchMode` plus the compatibility `webSearchEnabled`
+flag) so lanes, director, and critic can investigate current papers,
 documentation, and implementation leads. Ordinary conversation does not opt
 into these research settings. Web results remain discovery material: Evidra
 requires a durable retrieved source, checksum, and claim provenance before a
