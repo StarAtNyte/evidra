@@ -2031,7 +2031,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (campaign && campaign.status === "running") {
         persistCampaignCheckpoint(campaign, "cycle-complete", cycleNumber + 1);
       }
-      if (campaign && !approvalRequired && cycle.decision === "stop") {
+      let openFalsificationCount = 0;
+      if (campaign && cycle.decision === "stop") {
+        const stopCheck = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        openFalsificationCount = researchMemoryContext(stopCheck, 30, campaign.goal).falsificationAgenda
+          .filter((item) => item.status === "untested" || item.status === "inconclusive").length;
+        if (openFalsificationCount > 0) stopCheck.appendEvent("research.stop_policy.continued", { reason: "open falsification agenda", openFalsifications: openFalsificationCount, source: "tui" });
+        stopCheck.close();
+      }
+      if (campaign && !approvalRequired && cycle.decision === "stop" && openFalsificationCount === 0) {
         campaign.status = "completed";
         persistCampaign(campaign);
         setConfig((current) => ({ ...current, campaign: { ...campaign, status: "completed" } }));
@@ -2040,6 +2048,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         stopped.setSchedulerState({ status: "idle", mode: config.mode, currentStep: "campaign-complete" });
         stopped.close();
         append("assistant", "Autonomous research stopping condition accepted by the research director.");
+      } else if (campaign && !approvalRequired && cycle.decision === "stop" && openFalsificationCount > 0) {
+        append("assistant", `Stopping deferred: ${openFalsificationCount} falsification test(s) remain open. Continuing autonomous research.`);
       } else if (campaign && cycle.goalStatus === "blocked") {
         campaign.status = "paused";
         persistCampaign(campaign);
