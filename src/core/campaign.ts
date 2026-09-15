@@ -32,6 +32,13 @@ export function nextCampaignCycle(checkpoint?: CampaignCheckpoint): number {
   return checkpoint.currentStep === "cycle-complete" ? checkpoint.currentCycle + 1 : checkpoint.currentCycle;
 }
 
+/** Attach a validated checkpoint to any campaign-shaped payload. */
+export function withCampaignCheckpoint<T extends object>(campaign: T, step: CampaignCheckpointStep, cycle: number, checkpointedAt = new Date().toISOString()): T & CampaignCheckpoint {
+  if (!Number.isInteger(cycle) || cycle < 0) throw new Error("Campaign checkpoint cycle must be a non-negative integer.");
+  if (!Number.isFinite(Date.parse(checkpointedAt))) throw new Error("Campaign checkpoint timestamp must be a valid date.");
+  return { ...campaign, currentCycle: cycle, currentStep: step, checkpointedAt };
+}
+
 /**
  * The execution settings that must travel with a durable campaign.  Keeping
  * these beside the campaign state means a resumed controller does not

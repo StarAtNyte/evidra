@@ -25,7 +25,7 @@ import { assessStopPolicy } from "./core/stop-policy.js";
 import { classifyVerifier } from "./core/formal-verification.js";
 import { detectRouteDrift } from "./core/drift-detection.js";
 import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
-import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readCampaignRuntime, researchTurnTimeoutMs, resumeCampaign, type CampaignCheckpointStep, type CampaignRuntimeConfig } from "./core/campaign.js";
+import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readCampaignRuntime, researchTurnTimeoutMs, resumeCampaign, withCampaignCheckpoint, type CampaignCheckpointStep, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { auditExperiment, validateEvaluationMatrix } from "./core/validation.js";
 import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance } from "./core/validation-engine.js";
@@ -412,7 +412,7 @@ function recordCampaignCheckpoint<T extends { status: string }>(campaign: T, mod
   const store = new ResearchStore(statePath);
   const lease = store.controllerLease();
   if (lease?.status === "running" && lease.pid === process.pid && lease.controllerId) store.heartbeatControllerLease(lease.controllerId, mode, step);
-  store.saveCampaign({ ...campaign, currentCycle: cycle, currentStep: step, checkpointedAt: new Date().toISOString() });
+  store.saveCampaign(withCampaignCheckpoint(campaign, step, cycle));
   store.setSchedulerState({ status: campaign.status === "paused" ? "paused" : "running", mode, currentStep: step });
   store.appendEvent("research.campaign.checkpoint", { cycle, step, mode });
   store.close();

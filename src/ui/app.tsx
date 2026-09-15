@@ -15,7 +15,7 @@ import { captureEnvironment } from "../core/environment.js";
 import { compareRuns } from "../core/statistics.js";
 import { recoveryDelay, recoveryPlan, recoveryRouteDirective } from "../core/recovery.js";
 import { observedGpuHours } from "../core/compute-budget.js";
-import { campaignElapsedMinutes, pauseCampaign, readCampaignCheckpoint, resumeCampaign } from "../core/campaign.js";
+import { campaignElapsedMinutes, pauseCampaign, readCampaignCheckpoint, resumeCampaign, withCampaignCheckpoint } from "../core/campaign.js";
 import { prepareSubmission, validateSubmissionBundle } from "../core/submissions.js";
 import { pollSubmissionScore, submitApprovedBundle } from "../core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "../core/submission-policy.js";
@@ -716,7 +716,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   };
 
   const persistCampaignCheckpoint = (campaign: ResearchCampaign, step: "research-lanes" | "experiment-execution" | "cycle-complete", cycle: number): void => {
-    const updated = { ...campaign, currentCycle: cycle, currentStep: step, checkpointedAt: new Date().toISOString() };
+    const updated = withCampaignCheckpoint(campaign, step, cycle);
     Object.assign(campaign, updated);
     persistCampaign(campaign);
     updateControllerStep(step);
