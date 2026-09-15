@@ -97,6 +97,7 @@ export function classifyProcessFailure(result: ProcessResult, remote = false): R
   if (/no space left on device|disk quota|enospc|out of disk space/.test(text)) return "disk";
   if (/rate limit|429|usage limit/.test(text)) return "rate_limit";
   if (/auth|unauthorized|forbidden/.test(text)) return "auth";
+  if (/bwrap|loopback|network namespace|sandbox.*(?:denied|failed)|(?:network|namespace).*(?:operation not permitted|permission denied)/.test(text)) return "sandbox";
   if (remote && /modal|connection reset|connection refused|failed to connect|temporarily unavailable|gateway timeout|\b502\b|\b503\b|container.*(failed|crashed)|worker.*(failed|crashed)/.test(text)) return "transient_cloud";
   return "unknown";
 }

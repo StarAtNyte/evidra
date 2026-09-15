@@ -217,7 +217,7 @@ Codex subscription limits are finite. Select the desired behavior explicitly:
 /limits stop       Stop on exhaustion
 ```
 
-Provider, timeout, stream, authentication, dependency, capacity, and tool failures use
+Provider, timeout, stream, authentication, dependency, capacity, sandbox, and tool failures use
 bounded retries with backoff. After retry exhaustion, Evidra records the
 failure and suppresses an unchanged retry route. The next attempt must change
 an appropriate route dimension such as executor, provider, model, or search

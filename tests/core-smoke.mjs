@@ -21,7 +21,7 @@ import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { normalizeResearchDecisionPayload, runResearchDirector } from "../dist/agents/research-director.js";
 import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
-import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
+import { LocalExecutor, classifyProcessFailure, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
 import { experienceReplayWorld } from "../dist/core/experience.js";
@@ -515,6 +515,13 @@ test("startup fallback eligibility distinguishes route failures from account mod
   assert.equal(isProviderUsageLimit(new Error("Selected model is at capacity")), true);
   assert.equal(isProviderFallbackEligible(new Error("Selected model is at capacity")), true);
   assert.equal(isProviderFallbackEligible(new Error("The selected model is not available for your account")), false);
+});
+
+test("sandbox launcher failures are classified separately from unknown execution failures", () => {
+  const result = processFailureResult(["uv", "run", "whest"], "/tmp/workspace", new Error("bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted"));
+  assert.equal(classifyProcessFailure(result), "sandbox");
+  assert.equal(recoveryPlan("sandbox").retry, false);
+  assert.match(recoveryRouteDirective("sandbox").instruction, /sandbox|alternate executor/i);
 });
 
 test("active Codex fallback changes route only under auto or fallback policy", () => {
@@ -4039,6 +4046,9 @@ test("harness evolution inventories editable components and enforces prediction 
     const interventions = planHarnessInterventions({ inventory, failureProfile: { invalid_metric: 2, rate_limit: 1 }, benchmarkAvailable: true });
     assert.equal(interventions[0].failureClass, "invalid_metric");
     assert.ok(interventions[0].components.some((id) => id.includes("executors.ts")));
+    const sandboxIntervention = planHarnessInterventions({ inventory, failureProfile: { sandbox: 1 }, benchmarkAvailable: true });
+    assert.equal(sandboxIntervention[0].failureClass, "sandbox");
+    assert.ok(sandboxIntervention[0].components.some((id) => id.includes("executors.ts")));
     const contract = { id: "change-1", componentIds: interventions[0].components, baselineScore: 0.5, predictedDelta: { low: 0.02, median: 0.05, high: 0.1 }, prediction: "score improves", falsification: "no improvement", acceptance: "paired" };
     assert.equal(parseHarnessChangeContract(contract).id, "change-1");
     assert.throws(() => parseHarnessChangeContract({ ...contract, predictedDelta: { low: 0.2, median: 0.1, high: 0.3 } }), /less than or equal/);

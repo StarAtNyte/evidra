@@ -34,6 +34,7 @@ export function recoveryPlan(failureClass: RunResult["failureClass"]): RecoveryP
     case "data_missing": return { retry: false, maxAttempts: 1, backoffSeconds: 0, action: "refresh or repair the data contract before trying another experiment", route: "refresh_data" };
     case "dependency": return { retry: false, maxAttempts: 1, backoffSeconds: 0, action: "repair the dependency or execution environment before trying another experiment", route: "repair_code" };
     case "auth": return { retry: false, maxAttempts: 1, backoffSeconds: 0, action: "reauthenticate the provider before trying another experiment", route: "reauthenticate" };
+    case "sandbox": return { retry: false, maxAttempts: 1, backoffSeconds: 0, action: "repair or change the execution sandbox before trying another experiment", route: "repair_code" };
     case "corrupt_artifact": return { retry: false, maxAttempts: 1, backoffSeconds: 0, action: "repair the artifact contract and rerun independently", route: "repair_code" };
     case "nan_loss":
     case "code_regression":
@@ -55,17 +56,19 @@ export function recoveryDelay(plan: RecoveryPlan, attempt: number): number {
 export function recoveryRouteDirective(failureClass: RunResult["failureClass"]): RecoveryRouteDirective {
   const normalized = failureClass ?? "unknown";
   const plan = recoveryPlan(failureClass);
-  const instruction = plan.route === "reduce_resources"
-    ? "Create a lower-resource or split-workload experiment; do not rerun the same resource manifest."
-    : plan.route === "refresh_data"
-      ? "Audit and repair the data contract, then validate the refreshed inputs before allocating compute."
-      : plan.route === "repair_code"
-        ? "Create a repair experiment that isolates the dependency or artifact contract before testing the hypothesis again."
-        : plan.route === "reauthenticate"
-          ? "Repair provider authentication or select an authenticated alternate provider before resuming execution."
-          : plan.route === "change_hypothesis"
-            ? "Select a materially different hypothesis or formulation and record why the failed route is rejected."
-            : "Use a distinct execution route or provider configuration; do not replay the failed route unchanged.";
+  const instruction = normalized === "sandbox"
+    ? "Repair the execution sandbox or select a verified alternate executor; do not repeat the blocked launcher unchanged."
+    : plan.route === "reduce_resources"
+      ? "Create a lower-resource or split-workload experiment; do not rerun the same resource manifest."
+      : plan.route === "refresh_data"
+        ? "Audit and repair the data contract, then validate the refreshed inputs before allocating compute."
+        : plan.route === "repair_code"
+          ? "Create a repair experiment that isolates the dependency or artifact contract before testing the hypothesis again."
+          : plan.route === "reauthenticate"
+            ? "Repair provider authentication or select an authenticated alternate provider before resuming execution."
+            : plan.route === "change_hypothesis"
+              ? "Select a materially different hypothesis or formulation and record why the failed route is rejected."
+              : "Use a distinct execution route or provider configuration; do not replay the failed route unchanged.";
   return {
     routeKey: `${normalized}:${plan.route}`,
     route: plan.route,

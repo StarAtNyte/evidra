@@ -47,6 +47,7 @@ export function allocateNextResearch(input: AllocationInput): ResearchAllocation
     const route = failureClass === "data_missing" ? ["evidence-validation", "Refresh the data contract and audit missing inputs before allocating compute."]
       : failureClass === "dependency" ? ["recovery", "Repair or provision the dependency in the selected execution image before retrying."]
         : failureClass === "auth" || failureClass === "rate_limit" ? ["recovery", "Repair provider access or route to the configured alternate provider before retrying."]
+          : failureClass === "sandbox" ? ["recovery", "Repair the execution sandbox or select an alternate executor before retrying; do not repeat the blocked launcher unchanged."]
           : failureClass === "invalid_metric" || failureClass === "corrupt_artifact" ? ["evidence-validation", "Repair the output contract and run the independent artifact/metric verifier before changing the hypothesis."]
             : failureClass === "cuda_oom" || failureClass === "timeout" || failureClass === "disk" || failureClass === "transient_cloud" ? ["recovery", "Change the resource route or bounded retry policy; do not repeat the same failed execution unchanged."]
               : ["recovery", "Classify and reproduce the failure with one controlled environmental change before selecting another expensive experiment."];

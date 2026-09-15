@@ -289,7 +289,7 @@ export const RunResultSchema = z.object({
   stderr: z.string().optional(),
   command: z.array(z.string()).optional(),
   cwd: z.string().optional(),
-  failureClass: z.enum(["cuda_oom", "transient_cloud", "data_missing", "nan_loss", "dependency", "timeout", "early_stopped", "corrupt_artifact", "invalid_metric", "code_regression", "auth", "rate_limit", "disk", "unknown"]).optional(),
+  failureClass: z.enum(["cuda_oom", "transient_cloud", "data_missing", "nan_loss", "dependency", "timeout", "early_stopped", "corrupt_artifact", "invalid_metric", "code_regression", "auth", "rate_limit", "disk", "sandbox", "unknown"]).optional(),
 });
 
 export type RunResult = z.infer<typeof RunResultSchema>;
