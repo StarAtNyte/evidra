@@ -572,7 +572,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
             codexThreadId: undefined,
             model: provider === "local"
               ? (current.provider === "local" ? current.model : "qwen3.6:27b")
-              : (current.provider === "codex" ? current.model : "default"),
+              : (current.provider === "codex" ? current.model : DEFAULT_CODEX_MODEL),
           }));
           setOnboardingComplete(true);
           setPicker(null);
@@ -2191,7 +2191,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           codexThreadId: undefined,
           model: provider === "local"
             ? (current.provider === "local" ? current.model : "qwen3.6:27b")
-            : (current.provider === "codex" ? current.model : "default"),
+            : (current.provider === "codex" ? current.model : DEFAULT_CODEX_MODEL),
         }));
         setOnboardingComplete(true);
         append("assistant", `Provider selected: ${provider}`);
@@ -2228,7 +2228,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const status = loginCodex(mode);
         if (status === 0) {
           activeCodexThread.current = undefined;
-          setConfig((current) => ({ ...current, provider: "codex", model: current.provider === "codex" ? current.model : "default", codexThreadId: undefined }));
+          setConfig((current) => ({ ...current, provider: "codex", model: current.provider === "codex" ? current.model : DEFAULT_CODEX_MODEL, codexThreadId: undefined }));
+          void listCodexModels().then((models) => setAvailableModels(models)).catch(() => setAvailableModels([]));
           setOnboardingComplete(true);
           append("assistant", "Codex login completed. Evidra is ready.");
         } else append("assistant", "Codex login did not complete. Setup remains available; run /login codex again when ready.");
