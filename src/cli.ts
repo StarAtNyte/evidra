@@ -2258,8 +2258,21 @@ research
       // this objective with an explicit alternate-route instruction so a
       // provider/tool failure cannot silently replay the same route.
       let agentObjective = cycleObjective;
-      const remainingBudgetMs = Math.max(10_000, campaign.budgetMinutes * 60_000 - (Date.now() - started));
-      const agentTimeoutMs = Math.max(10_000, Math.min(3 * 60_000, remainingBudgetMs));
+      const remainingBudgetMs = Math.max(0, campaignRemainingMs({ ...campaign, startedAt: campaign.startedAt }));
+      if (remainingBudgetMs <= 0) {
+        const expiredStore = new ResearchStore(statePath);
+        campaign.status = "completed";
+        expiredStore.saveCampaign(campaign);
+        expiredStore.setSchedulerState({ status: "idle", mode, currentStep: "budget-exhausted" });
+        expiredStore.appendEvent("research.campaign.completed", { cycle, reason: "budget exhausted before starting another agent turn" });
+        expiredStore.close();
+        console.log(`${mode === "challenge" ? "Challenge" : "Research"} budget exhausted; preserving the durable checkpoint.`);
+        break;
+      }
+      // A cycle has lanes, a director, and a critic. Reserve wall-clock for
+      // each stage so a short campaign cannot overrun by multiplying one
+      // provider timeout across all three stages.
+      const agentTimeoutMs = Math.max(15_000, Math.min(120_000, Math.floor(remainingBudgetMs / 4)));
       while (true) {
         try {
           console.log("Research · independent lanes are investigating the evidence...");

@@ -60,7 +60,13 @@ function boundValue(value: unknown, budget: number, path: string, truncated: str
 }
 
 /** Pack model context under one aggregate character budget without changing evidence semantics. */
-export function boundResearchContext(input: Record<string, unknown>, maxChars = 120_000): BoundedContext {
+/**
+ * Keep provider turns small enough for responsive, repeated autonomous cycles.
+ * Large historical state is still durable in SQLite; it should not be replayed
+ * wholesale into every lane/director prompt. Operators can raise the ceiling
+ * for unusually large tasks without changing the evidence on disk.
+ */
+export function boundResearchContext(input: Record<string, unknown>, maxChars = Number(process.env.EVIDRA_CONTEXT_MAX_CHARS ?? 48_000)): BoundedContext {
   const budget = Math.max(4_000, Math.floor(maxChars));
   const truncated: string[] = [];
   const dropped: string[] = [];
