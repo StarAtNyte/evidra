@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `d9dc69d`.
+- Latest pushed commit: `0089e8b`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -138,6 +138,9 @@ external evaluator.
 - Codex research-director turns now pass a structured-output schema through
   the SDK before Evidra's own Zod/evidence gates, reducing malformed decision
   responses while preserving controller authority.
+- Codex agent usage aggregation is now shared by the CLI and TUI, preserving
+  input, output, cached-input, and reasoning-output totals while rejecting
+  malformed or negative counters.
 - Codex thread restoration is explicit: a new terminal starts a fresh Evidra
   chat, while `/resume <session-id>` restores the saved Codex thread and
   transcript. Provider/model changes invalidate the active chat thread.
