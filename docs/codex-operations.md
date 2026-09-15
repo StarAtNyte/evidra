@@ -190,6 +190,10 @@ the wait interval is excluded from its research-time budget. Retry guards use
 that pause-aware clock as well, so a long provider wait cannot consume the
 active campaign budget merely because calendar time elapsed.
 
+The interactive TUI follows the same policy: `auto` and `wait` schedule a
+durable paused retry, `fallback` requires the local route, and `stop` leaves the
+campaign stopped instead of silently converting the limit into a wait.
+
 Native Codex activity is normalized into concise progress and bounded,
 secret-redacted trajectory events. Raw protocol ids, credentials, and
 unbounded payloads are not shown in the TUI or stored in research context.

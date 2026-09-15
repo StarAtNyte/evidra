@@ -1642,8 +1642,20 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const runAutonomousCycle = async (campaignOverride?: ResearchCampaign, autoContinue = false): Promise<void> => {
     const mode = configRef.current.mode;
     if (loopBusy.current || busy) return;
-    const pendingCampaign = campaignOverride ?? config.campaign;
+    let pendingCampaign = campaignOverride ?? config.campaign;
     if (pendingCampaign?.nextAttemptAt && Date.parse(pendingCampaign.nextAttemptAt) > Date.now()) return;
+    // A provider-limit wait is represented as a durable pause. Resume it only
+    // once the retry window has elapsed; otherwise the paused interval would
+    // count against the campaign budget and the cycle would run with a stale
+    // paused campaign object.
+    if (pendingCampaign?.status === "paused" && pendingCampaign.nextAttemptAt && Date.parse(pendingCampaign.nextAttemptAt) <= Date.now()) {
+      const resumed = { ...resumeCampaign(pendingCampaign), nextAttemptAt: undefined, limitMessage: undefined };
+      pendingCampaign = resumed;
+      campaignOverride = resumed;
+      persistCampaign(resumed);
+      configRef.current = { ...configRef.current, campaign: resumed };
+      setConfig((current) => ({ ...current, campaign: resumed }));
+    }
     ensureActiveProject();
     if (!acquireControllerLease(mode, "research")) return;
     loopBusy.current = true;
@@ -1845,14 +1857,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
     } catch (error) {
       const campaign = campaignOverride ?? config.campaign;
-      if (campaign && isProviderUsageLimit(error)) {
+      if (campaign && isProviderUsageLimit(error) && (config.limitPolicy === "auto" || config.limitPolicy === "wait")) {
         const retryAfterMs = providerRetryAfterMs(error);
         const nextAttemptAt = new Date(Date.now() + retryAfterMs).toISOString();
-        const waiting = { ...campaign, status: "running" as const, nextAttemptAt, limitMessage: error instanceof Error ? error.message : String(error) };
+        const waiting = { ...pauseCampaign(campaign), nextAttemptAt, limitMessage: error instanceof Error ? error.message : String(error) };
         persistCampaign(waiting);
         setConfig((current) => ({ ...current, campaign: waiting }));
         const waitingStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        waitingStore.setSchedulerState({ status: "running", mode: config.mode, currentStep: `provider-limit-until-${nextAttemptAt}` });
+        waitingStore.setSchedulerState({ status: "paused", mode: config.mode, currentStep: `provider-limit-until-${nextAttemptAt}` });
         waitingStore.appendEvent("research.provider_limit.waiting", { retryAt: nextAttemptAt, retryAfterMs, provider: config.provider });
         waitingStore.close();
         if (!loopTimer.current) loopTimer.current = setInterval(() => { void runAutonomousCycle(); }, 60_000);

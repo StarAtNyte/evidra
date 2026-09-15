@@ -186,6 +186,9 @@ external evaluator.
 - Outer Codex retry guards now use pause-aware campaign elapsed time. Provider
   entitlement reset waits no longer consume active research budget through a
   raw wall-clock comparison.
+- The TUI provider-limit path now matches the CLI: `auto`/`wait` durably pause
+  and resume at the retry time, while `fallback` and `stop` are honored rather
+  than silently waiting.
 - Codex structured-output schemas now cover the research director, independent
   research lanes, and critic, so every research-role response is constrained
   before durable parsing and evidence gates.
