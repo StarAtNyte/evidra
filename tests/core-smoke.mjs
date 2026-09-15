@@ -42,6 +42,7 @@ import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateVali
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
 import { renderReport } from "../dist/core/reports.js";
 import { latestSourceEntries, latestSourcePayloads, repositoryLeadsFromEvents, researchMemoryContext } from "../dist/core/research-context.js";
+import { playbookFromMethod, verifiedPlaybooksFromEvents } from "../dist/core/playbooks.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "../dist/core/experiment-patches.js";
 import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js";
 import { compareClaims } from "../dist/core/claim-consistency.js";
@@ -1213,6 +1214,15 @@ test("only independently replicated method events enter transfer memory", () => 
     { type: "research.method.transferable", payload: { ...method, id: "malformed", evidenceIds: ["run-1"] } },
   ], "group validation");
   assert.deepEqual(methods.map((entry) => entry.id), ["method-1"]);
+});
+
+test("replicated methods become bounded playbook leads with fresh-transfer warnings", () => {
+  const method = createTransferableMethod({ id: "method-playbook", sourceCompetition: "prior-task", sourceTaskType: "ranking", title: "Calibrate ranks", formulationFamily: "inference", mechanism: "scores are miscalibrated across groups", proposedChange: "fit calibration on out-of-fold predictions", evidenceIds: ["run-a", "run-b"], tags: ["ranking", "calibration"] });
+  const playbook = playbookFromMethod(method);
+  assert.equal(playbook.id, "playbook_method-playbook");
+  assert.deepEqual(playbook.steps, ["fit calibration on out-of-fold predictions"]);
+  assert.match(playbook.failureModes[0], /may not transfer/);
+  assert.deepEqual(verifiedPlaybooksFromEvents([{ type: "research.method.transferable", payload: method }, { type: "research.method.transferable", payload: method }, { type: "research.method.transferable", payload: { ...method, id: "unreplicated", replicated: false } }], "calibration ranking").map((entry) => entry.id), ["playbook_method-playbook"]);
 });
 
 test("ablation planner creates reproducible leave-one-factor-out controls", () => {
