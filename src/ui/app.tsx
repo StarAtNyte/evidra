@@ -33,7 +33,7 @@ import { codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexM
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { boundedPeerBoard, runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
-import { createToolTraceRecorder, evaluateTrajectory, type TrajectoryEvent } from "../core/trajectories.js";
+import { createToolTraceRecorder, evaluateTrajectory, providerActivityFailureClass, type TrajectoryEvent } from "../core/trajectories.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../core/capability-router.js";
 import { allocateNextResearch } from "../core/allocation.js";
 import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurriculum } from "../core/experience.js";
@@ -813,8 +813,24 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const recentTrajectories = store.trajectories(50);
     const recentFailureCount = recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
     const recentQuality = recentTrajectories.slice(0, 20).map((entry) => qualityFeedback(entry.quality));
+    const failureClasses = [
+      ...store.runs().slice(0, 20).map((entry) => (entry.payload as { failureClass?: unknown }).failureClass).filter((value): value is string => typeof value === "string"),
+      ...recentTrajectories.flatMap((entry) => {
+        const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { events?: unknown } : {};
+        if (!Array.isArray(payload.events)) return [];
+        return payload.events.flatMap((event) => {
+          if (!event || typeof event !== "object") return [];
+          const eventPayload = (event as { payload?: unknown }).payload;
+          if (!eventPayload || typeof eventPayload !== "object") return [];
+          const value = eventPayload as { providerActivity?: unknown; activity?: unknown };
+          if (value.providerActivity !== true || typeof value.activity !== "string") return [];
+          const failure = providerActivityFailureClass(value.activity);
+          return failure ? [failure] : [];
+        });
+      }),
+    ];
     const campaignRemaining = campaign ? Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)) : undefined;
-    const route = routeCapability({ objective, mode, provider: config.provider, model: config.model, autonomy: config.autonomy, recentFailureCount, recentQuality, recentOutcomes: store.recentEvents(500).filter((event) => event.type === "research.capability_outcome").slice(-12).map((event) => {
+    const route = routeCapability({ objective, mode, provider: config.provider, model: config.model, autonomy: config.autonomy, recentFailureCount, failureClasses, recentQuality, recentOutcomes: store.recentEvents(500).filter((event) => event.type === "research.capability_outcome").slice(-12).map((event) => {
       const payload = event.payload as { mode?: unknown; servedProvider?: unknown; servedModel?: unknown; outcome?: unknown; quality?: unknown };
       return { mode: typeof payload.mode === "string" ? payload.mode : undefined, provider: typeof payload.servedProvider === "string" ? payload.servedProvider : undefined, model: typeof payload.servedModel === "string" ? payload.servedModel : undefined, outcome: typeof payload.outcome === "string" ? payload.outcome : undefined, quality: typeof payload.quality === "string" ? payload.quality : undefined };
     }), budgetRemainingMinutes: campaignRemaining, requestedParallel: 3 });
@@ -827,12 +843,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return Number.isFinite(forecast.normalizedError) && ["underestimated", "overestimated", "calibrated"].includes(forecast.calibration);
       });
     const forecastCalibration = summarizeForecastAssessments(forecastAssessments);
-    const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts, forecastCalibration });
+    const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts, failureClasses, forecastCalibration });
     store.appendEvent("research.next_allocation", { allocation, objective });
     const adaptiveHarness = deriveAdaptiveHarnessPolicy({
       phase: phaseGoal?.phase,
       quality: recentQuality as Array<{ overall?: string; toolUse?: { verdict?: string }; evidenceConsistency?: { verdict?: string }; errorRecovery?: { verdict?: string }; termination?: { verdict?: string } }>,
-      failureClasses: store.runs().slice(0, 20).map((entry) => (entry.payload as { failureClass?: unknown }).failureClass).filter((value): value is string => typeof value === "string"),
+      failureClasses,
       evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
       budgetRemainingMinutes: campaignRemaining,
       allocationFocus: allocation.focus,

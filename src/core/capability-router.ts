@@ -9,6 +9,8 @@ export interface CapabilityRouteInput {
   model?: string;
   autonomy: AutonomyLevel;
   recentFailureCount?: number;
+  /** Typed executor/provider failures from recent trajectories. */
+  failureClasses?: string[];
   /** Quality feedback from prior trajectories; this is the harness feedback signal. */
   recentQuality?: Array<{ overall?: string; gaps?: string[] }>;
   /** Prior route outcomes, used only when they match the current mode/provider. */
@@ -92,6 +94,11 @@ export function routeCapability(input: CapabilityRouteInput): CapabilityRoute {
   if (/(research|investigat|compare|novel|hypothes|theorem|proof|generaliz)/.test(text)) { score += 1; rationale.push("objective requires open-ended investigation"); }
   if (input.objective.length > 500) { score += 1; rationale.push("long objective has multiple constraints"); }
   if ((input.recentFailureCount ?? 0) > 0) { score += Math.min(2, input.recentFailureCount ?? 0); rationale.push(`${input.recentFailureCount} recent failure(s) require recovery-aware routing`); }
+  const failureClasses = [...new Set((input.failureClasses ?? []).filter((item) => item.trim().length > 0))];
+  if (failureClasses.length) {
+    score += Math.min(2, failureClasses.length);
+    rationale.push(`recent failure routes require targeted recovery: ${failureClasses.slice(0, 4).join(", ")}`);
+  }
   const quality = input.recentQuality ?? [];
   const failedQuality = quality.filter((item) => item.overall === "FAIL").length;
   const warnedQuality = quality.filter((item) => item.overall === "WARN").length;

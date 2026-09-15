@@ -635,6 +635,13 @@ test("capability outcomes preserve prediction, serving action, and result", () =
   });
 });
 
+test("capability routing raises targeted pressure for typed native failures", () => {
+  const baseline = routeCapability({ objective: "research", mode: "research", provider: "codex", autonomy: "fast" });
+  const pressured = routeCapability({ objective: "research", mode: "research", provider: "codex", autonomy: "fast", failureClasses: ["timeout", "dependency"] });
+  assert.ok(pressured.demandScore > baseline.demandScore);
+  assert.match(pressured.rationale.join(" "), /timeout, dependency/);
+});
+
 test("capability outcomes preserve actual served lane count", () => {
   const route = routeCapability({ objective: "research", mode: "research", provider: "local", autonomy: "fast", requestedParallel: 3 });
   const outcome = capabilityOutcome({ objective: "research", mode: "research", route, provider: "local", model: "qwen", quality: { overall: "PASS" }, parallelLanes: 1 });
