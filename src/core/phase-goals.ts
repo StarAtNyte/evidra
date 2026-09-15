@@ -107,10 +107,18 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
     case "implementation": if (!has("experiment.stage.smoke.completed") && !has("experiment.stage.full_validation.completed")) missing.push("completed implementation or smoke stage"); break;
     case "evaluation": {
       const validated = payloads("experiment.stage.full_validation.completed").some((payload) => {
-        const value = payload as { exitCode?: unknown; metric?: unknown };
-        return (value.exitCode === undefined || value.exitCode === 0) && typeof value.metric === "number" && Number.isFinite(value.metric);
+        const value = payload as { exitCode?: unknown; metric?: unknown; outcomeType?: unknown; declaredArtifactCount?: unknown; verificationPassed?: unknown };
+        const successful = value.exitCode === undefined || value.exitCode === 0;
+        if (!successful) return false;
+        // Scalar metrics require a finite primary value. Other outcomes are
+        // evaluated by successful execution plus their declared artifacts or
+        // verifier evidence; they must not be forced through a fake score.
+        if (value.outcomeType && value.outcomeType !== "metric") return Number(value.declaredArtifactCount ?? 0) > 0 || Number(value.verificationPassed ?? 0) > 0;
+        return typeof value.metric === "number" && Number.isFinite(value.metric);
       });
-      if (!validated) missing.push("completed evaluated run with primary metric");
+      if (!validated) missing.push(payloads("experiment.stage.full_validation.completed").some((payload) => (payload as { outcomeType?: unknown }).outcomeType && (payload as { outcomeType?: unknown }).outcomeType !== "metric")
+        ? "completed evaluated run with the declared outcome evidence"
+        : "completed evaluated run with primary metric");
       else if (!has("run.completed")) missing.push("completed evaluated run");
       else if (evidence.mode !== "research" && !has("experiment.comparison.completed")) missing.push("baseline comparison");
       break;

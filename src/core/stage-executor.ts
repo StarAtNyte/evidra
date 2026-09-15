@@ -15,5 +15,7 @@ export function runReducedValidation(
     ...manifest,
     evaluation: { ...manifest.evaluation, requiredArtifacts: [] },
   };
-  return executor.run(reducedManifest, cwd, command, onProcess, metricName).then((result) => validateRunMetric(result, metricName));
+  return executor.run(reducedManifest, cwd, command, onProcess, metricName).then((result) =>
+    !manifest.outcomeType || manifest.outcomeType === "metric" ? validateRunMetric(result, metricName) : result,
+  );
 }

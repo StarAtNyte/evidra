@@ -1397,6 +1397,19 @@ test("reduced validation rejects a successful worker without its primary metric"
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("reduced validation supports non-metric outcomes without inventing a score", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-nonmetric-reduced-"));
+  try {
+    const competition = { id: "proof", name: "Proof", taskType: "formal", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "estimator.py" }, researchSources: [], evaluatorTimeoutMinutes: 1 };
+    const manifest = createExperimentManifest({ id: "proof-reduced", hypothesisId: "hyp-proof", outcomeType: "proof", gitCommit: "abc", datasetVersion: "data" }, competition);
+    const result = await runReducedValidation(new LocalExecutor(), manifest, root, [process.execPath, "-e", "console.log('proof checker passed')"], "score");
+    assert.equal(result.status, "completed");
+    assert.deepEqual(result.metrics, {});
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("reduced promotion rejection prevents the full executor from starting", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-promotion-gate-"));
   try {
@@ -1964,6 +1977,13 @@ test("evaluation phase requires a measured primary metric", () => {
     hypotheses: 1, experiments: 1, runs: 1, artifacts: 1,
   });
   assert.equal(challengeComplete.met, true);
+  const proofComplete = evaluatePhaseGoalEvidence(goal, {
+    mode: "research",
+    eventTypes: ["experiment.stage.full_validation.completed", "run.completed"],
+    eventPayloads: [{ type: "experiment.stage.full_validation.completed", payload: { outcomeType: "proof", exitCode: 0, metric: null, declaredArtifactCount: 1, verificationPassed: 0 } }, { type: "run.completed", payload: {} }],
+    hypotheses: 1, experiments: 1, runs: 1, artifacts: 1,
+  });
+  assert.equal(proofComplete.met, true);
 });
 
 test("promotion phase requires accepted validation in addition to human gates", () => {

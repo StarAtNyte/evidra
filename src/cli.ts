@@ -3157,7 +3157,7 @@ experiment.command("run")
       reducedStore.close();
       if (reduced.status !== "completed") throw new Error(`Reduced validation failed (${reduced.exitCode}): ${reduced.stderr || reduced.stdout}`);
       const promotionPolicy = adapter.config.execution?.reducedPromotion;
-      if (promotionPolicy?.enabled) {
+      if (promotionPolicy?.enabled && manifest.outcomeType === "metric") {
         const promotionStore = new ResearchStore(statePath);
         const baselineEvent = promotionStore.eventsByType("baseline.completed").at(-1);
         const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string } | undefined;
@@ -3280,7 +3280,7 @@ experiment.command("run")
     if (manifest.outcomeType === "metric") result = validateRunMetric(result, adapter.config.metric.name);
     executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
     const fullStageStore = new ResearchStore(statePath);
-    fullStageStore.appendEvent(result.status === "completed" ? "experiment.stage.full_validation.completed" : "experiment.stage.full_validation.failed", { experimentId: id, runId: result.runId, metric: result.metrics[adapter.config.metric.name] ?? null, exitCode: result.exitCode, attempts: attempt });
+    fullStageStore.appendEvent(result.status === "completed" ? "experiment.stage.full_validation.completed" : "experiment.stage.full_validation.failed", { experimentId: id, runId: result.runId, outcomeType: manifest.outcomeType, metric: result.metrics[adapter.config.metric.name] ?? null, declaredArtifactCount: manifest.evaluation.requiredArtifacts.length, verificationPassed: verifications.filter((verification) => verification.exitCode === 0).length, exitCode: result.exitCode, attempts: attempt });
     fullStageStore.close();
     const artifactDir = join(root, ".sota", "artifacts", result.runId);
     mkdirSync(artifactDir, { recursive: true });
