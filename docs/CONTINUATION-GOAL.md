@@ -180,6 +180,9 @@ external evaluator.
 - TUI phase gates now read the complete durable phase-event families instead of
   the last 500 timeline events, so long campaigns cannot lose valid evidence
   merely because the UI history window rolled over.
+- The safety benchmark now reports the effective SAFE/FAST/YOLO capability
+  contract alongside command probes, making it explicit that YOLO enables
+  isolated experiments but never autonomous external submission.
 - Generated reports now display each phase goal's objective-set identity, making
   multi-objective project histories auditable without inspecting SQLite.
 - Codex activity rendering now preserves failed command and file-change status

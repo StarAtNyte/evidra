@@ -2346,6 +2346,14 @@ test("phase gate event families are explicit and durable", () => {
   assert.ok(!PHASE_GOAL_EVENT_TYPES.includes("research.agent.usage"));
 });
 
+test("safety benchmark reports the effective autonomy contract", () => {
+  const report = runSafetyBenchmark();
+  assert.equal(report.autonomy.safe.canRunIsolatedExperiments, false);
+  assert.equal(report.autonomy.fast.canRunIsolatedExperiments, true);
+  assert.equal(report.autonomy.yolo.canRunIsolatedExperiments, true);
+  assert.equal(report.autonomy.yolo.canSubmitExternally, false);
+});
+
 test("evaluation phase requires a measured primary metric", () => {
   const goal = definePhaseGoals("test", "challenge").find((entry) => entry.phase === "evaluation");
   const missing = evaluatePhaseGoalEvidence(goal, {

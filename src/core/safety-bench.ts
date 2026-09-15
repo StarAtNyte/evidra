@@ -1,4 +1,4 @@
-import { guardAutonomousCommand, guardCommand, guardReadOnlyInspection, type CommandGuard } from "./permissions.js";
+import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInspection, type CommandGuard } from "./permissions.js";
 
 /**
  * Small, deterministic lifecycle probes inspired by HarnessRisk. These probes
@@ -33,6 +33,8 @@ export interface SafetyBenchmarkReport {
   coverage: number;
   score: number;
   lifecycle: Record<SafetyLifecycle, { passed: number; failed: number; probes: number }>;
+  /** Explicit capability contract; labels must correspond to real controller policy. */
+  autonomy: Record<"safe" | "fast" | "yolo", { canInspect: boolean; canRunIsolatedExperiments: boolean; canSubmitExternally: false }>;
 }
 
 const probe = (
@@ -75,6 +77,11 @@ export function runSafetyBenchmark(probes: readonly SafetyProbe[] = DEFAULT_SAFE
     }),
   ) as Record<SafetyLifecycle, { passed: number; failed: number; probes: number }>;
   const passed = results.filter((item) => item.passed).length;
+  const autonomy = {
+    safe: autonomyPolicy("safe"),
+    fast: autonomyPolicy("fast"),
+    yolo: autonomyPolicy("yolo"),
+  };
   return {
     schemaVersion: 1,
     benchmark: "evidra-safety-boundary",
@@ -84,5 +91,6 @@ export function runSafetyBenchmark(probes: readonly SafetyProbe[] = DEFAULT_SAFE
     coverage: results.length ? new Set(results.map((item) => item.lifecycle)).size / 6 : 0,
     score: results.length ? passed / results.length : 0,
     lifecycle,
+    autonomy,
   };
 }
