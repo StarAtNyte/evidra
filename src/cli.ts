@@ -1170,7 +1170,12 @@ airsBenchmark.command("execute")
     const lifecycleWorkspace = resolve(options.workspace);
     const agentRunner = options.codex ? async (context: { workspace: string; agentDataDir: string; agentLogDir: string; taskPath: string; timeoutMs: number; onProgress?: (message: string) => void }) => {
       await checkProvider({ provider: "codex", model: options.model, cwd: context.workspace });
-      const taskDescription = resolve(process.cwd(), taskDir, "project_description.md");
+      const sourceTaskDescription = resolve(process.cwd(), taskDir, "project_description.md");
+      const taskDescription = join(context.workspace, "TASK.md");
+      // Give the provider a local task brief so it never needs to read the
+      // benchmark checkout by absolute path. Official prepare/evaluate scripts
+      // remain controller-owned and run outside the agent sandbox.
+      writeFileSync(taskDescription, readFileSync(sourceTaskDescription, "utf8"), { mode: 0o600 });
       const submissionPath = join(context.agentLogDir, "submission.csv");
       const submissionRelativePath = "log/submission.csv";
       const started = Date.now();
@@ -1198,7 +1203,7 @@ airsBenchmark.command("execute")
           timeoutMs: phaseTimeoutMs, maxRepeatedCommands: 3, maxFailedCommands: 3,
         });
         const strategyShift = phaseIndex > 0 ? " The previous phase did not leave a usable artifact; change strategy now, stop investigating, and execute the shortest reliable shell/Python path to produce the artifact." : "";
-        const objective = `You are running phase ${phaseIndex + 1} of ${phases.length} (${phases[phaseIndex].name}) for an AIRS-Bench experiment. Read the task specification at ${taskDescription}. Your current working directory is ${context.workspace}; work only there. Use the prepared data in ${context.agentDataDir}; do not access hidden labels or test_with_labels. ${phases[phaseIndex].instruction}${strategyShift} You MUST leave the required local artifact at ${submissionRelativePath} before the final verification phase completes. Do not submit externally and do not finish with only an explanation. IMPORTANT: create and edit files with shell commands (for example python3 -c, heredocs, or redirection). Do not use the provider's file-change/apply-patch tool; this worker runs in a disposable workspace where that tool is unavailable.`;
+        const objective = `You are running phase ${phaseIndex + 1} of ${phases.length} (${phases[phaseIndex].name}) for an AIRS-Bench experiment. Read the local task brief at TASK.md. Your current working directory is ${context.workspace}; work only there. Use the prepared data in ${context.agentDataDir}; do not access hidden labels or test_with_labels or any path outside this workspace. ${phases[phaseIndex].instruction}${strategyShift} You MUST leave the required local artifact at ${submissionRelativePath} before the final verification phase completes. Do not submit externally and do not finish with only an explanation. IMPORTANT: create and edit files with shell commands (for example python3 -c, heredocs, or redirection). Do not use the provider's file-change/apply-patch tool; this worker runs in a disposable workspace where that tool is unavailable.`;
         try {
           const response = await agent.run({
             role: "experiment engineer",

@@ -211,6 +211,10 @@ complete. The embedded AIRS prompt directs Codex to use shell or Python file
 creation because provider patch tools are not portable across disposable worker
 paths.
 
+Embedded Codex also receives a local `TASK.md` copy of the public task brief;
+it does not need an absolute path into the benchmark checkout. The official
+preparation and evaluation scripts remain controller-owned.
+
 Embedded AIRS Codex runs use the provider's `workspace-write` sandbox inside
 their disposable workspace (network remains disabled), plus a repeated-command watchdog: three identical
 shell commands in succession terminate the agent stage with an explicit stuck
