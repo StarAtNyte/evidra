@@ -136,7 +136,7 @@ export async function runResearchDirector(
           ...task,
           context: workingContext,
           objective: `${objective}\n\n${contract}\n\n${contractGuidance}`,
-        }, { ...options, onActivity: options.onActivity, onAssistant: options.onAssistant }, options.fallbackLocalModel, onProgress, options.onProcess);
+        }, { ...options, onActivity: options.onActivity, onAssistant: options.onAssistant, onUsage: undefined }, options.fallbackLocalModel, onProgress, options.onProcess);
         options.onUsage?.(result.usage, result.provider, result.model ?? options.model, "director");
         parsed = ResearchDecisionSchema.safeParse(extractJson(result.output));
         if (parsed.success) break;

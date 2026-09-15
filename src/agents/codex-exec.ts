@@ -83,6 +83,7 @@ export interface ExecAgentOptions {
   onActivity?: (source: string, activity: string) => void;
   /** Receive the bounded, redacted assistant message for replay diagnostics. */
   onAssistant?: (source: string, text: string) => void;
+  onUsage?: (usage: AgentResult["usage"], provider: string, model: string, role: string) => void;
 }
 
 export class ProviderUsageLimitError extends Error {
@@ -451,18 +452,23 @@ export async function resolveStartupProvider(options: ExecAgentOptions, fallback
 export class CodexExecAgent {
   constructor(private readonly options: ExecAgentOptions) {}
 
-  run(task: AgentTask, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
+  async run(task: AgentTask, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
     const prompt = `${task.objective}\n\nResearch context:\n${JSON.stringify(task.context, null, 2)}\n\n` +
       "You are Evidra, the research and experimentation workbench assistant. The selected provider is only an implementation detail; never introduce yourself as Codex, OpenAI, Ollama, or another underlying model. " +
       (task.role === "research director" ? "Act as Evidra's research director. " : "Act as Evidra's conversational assistant. ") +
       "Return a concise, evidence-oriented answer. " +
       "Do not submit anything or expose credentials.";
-    if (this.options.provider === "local") return this.runOllama(prompt, onProgress, onProcess);
+    if (this.options.provider === "local") {
+      const result = await this.runOllama(prompt, onProgress, onProcess);
+      this.options.onUsage?.(result.usage, result.provider, result.model ?? this.options.model, task.role);
+      return result;
+    }
 
-    return codexIsLoggedInAsync().then((loggedIn) => {
-      if (!loggedIn) throw new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription.");
-      return this.runCodexSdk(prompt, onProgress, onProcess, task.outputSchema);
-    });
+    const loggedIn = await codexIsLoggedInAsync();
+    if (!loggedIn) throw new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription.");
+    const result = await this.runCodexSdk(prompt, onProgress, onProcess, task.outputSchema);
+    this.options.onUsage?.(result.usage, result.provider, result.model ?? this.options.model, task.role);
+    return result;
   }
 
   private async runCodexSdk(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void, outputSchemaText?: string): Promise<AgentResult> {

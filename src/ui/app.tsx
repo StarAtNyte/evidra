@@ -373,6 +373,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
     activeProcesses.current.add(control);
     activeProcess.current = control;
   };
+  const persistAgentUsage = (usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningOutputTokens?: number } | undefined, provider: string, model: string, role: string): void => {
+    const usageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    usageStore.appendEvent("research.agent.usage", { role, provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, cacheWriteInputTokens: usage?.cacheWriteInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens, sessionId: sessionId.current });
+    usageStore.close();
+  };
   const terminateActiveProcesses = (): void => {
     for (const control of activeProcesses.current) control.terminate();
     activeProcess.current?.terminate();
@@ -3228,7 +3233,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           mode: config.mode,
           instruction: "This is ordinary conversation, not a research cycle. Answer directly and concisely. Do not inspect files, run commands, edit code, propose experiments, or claim fresh measurements. If the user wants autonomous research, tell them to use /research.",
         },
-      }, { provider: config.provider, model: config.model, cwd: root, threadId: config.provider === "codex" ? (activeCodexThread.current ?? config.codexThreadId) : undefined, reasoningEffort: config.reasoningEffort, sandbox: "read-only", limitPolicy: config.limitPolicy, onThread: (threadId) => { activeCodexThread.current = threadId; setConfig((current) => ({ ...current, codexThreadId: threadId })); activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, config.fallbackModel, setProgress, registerProcess);
+      }, { provider: config.provider, model: config.model, cwd: root, threadId: config.provider === "codex" ? (activeCodexThread.current ?? config.codexThreadId) : undefined, reasoningEffort: config.reasoningEffort, sandbox: "read-only", limitPolicy: config.limitPolicy, onUsage: persistAgentUsage, onThread: (threadId) => { activeCodexThread.current = threadId; setConfig((current) => ({ ...current, codexThreadId: threadId })); activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, config.fallbackModel, setProgress, registerProcess);
       if (result.provider !== config.provider) {
         activeCodexThread.current = undefined;
         setConfig((current) => ({ ...current, codexThreadId: undefined }));

@@ -371,6 +371,9 @@ external evaluator.
 - TUI-started research cycles now record the same provider usage events as the
   CLI for lanes, director, and critic, restoring cross-interface accounting
   parity.
+- Ordinary TUI conversation turns now use the same durable usage callback, so
+  `/usage` includes Codex and local chat consumption rather than only
+  autonomous research calls.
 
 ## Immediate next work
 
