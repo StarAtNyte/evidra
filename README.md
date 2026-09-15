@@ -258,6 +258,7 @@ Implemented today:
 - checkpoint metadata is validated against a fixed phase contract with nonnegative cycles and valid timestamps; malformed or legacy metadata is reported as unavailable rather than trusted;
 - resume uses that checkpoint contract: interrupted phases rerun their current cycle, while a completed cycle advances exactly once, preventing skipped or duplicated campaign cycles;
 - the TUI applies the same checkpoint validator as the CLI, so status views cannot present malformed progress metadata as trustworthy state;
+- resume explicitly records and reports invalid saved checkpoints before returning to a safe cycle boundary, preserving operator visibility instead of silently discarding progress metadata;
 - local research lanes can use a bounded heterogeneous Ollama pool: installed local models are discovered at campaign start, assigned deterministically across independent roles, and the actual model used by every lane is recorded for replay and routing analysis;
 - independently replicated methods are also distilled into ranked, provenance-linked playbook leads with explicit transfer failure modes; playbooks guide new research but never count as current-workspace proof;
 - failed, invalid, rejected, and blocked experiment directions are retained as ranked negative experience, so future cycles must change the route instead of repeating an unchanged failure;

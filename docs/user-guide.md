@@ -213,6 +213,9 @@ On resume, an interrupted phase restarts its current cycle; only the
 Codex campaigns deterministic restart semantics.
 The TUI and CLI share the same checkpoint validator, keeping status output
 consistent regardless of how a campaign is inspected.
+If resume encounters malformed checkpoint metadata, it records
+`research.campaign.checkpoint.invalid` and reports the recovery decision before
+continuing from a safe boundary.
 
 Independent lanes explore different formulations and roles. Their evidence is
 cross-pollinated through a bounded board, while shared citations are not
