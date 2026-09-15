@@ -886,8 +886,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const experienceMix = selectCurriculum(experienceRecords);
     const curriculumGuidance = experienceMix.map((stage) => `stage ${stage.stage}: ${stage.trajectoryIds.join(", ") || "none"} (${stage.rationale})`).join("; ");
     const researchSources = latestSourceEntries(store.sources(), 12, objective, store).map((entry) => {
-      const payload = entry.payload as { title?: string; url?: string; excerpt?: string; claims?: string[] };
-      return { id: entry.id, title: payload.title, url: payload.url, excerpt: payload.excerpt, claims: payload.claims?.slice(0, 8) };
+      const payload = entry.payload as { title?: string; url?: string; excerpt?: string; claims?: string[]; qualityScore?: number; evidenceClass?: string };
+      return { id: entry.id, title: payload.title, url: payload.url, excerpt: payload.excerpt, claims: payload.claims?.slice(0, 8), qualityScore: payload.qualityScore, evidenceClass: payload.evidenceClass };
     });
     store.close();
     const laneStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -1098,6 +1098,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const decisionRubric = assessResearchDecisionRubric(decision, {
       baselineAvailable: Boolean((observation as { baseline?: { exitCode?: unknown } }).baseline?.exitCode === 0),
       sourceCount: researchSources.length,
+      sourceQuality: researchSources.length
+        ? researchSources.reduce((sum, source) => sum + (typeof source.qualityScore === "number" && Number.isFinite(source.qualityScore) ? source.qualityScore : 0), 0) / researchSources.length
+        : 0,
+      sourceClaimCoverage: researchSources.length
+        ? researchSources.filter((source) => Array.isArray(source.claims) && source.claims.length > 0).length / researchSources.length
+        : 0,
+      sourceDiversity: Math.min(1, new Set(researchSources.map((source) => source.evidenceClass).filter((value): value is string => Boolean(value))).size / 3),
       evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
     });
     decisionStore.appendEvent("research.rubric.assessed", {

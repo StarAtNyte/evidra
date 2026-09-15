@@ -270,6 +270,7 @@ Implemented today:
 - one-shot `evidra research` receives the same history, so harness learning is not limited to autonomous campaigns;
 - generated reports expose the bounded harness-evolution decision history, changed components, protocol identity, and measured outcomes;
 - fast and YOLO TUI campaigns can run a bounded fresh-lane peer-review pass over contested findings before director synthesis; safe mode stays single-pass and read-only;
+- TUI and CLI now grade literature evidence with the same quality, claim-coverage, and provenance-diversity signals;
 - failed hypotheses cannot silently consume budget on an unchanged route: retries must change the executor, provider, model, or search operator, while the failed attempt remains immutable evidence;
 - suppressed duplicate or unchanged retries emit a durable scheduling event with the route and reason, so the next research cycle can replan from an explicit controller decision;
 - autonomous campaigns persist phase-level checkpoints (cycle start, lanes, director, critic, execution, and terminal/completion) into campaign state, scheduler state, and the controller lease for reliable restart and status reporting;
