@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `77f61c3`.
+- Latest pushed commit: `3d010d7`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -100,6 +100,9 @@ external evaluator.
 - The Kaggle adapter now performs a read-only access/authentication preflight
   before approved upload and defaults score polling to `competitions submissions
   --csv`, including public-score parsing.
+- Binary log-loss, AUROC, and average-precision evaluators now reject
+  non-binary target labels rather than silently coercing malformed outputs.
+- The local safety benchmark currently passes all 9/9 lifecycle probes.
 
 ## Immediate next work
 
