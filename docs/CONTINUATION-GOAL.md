@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `d31e482`.
+- Latest pushed commit: `a4b5c54`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -129,6 +129,9 @@ external evaluator.
 - Codex command activity now includes an exit code only when the provider
   supplies one, keeping failure output concise; regression coverage remains
   green at 349/349.
+- Codex structured-output schemas now cover the research director, independent
+  research lanes, and critic, so every research-role response is constrained
+  before durable parsing and evidence gates.
 - Normal Codex chat no longer performs a duplicate UI-level auth preflight;
   the provider boundary performs the single asynchronous check before the turn,
   reducing startup latency without allowing unauthenticated execution.
