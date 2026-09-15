@@ -57,11 +57,11 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `ee818c6`.
+- Latest pushed commit: `7d29b38`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 321/321 tests passing, TypeScript check passing,
+- Latest verified baseline: 322/322 tests passing, TypeScript check passing,
   build passing, and a clean worktree.
 - Benchmark report command argv is now redacted alongside process output, with
   coverage for primary, alternate, and reproducibility routes.
@@ -93,6 +93,8 @@ external evaluator.
   bias in the generic metric layer.
 - Paired bootstrap and permutation statistics now reject non-finite metric
   values and invalid sample counts instead of emitting misleading evidence.
+- Direct fair-pair comparisons require complete task, arm, seed, model, and
+  budget metadata, even when callers bypass the external trial parser.
 
 ## Immediate next work
 
