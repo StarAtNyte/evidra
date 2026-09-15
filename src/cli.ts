@@ -1612,8 +1612,9 @@ challenge.command("baseline").description("Run the canonical baseline").action(a
   requireCompetitionContract(adapter);
   const result = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000, streamProcessOutput);
   const store = new ResearchStore(statePath);
-  const metric = parseMetricOutput(result.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
-  recordBaselineEvidence(store, root, result, metric);
+  const parsed = parseMetricOutput(result.stdout, adapter.config.metric.name);
+  const metric = parsed.metrics[adapter.config.metric.name] ?? null;
+  recordBaselineEvidence(store, root, result, metric, parsed.metrics, parsed.metricsByFold);
   store.close();
   if (result.exitCode !== 0) process.exitCode = result.exitCode;
 });
@@ -2105,8 +2106,9 @@ research
         baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
       }
       if (mode === "challenge" && baseline && !(options.skipBaseline && priorBaseline)) {
-        const metric = parseMetricOutput(baseline.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
-        recordBaselineEvidence(store, root, baseline, metric);
+        const parsed = parseMetricOutput(baseline.stdout, adapter.config.metric.name);
+        const metric = parsed.metrics[adapter.config.metric.name] ?? null;
+        recordBaselineEvidence(store, root, baseline, metric, parsed.metrics, parsed.metricsByFold);
       }
       const observation = { gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40), repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120), ...(baseline ? { baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: redactSecrets(baseline.stdout.slice(-4000)), stderr: redactSecrets(baseline.stderr.slice(-4000)) } } : {}) };
       store.appendEvent("research.observation", observation);
@@ -2875,8 +2877,9 @@ research.command("propose")
       repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120),
       baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: redactSecrets(baseline.stdout.slice(-4000)), stderr: redactSecrets(baseline.stderr.slice(-4000)) },
     };
-    const metric = parseMetricOutput(baseline.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
-    recordBaselineEvidence(store, root, baseline, metric);
+    const parsed = parseMetricOutput(baseline.stdout, adapter.config.metric.name);
+    const metric = parsed.metrics[adapter.config.metric.name] ?? null;
+    recordBaselineEvidence(store, root, baseline, metric, parsed.metrics, parsed.metricsByFold);
     store.appendEvent("research.observation", observation);
     store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
     const recentEvents = store.recentEvents(20);
@@ -2946,8 +2949,9 @@ program.command("baseline")
     }
     const result = await runProcess(command, adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000, streamProcessOutput);
     const store = new ResearchStore(statePath);
-    const metric = parseMetricOutput(result.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
-    recordBaselineEvidence(store, root, result, metric);
+    const parsed = parseMetricOutput(result.stdout, adapter.config.metric.name);
+    const metric = parsed.metrics[adapter.config.metric.name] ?? null;
+    recordBaselineEvidence(store, root, result, metric, parsed.metrics, parsed.metricsByFold);
     store.close();
     if (result.exitCode !== 0) process.exitCode = result.exitCode;
   });
@@ -3326,7 +3330,7 @@ experiment.command("run")
     if (experimentQuality.overall !== "PASS") resultStore.appendEvent("trajectory.capability_gaps", { trajectoryId: `trajectory_${result.runId}`, gaps: Object.entries(experimentQuality).filter(([key, value]) => key !== "overall" && (value as { verdict: string }).verdict !== "PASS").map(([key, value]) => ({ dimension: key, verdict: (value as { verdict: string }).verdict, evidence: (value as { evidence: string[] }).evidence })) });
     if (recorded.status === "completed") {
       const baselineEvent = resultStore.eventsByType("baseline.completed").at(-1);
-      const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string; stderr?: string; durationMs?: number; command?: string[]; cwd?: string } | undefined;
+      const baselinePayload = baselineEvent?.payload as { metric?: unknown; metrics?: Record<string, number>; metricsByFold?: Record<string, number[]>; stdout?: string; stderr?: string; durationMs?: number; command?: string[]; cwd?: string } | undefined;
       const metricName = adapter.config.metric.name;
       const parsedBaseline = baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, metricName) : { metrics: {} as Record<string, number>, metricsByFold: {} as Record<string, number[]>, subgroupDeltas: [] };
       const baselineMetric = typeof baselinePayload?.metric === "number" && Number.isFinite(baselinePayload.metric)
@@ -3338,8 +3342,8 @@ experiment.command("run")
           status: "completed" as const,
           exitCode: 0,
           durationSeconds: (baselinePayload?.durationMs ?? 0) / 1000,
-          metrics: { [metricName]: baselineMetric },
-          metricsByFold: { [metricName]: baselinePayload?.stdout ? parsedBaseline.metricsByFold[metricName] ?? [] : [] },
+          metrics: baselinePayload?.metrics ?? { [metricName]: baselineMetric },
+          metricsByFold: baselinePayload?.metricsByFold ?? { [metricName]: baselinePayload?.stdout ? parsedBaseline.metricsByFold[metricName] ?? [] : [] },
           subgroupDeltas: parsedBaseline.subgroupDeltas,
           artifacts: {},
           stdout: baselinePayload?.stdout,

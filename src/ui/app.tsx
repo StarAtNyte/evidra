@@ -735,8 +735,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         );
         activeProcess.current = null;
         const baselineStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        const metric = parseMetricOutput(baseline.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
-        recordBaselineEvidence(baselineStore, root, baseline, metric);
+        const parsed = parseMetricOutput(baseline.stdout, adapter.config.metric.name);
+        const metric = parsed.metrics[adapter.config.metric.name] ?? null;
+        recordBaselineEvidence(baselineStore, root, baseline, metric, parsed.metrics, parsed.metricsByFold);
         baselineStore.close();
       }
       if (priorBaseline && typeof (priorBaseline.payload as { metric?: unknown }).metric !== "number") {
@@ -2094,8 +2095,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setConfig((current) => ({ ...current, mode: "challenge" }));
         const baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
         const baselineStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        const metric = parseMetricOutput(baseline.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
-        recordBaselineEvidence(baselineStore, root, baseline, metric);
+        const parsed = parseMetricOutput(baseline.stdout, adapter.config.metric.name);
+        const metric = parsed.metrics[adapter.config.metric.name] ?? null;
+        recordBaselineEvidence(baselineStore, root, baseline, metric, parsed.metrics, parsed.metricsByFold);
         baselineStore.setSchedulerState({ status: "running", mode: "challenge", currentStep: "research" });
         baselineStore.close();
         setProgress("Zero-to-hero: generating the first falsifiable research decision...");
@@ -2409,8 +2411,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       try {
         const result = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
         const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        const metric = parseMetricOutput(result.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
-        recordBaselineEvidence(store, root, result, metric);
+        const parsed = parseMetricOutput(result.stdout, adapter.config.metric.name);
+        const metric = parsed.metrics[adapter.config.metric.name] ?? null;
+        recordBaselineEvidence(store, root, result, metric, parsed.metrics, parsed.metricsByFold);
         store.close();
         appendTool(`Baseline ${result.exitCode === 0 ? "completed" : "failed"}.\n${result.stdout || result.stderr}`);
       } catch (error) { appendError(error); }

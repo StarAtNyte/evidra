@@ -12,6 +12,9 @@ export interface BaselineEvidence {
   exitCode: number;
   durationMs: number;
   metric: number | null;
+  /** Complete evaluator metric set, not only the configured primary metric. */
+  metrics: Record<string, number>;
+  metricsByFold: Record<string, number[]>;
   stdout: string;
   stderr: string;
   artifactPaths: Record<string, string>;
@@ -24,6 +27,8 @@ export function recordBaselineEvidence(
   root: string,
   result: ProcessResult,
   metric: number | null,
+  metrics: Record<string, number> = metric === null ? {} : { primary: metric },
+  metricsByFold: Record<string, number[]> = {},
 ): BaselineEvidence {
   const runId = `baseline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const artifactDir = join(root, ".sota", "artifacts", runId);
@@ -31,7 +36,7 @@ export function recordBaselineEvidence(
   const artifactContents: Record<string, string> = {
     "stdout.log": redactSecrets(result.stdout),
     "stderr.log": redactSecrets(result.stderr),
-    "metrics.json": `${JSON.stringify({ metric }, null, 2)}\n`,
+    "metrics.json": `${JSON.stringify({ metric, metrics, metricsByFold }, null, 2)}\n`,
     "provenance.json": `${JSON.stringify({ runId, command: result.command, cwd: result.cwd, exitCode: result.exitCode, durationMs: result.durationMs, recordedAt: new Date().toISOString() }, null, 2)}\n`,
   };
   const artifactPaths: Record<string, string> = {};
@@ -50,6 +55,8 @@ export function recordBaselineEvidence(
     exitCode: result.exitCode,
     durationMs: result.durationMs,
     metric,
+    metrics,
+    metricsByFold,
     stdout: redactSecrets(result.stdout),
     stderr: redactSecrets(result.stderr),
     artifactPaths,

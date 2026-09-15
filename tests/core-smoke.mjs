@@ -1910,11 +1910,13 @@ test("baseline evidence is persisted as checksummed artifacts", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-baseline-"));
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    const evidence = recordBaselineEvidence(store, root, { command: ["python", "baseline.py"], cwd: root, exitCode: 0, durationMs: 12, stdout: "metric: 0.42\nOPENAI_API_KEY=sk-test_12345678901234567890\n", stderr: "" }, 0.42);
+    const evidence = recordBaselineEvidence(store, root, { command: ["python", "baseline.py"], cwd: root, exitCode: 0, durationMs: 12, stdout: "metric: 0.42\nOPENAI_API_KEY=sk-test_12345678901234567890\n", stderr: "" }, 0.42, { score: 0.42, safety: 0.9 }, { score: [0.41, 0.42], safety: [0.89, 0.9] });
     assert.equal(Object.keys(evidence.artifactChecksums).length, 4);
     assert.equal(store.recentEvents(20).some((event) => event.type === "artifact.created"), true);
     const baseline = store.recentEvents(20).find((event) => event.type === "baseline.completed");
     assert.equal(Object.keys(baseline.payload.artifactChecksums).length, 4);
+    assert.equal(baseline.payload.metrics.safety, 0.9);
+    assert.deepEqual(baseline.payload.metricsByFold.safety, [0.89, 0.9]);
     assert.doesNotMatch(String(baseline.payload.stdout), /sk-test_/);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
