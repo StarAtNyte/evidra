@@ -611,3 +611,6 @@ director context and their tool provenance is available for citation grounding.
 The semantic result also reports each supplied acceptance criterion with its own
 verdict, reasoning, and grounded evidence; missing or failed required criteria
 force a revision even when the overall model verdict says pass.
+The controller then merges semantic criterion results with the domain verifier
+result into one conservative `subtask.audit`; phase advancement requires both
+independent layers to pass the same required criteria.
