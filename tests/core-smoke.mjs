@@ -3004,6 +3004,34 @@ test("Codex failure events preserve nested provider diagnostics", () => {
   assert.equal(codexEventErrorMessage({ type: "turn.failed" }), "Codex turn failed.");
 });
 
+test("Codex adapter accepts only a completed injected stream", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-codex-stream-"));
+  const makeClient = (events) => () => ({
+    startThread: () => ({ runStreamed: async () => ({ events: (async function* () { for (const event of events) yield event; })() }) }),
+    resumeThread: () => ({ runStreamed: async () => ({ events: (async function* () { for (const event of events) yield event; })() }) }),
+  });
+  const task = { role: "conversation assistant", objective: "hello", context: {} };
+  try {
+    const completed = new CodexExecAgent({ provider: "codex", model: "gpt-test", cwd: root }, {
+      isLoggedIn: async () => true,
+      createClient: makeClient([
+        { type: "thread.started", thread_id: "thread-test" },
+        { type: "item.completed", item: { type: "agent_message", text: "Evidra response" } },
+        { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 2 } },
+      ]),
+    });
+    const result = await completed.run(task);
+    assert.equal(result.output, "Evidra response");
+    const incomplete = new CodexExecAgent({ provider: "codex", model: "gpt-test", cwd: root }, {
+      isLoggedIn: async () => true,
+      createClient: makeClient([{ type: "item.completed", item: { type: "agent_message", text: "partial" } }]),
+    });
+    await assert.rejects(() => incomplete.run(task), /stream ended before the turn completed/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Codex usage preserves cache and reasoning-token accounting", () => {
   assert.deepEqual(normalizeCodexUsage({ input_tokens: 100, cached_input_tokens: 40, cache_write_input_tokens: 8, output_tokens: 20, reasoning_output_tokens: 12 }), {
     inputTokens: 100, cachedInputTokens: 40, cacheWriteInputTokens: 8, outputTokens: 20, reasoningOutputTokens: 12,

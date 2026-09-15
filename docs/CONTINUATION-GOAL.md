@@ -395,6 +395,9 @@ external evaluator.
 - Codex streamed turns now require the SDK's `turn.completed` event in addition
   to a non-empty assistant message; a disconnected partial stream is rejected
   and remains eligible for recovery rather than becoming a valid decision.
+- The Codex adapter now supports injected authentication/client dependencies
+  for deterministic stream-contract tests, covering both completed and partial
+  provider turns without requiring live credentials.
 
 ## Immediate next work
 

@@ -92,6 +92,15 @@ export interface ExecAgentOptions {
   interruptSignal?: AbortSignal;
 }
 
+export interface CodexExecDependencies {
+  /** Test or embedding hook; production defaults to the installed SDK. */
+  isLoggedIn?: () => Promise<boolean>;
+  createClient?: (options: Record<string, unknown>) => {
+    startThread: (options: Record<string, unknown>) => { runStreamed: (input: string, options?: Record<string, unknown>) => Promise<{ events: AsyncIterable<unknown> }> };
+    resumeThread: (threadId: string, options: Record<string, unknown>) => { runStreamed: (input: string, options?: Record<string, unknown>) => Promise<{ events: AsyncIterable<unknown> }> };
+  };
+}
+
 export class ProviderUsageLimitError extends Error {
   constructor(message: string, readonly retryAfterMs: number) {
     super(message);
@@ -456,7 +465,7 @@ export async function resolveStartupProvider(options: ExecAgentOptions, fallback
 }
 
 export class CodexExecAgent {
-  constructor(private readonly options: ExecAgentOptions) {}
+  constructor(private readonly options: ExecAgentOptions, private readonly dependencies: CodexExecDependencies = {}) {}
 
   async run(task: AgentTask, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
     const prompt = `${task.objective}\n\nResearch context:\n${JSON.stringify(task.context, null, 2)}\n\n` +
@@ -470,7 +479,7 @@ export class CodexExecAgent {
       return result;
     }
 
-    const loggedIn = await codexIsLoggedInAsync();
+    const loggedIn = await (this.dependencies.isLoggedIn?.() ?? codexIsLoggedInAsync());
     if (!loggedIn) throw new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription.");
     const result = await this.runCodexSdk(prompt, onProgress, onProcess, task.outputSchema);
     this.options.onUsage?.(result.usage, result.provider, result.model ?? this.options.model, task.role);
@@ -506,7 +515,9 @@ export class CodexExecAgent {
     const model = effectiveCodexModel(this.options.model);
 
     try {
-      const codex = new Codex({ codexPathOverride: resolveCodexBinary() });
+      const codex = this.dependencies.createClient
+        ? this.dependencies.createClient({ codexPathOverride: resolveCodexBinary() })
+        : new Codex({ codexPathOverride: resolveCodexBinary() });
       const thread = this.options.threadId
         ? codex.resumeThread(this.options.threadId, {
           workingDirectory: isolated?.path ?? this.options.cwd,
