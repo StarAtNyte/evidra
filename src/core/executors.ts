@@ -313,18 +313,23 @@ function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metric
   };
 }
 
-/** Require the declared primary metric after the worker and optional evaluator have both run. */
-export function validateRunMetric(result: RunResult, metricName: string): RunResult {
+/** Require every declared metric after the worker and optional evaluator have both run. */
+export function validateRunMetrics(result: RunResult, metricNames: string[]): RunResult {
   if (result.status !== "completed") return result;
-  const metric = result.metrics[metricName];
-  if (typeof metric === "number" && Number.isFinite(metric)) return result;
+  const missing = [...new Set(metricNames.filter((name) => typeof result.metrics[name] !== "number" || !Number.isFinite(result.metrics[name])))];
+  if (!missing.length) return result;
   return {
     ...result,
     status: "failed",
     exitCode: result.exitCode === 0 ? 65 : result.exitCode,
     failureClass: "invalid_metric",
-    stderr: `${result.stderr ?? ""}${result.stderr ? "\n" : ""}Missing finite declared metric: ${metricName}`,
+    stderr: `${result.stderr ?? ""}${result.stderr ? "\n" : ""}Missing finite declared metric${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`,
   };
+}
+
+/** Backward-compatible single-primary validation helper. */
+export function validateRunMetric(result: RunResult, metricName: string): RunResult {
+  return validateRunMetrics(result, [metricName]);
 }
 
 export class LocalExecutor implements ExperimentExecutor {

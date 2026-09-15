@@ -7,7 +7,7 @@ import { ResearchStore } from "../core/store.js";
 import { runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
-import { executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetric } from "../core/executors.js";
+import { executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
 import { auditExperiment, validateEvaluationMatrix } from "../core/validation.js";
 import { sha256File } from "../core/evidence.js";
@@ -1430,7 +1430,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (checked.exitCode !== 0) break;
       }
     }
-    if (manifest.outcomeType === "metric") result = validateRunMetric(result, adapter.config.metric.name);
+    if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [adapter.config.metric.name, ...(adapter.config.secondaryMetrics ?? []).map((objective) => objective.name)]);
     executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
     const fullStageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     fullStageStore.appendEvent(result.status === "completed" ? "experiment.stage.full_validation.completed" : "experiment.stage.full_validation.failed", { experimentId: id, runId: result.runId, metric: result.metrics[adapter.config.metric.name] ?? null, exitCode: result.exitCode, attempts: attempt });

@@ -20,7 +20,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
-import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric } from "../dist/core/executors.js";
+import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
@@ -2794,6 +2794,15 @@ test("completed workers without a finite declared metric become invalid metric f
     assert.equal(validated.failureClass, "invalid_metric");
     assert.match(validated.stderr, /Missing finite declared metric: val_bpb/);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("completed workers require the complete declared metric suite", () => {
+  const result = { runId: "suite-run", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 0.8 }, artifacts: {} };
+  const invalid = validateRunMetrics(result, ["score", "safety"]);
+  assert.equal(invalid.status, "failed");
+  assert.equal(invalid.failureClass, "invalid_metric");
+  assert.match(invalid.stderr, /safety/);
+  assert.equal(validateRunMetrics({ ...result, metrics: { score: 0.8, safety: 0.9 } }, ["score", "safety"]).status, "completed");
 });
 
 test("metric parser accepts evaluator JSON and keyed log output", () => {

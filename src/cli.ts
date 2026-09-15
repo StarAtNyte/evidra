@@ -32,7 +32,7 @@ import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateVali
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
-import { executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetric } from "./core/executors.js";
+import { executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "./core/executors.js";
 import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
@@ -3281,7 +3281,7 @@ experiment.command("run")
         if (checked.exitCode !== 0) break;
       }
     }
-    if (manifest.outcomeType === "metric") result = validateRunMetric(result, adapter.config.metric.name);
+    if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [adapter.config.metric.name, ...(adapter.config.secondaryMetrics ?? []).map((objective) => objective.name)]);
     executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
     const fullStageStore = new ResearchStore(statePath);
     fullStageStore.appendEvent(result.status === "completed" ? "experiment.stage.full_validation.completed" : "experiment.stage.full_validation.failed", { experimentId: id, runId: result.runId, outcomeType: manifest.outcomeType, metric: result.metrics[adapter.config.metric.name] ?? null, declaredArtifactCount: manifest.evaluation.requiredArtifacts.length, verificationPassed: verifications.filter((verification) => verification.exitCode === 0).length, exitCode: result.exitCode, attempts: attempt });
