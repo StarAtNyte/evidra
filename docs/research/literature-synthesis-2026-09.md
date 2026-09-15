@@ -162,6 +162,10 @@ Transfer memory follows the same boundary: `sourceContext` is domain-neutral
 and legacy competition provenance remains readable, so a scientific or
 software method can become a fresh transfer hypothesis without being encoded
 as a competition result.
+Each transferred method also carries source assumptions, falsifying signals,
+and a concrete target-side transfer test. This operationalizes revision and
+continual transfer: a method can be retrieved because it is relevant, but it
+cannot be promoted merely because it worked in its source setting.
 
 Primary sources:
 

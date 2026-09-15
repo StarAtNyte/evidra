@@ -12,6 +12,12 @@ export interface TransferableMethod {
   mechanism: string;
   proposedChange: string;
   evidenceIds: string[];
+  /** Conditions observed in the source setting that must be checked before transfer. */
+  transferAssumptions: string[];
+  /** Signals that should falsify or downgrade a transfer attempt. */
+  failureSignals: string[];
+  /** Concrete fresh test required before using this as current-task evidence. */
+  transferTest: string;
   observedDelta?: number;
   replicated: true;
   tags: string[];
@@ -28,6 +34,9 @@ export const TransferableMethodSchema = z.object({
   mechanism: z.string(),
   proposedChange: z.string().min(1),
   evidenceIds: z.array(z.string().min(1)).min(2).refine((ids) => new Set(ids).size >= 2, "independent evidence IDs are required"),
+  transferAssumptions: z.array(z.string().min(1)).min(1).default(["the current task shares the source method's relevant mechanism"]),
+  failureSignals: z.array(z.string().min(1)).min(1).default(["the matched transfer test fails or exposes a source-setting mismatch"]),
+  transferTest: z.string().min(1).default("Run a matched, task-specific evaluation before treating this method as evidence."),
   observedDelta: z.number().finite().optional(),
   replicated: z.literal(true),
   tags: z.array(z.string().min(1)),
@@ -45,11 +54,19 @@ function relevance(method: TransferableMethod, query?: string): number {
 }
 
 /** Create a reusable method only after an independent replicated improvement. */
-export function createTransferableMethod(input: Omit<TransferableMethod, "schemaVersion" | "replicated" | "sourceContext"> & { sourceContext?: string }): TransferableMethod {
+export function createTransferableMethod(input: Omit<TransferableMethod, "schemaVersion" | "replicated" | "sourceContext" | "transferAssumptions" | "failureSignals" | "transferTest"> & {
+  sourceContext?: string;
+  transferAssumptions?: string[];
+  failureSignals?: string[];
+  transferTest?: string;
+}): TransferableMethod {
   return TransferableMethodSchema.parse({
     schemaVersion: 1,
     ...input,
-    sourceContext: input.sourceContext ?? input.sourceCompetition ?? "general-research",
+  sourceContext: input.sourceContext ?? input.sourceCompetition ?? "general-research",
+    transferAssumptions: input.transferAssumptions ?? ["the current task shares the source method's relevant mechanism"],
+    failureSignals: input.failureSignals ?? ["the matched transfer test fails or exposes a source-setting mismatch"],
+    transferTest: input.transferTest ?? "Run a matched, task-specific evaluation before treating this method as evidence.",
     replicated: true,
   });
 }

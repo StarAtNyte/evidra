@@ -131,6 +131,9 @@ external evaluator.
 - Transferable methods now use domain-neutral `sourceContext` provenance;
   legacy `sourceCompetition` records remain readable, so research methods are
   not forced through a competition-shaped memory schema.
+- Transferable methods/playbooks now preserve explicit source assumptions,
+  failure signals, and a fresh transfer-test procedure; retrieval remains a
+  hypothesis lead rather than evidence of universal applicability.
 
 ## Immediate next work
 

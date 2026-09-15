@@ -2725,6 +2725,15 @@ research
               mechanism: typeof replicationHypothesisPayload.mechanism === "string" ? replicationHypothesisPayload.mechanism : "",
               proposedChange: typeof replicationHypothesisPayload.proposedChange === "string" ? replicationHypothesisPayload.proposedChange : "",
               evidenceIds: [experimentId, replication.id],
+              transferAssumptions: [
+                `the target preserves the source task mechanism: ${adapter.config.taskType}`,
+                `the target evaluator remains comparable enough to test the proposed change: ${adapter.config.metric.name}`,
+              ],
+              failureSignals: [
+                "the matched target evaluation fails to reproduce the direction of improvement",
+                "the target data, evaluator, or resource constraints invalidate the source assumption",
+              ],
+              transferTest: "Run the proposed change on the target workspace with its locked evaluator, then require independent replication before promotion.",
               tags: [adapter.config.taskType, typeof replicationHypothesisPayload.formulationFamily === "string" ? replicationHypothesisPayload.formulationFamily : "other"],
             }));
           }

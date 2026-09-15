@@ -13,6 +13,8 @@ export interface VerifiedPlaybook {
   trigger: string;
   steps: string[];
   failureModes: string[];
+  transferAssumptions: string[];
+  transferTest: string;
   evidenceIds: string[];
   tags: string[];
   /** Playbooks are leads for a new workspace, never proof of transfer. */
@@ -30,6 +32,8 @@ export const VerifiedPlaybookSchema = z.object({
   trigger: z.string().min(1),
   steps: z.array(z.string().min(1)).min(1).max(8),
   failureModes: z.array(z.string().min(1)).min(1).max(8),
+  transferAssumptions: z.array(z.string().min(1)).min(1).default(["the current task shares the source method's relevant mechanism"]),
+  transferTest: z.string().min(1).default("Run a matched, task-specific evaluation before treating this method as evidence."),
   evidenceIds: z.array(z.string().min(1)).min(2).refine((ids) => new Set(ids).size >= 2, "independent evidence IDs are required"),
   tags: z.array(z.string().min(1)).max(12),
   status: z.literal("replicated_lead"),
@@ -58,6 +62,8 @@ export function playbookFromMethod(method: {
   proposedChange: string;
   evidenceIds: string[];
   tags: string[];
+  transferAssumptions?: string[];
+  transferTest?: string;
 }): VerifiedPlaybook {
   return VerifiedPlaybookSchema.parse({
     schemaVersion: 1,
@@ -72,6 +78,8 @@ export function playbookFromMethod(method: {
     // A replicated method does not imply universal applicability. Preserve
     // the explicit transfer uncertainty in the playbook itself.
     failureModes: ["may not transfer to the current task, split, or data distribution"],
+    transferAssumptions: method.transferAssumptions ?? ["the current task shares the source method's relevant mechanism"],
+    transferTest: method.transferTest ?? "Run a matched, task-specific evaluation before treating this method as evidence.",
     evidenceIds: [...new Set(method.evidenceIds)],
     tags: [...new Set(method.tags)],
     status: "replicated_lead",
