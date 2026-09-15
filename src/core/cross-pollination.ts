@@ -56,7 +56,7 @@ export function synthesizeLaneReports(reports: LaneFinding[]): CrossPollinationB
     }
   }
   const recommendations = completed.flatMap((report) => (report.recommendations ?? []).map((recommendation) => `${report.role ?? "lane"}: ${recommendation}`));
-  const recommendationGroups: Array<{ recommendation: string; roles: Set<string>; evidence: Set<string>; confidence: number[]; terms: Set<string> }> = [];
+  const recommendationGroups: Array<{ recommendation: string; roles: Set<string>; evidence: Set<string>; roleEvidence: Map<string, Set<string>>; confidence: number[]; terms: Set<string> }> = [];
   for (const report of completed) {
     for (const recommendation of report.recommendations ?? []) {
       const normalized = recommendation.trim().toLowerCase().replace(/\s+/g, " ");
@@ -66,21 +66,32 @@ export function synthesizeLaneReports(reports: LaneFinding[]): CrossPollinationB
       // discriminative shared terms before merging independently worded
       // recommendations; one shared domain word is too easy to manufacture.
       const group = recommendationGroups.find((candidate) => candidate.recommendation.trim().toLowerCase().replace(/\s+/g, " ") === normalized || intersectionSize(candidate.terms, terms) >= 2);
-      const target = group ?? { recommendation, roles: new Set<string>(), evidence: new Set<string>(), confidence: [], terms };
-      target.roles.add(report.role ?? "lane");
-      for (const item of report.evidence ?? []) target.evidence.add(item);
+      const role = report.role ?? "lane";
+      const target = group ?? { recommendation, roles: new Set<string>(), evidence: new Set<string>(), roleEvidence: new Map<string, Set<string>>(), confidence: [], terms };
+      target.roles.add(role);
+      const roleEvidence = target.roleEvidence.get(role) ?? new Set<string>();
+      for (const item of report.evidence ?? []) { target.evidence.add(item); roleEvidence.add(item); }
+      target.roleEvidence.set(role, roleEvidence);
       target.confidence.push(report.confidence ?? 0.5);
       if (!group) recommendationGroups.push(target);
     }
   }
   const transferCandidates = recommendationGroups
-    .map((group) => ({
-      recommendation: group.recommendation,
-      sourceRoles: [...group.roles].sort(),
-      evidence: [...group.evidence].slice(0, 6),
-      independentSupport: group.roles.size,
-      confidence: group.confidence.length ? group.confidence.reduce((sum, value) => sum + value, 0) / group.confidence.length : 0,
-    }))
+    .map((group) => {
+      // Distinct prose is not independent corroboration. Count distinct
+      // role-level evidence signatures, so lanes citing the same baseline or
+      // source cannot inflate support; a lane with one additional anchor is
+      // still distinguishable from a lane with only the shared anchor.
+      const evidenceSignatures = new Set([...group.roles].map((role) => [...(group.roleEvidence.get(role) ?? [])].sort().join("\u001f")));
+      const independentSupport = group.evidence.size ? evidenceSignatures.size : 0;
+      return {
+        recommendation: group.recommendation,
+        sourceRoles: [...group.roles].sort(),
+        evidence: [...group.evidence].slice(0, 6),
+        independentSupport,
+        confidence: group.confidence.length ? group.confidence.reduce((sum, value) => sum + value, 0) / group.confidence.length : 0,
+      };
+    })
     .sort((left, right) => right.independentSupport - left.independentSupport || right.evidence.length - left.evidence.length || right.confidence - left.confidence || left.recommendation.localeCompare(right.recommendation))
     .slice(0, 8);
   const tensions = completed.flatMap((report) => (report.uncertainties ?? []).map((uncertainty) => `${report.role ?? "lane"}: ${uncertainty}`));
