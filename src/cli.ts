@@ -1177,28 +1177,34 @@ airsBenchmark.command("execute")
       const deadline = started + context.timeoutMs;
       const outputs: string[] = [];
       let lastError: unknown;
-      for (let attempt = 0; attempt < 2; attempt += 1) {
+      const phases = [
+        { name: "inspect", instruction: "Begin by inspecting the task description and the visible train/validation data. Write a short PLAN.md in the workspace with the chosen approach and the exact submission format. Do not spend the phase repeatedly printing the working directory." },
+        { name: "implement", instruction: `Implement the simplest justified solution now. Use the visible data and the plan, and create ${submissionRelativePath} with predictions in the required format. Use shell or Python commands when they are more reliable than a patch tool.` },
+        { name: "verify", instruction: `Verify ${submissionRelativePath} directly: check its header, row count, and values against the task specification. Repair it in place if needed, then stop.` },
+      ];
+      for (let phaseIndex = 0; phaseIndex < phases.length; phaseIndex += 1) {
         const remainingMs = deadline - Date.now();
         if (remainingMs < 1_000) break;
-        if (attempt > 0) context.onProgress?.("Codex artifact missing or turn failed · starting one bounded repair attempt...");
+        context.onProgress?.(`Codex · ${phases[phaseIndex].name} phase`);
         const agent = new CodexExecAgent({
           provider: "codex", model: options.model, cwd: context.workspace,
           reasoningEffort: options.effort, sandbox: "workspace-write", networkAccessEnabled: false,
           timeoutMs: remainingMs, maxRepeatedCommands: 3,
         });
-        const objective = `Solve the AIRS-Bench task autonomously. Read the task specification at ${taskDescription}. Your current working directory is ${context.workspace}; work only there. Use the prepared data in ${context.agentDataDir}; do not access hidden labels or test_with_labels. Run justified train/validation experiments within the time budget. You MUST create the final submission at the workspace-relative path ${submissionRelativePath} (the controller will collect it from the log directory) in the exact format required by the task. Use relative paths for file changes, not absolute /tmp paths. Before finishing, run a command that verifies ${submissionRelativePath} exists, has the expected header and row count, and can be consumed by the evaluator. Do not submit externally and do not finish with only an explanation: the required submission artifact is the deliverable.${attempt > 0 ? ` A previous agent turn did not produce the artifact. Repair the workflow now: inspect the existing workspace, make the submission directly, and verify it before replying. Do not repeat directory-only inspection.` : ""}`;
+        const objective = `You are running phase ${phaseIndex + 1} of ${phases.length} (${phases[phaseIndex].name}) for an AIRS-Bench experiment. Read the task specification at ${taskDescription}. Your current working directory is ${context.workspace}; work only there. Use the prepared data in ${context.agentDataDir}; do not access hidden labels or test_with_labels. ${phases[phaseIndex].instruction} You MUST leave the required local artifact at ${submissionRelativePath} before the final verification phase completes. Do not submit externally and do not finish with only an explanation.`;
         try {
           const response = await agent.run({
             role: "experiment engineer",
             objective,
-            context: { taskPath: context.taskPath, taskDescription, agentDataDir: context.agentDataDir, agentLogDir: context.agentLogDir, model: options.model, seed: options.seed, effort: options.effort, attempt: attempt + 1 },
+            context: { taskPath: context.taskPath, taskDescription, agentDataDir: context.agentDataDir, agentLogDir: context.agentLogDir, model: options.model, seed: options.seed, effort: options.effort, phase: phases[phaseIndex].name, phaseIndex: phaseIndex + 1 },
           }, context.onProgress);
           outputs.push(typeof response.output === "string" ? response.output : JSON.stringify(response.output));
-          if (existsSync(submissionPath)) return { command: ["codex-sdk", "airs-agent"], cwd: context.workspace, exitCode: 0, durationMs: Date.now() - started, stdout: outputs.join("\n"), stderr: "" };
+          if (phaseIndex >= 1 && existsSync(submissionPath)) {
+            if (phaseIndex === phases.length - 1) return { command: ["codex-sdk", "airs-agent"], cwd: context.workspace, exitCode: 0, durationMs: Date.now() - started, stdout: outputs.join("\n"), stderr: "" };
+          }
           lastError = new Error(`Codex completed without creating the required submission artifact: ${submissionPath}`);
         } catch (error) {
           lastError = error;
-          if (attempt === 1) throw error;
         }
       }
       throw lastError instanceof Error ? lastError : new Error(`Codex agent did not produce ${submissionPath}`);

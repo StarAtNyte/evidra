@@ -167,6 +167,11 @@ The shared provider prompt also gives experiment engineers an execution-first
 instruction: they summarize only after producing and verifying the required
 artifact. Conversational research turns retain the concise-answer behavior.
 
+The embedded AIRS route supervises Codex in three bounded phases—inspect/plan,
+implement, and verify—with a controller artifact check between phases. A
+failed phase can be retried by the next fresh phase while the original deadline
+is preserved.
+
 Before the agent stage, the adapter initializes the disposable task workspace
 as a local Git repository when necessary. This is required by Codex's file
 change tool and does not touch the user's checkout or turn the temporary
