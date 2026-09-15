@@ -57,11 +57,11 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `a0d03bd`.
+- Latest pushed commit: `612b882`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 338/338 tests passing, TypeScript check passing,
+- Latest verified baseline: 339/339 tests passing, TypeScript check passing,
   and build passing. The worktree has six intentionally untracked pilot reports
   under `reports/`; do not confuse those generated artifacts with source edits.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
@@ -72,6 +72,9 @@ external evaluator.
   30 minutes; the remaining campaign budget remains the hard upper bound. Lane
   agreement scoring discounts findings backed only by the same artifact, so
   shared citations cannot masquerade as independent corroboration.
+- Local provider requests now enforce the same configured turn timeout and clean
+  up abort/signal handlers; a hanging Ollama endpoint cannot stall a campaign
+  indefinitely.
 - Source discovery now persists provenance classes and conservative quality
   scores, backfills metadata for historical events, diversity-reranks providers,
   and rejects instruction-like retrieved sentences before durable claim
