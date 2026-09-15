@@ -85,6 +85,12 @@ export function isRetryableAgentError(error: unknown): boolean {
   return isProviderUsageLimit(error) || /network|unreachable|timed out|timeout|stream disconnected|connection termination|temporarily|did not return|invalid decision|returned invalid|turn failed|econnreset|ePIPE|503|502|504/i.test(text);
 }
 
+/** Keep live provider activity useful in a one-line TUI status rail. */
+function progressLine(value: string, limit = 180): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length > limit ? `${compact.slice(0, limit - 1)}…` : compact;
+}
+
 export const MAX_PROVIDER_RESET_WAIT_MS = 24 * 60 * 60_000;
 
 export function providerRetryAfterMs(error: unknown): number {
@@ -300,11 +306,17 @@ export class CodexExecAgent {
       let usage: AgentResult["usage"];
       let threadId: string | undefined;
       for await (const event of stream.events) {
-        const value = event as unknown as { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string }; usage?: AgentResult["usage"]; message?: string };
+        const value = event as unknown as { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string; query?: string }; usage?: AgentResult["usage"]; message?: string };
         if (value.type === "thread.started" && value.thread_id) { threadId = value.thread_id; this.options.onThread?.(value.thread_id); }
         else if (value.type === "turn.started") onProgress?.("Thinking...");
-        else if (value.type === "item.started" && value.item?.type === "command_execution") onProgress?.(`Running: ${value.item.command ?? "command"}`);
-        else if (value.type === "item.completed" && value.item?.type === "agent_message" && value.item.text) finalText = value.item.text;
+        else if (value.type === "item.started" && value.item?.type === "command_execution") onProgress?.(`Running: ${progressLine(value.item.command ?? "command")}`);
+        else if (value.type === "item.started" && value.item?.type === "web_search") onProgress?.(`Searching: ${progressLine(value.item.query ?? "web")}`);
+        else if (value.type === "item.started" && value.item?.type === "file_change") onProgress?.("Applying a workspace change...");
+        else if (value.type === "item.started" && value.item?.type === "reasoning") onProgress?.("Reasoning...");
+        else if ((value.type === "item.updated" || value.type === "item.completed") && value.item?.type === "agent_message" && value.item.text) {
+          finalText = value.item.text;
+          if (value.type === "item.updated") onProgress?.(`Codex · ${progressLine(value.item.text)}`);
+        }
         else if (value.type === "turn.completed") {
           const raw = value.usage as unknown as { input_tokens?: number; output_tokens?: number } | undefined;
           usage = raw ? { inputTokens: raw.input_tokens, outputTokens: raw.output_tokens } : undefined;
