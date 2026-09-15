@@ -201,8 +201,8 @@ submission as complete. The embedded AIRS prompt directs Codex to use shell or
 Python file creation because provider patch tools are not portable across
 disposable worker paths.
 
-Embedded AIRS Codex runs use full filesystem access only inside their disposable
-workspace (network remains disabled), plus a repeated-command watchdog: three identical
+Embedded AIRS Codex runs use the provider's `workspace-write` sandbox inside
+their disposable workspace (network remains disabled), plus a repeated-command watchdog: three identical
 shell commands in succession terminate the agent stage with an explicit stuck
 diagnostic, allowing the outer retry/route policy to recover instead of
 silently consuming the entire experiment budget. The watchdog is opt-in in

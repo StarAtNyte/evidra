@@ -1190,11 +1190,11 @@ airsBenchmark.command("execute")
         const phaseTimeoutMs = Math.max(10_000, Math.min(remainingMs, Math.floor(context.timeoutMs * (phaseBudgetFractions[phaseIndex] ?? 0.15))));
         const agent = new CodexExecAgent({
           provider: "codex", model: options.model, cwd: context.workspace,
-          // AIRS runs inside a disposable workspace created by the adapter.
-          // Full local access makes Codex's file tools reliable there while
-          // preserving the important boundaries: no network and no access to
-          // the controller checkout.
-          reasoningEffort: options.effort, sandbox: "danger-full-access", networkAccessEnabled: false,
+          // AIRS workers stay in the provider's workspace-write sandbox. The
+          // prompt uses shell/Python editing because provider patch events are
+          // unreliable for disposable paths; never weaken filesystem isolation
+          // just to make those events succeed.
+          reasoningEffort: options.effort, sandbox: "workspace-write", networkAccessEnabled: false,
           timeoutMs: phaseTimeoutMs, maxRepeatedCommands: 3, maxFailedCommands: 3,
         });
         const strategyShift = phaseIndex > 0 ? " The previous phase did not leave a usable artifact; change strategy now, stop investigating, and execute the shortest reliable shell/Python path to produce the artifact." : "";
