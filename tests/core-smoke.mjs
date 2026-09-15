@@ -4615,6 +4615,15 @@ test("cross-pollination does not count shared evidence as independent support", 
   assert.equal(board.needsAdversarialReview, true);
 });
 
+test("cross-pollination does not count an evidence-free lane as corroboration", () => {
+  const board = synthesizeLaneReports([
+    { role: "data", status: "completed", recommendations: ["use grouped folds"], evidence: ["audit.json"] },
+    { role: "model", status: "completed", recommendations: ["use grouped folds"], evidence: [] },
+  ]);
+  assert.equal(board.transferCandidates[0].independentSupport, 1);
+  assert.equal(board.needsAdversarialReview, true);
+});
+
 test("cross-pollination groups independently worded recommendations conservatively", () => {
   const board = synthesizeLaneReports([
     { role: "data", status: "completed", recommendations: ["use grouped source folds to prevent leakage"], evidence: ["groups.csv"], confidence: 0.8 },

@@ -82,7 +82,9 @@ export function synthesizeLaneReports(reports: LaneFinding[]): CrossPollinationB
       // role-level evidence signatures, so lanes citing the same baseline or
       // source cannot inflate support; a lane with one additional anchor is
       // still distinguishable from a lane with only the shared anchor.
-      const evidenceSignatures = new Set([...group.roles].map((role) => [...(group.roleEvidence.get(role) ?? [])].sort().join("\u001f")));
+      const evidenceSignatures = new Set([...group.roles]
+        .map((role) => [...(group.roleEvidence.get(role) ?? [])].sort().join("\u001f"))
+        .filter((signature) => signature.length > 0));
       const independentSupport = group.evidence.size ? evidenceSignatures.size : 0;
       return {
         recommendation: group.recommendation,
