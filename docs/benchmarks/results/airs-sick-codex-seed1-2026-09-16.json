@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "benchmark": "AIRS-Bench",
+  "task": "TextualClassificationSickAccuracy",
+  "taskPath": "airsbench/tasks/rad/TextualClassificationSickAccuracy",
+  "provider": "codex",
+  "model": "gpt-5.6-luna",
+  "reasoningEffort": "medium",
+  "seed": "1",
+  "agentBudgetMinutes": 10,
+  "metric": "Accuracy",
+  "direction": "maximize",
+  "baseline": 0.5686913982878108,
+  "candidate": 0.7702812882185079,
+  "absoluteDelta": 0.20158988993069715,
+  "valid": true,
+  "lifecycle": ["prepare", "agent", "evaluate_prepare", "evaluate"],
+  "evaluator": "official task evaluator, unchanged",
+  "claimBoundary": "paired local evidence; not leaderboard or SOTA evidence"
+}

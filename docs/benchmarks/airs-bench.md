@@ -157,6 +157,12 @@ single local run, so it is evidence that the harness can execute and improve a
 real task—not evidence of leaderboard SOTA. Repeated seeds, task-balanced
 comparisons, and a held-out suite are still required.
 
+A second run with the same model, effort, budget, task, and evaluator but seed
+`1` returned `Accuracy = 0.7702812882185079`. Across the two seeds the mean is
+`0.7884223399918466`, the worst run is `0.7702812882185079`, and both runs beat
+the majority baseline. This is initial reproducibility evidence; it is not yet
+a multi-task or leaderboard comparison.
+
 A bounded embedded-Codex probe was also attempted with `gpt-5.6-luna` at
 medium effort. Codex authenticated and entered the isolated workspace, but
 repeatedly inspected the working directory without producing the required
