@@ -229,6 +229,17 @@ test("stop policy pauses unresolved leakage and repeated failures", () => {
   assert.equal(assessStopPolicy({ stopCondition: "pause after repeated failures", rewards: failures, remainingBudgetMinutes: 10 }).action, "pause");
 });
 
+test("stop policy keeps open falsification tests alive during apparent convergence", () => {
+  const input = { stopCondition: "stop after convergence", rewards: [
+    { reward: 0.001, durationSeconds: 60 }, { reward: 0.001, durationSeconds: 60 },
+    { reward: 0.001, durationSeconds: 60 }, { reward: 0.001, durationSeconds: 60 },
+    { reward: 0.001, durationSeconds: 60 },
+  ], remainingBudgetMinutes: 10, minimumRewardPerMinute: 0.01, minimumSamples: 5 };
+  assert.equal(assessStopPolicy({ ...input, openFalsifications: 1 }).action, "continue");
+  assert.match(assessStopPolicy({ ...input, openFalsifications: 1 }).reason, /falsification/);
+  assert.equal(assessStopPolicy({ ...input, openFalsifications: 0 }).action, "stop");
+});
+
 test("durable research state and queue survive store reopen", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-smoke-"));
   try {

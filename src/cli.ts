@@ -3316,6 +3316,7 @@ research
         }).filter((observation) => Number.isFinite(observation.reward)),
         remainingBudgetMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
         leakageUnresolved: phaseGoal?.phase === "data_audit" && !durableEvents.some((event) => event.type === "data.audit.accepted"),
+        openFalsifications: researchMemory.falsificationAgenda.filter((item) => item.status === "untested" || item.status === "inconclusive").length,
       });
       decisionStore.appendEvent("research.stop_policy.assessed", { cycle, ...stopPolicy });
       if (phaseGoal) {

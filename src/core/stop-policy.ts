@@ -14,6 +14,8 @@ export interface StopPolicyInput {
   minimumRewardPerMinute?: number;
   failureWindow?: number;
   maximumFailures?: number;
+  /** Number of high-priority hypotheses with no terminal falsification test. */
+  openFalsifications?: number;
 }
 
 export interface StopPolicyResult {
@@ -23,6 +25,7 @@ export interface StopPolicyResult {
   recentFailures: number;
   meanRewardPerMinute: number | null;
   enabledRules: string[];
+  openFalsifications: number;
 }
 
 /**
@@ -53,15 +56,18 @@ export function assessStopPolicy(input: StopPolicyInput): StopPolicyResult {
     .filter(Number.isFinite);
   const meanRewardPerMinute = rates.length ? rates.reduce((sum, value) => sum + value, 0) / rates.length : null;
   const recentFailures = recent.filter((observation) => observation.valid === false || observation.reward < 0).length;
+  const openFalsifications = Math.max(0, Math.floor(input.openFalsifications ?? 0));
+  const result = (action: StopPolicyResult["action"], reason: string): StopPolicyResult => ({ action, reason, samples: valid.length, recentFailures, meanRewardPerMinute, enabledRules, openFalsifications });
 
   if (input.leakageUnresolved && enabledRules.includes("leakage review")) {
-    return { action: "pause", reason: "leakage remains unresolved; pause before spending more compute", samples: valid.length, recentFailures, meanRewardPerMinute, enabledRules };
+    return result("pause", "leakage remains unresolved; pause before spending more compute");
   }
   if (enabledRules.includes("repeated-failure pause") && recent.length >= failureWindow && recentFailures >= maximumFailures) {
-    return { action: "pause", reason: `${recentFailures}/${recent.length} recent attempts failed or regressed`, samples: valid.length, recentFailures, meanRewardPerMinute, enabledRules };
+    return result("pause", `${recentFailures}/${recent.length} recent attempts failed or regressed`);
   }
   if (enabledRules.includes("low-gain convergence") && valid.length >= minimumSamples && meanRewardPerMinute !== null && meanRewardPerMinute < minimumRewardPerMinute && input.remainingBudgetMinutes > 0) {
-    return { action: "stop", reason: `mean observed gain is ${meanRewardPerMinute.toFixed(4)} per minute, below ${minimumRewardPerMinute.toFixed(4)}`, samples: valid.length, recentFailures, meanRewardPerMinute, enabledRules };
+    if (openFalsifications > 0) return result("continue", `low observed gain, but ${openFalsifications} falsification test(s) remain open`);
+    return result("stop", `mean observed gain is ${meanRewardPerMinute.toFixed(4)} per minute, below ${minimumRewardPerMinute.toFixed(4)}`);
   }
-  return { action: "continue", reason: "stop policy has not accumulated sufficient evidence", samples: valid.length, recentFailures, meanRewardPerMinute, enabledRules };
+  return result("continue", "stop policy has not accumulated sufficient evidence");
 }
