@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `f8a25fd`.
+- Latest pushed commit: `77f61c3`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -97,6 +97,9 @@ external evaluator.
   budget metadata, even when callers bypass the external trial parser.
 - Benchmark arms and trials can carry an evaluator fingerprint; protocol
   fingerprints, direct pairing, and held-out parity now reject evaluator drift.
+- The Kaggle adapter now performs a read-only access/authentication preflight
+  before approved upload and defaults score polling to `competitions submissions
+  --csv`, including public-score parsing.
 
 ## Immediate next work
 
