@@ -1208,7 +1208,7 @@ airsBenchmark.command("execute")
           const response = await agent.run({
             role: "experiment engineer",
             objective,
-            context: { taskPath: context.taskPath, taskDescription, agentDataDir: context.agentDataDir, agentLogDir: context.agentLogDir, model: options.model, seed: options.seed, effort: options.effort, phase: phases[phaseIndex].name, phaseIndex: phaseIndex + 1 },
+            context: { taskPath: "TASK.md", taskDescription: "TASK.md", agentDataDir: "data", agentLogDir: "log", model: options.model, seed: options.seed, effort: options.effort, phase: phases[phaseIndex].name, phaseIndex: phaseIndex + 1 },
           }, context.onProgress);
           outputs.push(typeof response.output === "string" ? response.output : JSON.stringify(response.output));
           // The official evaluator is the authoritative verifier. If any
