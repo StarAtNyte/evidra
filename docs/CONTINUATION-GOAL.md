@@ -189,6 +189,9 @@ external evaluator.
 - The TUI provider-limit path now matches the CLI: `auto`/`wait` durably pause
   and resume at the retry time, while `fallback` and `stop` are honored rather
   than silently waiting.
+- Autonomous memory context now uses hybrid FTS-plus-lexical retrieval for
+  durable claims and hypotheses, so the existing SQLite index influences Codex
+  research context instead of being used only by the interactive memory search.
 - Codex structured-output schemas now cover the research director, independent
   research lanes, and critic, so every research-role response is constrained
   before durable parsing and evidence gates.

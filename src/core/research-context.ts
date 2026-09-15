@@ -61,6 +61,24 @@ function ranked<T>(entries: T[], query: string | undefined, text: (entry: T) => 
     .map((entry) => entry.entry);
 }
 
+/**
+ * Rank durable memory with the store's FTS index when available, while
+ * retaining the deterministic lexical scorer for old stores or partial
+ * queries. FTS is intentionally a boost rather than the sole ranking source:
+ * a migrated database may have an incomplete index and a useful partial
+ * lexical match should still remain visible to the director.
+ */
+function rankedMemory<T extends { id: string }>(store: ResearchStore, entries: T[], query: string | undefined, text: (entry: T) => string): T[] {
+  const lexical = ranked(entries, query, text);
+  if (!query?.trim()) return lexical;
+  const indexed = new Set(store.searchMemory(query, Math.min(200, Math.max(20, entries.length * 4))).map((entry) => entry.id));
+  const queryTokens = tokens(query);
+  return lexical
+    .map((entry, index) => ({ entry, index, lexical: relevance(queryTokens, text(entry)), indexed: indexed.has(entry.id) }))
+    .sort((left, right) => Number(right.indexed) - Number(left.indexed) || right.lexical - left.lexical || left.index - right.index)
+    .map((entry) => entry.entry);
+}
+
 /** Read and rank durable repository discoveries for later research cycles. */
 export function repositoryLeadsFromEvents(events: Array<{ type: string; payload: unknown }>, query?: string, limit = 8): ResearchRepositoryLead[] {
   const seen = new Set<string>();
@@ -83,13 +101,13 @@ export function repositoryLeadsFromEvents(events: Array<{ type: string; payload:
 /** Build a bounded, structured memory snapshot for autonomous research context. */
 export function researchMemoryContext(store: ResearchStore, limit = 30, query?: string, transferTarget: TransferTarget = {}): ResearchMemoryContext {
   const bounded = Math.max(1, Math.min(limit, 100));
-  const claims = ranked(store.claims(), query, (entry) => JSON.stringify(entry.payload)).slice(0, bounded).flatMap((entry) => {
+  const claims = rankedMemory(store, store.claims(), query, (entry) => JSON.stringify(entry.payload)).slice(0, bounded).flatMap((entry) => {
     const value = entry.payload as Partial<ResearchMemoryContext["claims"][number]>;
     return typeof value.statement === "string" && typeof value.scope === "string" && typeof value.confidence === "number" && typeof value.sourceType === "string" && typeof value.sourceId === "string"
       ? [{ id: entry.id, statement: value.statement.slice(0, 800), scope: value.scope, confidence: value.confidence, sourceType: value.sourceType, sourceId: value.sourceId, status: value.status ?? "active" }]
       : [];
   });
-  const hypotheses = ranked(store.hypotheses(), query, (entry) => JSON.stringify(entry.payload)).slice(0, bounded).flatMap((entry) => {
+  const hypotheses = rankedMemory(store, store.hypotheses(), query, (entry) => JSON.stringify(entry.payload)).slice(0, bounded).flatMap((entry) => {
     const value = entry.payload as { title?: unknown; status?: unknown; mechanism?: unknown };
     return typeof value.title === "string" ? [{ id: entry.id, title: value.title, status: typeof value.status === "string" ? value.status : "proposed", ...(typeof value.mechanism === "string" ? { mechanism: value.mechanism.slice(0, 500) } : {}) }] : [];
   });

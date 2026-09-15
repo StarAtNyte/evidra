@@ -23,6 +23,11 @@ The controller never accepts a model's prose as proof. A result must pass the
 declared evaluator, artifact and integrity checks, validation policy, and any
 replication or reviewer gates.
 
+Long-running context retrieval is hybrid: durable claims and hypotheses are
+ranked using the SQLite FTS index when available, then deterministic lexical
+overlap remains as a compatibility fallback. This keeps relevant old memory
+available after migrations while giving exact multi-term findings priority.
+
 ```text
 user prompt
   -> Codex turn
