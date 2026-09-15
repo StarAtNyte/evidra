@@ -2474,6 +2474,7 @@ research
           criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
             provider: options.provider as "codex" | "local",
             model: selectedModel,
+            modelPool: researchModelPool,
             fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined,
             limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop",
             reasoningEffort: options.thinking,

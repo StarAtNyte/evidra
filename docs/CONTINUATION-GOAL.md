@@ -136,6 +136,9 @@ external evaluator.
 - The director synthesis turn receives the same pool and applies the same
   untried-route recovery, so a provider failure after lane collection cannot
   force the whole cycle to replay on the original model.
+- The adversarial critic also receives the route pool and retries on an
+  untried route before degrading to a revise-only review, keeping verification
+  available during transient provider failures.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
 - Codex command activity now includes an exit code only when the provider

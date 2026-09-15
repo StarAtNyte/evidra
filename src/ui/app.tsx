@@ -997,6 +997,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       criticReview = await runResearchCritic(objective, decision, laneReports, {
         provider: config.provider,
         model: config.model,
+        modelPool: researchModelPool,
         fallbackLocalModel: config.fallbackModel,
         limitPolicy: config.limitPolicy,
         reasoningEffort: config.reasoningEffort,

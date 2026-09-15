@@ -365,20 +365,44 @@ export async function runResearchCritic(
   options.onProgress?.("Research critic · checking assumptions and disagreement...");
   const prompt = `${objective}\n\nYou are Evidra's independent critic. Review the proposed decision and independent lane reports below. Look for unsupported claims, leakage, invalid comparisons, missing controls, overconfident conclusions, and cheaper falsification tests. Do not rewrite the decision or invent measurements. Return ONLY JSON: {"verdict":"proceed|revise|reject","summary":"...","objections":["..."],"requiredChecks":["..."],"evidence":["copy an exact evidence anchor from the lane reports or durable observation context"],"independentReplication":true,"confidence":0.0}. A proceed verdict is valid only when evidence contains at least one exact anchor from the supplied reports and requiredChecks is empty.\n\nDecision:\n${JSON.stringify(decision)}\n\nLane reports:\n${JSON.stringify(laneReports)}`;
   try {
-    const result = await runWithLocalFallback({ role: "critic", objective: prompt, context: { decision, laneReports }, outputSchema: RESEARCH_REVIEW_OUTPUT_SCHEMA }, {
-      provider: options.provider,
-      model: options.model,
-      limitPolicy: options.limitPolicy,
-      reasoningEffort: options.reasoningEffort,
-      networkAccessEnabled: options.networkAccessEnabled ?? true,
-      webSearchMode: options.webSearchMode ?? "live",
-      timeoutMs: options.timeoutMs,
-      cwd: options.cwd,
-      sandbox: "read-only",
-      onActivity: options.onActivity,
-      onAssistant: options.onAssistant,
-    }, options.provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
-    options.onUsage?.(result.usage, result.provider, result.model ?? options.model, "critic");
+    let provider = options.provider;
+    let model = options.model;
+    let result: Awaited<ReturnType<typeof runWithLocalFallback>> | undefined;
+    let lastError: unknown;
+    const attemptedRoutes = new Set<string>();
+    for (let attempt = 1; attempt <= 3 && !result; attempt += 1) {
+      attemptedRoutes.add(`${provider}\u0000${model}`);
+      try {
+        result = await runWithLocalFallback({ role: "critic", objective: prompt, context: { decision, laneReports }, outputSchema: RESEARCH_REVIEW_OUTPUT_SCHEMA }, {
+          provider,
+          model,
+          limitPolicy: options.limitPolicy,
+          reasoningEffort: options.reasoningEffort,
+          networkAccessEnabled: options.networkAccessEnabled ?? true,
+          webSearchMode: options.webSearchMode ?? "live",
+          timeoutMs: options.timeoutMs,
+          cwd: options.cwd,
+          sandbox: "read-only",
+          onActivity: options.onActivity,
+          onAssistant: options.onAssistant,
+        }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
+      } catch (error) {
+        lastError = error;
+        if (!isRetryableAgentError(error) || attempt === 3 || (isProviderUsageLimit(error) && options.limitPolicy === "wait")) throw error;
+        const alternate = alternateResearchLaneRoute({ provider, model }, options.modelPool, attemptedRoutes);
+        if (alternate) {
+          provider = alternate.provider;
+          model = alternate.model;
+          options.onProgress?.(`Research critic changing route to ${provider}/${model}...`);
+          continue;
+        }
+        const delayMs = attempt * 1_000;
+        options.onProgress?.(`Research critic retry ${attempt}/2 in ${delayMs / 1000}s...`);
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    if (!result) throw lastError instanceof Error ? lastError : new Error("Research critic did not return a result.");
+    options.onUsage?.(result.usage, result.provider, result.model ?? model, "critic");
     const evidenceStore = new ResearchStore(options.storePath);
     const evidenceAnchors = new Set<string>([
       ...laneReports.flatMap((lane) => lane.evidence),
@@ -399,7 +423,7 @@ export async function runResearchCritic(
     });
     const claimId = `claim_critic_${Date.now()}`;
     completed.saveClaim({ id: claimId, payload: { id: claimId, statement: `[critic:${review.verdict}] ${review.summary}`, scope: "research decision review", confidence: review.confidence, sourceType: "review", sourceId: claimId, status: "active", objections: review.objections, requiredChecks: review.requiredChecks, evidence: review.evidence, servedProvider: result.provider, servedModel: result.model ?? options.model } });
-    completed.updateAgentLane({ role: "critic", status: "idle", provider: options.provider, model: options.model, task: null, error: null });
+    completed.updateAgentLane({ role: "critic", status: "idle", provider: result.provider, model: result.model ?? model, task: null, error: null });
     completed.close();
     return review;
   } catch (error) {
