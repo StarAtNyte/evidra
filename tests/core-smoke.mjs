@@ -2326,8 +2326,11 @@ test("autonomy policy and shell guard enforce hard safety boundaries", () => {
   assert.equal(guardAutonomousCommand(["curl", "--head", "https://example.com"]).allowed, true);
   assert.equal(guardAutonomousCommand(["git", "status", "--short"]).allowed, true);
   assert.equal(guardReadOnlyInspection(["git", "status", "--short"]).allowed, true);
+  assert.equal(guardReadOnlyInspection(["git", "diff", "--output", "report.txt"]).allowed, false);
+  assert.equal(guardReadOnlyInspection(["git", "branch", "-D", "main"]).allowed, false);
   assert.equal(guardReadOnlyInspection(["git", "checkout", "main"]).allowed, false);
   assert.equal(guardReadOnlyInspection(["python3", "-c", "open('x', 'w')"]).allowed, false);
+  assert.equal(guardReadOnlyInspection(["node", "-e", "require('fs').writeFileSync('x','bad')"]).allowed, false);
   assert.equal(guardReadOnlyInspection(["find", ".", "-exec", "rm", "{}", ";"]).allowed, false);
   const workspace = mkdtempSync(join(tmpdir(), "evidra-permissions-"));
   try {
@@ -2568,6 +2571,10 @@ test("autonomous research tools do not inherit controller credentials", async ()
     }, { root, storePath: db, autonomy: "yolo" });
     assert.equal(probe.ok, true);
     assert.match(probe.output.stdout, /\"secret\":null/);
+    const mutation = await executeResearchTool({ name: "shell.exec", arguments: { command: ["touch", "should-not-exist"] } }, { root, storePath: db, autonomy: "yolo" });
+    assert.equal(mutation.ok, false);
+    assert.match(mutation.error, /read-only|refuses/i);
+    assert.equal(existsSync(join(root, "should-not-exist")), false);
   } finally {
     if (previous === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = previous;

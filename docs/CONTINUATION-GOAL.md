@@ -212,6 +212,12 @@ external evaluator.
 - Director tool caching now distinguishes safe inspection from cacheability;
   `shell.exec` observations are never reused across rounds because fast/YOLO
   commands may see changing state.
+- Research-tool shell execution is now read-only across safe/fast/YOLO, with
+  bounded harmless interpreter probes retained for inspection. Workspace edits
+  remain limited to the isolated experiment engineer path.
+- Read-only shell guards now reject Git output/mutation/external-diff options
+  and interpreter imports/indirection, covering common write and subprocess
+  bypasses in autonomous Codex research tools.
 - Autonomous memory context now uses hybrid FTS-plus-lexical retrieval for
   durable claims and hypotheses, so the existing SQLite index influences Codex
   research context instead of being used only by the interactive memory search.

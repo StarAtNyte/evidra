@@ -133,6 +133,22 @@ export function guardReadOnlyInspection(command: string[]): CommandGuard {
   if (executable === "git") {
     const allowed = new Set(["status", "rev-parse", "log", "diff", "show", "ls-files", "branch"]);
     if (!allowed.has(command[1]?.toLowerCase() ?? "")) return { allowed: false, reason: "SAFE mode only permits read-only Git inspection commands." };
+    const joined = command.slice(2).join(" ").toLowerCase();
+    if (/(^|\s)(--output|-o)(\s|=|$)/.test(joined) || /(^|\s)(--exec|--ext-diff|--textconv)(\s|=|$)/.test(joined)) {
+      return { allowed: false, reason: "Read-only Git inspection refuses output, external-diff, and command-execution options." };
+    }
+    if (command[1].toLowerCase() === "branch" && /(^|\s)(-d|-D|-m|-M|-c|-C|--delete|--move|--copy|--edit-description)(\s|$)/.test(joined)) {
+      return { allowed: false, reason: "Read-only Git inspection refuses branch mutation options." };
+    }
+    return { allowed: true };
+  }
+  if (["node", "nodejs", "python", "python3"].includes(executable)) {
+    const flagIndex = command.findIndex((argument, index) => index > 0 && (argument === "-e" || argument === "-c"));
+    if (flagIndex < 0 || !command[flagIndex + 1]) return { allowed: false, reason: "Autonomous research shell only permits explicit read-only interpreter probes." };
+    const code = command.slice(flagIndex + 1).join(" ");
+    if (/[>|]|\b(?:require|import|eval|function|binding|fetch|http|https|net|fs|os|child|writeFile|appendFile|unlink|rmdir|mkdir|rename|copyFile|truncate|exec|spawn|fork|system|subprocess)\b|open\s*\([^)]*['\"][wa+]/i.test(code)) {
+      return { allowed: false, reason: "Autonomous research shell refuses interpreter code that can write files, spawn processes, or mutate the workspace." };
+    }
     return { allowed: true };
   }
   if (!readOnly.has(executable)) return { allowed: false, reason: `SAFE mode does not permit '${executable}' for autonomous shell work.` };

@@ -131,6 +131,11 @@ hard boundaries in every mode:
 Codex research roles use read-only access. The engineer receives write access
 only to its isolated worktree. Local/container/Modal workers receive a minimal
 environment and no controller tokens, API keys, or user dotfiles.
+This applies to research-tool shell calls even in fast/YOLO; harmless bounded
+interpreter probes are allowed for inspection, but workspace mutation and
+process-spawning, imports, output redirection, external-diff, or Git mutation
+options are refused. Autonomy changes scheduling, not the
+research-agent write boundary.
 
 ## Long-running campaigns
 
