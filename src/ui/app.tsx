@@ -958,7 +958,58 @@ export function App({ root }: { root: string }): React.JSX.Element {
       });
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
       setProgress("Research 4/4 · director is cross-pollinating lane findings...");
-      const crossPollination = synthesizeLaneReports(laneReports);
+      let crossPollination = synthesizeLaneReports(laneReports);
+      // Keep the TUI on the same bounded collaboration protocol as the CLI:
+      // fast/YOLO campaigns can send a fresh lane set over contested findings
+      // before director synthesis. Safe mode remains single-pass inspection.
+      const completedLaneCount = laneReports.filter((lane) => lane.status === "completed").length;
+      const shouldPeerReview = config.autonomy !== "safe" && completedLaneCount > 1 && (adaptiveHarness.peerReview || crossPollination.needsAdversarialReview);
+      if (shouldPeerReview) {
+        setProgress("Research · evidence is contested; independent lanes are peer-reviewing the board...");
+        const initialLaneReports = laneReports;
+        const peerReports = await runResearchLanes(
+          `${allocatedObjective}\n\nPeer-review the supplied lane board. Challenge unsupported agreements, resolve tensions where primary evidence permits, and identify the cheapest discriminating test. Do not repeat workspace inspection unless the board exposes a specific evidence gap.`,
+          {
+            mode,
+            project,
+            observation,
+            recentEvents,
+            researchSources,
+            ultimateGoal: objective,
+            phaseGoal: phaseGoal ?? null,
+            allocation,
+            evidenceConflicts,
+            researchMemory,
+            peerLaneBoard: crossPollination,
+            priorLaneReports: initialLaneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
+          },
+          {
+            provider: config.provider,
+            model: config.model,
+            modelPool: researchModelPool,
+            fallbackLocalModel: config.fallbackModel,
+            limitPolicy: config.limitPolicy,
+            reasoningEffort: config.reasoningEffort,
+            cwd: root,
+            storePath: join(root, ".sota", "database.sqlite"),
+            maxParallel: route.parallelLanes,
+            autonomy: config.autonomy,
+            laneFocus: "evidence-validation",
+            laneRotation: (campaign?.currentCycle ?? 0) + 1,
+            onProgress: setProgress,
+            onProcess: registerProcess,
+            isCancelled: () => interruptedProcess.current,
+            onActivity: toolTrace.onActivity,
+            onAssistant: toolTrace.onAssistant,
+            onUsage: recordAgentUsage,
+          },
+        );
+        laneReports = [...initialLaneReports, ...peerReports.map((lane) => ({ ...lane, role: `${lane.role} peer-review` }))];
+        crossPollination = synthesizeLaneReports(laneReports);
+        const peerStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        peerStore.appendEvent("research.peer_review.completed", { initialBoard: synthesizeLaneReports(initialLaneReports), board: crossPollination, reviewers: peerReports.map((lane) => lane.role) });
+        peerStore.close();
+      }
       decision = await runResearchDirector(allocatedObjective, {
         mode,
         project,
