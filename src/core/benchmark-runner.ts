@@ -1,6 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve } from "node:path";
+import { z } from "zod";
 import { parseMetricOutput, prepareWorkerHome, safeWorkerEnvironment } from "./executors.js";
 import { classifyProcessFailure } from "./executors.js";
 import { runProcess } from "./process.js";
@@ -46,6 +47,47 @@ export interface BenchmarkArmSpec {
   metricGates?: Array<{ name: string; direction: ScoreDirection; maximumRegression?: number }>;
   command: string[];
   cwd?: string;
+}
+
+const BenchmarkArmSchema = z.object({
+  harness: z.string().min(1),
+  policy: z.string().min(1).optional(),
+  componentIds: z.array(z.string().min(1)).optional(),
+  task: z.string().min(1),
+  taskMetadata: z.record(z.union([z.string(), z.number().finite(), z.boolean()])).optional(),
+  slice: z.string().min(1).optional(),
+  arm: z.string().min(1),
+  seed: z.union([z.string(), z.number().finite()]),
+  provider: z.string().min(1).optional(),
+  model: z.string().min(1),
+  reasoningEffort: z.string().min(1).default("medium"),
+  budgetMinutes: z.number().finite().positive(),
+  dataRevision: z.string().min(1).optional(),
+  runtimeFingerprint: z.string().min(1).optional(),
+  direction: z.enum(["maximize", "minimize"]),
+  baselineMetric: z.number().finite(),
+  taskWorstMetric: z.number().finite().optional(),
+  taskBestMetric: z.number().finite().optional(),
+  retries: z.number().int().min(0).max(3).optional(),
+  alternateCommands: z.array(z.array(z.string().min(1)).min(1)).max(3).optional(),
+  reproducibilityCommand: z.array(z.string().min(1)).min(1).optional(),
+  reproducibilityTolerance: z.number().finite().nonnegative().optional(),
+  metric: z.string().min(1),
+  requiredMetrics: z.array(z.string().min(1)).optional(),
+  metricGates: z.array(z.object({ name: z.string().min(1), direction: z.enum(["maximize", "minimize"]), maximumRegression: z.number().finite().nonnegative().optional() })).optional(),
+  command: z.array(z.string().min(1)).min(1),
+  cwd: z.string().min(1).optional(),
+}).passthrough();
+
+/** Parse an externally supplied benchmark arm before any worker is launched. */
+export function parseBenchmarkArm(value: unknown, label = "Benchmark arm"): BenchmarkArmSpec {
+  const parsed = BenchmarkArmSchema.safeParse(value);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const path = issue?.path.length ? ` (${issue.path.join(".")})` : "";
+    throw new Error(`${label} is invalid${path}: ${issue?.message ?? "invalid arm"}`);
+  }
+  return parsed.data as BenchmarkArmSpec;
 }
 
 export interface BenchmarkRunReport {

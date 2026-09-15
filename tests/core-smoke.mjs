@@ -134,7 +134,7 @@ import { deriveAdaptiveHarnessPolicy } from "../dist/core/adaptive-harness.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "../dist/core/error-analysis.js";
 import { createTransferableMethod, transferableMethodsFromEvents } from "../dist/core/method-transfer.js";
 import { createAblationPlan, ablationPlansFromEvents, evaluateAblationEvidence } from "../dist/core/ablation.js";
-import { benchmarkProtocolFingerprint, runBenchmarkArms } from "../dist/core/benchmark-runner.js";
+import { benchmarkProtocolFingerprint, parseBenchmarkArm, runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, parseAirsBenchDiscovery } from "../dist/core/airs-bench.js";
 import { DEFAULT_SEARCH_OPERATORS, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "../dist/core/search-policy.js";
 import { planPortfolio } from "../dist/core/portfolio.js";
@@ -4684,6 +4684,13 @@ test("benchmark protocol rejects mismatched reasoning effort", () => {
   ]);
   assert.equal(report.valid, false);
   assert.ok(report.issues.some((issue) => issue.field === "reasoningEffort"));
+});
+
+test("benchmark arm parser normalizes defaults and rejects malformed external protocols", () => {
+  const parsed = parseBenchmarkArm({ harness: "evidra", task: "task", arm: "default", seed: 1, model: "m", budgetMinutes: 1, direction: "maximize", baselineMetric: 0, metric: "score", command: ["run"] });
+  assert.equal(parsed.reasoningEffort, "medium");
+  assert.throws(() => parseBenchmarkArm({ ...parsed, alternateCommands: [["run", ""]] }), /alternateCommands/);
+  assert.throws(() => parseBenchmarkArm({ ...parsed, metricGates: [{ name: "latency", direction: "maximize", maximumRegression: -1 }] }), /maximumRegression/);
 });
 
 test("benchmark protocol rejects mismatched task provenance", () => {

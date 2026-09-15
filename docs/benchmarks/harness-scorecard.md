@@ -52,6 +52,10 @@ comparison passes the conservative win gate. This makes competitiveness the
 default behavior of the executable harness path, while still refusing to call a
 single-task, incomplete, invalid, or unreplicated result a win. Use
 `--challenger` and `--incumbent` for explicit labels.
+External arm objects are parsed against one typed schema before execution or
+durable retest replay; malformed commands, gates, routes, metrics, and budgets
+are rejected before any worker starts. Missing `reasoningEffort` is normalized
+to Evidra's medium default.
 Every generated benchmark report also includes a `protocolFingerprint`. It is a
 SHA-256 identity over the fairness-critical task, arm, seed, model, reasoning
 effort, budget, data/runtime revision, direction, baseline, bounds, and metric

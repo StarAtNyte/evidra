@@ -78,7 +78,7 @@ import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.j
 import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "./core/validation-lock.js";
-import { runBenchmarkArms, type BenchmarkArmSpec } from "./core/benchmark-runner.js";
+import { parseBenchmarkArm, runBenchmarkArms, type BenchmarkArmSpec } from "./core/benchmark-runner.js";
 import { analyzeHarnessComponentFailures, assessHarnessChangePresence, evaluateHarnessChange, parseHarnessChangeContract, type HarnessChangeContract } from "./core/harness-evolution.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, parseAirsBenchDiscovery, type AirsBenchFamily, type AirsHarnessTemplate } from "./core/airs-bench.js";
 import { inventoryHarnessComponents, planHarnessInterventions } from "./core/harness-evolution.js";
@@ -595,14 +595,7 @@ benchmark.command("run")
     const baselineComponents = baselineComponentsValue === undefined ? undefined : Array.isArray(baselineComponentsValue) && baselineComponentsValue.every((entry) => entry && typeof entry === "object" && typeof (entry as { path?: unknown }).path === "string" && typeof (entry as { checksum?: unknown }).checksum === "string")
       ? baselineComponentsValue as Array<{ path: string; checksum: string }>
       : (() => { throw new Error("baselineComponents must be an array of { path, checksum } entries."); })();
-    const arms = raw.map((value, index) => {
-      if (!value || typeof value !== "object") throw new Error(`Benchmark arm ${index + 1} is not an object.`);
-      const arm = value as Partial<BenchmarkArmSpec>;
-      const invalidReproducibility = arm.reproducibilityCommand !== undefined && (!Array.isArray(arm.reproducibilityCommand) || !arm.reproducibilityCommand.length || !arm.reproducibilityCommand.every((part) => typeof part === "string"));
-      const invalidTolerance = arm.reproducibilityTolerance !== undefined && (typeof arm.reproducibilityTolerance !== "number" || !Number.isFinite(arm.reproducibilityTolerance) || arm.reproducibilityTolerance < 0);
-      if (typeof arm.harness !== "string" || typeof arm.task !== "string" || typeof arm.arm !== "string" || arm.seed === undefined || typeof arm.model !== "string" || typeof arm.budgetMinutes !== "number" || (arm.retries !== undefined && (!Number.isInteger(arm.retries) || arm.retries < 0 || arm.retries > 3)) || typeof arm.metric !== "string" || !Array.isArray(arm.command) || !arm.command.every((part) => typeof part === "string") || invalidReproducibility || invalidTolerance) throw new Error(`Benchmark arm ${index + 1} is missing a required field or has invalid retry/reproducibility settings.`);
-      return { ...arm, reasoningEffort: arm.reasoningEffort ?? "medium" } as BenchmarkArmSpec;
-    });
+    const arms = raw.map((value, index) => parseBenchmarkArm(value, `Benchmark arm ${index + 1}`));
     const providerPair = options.compareProviders?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
     if (providerPair.length !== 0 && providerPair.length !== 2) throw new Error("--compare-providers must contain exactly two comma-separated provider names.");
     const protocol = validateBenchmarkProtocol(arms.map((arm) => ({ ...arm, validRun: false, durationSeconds: 0, recovered: false, reproducible: false })));
@@ -736,7 +729,14 @@ benchmark.command("retest")
       retestStore.close();
       throw new Error(`Harness retest task '${taskId}' has no stored benchmark protocol.`);
     }
-    const arms = rawProtocol as BenchmarkArmSpec[];
+    let arms: BenchmarkArmSpec[];
+    try { arms = rawProtocol.map((value, index) => parseBenchmarkArm(value, `Stored retest arm ${index + 1}`)); }
+    catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      retestStore.updateTask(taskId, "failed", { error: message });
+      retestStore.close();
+      throw error;
+    }
     const protocol = validateBenchmarkProtocol(arms.map((arm) => ({ ...arm, validRun: false, durationSeconds: 0, recovered: false, reproducible: false })));
     if (!protocol.valid) {
       retestStore.updateTask(taskId, "failed", { error: "Stored retest protocol is no longer matched.", issues: protocol.issues });

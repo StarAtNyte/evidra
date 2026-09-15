@@ -70,6 +70,8 @@ external evaluator.
 - Structured store payloads now recognize command-shaped argv arrays globally,
   preventing separate-argument credentials from leaking through event or run
   attempt persistence.
+- External benchmark arms now pass through one schema-first parser before a run
+  or retest replay; malformed protocols cannot reach workers.
 
 ## Immediate next work
 
