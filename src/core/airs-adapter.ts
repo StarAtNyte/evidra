@@ -111,8 +111,11 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
   // with a HEAD; an empty seed is never accepted as a finished submission.
   const submissionPath = join(agentLogDir, "submission.csv");
   const planPath = join(lifecycleRoot, "PLAN.md");
-  writeFileSync(submissionPath, "", { mode: 0o600 });
-  writeFileSync(planPath, "# AIRS task plan\n\nAgent must replace this placeholder before completion.\n", { mode: 0o600 });
+  // Never overwrite a partial run when a caller resumes the same workspace.
+  // The controller's artifact gate, not the seed, decides whether the files
+  // are complete.
+  if (!existsSync(submissionPath)) writeFileSync(submissionPath, "", { mode: 0o600 });
+  if (!existsSync(planPath)) writeFileSync(planPath, "# AIRS task plan\n\nAgent must replace this placeholder before completion.\n", { mode: 0o600 });
   const seedCommit = await runProcess(["git", "add", "--", "log/submission.csv", "PLAN.md"], lifecycleRoot, 10_000, undefined, undefined, environment);
   if (seedCommit.exitCode === 0) {
     await runProcess(["git", "-c", "user.name=Evidra", "-c", "user.email=evidra@localhost", "commit", "--quiet", "-m", "seed AIRS agent workspace"], lifecycleRoot, 10_000, undefined, undefined, environment);

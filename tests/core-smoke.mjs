@@ -4789,6 +4789,23 @@ test("AIRS lifecycle rejects the seeded empty submission and accepts a real arti
     });
     assert.equal(empty.valid, false);
     assert.equal(empty.failureStage, "agent");
+    const resumeWorkspace = join(root, "resume");
+    const interrupted = await runAirsTaskLifecycle({
+      repository: root, taskPath: "task", preparePath: "task/prepare.py", evaluatePreparePath: "task/evaluate_prepare.py", evaluatePath: "task/evaluate.py",
+      globalSharedDataDir: globalData, python: process.execPath, workspace: resumeWorkspace, timeoutMs: 30_000,
+      agentRunner: async ({ agentLogDir }) => { writeFileSync(join(agentLogDir, "submission.csv"), "partial-work\n"); return result(1); }, metric: "Accuracy",
+    });
+    assert.equal(interrupted.valid, false);
+    const resumed = await runAirsTaskLifecycle({
+      repository: root, taskPath: "task", preparePath: "task/prepare.py", evaluatePreparePath: "task/evaluate_prepare.py", evaluatePath: "task/evaluate.py",
+      globalSharedDataDir: globalData, python: process.execPath, workspace: resumeWorkspace, timeoutMs: 30_000,
+      agentRunner: async ({ agentLogDir }) => {
+        assert.equal(readFileSync(join(agentLogDir, "submission.csv"), "utf8"), "partial-work\n");
+        writeFileSync(join(agentLogDir, "submission.csv"), "id,prediction\n1,ok\n");
+        return result();
+      }, metric: "Accuracy",
+    });
+    assert.equal(resumed.valid, true);
     const complete = await runAirsTaskLifecycle({
       repository: root, taskPath: "task", preparePath: "task/prepare.py", evaluatePreparePath: "task/evaluate_prepare.py", evaluatePath: "task/evaluate.py",
       globalSharedDataDir: globalData, python: process.execPath, workspace: join(root, "complete"), timeoutMs: 30_000,

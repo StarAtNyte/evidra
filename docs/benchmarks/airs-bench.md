@@ -203,11 +203,13 @@ change tool and does not touch the user's checkout or turn the temporary
 repository into benchmark evidence.
 
 The workspace is seeded with an empty `log/submission.csv` and a placeholder
-`PLAN.md`, then committed. The seed makes the workspace structurally usable by
-providers that require a Git `HEAD`, but Evidra only accepts a non-empty
-submission as complete. The embedded AIRS prompt directs Codex to use shell or
-Python file creation because provider patch tools are not portable across
-disposable worker paths.
+`PLAN.md`, then committed. Seeding is non-destructive when a workspace is
+resumed, so partial plans and artifacts survive a controller or provider
+restart. The seed makes the workspace structurally usable by providers that
+require a Git `HEAD`, but Evidra only accepts a non-empty submission as
+complete. The embedded AIRS prompt directs Codex to use shell or Python file
+creation because provider patch tools are not portable across disposable worker
+paths.
 
 Embedded AIRS Codex runs use the provider's `workspace-write` sandbox inside
 their disposable workspace (network remains disabled), plus a repeated-command watchdog: three identical
