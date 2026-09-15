@@ -1468,6 +1468,9 @@ test("reports and timeline expose ensemble lifecycle state", () => {
   try {
     const store = new ResearchStore(join(root, "state.sqlite"));
     store.saveEnsembleCandidate({ id: "blend-report", path: join(root, "blend.json"), checksum: "sha256:test", status: "validated", payload: { id: "blend-report", status: "validated" } });
+    const method = createTransferableMethod({ id: "report-method", sourceCompetition: "prior", sourceTaskType: "tabular", title: "Grouped folds", formulationFamily: "validation", mechanism: "groups leak across folds", proposedChange: "use grouped folds", evidenceIds: ["run-a", "run-b"], tags: ["validation"] });
+    store.appendEvent("research.method.transferable", method);
+    store.saveExperiment({ id: "report-failed-route", payload: { status: "failed", title: "Ungrouped route", failureClass: "invalid_metric" } });
     store.appendEvent("ensemble.candidate.status", { id: "blend-report", status: "validated" });
     store.appendEvent("research.capability_outcome", { outcome: "success", predictedTier: "C2", served: { provider: "local", model: "qwen-test", parallelLanes: 2 }, quality: "PASS" });
     store.appendEvent("harness.benchmark.completed", { challenger: "evidra", scorecards: [{ harness: "evidra", competitiveScore: 72.5, failureProfile: { timeout: 2 } }], comparisons: [{ incumbent: "mlgym", challengerWins: false }] });
@@ -1480,6 +1483,9 @@ test("reports and timeline expose ensemble lifecycle state", () => {
     assert.match(report, /success.*predicted C2.*local\/qwen-test/);
     assert.match(report, /## Harness benchmark feedback/);
     assert.match(report, /timeout/);
+    assert.match(report, /## Learned transfer memory/);
+    assert.match(report, /playbook_report-method/);
+    assert.match(report, /report-failed-route.*Ungrouped route/);
     assert.match(renderTimeline(store.recentEvents(20)), /ensemble · blend-report · validated/);
     assert.match(renderTimeline(store.recentEvents(20)), /routing · success · predicted C2 · local\/qwen-test/);
     store.close();

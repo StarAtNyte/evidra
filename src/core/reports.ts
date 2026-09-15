@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { ResearchStore } from "./store.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "./claim-audit.js";
 import { redactCommand } from "./redaction.js";
+import { researchMemoryContext } from "./research-context.js";
 
 export type ReportKind = "research" | "challenge" | "final";
 
@@ -23,6 +24,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const attempts = store.runAttempts();
   const artifacts = store.artifacts();
   const trajectories = store.trajectoryHistory();
+  const researchMemory = researchMemoryContext(store, 50);
   const ensembles = store.ensembleCandidates(100);
   const events = store.recentEvents(40);
   const eventIntegrity = store.verifyEventChain();
@@ -72,6 +74,12 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     }).join("\n") : "No phase goals recorded.",
   ];
   if (kind !== "challenge") sections.push("", "## Hypotheses", "", hypotheses.length ? hypotheses.map((hypothesis) => `- ${hypothesis.id}: ${line((hypothesis.payload as { title?: string }).title ?? hypothesis.payload)}`).join("\n") : "No hypotheses recorded.");
+  sections.push("", "## Learned transfer memory", "", researchMemory.verifiedPlaybooks.length
+    ? researchMemory.verifiedPlaybooks.map((playbook) => `- ${playbook.id} · ${playbook.title} · ${playbook.sourceCompetition} → ${playbook.sourceTaskType}\n  steps: ${playbook.steps.join("; ")}\n  evidence: ${playbook.evidenceIds.join(", ")}\n  transfer warning: ${playbook.failureModes.join("; ")}`).join("\n")
+    : "No independently replicated playbook leads recorded.",
+    researchMemory.failedDirections.length
+      ? `\nFailed directions in memory:\n${researchMemory.failedDirections.map((direction) => `- ${direction.id} · ${direction.title} · ${direction.failureClass}: ${direction.reason}`).join("\n")}`
+      : "Failed directions in memory: none.");
   sections.push("", "## Decisions", "", decisions.length ? decisions.map((decision) => `- ${decision.id} · ${decision.createdAt}\n  ${line(decision.payload)}`).join("\n") : "No decisions recorded.");
   sections.push("", "## Evidence claims", "", claims.length ? claims.slice(0, 80).map((claim) => `- ${claim.id}: ${line((claim.payload as { statement?: string }).statement ?? claim.payload)}`).join("\n") : "No claims recorded.");
   sections.push("", "## Claim verification audit", "", `Publishable: ${claimAudit.publishable ? "yes" : "no"}\nVerified: ${claimAudit.verified} · provisional: ${claimAudit.provisional} · literature-only: ${claimAudit.literatureOnly} · unsupported: ${claimAudit.unsupported} · conflicted: ${claimAudit.conflicted}`, claimAudit.entries.length ? claimAudit.entries.slice(0, 80).map((entry) => `- ${entry.status.toUpperCase()} ${entry.id} · ${entry.reasons.join("; ")}`).join("\n") : "No claims available for audit.");
