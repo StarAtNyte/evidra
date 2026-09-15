@@ -3074,6 +3074,39 @@ test("Codex adapter accepts only a completed injected stream", async () => {
   }
 });
 
+test("Codex read-only turns recover from an unavailable host sandbox in an isolated copy", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-codex-sandbox-retry-"));
+  writeFileSync(join(root, "notes.txt"), "safe observation\n");
+  const optionsSeen = [];
+  let attempts = 0;
+  try {
+    const agent = new CodexExecAgent({ provider: "codex", model: "gpt-test", cwd: root, sandbox: "read-only" }, {
+      isLoggedIn: async () => true,
+      createClient: () => ({
+        startThread: (options) => {
+          optionsSeen.push(options);
+          return { runStreamed: async () => {
+            attempts += 1;
+            if (attempts === 1) throw new Error("bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted");
+            return { events: (async function* () {
+              yield { type: "thread.started", thread_id: "isolated-thread" };
+              yield { type: "item.completed", item: { type: "agent_message", text: "Recovered safely" } };
+              yield { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } };
+            })() };
+          } };
+        },
+        resumeThread: () => { throw new Error("sandbox retry must start a fresh thread"); },
+      }),
+    });
+    const result = await agent.run({ role: "research director", objective: "inspect", context: {} });
+    assert.equal(result.output, "Recovered safely");
+    assert.equal(optionsSeen.length, 2);
+    assert.equal(optionsSeen[0].sandboxMode, "read-only");
+    assert.equal(optionsSeen[1].sandboxMode, "danger-full-access");
+    assert.notEqual(optionsSeen[1].workingDirectory, root);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("Codex usage preserves cache and reasoning-token accounting", () => {
   assert.deepEqual(normalizeCodexUsage({ input_tokens: 100, cached_input_tokens: 40, cache_write_input_tokens: 8, output_tokens: 20, reasoning_output_tokens: 12 }), {
     inputTokens: 100, cachedInputTokens: 40, cacheWriteInputTokens: 8, outputTokens: 20, reasoningOutputTokens: 12,

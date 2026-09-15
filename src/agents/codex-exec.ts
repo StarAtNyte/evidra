@@ -112,6 +112,13 @@ export function isProviderUsageLimit(error: unknown): boolean {
   return error instanceof ProviderUsageLimitError || /rate limit|usage limit|quota|too many requests|not enough credits|at capacity|overloaded|server busy/i.test(error instanceof Error ? error.message : String(error));
 }
 
+/** Detect the host-level launcher failures that can be repaired by moving a
+ * read-only turn into Evidra's disposable isolated workspace. */
+export function isCodexSandboxFailure(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return /bwrap|loopback|network namespace|sandbox.*(?:denied|failed)|(?:network|namespace).*(?:operation not permitted|permission denied)/i.test(text);
+}
+
 /** Errors for which an automatic local route is a truthful startup substitute. */
 export function isProviderFallbackEligible(error: unknown): boolean {
   if (isProviderUsageLimit(error)) return true;
@@ -505,6 +512,22 @@ export class CodexExecAgent {
   }
 
   private async runCodexSdk(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void, outputSchemaText?: string, role = "conversation assistant"): Promise<AgentResult> {
+    try {
+      return await this.runCodexSdkAttempt(prompt, onProgress, onProcess, outputSchemaText, role);
+    } catch (error) {
+      // Research/chat turns are read-only and may safely use a disposable
+      // copy if the host cannot create Codex's normal bwrap namespace. Never
+      // apply this to workspace-write experiment engineers.
+      if (this.options.sandbox === "read-only" && isCodexSandboxFailure(error)) {
+        onProgress?.("Codex sandbox unavailable · retrying in an isolated workspace...");
+        const retryOptions = { ...this.options, threadId: undefined, sandbox: "danger-full-access" as const };
+        return await new CodexExecAgent(retryOptions, this.dependencies).runCodexSdkAttempt(prompt, onProgress, onProcess, outputSchemaText, role, "danger-full-access");
+      }
+      throw error;
+    }
+  }
+
+  private async runCodexSdkAttempt(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void, outputSchemaText?: string, role = "conversation assistant", sandboxOverride?: CodexSandboxMode): Promise<AgentResult> {
     const abort = new AbortController();
     let timedOut = false;
     // Serious research turns may include several tool calls and should not be
@@ -527,7 +550,7 @@ export class CodexExecAgent {
       get paused() { return paused; },
     };
     onProcess?.(control);
-    const sandboxMode = effectiveCodexSandbox(this.options.sandbox);
+    const sandboxMode = sandboxOverride ?? effectiveCodexSandbox(this.options.sandbox);
     const isolatedWorkspace = sandboxMode === "danger-full-access" && this.options.sandbox !== "workspace-write";
     const isolated = isolatedWorkspace ? createIsolatedCodexWorkspace(this.options.cwd) : undefined;
     const model = effectiveCodexModel(this.options.model);
@@ -609,6 +632,7 @@ export class CodexExecAgent {
         const retryAfterMs = providerRetryAfterMs(new Error(diagnostic));
         throw new ProviderUsageLimitError(`Codex usage limit reached. Retrying in ${Math.ceil(retryAfterMs / 60_000)} minute(s).`, retryAfterMs);
       }
+      if (isCodexSandboxFailure(error)) throw error;
       if (/not supported when using Codex with a ChatGPT account/i.test(diagnostic)) throw new Error("The selected model is not available for your ChatGPT Codex account. Use /model to choose an available model.");
       if (/stream disconnected|network|timed out|upstream connect error|connection termination/i.test(diagnostic)) throw new Error("Codex is unreachable right now. Check your connection, then try again.");
       throw error;

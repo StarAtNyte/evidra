@@ -224,6 +224,14 @@ an appropriate route dimension such as executor, provider, model, or search
 operator. This prevents an autonomous campaign from burning its budget by
 repeating the same failed request.
 
+When a read-only Codex turn encounters a host-level bwrap or network-namespace
+failure, Evidra starts one fresh turn in a disposable isolated copy of the
+workspace with Codex full-access sandboxing. The controller checkout remains
+untouched, the original thread is not resumed across the workspace boundary,
+and workspace-write experiment engineers never use this fallback. If the
+isolated route also fails, the run is recorded as `sandbox` and requires an
+environment repair or a verified alternate executor.
+
 When a Codex entitlement reset is required, the campaign is durably paused and
 the wait interval is excluded from its research-time budget. Retry guards use
 that pause-aware clock as well, so a long provider wait cannot consume the

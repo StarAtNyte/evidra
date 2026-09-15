@@ -439,6 +439,10 @@ external evaluator.
 - Sandbox launcher failures such as bwrap loopback/network-namespace errors
   are now classified as `sandbox` rather than `unknown`, with explicit repair
   or alternate-executor guidance for the next controller cycle.
+- Read-only Codex turns now make one safe recovery attempt when the host cannot
+  create its bwrap namespace: they start a fresh provider thread in a disposable
+  isolated workspace with full-access provider sandboxing, preserving the real
+  checkout and never applying the fallback to workspace-write engineers.
 
 ## Immediate next work
 
