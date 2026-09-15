@@ -2309,6 +2309,14 @@ test("hypothesis phase gates require a falsifiable selected direction", () => {
   assert.equal(evaluatePhaseGoalEvidence(goal, { ...base, falsifiableHypotheses: 1, selectedHypothesisFalsifiable: true }).met, true);
 });
 
+test("research hypothesis schemas reject whitespace-only falsification tests", () => {
+  const invalid = {
+    title: "invalid", mechanism: "mechanism", proposedChange: "change", falsificationTest: "   ",
+    expectedMetricDelta: { low: 0, median: 0, high: 0 }, evidence: [], dependencies: [], ablationFactors: [],
+  };
+  assert.throws(() => ResearchDecisionSchema.parse({ phase: "hypothesis", goalStatus: "active", decision: "propose", bottleneck: "x", rationale: "x", hypotheses: [invalid], selectedHypothesis: null, searchOperator: "audit", nextAction: "inspect", toolCalls: [] }), /falsificationTest/);
+});
+
 test("subtask audits are durable controller evidence", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-subtask-audit-"));
   try {

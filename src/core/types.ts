@@ -82,7 +82,7 @@ export const HypothesisSchema = z.object({
   id: z.string(),
   title: z.string(),
   mechanism: z.string(),
-  falsificationTest: z.string(),
+  falsificationTest: z.string().trim().min(1),
   expectedDelta: z.number(),
   status: z.enum(["proposed", "testing", "supported", "rejected", "inconclusive"]),
 });
@@ -110,7 +110,7 @@ export const ResearchHypothesisSchema = z.object({
     expectedFailureModes: z.array(z.string().min(1).max(300)).min(1).max(8),
   }).optional(),
   proposedChange: z.string().min(1),
-  falsificationTest: z.string().min(1),
+  falsificationTest: z.string().trim().min(1),
   expectedMetricDelta: z.object({ low: z.number(), median: z.number(), high: z.number() }).default({ low: 0, median: 0, high: 0 }).superRefine((forecast, context) => {
     if (forecast.low > forecast.median) context.addIssue({ code: z.ZodIssueCode.custom, path: ["low"], message: "must be less than or equal to median" });
     if (forecast.median > forecast.high) context.addIssue({ code: z.ZodIssueCode.custom, path: ["high"], message: "must be greater than or equal to median" });
