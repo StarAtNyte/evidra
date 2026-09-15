@@ -12,6 +12,8 @@ export const ScientificTaskStageSchema = z.object({
   id: z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/),
   title: z.string().min(1).max(200),
   objective: z.string().min(1).max(2_000),
+  /** Relative importance in progress reports; validity still requires every stage. */
+  weight: z.number().finite().positive().default(1),
   command: z.array(z.string().min(1)).min(1),
   cwd: z.string().default("."),
   timeoutMinutes: z.number().positive().max(24 * 60).default(15),
@@ -188,8 +190,10 @@ export function evaluateScientificTaskRun(taskValue: unknown, run: ScientificTas
     return reason ? [`${stage.id}: ${reason}`] : [];
   });
   if (orderMismatch) invalidStages.push("stage observations are out of task order");
-  const validStages = task.stages.length - missingStages.length - invalidStages.length;
-  const stageScore = validStages / task.stages.length;
+  const totalWeight = task.stages.reduce((sum, stage) => sum + stage.weight, 0);
+  const validStageIds = new Set(task.stages.filter((stage) => !missingStages.includes(stage.id) && !invalidStages.some((reason) => reason.startsWith(`${stage.id}:`))).map((stage) => stage.id));
+  const validWeight = task.stages.filter((stage) => validStageIds.has(stage.id)).reduce((sum, stage) => sum + stage.weight, 0);
+  const stageScore = totalWeight > 0 ? validWeight / totalWeight : 0;
   if (parsedRun.taskId !== task.id) invalidStages.push(`run task ID '${parsedRun.taskId}' does not match task '${task.id}'`);
   const processQuality = Math.min(1, Math.max(0, (stageScore * 0.7) + (parsedRun.stages.length === task.stages.length ? 0.2 : 0) + (parsedRun.status === "completed" ? 0.1 : 0)));
   const valid = missingStages.length === 0 && invalidStages.length === 0 && parsedRun.status === "completed";

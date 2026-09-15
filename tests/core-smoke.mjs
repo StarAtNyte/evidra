@@ -5761,6 +5761,9 @@ test("scientific task runner verifies intermediate stages and resumes verified s
     const first = await runScientificTask(task, root);
     assert.equal(first.status, "completed");
     assert.equal(evaluateScientificTaskRun(task, first).valid, true);
+    const weightedFailure = { ...first, status: "failed", stages: [{ ...first.stages[0], status: "failed", exitCode: 1 }, first.stages[1]] };
+    const weightedTask = { ...task, stages: [{ ...task.stages[0], weight: 1 }, { ...task.stages[1], weight: 3 }] };
+    assert.equal(evaluateScientificTaskRun(weightedTask, weightedFailure).stageScore, 0.75);
     const resumed = await runScientificTask(task, root, { previous: first });
     assert.equal(resumed.status, "completed");
     assert.deepEqual(resumed.stages.map((stage) => stage.status), ["resumed", "resumed"]);
@@ -5769,6 +5772,7 @@ test("scientific task runner verifies intermediate stages and resumes verified s
     assert.throws(() => ScientificTaskRunSchema.parse({ ...first, stages: [first.stages[0], first.stages[0]] }), /stage observations must be unique/);
     assert.equal(evaluateScientificTaskRun(task, { ...first, taskId: "different-task" }).valid, false);
     assert.throws(() => ScientificTaskSchema.parse({ ...task, stages: [{ ...task.stages[0], verificationCommands: [task.stages[0].verificationCommands[0], task.stages[0].verificationCommands[0]] }] }), /verificationCommands must contain unique entries/);
+    assert.throws(() => ScientificTaskSchema.parse({ ...task, stages: [{ ...task.stages[0], weight: 0 }] }), /greater than 0/);
     writeFileSync(join(root, "input.json"), "{\"mutated\":true}");
     const repaired = await runScientificTask(task, root, { previous: first });
     assert.equal(repaired.status, "completed");
