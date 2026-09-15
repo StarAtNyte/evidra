@@ -57,11 +57,11 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `b159fae`.
+- Latest pushed commit: `48f1b94`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 334/334 tests passing, TypeScript check passing,
+- Latest verified baseline: 336/336 tests passing, TypeScript check passing,
   and build passing. The worktree has six intentionally untracked pilot reports
   under `reports/`; do not confuse those generated artifacts with source edits.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
@@ -73,6 +73,9 @@ external evaluator.
   and rejects instruction-like retrieved sentences before durable claim
   extraction. These scores route evidence; retrieval and evaluator checks still
   determine whether claims are publishable.
+- Generated reports now include source-frontier coverage, provenance-class
+  counts, claim coverage, and mean routing quality. The lifecycle safety
+  benchmark currently passes all 9/9 probes.
 - Benchmark report command argv is now redacted alongside process output, with
   coverage for primary, alternate, and reproducibility routes.
 - Baseline and scientific-task attempt evidence now applies the same command and
