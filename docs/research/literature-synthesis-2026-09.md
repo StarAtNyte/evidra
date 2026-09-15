@@ -158,6 +158,10 @@ policies, and places the result in the next cycle's allocation context. The
 utility is explicitly a trajectory-reliability diagnostic supplied by the
 caller; it is not silently treated as task success. A fresh evaluator or
 holdout remains required before any replay-derived idea can be promoted.
+Transfer memory follows the same boundary: `sourceContext` is domain-neutral
+and legacy competition provenance remains readable, so a scientific or
+software method can become a fresh transfer hypothesis without being encoded
+as a competition result.
 
 Primary sources:
 

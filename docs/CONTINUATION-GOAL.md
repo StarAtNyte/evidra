@@ -128,6 +128,9 @@ external evaluator.
   report Pareto-front coverage without inventing a weighted scalar.
 - Replay expansion now removes terminal leaves from the frontier, preserving
   access to unexplored sibling branches during bounded policy simulation.
+- Transferable methods now use domain-neutral `sourceContext` provenance;
+  legacy `sourceCompetition` records remain readable, so research methods are
+  not forced through a competition-shaped memory schema.
 
 ## Immediate next work
 

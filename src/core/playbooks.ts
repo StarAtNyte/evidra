@@ -6,6 +6,7 @@ export interface VerifiedPlaybook {
   schemaVersion: 1;
   id: string;
   title: string;
+  sourceContext: string;
   sourceCompetition: string;
   sourceTaskType: string;
   formulationFamily: string;
@@ -22,7 +23,8 @@ export const VerifiedPlaybookSchema = z.object({
   schemaVersion: z.literal(1),
   id: z.string().min(1),
   title: z.string().min(1),
-  sourceCompetition: z.string().min(1),
+  sourceContext: z.string().min(1).default("general-research"),
+  sourceCompetition: z.string().min(1).default("general-research"),
   sourceTaskType: z.string().min(1),
   formulationFamily: z.string().min(1),
   trigger: z.string().min(1),
@@ -40,14 +42,15 @@ function tokens(value: string): Set<string> {
 function relevance(playbook: VerifiedPlaybook, query: string): number {
   const requested = tokens(query);
   if (!requested.size) return 0;
-  const vocabulary = tokens(`${playbook.title} ${playbook.sourceTaskType} ${playbook.formulationFamily} ${playbook.trigger} ${playbook.steps.join(" ")} ${playbook.tags.join(" ")}`);
+  const vocabulary = tokens(`${playbook.title} ${playbook.sourceContext} ${playbook.sourceTaskType} ${playbook.formulationFamily} ${playbook.trigger} ${playbook.steps.join(" ")} ${playbook.tags.join(" ")}`);
   return [...requested].filter((token) => vocabulary.has(token)).length / requested.size;
 }
 
 /** Derive a playbook only from the durable replicated-method contract. */
 export function playbookFromMethod(method: {
   id: string;
-  sourceCompetition: string;
+  sourceContext?: string;
+  sourceCompetition?: string;
   sourceTaskType: string;
   title: string;
   formulationFamily: string;
@@ -60,7 +63,8 @@ export function playbookFromMethod(method: {
     schemaVersion: 1,
     id: `playbook_${method.id}`,
     title: method.title,
-    sourceCompetition: method.sourceCompetition,
+    sourceContext: method.sourceContext ?? method.sourceCompetition ?? "general-research",
+    sourceCompetition: method.sourceCompetition ?? "general-research",
     sourceTaskType: method.sourceTaskType,
     formulationFamily: method.formulationFamily,
     trigger: method.mechanism,

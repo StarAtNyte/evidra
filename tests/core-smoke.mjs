@@ -1217,6 +1217,9 @@ test("only independently replicated method events enter transfer memory", () => 
     { type: "research.method.transferable", payload: { ...method, id: "malformed", evidenceIds: ["run-1"] } },
   ], "group validation");
   assert.deepEqual(methods.map((entry) => entry.id), ["method-1"]);
+  const scientific = createTransferableMethod({ id: "method-scientific", sourceContext: "scientific:fluid-dynamics", sourceTaskType: "theorem-proving", title: "Invariant-guided search", formulationFamily: "formal", mechanism: "candidate steps violate a conserved invariant", proposedChange: "reject invariant-violating branches before expensive proof search", evidenceIds: ["proof-1", "proof-2"], tags: ["formal", "search"] });
+  assert.equal(scientific.sourceContext, "scientific:fluid-dynamics");
+  assert.equal(scientific.sourceCompetition, undefined);
 });
 
 test("replicated methods become bounded playbook leads with fresh-transfer warnings", () => {

@@ -3,7 +3,9 @@ import { z } from "zod";
 export interface TransferableMethod {
   schemaVersion: 1;
   id: string;
-  sourceCompetition: string;
+  /** Domain-neutral provenance; sourceCompetition remains for legacy records. */
+  sourceContext: string;
+  sourceCompetition?: string;
   sourceTaskType: string;
   title: string;
   formulationFamily: string;
@@ -18,7 +20,8 @@ export interface TransferableMethod {
 export const TransferableMethodSchema = z.object({
   schemaVersion: z.literal(1),
   id: z.string().min(1),
-  sourceCompetition: z.string().min(1),
+  sourceContext: z.string().min(1).default("general-research"),
+  sourceCompetition: z.string().min(1).optional(),
   sourceTaskType: z.string().min(1),
   title: z.string().min(1),
   formulationFamily: z.string().min(1),
@@ -37,13 +40,18 @@ function tokens(value: string): Set<string> {
 function relevance(method: TransferableMethod, query?: string): number {
   const queryTokens = tokens(query ?? "");
   if (!queryTokens.size) return 0;
-  const methodTokens = tokens(`${method.title} ${method.formulationFamily} ${method.mechanism} ${method.proposedChange} ${method.tags.join(" ")}`);
+  const methodTokens = tokens(`${method.title} ${method.sourceContext} ${method.sourceCompetition ?? ""} ${method.formulationFamily} ${method.mechanism} ${method.proposedChange} ${method.tags.join(" ")}`);
   return [...queryTokens].filter((token) => methodTokens.has(token)).length / queryTokens.size;
 }
 
 /** Create a reusable method only after an independent replicated improvement. */
-export function createTransferableMethod(input: Omit<TransferableMethod, "schemaVersion" | "replicated">): TransferableMethod {
-  return TransferableMethodSchema.parse({ schemaVersion: 1, ...input, replicated: true });
+export function createTransferableMethod(input: Omit<TransferableMethod, "schemaVersion" | "replicated" | "sourceContext"> & { sourceContext?: string }): TransferableMethod {
+  return TransferableMethodSchema.parse({
+    schemaVersion: 1,
+    ...input,
+    sourceContext: input.sourceContext ?? input.sourceCompetition ?? "general-research",
+    replicated: true,
+  });
 }
 
 /** Read only durable method events and rank them for a new research objective. */

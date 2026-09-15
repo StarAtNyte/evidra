@@ -2717,6 +2717,7 @@ research
             }
             replicationStore.appendEvent("research.method.transferable", createTransferableMethod({
               id: `method_${experimentId}`,
+              sourceContext: `${mode}:${adapter.id}`,
               sourceCompetition: adapter.id,
               sourceTaskType: adapter.config.taskType,
               title: typeof replicationHypothesisPayload.title === "string" ? replicationHypothesisPayload.title : parentManifest.data.hypothesisId,
