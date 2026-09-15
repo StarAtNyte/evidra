@@ -10,6 +10,8 @@ export interface RetrievedSource extends ResearchSource {
   excerpt: string;
 }
 
+export type SourceEvidenceClass = "scholarly" | "official" | "implementation" | "discovery";
+
 export interface SourceSearchResult {
   title: string;
   url: string;
@@ -22,15 +24,30 @@ export interface SourceSearchResult {
   /** Probe(s) that returned this work during a deep search. */
   queries?: string[];
   /** Deterministic provenance class used to prioritize evidence over discovery noise. */
-  evidenceClass?: "scholarly" | "official" | "implementation" | "discovery";
+  evidenceClass?: SourceEvidenceClass;
   /** 0..1 ranking signal; this is a retrieval heuristic, never a truth score. */
   qualityScore?: number;
 }
 
 export type SourceSearchDepth = "shallow" | "deep";
 
-function hostFor(url: string): string {
-  try { return new URL(url).hostname.toLowerCase(); } catch { return ""; }
+/** Classify a URL when it enters the system without a search-provider record. */
+export function sourceEvidenceClass(url: string, provider?: SourceSearchResult["provider"], doi?: string): SourceEvidenceClass {
+  let host = "";
+  try { host = new URL(url).hostname.toLowerCase(); } catch { /* malformed URLs are rejected by retrieval */ }
+  if (provider === "arxiv" || provider === "openalex" || provider === "crossref" || Boolean(doi) || /(^|\.)arxiv\.org$/i.test(host)) return "scholarly";
+  if (/(^|\.)github\.com$|(^|\.)gitlab\.com$/i.test(host)) return "implementation";
+  if (/(^|\.)scholar\.google\.|(^|\.)researchgate\.net$/i.test(host)) return "discovery";
+  if (/(^|\.)((gov|edu)|openai\.com|deepmind\.google|ai\.google|nasa\.gov|who\.int)$/i.test(host)) return "official";
+  return provider === "web" ? "discovery" : "discovery";
+}
+
+/** A conservative score for routing and display; never a claim of correctness. */
+export function sourceEvidenceQuality(input: Pick<SourceSearchResult, "url" | "provider" | "doi" | "abstract" | "authors" | "venue">): number {
+  const evidenceClass = sourceEvidenceClass(input.url, input.provider, input.doi);
+  const base = evidenceClass === "scholarly" ? 0.72 : evidenceClass === "official" ? 0.62 : evidenceClass === "implementation" ? 0.52 : 0.2;
+  const metadata = (input.doi ? 0.08 : 0) + (input.abstract ? 0.06 : 0) + (input.authors.length ? 0.04 : 0) + (input.venue ? 0.03 : 0);
+  return Number(Math.max(0, Math.min(1, base + metadata)).toFixed(4));
 }
 
 /**
@@ -46,14 +63,8 @@ export function rankSourceSearchResults(results: SourceSearchResult[], query?: s
     const key = (result.doi ?? canonicalSourceUrl(result.url)).toLowerCase();
     if (seen.has(key)) return [];
     seen.add(key);
-    const host = hostFor(result.url);
-    const scholarly = result.provider === "arxiv" || result.provider === "openalex" || result.provider === "crossref";
-    const official = /(^|\.)((gov|edu)|wikipedia\.org|openai\.com|deepmind\.google|ai\.google|nasa\.gov|who\.int)$/i.test(host)
-      || /(^|\.)github\.com$/i.test(host);
-    const implementation = /(^|\.)github\.com$/i.test(host) || /(^|\.)gitlab\.com$/i.test(host);
-    const discovery = result.provider === "web" || /(^|\.)scholar\.google\./i.test(host) || /(^|\.)researchgate\.net$/i.test(host);
-    const evidenceClass: SourceSearchResult["evidenceClass"] = scholarly ? "scholarly" : implementation ? "implementation" : official ? "official" : discovery ? "discovery" : "discovery";
-    const base = scholarly ? 0.72 : official ? 0.62 : implementation ? 0.52 : 0.2;
+    const evidenceClass = sourceEvidenceClass(result.url, result.provider, result.doi);
+    const base = evidenceClass === "scholarly" ? 0.72 : evidenceClass === "official" ? 0.62 : evidenceClass === "implementation" ? 0.52 : 0.2;
     const metadata = (result.doi ? 0.08 : 0) + (result.abstract ? 0.06 : 0) + (result.authors.length ? 0.04 : 0) + (result.venue ? 0.03 : 0);
     const overlap = queryTokens.size ? [...queryTokens].filter((token) => `${result.title} ${result.abstract ?? ""}`.toLowerCase().includes(token)).length / queryTokens.size : 0;
     const score = Math.max(0, Math.min(1, base + metadata + overlap * 0.07 + (result.queries?.length ?? 0) * 0.01));
@@ -467,6 +478,7 @@ export async function retrieveSource(url: string, signal?: AbortSignal): Promise
     : contentType.includes("html") ? stripMarkup(raw) : raw.replace(/\s+/g, " ").trim();
   const titleMatch = raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   const title = stripMarkup(titleMatch?.[1] ?? parsed.hostname ?? url).slice(0, 300) || url;
+  const evidenceClass = sourceEvidenceClass(response.url || url);
   const source = ResearchSourceSchema.parse({
     id: sourceId(url, contentHash),
     title,
@@ -474,6 +486,8 @@ export async function retrieveSource(url: string, signal?: AbortSignal): Promise
     retrievedAt: new Date().toISOString(),
     contentHash,
     license: response.headers.get("x-license") ?? undefined,
+    evidenceClass,
+    qualityScore: sourceEvidenceQuality({ url: response.url || url, authors: [], provider: undefined }),
     claims: [],
   });
   return { ...source, contentType, text, excerpt: text.slice(0, 1200) };

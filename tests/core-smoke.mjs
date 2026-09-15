@@ -10,7 +10,7 @@ import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../di
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
-import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
+import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { CompetitionConfigSchema, ExperimentManifestSchema } from "../dist/core/types.js";
 import { processFailureResult, runProcess } from "../dist/core/process.js";
@@ -2490,6 +2490,13 @@ test("source ranking prefers provenance-rich evidence over web discovery noise",
   assert.equal(ranked[0].evidenceClass, "scholarly");
   assert.ok((ranked[0].qualityScore ?? 0) > (ranked[2].qualityScore ?? 0));
   assert.equal(ranked[2].evidenceClass, "discovery");
+});
+
+test("direct source provenance remains classifiable without a search event", () => {
+  assert.equal(sourceEvidenceClass("https://arxiv.org/abs/2601.12345"), "scholarly");
+  assert.equal(sourceEvidenceClass("https://github.com/example/project"), "implementation");
+  assert.equal(sourceEvidenceClass("https://example.org/discussion", "web"), "discovery");
+  assert.ok(sourceEvidenceQuality({ url: "https://arxiv.org/abs/2601.12345", authors: ["Author"], abstract: "Measured results", doi: "https://doi.org/10.1/x" }) > 0.8);
 });
 
 test("arXiv search parsing preserves primary paper metadata", () => {
