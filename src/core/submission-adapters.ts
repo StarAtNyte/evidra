@@ -173,6 +173,25 @@ function kaggleScoreCommand(config: NonNullable<CompetitionConfig["submission"]>
   return ["kaggle", "competitions", "submissions", "-c", kaggleCompetition(config, competition), "--csv"];
 }
 
+/** Parse one bounded RFC 4180-style CSV row without adding a dependency to the CLI. */
+function parseCsvRow(line: string): string[] {
+  const cells: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index]!;
+    if (character === '"') {
+      if (quoted && line[index + 1] === '"') { cell += '"'; index += 1; }
+      else quoted = !quoted;
+    } else if (character === "," && !quoted) {
+      cells.push(cell.trim()); cell = "";
+    } else cell += character;
+  }
+  if (quoted) throw new Error("Malformed CSV score output: unterminated quoted field.");
+  cells.push(cell.trim());
+  return cells;
+}
+
 async function verifyKaggleAccess(config: NonNullable<CompetitionConfig["submission"]>, competition: CompetitionConfig, cwd: string, onProcess?: (control: ProcessControl) => void): Promise<void> {
   const command = ["kaggle", "competitions", "files", "-c", kaggleCompetition(config, competition)];
   const guard = guardCommand(command);
@@ -205,12 +224,16 @@ export function parseSubmissionScore(output: string): number | undefined {
   // rows, commonly using publicScore/privateScore columns without labels.
   const lines = output.trim().split(/\r?\n/).filter(Boolean);
   if (lines.length >= 2) {
-    const header = lines[0]!.split(",").map((value) => value.trim().toLowerCase().replaceAll(/[^a-z0-9]/g, ""));
+    let header: string[];
+    try { header = parseCsvRow(lines[0]!).map((value) => value.toLowerCase().replaceAll(/[^a-z0-9]/g, "")); }
+    catch { header = []; }
     const scoreIndex = header.findIndex((value) => value === "publicscore" || value === "leaderboardscore" || value === "score");
     if (scoreIndex >= 0) {
       for (const line of lines.slice(1).reverse()) {
-        const value = line.split(",")[scoreIndex]?.trim();
-        if (value) candidates.push(value.replace(/^"|"$/g, ""));
+        try {
+          const value = parseCsvRow(line)[scoreIndex];
+          if (value) candidates.push(value);
+        } catch { /* fall back to the other score formats */ }
       }
     }
   }
