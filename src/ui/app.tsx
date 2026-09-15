@@ -73,7 +73,7 @@ type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "me
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
 type WorkbenchMode = "research" | "challenge";
 type AutonomyLevel = "safe" | "fast" | "yolo";
-type ResearchCampaign = { goal: string; budgetMinutes: number; gpuBudgetHours?: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean };
+type ResearchCampaign = { goal: string; budgetMinutes: number; gpuBudgetHours?: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean; currentCycle?: number; currentStep?: string; checkpointedAt?: string };
 type LimitPolicy = "auto" | "wait" | "fallback" | "stop";
 type ExperimentExecutorKind = "local" | "container" | "modal";
 type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; limitPolicy: LimitPolicy; fallbackModel: string; experimentExecutor: ExperimentExecutorKind; campaign?: ResearchCampaign; codexThreadId?: string };
@@ -3135,7 +3135,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const goal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), config.mode));
         const campaign = config.campaign;
         const counts = store.counts();
-        append("assistant", `Research status\n  scheduler: ${state.status}\n  step: ${state.currentStep ?? "idle"}\n  phase: ${goal?.phase ?? "not initialized"}\n  phase goal: ${goal?.title ?? "none"}\n  attempts: ${goal?.attempts ?? 0}\n  decisions: ${counts.decisions} · hypotheses: ${counts.hypotheses} · claims: ${counts.claims}${campaign ? `\n\nCampaign\n  status: ${campaign.status}\n  goal: ${campaign.goal}\n  budget: ${campaign.budgetMinutes} minutes\n  stop: ${campaign.stopCondition}` : "\n\nNo campaign configured. Use /research to start one."}`);
+        append("assistant", `Research status\n  scheduler: ${state.status}\n  step: ${state.currentStep ?? "idle"}\n  phase: ${goal?.phase ?? "not initialized"}\n  phase goal: ${goal?.title ?? "none"}\n  attempts: ${goal?.attempts ?? 0}\n  decisions: ${counts.decisions} · hypotheses: ${counts.hypotheses} · claims: ${counts.claims}${campaign ? `\n\nCampaign\n  status: ${campaign.status}\n  goal: ${campaign.goal}\n  budget: ${campaign.budgetMinutes} minutes\n  checkpoint: cycle ${campaign.currentCycle ?? "?"} · ${campaign.currentStep ?? "unknown"}${campaign.checkpointedAt ? ` · ${campaign.checkpointedAt}` : ""}\n  stop: ${campaign.stopCondition}` : "\n\nNo campaign configured. Use /research to start one."}`);
       } else {
         const status = action === "start" ? "running" : action === "pause" ? "paused" : "idle";
         store.setSchedulerState({ status, mode: "research", currentStep: null });

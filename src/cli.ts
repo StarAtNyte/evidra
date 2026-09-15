@@ -411,7 +411,7 @@ async function acquireCliControllerLease(mode: "research" | "challenge"): Promis
 function recordCampaignCheckpoint<T extends { status: string }>(campaign: T, mode: "research" | "challenge", cycle: number, step: string): void {
   const store = new ResearchStore(statePath);
   const lease = store.controllerLease();
-  if (lease?.status === "running" && lease.controllerId) store.heartbeatControllerLease(lease.controllerId, mode, step);
+  if (lease?.status === "running" && lease.pid === process.pid && lease.controllerId) store.heartbeatControllerLease(lease.controllerId, mode, step);
   store.saveCampaign({ ...campaign, currentCycle: cycle, currentStep: step, checkpointedAt: new Date().toISOString() });
   store.setSchedulerState({ status: campaign.status === "paused" ? "paused" : "running", mode, currentStep: step });
   store.appendEvent("research.campaign.checkpoint", { cycle, step, mode });
@@ -1598,12 +1598,12 @@ challenge.command("status").action(() => {
   const store = new ResearchStore(statePath);
   const active = store.project();
   const adapter = activeCompetition();
-  const campaign = store.campaign() as { status?: string; goal?: string; budgetMinutes?: number; gpuBudgetHours?: number; autoExecuteExperiments?: boolean; runtime?: { autonomy?: string } } | undefined;
+  const campaign = store.campaign() as { status?: string; goal?: string; budgetMinutes?: number; gpuBudgetHours?: number; autoExecuteExperiments?: boolean; currentCycle?: number; currentStep?: string; checkpointedAt?: string; runtime?: { autonomy?: string } } | undefined;
   const gpuUsed = observedGpuHours(store.runAttempts(), store.experiments(), store.hypotheses());
   const gpuReserved = store.reservedComputeGpuHours();
   const autonomous = campaign?.autoExecuteExperiments === true || campaign?.runtime?.autonomy === "fast" || campaign?.runtime?.autonomy === "yolo";
   const lease = store.liveControllerLease();
-  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}${campaign ? `\nCampaign: ${campaign.status ?? "unknown"}\nGoal: ${campaign.goal ?? "(none)"}\nBudget: ${campaign.budgetMinutes ?? "?"} minutes\nGPU usage: ${gpuUsed.toFixed(3)} observed + ${gpuReserved.toFixed(3)} reserved / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed - gpuReserved).toFixed(3)} available)` : ""}\nAutonomous experiments: ${autonomous ? "enabled" : "approval-gated"}` : "\nCampaign: none"}${lease ? `\nController: running (pid ${lease.pid}, step ${lease.currentStep ?? "unknown"})` : "\nController: idle"}`);
+  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}${campaign ? `\nCampaign: ${campaign.status ?? "unknown"}\nGoal: ${campaign.goal ?? "(none)"}\nBudget: ${campaign.budgetMinutes ?? "?"} minutes\nCheckpoint: cycle ${campaign.currentCycle ?? "?"} · ${campaign.currentStep ?? "unknown"}${campaign.checkpointedAt ? ` · ${campaign.checkpointedAt}` : ""}\nGPU usage: ${gpuUsed.toFixed(3)} observed + ${gpuReserved.toFixed(3)} reserved / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed - gpuReserved).toFixed(3)} available)` : ""}\nAutonomous experiments: ${autonomous ? "enabled" : "approval-gated"}` : "\nCampaign: none"}${lease ? `\nController: running (pid ${lease.pid}, step ${lease.currentStep ?? "unknown"})` : "\nController: idle"}`);
   store.close();
 });
 for (const action of ["pause", "resume", "stop"] as const) {
