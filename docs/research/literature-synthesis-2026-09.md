@@ -110,7 +110,9 @@ that Evidra beats another harness.
    verifier campaigns.
    Implemented for normalized metric suites and non-metric objective values;
    incomparable survivors are retained through Pareto promotion.~~
-4. Add held-out cross-provider harness evaluation to the benchmark runner.
+4. ~~Add held-out cross-provider harness evaluation to the benchmark runner.~~
+   Implemented with explicit provider-route comparisons, task-disjoint holdout
+   validation, and exported provider/model/effort provenance.
 5. ~~Generate a final research report from immutable evidence with explicit
    uncertainty, failed directions, and reproduction commands.
    Implemented through the durable report and claim-audit pipeline; the remaining

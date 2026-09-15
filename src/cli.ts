@@ -1036,7 +1036,7 @@ benchmark.command("export")
     const baselineMetric = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] : undefined;
     if (!Number.isFinite(baselineMetric)) { store.close(); throw new Error("No finite baseline.completed metric is available for benchmark export."); }
     const events = store.eventsByTypes(["experiment.autonomous.replication.completed", "run.retry.scheduled"]);
-    const campaign = store.campaign() as { budgetMinutes?: unknown; runtime?: { model?: unknown } } | undefined;
+    const campaign = store.campaign() as { budgetMinutes?: unknown; runtime?: { provider?: unknown; model?: unknown; thinking?: unknown } } | undefined;
     const independentlyReplicatedParents = new Set(events
       .filter((event) => event.type === "experiment.autonomous.replication.completed")
       .map((event) => (event.payload as { parentId?: unknown }).parentId)
@@ -1045,7 +1045,7 @@ benchmark.command("export")
     for (const run of store.runs()) {
       const payload = run.payload as { metrics?: Record<string, number>; durationSeconds?: number; recoveryAttempts?: number; status?: string; artifacts?: Record<string, string> };
       const experiment = store.experiments().find((entry) => entry.id === run.experimentId);
-      const manifest = experiment?.payload as { datasetVersion?: unknown; splitVersion?: unknown; evaluation?: { seeds?: unknown } } | undefined;
+      const manifest = experiment?.payload as { datasetVersion?: unknown; splitVersion?: unknown; evaluation?: { seeds?: unknown; metrics?: Array<{ name?: unknown; direction?: unknown; maximumRegression?: unknown }> }; runtimeContext?: { provider?: unknown; model?: unknown; thinking?: unknown } } | undefined;
       const candidateMetric = payload.metrics?.[adapter.config.metric.name];
       let runtimeFingerprint: string | undefined;
       const environmentPath = payload.artifacts?.["environment.json"];
@@ -1064,13 +1064,17 @@ benchmark.command("export")
         task: project?.competitionId ?? adapter.id,
         arm: `${String(manifest?.datasetVersion ?? "unknown-dataset")}::${String(manifest?.splitVersion ?? "unknown-split")}`,
         seed: Array.isArray(manifest?.evaluation?.seeds) ? manifest.evaluation.seeds.join(",") : "unknown-seed",
-        model: typeof campaign?.runtime?.model === "string" ? campaign.runtime.model : "unknown-model",
+        ...(typeof manifest?.runtimeContext?.provider === "string" ? { provider: manifest.runtimeContext.provider } : typeof campaign?.runtime?.provider === "string" ? { provider: campaign.runtime.provider } : {}),
+        model: typeof manifest?.runtimeContext?.model === "string" ? manifest.runtimeContext.model : typeof campaign?.runtime?.model === "string" ? campaign.runtime.model : "unknown-model",
+        ...(typeof manifest?.runtimeContext?.thinking === "string" ? { reasoningEffort: manifest.runtimeContext.thinking } : typeof campaign?.runtime?.thinking === "string" ? { reasoningEffort: campaign.runtime.thinking } : {}),
         budgetMinutes: typeof campaign?.budgetMinutes === "number" ? campaign.budgetMinutes : 0,
         ...(typeof manifest?.datasetVersion === "string" ? { dataRevision: manifest.datasetVersion } : {}),
         ...(runtimeFingerprint ? { runtimeFingerprint } : {}),
         direction: adapter.config.metric.direction,
         baselineMetric: baselineMetric as number,
         candidateMetric: Number.isFinite(candidateMetric) ? candidateMetric : undefined,
+        ...(payload.metrics && Object.keys(payload.metrics).length ? { candidateMetrics: payload.metrics } : {}),
+        ...(manifest?.evaluation?.metrics?.length ? { metricGates: manifest.evaluation.metrics.filter((metric) => typeof metric.name === "string" && metric.name !== adapter.config.metric.name && (metric.direction === "maximize" || metric.direction === "minimize")).map((metric) => ({ name: metric.name as string, direction: metric.direction as "maximize" | "minimize", maximumRegression: typeof metric.maximumRegression === "number" && Number.isFinite(metric.maximumRegression) ? metric.maximumRegression : 0 })) } : {}),
         validRun: run.status === "completed" && Number.isFinite(candidateMetric),
         durationSeconds: typeof payload.durationSeconds === "number" ? payload.durationSeconds : 0,
         recovered: (payload.recoveryAttempts ?? 1) > 1 || experimentEvents.some((event) => event.type === "run.retry.scheduled"),
