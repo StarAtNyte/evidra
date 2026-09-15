@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `0089e8b`.
+- Latest pushed commit: `d31e482`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -126,6 +126,9 @@ external evaluator.
   Codex executable used by login, model discovery, steering, and SDK turns.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
+- Codex command activity now includes an exit code only when the provider
+  supplies one, keeping failure output concise; regression coverage remains
+  green at 349/349.
 - Normal Codex chat no longer performs a duplicate UI-level auth preflight;
   the provider boundary performs the single asynchronous check before the turn,
   reducing startup latency without allowing unauthenticated execution.
