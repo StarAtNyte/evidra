@@ -4822,6 +4822,16 @@ test("AIRS lifecycle rejects the seeded empty submission and accepts a real arti
     });
     assert.equal(restored.valid, true);
     assert.match(restored.stages.find((stage) => stage.stage === "agent")?.result.stdout ?? "", /Restored/);
+    writeFileSync(join(resumeWorkspace, "data", "manual-change.txt"), "changed\n");
+    let dataRestarted = false;
+    const changedData = await runAirsTaskLifecycle({
+      repository: root, taskPath: "task", preparePath: "task/prepare.py", evaluatePreparePath: "task/evaluate_prepare.py", evaluatePath: "task/evaluate.py",
+      globalSharedDataDir: globalData, python: process.execPath, workspace: resumeWorkspace, timeoutMs: 30_000,
+      agentRunner: async ({ agentLogDir }) => { dataRestarted = true; writeFileSync(join(agentLogDir, "submission.csv"), "id,prediction\n1,data\n"); return result(); }, metric: "Accuracy",
+    });
+    assert.equal(dataRestarted, true);
+    assert.equal(changedData.valid, true);
+    assert.equal(changedData.metrics.Accuracy, 0.5);
     writeFileSync(join(task, "evaluate.py"), "console.log('Accuracy: 0.6');\n");
     let restarted = false;
     const changedContract = await runAirsTaskLifecycle({

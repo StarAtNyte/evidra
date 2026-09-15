@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { parseMetricOutput, safeWorkerEnvironment } from "./executors.js";
 import { processFailureResult, runProcess, splitCommandLine } from "./process.js";
@@ -57,6 +58,24 @@ function usableSubmission(path: string): boolean {
   return existsSync(path) && statSync(path).isFile() && statSync(path).size > 0;
 }
 
+/** Fingerprint prepared data without reading potentially multi-gigabyte files. */
+function directoryRevision(root: string): string {
+  const entries: string[] = [];
+  const visit = (current: string, prefix: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) visit(path, relativePath);
+      else if (entry.isFile()) {
+        const stats = statSync(path);
+        entries.push(`${relativePath}:${stats.size}:${stats.mtimeMs}`);
+      }
+    }
+  };
+  visit(root, "");
+  return `sha256:${createHash("sha256").update(entries.join("\n")).digest("hex")}`;
+}
+
 function readAgentCheckpoint(path: string, contract: string): boolean {
   if (!existsSync(path)) return false;
   try {
@@ -89,7 +108,7 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
   const submissionPath = join(agentLogDir, "submission.csv");
   const planPath = join(lifecycleRoot, "PLAN.md");
   const checkpointPath = join(lifecycleRoot, ".evidra-airs-agent.json");
-  const contract = JSON.stringify({ repository, taskPath, preparePath, evaluatePreparePath, evaluatePath, prepareHash: sha256File(preparePath), evaluatePrepareHash: sha256File(evaluatePreparePath), evaluateHash: sha256File(evaluatePath), globalSharedDataDir, metric: options.metric, model: options.model ?? "", seed: options.seed ?? "", effort: options.effort ?? "medium" });
+  const contractBase = { repository, taskPath, preparePath, evaluatePreparePath, evaluatePath, prepareHash: sha256File(preparePath), evaluatePrepareHash: sha256File(evaluatePreparePath), evaluateHash: sha256File(evaluatePath), globalSharedDataDir, metric: options.metric, model: options.model ?? "", seed: options.seed ?? "", effort: options.effort ?? "medium" };
   const resumed = existsSync(join(lifecycleRoot, ".git")) || existsSync(submissionPath) || existsSync(planPath);
   const initialArtifactBytes = existsSync(submissionPath) && statSync(submissionPath).isFile() ? statSync(submissionPath).size : 0;
   const lifecycleState = (): Pick<AirsTaskLifecycleResult, "resumed" | "initialArtifactBytes" | "finalArtifactBytes"> => ({
@@ -121,6 +140,7 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
   };
   const prepare = await runStage("prepare", [python, preparePath, "--global-shared-data-dir", globalSharedDataDir, "--agent-data-mount-dir", agentDataDir, "--agent-log-dir", agentLogDir], repository);
   if (prepare.exitCode !== 0) return { valid: false, ...lifecycleState(), metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "prepare" };
+  const contract = JSON.stringify({ ...contractBase, preparedDataRevision: directoryRevision(agentDataDir) });
   // Codex file-change tools require a repository root even when the task is
   // otherwise a disposable scratch workspace. This repository is ephemeral;
   // it is never connected to the user's checkout or used as submission proof.
