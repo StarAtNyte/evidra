@@ -107,7 +107,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   })() : "No experience curriculum recorded.");
   sections.push("", "## Harness benchmark feedback", "", harnessBenchmarkEvents.length
     ? harnessBenchmarkEvents.slice(-5).map((event) => {
-      const payload = event.payload as { challenger?: string; scorecards?: Array<{ harness?: string; competitiveScore?: number; failureProfile?: Record<string, number> }>; comparisons?: Array<{ incumbent?: string; challengerWins?: boolean; reason?: string }>; providerComparison?: { challenger?: string; incumbent?: string; pairedMeanDelta?: number | null; pairedLower95?: number | null; challengerWins?: boolean; reason?: string }; providerGeneralization?: { challengerProvider?: string; incumbentProvider?: string; generalizes?: boolean; reason?: string }; changeOutcomes?: Array<{ incumbent?: string; outcome?: { status?: string; observedDelta?: number } }> };
+      const payload = event.payload as { challenger?: string; scorecards?: Array<{ harness?: string; competitiveScore?: number; failureProfile?: Record<string, number> }>; comparisons?: Array<{ incumbent?: string; challengerWins?: boolean; reason?: string }>; providerComparison?: { challenger?: string; incumbent?: string; pairedMeanDelta?: number | null; pairedLower95?: number | null; challengerWins?: boolean; reason?: string }; providerGeneralization?: { challengerProvider?: string; incumbentProvider?: string; generalizes?: boolean; reason?: string }; componentFailureEvidence?: Array<{ componentId?: string; samples?: number; failures?: number; failureLift?: number; interpretation?: string }>; changeOutcomes?: Array<{ incumbent?: string; outcome?: { status?: string; observedDelta?: number } }> };
       const scores = (payload.scorecards ?? []).map((scorecard) => `${scorecard.harness ?? "unknown"}=${typeof scorecard.competitiveScore === "number" ? scorecard.competitiveScore.toFixed(1) : "?"}${Object.keys(scorecard.failureProfile ?? {}).length ? ` failures=${JSON.stringify(scorecard.failureProfile)}` : ""}`).join(", ");
       const comparisons = (payload.comparisons ?? []).map((comparison) => `vs ${comparison.incumbent ?? "unknown"}: ${comparison.challengerWins ? "win" : "not proven"}`).join("; ");
       const changes = (payload.changeOutcomes ?? []).map((item) => `vs ${item.incumbent ?? "unknown"}: ${item.outcome?.status ?? "unobserved"}${typeof item.outcome?.observedDelta === "number" ? ` (${item.outcome.observedDelta.toFixed(4)})` : ""}`).join("; ");
@@ -117,7 +117,10 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
       const holdout = payload.providerGeneralization
         ? `\n  Provider holdout: ${payload.providerGeneralization.challengerProvider ?? "unknown"} vs ${payload.providerGeneralization.incumbentProvider ?? "unknown"} · ${payload.providerGeneralization.generalizes ? "generalizes" : "not proven"} · ${payload.providerGeneralization.reason ?? "no reason recorded"}`
         : "";
-      return `- ${event.createdAt} · challenger ${payload.challenger ?? "unknown"}\n  Scores: ${scores || "none"}${comparisons ? `\n  Comparisons: ${comparisons}` : ""}${provider}${holdout}${changes ? `\n  Prediction contract: ${changes}` : ""}`;
+      const componentFailures = payload.componentFailureEvidence?.length
+        ? `\n  Component failure lifts: ${payload.componentFailureEvidence.slice(0, 8).map((item) => `${item.componentId ?? "unknown"}=${typeof item.failureLift === "number" ? item.failureLift.toFixed(3) : "?"} (${item.failures ?? 0}/${item.samples ?? 0})`).join(", ")}`
+        : "";
+      return `- ${event.createdAt} · challenger ${payload.challenger ?? "unknown"}\n  Scores: ${scores || "none"}${comparisons ? `\n  Comparisons: ${comparisons}` : ""}${provider}${holdout}${componentFailures}${changes ? `\n  Prediction contract: ${changes}` : ""}`;
     }).join("\n")
     : "No matched harness benchmark feedback recorded.");
   sections.push("", "## Harness evolution plan", "", harnessEvolutionEvents.length
