@@ -12,7 +12,7 @@ import { ResearchStore } from "../dist/core/store.js";
 import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, researchSearchQueries, retrieveSource, sourceClaims, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
-import { CompetitionConfigSchema } from "../dist/core/types.js";
+import { CompetitionConfigSchema, ExperimentManifestSchema } from "../dist/core/types.js";
 import { runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
@@ -4127,6 +4127,19 @@ test("experiment manifests carry the complete metric contract to workers", () =>
   const manifest = createExperimentManifest({ id: "metric-contract", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "v1" }, competition);
   assert.deepEqual(manifest.evaluation.metrics.map((metric) => metric.name), ["score", "latency_ms"]);
   assert.match(manifestSummary(manifest), /latency_ms \(minimize\)/);
+});
+
+test("experiment metric contracts reject duplicate objectives and negative thresholds", () => {
+  const base = {
+    id: "invalid-contract", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "v1",
+    splitVersion: "split", change: { configPatch: {} }, resources: { executor: "local", timeoutMinutes: 1 },
+    evaluation: { folds: [0], seeds: [0], requiredArtifacts: [], metrics: [
+      { name: "score", direction: "maximize" }, { name: "score", direction: "maximize" },
+    ] }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 0, requireReplication: false },
+    createdAt: new Date().toISOString(),
+  };
+  assert.throws(() => ExperimentManifestSchema.parse(base), /objective names must be unique/);
+  assert.throws(() => ExperimentManifestSchema.parse({ ...base, evaluation: { ...base.evaluation, metrics: [{ name: "score", direction: "maximize", minimumDelta: -0.1 }] } }), /greater than or equal to 0/);
 });
 
 test("research decisions support non-metric outcomes without fabricated GPU estimates", () => {
