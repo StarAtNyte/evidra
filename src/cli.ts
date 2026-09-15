@@ -73,7 +73,7 @@ import { promoteHalvingStage } from "./core/successive-halving.js";
 import type { CostObservation } from "./core/cost-model.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
-import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, evaluateProviderGeneralization, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
+import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, evaluateProviderGeneralization, harnessParetoFrontier, parseHarnessTrial, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
 import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.js";
 import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
@@ -631,7 +631,7 @@ benchmark.command("run")
       const heldOutParsed: unknown = JSON.parse(readFileSync(resolve(options.providerHoldout), "utf8"));
       const heldOutRaw = Array.isArray(heldOutParsed) ? heldOutParsed : heldOutParsed && typeof heldOutParsed === "object" && Array.isArray((heldOutParsed as { trials?: unknown }).trials) ? (heldOutParsed as { trials: unknown[] }).trials : undefined;
       if (!heldOutRaw?.length) throw new Error("Provider held-out report must contain a non-empty trials array.");
-      providerGeneralization = evaluateProviderGeneralization(report.trials, heldOutRaw as HarnessTrial[], providerPair[0], providerPair[1]);
+      providerGeneralization = evaluateProviderGeneralization(report.trials, heldOutRaw.map((value, index) => parseHarnessTrial(value, `Provider held-out trial ${index + 1}`)), providerPair[0], providerPair[1]);
     }
     const adaptation = planHarnessAdaptation(report.trials, scorecards, comparisons, options.challenger);
     const challengerTrials = report.trials.filter((trial) => trial.harness === options.challenger);
@@ -648,7 +648,7 @@ benchmark.command("run")
       const heldOutParsed: unknown = JSON.parse(readFileSync(resolve(options.holdout), "utf8"));
       const heldOutRaw = Array.isArray(heldOutParsed) ? heldOutParsed : heldOutParsed && typeof heldOutParsed === "object" && Array.isArray((heldOutParsed as { trials?: unknown }).trials) ? (heldOutParsed as { trials: unknown[] }).trials : undefined;
       if (!heldOutRaw?.length) throw new Error("Held-out benchmark report must contain a non-empty trials array.");
-      const heldOutTrials = heldOutRaw as HarnessTrial[];
+      const heldOutTrials = heldOutRaw.map((value, index) => parseHarnessTrial(value, `Held-out trial ${index + 1}`));
       generalization = incumbents.map((incumbent) => evaluateHarnessGeneralization(report.trials, heldOutTrials, options.challenger, incumbent));
     }
     let retention: ReturnType<typeof evaluateHarnessRetention> | undefined;
@@ -656,7 +656,7 @@ benchmark.command("run")
       const priorParsed: unknown = JSON.parse(readFileSync(resolve(options.retention), "utf8"));
       const priorRaw = Array.isArray(priorParsed) ? priorParsed : priorParsed && typeof priorParsed === "object" && Array.isArray((priorParsed as { trials?: unknown }).trials) ? (priorParsed as { trials: unknown[] }).trials : undefined;
       if (!priorRaw?.length) throw new Error("Retention report must contain a non-empty trials array.");
-      const priorTrials = priorRaw as HarnessTrial[];
+      const priorTrials = priorRaw.map((value, index) => parseHarnessTrial(value, `Retention trial ${index + 1}`));
       const priorProtocol = validateBenchmarkProtocol(priorTrials);
       if (!priorProtocol.valid) throw new Error(`Retention report is not matched:\n${priorProtocol.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
       const maximumRegression = Number(options.retentionRegression);
@@ -800,10 +800,7 @@ benchmark.command("validate")
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
     const raw = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray((parsed as { trials?: unknown }).trials) ? (parsed as { trials: unknown[] }).trials : undefined;
     if (!raw?.length) throw new Error("Benchmark input must contain a non-empty JSON trial array.");
-    const trials = raw.map((value, index) => {
-      if (!value || typeof value !== "object") throw new Error(`Benchmark trial ${index + 1} is not an object.`);
-      return value as HarnessTrial;
-    });
+    const trials = raw.map((value, index) => parseHarnessTrial(value, `Benchmark trial ${index + 1}`));
     const report = validateBenchmarkProtocol(trials);
     if (options.json) {
       console.log(JSON.stringify(report, null, 2));
@@ -824,14 +821,7 @@ benchmark.command("score")
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
     const raw = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray((parsed as { trials?: unknown }).trials) ? (parsed as { trials: unknown[] }).trials : undefined;
     if (!raw?.length) throw new Error("Benchmark input must contain a non-empty JSON trial array.");
-    const trials = raw.map((value, index) => {
-      if (!value || typeof value !== "object") throw new Error(`Benchmark trial ${index + 1} is not an object.`);
-      const trial = value as Partial<HarnessTrial>;
-      if (typeof trial.harness !== "string" || typeof trial.task !== "string" || (trial.direction !== "maximize" && trial.direction !== "minimize") || typeof trial.baselineMetric !== "number" || typeof trial.validRun !== "boolean" || typeof trial.durationSeconds !== "number" || typeof trial.recovered !== "boolean" || typeof trial.reproducible !== "boolean") {
-        throw new Error(`Benchmark trial ${index + 1} is missing a required field.`);
-      }
-      return trial as HarnessTrial;
-    });
+    const trials = raw.map((value, index) => parseHarnessTrial(value, `Benchmark trial ${index + 1}`));
     const scorecards = scoreHarnessTrials(trials);
     if (options.json) {
       console.log(JSON.stringify(scorecards, null, 2));
@@ -998,12 +988,7 @@ benchmark.command("compare")
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
     const raw = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray((parsed as { trials?: unknown }).trials) ? (parsed as { trials: unknown[] }).trials : undefined;
     if (!raw?.length) throw new Error("Benchmark input must contain a non-empty JSON trial array.");
-    const trials = raw.map((value, index) => {
-      if (!value || typeof value !== "object") throw new Error(`Benchmark trial ${index + 1} is not an object.`);
-      const trial = value as Partial<HarnessTrial>;
-      if (typeof trial.harness !== "string" || typeof trial.task !== "string" || (trial.direction !== "maximize" && trial.direction !== "minimize") || typeof trial.baselineMetric !== "number" || typeof trial.validRun !== "boolean" || typeof trial.durationSeconds !== "number" || typeof trial.recovered !== "boolean" || typeof trial.reproducible !== "boolean") throw new Error(`Benchmark trial ${index + 1} is missing a required field.`);
-      return trial as HarnessTrial;
-    });
+    const trials = raw.map((value, index) => parseHarnessTrial(value, `Benchmark trial ${index + 1}`));
     const protocol = validateBenchmarkProtocol(trials);
     if (!protocol.valid) throw new Error(`Benchmark protocol is not matched:\n${protocol.issues.map((issue) => `- ${issue.message}`).join("\n")}`);
     const comparison = compareHarnesses(trials, challenger, incumbent);

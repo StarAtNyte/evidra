@@ -62,7 +62,7 @@ import { validateCompetitionContract } from "../dist/core/competition-contract.j
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { assessForecast, summarizeForecastAssessments } from "../dist/core/forecast-calibration.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
-import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, evaluateProviderGeneralization, harnessParetoFrontier, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
+import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, evaluateProviderGeneralization, harnessParetoFrontier, parseHarnessTrial, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, ScientificTaskSchema } from "../dist/core/scientific-tasks.js";
 import { runSafetyBenchmark } from "../dist/core/safety-bench.js";
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "../dist/core/scientific-suite.js";
@@ -3627,6 +3627,20 @@ test("benchmark runner enforces and preserves general metric suites", async () =
     assert.equal(missing.trials[0].validRun, false);
     assert.equal(missing.trials[0].failureClass, "invalid_metric_suite");
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("external benchmark trial parser rejects malformed evidence and preserves extensions", () => {
+  const trial = parseHarnessTrial({
+    harness: "evidra", task: "task-a", direction: "maximize", baselineMetric: 0.5,
+    candidateMetric: 0.7, candidateMetrics: { score: 0.7, safety: 0.99 },
+    metricGates: [{ name: "safety", direction: "maximize", maximumRegression: 0.01 }],
+    validRun: true, durationSeconds: 2, recovered: false, reproducible: true,
+    sourceReport: "held-out-v1",
+  });
+  assert.deepEqual(trial.candidateMetrics, { score: 0.7, safety: 0.99 });
+  assert.equal(trial.sourceReport, "held-out-v1");
+  assert.throws(() => parseHarnessTrial({ ...trial, candidateMetrics: { score: Number.NaN } }), /candidateMetrics\.score/);
+  assert.throws(() => parseHarnessTrial({ ...trial, durationSeconds: -1 }), /durationSeconds/);
 });
 
 test("benchmark protocol preserves provider provenance and rejects cross-provider pairing", () => {

@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export type ScoreDirection = "maximize" | "minimize";
 
 export interface HarnessTrial {
@@ -45,6 +47,53 @@ export interface HarnessTrial {
   executionAlignment?: boolean;
   /** Structured failure emitted by the benchmark runner, when the arm failed. */
   failureClass?: string;
+}
+
+const HarnessTrialSchema = z.object({
+  harness: z.string().min(1),
+  policy: z.string().min(1).optional(),
+  componentIds: z.array(z.string().min(1)).optional(),
+  task: z.string().min(1),
+  slice: z.string().min(1).optional(),
+  arm: z.string().optional(),
+  seed: z.union([z.string(), z.number().finite()]).optional(),
+  provider: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  reasoningEffort: z.string().min(1).optional(),
+  budgetMinutes: z.number().finite().positive().optional(),
+  dataRevision: z.string().min(1).optional(),
+  runtimeFingerprint: z.string().min(1).optional(),
+  direction: z.enum(["maximize", "minimize"]),
+  baselineMetric: z.number().finite(),
+  candidateMetric: z.number().finite().optional(),
+  candidateMetrics: z.record(z.string().min(1), z.number().finite()).optional(),
+  metricGates: z.array(z.object({
+    name: z.string().min(1),
+    direction: z.enum(["maximize", "minimize"]),
+    maximumRegression: z.number().finite().nonnegative().optional(),
+  })).optional(),
+  taskWorstMetric: z.number().finite().optional(),
+  taskBestMetric: z.number().finite().optional(),
+  validRun: z.boolean(),
+  durationSeconds: z.number().finite().nonnegative(),
+  timeToEvidenceSeconds: z.number().finite().nonnegative().optional(),
+  recovered: z.boolean(),
+  reproducible: z.boolean(),
+  reproducibilityChecked: z.boolean().optional(),
+  processQuality: z.number().finite().min(0).max(1).optional(),
+  executionAlignment: z.boolean().optional(),
+  failureClass: z.string().min(1).optional(),
+}).passthrough();
+
+/** Parse an external trial without silently accepting malformed evidence. */
+export function parseHarnessTrial(value: unknown, label = "Benchmark trial"): HarnessTrial {
+  const parsed = HarnessTrialSchema.safeParse(value);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const path = issue?.path.length ? ` (${issue.path.join(".")})` : "";
+    throw new Error(`${label} is invalid${path}: ${issue?.message ?? "invalid trial"}`);
+  }
+  return parsed.data as HarnessTrial;
 }
 
 export interface BenchmarkProtocolIssue {
