@@ -129,7 +129,10 @@ that boundary in `src/core/replay-simulator.ts`. `validateReplayWorld` rejects
 duplicate IDs, missing parents, invalid roots, and cycles; `simulateReplay` is
 offline-only and bounded by policy rounds and parallelism; `rankReplayPolicies`
 compares candidate exploration policies using best valid outcome, cost, and
-parallelism. This is a policy-evaluation primitive, not evidence that a policy
+parallelism. Replay nodes support both legacy metric scores and explicit
+evaluator-defined utility for artifact, proof, behavior, system, and other
+non-metric outcomes; the simulator never invents a scalar for a non-metric goal.
+This is a policy-evaluation primitive, not evidence that a policy
 will transfer to an unobserved task. A fresh online rollout and matched holdout
 remain required before deployment claims.
 

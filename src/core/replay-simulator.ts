@@ -4,7 +4,10 @@ import { z } from "zod";
 export interface ReplayNode {
   id: string;
   parentId: string | null;
-  score: number;
+  /** Metric score for legacy metric worlds; evaluator-defined utility is the generic form. */
+  score?: number;
+  utility?: number;
+  outcomeType?: "metric" | "artifact" | "proof" | "behavior" | "system" | "other";
   costMinutes: number;
   valid: boolean;
   /** Optional terminal marker retained for policy diagnostics. */
@@ -14,10 +17,15 @@ export interface ReplayNode {
 const ReplayNodeSchema = z.object({
   id: z.string().min(1),
   parentId: z.string().min(1).nullable(),
-  score: z.number().finite(),
+  score: z.number().finite().optional(),
+  utility: z.number().finite().optional(),
+  outcomeType: z.enum(["metric", "artifact", "proof", "behavior", "system", "other"]).default("metric"),
   costMinutes: z.number().finite().nonnegative(),
   valid: z.boolean(),
   terminal: z.boolean().optional(),
+}).superRefine((node, context) => {
+  if (node.score === undefined && node.utility === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["utility"], message: "Replay node requires an evaluator-defined utility or legacy score." });
+  if (node.outcomeType !== "metric" && node.utility === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["utility"], message: "Non-metric replay outcomes require explicit evaluator-defined utility." });
 });
 
 export interface ReplayWorld {
@@ -45,6 +53,7 @@ export interface ReplayResult {
   attemptedNodes: number;
   totalCostMinutes: number;
   bestScore: number | null;
+  bestUtility: number | null;
   replayScore: number;
   stopped: "policy" | "exhausted" | "round_limit";
 }
@@ -117,12 +126,13 @@ export function simulateReplay(worldInput: ReplayWorld, policy: ReplayPolicy, sc
     }
     if (!revealedThisRound) break;
   }
-  const validScores = world.nodes.filter((node) => revealed.has(node.id) && node.valid).map((node) => node.score);
-  const bestScore = validScores.length ? Math.max(...validScores) : null;
+  const validUtilities = world.nodes.filter((node) => revealed.has(node.id) && node.valid).map((node) => node.utility ?? node.score!).filter(Number.isFinite);
+  const bestUtility = validUtilities.length ? Math.max(...validUtilities) : null;
+  const bestScore = bestUtility;
   const attemptedNodes = Math.max(0, revealed.size - 1);
-  const replayScore = bestScore === null ? -costPenalty * totalCostMinutes : bestScore - costPenalty * totalCostMinutes + parallelismBonus * (attemptedNodes / Math.max(1, rounds));
+  const replayScore = bestUtility === null ? -costPenalty * totalCostMinutes : bestUtility - costPenalty * totalCostMinutes + parallelismBonus * (attemptedNodes / Math.max(1, rounds));
   const stopped = !frontier.size ? "exhausted" : rounds >= policy.maxRounds ? "round_limit" : "policy";
-  return { policyId: policy.id, revealed: [...revealed].sort(), rounds, attemptedNodes, totalCostMinutes, bestScore, replayScore, stopped };
+  return { policyId: policy.id, revealed: [...revealed].sort(), rounds, attemptedNodes, totalCostMinutes, bestScore, bestUtility, replayScore, stopped };
 }
 
 /** Evaluate alternative policies and return the highest replay score first. */

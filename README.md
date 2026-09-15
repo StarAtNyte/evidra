@@ -25,7 +25,12 @@ Most coding agents optimize for one conversation and one code change. Evidra is 
 
 ## Current maturity
 
-Evidra is an active TypeScript foundation, not a claim that every competition-specific worker or cloud adapter already exists. The controller primitives are implemented and tested; competition-specific training, metrics, split strategies, cloud executors, and submission adapters are loaded from the active workspace or added incrementally.
+Evidra is an active TypeScript foundation for both normal research and
+challenges—not a Kaggle-only runner. The controller primitives are implemented
+and tested; domain-specific training, metrics, split strategies, cloud
+executors, evaluators, and submission adapters are loaded from the active
+workspace or added incrementally. A research goal may be a metric, artifact,
+proof, behavior, system property, or another explicitly verifiable outcome.
 
 ## Research architecture inspired by frontier research systems
 
@@ -660,7 +665,7 @@ OOF/prediction analysis with ensemble candidates. The remaining research-lab lay
 
 These are separate from the core TUI so Evidra remains useful for non-Kaggle research and can be operated entirely from a terminal.
 
-For a reproducible end-to-end harness trial, see [the Karpathy Autoresearch recipe](docs/benchmarks/karpathy-autoresearch.md). A standard checkout is detected by `evidra init autoresearch`, so the generic manifest, GPU worker, metric parser, evidence artifacts, and autonomous experiment loop can be exercised without a benchmark-specific agent path.
+For a reproducible end-to-end harness trial, see [the Karpathy Autoresearch recipe](docs/benchmarks/karpathy-autoresearch.md). A standard checkout is detected by `evidra init autoresearch`, so the generic manifest, GPU worker, metric parser, evidence artifacts, and autonomous experiment loop can be exercised without a benchmark-specific agent path. The same controller and evidence contracts are used for scientific, software, algorithmic, and competition workflows.
 
 The first real AIRS-Bench task trial is recorded in [the AIRS-Bench harness report](docs/benchmarks/airs-bench.md). It reproduces a SICK task baseline through Evidra and records structured-agent failure as resumable evidence when a deliberately small local model cannot complete the decision contract.
 

@@ -3095,11 +3095,17 @@ test("replay simulator evaluates alternate branch and batch policies without exe
   const batch = simulateReplay(world, { id: "batch", maxRounds: 2, maxParallel: 2, select: ({ frontier }) => frontier }, { costPenalty: 0 });
   assert.deepEqual(batch.revealed, ["a", "a1", "b", "root"]);
   assert.equal(batch.bestScore, 1.1);
+  assert.equal(batch.bestUtility, 1.1);
   assert.equal(rankReplayPolicies(world, [
     { id: "slow", maxRounds: 2, maxParallel: 1, select: ({ frontier }) => [frontier[0]] },
     { id: "batch", maxRounds: 2, maxParallel: 2, select: ({ frontier }) => frontier },
   ], { costPenalty: 0 })[0].policyId, "batch");
   assert.equal(batch.totalCostMinutes, 5);
+  const nonMetric = simulateReplay({ rootId: "root", nodes: [
+    { id: "root", parentId: null, utility: 0, outcomeType: "proof", costMinutes: 0, valid: true },
+    { id: "proof", parentId: "root", utility: 1, outcomeType: "proof", costMinutes: 1, valid: true },
+  ] }, { id: "proof-policy", maxRounds: 1, maxParallel: 1, select: ({ frontier }) => frontier }, { costPenalty: 0 });
+  assert.equal(nonMetric.bestUtility, 1);
 });
 
 test("replay simulator rejects malformed or cyclic discovery history", () => {

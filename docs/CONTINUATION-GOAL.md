@@ -113,6 +113,9 @@ external evaluator.
 - Documented the Dream-RSI and Discovery Foundation Models design translation in
   `docs/research/literature-synthesis-2026-09.md`; replay results remain leads
   until a fresh online rollout and held-out validation.
+- Replay outcomes support explicit evaluator utility for non-metric research
+  goals (artifact, proof, behavior, system, or other), while retaining legacy
+  metric scores; the simulator never invents a scalar outcome.
 
 ## Immediate next work
 
