@@ -507,7 +507,12 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
 
 /** Run independent research lanes with an explicit concurrency bound. */
 export async function runResearchLanes(objective: string, context: Record<string, unknown>, options: ResearchLanesOptions): Promise<ResearchLaneReport[]> {
-  const concurrency = researchLaneConcurrency({ autonomy: options.autonomy, provider: options.provider, requested: options.maxParallel });
+  // A Codex pool may become local after entitlement exhaustion. Size the
+  // initial pool for the most constrained route that can actually serve it,
+  // otherwise several lanes can switch to one Ollama process at once.
+  const mayUseLocalFallback = options.provider === "local"
+    || Boolean(options.fallbackLocalModel && (options.limitPolicy === "auto" || options.limitPolicy === "fallback"));
+  const concurrency = researchLaneConcurrency({ autonomy: options.autonomy, provider: mayUseLocalFallback ? "local" : options.provider, requested: options.maxParallel });
   const roles = selectResearchLaneRoles(objective, concurrency, { focus: options.laneFocus, rotation: options.laneRotation });
   const routes = assignResearchLaneRoutes(roles, options);
   const reports: ResearchLaneReport[] = [];
