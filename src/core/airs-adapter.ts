@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { parseMetricOutput, safeWorkerEnvironment } from "./executors.js";
 import { processFailureResult, runProcess, splitCommandLine } from "./process.js";
@@ -47,6 +47,10 @@ function scriptPath(repository: string, value: string, label: string): string {
   const path = containedPath(repository, value, label);
   if (!existsSync(path)) throw new Error(`${label} does not exist: ${path}`);
   return path;
+}
+
+function usableSubmission(path: string): boolean {
+  return existsSync(path) && statSync(path).isFile() && statSync(path).size > 0;
 }
 
 /**
@@ -102,6 +106,17 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
       return { valid: false, metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "agent" };
     }
   }
+  // Seed the two files most agents must update, then commit the seed. Codex's
+  // file-change tool is more reliable when it updates tracked paths in a repo
+  // with a HEAD; an empty seed is never accepted as a finished submission.
+  const submissionPath = join(agentLogDir, "submission.csv");
+  const planPath = join(lifecycleRoot, "PLAN.md");
+  writeFileSync(submissionPath, "", { mode: 0o600 });
+  writeFileSync(planPath, "# AIRS task plan\n\nAgent must replace this placeholder before completion.\n", { mode: 0o600 });
+  const seedCommit = await runProcess(["git", "add", "--", "log/submission.csv", "PLAN.md"], lifecycleRoot, 10_000, undefined, undefined, environment);
+  if (seedCommit.exitCode === 0) {
+    await runProcess(["git", "-c", "user.name=Evidra", "-c", "user.email=evidra@localhost", "commit", "--quiet", "-m", "seed AIRS agent workspace"], lifecycleRoot, 10_000, undefined, undefined, environment);
+  }
   let agent: ProcessResult;
   if (options.agentRunner) {
     options.onProgress?.("AIRS · agent");
@@ -112,8 +127,7 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
     agent = await runStage("agent", options.agentCommand!, lifecycleRoot);
   }
   if (agent.exitCode !== 0) return { valid: false, metrics: {}, workspace: lifecycleRoot, agentDataDir, agentLogDir, stages, failureStage: "agent" };
-  const submissionPath = join(agentLogDir, "submission.csv");
-  if (!existsSync(submissionPath)) {
+  if (!usableSubmission(submissionPath)) {
     const failure: ProcessResult = {
       ...agent,
       exitCode: 66,

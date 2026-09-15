@@ -177,6 +177,13 @@ as a local Git repository when necessary. This is required by Codex's file
 change tool and does not touch the user's checkout or turn the temporary
 repository into benchmark evidence.
 
+The workspace is seeded with an empty `log/submission.csv` and a placeholder
+`PLAN.md`, then committed. The seed makes the workspace structurally usable by
+providers that require a Git `HEAD`, but Evidra only accepts a non-empty
+submission as complete. The embedded AIRS prompt directs Codex to use shell or
+Python file creation because provider patch tools are not portable across
+disposable worker paths.
+
 Embedded AIRS Codex runs now use a repeated-command watchdog: three identical
 shell commands in succession terminate the agent stage with an explicit stuck
 diagnostic, allowing the outer retry/route policy to recover instead of

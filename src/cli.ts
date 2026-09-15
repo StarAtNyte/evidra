@@ -1191,7 +1191,7 @@ airsBenchmark.command("execute")
           reasoningEffort: options.effort, sandbox: "workspace-write", networkAccessEnabled: false,
           timeoutMs: remainingMs, maxRepeatedCommands: 3,
         });
-        const objective = `You are running phase ${phaseIndex + 1} of ${phases.length} (${phases[phaseIndex].name}) for an AIRS-Bench experiment. Read the task specification at ${taskDescription}. Your current working directory is ${context.workspace}; work only there. Use the prepared data in ${context.agentDataDir}; do not access hidden labels or test_with_labels. ${phases[phaseIndex].instruction} You MUST leave the required local artifact at ${submissionRelativePath} before the final verification phase completes. Do not submit externally and do not finish with only an explanation.`;
+        const objective = `You are running phase ${phaseIndex + 1} of ${phases.length} (${phases[phaseIndex].name}) for an AIRS-Bench experiment. Read the task specification at ${taskDescription}. Your current working directory is ${context.workspace}; work only there. Use the prepared data in ${context.agentDataDir}; do not access hidden labels or test_with_labels. ${phases[phaseIndex].instruction} You MUST leave the required local artifact at ${submissionRelativePath} before the final verification phase completes. Do not submit externally and do not finish with only an explanation. IMPORTANT: create and edit files with shell commands (for example python3 -c, heredocs, or redirection). Do not use the provider's file-change/apply-patch tool; this worker runs in a disposable workspace where that tool is unavailable.`;
         try {
           const response = await agent.run({
             role: "experiment engineer",
@@ -1199,7 +1199,7 @@ airsBenchmark.command("execute")
             context: { taskPath: context.taskPath, taskDescription, agentDataDir: context.agentDataDir, agentLogDir: context.agentLogDir, model: options.model, seed: options.seed, effort: options.effort, phase: phases[phaseIndex].name, phaseIndex: phaseIndex + 1 },
           }, context.onProgress);
           outputs.push(typeof response.output === "string" ? response.output : JSON.stringify(response.output));
-          if (phaseIndex >= 1 && existsSync(submissionPath)) {
+          if (phaseIndex >= 1 && existsSync(submissionPath) && statSync(submissionPath).isFile() && statSync(submissionPath).size > 0) {
             if (phaseIndex === phases.length - 1) return { command: ["codex-sdk", "airs-agent"], cwd: context.workspace, exitCode: 0, durationMs: Date.now() - started, stdout: outputs.join("\n"), stderr: "" };
           }
           lastError = new Error(`Codex completed without creating the required submission artifact: ${submissionPath}`);
