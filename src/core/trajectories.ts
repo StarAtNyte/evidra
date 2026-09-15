@@ -156,6 +156,7 @@ export function validateTrajectoryStructure(events: TrajectoryEvent[]): Trajecto
       if (terminalIndex >= 0) quarantined.push("trajectory has multiple terminal events");
       else terminalIndex = index;
     }
+    if (event.payload.traceTruncated === true) issues.push("trace was truncated before complete terminal evidence was retained");
     if (terminalIndex >= 0 && index > terminalIndex) quarantined.push("events occur after terminal state");
     if (event.kind === "tool_call") {
       if (!event.callId) quarantined.push(`tool call '${event.id || index}' has no call id`);

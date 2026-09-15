@@ -664,6 +664,7 @@ test("tool traces cap all event kinds, including tool calls and results", () => 
   const marker = trace.events.at(-1);
   assert.equal(marker?.payload.traceTruncated, true);
   assert.ok(Number(marker?.payload.droppedEvents) > 1);
+  assert.match(validateTrajectoryStructure(trace.events).issues.join(" "), /truncated before complete terminal evidence/);
 });
 
 test("persisted trace parser bounds malformed crash artifacts and redacts payloads", () => {

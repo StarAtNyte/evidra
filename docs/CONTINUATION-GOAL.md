@@ -349,6 +349,9 @@ external evaluator.
 - Bounded traces now reserve a final `traceTruncated` marker, making dropped
   tail evidence explicit to recovery and trajectory-quality evaluation instead
   of silently presenting an incomplete trace as complete.
+- Trajectory validation now turns that marker into an explicit recoverable
+  structural issue, preventing truncated Codex prefixes from being treated as
+  complete evidence by routing or learning components.
 
 ## Immediate next work
 
