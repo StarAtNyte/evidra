@@ -389,6 +389,9 @@ external evaluator.
 - Research lane concurrency now accounts for configured local fallback routes
   before launch, preventing simultaneous Codex-exhaustion fallbacks from
   overloading a single Ollama service.
+- Codex operations and user documentation now describe research-only native
+  web search, durable source grounding, assistant trace capture, and complete
+  cache-write usage telemetry.
 - Codex streamed turns now require the SDK's `turn.completed` event in addition
   to a non-empty assistant message; a disconnected partial stream is rejected
   and remains eligible for recovery rather than becoming a valid decision.

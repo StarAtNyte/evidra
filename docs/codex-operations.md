@@ -30,6 +30,13 @@ Read-only observations may be reused within a turn, but shell results are
 never cached because fast/YOLO commands can observe changing process or
 filesystem state.
 
+Research-role Codex threads opt into the official SDK's live web-search and
+network options so lanes, director, and critic can investigate current papers,
+documentation, and implementation leads. Ordinary conversation does not opt
+into these research settings. Web results remain discovery material: Evidra
+requires a durable retrieved source, checksum, and claim provenance before a
+literature claim can support a hypothesis or completion decision.
+
 Long-running context retrieval is hybrid: durable claims and hypotheses are
 ranked using the SQLite FTS index when available, then deterministic lexical
 overlap remains as a compatibility fallback. This keeps relevant old memory
@@ -222,9 +229,9 @@ The CLI polls the durable controller directive during long reset waits, so a
 stop request interrupts the wait within a few seconds rather than waiting for
 the provider window to expire.
 
-Native Codex activity is normalized into concise progress and bounded,
-secret-redacted trajectory events. Raw protocol ids, credentials, and
-unbounded payloads are not shown in the TUI or stored in research context.
+Native Codex activity and the bounded final assistant message are normalized
+into concise, secret-redacted trajectory events. Raw protocol ids, credentials,
+and unbounded payloads are not shown in the TUI or stored in research context.
 During an autonomous cycle, the same bounded events are also appended to a
 cycle JSONL trace under `.sota/traces/` as they occur. If the controller crashes
 before the final trajectory is committed, the partial tool/command history is
