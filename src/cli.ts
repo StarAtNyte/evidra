@@ -78,7 +78,7 @@ import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.j
 import { assessHypothesisQuality } from "./core/hypothesis-quality.js";
 import { assessResearchDecisionRubric } from "./core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "./core/validation-lock.js";
-import { parseBenchmarkArm, runBenchmarkArms, type BenchmarkArmSpec } from "./core/benchmark-runner.js";
+import { benchmarkProtocolFingerprint, parseBenchmarkArm, runBenchmarkArms, type BenchmarkArmSpec } from "./core/benchmark-runner.js";
 import { analyzeHarnessComponentFailures, assessHarnessChangePresence, evaluateHarnessChange, parseHarnessChangeContract, type HarnessChangeContract } from "./core/harness-evolution.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, parseAirsBenchDiscovery, type AirsBenchFamily, type AirsHarnessTemplate } from "./core/airs-bench.js";
 import { inventoryHarnessComponents, planHarnessInterventions } from "./core/harness-evolution.js";
@@ -574,6 +574,7 @@ benchmark.command("run")
   .option("--out <file>", "write the run report and scorecards to a JSON file")
   .option("--workspace <dir>", "explicit benchmark workspace root; defaults to the Evidra project")
   .option("--parallel <count>", "maximum independent benchmark arms to run concurrently", "1")
+  .option("--dry-run", "validate and print the matched protocol without launching any harness")
   .option("--challenger <harness>", "harness that must beat the incumbents", "evidra")
   .option("--incumbent <harness>", "compare only against this incumbent; by default compare against every other harness")
   .option("--retention <file>", "previous benchmark report whose challenger performance must be retained")
@@ -582,7 +583,7 @@ benchmark.command("run")
   .option("--compare-providers <routes>", "explicit provider diagnostic, e.g. codex,local; allows intentional mixed-provider arms")
   .option("--provider-holdout <file>", "task-disjoint held-out report for the explicit provider comparison")
   .description("Execute matched arms, score the evidence, and verify the challenger beats incumbents")
-  .action(async (file: string, options: { out?: string; workspace?: string; challenger: string; incumbent?: string; parallel: string; retention?: string; retentionRegression: string; holdout?: string; compareProviders?: string; providerHoldout?: string }) => {
+  .action(async (file: string, options: { out?: string; workspace?: string; challenger: string; incumbent?: string; parallel: string; dryRun?: boolean; retention?: string; retentionRegression: string; holdout?: string; compareProviders?: string; providerHoldout?: string }) => {
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
     const raw = parsed && typeof parsed === "object" && Array.isArray((parsed as { arms?: unknown }).arms) ? (parsed as { arms: unknown[] }).arms : undefined;
     if (!raw?.length) throw new Error("Benchmark protocol must contain a non-empty arms array.");
@@ -604,6 +605,17 @@ benchmark.command("run")
     if (!protocol.valid && protocolIssues.length) throw new Error(`Benchmark protocol is not matched:\n${protocolIssues.map((issue) => `- ${issue.message}`).join("\n")}`);
     const benchmarkWorkspace = options.workspace ? resolve(options.workspace) : root;
     const maxParallel = Math.max(1, Math.min(32, Number.parseInt(options.parallel, 10) || 1));
+    if (options.dryRun) {
+      console.log(JSON.stringify({
+        dryRun: true,
+        workspace: benchmarkWorkspace,
+        maxParallel,
+        protocolFingerprint: benchmarkProtocolFingerprint(arms),
+        protocol: protocol,
+        arms: arms.map((arm) => ({ harness: arm.harness, task: arm.task, arm: arm.arm, seed: arm.seed, provider: arm.provider ?? null, model: arm.model, reasoningEffort: arm.reasoningEffort ?? "medium", budgetMinutes: arm.budgetMinutes, evaluatorFingerprint: arm.evaluatorFingerprint ?? null, command: arm.command })),
+      }, null, 2));
+      return;
+    }
     const report = await runBenchmarkArms(arms, benchmarkWorkspace, (message) => console.log(`· ${message}`), { maxParallel });
     const componentFailureEvidence = analyzeHarnessComponentFailures(report.trials);
     const matched = validateBenchmarkProtocol(report.trials);

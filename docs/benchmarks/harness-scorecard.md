@@ -27,6 +27,7 @@ The same protocol is available from the CLI:
 
 ```bash
 evidra benchmark run protocol.json --out benchmark-run.json
+evidra benchmark run protocol.json --dry-run # validate without launching harnesses
 # use an external checkout, such as an AIRS-Bench repository:
 evidra benchmark run airs-protocol.json --workspace /path/to/airs-bench
 # optionally select one incumbent; otherwise Evidra is compared with every other arm
@@ -44,6 +45,10 @@ present on every matched arm, with the same metric direction and baseline
 metric. Historical trial
 exports can still be scored for diagnostics, but incomplete or mismatched files
 are explicitly marked rather than treated as evidence that Evidra won.
+`benchmark run --dry-run` performs the same arm and fairness validation and
+prints the resolved workspace, protocol fingerprint, fairness metadata, and
+commands without starting a worker or writing benchmark evidence. Use it when
+assembling a new Codex/Pi/Hermes/Evidra comparison.
 
 `benchmark run` accepts `{ "arms": [...] }` with one command per harness arm. By
 default it treats `evidra` as the challenger and compares it against every other

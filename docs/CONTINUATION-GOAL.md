@@ -140,6 +140,9 @@ external evaluator.
 - Research lanes now return bounded discriminating tests; cross-pollination
   persists them and keeps adversarial review active when uncertainty has no
   concrete resolution test.
+- Harness comparison now has a non-mutating `benchmark run --dry-run`
+  preflight that prints the protocol fingerprint and resolved arms before any
+  external harness is launched.
 
 ## Immediate next work
 
