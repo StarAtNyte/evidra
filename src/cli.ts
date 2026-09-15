@@ -590,6 +590,10 @@ benchmark.command("run")
     if (change && (typeof change.id !== "string" || !Array.isArray(change.componentIds) || !change.componentIds.every((item) => typeof item === "string") || !change.predictedDelta || typeof change.predictedDelta.low !== "number" || typeof change.predictedDelta.median !== "number" || typeof change.predictedDelta.high !== "number" || typeof change.prediction !== "string" || typeof change.falsification !== "string" || typeof change.acceptance !== "string")) {
       throw new Error("Benchmark change contract must declare id, componentIds, predictedDelta, prediction, falsification, and acceptance.");
     }
+    const baselineComponentsValue = parsed && typeof parsed === "object" ? (parsed as { baselineComponents?: unknown }).baselineComponents : undefined;
+    const baselineComponents = baselineComponentsValue === undefined ? undefined : Array.isArray(baselineComponentsValue) && baselineComponentsValue.every((entry) => entry && typeof entry === "object" && typeof (entry as { path?: unknown }).path === "string" && typeof (entry as { checksum?: unknown }).checksum === "string")
+      ? baselineComponentsValue as Array<{ path: string; checksum: string }>
+      : (() => { throw new Error("baselineComponents must be an array of { path, checksum } entries."); })();
     const arms = raw.map((value, index) => {
       if (!value || typeof value !== "object") throw new Error(`Benchmark arm ${index + 1} is not an object.`);
       const arm = value as Partial<BenchmarkArmSpec>;
@@ -633,8 +637,10 @@ benchmark.command("run")
     const componentAblations = challengerTrials.length > 0 && challengerTrials.every((trial) => Array.isArray(trial.componentIds))
       ? evaluateHarnessComponentAblations(report.trials, options.challenger)
       : undefined;
+    const targetComponentIds = [...new Set(arms.filter((arm) => arm.harness === options.challenger).flatMap((arm) => arm.componentIds ?? []))];
+    const changePresence = change && baselineComponents ? assessHarnessChangePresence(baselineComponents, inventoryHarnessComponents(benchmarkWorkspace), targetComponentIds) : undefined;
     const changeOutcomes = change
-      ? comparisons.map((comparison) => ({ incumbent: comparison.incumbent, outcome: evaluateHarnessChange({ ...change, id: change.id!, componentIds: change.componentIds!, predictedDelta: change.predictedDelta!, prediction: change.prediction!, falsification: change.falsification!, acceptance: change.acceptance! }, { baselineScore: change.baselineScore, candidateScore: comparison.pairedMeanDelta === null ? undefined : (change.baselineScore ?? 0) + comparison.pairedMeanDelta, valid: comparison.validPairedArms > 0 && comparison.pairedLower95 !== null }) }))
+      ? comparisons.map((comparison) => ({ incumbent: comparison.incumbent, outcome: evaluateHarnessChange({ ...change, id: change.id!, componentIds: change.componentIds!, predictedDelta: change.predictedDelta!, prediction: change.prediction!, falsification: change.falsification!, acceptance: change.acceptance! }, { baselineScore: change.baselineScore, candidateScore: comparison.pairedMeanDelta === null ? undefined : (change.baselineScore ?? 0) + comparison.pairedMeanDelta, valid: comparison.validPairedArms > 0 && comparison.pairedLower95 !== null, changePresence }) }))
       : undefined;
     let generalization: ReturnType<typeof evaluateHarnessGeneralization>[] | undefined;
     if (options.holdout) {
@@ -655,7 +661,7 @@ benchmark.command("run")
       const maximumRegression = Number(options.retentionRegression);
       retention = evaluateHarnessRetention(priorTrials, report.trials, options.challenger, maximumRegression);
     }
-    const output = { ...report, scorecards, ...(policyScorecards ? { policyScorecards, policyComparisons } : {}), pareto, protocol: matched, challenger: options.challenger, comparisons, ...(providerComparison ? { providerComparison } : {}), ...(providerGeneralization ? { providerGeneralization } : {}), adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
+    const output = { ...report, scorecards, ...(policyScorecards ? { policyScorecards, policyComparisons } : {}), pareto, protocol: matched, challenger: options.challenger, comparisons, ...(providerComparison ? { providerComparison } : {}), ...(providerGeneralization ? { providerGeneralization } : {}), adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, ...(changePresence ? { changePresence } : {}), changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
     if (options.out) writeFileSync(resolve(options.out), `${JSON.stringify(output, null, 2)}\n`);
     const benchmarkStore = new ResearchStore(statePath);
     benchmarkStore.appendEvent("harness.benchmark.completed", {
@@ -675,7 +681,7 @@ benchmark.command("run")
       ...(providerGeneralization ? { providerGeneralization } : {}),
       adaptation,
       ...(componentAblations ? { componentAblations: componentAblations.map((item) => ({ variant: item.variant, removedComponents: item.removedComponents, valid: item.valid, challengerWins: item.comparison.challengerWins, reason: item.reason })) } : {}),
-      ...(change ? { change, changeOutcomes } : {}),
+      ...(change ? { change, ...(changePresence ? { changePresence } : {}), changeOutcomes } : {}),
       ...(generalization ? { generalization: generalization.map((report) => ({ incumbent: report.incumbent, generalizes: report.generalizes, reason: report.reason })) } : {}),
       ...(retention ? { retention } : {}),
     });

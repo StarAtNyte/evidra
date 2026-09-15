@@ -3422,6 +3422,7 @@ test("harness evolution inventories editable components and enforces prediction 
     assert.ok(interventions[0].components.some((id) => id.includes("executors.ts")));
     const contract = { id: "change-1", componentIds: interventions[0].components, baselineScore: 0.5, predictedDelta: { low: 0.02, median: 0.05, high: 0.1 }, prediction: "score improves", falsification: "no improvement", acceptance: "paired" };
     assert.equal(evaluateHarnessChange(contract, { candidateScore: 0.57, valid: true }).status, "confirmed");
+    assert.equal(evaluateHarnessChange(contract, { candidateScore: 0.9, valid: true, changePresence: { status: "unchanged", changedPaths: [], addedPaths: [], removedPaths: [], reason: "no targeted source changed" } }).status, "unobserved");
     assert.equal(evaluateHarnessChange(contract, { candidateScore: 0.51, valid: true }).status, "refuted");
     assert.equal(evaluateHarnessChange(contract, { candidateScore: 0.9, valid: false }).status, "unobserved");
     const snapshot = inventory.map((component) => ({ path: component.path, checksum: component.checksum }));

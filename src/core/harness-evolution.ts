@@ -143,7 +143,9 @@ export function planHarnessInterventions(input: {
 }
 
 /** Compare a declared prediction with measured evidence without accepting a narrative win. */
-export function evaluateHarnessChange(contract: HarnessChangeContract, outcome: { candidateScore?: number; baselineScore?: number; valid?: boolean }): HarnessChangeOutcome {
+export function evaluateHarnessChange(contract: HarnessChangeContract, outcome: { candidateScore?: number; baselineScore?: number; valid?: boolean; changePresence?: HarnessChangePresence }): HarnessChangeOutcome {
+  if (outcome.changePresence?.status === "unchanged") return { status: "unobserved", explanation: `Declared harness change is absent: ${outcome.changePresence.reason}` };
+  if (outcome.changePresence?.status === "unavailable") return { status: "unobserved", explanation: `Harness change presence could not be verified: ${outcome.changePresence.reason}` };
   const baseline = outcome.baselineScore ?? contract.baselineScore;
   const candidate = outcome.candidateScore;
   if (!outcome.valid || baseline === undefined || candidate === undefined || !Number.isFinite(baseline) || !Number.isFinite(candidate)) return { status: "unobserved", explanation: "No valid paired score was recorded." };
