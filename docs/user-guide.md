@@ -169,9 +169,10 @@ retrieve primary sources, read challenge discussions, run commands, write code
 in an isolated worktree, execute an evaluator, analyze artifacts, and use the
 results in its next reasoning turn. It records hypotheses with mechanisms,
 tests, expected outcomes, costs, risks, dependencies, and falsification rules.
-Research-director turns also use the Codex SDK's structured-output schema, so
-phase, decision, hypothesis, and tool-call fields are validated at the model
-boundary before Evidra applies its own durable schema and evidence gates.
+Research-director, independent-lane, and critic turns use the Codex SDK's
+structured-output schemas, so phase, decision, report, review, hypothesis, and
+tool-call fields are constrained at the model boundary before Evidra applies
+its own durable schemas and evidence gates.
 
 Independent lanes explore different formulations and roles. Their evidence is
 cross-pollinated through a bounded board, while shared citations are not

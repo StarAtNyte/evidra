@@ -61,6 +61,38 @@ export type ResearchReview = z.infer<typeof ResearchReviewSchema> & {
   error?: string;
 };
 
+const RESEARCH_LANE_OUTPUT_SCHEMA = JSON.stringify({
+  type: "object",
+  additionalProperties: false,
+  required: ["role", "summary", "findings", "recommendations", "uncertainties", "discriminatingTests", "evidence", "evidenceSourceIds", "confidence"],
+  properties: {
+    role: { type: "string" },
+    summary: { type: "string" },
+    findings: { type: "array", maxItems: 12, items: { type: "string" } },
+    recommendations: { type: "array", maxItems: 8, items: { type: "string" } },
+    uncertainties: { type: "array", maxItems: 8, items: { type: "string" } },
+    discriminatingTests: { type: "array", maxItems: 8, items: { type: "string" } },
+    evidence: { type: "array", maxItems: 12, items: { type: "string" } },
+    evidenceSourceIds: { type: "array", maxItems: 8, items: { type: "string" } },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+  },
+});
+
+const RESEARCH_REVIEW_OUTPUT_SCHEMA = JSON.stringify({
+  type: "object",
+  additionalProperties: false,
+  required: ["verdict", "summary", "objections", "requiredChecks", "evidence", "independentReplication", "confidence"],
+  properties: {
+    verdict: { type: "string", enum: ["proceed", "revise", "reject"] },
+    summary: { type: "string" },
+    objections: { type: "array", maxItems: 12, items: { type: "string" } },
+    requiredChecks: { type: "array", maxItems: 12, items: { type: "string" } },
+    evidence: { type: "array", maxItems: 12, items: { type: "string" } },
+    independentReplication: { type: "boolean" },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+  },
+});
+
 /** A review cannot approve a decision while declaring unresolved checks. */
 export function normalizeResearchReview(review: ResearchReview, validEvidence?: ReadonlySet<string>): ResearchReview {
   const groundedEvidence = validEvidence
@@ -312,7 +344,7 @@ export async function runResearchCritic(
   options.onProgress?.("Research critic · checking assumptions and disagreement...");
   const prompt = `${objective}\n\nYou are Evidra's independent critic. Review the proposed decision and independent lane reports below. Look for unsupported claims, leakage, invalid comparisons, missing controls, overconfident conclusions, and cheaper falsification tests. Do not rewrite the decision or invent measurements. Return ONLY JSON: {"verdict":"proceed|revise|reject","summary":"...","objections":["..."],"requiredChecks":["..."],"evidence":["copy an exact evidence anchor from the lane reports or durable observation context"],"independentReplication":true,"confidence":0.0}. A proceed verdict is valid only when evidence contains at least one exact anchor from the supplied reports and requiredChecks is empty.\n\nDecision:\n${JSON.stringify(decision)}\n\nLane reports:\n${JSON.stringify(laneReports)}`;
   try {
-    const result = await runWithLocalFallback({ role: "critic", objective: prompt, context: { decision, laneReports } }, {
+    const result = await runWithLocalFallback({ role: "critic", objective: prompt, context: { decision, laneReports }, outputSchema: RESEARCH_REVIEW_OUTPUT_SCHEMA }, {
       provider: options.provider,
       model: options.model,
       limitPolicy: options.limitPolicy,
@@ -412,7 +444,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
       if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
       try {
         const bounded = boundResearchContext({ ...context, laneToolResults: toolResults });
-        const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective), context: bounded.context }, {
+        const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective), context: bounded.context, outputSchema: RESEARCH_LANE_OUTPUT_SCHEMA }, {
           provider,
           model,
           limitPolicy: options.limitPolicy,
