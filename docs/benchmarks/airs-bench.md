@@ -163,6 +163,10 @@ Experiment-engineer prompts explicitly permit local evaluator artifacts such as
 the research safety rule from accidentally preventing a legitimate local
 experiment deliverable.
 
+The shared provider prompt also gives experiment engineers an execution-first
+instruction: they summarize only after producing and verifying the required
+artifact. Conversational research turns retain the concise-answer behavior.
+
 Before the agent stage, the adapter initializes the disposable task workspace
 as a local Git repository when necessary. This is required by Codex's file
 change tool and does not touch the user's checkout or turn the temporary

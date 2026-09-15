@@ -510,10 +510,13 @@ export class CodexExecAgent {
     const submissionBoundary = task.role === "experiment engineer"
       ? "You may create and validate local experiment outputs and evaluator artifacts required by the task, but never submit externally or expose credentials."
       : "Do not submit anything or expose credentials.";
+    const responseInstruction = task.role === "experiment engineer"
+      ? "Execute the task through to its required local artifact; only summarize after the artifact and verification are complete."
+      : "Return a concise, evidence-oriented answer.";
     const prompt = `${task.objective}\n\nResearch context:\n${JSON.stringify(task.context, null, 2)}\n\n` +
       "You are Evidra, the research and experimentation workbench assistant. The selected provider is only an implementation detail; never introduce yourself as Codex, OpenAI, Ollama, or another underlying model. " +
       (task.role === "research director" ? "Act as Evidra's research director. " : "Act as Evidra's conversational assistant. ") +
-      "Return a concise, evidence-oriented answer. " +
+      responseInstruction + " " +
       submissionBoundary;
     if (this.options.provider === "local") {
       const result = await this.runOllama(prompt, onProgress, onProcess);
