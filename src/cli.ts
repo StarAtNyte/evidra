@@ -407,6 +407,17 @@ async function acquireCliControllerLease(mode: "research" | "challenge"): Promis
   return release;
 }
 
+/** Persist the last autonomous phase before work begins, so restart/status paths never guess. */
+function recordCampaignCheckpoint<T extends { status: string }>(campaign: T, mode: "research" | "challenge", cycle: number, step: string): void {
+  const store = new ResearchStore(statePath);
+  const lease = store.controllerLease();
+  if (lease?.status === "running" && lease.controllerId) store.heartbeatControllerLease(lease.controllerId, mode, step);
+  store.saveCampaign({ ...campaign, currentCycle: cycle, currentStep: step, checkpointedAt: new Date().toISOString() });
+  store.setSchedulerState({ status: campaign.status === "paused" ? "paused" : "running", mode, currentStep: step });
+  store.appendEvent("research.campaign.checkpoint", { cycle, step, mode });
+  store.close();
+}
+
 async function ingestCompetitionSources(adapter: ReturnType<typeof activeCompetition>): Promise<void> {
   if (!adapter.config.researchSources?.length) return;
   const store = new ResearchStore(statePath);
@@ -1790,6 +1801,7 @@ research
     const objective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}`;
     let cycle = 0;
     do {
+      recordCampaignCheckpoint(campaign, mode, cycle, "cycle-start");
       const directive = await waitForControllerDirective(
         () => {
           if (campaign.status === "paused") return;
@@ -2292,6 +2304,7 @@ research
       const agentTimeoutMs = researchTurnTimeoutMs(remainingBudgetMs);
       while (true) {
         try {
+          recordCampaignCheckpoint(campaign, mode, cycle, "research-lanes");
           console.log("Research · independent lanes are investigating the evidence...");
           laneReports = await runResearchLanes(agentObjective, {
             project: activeProject,
@@ -2394,6 +2407,7 @@ research
           const crossPollinationStore = new ResearchStore(statePath);
           crossPollinationStore.appendEvent("research.cross_pollination.completed", { cycle, board: crossPollination });
           crossPollinationStore.close();
+          recordCampaignCheckpoint(campaign, mode, cycle, "research-director");
           console.log("Research · director is cross-pollinating lane findings...");
           decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness }, { provider: options.provider as "codex" | "local", model: selectedModel, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onUsage: recordAgentUsage, consumeSteering: () => {
             const steeringStore = new ResearchStore(statePath);
@@ -2401,6 +2415,7 @@ research
             steeringStore.close();
             return messages;
           } });
+          recordCampaignCheckpoint(campaign, mode, cycle, "research-critic");
           criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
             provider: options.provider as "codex" | "local",
             model: selectedModel,
@@ -2661,6 +2676,7 @@ research
       const executionCandidates = !criticBlocks && !policyBlocksExecution && decision.decision === "run" && decision.selectedHypothesis && autonomyPolicy(autonomy).canRunIsolatedExperiments
         ? (portfolioPlan.selected.length ? portfolioPlan.selected : selectedDecisionCandidate ? [selectedDecisionCandidate] : [])
         : [];
+      if (executionCandidates.length) recordCampaignCheckpoint(campaign, mode, cycle, "experiment-execution");
       // Successive halving is only executable when the competition declares a
       // reduced-validation command. Otherwise a feasible portfolio must go
       // directly to the full evaluator; pretending a reduced stage exists
@@ -3061,6 +3077,7 @@ research
           policy: adaptiveHarness,
         });
       }
+      recordCampaignCheckpoint(campaign, mode, cycle, terminal ? "campaign-terminal" : "cycle-complete");
       decisionStore.close();
       console.log(formatResearchDecision(decision));
       if (stagnation.stagnant) console.log(`\nCampaign paused after ${stagnation.cycles} unchanged active decisions; review the bottleneck before resuming.`);
