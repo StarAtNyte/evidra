@@ -1983,7 +1983,12 @@ research
         eligible: ensemblePayload.eligible === true,
         ...(Array.isArray(diversity) ? { pairCount: diversity.length, maxDisagreement: Math.max(0, ...diversity.map((pair) => pair && typeof pair === "object" && typeof (pair as { disagreement?: unknown }).disagreement === "number" ? (pair as { disagreement: number }).disagreement : 0)) } : {}),
       } : undefined;
-      const forecastCalibrationEvents = store.eventsByType("research.forecast.assessed").slice(-24);
+      const forecastCalibrationEvents = store.eventsByType("research.forecast.assessed").filter((event) => {
+        const payload = event.payload && typeof event.payload === "object" ? event.payload as { competitionId?: unknown; provider?: unknown; model?: unknown } : {};
+        return (payload.competitionId === undefined || payload.competitionId === adapter.id)
+          && (payload.provider === undefined || payload.provider === options.provider)
+          && (payload.model === undefined || payload.model === selectedModel);
+      }).slice(-24);
       const forecastAssessments = forecastCalibrationEvents
         .map((event) => event.payload && typeof event.payload === "object" ? (event.payload as { forecast?: { covered?: unknown; calibration?: unknown; normalizedError?: unknown } }).forecast : undefined)
         .filter((forecast): forecast is { covered: boolean; calibration: "underestimated" | "overestimated" | "calibrated"; normalizedError: number } => {
@@ -3490,17 +3495,17 @@ experiment.command("run")
           secondaryMetrics: adapter.config.secondaryMetrics,
         });
         resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, comparisonCount, adjustedProbabilityThreshold: acceptance.adjustedProbabilityThreshold, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });
+        const runtimeContext = entryPayload.runtimeContext && typeof entryPayload.runtimeContext === "object" ? entryPayload.runtimeContext as { provider?: string; model?: string; phase?: string } : {};
         const declaredForecast = hypothesis?.payload && typeof hypothesis.payload === "object"
           ? (hypothesis.payload as { expectedMetricDelta?: { low?: unknown; median?: unknown; high?: unknown } }).expectedMetricDelta
           : undefined;
         if (declaredForecast && typeof comparison.delta === "number" && Number.isFinite(comparison.delta)
           && typeof declaredForecast.low === "number" && typeof declaredForecast.median === "number" && typeof declaredForecast.high === "number") {
           const forecast = assessForecast({ low: declaredForecast.low, median: declaredForecast.median, high: declaredForecast.high }, comparison.delta);
-          resultStore.appendEvent("research.forecast.assessed", { experimentId: id, hypothesisId: manifest.hypothesisId, forecast });
+          resultStore.appendEvent("research.forecast.assessed", { experimentId: id, hypothesisId: manifest.hypothesisId, competitionId: adapter.id, provider: runtimeContext.provider, model: runtimeContext.model, forecast });
         }
         if (operator) {
           const improvementDelta = ratchetComparison.delta === null ? undefined : adapter.config.metric.direction === "minimize" ? -ratchetComparison.delta : ratchetComparison.delta;
-          const runtimeContext = entryPayload.runtimeContext && typeof entryPayload.runtimeContext === "object" ? entryPayload.runtimeContext as { provider?: string; model?: string; phase?: string } : {};
           resultStore.appendEvent("research.search.reward", { experimentId: id, competitionId: adapter.id, datasetRevision: manifest.datasetVersion, operator, reward: searchReward(improvementDelta, recorded.status === "completed", comparison.evidence === "replicated"), valid: recorded.status === "completed", reproducible: comparison.evidence === "replicated", delta: improvementDelta, durationSeconds: recorded.durationSeconds, executor: manifest.resources.executor, provider: runtimeContext.provider, model: runtimeContext.model, phase: runtimeContext.phase, gpu: manifest.resources.gpu ?? undefined });
         }
       } else {
