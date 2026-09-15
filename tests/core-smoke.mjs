@@ -3003,6 +3003,12 @@ test("metric registry computes common classification, regression, and ranking me
   assert.equal(computeMetric("mae", [1, 3], [1, 2]), 0.5);
   assert.equal(computeMetric("auroc", [0, 1, 0, 1], [0.1, 0.9, 0.2, 0.8]), 1);
   assert.equal(metricDefinition("f1_macro").name, "macro_f1");
+  assert(Math.abs(computeMetric("average_precision", [1, 0, 1], [0.9, 0.8, 0.7]) - 5 / 6) < 1e-12);
+  assert(Math.abs(computeMetric("map", [1, 0, 1], [0.9, 0.8, 0.7]) - 5 / 6) < 1e-12);
+  assert.equal(computeMetric("ndcg", [3, 0, 2], [0.9, 0.7, 0.8]), 1);
+  assert.equal(computeMetric("quadratic_weighted_kappa", [0, 1, 2], [0, 1, 2]), 1);
+  assert.equal(computeMetric("iou", [1, 1, 0, 0], [1, 0, 0, 0]), 0.5);
+  assert(Math.abs(computeMetric("dice", [1, 1, 0, 0], [1, 0, 0, 0]) - 2 / 3) < 1e-12);
 });
 
 test("ensemble analysis exposes diversity and deterministic blends", () => {
