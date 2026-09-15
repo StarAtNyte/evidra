@@ -45,6 +45,24 @@ function toolCacheKey(call: ResearchToolCall): string {
   return `${call.name}:${JSON.stringify(call.arguments ?? {})}`;
 }
 
+const RESEARCH_DECISION_OUTPUT_SCHEMA = JSON.stringify({
+  type: "object",
+  additionalProperties: false,
+  required: ["phase", "goalStatus", "decision", "bottleneck", "rationale", "hypotheses", "selectedHypothesis", "searchOperator", "nextAction", "toolCalls"],
+  properties: {
+    phase: { type: "string", enum: ["orientation", "baseline", "data_audit", "validation", "hypothesis", "implementation", "evaluation", "replication", "promotion"] },
+    goalStatus: { type: "string", enum: ["active", "blocked", "met"] },
+    decision: { type: "string", enum: ["inspect", "propose", "run", "replicate", "stop"] },
+    bottleneck: { type: "string" },
+    rationale: { type: "string" },
+    hypotheses: { type: "array", maxItems: 5, items: { type: "object", additionalProperties: true } },
+    selectedHypothesis: { type: ["string", "null"] },
+    searchOperator: { type: "string", enum: ["greedy", "ucb_portfolio", "evolutionary", "mcts", "ablation", "combination", "replication", "audit"] },
+    nextAction: { type: "string" },
+    toolCalls: { type: "array", items: { type: "object", additionalProperties: true } },
+  },
+});
+
 export async function runResearchDirector(
   objective: string,
   context: Record<string, unknown>,
@@ -55,6 +73,7 @@ export async function runResearchDirector(
     role: "research director",
     objective,
     context,
+    outputSchema: RESEARCH_DECISION_OUTPUT_SCHEMA,
   };
   // Keep a hard ceiling, but honor the autonomy-derived controller budget.
   // The previous unconditional cap of eight silently overrode yolo's

@@ -436,11 +436,11 @@ export class CodexExecAgent {
 
     return codexIsLoggedInAsync().then((loggedIn) => {
       if (!loggedIn) throw new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription.");
-      return this.runCodexSdk(prompt, onProgress, onProcess);
+      return this.runCodexSdk(prompt, onProgress, onProcess, task.outputSchema);
     });
   }
 
-  private async runCodexSdk(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
+  private async runCodexSdk(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void, outputSchemaText?: string): Promise<AgentResult> {
     const abort = new AbortController();
     let timedOut = false;
     // Serious research turns may include several tool calls and should not be
@@ -485,7 +485,12 @@ export class CodexExecAgent {
         modelReasoningEffort: this.options.reasoningEffort as "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "persistent" | undefined,
         approvalPolicy: "never",
       });
-      const stream = await thread.runStreamed(prompt, { signal: abort.signal });
+      let outputSchema: unknown;
+      if (outputSchemaText) {
+        try { outputSchema = JSON.parse(outputSchemaText); }
+        catch { throw new Error("The configured Codex output schema is invalid JSON."); }
+      }
+      const stream = await thread.runStreamed(prompt, { signal: abort.signal, ...(outputSchema ? { outputSchema } : {}) });
       let finalText = "";
       let usage: AgentResult["usage"];
       let threadId: string | undefined;
