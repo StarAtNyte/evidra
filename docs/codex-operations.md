@@ -137,6 +137,12 @@ process-spawning, imports, output redirection, external-diff, or Git mutation
 options are refused. Autonomy changes scheduling, not the
 research-agent write boundary.
 
+`EVIDRA_CODEX_SANDBOX` cannot weaken a role's requested sandbox: a research
+lane requesting `read-only` remains read-only even if the process environment
+requests full access. The variable may tighten a permissive engineer/user
+route, while all full-access work remains isolated from the controller
+checkout.
+
 ## Long-running campaigns
 
 Start a campaign with an explicit goal and stopping condition:

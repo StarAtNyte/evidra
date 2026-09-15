@@ -429,12 +429,15 @@ test("external action intents prevent restart-time replay and support explicit r
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("Codex sandbox remains safe by default and supports an explicit benchmark override", () => {
+test("Codex sandbox preserves read-only role boundaries", () => {
   const previous = process.env.EVIDRA_CODEX_SANDBOX;
   delete process.env.EVIDRA_CODEX_SANDBOX;
   assert.equal(effectiveCodexSandbox("read-only"), "read-only");
   process.env.EVIDRA_CODEX_SANDBOX = "danger-full-access";
-  assert.equal(effectiveCodexSandbox("read-only"), "danger-full-access");
+  assert.equal(effectiveCodexSandbox("read-only"), "read-only");
+  assert.equal(effectiveCodexSandbox("workspace-write"), "danger-full-access");
+  process.env.EVIDRA_CODEX_SANDBOX = "read-only";
+  assert.equal(effectiveCodexSandbox("workspace-write"), "read-only");
   if (previous === undefined) delete process.env.EVIDRA_CODEX_SANDBOX;
   else process.env.EVIDRA_CODEX_SANDBOX = previous;
 });

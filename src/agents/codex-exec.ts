@@ -26,9 +26,16 @@ export function effectiveCodexModel(preferred?: string): string {
 export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
 export function effectiveCodexSandbox(requested?: CodexSandboxMode): CodexSandboxMode {
+  const baseline = requested ?? "read-only";
   const override = process.env.EVIDRA_CODEX_SANDBOX;
-  if (override === "read-only" || override === "workspace-write" || override === "danger-full-access") return override;
-  return requested ?? "read-only";
+  if (override !== "read-only" && override !== "workspace-write" && override !== "danger-full-access") return baseline;
+  // A process-wide environment override must not weaken a role-level
+  // restriction. Research lanes and critics explicitly request read-only;
+  // allowing this variable to promote them would make their provider copy
+  // share the active checkout with write access. It may still tighten a
+  // permissive engineer or user-requested sandbox.
+  if (baseline === "read-only" && override !== "read-only") return baseline;
+  return override;
 }
 
 /**
