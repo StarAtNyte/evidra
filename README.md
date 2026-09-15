@@ -33,6 +33,9 @@ complete interactive command catalog is [`docs/command-surface.md`](docs/command
 It covers Codex sessions, model routing, permissions, steering and queued
 messages, provider-limit recovery, autonomous phase goals, experiments,
 Modal/container execution, evidence gates, reports, and external submissions.
+For the Codex-specific runtime contract, session lifecycle, interruption and
+steering semantics, permission boundaries, provider exhaustion, and unattended
+campaign checklist, see [`docs/codex-operations.md`](docs/codex-operations.md).
 
 ## Why Evidra
 

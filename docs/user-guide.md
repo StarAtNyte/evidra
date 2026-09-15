@@ -47,6 +47,10 @@ If Codex is installed outside `PATH`, set `EVIDRA_CODEX_BIN` to the executable
 path. Evidra uses that same binary for login, model discovery, steering, and
 SDK-backed turns; `/doctor` reports the resolved binary as well.
 
+The complete operational contract, including isolation boundaries, checkpoint
+semantics, provider exhaustion, and production checks, is in
+[`codex-operations.md`](codex-operations.md).
+
 ## 2. The Codex-first TUI
 
 The full-screen interface uses a compact Codex-style transcript:
