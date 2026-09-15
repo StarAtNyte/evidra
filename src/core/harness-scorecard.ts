@@ -473,6 +473,21 @@ export function compareHarnesses(trials: HarnessTrial[], challenger: string, inc
 }
 
 /**
+ * Compare provider routes intentionally, rather than treating provider as an
+ * invisible harness configuration. The normal protocol validator rejects
+ * mixed providers on one matched arm; this explicit diagnostic removes that
+ * route label only after the caller has named both providers.
+ */
+export function compareProviderRoutes(trials: HarnessTrial[], challengerProvider: string, incumbentProvider: string): HarnessComparison {
+  if (!challengerProvider.trim() || !incumbentProvider.trim()) throw new Error("Provider route names must be non-empty.");
+  if (challengerProvider === incumbentProvider) throw new Error("Challenger and incumbent providers must be different.");
+  const routed = trials
+    .filter((trial) => trial.provider === challengerProvider || trial.provider === incumbentProvider)
+    .map((trial) => ({ ...trial, harness: trial.provider!, provider: undefined }));
+  return compareHarnesses(routed, challengerProvider, incumbentProvider);
+}
+
+/**
  * Attribute a harness change to one removed component at a time. This is a
  * diagnostic, not a loophole around the normal paired comparison: every
  * variant still needs the same task/seed/model/budget protocol and its own
