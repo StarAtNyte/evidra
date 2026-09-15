@@ -13,6 +13,14 @@ export interface ValidationContext {
   artifactChecksums?: Record<string, string>;
 }
 
+export interface ExperimentAudit {
+  accepted: boolean;
+  reasons: string[];
+  gates: Record<string, boolean>;
+  missingMetrics: string[];
+  evidenceContract: "metric_suite" | "artifact_or_verifier" | "missing";
+}
+
 export function validateEvaluationMatrix(manifest: Pick<ExperimentManifest, "evaluation">, run: Pick<RunResult, "matrix">, metricName: string): { valid: boolean; expected: number; observed: number; missing: string[]; invalidMetric: string[] } {
   if (!manifest.evaluation.matrixRequired) return { valid: true, expected: 0, observed: run.matrix?.length ?? 0, missing: [], invalidMetric: [] };
   const cells = run.matrix ?? [];
@@ -26,7 +34,7 @@ export function validateEvaluationMatrix(manifest: Pick<ExperimentManifest, "eva
   return { valid: missing.length === 0 && invalidMetric.length === 0 && cells.length === observed.size && observed.size === expectedCells.length, expected: expectedCells.length, observed: observed.size, missing, invalidMetric };
 }
 
-export function auditExperiment(manifest: ExperimentManifest, run: RunResult, context: ValidationContext): { accepted: boolean; reasons: string[]; gates: Record<string, boolean> } {
+export function auditExperiment(manifest: ExperimentManifest, run: RunResult, context: ValidationContext): ExperimentAudit {
   const declaredVerifiers = (manifest.evaluation.verificationCommand ? 1 : 0) + (manifest.evaluation.verificationCommands?.length ?? 0);
   const verification = run.verification;
   const nonMetric = manifest.outcomeType !== "metric" && manifest.outcomeType !== undefined;
@@ -40,6 +48,7 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
       && (declaredVerifiers < 2 || verification.independent === true);
   const matrix = validateEvaluationMatrix(manifest, run, context.metricName ?? "");
   const declaredMetricNames = [...new Set([context.metricName, ...(manifest.evaluation.metrics ?? []).map((objective) => objective.name)].filter((name): name is string => Boolean(name)))];
+  const missingMetrics = nonMetric ? [] : declaredMetricNames.filter((name) => typeof run.metrics[name] !== "number" || !Number.isFinite(run.metrics[name]));
   const metricsRecomputed = nonMetric
     ? run.status === "completed" && nonMetricEvidenceDeclared
     : declaredMetricNames.length
@@ -63,5 +72,8 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
     evaluationCoverage: matrix.valid,
   };
   const result = evaluateEvidenceGate(manifest, gates);
-  return { ...result, gates };
+  const reasons = [...result.reasons];
+  if (missingMetrics.length) reasons.push(`missing finite declared metric${missingMetrics.length === 1 ? "" : "s"}: ${missingMetrics.join(", ")}`);
+  if (nonMetric && !nonMetricEvidenceDeclared) reasons.push("non-metric outcome must declare at least one required artifact or verifier");
+  return { accepted: reasons.length === 0, reasons, gates, missingMetrics, evidenceContract: nonMetric ? nonMetricEvidenceDeclared ? "artifact_or_verifier" : "missing" : "metric_suite" };
 }

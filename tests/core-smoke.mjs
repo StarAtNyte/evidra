@@ -1946,6 +1946,7 @@ test("evidence audit rejects missing declared artifact files", () => {
     const context = { currentCommit: "commit", datasetVersion: "data", splitVersion: "split", leakageAuditPassed: true, reviewerApproved: true };
     assert.equal(auditExperiment(manifest, run, context).gates.outputsComplete, true);
     assert.equal(auditExperiment(manifest, { ...run, metrics: { loss: 0.1 } }, { ...context, metricName: "score" }).gates.metricsRecomputed, false);
+    assert.deepEqual(auditExperiment(manifest, { ...run, metrics: { loss: 0.1 } }, { ...context, metricName: "score" }).missingMetrics, ["score"]);
     assert.equal(auditExperiment(manifest, run, { ...context, metricName: "score" }).gates.metricsRecomputed, true);
     assert.equal(auditExperiment(manifest, run, { ...context, artifactChecksums: { "predictions.json": "sha256:tampered" } }).gates.outputsComplete, false);
     const checksum = createHash("sha256").update(readFileSync(artifact)).digest("hex");
@@ -4280,6 +4281,7 @@ test("non-metric evidence audit rejects a successful run without an evidence con
   const audit = auditExperiment(manifest, { runId: "run-proof-empty", status: "completed", exitCode: 0, durationSeconds: 1, metrics: {}, artifacts: {} }, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true });
   assert.equal(audit.accepted, false);
   assert.equal(audit.gates.metricsRecomputed, false);
+  assert.equal(audit.evidenceContract, "missing");
   assert.match(audit.reasons.join(" "), /independently recomputed|evidence/i);
 });
 
