@@ -26,6 +26,12 @@ export function readCampaignCheckpoint(value: unknown): CampaignCheckpoint | und
   return { currentCycle: candidate.currentCycle, currentStep: candidate.currentStep as CampaignCheckpointStep, checkpointedAt: candidate.checkpointedAt };
 }
 
+/** Resume the interrupted cycle; only a fully completed cycle advances the counter. */
+export function nextCampaignCycle(checkpoint?: CampaignCheckpoint): number {
+  if (!checkpoint) return 0;
+  return checkpoint.currentStep === "cycle-complete" ? checkpoint.currentCycle + 1 : checkpoint.currentCycle;
+}
+
 /**
  * The execution settings that must travel with a durable campaign.  Keeping
  * these beside the campaign state means a resumed controller does not

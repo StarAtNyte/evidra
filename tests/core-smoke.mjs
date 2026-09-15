@@ -52,7 +52,7 @@ import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js"
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { materializeResearchDecision } from "../dist/core/research-graph.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
-import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, pauseCampaign, readCampaignCheckpoint, researchTurnTimeoutMs, resumeCampaign } from "../dist/core/campaign.js";
+import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, researchTurnTimeoutMs, resumeCampaign } from "../dist/core/campaign.js";
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
@@ -808,6 +808,9 @@ test("campaign checkpoints accept known phases and reject corrupted metadata", (
   assert.equal(readCampaignCheckpoint({ ...checkpoint, currentCycle: -1 }), undefined);
   assert.equal(readCampaignCheckpoint({ ...checkpoint, currentStep: "invented-phase" }), undefined);
   assert.equal(readCampaignCheckpoint({ ...checkpoint, checkpointedAt: "not-a-date" }), undefined);
+  assert.equal(nextCampaignCycle(checkpoint), 3);
+  assert.equal(nextCampaignCycle({ ...checkpoint, currentStep: "cycle-complete" }), 4);
+  assert.equal(nextCampaignCycle(), 0);
 });
 
 test("durable campaign runtime settings are validated before resume", () => {
