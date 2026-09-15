@@ -90,6 +90,8 @@ The implementation already contains the main architecture implied by these rules
 - local, container, and Modal execution with provider fallback and recovery;
 - matched harness benchmarks, component-change checks, and trajectory quality;
 - multi-objective validation, subgroup protection, replication, and statistical gates;
+- a bounded replay simulator for evaluating alternate branch-order, stopping, and
+  batching policies over recorded discovery trees without rerunning workers;
 - an extensible evaluator parser plus built-in accuracy, F1, regression, ranking,
   overlap, and ordinal-agreement metrics.
 
@@ -117,6 +119,35 @@ that Evidra beats another harness.
    uncertainty, failed directions, and reproduction commands.
    Implemented through the durable report and claim-audit pipeline; the remaining
    empirical work is to validate report usefulness on held-out campaigns.~~
+
+## New design inputs: recursive replay and discovery intelligence
+
+Dream-RSI describes completed discovery histories as replay simulators: a policy
+can choose which recorded leaf or branch to open, how to batch work, and when to
+stop, while replay exposes only already-recorded outcomes. Evidra now captures
+that boundary in `src/core/replay-simulator.ts`. `validateReplayWorld` rejects
+duplicate IDs, missing parents, invalid roots, and cycles; `simulateReplay` is
+offline-only and bounded by policy rounds and parallelism; `rankReplayPolicies`
+compares candidate exploration policies using best valid outcome, cost, and
+parallelism. This is a policy-evaluation primitive, not evidence that a policy
+will transfer to an unobserved task. A fresh online rollout and matched holdout
+remain required before deployment claims.
+
+The Discovery Foundation Models paper frames discovery as explicit capabilities:
+finding valuable unknowns, formulating the problem, constructing representations,
+forming hypotheses, intervening, revising from evidence, and transferring only
+validated skills across tasks. Evidra already represents hypotheses, validation,
+experiments, evidence, critics, and experience; the replay contract is the first
+concrete addition toward making the intervention and continual-improvement
+interfaces explicit. The next integration step is to attach replay nodes to
+durable experiment/trajectory records and require a fresh holdout before a
+replayed policy can alter autonomous allocation.
+
+Primary sources:
+
+- [Dream-RSI: Recursive Self-Improvement through Evolving Worlds](https://arxiv.org/abs/2609.14858)
+- [Dream-RSI repository](https://github.com/zhengkid/Dream-RSI)
+- [Discovery Foundation Models: Toward Open-Ended Discovery Intelligence](https://arxiv.org/abs/2609.15973)
 
 ## Sources
 

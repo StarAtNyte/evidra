@@ -22,6 +22,7 @@ import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolF
 import { runResearchDirector } from "../dist/agents/research-director.js";
 import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
+import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
 import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoalsForMode } from "../dist/core/phase-goals.js";
@@ -3082,6 +3083,30 @@ test("metric registry computes common classification, regression, and ranking me
   assert(Math.abs(computeMetric("dice", [1, 1, 0, 0], [1, 0, 0, 0]) - 2 / 3) < 1e-12);
 });
 
+test("replay simulator evaluates alternate branch and batch policies without execution", () => {
+  const world = { rootId: "root", nodes: [
+    { id: "root", parentId: null, score: 0, costMinutes: 0, valid: true },
+    { id: "a", parentId: "root", score: 0.8, costMinutes: 2, valid: true },
+    { id: "b", parentId: "root", score: 0.6, costMinutes: 1, valid: true },
+    { id: "a1", parentId: "a", score: 1.1, costMinutes: 2, valid: true },
+  ] };
+  const first = simulateReplay(world, { id: "first", maxRounds: 2, maxParallel: 1, select: ({ frontier }) => [frontier[0]] }, { costPenalty: 0 });
+  assert.deepEqual(first.revealed, ["a", "a1", "root"]);
+  const batch = simulateReplay(world, { id: "batch", maxRounds: 2, maxParallel: 2, select: ({ frontier }) => frontier }, { costPenalty: 0 });
+  assert.deepEqual(batch.revealed, ["a", "a1", "b", "root"]);
+  assert.equal(batch.bestScore, 1.1);
+  assert.equal(rankReplayPolicies(world, [
+    { id: "slow", maxRounds: 2, maxParallel: 1, select: ({ frontier }) => [frontier[0]] },
+    { id: "batch", maxRounds: 2, maxParallel: 2, select: ({ frontier }) => frontier },
+  ], { costPenalty: 0 })[0].policyId, "batch");
+  assert.equal(batch.totalCostMinutes, 5);
+});
+
+test("replay simulator rejects malformed or cyclic discovery history", () => {
+  assert.throws(() => validateReplayWorld({ rootId: "root", nodes: [{ id: "root", parentId: "missing", score: 0, costMinutes: 0, valid: true }] }), /root must have/);
+  assert.throws(() => validateReplayWorld({ rootId: "root", nodes: [{ id: "root", parentId: null, score: 0, costMinutes: 0, valid: true }, { id: "a", parentId: "b", score: 0, costMinutes: 0, valid: true }, { id: "b", parentId: "a", score: 0, costMinutes: 0, valid: true }] }), /cycle/);
+});
+
 test("ensemble analysis exposes diversity and deterministic blends", () => {
   const vectors = [{ id: "a", path: "a", values: [0, 1, 0, 1] }, { id: "b", path: "b", values: [0, 0, 1, 1] }];
   assert.equal(diversityReport(vectors).length, 1);
@@ -3283,6 +3308,7 @@ test("generic score polling parses JSON and human-readable adapter output", asyn
   assert.equal(parseSubmissionScore("{\"result\":{\"score\":0.44}}"), 0.44);
   assert.equal(parseSubmissionScore("fileName,date,description,status,publicScore,privateScore\npred.csv,2026-09-15,\"test, with comma\",complete,0.731,0.700"), 0.731);
   assert.equal(parseSubmissionScore("fileName,publicScore\npred.csv,\"0.812\""), 0.812);
+  assert.equal(parseSubmissionScore("fileName,description,publicScore\npred.csv,\"score: 0.111\",0.812"), 0.812);
   assert.equal(parseSubmissionScore("no score here"), undefined);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
