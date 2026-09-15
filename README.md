@@ -219,7 +219,7 @@ Implemented today:
 - local-model experiment implementation through bounded unified-diff proposals, checked and applied only inside the experiment worktree;
 - Modal execution mounts the exact isolated experiment worktree and accepts either Modal CLI profiles or environment credentials;
 - Docker/Podman execution mounts only the exact isolated experiment worktree, uses a network-disabled container, and keeps the same artifact, metric, retry, and evidence gates;
-- Codex-backed experiment engineers honor entitlement reset windows with bounded retry/wait behavior instead of silently abandoning an authorized campaign;
+- Codex-backed experiment engineers honor the configured entitlement policy: they switch to an installed local fallback in `auto`/`fallback` mode, or wait durably when `wait` is selected, instead of silently abandoning an authorized campaign;
 - shell and autonomy safety guards.
 - a deterministic six-lifecycle safety boundary benchmark (`evidra benchmark safety`) covering configuration, capability extension, runtime, persistence, action control, and recovery;
 - durable external-action intents that reserve submissions before invocation, refuse restart-time replay, and require explicit `evidra submission reconcile <bundle> --status submitted|not-submitted` after an ambiguous crash;
