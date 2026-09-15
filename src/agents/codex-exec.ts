@@ -372,25 +372,29 @@ export function listCodexModels(): Promise<AvailableModel[]> {
     };
     const timer = setTimeout(() => finish(() => reject(new Error("Timed out while loading Codex models."))), 12_000);
     child.stdin.on("error", (error) => finish(() => reject(new Error(`Codex model listing transport failed: ${error.message}`))));
+    const handleLine = (line: string): boolean => {
+      try {
+        const event = JSON.parse(line) as { id?: number; result?: { data?: unknown }; error?: { message?: string } };
+        if (event.id !== 2) return false;
+        if (event.error) finish(() => reject(new Error(event.error?.message ?? "Codex model listing failed.")));
+        else finish(() => resolve(normalizeCodexModels(event.result?.data)));
+        return true;
+      } catch {
+        // App-server emits JSON objects; ignore startup noise and incomplete data.
+        return false;
+      }
+    };
     child.stdout.on("data", (chunk: Buffer) => {
       buffer += chunk.toString();
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        try {
-          const event = JSON.parse(line) as { id?: number; result?: { data?: unknown }; error?: { message?: string } };
-          if (event.id !== 2) continue;
-          if (event.error) finish(() => reject(new Error(event.error?.message ?? "Codex model listing failed.")));
-          else finish(() => resolve(normalizeCodexModels(event.result?.data)));
-          return;
-        } catch {
-          // App-server emits one JSON object per line; ignore startup noise.
-        }
-      }
+      for (const line of lines) if (handleLine(line)) return;
     });
     child.on("error", (error) => finish(() => reject(error)));
     child.on("close", (code) => {
-      if (!settled) finish(() => reject(new Error(`Codex model listing exited with ${code ?? 1}.`)));
+      if (settled) return;
+      if (buffer.trim() && handleLine(buffer)) return;
+      finish(() => reject(new Error(`Codex model listing exited with ${code ?? 1}.`)));
     });
     try {
       child.stdin.write(`${JSON.stringify({ method: "initialize", id: 1, params: { clientInfo: { name: "evidra", version: "0.1.0" } } })}\n`);

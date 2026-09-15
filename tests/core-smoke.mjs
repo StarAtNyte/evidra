@@ -3095,6 +3095,29 @@ test("Codex model discovery converts an early app-server exit into a bounded err
   }
 });
 
+test("Codex model discovery flushes a JSON-RPC response without a trailing newline", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-codex-models-final-line-"));
+  const bin = join(root, "codex");
+  writeFileSync(bin, "#!/bin/sh\nif [ \"$1\" = \"login\" ]; then exit 0; fi\nprintf '%s' '{\"id\":2,\"result\":{\"data\":[{\"id\":\"gpt-test\"}]}}'\n", { mode: 0o755 });
+  const previousBinary = process.env.EVIDRA_CODEX_BIN;
+  const previousCodexKey = process.env.CODEX_API_KEY;
+  const previousOpenAiKey = process.env.OPENAI_API_KEY;
+  process.env.EVIDRA_CODEX_BIN = bin;
+  delete process.env.CODEX_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  try {
+    assert.deepEqual(await listCodexModels(), [{ id: "gpt-test", displayName: "gpt-test" }]);
+  } finally {
+    if (previousBinary === undefined) delete process.env.EVIDRA_CODEX_BIN;
+    else process.env.EVIDRA_CODEX_BIN = previousBinary;
+    if (previousCodexKey === undefined) delete process.env.CODEX_API_KEY;
+    else process.env.CODEX_API_KEY = previousCodexKey;
+    if (previousOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousOpenAiKey;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Codex login is asynchronous and interruptible", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-codex-login-"));
   const bin = join(root, "bin");
