@@ -103,7 +103,7 @@ external evaluator.
 - Codex item events now expose concise progress for MCP tools, todo plans,
   command completion, file changes, reasoning summaries, and item failures;
   the normalized adapter is covered by regression tests.
-- Codex usage now preserves input, output, cached-input, and
+- Codex usage now preserves input, output, cached-input, cache-write, and
   reasoning-output token counts through agent results, durable usage events,
   CLI/TUI summaries, and regression coverage.
 - The Codex adapter now resolves the legacy `default` sentinel to the explicit
@@ -247,7 +247,7 @@ external evaluator.
   the SDK before Evidra's own Zod/evidence gates, reducing malformed decision
   responses while preserving controller authority.
 - Codex agent usage aggregation is now shared by the CLI and TUI, preserving
-  input, output, cached-input, and reasoning-output totals while rejecting
+  input, output, cached-input, cache-write, and reasoning-output totals while rejecting
   malformed or negative counters.
 - Codex thread restoration is explicit: a new terminal starts a fresh Evidra
   chat, while `/resume <session-id>` restores the saved Codex thread and
