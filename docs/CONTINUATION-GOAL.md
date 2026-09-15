@@ -133,6 +133,9 @@ external evaluator.
   route in that pool before repeating a route. Single-route configurations keep
   bounded same-route retries, while every route change remains visible in the
   activity stream and the failed observation remains durable evidence.
+- The director synthesis turn receives the same pool and applies the same
+  untried-route recovery, so a provider failure after lane collection cannot
+  force the whole cycle to replay on the original model.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
 - Codex command activity now includes an exit code only when the provider

@@ -3,6 +3,7 @@ import { isProviderUsageLimit, isRetryableAgentError, runWithLocalFallback, type
 import type { ProcessControl } from "../core/process.js";
 import { normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
 import { boundResearchContext } from "../core/context-budget.js";
+import { alternateResearchLaneRoute } from "./research-lanes.js";
 
 function extractJson(output: unknown): unknown {
   const text = String(output).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
@@ -39,6 +40,8 @@ export function normalizeResearchDecisionPayload(value: unknown): unknown {
 export interface ResearchDirectorOptions {
   provider: AgentProvider;
   model: string;
+  /** Optional bounded pool used for route-changing recovery of the director. */
+  modelPool?: Array<{ provider: AgentProvider; model: string }>;
   reasoningEffort?: string;
   networkAccessEnabled?: boolean;
   webSearchMode?: CodexWebSearchMode;
@@ -245,23 +248,34 @@ export async function runResearchDirector(
   }).context;
   const steering: string[] = [];
   const readOnlyToolCache = new Map<string, ResearchToolResult>();
+  let provider = options.provider;
+  let model = options.model;
+  const attemptedRoutes = new Set<string>();
   for (let round = 0; round <= maxToolRounds; round += 1) {
     let parsed: ReturnType<typeof ResearchDecisionSchema.safeParse> | undefined;
     let lastError: unknown;
     for (let attempt = 1; attempt <= maxAgentAttempts; attempt += 1) {
+      attemptedRoutes.add(`${provider}\u0000${model}`);
       try {
         const result: AgentResult = await runWithLocalFallback({
           ...task,
           context: workingContext,
           objective: `${objective}\n\n${contract}\n\n${contractGuidance}`,
-        }, { ...options, networkAccessEnabled: options.networkAccessEnabled ?? true, webSearchMode: options.webSearchMode ?? "live", onActivity: options.onActivity, onAssistant: options.onAssistant, onUsage: undefined }, options.fallbackLocalModel, onProgress, options.onProcess);
-        options.onUsage?.(result.usage, result.provider, result.model ?? options.model, "director");
+        }, { ...options, provider, model, networkAccessEnabled: options.networkAccessEnabled ?? true, webSearchMode: options.webSearchMode ?? "live", onActivity: options.onActivity, onAssistant: options.onAssistant, onUsage: undefined }, options.fallbackLocalModel, onProgress, options.onProcess);
+        options.onUsage?.(result.usage, result.provider, result.model ?? model, "director");
         parsed = ResearchDecisionSchema.safeParse(normalizeResearchDecisionPayload(extractJson(result.output)));
         if (parsed.success) break;
         throw new Error(`Research director returned invalid decision: ${parsed.error.issues.map((issue) => issue.path.join(".") + " " + issue.message).join("; ")}`);
       } catch (error) {
         lastError = error;
         if (!isRetryableAgentError(error) || attempt === maxAgentAttempts || (isProviderUsageLimit(error) && options.limitPolicy === "wait")) throw error;
+        const alternate = alternateResearchLaneRoute({ provider, model }, options.modelPool, attemptedRoutes);
+        if (alternate) {
+          provider = alternate.provider;
+          model = alternate.model;
+          onProgress?.(`Director changing route to ${provider}/${model}...`);
+          continue;
+        }
         const delayMs = attempt * 1_000;
         onProgress?.(`Director retry ${attempt}/${maxAgentAttempts - 1} in ${delayMs / 1000}s...`);
         await new Promise<void>((resolve) => setTimeout(resolve, delayMs));

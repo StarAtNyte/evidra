@@ -970,6 +970,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }, {
         provider: config.provider,
         model: config.model,
+        modelPool: researchModelPool,
         reasoningEffort: route.reasoningEffort === "high" ? config.reasoningEffort : route.reasoningEffort,
         limitPolicy: config.limitPolicy,
         cwd: root,

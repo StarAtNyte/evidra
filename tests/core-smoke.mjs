@@ -3014,6 +3014,48 @@ test("research director executes typed tools and reasons over returned evidence"
   }
 });
 
+test("research director changes to an untried model after a retryable route failure", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-director-route-recovery-"));
+  const previousHost = process.env.OLLAMA_HOST;
+  let calls = 0;
+  const seenModels = [];
+  const decision = { phase: "orientation", goalStatus: "active", decision: "propose", bottleneck: "route recovered", rationale: "The alternate route returned a valid decision.", hypotheses: [], selectedHypothesis: null, nextAction: "continue", toolCalls: [] };
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk.toString(); });
+    request.on("end", () => {
+      calls += 1;
+      try { seenModels.push(JSON.parse(body).model); } catch { /* assertion below catches malformed requests */ }
+      if (calls === 1) {
+        response.statusCode = 503;
+        response.end("temporarily unavailable");
+        return;
+      }
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${address.port}`;
+  try {
+    const result = await runResearchDirector("Recover the director route", {}, {
+      provider: "local",
+      model: "primary",
+      modelPool: [{ provider: "local", model: "primary" }, { provider: "local", model: "alternate" }],
+      cwd: root,
+      maxAgentAttempts: 2,
+    });
+    assert.equal(result.decision, "propose");
+    assert.deepEqual(seenModels, ["primary", "alternate"]);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("local provider enforces the configured turn timeout", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-local-timeout-"));
   const previousHost = process.env.OLLAMA_HOST;
