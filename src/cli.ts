@@ -1332,6 +1332,7 @@ sources.command("adapt")
     const adaptationObjective = objective?.trim() || `Adapt the technique from '${typeof source.title === "string" ? source.title : id}' into testable improvements for the active workspace.`;
     const recentEvents = store.recentEvents(20);
     const researchMemory = researchMemoryContext(store, 20, adaptationObjective);
+    store.appendEvent("research.memory.retrieved", { ...researchMemory.retrieval, context: "source-adaptation" });
     const sourceContext = {
       id,
       title: typeof source.title === "string" ? source.title : "untitled",
@@ -2441,6 +2442,7 @@ research
         taskType: mode === "challenge" ? adapter.config.taskType : "general research",
         context: mode === "challenge" ? `challenge ${adapter.id}` : "research",
       });
+      store.appendEvent("research.memory.retrieved", { ...researchMemory.retrieval, context: mode === "challenge" ? "challenge-campaign" : "research-campaign", cycle });
       const peerLaneBoard = boundedPeerBoard(recentEvents);
       console.log(`${mode === "challenge" ? "Challenge" : "Research"} ${cycle} · inspecting workspace${mode === "challenge" ? " and baseline" : ""} (budget ${campaign.budgetMinutes}m)...`);
       const gitStatus = await runProcess(["git", "status", "--short"], root);
@@ -3408,6 +3410,7 @@ research.command("propose")
     store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
     const recentEvents = store.recentEvents(20);
     const researchMemory = researchMemoryContext(store, 30, objective, { objective, taskType: "general research", context: "research" });
+    store.appendEvent("research.memory.retrieved", { ...researchMemory.retrieval, context: "one-shot-research" });
     const harnessChangeHistory = store.harnessChanges().slice(-8).map((change) => ({
       id: change.id,
       protocolFingerprint: change.protocolFingerprint,

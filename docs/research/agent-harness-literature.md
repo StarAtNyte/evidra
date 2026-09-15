@@ -669,3 +669,8 @@ understanding, and selective forgetting as separate memory competencies
 selective-forgetting lesson conservatively: invalidated and superseded claims
 remain durably queryable as `quarantinedClaims` for audit and negative evidence,
 but are excluded from the active research context supplied to agents.
+Each bounded memory packet also carries a deterministic fingerprint and is
+recorded as `research.memory.retrieved`, including the query and selected IDs.
+This makes retrieval a measurable harness component: later replay can compare
+whether a failure came from selecting the wrong memory or from reasoning over
+the right evidence.

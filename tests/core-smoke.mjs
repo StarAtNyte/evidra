@@ -2177,6 +2177,8 @@ test("research memory context remains bounded and cumulative", () => {
     const context = researchMemoryContext(store, 1);
     assert.equal(context.claims[0].id, "memory-claim");
     assert.deepEqual(context.quarantinedClaims.map((claim) => claim.id), ["stale-claim"]);
+    assert.match(context.retrieval.fingerprint, /^sha256:[0-9a-f]{64}$/);
+    assert.deepEqual(context.retrieval.activeClaimIds, ["memory-claim"]);
     assert.equal(context.hypotheses[0].title, "Bounded memory");
     assert.deepEqual(context.contradictions, []);
     store.close();

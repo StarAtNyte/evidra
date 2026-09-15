@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ResearchStore } from "./store.js";
 import { transferableMethodsFromEvents, type TransferTarget, type TransferableMethod } from "./method-transfer.js";
 import { ablationPlansFromEvents, type AblationPlan } from "./ablation.js";
@@ -18,6 +19,15 @@ export interface ResearchMemoryContext {
   failedDirections: FailedDirection[];
   repositoryLeads: ResearchRepositoryLead[];
   ablationPlans: AblationPlan[];
+  /** Reproducible record of exactly which memory was supplied to an agent. */
+  retrieval: {
+    query: string;
+    limit: number;
+    activeClaimIds: string[];
+    quarantinedClaimIds: string[];
+    hypothesisIds: string[];
+    fingerprint: string;
+  };
 }
 
 /** Return the newest source entry for each URL while preserving source history in storage. */
@@ -138,5 +148,13 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
   const failedDirections = failedDirectionsFromExperiments(store.experiments(), query, Math.min(8, bounded));
   const repositoryLeads = repositoryLeadsFromEvents(events, query, Math.min(8, bounded));
   const ablationPlans = ablationPlansFromEvents(events, Math.min(8, bounded));
-  return { claims, quarantinedClaims, hypotheses, contradictions, transferableMethods, verifiedPlaybooks, failedDirections, repositoryLeads, ablationPlans };
+  const retrievalBasis = {
+    query: query?.trim() ?? "",
+    limit: bounded,
+    activeClaimIds: claims.map((claim) => claim.id),
+    quarantinedClaimIds: quarantinedClaims.map((claim) => claim.id),
+    hypothesisIds: hypotheses.map((hypothesis) => hypothesis.id),
+  };
+  const fingerprint = `sha256:${createHash("sha256").update(JSON.stringify(retrievalBasis)).digest("hex")}`;
+  return { claims, quarantinedClaims, hypotheses, contradictions, transferableMethods, verifiedPlaybooks, failedDirections, repositoryLeads, ablationPlans, retrieval: { ...retrievalBasis, fingerprint } };
 }

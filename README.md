@@ -223,6 +223,8 @@ The same audit is an execution gate, not just a report decoration. Autonomous re
 
 Research memory keeps invalidated and superseded claims in a quarantined channel for audit and negative evidence, while excluding them from active claims supplied to autonomous agents. This prevents stale conclusions from silently re-entering a later research cycle without deleting the historical record.
 
+Every bounded memory packet is fingerprinted and recorded as `research.memory.retrieved` with its query and selected claim/hypothesis IDs. The retrieval component is therefore replayable and measurable independently from the model's reasoning quality.
+
 The claim-audit rule is shared by the CLI, TUI, and generated reports. Self-describing observations such as lane findings are accepted only when their payload includes durable evidence fields; interactive status and exported provenance reports therefore cannot disagree about the same claim.
 
 Before allocating compute, Evidra also structurally scores each hypothesis for a concrete mechanism, grounded evidence, falsifiability, implementation cost, and leakage risk. This score only prioritizes work; it never counts as an empirical improvement.
