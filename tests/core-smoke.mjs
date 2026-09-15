@@ -1966,7 +1966,7 @@ test("baseline evidence is persisted as checksummed artifacts", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-baseline-"));
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    const evidence = recordBaselineEvidence(store, root, { command: ["python", "baseline.py"], cwd: root, exitCode: 0, durationMs: 12, stdout: "metric: 0.42\nOPENAI_API_KEY=sk-test_12345678901234567890\n", stderr: "" }, 0.42, { score: 0.42, safety: 0.9 }, { score: [0.41, 0.42], safety: [0.89, 0.9] });
+    const evidence = recordBaselineEvidence(store, root, { command: ["python", "baseline.py", "--token", "sk-test_12345678901234567890"], cwd: root, exitCode: 0, durationMs: 12, stdout: "metric: 0.42\nOPENAI_API_KEY=sk-test_12345678901234567890\n", stderr: "" }, 0.42, { score: 0.42, safety: 0.9 }, { score: [0.41, 0.42], safety: [0.89, 0.9] });
     assert.equal(Object.keys(evidence.artifactChecksums).length, 4);
     assert.equal(store.recentEvents(20).some((event) => event.type === "artifact.created"), true);
     const baseline = store.recentEvents(20).find((event) => event.type === "baseline.completed");
@@ -1974,6 +1974,7 @@ test("baseline evidence is persisted as checksummed artifacts", () => {
     assert.equal(baseline.payload.metrics.safety, 0.9);
     assert.deepEqual(baseline.payload.metricsByFold.safety, [0.89, 0.9]);
     assert.doesNotMatch(String(baseline.payload.stdout), /sk-test_/);
+    assert.doesNotMatch(JSON.stringify(baseline.payload), /sk-test_/);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -4613,9 +4614,10 @@ test("scientific task runner verifies intermediate stages and resumes verified s
     const blockedCommand = await runScientificTask({ ...task, id: "blocked-command", stages: [{ ...task.stages[0], command: ["git", "push", "origin", "main"] }] }, root);
     assert.equal(blockedCommand.status, "failed");
     assert.match(blockedCommand.stages[0].stderrTail, /Permission denied by Evidra/);
-    const recovered = await runScientificTask({ ...task, id: "alternate-route", stages: [{ ...task.stages[0], command: [process.execPath, "-e", "process.exit(3)"], alternateCommands: [[process.execPath, "-e", "require('node:fs').writeFileSync('recovered.json','{}')"]], requiredArtifacts: ["recovered.json"], verificationCommands: [[process.execPath, "-e", "if(!require('node:fs').existsSync('recovered.json')) process.exit(1)"]], snapshotPaths: ["recovered.json"] }] }, root);
+    const recovered = await runScientificTask({ ...task, id: "alternate-route", stages: [{ ...task.stages[0], command: [process.execPath, "-e", "process.exit(3)", "--token", "sk-scientific-secret-12345678901234567890"], alternateCommands: [[process.execPath, "-e", "require('node:fs').writeFileSync('recovered.json','{}')"]], requiredArtifacts: ["recovered.json"], verificationCommands: [[process.execPath, "-e", "if(!require('node:fs').existsSync('recovered.json')) process.exit(1)"]], snapshotPaths: ["recovered.json"] }] }, root);
     assert.equal(recovered.status, "completed");
     assert.deepEqual(recovered.stages[0].attempts?.map((attempt) => attempt.route), ["primary", "alternate"]);
+    assert.doesNotMatch(JSON.stringify(recovered), /sk-scientific-secret/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

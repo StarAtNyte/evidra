@@ -65,6 +65,8 @@ external evaluator.
   build passing, and a clean worktree.
 - Benchmark report command argv is now redacted alongside process output, with
   coverage for primary, alternate, and reproducibility routes.
+- Baseline and scientific-task attempt evidence now applies the same command and
+  output redaction boundary before persistence.
 
 ## Immediate next work
 

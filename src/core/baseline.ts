@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { ProcessResult } from "./types.js";
 import { sha256File } from "./evidence.js";
 import type { ResearchStore } from "./store.js";
-import { redactSecrets } from "./redaction.js";
+import { redactCommand, redactSecrets } from "./redaction.js";
 
 export interface BaselineEvidence {
   runId: string;
@@ -37,7 +37,7 @@ export function recordBaselineEvidence(
     "stdout.log": redactSecrets(result.stdout),
     "stderr.log": redactSecrets(result.stderr),
     "metrics.json": `${JSON.stringify({ metric, metrics, metricsByFold }, null, 2)}\n`,
-    "provenance.json": `${JSON.stringify({ runId, command: result.command, cwd: result.cwd, exitCode: result.exitCode, durationMs: result.durationMs, recordedAt: new Date().toISOString() }, null, 2)}\n`,
+    "provenance.json": `${JSON.stringify({ runId, command: redactCommand(result.command), cwd: result.cwd, exitCode: result.exitCode, durationMs: result.durationMs, recordedAt: new Date().toISOString() }, null, 2)}\n`,
   };
   const artifactPaths: Record<string, string> = {};
   const artifactChecksums: Record<string, string> = {};
@@ -50,7 +50,7 @@ export function recordBaselineEvidence(
   }
   const evidence: BaselineEvidence = {
     runId,
-    command: result.command,
+    command: redactCommand(result.command),
     cwd: result.cwd,
     exitCode: result.exitCode,
     durationMs: result.durationMs,

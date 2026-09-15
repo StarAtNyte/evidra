@@ -5,6 +5,7 @@ import { z } from "zod";
 import { sha256File } from "./evidence.js";
 import { guardAutonomousCommand } from "./permissions.js";
 import { runProcess, type ProcessControl } from "./process.js";
+import { redactCommand, redactSecrets } from "./redaction.js";
 
 /** A stepwise, agent-agnostic task contract for scientific and engineering work. */
 export const ScientificTaskStageSchema = z.object({
@@ -232,7 +233,7 @@ async function executeScientificStage(stage: ScientificTaskStage, cwd: string, o
     let snapshotError: string | undefined;
     try { files = fileSnapshot(cwd, stage.snapshotPaths, `stage '${stage.id}' snapshot`); } catch (error) { snapshotError = error instanceof Error ? error.message : String(error); }
     const stageFailed = result.exitCode !== 0 || failed > 0 || artifactsMissing(stage, artifacts) || Boolean(snapshotError);
-    const attemptObservation = { attempt: attempt + 1, route, command: [...command], exitCode: result.exitCode, durationMs: result.durationMs, verification: { declared: stage.verificationCommands.length, executed, passed, failed }, stdoutTail: result.stdout.slice(-4_000), stderrTail: `${result.stderr}${snapshotError ? `\nSnapshot failed: ${snapshotError}` : ""}`.slice(-4_000) };
+    const attemptObservation = { attempt: attempt + 1, route, command: redactCommand([...command]), exitCode: result.exitCode, durationMs: result.durationMs, verification: { declared: stage.verificationCommands.length, executed, passed, failed }, stdoutTail: redactSecrets(result.stdout.slice(-4_000)), stderrTail: redactSecrets(`${result.stderr}${snapshotError ? `\nSnapshot failed: ${snapshotError}` : ""}`.slice(-4_000)) };
     attempts.push(attemptObservation);
     finalObservation = { stageId: stage.id, status: !stageFailed ? "completed" : "failed", exitCode: result.exitCode, durationMs: attempts.reduce((sum, item) => sum + item.durationMs, 0), verification: attemptObservation.verification, artifacts, snapshot: { id: snapshotId(files), files }, stdoutTail: attemptObservation.stdoutTail, stderrTail: attemptObservation.stderrTail };
     if (!stageFailed || options.isCancelled?.()) break;
