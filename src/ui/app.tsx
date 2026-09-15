@@ -9,7 +9,7 @@ import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
 import { classifyProcessFailure, executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
-import { auditExperiment, validateEvaluationMatrix } from "../core/validation.js";
+import { auditExperiment, auditExperimentSubtask, validateEvaluationMatrix } from "../core/validation.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "../core/decision-auditor.js";
 import { sha256File } from "../core/evidence.js";
 import { captureEnvironment } from "../core/environment.js";
@@ -2790,8 +2790,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const runResult = RunResultSchema.parse(run.payload);
           const adapter = activeAdapter();
           const audit = auditExperiment(manifest, runResult, { currentCommit: currentCommit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, splitVersion: manifest.splitVersion, metricName: adapter.config.metric.name, leakageAuditPassed: storedGates.leakageAuditPassed, reviewerApproved: storedGates.reviewerApproved, artifactChecksums });
+          const subtaskAudit = auditExperimentSubtask(manifest, audit, [run.id, ...Object.keys(artifactChecksums)]);
+          const auditStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+          auditStore.recordSubtaskAudit(subtaskAudit);
+          auditStore.appendEvent("experiment.audit.completed", { experimentId: id, accepted: audit.accepted, subtaskAudit });
+          auditStore.close();
           const gateLines = Object.entries(audit.gates).map(([name, passed]) => `  ${passed ? "✓" : "·"} ${name}`).join("\n");
-          append("assistant", `Evidence audit · ${id}\nStatus: ${audit.accepted ? "ACCEPTED" : "NOT ACCEPTED"}\n\n${gateLines}${audit.reasons.length ? `\n\nReasons:\n${audit.reasons.map((reason) => `- ${reason}`).join("\n")}` : ""}`);
+          append("assistant", `Evidence audit · ${id}\nStatus: ${audit.accepted ? "ACCEPTED" : "NOT ACCEPTED"}\n\n${gateLines}${audit.reasons.length ? `\n\nReasons:\n${audit.reasons.map((reason) => `- ${reason}`).join("\n")}` : ""}\n\nCriterion audit: ${subtaskAudit.complete ? "complete" : `blocked (${subtaskAudit.unmetRequired.join(", ")})`}`);
         } catch (error) { appendError(error); }
         return;
       }

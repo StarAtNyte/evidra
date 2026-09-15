@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `80cf514` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `c4fc3b7` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -72,6 +72,8 @@ external evaluator.
   missing or failed required criteria force revision.
 - Domain and semantic criterion results are merged into one conservative audit;
   phase advancement requires both layers to pass.
+- Experiment audit gates now map to criterion-level verifier evidence and are
+  persisted by both the CLI and TUI audit commands.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.

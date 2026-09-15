@@ -27,7 +27,7 @@ import { detectRouteDrift } from "./core/drift-detection.js";
 import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
 import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readCampaignRuntime, researchTurnTimeoutMs, resumeCampaign, withCampaignCheckpoint, type CampaignCheckpointStep, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
-import { auditExperiment, validateEvaluationMatrix } from "./core/validation.js";
+import { auditExperiment, auditExperimentSubtask, validateEvaluationMatrix } from "./core/validation.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "./core/decision-auditor.js";
 import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance } from "./core/validation-engine.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
@@ -4040,7 +4040,12 @@ experiment.command("audit")
       reviewerApproved: gates.reviewerApproved,
       artifactChecksums,
     });
-    console.log(`Evidence audit · ${id}\nStatus: ${audit.accepted ? "ACCEPTED" : "NOT ACCEPTED"}\n\n${Object.entries(audit.gates).map(([name, passed]) => `  ${passed ? "✓" : "·"} ${name}`).join("\n")}${audit.reasons.length ? `\n\nReasons:\n${audit.reasons.map((reason) => `- ${reason}`).join("\n")}` : ""}`);
+    const subtaskAudit = auditExperimentSubtask(manifest, audit, [run.id, ...Object.keys(artifactChecksums)]);
+    const auditStore = new ResearchStore(statePath);
+    auditStore.recordSubtaskAudit(subtaskAudit);
+    auditStore.appendEvent("experiment.audit.completed", { experimentId: id, accepted: audit.accepted, subtaskAudit });
+    auditStore.close();
+    console.log(`Evidence audit · ${id}\nStatus: ${audit.accepted ? "ACCEPTED" : "NOT ACCEPTED"}\n\n${Object.entries(audit.gates).map(([name, passed]) => `  ${passed ? "✓" : "·"} ${name}`).join("\n")}${audit.reasons.length ? `\n\nReasons:\n${audit.reasons.map((reason) => `- ${reason}`).join("\n")}` : ""}\n\nCriterion audit: ${subtaskAudit.complete ? "complete" : `blocked (${subtaskAudit.unmetRequired.join(", ")})`}`);
     if (!audit.accepted) process.exitCode = 2;
   });
 program.addCommand(experiment);

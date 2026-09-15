@@ -59,7 +59,7 @@ import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
-import { auditExperiment, validateEvaluationMatrix } from "../dist/core/validation.js";
+import { auditExperiment, auditExperimentSubtask, validateEvaluationMatrix } from "../dist/core/validation.js";
 import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
@@ -5667,8 +5667,12 @@ test("experiment audit rejects incomplete declared verifier evidence", () => {
   const incomplete = auditExperiment(manifest, { ...base, verification: { declared: 2, executed: 1, passed: 1, failed: 0, independent: false } }, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true });
   assert.equal(incomplete.accepted, false);
   assert.equal(incomplete.gates.verifiersPassed, false);
+  assert.equal(auditExperimentSubtask(manifest, incomplete).complete, false);
   const complete = auditExperiment(manifest, { ...base, verification: { declared: 2, executed: 2, passed: 2, failed: 0, independent: true } }, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true });
   assert.equal(complete.gates.verifiersPassed, true);
+  const completeAudit = auditExperimentSubtask(manifest, complete, ["run"]);
+  assert.equal(completeAudit.complete, true);
+  assert.equal(completeAudit.criteria.some((criterion) => criterion.id === "gate:verifiersPassed" && criterion.satisfied), true);
 });
 
 test("scientific task runner verifies intermediate stages and resumes verified snapshots", async () => {

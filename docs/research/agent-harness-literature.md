@@ -614,3 +614,9 @@ force a revision even when the overall model verdict says pass.
 The controller then merges semantic criterion results with the domain verifier
 result into one conservative `subtask.audit`; phase advancement requires both
 independent layers to pass the same required criteria.
+The same contract now covers experiment audits: every declared metric,
+artifact, verifier, commit/data/split match, output validity, leakage, review,
+and evaluation-coverage gate is represented as a required criterion. Headless
+and TUI experiment-audit commands persist the criterion-level result, so
+promotion and recovery can inspect structured experiment evidence rather than
+only a boolean acceptance summary.

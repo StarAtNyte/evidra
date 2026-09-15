@@ -1,6 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { evaluateEvidenceGate, sha256File } from "./evidence.js";
 import type { ExperimentManifest, RunResult } from "./types.js";
+import { auditSubtask, type SubtaskAudit, type SubtaskContract } from "./subtask-state.js";
 
 export interface ValidationContext {
   currentCommit: string;
@@ -19,6 +20,28 @@ export interface ExperimentAudit {
   gates: Record<string, boolean>;
   missingMetrics: string[];
   evidenceContract: "metric_suite" | "artifact_or_verifier" | "missing";
+}
+
+export function experimentAuditContract(manifest: Pick<ExperimentManifest, "id" | "hypothesisId">, gateNames: string[]): SubtaskContract {
+  return {
+    id: `experiment_audit:${manifest.id}`,
+    objective: `Verify experiment ${manifest.id} for hypothesis ${manifest.hypothesisId}.`,
+    scope: "experiment",
+    acceptanceCriteria: gateNames.map((name) => ({ id: `gate:${name}`, description: `experiment gate '${name}' passes`, required: true })),
+  };
+}
+
+/** Convert the complete experiment verifier result into the shared audit form. */
+export function auditExperimentSubtask(manifest: ExperimentManifest, audit: ExperimentAudit, evidenceIds: string[] = []): SubtaskAudit {
+  const gateNames = Object.keys(audit.gates);
+  const contract = experimentAuditContract(manifest, gateNames);
+  return auditSubtask(contract, gateNames.map((name) => ({
+    criterionId: `gate:${name}`,
+    satisfied: audit.gates[name] === true,
+    source: "verifier" as const,
+    evidenceIds: audit.gates[name] === true ? evidenceIds : [],
+    detail: audit.gates[name] === true ? "experiment verifier passed" : audit.reasons.find((reason) => reason.toLowerCase().includes(name.toLowerCase())) ?? "experiment verifier gate failed",
+  })));
 }
 
 export function validateEvaluationMatrix(manifest: Pick<ExperimentManifest, "evaluation">, run: Pick<RunResult, "matrix">, metricName: string): { valid: boolean; expected: number; observed: number; missing: string[]; invalidMetric: string[] } {
