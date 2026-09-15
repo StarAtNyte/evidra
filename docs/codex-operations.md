@@ -200,6 +200,9 @@ active campaign budget merely because calendar time elapsed.
 The interactive TUI follows the same policy: `auto` and `wait` schedule a
 durable paused retry, `fallback` requires the local route, and `stop` leaves the
 campaign stopped instead of silently converting the limit into a wait.
+The CLI polls the durable controller directive during long reset waits, so a
+stop request interrupts the wait within a few seconds rather than waiting for
+the provider window to expire.
 
 Native Codex activity is normalized into concise progress and bounded,
 secret-redacted trajectory events. Raw protocol ids, credentials, and

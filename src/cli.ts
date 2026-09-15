@@ -354,6 +354,16 @@ async function waitForControllerDirective(onPause?: () => void, onResume?: () =>
   }
 }
 
+/** Sleep in short slices so a long provider reset wait remains interruptible. */
+async function waitForProviderReset(delayMs: number): Promise<"elapsed" | "stop"> {
+  const deadline = Date.now() + Math.max(0, delayMs);
+  while (Date.now() < deadline) {
+    if (controllerDirective() === "stop") return "stop";
+    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(5_000, Math.max(1, deadline - Date.now()))));
+  }
+  return "elapsed";
+}
+
 async function acquireCliControllerLease(mode: "research" | "challenge"): Promise<() => void> {
   const controllerId = `cli-${process.pid}-${Date.now()}`;
   const initial = new ResearchStore(statePath);
@@ -1806,7 +1816,7 @@ research
     if (options.resume) console.log(savedCampaign && savedCampaign.status !== "completed" ? `Resuming durable research campaign from ${savedCampaign.startedAt ?? "saved state"}.` : "No resumable campaign found; starting a new research campaign.");
     const objective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}`;
     let cycle = options.resume ? nextCampaignCycle(savedCheckpoint) : 0;
-    do {
+    campaignLoop: do {
       recordCampaignCheckpoint(campaign, mode, cycle, "cycle-start");
       const directive = await waitForControllerDirective(
         () => {
@@ -2480,7 +2490,16 @@ research
             waitStore.close();
             const waitMs = delay;
             console.log(`Provider usage limit reached; pausing campaign budget and waiting ${Math.ceil(waitMs / 60_000)} minute(s) before retrying the same cycle.`);
-            await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+            if (await waitForProviderReset(waitMs) === "stop") {
+              campaign.status = "completed";
+              const stoppedStore = new ResearchStore(statePath);
+              stoppedStore.saveCampaign(campaign);
+              stoppedStore.setSchedulerState({ status: "idle", mode, currentStep: "provider-wait-stopped" });
+              stoppedStore.appendEvent("research.controller.stop", { cycle, reason: "stop requested during provider usage-limit wait" });
+              stoppedStore.close();
+              console.log("Research controller stop requested; provider wait interrupted safely.");
+              break campaignLoop;
+            }
             campaign = resumeCampaign(campaign);
             const resumeStore = new ResearchStore(statePath);
             resumeStore.saveCampaign(campaign);
