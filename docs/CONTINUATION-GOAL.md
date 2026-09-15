@@ -158,6 +158,9 @@ external evaluator.
 - TUI research rubrics now use the same source-quality, claim-coverage, and
   evidence-diversity signals as CLI campaigns, preventing interface-dependent
   evidence grading.
+- Literature adaptations now require every cited durable source to contain
+  extracted claims; a retrieved URL with no claim evidence cannot ground an
+  executable adaptation.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
 - Codex command activity now includes an exit code only when the provider

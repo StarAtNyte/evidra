@@ -2056,6 +2056,12 @@ test("source adaptation preserves literature provenance through the research gra
       hypotheses: [{ title: "Ungrounded adaptation", mechanism: "unknown", evidence: ["paper claim"], evidenceSourceIds: ["missing-paper"], sourceAdaptation: { sourceTitle: "Missing paper", originalSetting: "unknown", competitionDifference: "unknown", expectedFailureModes: ["unknown"] }, proposedChange: "test", falsificationTest: "fail", expectedMetricDelta: { low: 0, median: 0, high: 0 } }],
       selectedHypothesis: null, nextAction: "retrieve source", toolCalls: [],
     }), /unknown durable research source/);
+    store.saveSource({ id: "paper-empty", payload: { title: "Empty paper", url: "https://example.com/empty", claims: [] } });
+    assert.throws(() => materializeResearchDecision(store, {
+      phase: "hypothesis", goalStatus: "active", decision: "propose", bottleneck: "Need source claims", rationale: "The source has not yielded extractable claims.",
+      hypotheses: [{ title: "Unverified adaptation", mechanism: "unknown", evidence: ["unverified paper claim"], evidenceSourceIds: ["paper-empty"], sourceAdaptation: { sourceTitle: "Empty paper", originalSetting: "unknown", competitionDifference: "unknown", expectedFailureModes: ["unknown"] }, proposedChange: "test", falsificationTest: "fail", expectedMetricDelta: { low: 0, median: 0, high: 0 } }],
+      selectedHypothesis: null, nextAction: "retrieve and extract claims", toolCalls: [],
+    }), /without retrieved claims/);
     const materialized = materializeResearchDecision(store, {
       phase: "hypothesis",
       goalStatus: "active",

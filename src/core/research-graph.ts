@@ -26,10 +26,19 @@ function hypothesisFingerprint(hypothesis: ResearchDecision["hypotheses"][number
 /** Turn a validated director decision into durable graph entities. */
 export function materializeResearchDecision(store: ResearchStore, value: ResearchDecision, options: { evidenceSourceId?: string; evidenceScope?: string } = {}): MaterializedDecision {
   const decision = ResearchDecisionSchema.parse(value);
-  const durableSourceIds = new Set(store.sources().map((source) => source.id));
+  const durableSources = store.sources();
+  const durableSourceIds = new Set(durableSources.map((source) => source.id));
   for (const hypothesis of decision.hypotheses) {
     const missingSourceIds = (hypothesis.evidenceSourceIds ?? []).filter((sourceId) => !durableSourceIds.has(sourceId));
     if (missingSourceIds.length > 0) throw new Error(`Hypothesis '${hypothesis.title}' cites unknown durable research source(s): ${missingSourceIds.join(", ")}`);
+    if (hypothesis.sourceAdaptation) {
+      const withoutClaims = (hypothesis.evidenceSourceIds ?? []).filter((sourceId) => {
+        const source = durableSources.find((entry) => entry.id === sourceId);
+        const payload = source?.payload && typeof source.payload === "object" ? source.payload as { claims?: unknown } : {};
+        return !Array.isArray(payload.claims) || payload.claims.length === 0;
+      });
+      if (withoutClaims.length > 0) throw new Error(`Hypothesis '${hypothesis.title}' adapts source(s) without retrieved claims: ${withoutClaims.join(", ")}`);
+    }
   }
   const decisionId = store.saveDecision(decision);
   const stamp = `${Date.now()}_${decisionId}`;
