@@ -405,7 +405,12 @@ function protocolKey(trial: HarnessTrial): string {
 }
 
 function fairPair(left: HarnessTrial, right: HarnessTrial): boolean {
-  return left.direction === right.direction &&
+  const complete = (trial: HarnessTrial): boolean => Boolean(
+    typeof trial.task === "string" && trial.task.trim() && typeof trial.arm === "string" && trial.arm.trim() &&
+    trial.seed !== undefined && String(trial.seed).trim() && typeof trial.model === "string" && trial.model.trim() &&
+    typeof trial.budgetMinutes === "number" && Number.isFinite(trial.budgetMinutes) && trial.budgetMinutes > 0,
+  );
+  return complete(left) && complete(right) && left.direction === right.direction &&
     taskMetadataKey(left.taskMetadata) === taskMetadataKey(right.taskMetadata) &&
     left.provider === right.provider &&
     left.slice === right.slice &&

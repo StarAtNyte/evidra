@@ -4353,6 +4353,16 @@ test("direct harness comparison refuses mismatched reasoning effort", () => {
   assert.equal(comparison.challengerWins, false);
 });
 
+test("direct harness comparison refuses incomplete arm metadata", () => {
+  const base = { task: "task", direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 1, recovered: false, reproducible: true };
+  const comparison = compareHarnesses([
+    { harness: "evidra", ...base },
+    { harness: "other", ...base },
+  ], "evidra", "other");
+  assert.equal(comparison.validPairedArms, 0);
+  assert.equal(comparison.challengerWins, false);
+});
+
 test("held-out harness parity includes reasoning effort", () => {
   const make = (task, harness, effort, metric) => ({ harness, task, reasoningEffort: effort, arm: "default", seed: 1, model: "same-model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric: metric, validRun: true, durationSeconds: 1, recovered: false, reproducible: true });
   assert.throws(() => evaluateHarnessGeneralization(
