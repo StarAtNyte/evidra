@@ -3641,6 +3641,8 @@ test("external benchmark trial parser rejects malformed evidence and preserves e
   assert.equal(trial.sourceReport, "held-out-v1");
   assert.throws(() => parseHarnessTrial({ ...trial, candidateMetrics: { score: Number.NaN } }), /candidateMetrics\.score/);
   assert.throws(() => parseHarnessTrial({ ...trial, durationSeconds: -1 }), /durationSeconds/);
+  assert.throws(() => parseHarnessTrial({ ...trial, metricGates: [{ name: "safety", direction: "maximize" }, { name: "safety", direction: "maximize" }] }), /metric gate names must be unique/);
+  assert.throws(() => parseHarnessTrial({ ...trial, taskWorstMetric: 1, taskBestMetric: 0 }), /bounds must be ordered/);
 });
 
 test("benchmark protocol preserves provider provenance and rejects cross-provider pairing", () => {

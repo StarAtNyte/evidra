@@ -83,7 +83,17 @@ const HarnessTrialSchema = z.object({
   processQuality: z.number().finite().min(0).max(1).optional(),
   executionAlignment: z.boolean().optional(),
   failureClass: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough().superRefine((trial, context) => {
+  const gateNames = new Set<string>();
+  for (const [index, gate] of (trial.metricGates ?? []).entries()) {
+    if (gateNames.has(gate.name)) context.addIssue({ code: z.ZodIssueCode.custom, path: ["metricGates", index, "name"], message: "metric gate names must be unique" });
+    gateNames.add(gate.name);
+  }
+  if (trial.taskWorstMetric !== undefined && trial.taskBestMetric !== undefined) {
+    const ordered = trial.direction === "maximize" ? trial.taskWorstMetric < trial.taskBestMetric : trial.taskBestMetric < trial.taskWorstMetric;
+    if (!ordered) context.addIssue({ code: z.ZodIssueCode.custom, path: ["taskBestMetric"], message: "task normalization bounds must be ordered for the declared direction" });
+  }
+});
 
 /** Parse an external trial without silently accepting malformed evidence. */
 export function parseHarnessTrial(value: unknown, label = "Benchmark trial"): HarnessTrial {
