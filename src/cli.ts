@@ -52,7 +52,7 @@ import { createBlendCandidate, diversityReport, loadPredictionVector, safePredic
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
-import { checkProvider, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listLocalModels, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, codexResearchModelPool, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listCodexModels, listLocalModels, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -1801,7 +1801,18 @@ research
     if (startupRoute.fallback) {
       options.provider = startupRoute.provider;
       selectedModel = startupRoute.model;
+      researchModelPool = [{ provider: "local", model: selectedModel }];
       console.log(`Codex startup unavailable; using local/${selectedModel} before beginning the campaign.`);
+    }
+    if (options.provider === "codex" && laneLimit > 1) {
+      try {
+        const available = await listCodexModels();
+        researchModelPool = codexResearchModelPool(selectedModel, available, Math.min(4, laneLimit));
+      } catch {
+        // The already-validated primary model remains usable if model discovery
+        // briefly fails; diversity is optional, campaign progress is not.
+        researchModelPool = [{ provider: "codex", model: selectedModel }];
+      }
     }
     const started = Date.now();
     const runtime: CampaignRuntimeConfig = { mode, provider: options.provider as CampaignRuntimeConfig["provider"], model: selectedModel, thinking: options.thinking, lanes: laneLimit, autonomy, limitPolicy: options.limitPolicy as CampaignRuntimeConfig["limitPolicy"], executor: options.executor as CampaignRuntimeConfig["executor"] };

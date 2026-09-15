@@ -58,6 +58,14 @@ diversity, critic gates, replication, and domain-specific verification adapters.
 The report is evidence about one system's described process, not proof that the
 reported mathematical result is independently accepted.
 
+Evidra's Codex route now makes this diversity operational rather than merely
+prompt-level: when multiple lanes are requested, the controller discovers a
+bounded authenticated model pool, retains the selected model as the primary
+route, assigns alternatives deterministically, and records the served route.
+Automatic diversification excludes Astra under the current cost policy; an
+explicit future policy may opt in. Different models remain search priors, not
+independent evidence, and all claims still require evaluator-backed validation.
+
 Source: [On the Navier–Stokes Millennium Prize Problem](https://openai.com/index/navier-stokes-solution/).
 
 Formal verification is now represented as structured run evidence rather than a

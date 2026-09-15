@@ -281,6 +281,17 @@ export interface AvailableModel {
   supportedReasoningEfforts?: string[];
 }
 
+/** Build a small heterogeneous Codex pool without silently selecting costly
+ * preview models. The requested model remains the primary route. */
+export function codexResearchModelPool(primary: string, models: AvailableModel[], maxModels = 4): Array<{ provider: "codex"; model: string }> {
+  const selected = [primary, ...models
+    .filter((model) => !model.hidden && !/astra/i.test(model.id))
+    .map((model) => model.id)]
+    .filter((model, index, values) => model.trim().length > 0 && values.indexOf(model) === index)
+    .slice(0, Math.max(1, Math.min(6, Math.floor(maxModels))));
+  return selected.map((model) => ({ provider: "codex" as const, model }));
+}
+
 /** Normalize the app-server model schema for the TUI's string-based picker. */
 export function normalizeCodexModels(value: unknown): AvailableModel[] {
   if (!Array.isArray(value)) return [];

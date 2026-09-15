@@ -20,7 +20,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { normalizeResearchDecisionPayload, runResearchDirector } from "../dist/agents/research-director.js";
-import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
+import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, classifyProcessFailure, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
@@ -1828,6 +1828,19 @@ test("research lanes assign a bounded heterogeneous model pool deterministically
   const routes = assignResearchLaneRoutes(roles, { provider: "local", model: "primary", modelPool: [{ provider: "local", model: "qwen3.5:4b" }, { provider: "local", model: "qwen3.5:9b" }] });
   assert.deepEqual(routes.map((route) => route.model), ["qwen3.5:4b", "qwen3.5:9b", "qwen3.5:4b"]);
   assert.deepEqual(assignResearchLaneRoutes(roles, { provider: "codex", model: "default" }).map((route) => route.model), ["default", "default", "default"]);
+});
+
+test("Codex research model pools preserve the primary route and exclude Astra by default", () => {
+  assert.deepEqual(codexResearchModelPool("gpt-5.6-luna", [
+    { id: "gpt-6-astra", displayName: "Astra" },
+    { id: "gpt-5.6-sol", displayName: "Sol" },
+    { id: "gpt-5.6-terra", displayName: "Terra", hidden: true },
+    { id: "gpt-5.5", displayName: "Legacy" },
+  ], 4), [
+    { provider: "codex", model: "gpt-5.6-luna" },
+    { provider: "codex", model: "gpt-5.6-sol" },
+    { provider: "codex", model: "gpt-5.5" },
+  ]);
 });
 
 test("research lane pools expose ensemble and reproducibility specialties when capacity allows", () => {

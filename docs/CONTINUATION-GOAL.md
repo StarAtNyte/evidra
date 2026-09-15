@@ -443,6 +443,10 @@ external evaluator.
   create its bwrap namespace: they start a fresh provider thread in a disposable
   isolated workspace with full-access provider sandboxing, preserving the real
   checkout and never applying the fallback to workspace-write engineers.
+- Codex campaigns with multiple lanes now discover a bounded pool of authenticated
+  models, keep the configured model as the primary route, assign alternatives
+  deterministically to independent lanes, and exclude Astra from that automatic
+  pool unless a future policy explicitly opts in.
 
 ## Immediate next work
 
