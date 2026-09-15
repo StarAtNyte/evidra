@@ -20,7 +20,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
-import { CodexExecAgent, codexEventErrorMessage, codexItemProgress, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine } from "../dist/agents/codex-exec.js";
+import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
@@ -644,6 +644,14 @@ test("tool trace recorder preserves causal call/result pairs and redacts secrets
   blocked.onToolResult("director", blockedCall, { name: "shell.exec", ok: false, error: "blocked", trust: "permission_boundary" });
   blocked.events.push({ id: "terminal", kind: "terminal", payload: { status: "completed" } });
   assert.equal(evaluateTrajectory(blocked.events).safetyControl.verdict, "PASS");
+});
+
+test("Codex agent messages are extracted before generic item progress", () => {
+  const item = { type: "agent_message", text: "Evidra completed the analysis." };
+  assert.equal(codexAgentMessageText(item, "item.started"), undefined);
+  assert.equal(codexAgentMessageText(item, "item.updated"), item.text);
+  assert.equal(codexAgentMessageText(item, "item.completed"), item.text);
+  assert.equal(codexAgentMessageText({ type: "reasoning", text: "internal" }, "item.completed"), undefined);
 });
 
 test("persisted trace parser bounds malformed crash artifacts and redacts payloads", () => {

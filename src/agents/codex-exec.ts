@@ -169,6 +169,16 @@ export function codexItemProgress(item: unknown, eventType = "item.started"): st
   return undefined;
 }
 
+/** Extract the assistant text before generic item-progress handling. */
+export function codexAgentMessageText(item: unknown, eventType: string): string | undefined {
+  if (eventType !== "item.updated" && eventType !== "item.completed") return undefined;
+  if (!item || typeof item !== "object") return undefined;
+  const value = item as { type?: unknown; text?: unknown };
+  return value.type === "agent_message" && typeof value.text === "string" && value.text.trim()
+    ? value.text
+    : undefined;
+}
+
 /** Extract the useful diagnostic from either SDK failure event shape. */
 export function codexEventErrorMessage(event: unknown): string {
   if (!event || typeof event !== "object") return "Codex turn failed.";
@@ -510,16 +520,19 @@ export class CodexExecAgent {
         const value = event as unknown as { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string; query?: string; message?: string }; usage?: AgentResult["usage"]; message?: string; error?: { message?: string } };
         if (value.type === "thread.started" && value.thread_id) { threadId = value.thread_id; this.options.onThread?.(value.thread_id); }
         else if (value.type === "turn.started") onProgress?.("Thinking...");
+        else if ((value.type === "item.updated" || value.type === "item.completed") && value.item?.type === "agent_message") {
+          const message = codexAgentMessageText(value.item, value.type);
+          if (message) {
+            finalText = message;
+            if (value.type === "item.updated") onProgress?.(`Evidra · ${progressLine(message)}`);
+          }
+        }
         else if (value.item && (value.type === "item.started" || value.type === "item.updated" || value.type === "item.completed")) {
           const activity = codexItemProgress(value.item, value.type);
           if (activity) {
             onProgress?.(activity);
             this.options.onActivity?.("codex", activity);
           }
-        }
-        else if ((value.type === "item.updated" || value.type === "item.completed") && value.item?.type === "agent_message" && value.item.text) {
-          finalText = value.item.text;
-          if (value.type === "item.updated") onProgress?.(`Codex · ${progressLine(value.item.text)}`);
         }
         else if (value.type === "turn.completed") {
           usage = normalizeCodexUsage(value.usage);
