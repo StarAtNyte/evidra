@@ -71,7 +71,7 @@ export function validateSubtaskContract(contract: SubtaskContract): { valid: boo
     else if (ids.has(id)) reasons.push(`duplicate acceptance criterion: ${id}`);
     ids.add(id);
     if (!normalize(criterion.description)) reasons.push(`acceptance criterion description is empty: ${id || "unknown"}`);
-    if (criterion.weight !== undefined && (!Number.isFinite(criterion.weight) || criterion.weight <= 0)) reasons.push(`acceptance criterion weight must be positive: ${id || "unknown"}`);
+    if (criterion.weight !== undefined && (!Number.isFinite(criterion.weight) || criterion.weight <= 0 || criterion.weight > 1_000_000)) reasons.push(`acceptance criterion weight must be in (0, 1000000]: ${id || "unknown"}`);
   }
   for (const dependency of contract.dependencies ?? []) if (!normalize(dependency)) reasons.push("dependency id is empty");
   return { valid: reasons.length === 0, reasons };

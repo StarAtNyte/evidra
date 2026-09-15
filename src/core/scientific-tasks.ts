@@ -13,7 +13,7 @@ export const ScientificTaskStageSchema = z.object({
   title: z.string().min(1).max(200),
   objective: z.string().min(1).max(2_000),
   /** Relative importance in progress reports; validity still requires every stage. */
-  weight: z.number().finite().positive().default(1),
+  weight: z.number().finite().positive().max(1_000_000).default(1),
   command: z.array(z.string().min(1)).min(1),
   cwd: z.string().default("."),
   timeoutMinutes: z.number().positive().max(24 * 60).default(15),

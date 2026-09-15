@@ -2285,6 +2285,7 @@ test("generic subtask auditing requires verifier evidence and preserves unmet cr
   assert.equal(subtaskStateFromAudit(complete).status, "completed");
   assert.throws(() => assertSubtaskContract({ ...contract, acceptanceCriteria: [{ id: "x", description: "x" }, { id: "x", description: "duplicate" }] }), /duplicate/);
   assert.throws(() => assertSubtaskContract({ ...contract, acceptanceCriteria: [{ id: "x", description: "x", weight: 0 }] }), /weight/);
+  assert.throws(() => assertSubtaskContract({ ...contract, acceptanceCriteria: [{ id: "x", description: "x", weight: 1_000_001 }] }), /1000000/);
 });
 
 test("phase goals expose the same auditable contract used by generic work", () => {
@@ -5773,6 +5774,7 @@ test("scientific task runner verifies intermediate stages and resumes verified s
     assert.equal(evaluateScientificTaskRun(task, { ...first, taskId: "different-task" }).valid, false);
     assert.throws(() => ScientificTaskSchema.parse({ ...task, stages: [{ ...task.stages[0], verificationCommands: [task.stages[0].verificationCommands[0], task.stages[0].verificationCommands[0]] }] }), /verificationCommands must contain unique entries/);
     assert.throws(() => ScientificTaskSchema.parse({ ...task, stages: [{ ...task.stages[0], weight: 0 }] }), /greater than 0/);
+    assert.throws(() => ScientificTaskSchema.parse({ ...task, stages: [{ ...task.stages[0], weight: 1_000_001 }] }), /less than or equal to 1000000/);
     writeFileSync(join(root, "input.json"), "{\"mutated\":true}");
     const repaired = await runScientificTask(task, root, { previous: first });
     assert.equal(repaired.status, "completed");
