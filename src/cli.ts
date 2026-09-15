@@ -2256,7 +2256,7 @@ research
         ? `\n\nPrior decision-rubric gaps to repair before spending compute:\n${[...new Set(priorRubricGaps)].join("\n")}`
         : "";
       const cycleObjective = allocatedObjective + literatureBenchmarkGuidance + evolutionGuidance + rubricGuidance + steeringGuidance;
-      const researchSources = latestSourcePayloads(store.sources(), 12, cycleObjective);
+      const researchSources = latestSourcePayloads(store.sources(), 12, cycleObjective, store);
       const researchMemory = researchMemoryContext(store, 30, cycleObjective, {
         objective: campaign.goal,
         taskType: mode === "challenge" ? adapter.config.taskType : "general research",

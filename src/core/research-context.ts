@@ -19,7 +19,7 @@ export interface ResearchMemoryContext {
 }
 
 /** Return the newest source entry for each URL while preserving source history in storage. */
-export function latestSourceEntries<T extends { id: string; payload: unknown; createdAt: string }>(entries: T[], limit = 12, query?: string): T[] {
+export function latestSourceEntries<T extends { id: string; payload: unknown; createdAt: string }>(entries: T[], limit = 12, query?: string, store?: ResearchStore): T[] {
   const seen = new Set<string>();
   const result: T[] = [];
   for (const entry of entries) {
@@ -30,14 +30,14 @@ export function latestSourceEntries<T extends { id: string; payload: unknown; cr
     result.push(entry);
   }
   const ordered = query?.trim()
-    ? ranked(result, query, (entry) => JSON.stringify(entry.payload))
+    ? store ? rankedMemory(store, result, query, (entry) => JSON.stringify(entry.payload)) : ranked(result, query, (entry) => JSON.stringify(entry.payload))
     : result;
   return ordered.slice(0, Math.max(1, Math.min(limit, 100)));
 }
 
 /** Return the newest payload for each URL while preserving source history in storage. */
-export function latestSourcePayloads(entries: Array<{ id: string; payload: unknown; createdAt: string }>, limit = 12, query?: string): unknown[] {
-  return latestSourceEntries(entries, limit, query).map((entry) => entry.payload);
+export function latestSourcePayloads(entries: Array<{ id: string; payload: unknown; createdAt: string }>, limit = 12, query?: string, store?: ResearchStore): unknown[] {
+  return latestSourceEntries(entries, limit, query, store).map((entry) => entry.payload);
 }
 
 function tokens(value: string): Set<string> {

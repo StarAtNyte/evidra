@@ -27,6 +27,8 @@ Long-running context retrieval is hybrid: durable claims and hypotheses are
 ranked using the SQLite FTS index when available, then deterministic lexical
 overlap remains as a compatibility fallback. This keeps relevant old memory
 available after migrations while giving exact multi-term findings priority.
+The same ranking is now applied to the deduplicated literature sources passed
+into autonomous director turns, not only to the interactive memory command.
 
 ```text
 user prompt

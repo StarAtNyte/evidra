@@ -192,6 +192,9 @@ external evaluator.
 - Autonomous memory context now uses hybrid FTS-plus-lexical retrieval for
   durable claims and hypotheses, so the existing SQLite index influences Codex
   research context instead of being used only by the interactive memory search.
+- The autonomous CLI and TUI now apply that hybrid retrieval to deduplicated
+  literature sources as well, keeping source context and durable memory on one
+  retrieval path.
 - Codex structured-output schemas now cover the research director, independent
   research lanes, and critic, so every research-role response is constrained
   before durable parsing and evidence gates.
