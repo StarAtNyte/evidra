@@ -177,6 +177,10 @@ external evaluator.
   has a regression test covering concurrent lane-style event writers. This
   prevents transient database-lock contention from dropping parallel Codex
   observations.
+- Campaigns now enforce the wall-clock budget at the cycle boundary before
+  source ingestion, workspace inspection, baseline execution, or another
+  Codex turn. An expired resumed campaign records a terminal budget checkpoint
+  without starting new work.
 - Codex structured-output schemas now cover the research director, independent
   research lanes, and critic, so every research-role response is constrained
   before durable parsing and evidence gates.

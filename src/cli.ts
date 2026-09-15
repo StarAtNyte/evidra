@@ -1839,6 +1839,21 @@ research
         console.log("Research controller stop requested; stopped at the next safe boundary.");
         break;
       }
+      // Enforce the wall-clock budget before ingesting dynamic sources,
+      // inspecting the workspace, or rerunning a challenge baseline. This is
+      // especially important after resume: a campaign can be reopened after
+      // its budget expired while the previous controller was offline.
+      if (campaignRemainingMs({ ...campaign, startedAt: campaign.startedAt }) <= 0) {
+        campaign.status = "completed";
+        const expiredStore = new ResearchStore(statePath);
+        expiredStore.saveCampaign(campaign);
+        expiredStore.setSchedulerState({ status: "idle", mode, currentStep: "budget-exhausted" });
+        expiredStore.appendEvent("research.campaign.completed", { cycle, reason: "budget exhausted at cycle boundary" });
+        expiredStore.close();
+        recordCampaignCheckpoint(campaign, mode, cycle, "campaign-terminal");
+        console.log(`${mode === "challenge" ? "Challenge" : "Research"} budget exhausted before starting another cycle.`);
+        break;
+      }
       cycle += 1;
       await ingestCompetitionSources(adapter);
       const store = new ResearchStore(statePath);

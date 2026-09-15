@@ -158,6 +158,11 @@ requests a safe shutdown and preserves the same evidence. A dead controller is
 recovered through the durable lease; stale workers are finalized as failures
 instead of remaining permanently `running`.
 
+The budget is checked at the cycle boundary before dynamic-source ingestion,
+workspace inspection, baseline execution, or another Codex turn. Resuming an
+already-expired campaign therefore records a terminal budget checkpoint instead
+of spending work after the deadline.
+
 ## Usage exhaustion and recovery
 
 Codex subscription limits are finite. Select the desired behavior explicitly:
