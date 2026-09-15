@@ -108,7 +108,9 @@ export function providerRetryAfterMs(error: unknown): number {
 }
 
 export function queueCodexMessage(threadId: string, message: string): boolean {
-  const result = spawnSync("codex", ["queue", "--thread", threadId, "--message", message], { stdio: "ignore" });
+  // Steering is invoked from the TUI input handler. Never let a broken local
+  // Codex transport block rendering or keyboard input indefinitely.
+  const result = spawnSync("codex", ["queue", "--thread", threadId, "--message", message], { stdio: "ignore", timeout: 5_000, killSignal: "SIGTERM" });
   return result.status === 0;
 }
 
@@ -128,13 +130,13 @@ export function loginCodex(mode: "device" | "browser" = "device"): number {
 }
 
 export function codexLoginStatus(): string {
-  const result = spawnSync("codex", ["login", "status"], { encoding: "utf8" });
+  const result = spawnSync("codex", ["login", "status"], { encoding: "utf8", timeout: 5_000, killSignal: "SIGTERM" });
   return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
 }
 
 export function codexIsLoggedIn(): boolean {
   if (process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY) return true;
-  return spawnSync("codex", ["login", "status"], { stdio: "ignore" }).status === 0;
+  return spawnSync("codex", ["login", "status"], { stdio: "ignore", timeout: 5_000, killSignal: "SIGTERM" }).status === 0;
 }
 
 export function listCodexModels(): Promise<AvailableModel[]> {
