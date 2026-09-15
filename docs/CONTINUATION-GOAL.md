@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `612b882`.
+- Latest pushed commit: `5343580`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -75,6 +75,10 @@ external evaluator.
 - Local provider requests now enforce the same configured turn timeout and clean
   up abort/signal handlers; a hanging Ollama endpoint cannot stall a campaign
   indefinitely.
+- Ordinary Codex chat now resumes one provider thread for the lifetime of the
+  terminal session, preserving native conversation context and steering. Each
+  autonomous research turn remains isolated and receives only controller-owned,
+  bounded context.
 - Source discovery now persists provenance classes and conservative quality
   scores, backfills metadata for historical events, diversity-reranks providers,
   and rejects instruction-like retrieved sentences before durable claim
