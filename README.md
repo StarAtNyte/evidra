@@ -279,6 +279,7 @@ Implemented today:
 - phase goals are also isolated by a deterministic ultimate-objective identity, preventing separate campaigns from sharing progress accidentally;
 - phase gates count only evidence created within the active objective boundary, so historical runs and artifacts cannot satisfy a new campaign;
 - TUI phase gates read complete durable event families rather than the bounded visible timeline, preserving correctness in long campaigns;
+- generated reports display phase objective-set identities, keeping multiple research objectives distinguishable in one project;
 - failed hypotheses cannot silently consume budget on an unchanged route: retries must change the executor, provider, model, or search operator, while the failed attempt remains immutable evidence;
 - suppressed duplicate or unchanged retries emit a durable scheduling event with the route and reason, so the next research cycle can replan from an explicit controller decision;
 - autonomous campaigns persist phase-level checkpoints (cycle start, lanes, director, critic, execution, and terminal/completion) into campaign state, scheduler state, and the controller lease for reliable restart and status reporting;

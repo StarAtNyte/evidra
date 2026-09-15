@@ -180,6 +180,8 @@ external evaluator.
 - TUI phase gates now read the complete durable phase-event families instead of
   the last 500 timeline events, so long campaigns cannot lose valid evidence
   merely because the UI history window rolled over.
+- Generated reports now display each phase goal's objective-set identity, making
+  multi-objective project histories auditable without inspecting SQLite.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
 - Codex command activity now includes an exit code only when the provider

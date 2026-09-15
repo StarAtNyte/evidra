@@ -2329,6 +2329,17 @@ test("phase evidence excludes records from before the objective goal set", () =>
   assert.equal(phaseGoalRecordsSince(goal, [{ createdAt: before }, { createdAt: after }]), 1);
 });
 
+test("reports expose the objective identity for phase goals", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-goal-report-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.savePhaseGoal({ id: "goal-research-set-orientation", phase: "orientation", status: "active", payload: definePhaseGoals("report objective", "research")[0] });
+    const report = renderReport(store, "research");
+    assert.match(report, /goal-set [a-z0-9]+/);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("phase gate event families are explicit and durable", () => {
   assert.ok(PHASE_GOAL_EVENT_TYPES.includes("baseline.completed"));
   assert.ok(PHASE_GOAL_EVENT_TYPES.includes("experiment.validation.assessed"));

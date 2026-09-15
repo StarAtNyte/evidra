@@ -76,8 +76,8 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     "## Phase goals",
     "",
     goals.length ? goals.map((goal) => {
-      const payload = goal.payload as { title?: string; objective?: string; status?: string; attempts?: number };
-      return `- **${goal.phase}** · ${payload.status ?? goal.status} · attempts ${payload.attempts ?? 0}\n  ${payload.title ?? "Untitled"}\n  ${payload.objective ?? ""}`;
+      const payload = goal.payload as { title?: string; objective?: string; status?: string; attempts?: number; goalSetId?: string };
+      return `- **${goal.phase}** · ${payload.status ?? goal.status} · attempts ${payload.attempts ?? 0}${payload.goalSetId ? ` · goal-set ${payload.goalSetId}` : ""}\n  ${payload.title ?? "Untitled"}\n  ${payload.objective ?? ""}`;
     }).join("\n") : "No phase goals recorded.",
   ];
   if (kind !== "challenge") sections.push("", "## Hypotheses", "", hypotheses.length ? hypotheses.map((hypothesis) => `- ${hypothesis.id}: ${line((hypothesis.payload as { title?: string }).title ?? hypothesis.payload)}`).join("\n") : "No hypotheses recorded.");
