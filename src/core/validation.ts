@@ -58,12 +58,14 @@ export function refreshExperimentAudit(manifest: ExperimentManifest, run: RunRes
 export function independentReplicationObserved(
   experimentId: string,
   experiments: Array<{ id: string; payload: unknown }>,
-  runs: Array<{ experimentId: string; status: string }>,
+  runs: Array<{ id?: string; experimentId: string; status: string }>,
 ): boolean {
   return experiments.some((entry) => {
     const payload = entry.payload as { parent?: unknown; replicationOf?: unknown; runId?: unknown };
     if (payload.parent !== experimentId && payload.replicationOf !== experimentId) return false;
-    return runs.some((run) => run.experimentId === entry.id && run.status === "completed");
+    return runs.some((run) => run.experimentId === entry.id
+      && run.status === "completed"
+      && (typeof payload.runId !== "string" || run.id === payload.runId));
   });
 }
 

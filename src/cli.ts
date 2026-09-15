@@ -1479,7 +1479,8 @@ submission.command("submit").argument("<bundle>").option("--message <message>", 
   if (entry.status !== "approved") { store.close(); throw new Error(`Submission ${bundle} is '${entry.status}'. Run submission approve first.`); }
   const gates = store.experimentGates(entry.experimentId);
   const experimentAudit = store.latestSubtaskAudit(`experiment_audit:${entry.experimentId}`);
-  const runForAudit = store.runs().find((candidate) => candidate.experimentId === entry.experimentId);
+  const entryPayload = entry.payload as { runId?: unknown };
+  const runForAudit = typeof entryPayload.runId === "string" ? store.runs().find((candidate) => candidate.id === entryPayload.runId) : undefined;
   if (!experimentAudit || experimentAudit.complete !== true || (experimentAudit.payload as { runId?: unknown }).runId !== runForAudit?.id) {
     store.close();
     throw new Error(`Submission ${bundle} is blocked: run /experiment audit ${entry.experimentId} and obtain a complete audit for the current run.`);

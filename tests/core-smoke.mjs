@@ -5686,10 +5686,11 @@ test("experiment audit criteria refresh when operator gates change", () => {
 });
 
 test("replication evidence is detected only from a completed independent child", () => {
-  const experiments = [{ id: "child", payload: { parent: "parent" } }];
-  assert.equal(independentReplicationObserved("parent", experiments, [{ experimentId: "child", status: "completed" }]), true);
-  assert.equal(independentReplicationObserved("parent", experiments, [{ experimentId: "child", status: "failed" }]), false);
-  assert.equal(independentReplicationObserved("other", experiments, [{ experimentId: "child", status: "completed" }]), false);
+  const experiments = [{ id: "child", payload: { parent: "parent", runId: "child-run-2" } }];
+  assert.equal(independentReplicationObserved("parent", experiments, [{ id: "child-run-2", experimentId: "child", status: "completed" }]), true);
+  assert.equal(independentReplicationObserved("parent", experiments, [{ id: "child-run-1", experimentId: "child", status: "completed" }]), false);
+  assert.equal(independentReplicationObserved("parent", experiments, [{ id: "child-run-2", experimentId: "child", status: "failed" }]), false);
+  assert.equal(independentReplicationObserved("other", experiments, [{ id: "child-run-2", experimentId: "child", status: "completed" }]), false);
 });
 
 test("external evaluator evidence can be required as a separate experiment gate", () => {

@@ -3063,7 +3063,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (entry.status !== "approved") { store.close(); append("assistant", `Submission ${bundleId} is '${entry.status}'. Run /submission approve first.`); return; }
         const gates = store.experimentGates(entry.experimentId);
         const experimentAudit = store.latestSubtaskAudit(`experiment_audit:${entry.experimentId}`);
-        const runForAudit = store.runs().find((candidate) => candidate.experimentId === entry.experimentId);
+        const entryPayload = entry.payload as { runId?: unknown };
+        const runForAudit = typeof entryPayload.runId === "string" ? store.runs().find((candidate) => candidate.id === entryPayload.runId) : undefined;
         if (!experimentAudit || experimentAudit.complete !== true || (experimentAudit.payload as { runId?: unknown }).runId !== runForAudit?.id) {
           store.close();
           append("assistant", `Submission blocked: complete /experiment audit ${entry.experimentId} for the current run first.`);
