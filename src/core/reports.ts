@@ -36,6 +36,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const eventIntegrity = store.verifyEventChain();
   const harnessBenchmarkEvents = store.eventsByType("harness.benchmark.completed");
   const harnessEvolutionEvents = store.eventsByType("harness.evolution.plan");
+  const harnessChanges = store.harnessChanges();
   const routingEvents = store.eventsByType("research.capability_outcome");
   const experienceEvents = store.eventsByType("research.experience.recorded");
   const contradictionEdges = store.edges().filter((edge) => edge.relation === "contradicts");
@@ -137,6 +138,17 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
       return `- ${event.createdAt} · ${components} checksummed components\n  ${interventions || "No targeted intervention yet; waiting for benchmark evidence."}`;
     }).join("\n")
     : "No harness evolution plan recorded.");
+  sections.push("", "## Harness evolution decisions", "", harnessChanges.length
+    ? harnessChanges.slice(-12).map((change) => {
+      const changed = change.candidateComponents.filter((candidate) => change.baselineComponents.some((baseline) => baseline.path === candidate.path && baseline.checksum !== candidate.checksum)).map((component) => component.path);
+      const outcomeSummary = change.outcomes.map((outcome) => {
+        if (!outcome || typeof outcome !== "object") return "unstructured outcome";
+        const value = outcome as { incumbent?: unknown; outcome?: { status?: unknown; observedDelta?: unknown } };
+        return `${typeof value.incumbent === "string" ? value.incumbent : "comparison"}=${typeof value.outcome?.status === "string" ? value.outcome.status : "unobserved"}${typeof value.outcome?.observedDelta === "number" ? ` (${value.outcome.observedDelta.toFixed(4)})` : ""}`;
+      }).join(", ");
+      return `- ${change.id} · ${change.decision} · protocol ${change.protocolFingerprint}\n  components: ${changed.join(", ") || "none observed"}\n  outcomes: ${outcomeSummary || "none recorded"}`;
+    }).join("\n")
+    : "No durable harness-change decisions recorded.");
   sections.push("", "## Source frontier", "", `Works: ${sourceFrontierReport.uniqueWorks} · retrieved: ${sourceFrontierReport.retrievedWorks} · pending: ${sourceFrontierReport.pendingWorks}\nQuery coverage: ${(sourceFrontierReport.queryCoverage * 100).toFixed(0)}% · retrieval coverage: ${(sourceFrontierReport.retrievalCoverage * 100).toFixed(0)}% · claim coverage: ${(sourceFrontierReport.claimCoverage * 100).toFixed(0)}%\nEvidence classes: scholarly=${sourceFrontierReport.scholarlyWorks}, official=${sourceFrontierReport.officialWorks}, implementation=${sourceFrontierReport.implementationLeads}, discovery=${sourceFrontierReport.discoveryOnlyWorks}\nMean routing quality: ${(sourceFrontierReport.meanQualityScore * 100).toFixed(0)}%`, "", "## Sources", "", sources.length ? sources.map((source) => `- ${source.id}: ${line((source.payload as { title?: string; url?: string }).title ?? source.payload)} · ${(source.payload as { url?: string }).url ?? ""}`).join("\n") : "No sources recorded.");
   sections.push("", "## Ensemble candidates", "", ensembles.length ? ensembles.map((candidate) => `- ${candidate.id} · ${candidate.status} · ${candidate.checksum}\n  ${candidate.path}`).join("\n") : "No ensemble candidates recorded.");
   if (kind !== "research") sections.push("", "## Experiments and runs", "", experiments.length ? experiments.map((experiment) => {

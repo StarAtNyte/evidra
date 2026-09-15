@@ -424,6 +424,7 @@ test("harness change records survive store reopen with provenance and decision",
     assert.equal(changes[0].protocolFingerprint, "sha256:protocol");
     assert.deepEqual(changes[0].candidateComponents, [{ path: "src/core/old.ts", checksum: "after" }]);
     assert.equal(reopened.eventsByType("harness.change.recorded").length, 1);
+    assert.match(renderReport(reopened, "final"), /Harness evolution decisions[\s\S]*change:protocol-1[\s\S]*retain/);
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

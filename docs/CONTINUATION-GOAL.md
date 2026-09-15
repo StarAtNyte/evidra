@@ -149,6 +149,9 @@ external evaluator.
   becoming an unearned task result.
 - The same history is included in one-shot `evidra research` decisions, closing
   the memory boundary for non-campaign research as well.
+- Generated research/challenge/final reports now expose the bounded evolution
+  decision history, changed components, protocol identity, and measured
+  outcomes without requiring direct database inspection.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
 - Codex command activity now includes an exit code only when the provider
