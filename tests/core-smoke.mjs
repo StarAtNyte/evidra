@@ -1473,7 +1473,7 @@ test("reports and timeline expose ensemble lifecycle state", () => {
     store.saveExperiment({ id: "report-failed-route", payload: { status: "failed", title: "Ungrouped route", failureClass: "invalid_metric" } });
     store.appendEvent("ensemble.candidate.status", { id: "blend-report", status: "validated" });
     store.appendEvent("research.capability_outcome", { outcome: "success", predictedTier: "C2", served: { provider: "local", model: "qwen-test", parallelLanes: 2 }, quality: "PASS" });
-    store.appendEvent("harness.benchmark.completed", { challenger: "evidra", scorecards: [{ harness: "evidra", competitiveScore: 72.5, failureProfile: { timeout: 2 } }], comparisons: [{ incumbent: "mlgym", challengerWins: false }] });
+    store.appendEvent("harness.benchmark.completed", { challenger: "evidra", scorecards: [{ harness: "evidra", competitiveScore: 72.5, failureProfile: { timeout: 2 } }], comparisons: [{ incumbent: "mlgym", challengerWins: false }], providerComparison: { challenger: "codex", incumbent: "local", pairedLower95: 0.01, challengerWins: true, reason: "route wins" }, providerGeneralization: { challengerProvider: "codex", incumbentProvider: "local", generalizes: false, reason: "held-out not proven" } });
     const report = renderReport(store, "final");
     assert.match(report, /## Ensemble candidates/);
     assert.match(report, /## State integrity/);
@@ -1483,6 +1483,8 @@ test("reports and timeline expose ensemble lifecycle state", () => {
     assert.match(report, /success.*predicted C2.*local\/qwen-test/);
     assert.match(report, /## Harness benchmark feedback/);
     assert.match(report, /timeout/);
+    assert.match(report, /Provider route: codex vs local.*lower95=0.01/);
+    assert.match(report, /Provider holdout: codex vs local.*not proven/);
     assert.match(report, /## Learned transfer memory/);
     assert.match(report, /playbook_report-method/);
     assert.match(report, /report-failed-route.*Ungrouped route/);
