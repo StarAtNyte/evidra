@@ -1195,7 +1195,7 @@ airsBenchmark.command("execute")
           // preserving the important boundaries: no network and no access to
           // the controller checkout.
           reasoningEffort: options.effort, sandbox: "danger-full-access", networkAccessEnabled: false,
-          timeoutMs: phaseTimeoutMs, maxRepeatedCommands: 3,
+          timeoutMs: phaseTimeoutMs, maxRepeatedCommands: 3, maxFailedCommands: 3,
         });
         const strategyShift = phaseIndex > 0 ? " The previous phase did not leave a usable artifact; change strategy now, stop investigating, and execute the shortest reliable shell/Python path to produce the artifact." : "";
         const objective = `You are running phase ${phaseIndex + 1} of ${phases.length} (${phases[phaseIndex].name}) for an AIRS-Bench experiment. Read the task specification at ${taskDescription}. Your current working directory is ${context.workspace}; work only there. Use the prepared data in ${context.agentDataDir}; do not access hidden labels or test_with_labels. ${phases[phaseIndex].instruction}${strategyShift} You MUST leave the required local artifact at ${submissionRelativePath} before the final verification phase completes. Do not submit externally and do not finish with only an explanation. IMPORTANT: create and edit files with shell commands (for example python3 -c, heredocs, or redirection). Do not use the provider's file-change/apply-patch tool; this worker runs in a disposable workspace where that tool is unavailable.`;

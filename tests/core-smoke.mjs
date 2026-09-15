@@ -3217,6 +3217,29 @@ test("Codex adapter accepts only a completed injected stream", async () => {
   }
 });
 
+test("Codex agent stops after consecutive failed shell commands", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-codex-fail-watchdog-"));
+  const events = [
+    { type: "thread.started", thread_id: "thread-fail-watchdog" },
+    { type: "item.started", item: { type: "command_execution", command: "python bad.py" } },
+    { type: "item.completed", item: { type: "command_execution", command: "python bad.py", exit_code: 1 } },
+    { type: "item.started", item: { type: "command_execution", command: "python other.py" } },
+    { type: "item.completed", item: { type: "command_execution", command: "python other.py", exit_code: 2 } },
+    { type: "item.started", item: { type: "command_execution", command: "python third.py" } },
+    { type: "item.completed", item: { type: "command_execution", command: "python third.py", exit_code: 1 } },
+  ];
+  try {
+    const agent = new CodexExecAgent({ provider: "codex", model: "gpt-test", cwd: root, maxFailedCommands: 3 }, {
+      isLoggedIn: async () => true,
+      createClient: () => ({
+        startThread: () => ({ runStreamed: async () => ({ events: (async function* () { for (const event of events) yield event; })() }) }),
+        resumeThread: () => ({ runStreamed: async () => ({ events: (async function* () { for (const event of events) yield event; })() }) }),
+      }),
+    });
+    await assert.rejects(() => agent.run({ role: "experiment engineer", objective: "execute", context: {} }), /consecutive shell commands failed/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("Codex read-only turns recover from an unavailable host sandbox in an isolated copy", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-codex-sandbox-retry-"));
   writeFileSync(join(root, "notes.txt"), "safe observation\n");

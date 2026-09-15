@@ -85,6 +85,8 @@ export interface ExecAgentOptions {
   timeoutMs?: number;
   /** Abort autonomous turns that repeat the exact same shell command. Zero disables it. */
   maxRepeatedCommands?: number;
+  /** Abort autonomous turns after this many consecutive failed shell commands. Zero disables it. */
+  maxFailedCommands?: number;
   /** Receive concise, redacted native provider activity for durable traces. */
   onActivity?: (source: string, activity: string) => void;
   /** Receive the bounded, redacted assistant message for replay diagnostics. */
@@ -623,8 +625,9 @@ export class CodexExecAgent {
       let turnCompleted = false;
       let lastCommand: string | undefined;
       let repeatedCommands = 0;
+      let consecutiveFailedCommands = 0;
       for await (const event of stream.events) {
-        const value = event as unknown as { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string; query?: string; message?: string }; usage?: AgentResult["usage"]; message?: string; error?: { message?: string } };
+        const value = event as unknown as { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string; query?: string; message?: string; exit_code?: number }; usage?: AgentResult["usage"]; message?: string; error?: { message?: string } };
         if (value.type === "item.started" && value.item?.type === "command_execution" && typeof value.item.command === "string") {
           if (value.item.command === lastCommand) repeatedCommands += 1;
           else { lastCommand = value.item.command; repeatedCommands = 1; }
@@ -632,6 +635,17 @@ export class CodexExecAgent {
           if (limit > 0 && repeatedCommands >= limit) {
             abortReason = `Codex agent stuck: repeated the same command ${repeatedCommands} times (${progressLine(value.item.command)}).`;
             onProgress?.("Agent appears stuck · stopping the repeated command loop.");
+            abort.abort();
+          }
+        }
+        if (value.type === "item.completed" && value.item?.type === "command_execution") {
+          const failed = value.item.exit_code !== undefined && value.item.exit_code !== 0;
+          if (failed) consecutiveFailedCommands += 1;
+          else consecutiveFailedCommands = 0;
+          const limit = Math.max(0, Math.floor(this.options.maxFailedCommands ?? 0));
+          if (limit > 0 && consecutiveFailedCommands >= limit) {
+            abortReason = `Codex agent route failed: ${consecutiveFailedCommands} consecutive shell commands failed.`;
+            onProgress?.("Agent route is failing repeatedly · switching strategy.");
             abort.abort();
           }
         }

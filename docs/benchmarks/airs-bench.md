@@ -208,6 +208,10 @@ diagnostic, allowing the outer retry/route policy to recover instead of
 silently consuming the entire experiment budget. The watchdog is opt-in in
 the general Codex provider and enabled for autonomous AIRS runs.
 
+AIRS workers also stop after three consecutive failed shell commands, even
+when the commands are different; the next supervised phase then receives an
+explicit strategy-switch prompt.
+
 ```bash
 git clone https://github.com/facebookresearch/airs-bench.git
 cd airs-bench
