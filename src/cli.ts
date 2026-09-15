@@ -3208,7 +3208,7 @@ experiment.command("run")
     };
     const recordAttempt = (attemptNumber: number, attemptResult: typeof result): void => {
       const attemptStore = new ResearchStore(statePath);
-      attemptStore.recordRunAttempt({ id: `${id}:full_validation:${attemptNumber}`, experimentId: id, runId: attemptResult.runId, attempt: attemptNumber, stage: "full_validation", status: attemptResult.status, exitCode: attemptResult.exitCode, durationSeconds: attemptResult.durationSeconds, metric: attemptResult.metrics[adapter.config.metric.name] ?? null, failureClass: attemptResult.failureClass ?? null, command: attemptResult.command ?? command, cwd: attemptResult.cwd ?? experimentCwd, executor: manifest.resources.executor });
+      attemptStore.recordRunAttempt({ id: `${id}:full_validation:${attemptNumber}`, experimentId: id, runId: attemptResult.runId, attempt: attemptNumber, stage: "full_validation", status: attemptResult.status, exitCode: attemptResult.exitCode, durationSeconds: attemptResult.durationSeconds, metric: attemptResult.metrics[adapter.config.metric.name] ?? null, metrics: attemptResult.metrics, failureClass: attemptResult.failureClass ?? null, command: attemptResult.command ?? command, cwd: attemptResult.cwd ?? experimentCwd, executor: manifest.resources.executor });
       attemptStore.appendEvent("run.attempt.completed", {
         experimentId: id,
         attempt: attemptNumber,

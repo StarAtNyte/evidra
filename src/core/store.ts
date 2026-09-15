@@ -65,6 +65,7 @@ export interface RunAttempt {
   failureClass: string | null;
   durationSeconds: number | null;
   metric: number | null;
+  metrics: Record<string, number>;
   command: string[];
   cwd: string;
   executor: string;
@@ -138,6 +139,7 @@ export class ResearchStore {
         failure_class TEXT,
         duration_seconds REAL,
         metric REAL,
+        metrics_json TEXT NOT NULL DEFAULT '{}',
         command_json TEXT NOT NULL,
         cwd TEXT NOT NULL,
         executor TEXT NOT NULL,
@@ -298,6 +300,7 @@ export class ResearchStore {
     for (const column of ["previous_hash", "event_hash"]) {
       try { this.db.exec(`ALTER TABLE events ADD COLUMN ${column} TEXT`); } catch { /* already migrated */ }
     }
+    try { this.db.exec("ALTER TABLE run_attempts ADD COLUMN metrics_json TEXT NOT NULL DEFAULT '{}'"); } catch { /* already migrated */ }
     this.db.prepare(`
       INSERT OR IGNORE INTO event_chain_state (id, head_hash, event_count)
       VALUES (1, (SELECT event_hash FROM events ORDER BY id DESC LIMIT 1), (SELECT COUNT(*) FROM events))
@@ -493,18 +496,19 @@ export class ResearchStore {
     failureClass?: string | null;
     durationSeconds?: number | null;
     metric?: number | null;
+    metrics?: Record<string, number>;
     command: string[];
     cwd: string;
     executor: string;
   }): void {
     const now = new Date().toISOString();
     this.db.prepare(`
-      INSERT INTO run_attempts (id, experiment_id, run_id, attempt, stage, status, exit_code, failure_class, duration_seconds, metric, command_json, cwd, executor, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO run_attempts (id, experiment_id, run_id, attempt, stage, status, exit_code, failure_class, duration_seconds, metric, metrics_json, command_json, cwd, executor, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET run_id = excluded.run_id, status = excluded.status, exit_code = excluded.exit_code,
         failure_class = excluded.failure_class, duration_seconds = excluded.duration_seconds, metric = excluded.metric,
-        command_json = excluded.command_json, cwd = excluded.cwd, executor = excluded.executor, updated_at = excluded.updated_at
-    `).run(attempt.id, attempt.experimentId, attempt.runId ?? null, attempt.attempt, attempt.stage, attempt.status, attempt.exitCode ?? null, attempt.failureClass ?? null, attempt.durationSeconds ?? null, attempt.metric ?? null, safeJson(attempt.command), attempt.cwd, attempt.executor, now, now);
+        metrics_json = excluded.metrics_json, command_json = excluded.command_json, cwd = excluded.cwd, executor = excluded.executor, updated_at = excluded.updated_at
+    `).run(attempt.id, attempt.experimentId, attempt.runId ?? null, attempt.attempt, attempt.stage, attempt.status, attempt.exitCode ?? null, attempt.failureClass ?? null, attempt.durationSeconds ?? null, attempt.metric ?? null, safeJson(attempt.metrics ?? {}), safeJson(attempt.command), attempt.cwd, attempt.executor, now, now);
   }
 
   runAttempts(experimentId?: string): RunAttempt[] {
@@ -514,7 +518,7 @@ export class ResearchStore {
     const rows = (query.all(...(experimentId ? [experimentId] : [])) as Array<Record<string, unknown>>);
     return rows.map((row) => ({
       id: String(row.id), experimentId: String(row.experiment_id), runId: row.run_id === null ? null : String(row.run_id), attempt: Number(row.attempt), stage: String(row.stage), status: String(row.status),
-      exitCode: row.exit_code === null ? null : Number(row.exit_code), failureClass: row.failure_class === null ? null : String(row.failure_class), durationSeconds: row.duration_seconds === null ? null : Number(row.duration_seconds), metric: row.metric === null ? null : Number(row.metric),
+      exitCode: row.exit_code === null ? null : Number(row.exit_code), failureClass: row.failure_class === null ? null : String(row.failure_class), durationSeconds: row.duration_seconds === null ? null : Number(row.duration_seconds), metric: row.metric === null ? null : Number(row.metric), metrics: row.metrics_json ? JSON.parse(String(row.metrics_json)) as Record<string, number> : {},
       command: JSON.parse(String(row.command_json)) as string[], cwd: String(row.cwd), executor: String(row.executor), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     }));
   }
