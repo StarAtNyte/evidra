@@ -5,6 +5,7 @@ import { ablationPlansFromEvents, type AblationPlan } from "./ablation.js";
 import { verifiedPlaybooksFromEvents, type VerifiedPlaybook } from "./playbooks.js";
 import { failedDirectionsFromExperiments, type FailedDirection } from "./failure-memory.js";
 import { canonicalSourceUrl, type RepositorySearchResult } from "./sources.js";
+import { buildFalsificationAgenda, type FalsificationAgendaItem } from "./falsification-agenda.js";
 
 export type ResearchRepositoryLead = RepositorySearchResult;
 
@@ -19,6 +20,7 @@ export interface ResearchMemoryContext {
   failedDirections: FailedDirection[];
   repositoryLeads: ResearchRepositoryLead[];
   ablationPlans: AblationPlan[];
+  falsificationAgenda: FalsificationAgendaItem[];
   /** Reproducible record of exactly which memory was supplied to an agent. */
   retrieval: {
     query: string;
@@ -26,6 +28,7 @@ export interface ResearchMemoryContext {
     activeClaimIds: string[];
     quarantinedClaimIds: string[];
     hypothesisIds: string[];
+    falsificationHypothesisIds: string[];
     fingerprint: string;
   };
 }
@@ -148,13 +151,15 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
   const failedDirections = failedDirectionsFromExperiments(store.experiments(), query, Math.min(8, bounded));
   const repositoryLeads = repositoryLeadsFromEvents(events, query, Math.min(8, bounded));
   const ablationPlans = ablationPlansFromEvents(events, Math.min(8, bounded));
+  const falsificationAgenda = buildFalsificationAgenda(store.hypotheses(), store.experiments(), Math.min(8, bounded));
   const retrievalBasis = {
     query: query?.trim() ?? "",
     limit: bounded,
     activeClaimIds: claims.map((claim) => claim.id),
     quarantinedClaimIds: quarantinedClaims.map((claim) => claim.id),
     hypothesisIds: hypotheses.map((hypothesis) => hypothesis.id),
+    falsificationHypothesisIds: falsificationAgenda.map((item) => item.hypothesisId),
   };
   const fingerprint = `sha256:${createHash("sha256").update(JSON.stringify(retrievalBasis)).digest("hex")}`;
-  return { claims, quarantinedClaims, hypotheses, contradictions, transferableMethods, verifiedPlaybooks, failedDirections, repositoryLeads, ablationPlans, retrieval: { ...retrievalBasis, fingerprint } };
+  return { claims, quarantinedClaims, hypotheses, contradictions, transferableMethods, verifiedPlaybooks, failedDirections, repositoryLeads, ablationPlans, falsificationAgenda, retrieval: { ...retrievalBasis, fingerprint } };
 }

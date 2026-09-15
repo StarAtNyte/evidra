@@ -48,6 +48,7 @@ import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateVali
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
 import { renderReport } from "../dist/core/reports.js";
 import { latestSourceEntries, latestSourcePayloads, repositoryLeadsFromEvents, researchMemoryContext } from "../dist/core/research-context.js";
+import { buildFalsificationAgenda } from "../dist/core/falsification-agenda.js";
 import { playbookFromMethod, verifiedPlaybooksFromEvents } from "../dist/core/playbooks.js";
 import { failedDirectionsFromExperiments } from "../dist/core/failure-memory.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "../dist/core/experiment-patches.js";
@@ -2179,10 +2180,21 @@ test("research memory context remains bounded and cumulative", () => {
     assert.deepEqual(context.quarantinedClaims.map((claim) => claim.id), ["stale-claim"]);
     assert.match(context.retrieval.fingerprint, /^sha256:[0-9a-f]{64}$/);
     assert.deepEqual(context.retrieval.activeClaimIds, ["memory-claim"]);
+    assert.deepEqual(context.falsificationAgenda, []);
     assert.equal(context.hypotheses[0].title, "Bounded memory");
     assert.deepEqual(context.contradictions, []);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("falsification agenda prioritizes untested hypotheses and retains failed directions", () => {
+  const agenda = buildFalsificationAgenda([
+    { id: "tested", payload: { title: "Already tested", falsificationTest: "Reject if the independent rerun fails.", status: "proposed" } },
+    { id: "new", payload: { title: "New direction", falsificationTest: "Reject if held-out behavior does not improve.", status: "proposed" } },
+  ], [{ id: "exp-1", payload: { hypothesisId: "tested", status: "failed" } }]);
+  assert.equal(agenda[0].hypothesisId, "new");
+  assert.equal(agenda.find((item) => item.hypothesisId === "tested")?.status, "tested");
+  assert.match(agenda.find((item) => item.hypothesisId === "new")?.rationale ?? "", /No terminal experiment/);
 });
 
 test("research memory ranks relevant claims and hypotheses before merely recent ones", () => {

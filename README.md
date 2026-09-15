@@ -225,6 +225,8 @@ Research memory keeps invalidated and superseded claims in a quarantined channel
 
 Every bounded memory packet is fingerprinted and recorded as `research.memory.retrieved` with its query and selected claim/hypothesis IDs. The retrieval component is therefore replayable and measurable independently from the model's reasoning quality.
 
+The research context also includes a bounded falsification agenda derived from durable hypotheses and terminal experiments. It prioritizes untested hypotheses, marks already-tested directions, and preserves rejected directions as negative evidence so autonomous cycles choose a changed discriminator instead of repeating the same idea.
+
 The claim-audit rule is shared by the CLI, TUI, and generated reports. Self-describing observations such as lane findings are accepted only when their payload includes durable evidence fields; interactive status and exported provenance reports therefore cannot disagree about the same claim.
 
 Before allocating compute, Evidra also structurally scores each hypothesis for a concrete mechanism, grounded evidence, falsifiability, implementation cost, and leakage risk. This score only prioritizes work; it never counts as an empirical improvement.

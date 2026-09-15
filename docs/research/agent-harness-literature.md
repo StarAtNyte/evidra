@@ -674,3 +674,12 @@ recorded as `research.memory.retrieved`, including the query and selected IDs.
 This makes retrieval a measurable harness component: later replay can compare
 whether a failure came from selecting the wrong memory or from reasoning over
 the right evidence.
+
+POPPER's sequential-falsification framing also implies that a research system
+needs an explicit queue of tests, not only hypotheses. Evidra now derives a
+bounded `falsificationAgenda` from durable hypotheses and terminal experiments.
+Untested directions are prioritized, attempted directions remain visible, and
+failed/rejected directions are retained as negative evidence rather than being
+silently repeated unchanged. The agenda is provider- and domain-neutral, so a
+falsification test can describe a metric, artifact, behavior, proof, or system
+check.
