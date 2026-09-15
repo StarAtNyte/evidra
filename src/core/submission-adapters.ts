@@ -3,7 +3,7 @@ import { basename, isAbsolute, relative, resolve } from "node:path";
 import { guardCommand } from "./permissions.js";
 import { runProcess, type ProcessControl } from "./process.js";
 import { safeBundlePath, validateSubmissionBundle, type SubmissionValidation } from "./submissions.js";
-import { redactSecrets } from "./redaction.js";
+import { redactCommand, redactSecrets } from "./redaction.js";
 import type { CompetitionConfig } from "./types.js";
 
 export interface SubmissionReceipt {
@@ -88,11 +88,16 @@ export async function submitApprovedBundle(root: string, bundlePath: string, com
   const guard = guardCommand(command);
   if (!guard.allowed) throw new Error(`Submission command refused: ${guard.reason}`);
   const workingDirectory = commandWorkingDirectory(root, config?.workingDirectory);
-  const result = await runProcess(command, workingDirectory, 10 * 60_000, undefined, onProcess);
-  if (result.exitCode !== 0) throw new Error(`External submission failed (${result.exitCode}): ${result.stderr || result.stdout}`);
+  let result;
+  try {
+    result = await runProcess(command, workingDirectory, 10 * 60_000, undefined, onProcess);
+  } catch (error) {
+    throw new Error(`External submission could not start: ${redactSecrets(error instanceof Error ? error.message : String(error))}`);
+  }
+  if (result.exitCode !== 0) throw new Error(`External submission failed (${result.exitCode}): ${redactSecrets(result.stderr || result.stdout)}`);
   return {
     validation,
-    receipt: { platform, submittedAt: new Date().toISOString(), predictionFile: file, command, stdout: result.stdout, stderr: result.stderr },
+    receipt: { platform, submittedAt: new Date().toISOString(), predictionFile: file, command: redactCommand(command), stdout: redactSecrets(result.stdout), stderr: redactSecrets(result.stderr) },
   };
 }
 
@@ -108,9 +113,14 @@ export async function pollSubmissionScore(root: string, bundlePath: string, subm
   const command = substitute(template, { bundle: bundlePath, file, competition: config?.competition ?? competition.id, message: "", submission: submissionId });
   const guard = guardCommand(command);
   if (!guard.allowed) throw new Error(`Score polling command refused: ${guard.reason}`);
-  const result = await runProcess(command, commandWorkingDirectory(root, config?.workingDirectory), 10 * 60_000, undefined, onProcess);
+  let result;
+  try {
+    result = await runProcess(command, commandWorkingDirectory(root, config?.workingDirectory), 10 * 60_000, undefined, onProcess);
+  } catch (error) {
+    throw new Error(`External score polling could not start: ${redactSecrets(error instanceof Error ? error.message : String(error))}`);
+  }
   const score = parseSubmissionScore(result.stdout);
   if (result.exitCode !== 0) throw new Error(`External score polling failed (${result.exitCode}): ${redactSecrets(result.stderr || result.stdout)}`);
   if (score === undefined) throw new Error("Score polling completed but emitted no finite score. Emit JSON such as {\"publicScore\": 0.812} or 'score: 0.812'.");
-  return { platform: config?.platform ?? "command", observedAt: new Date().toISOString(), score, command, stdout: redactSecrets(result.stdout), stderr: redactSecrets(result.stderr) };
+  return { platform: config?.platform ?? "command", observedAt: new Date().toISOString(), score, command: redactCommand(command), stdout: redactSecrets(result.stdout), stderr: redactSecrets(result.stderr) };
 }

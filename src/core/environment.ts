@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { platform, arch, release, version } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { runProcess } from "./process.js";
-import { redactSecrets } from "./redaction.js";
+import { redactCommand } from "./redaction.js";
 
 type Probe = { exitCode: number; stdout: string; stderr: string } | null;
 
@@ -38,23 +38,6 @@ function digest(value: string | Buffer): string {
 
 const VOLATILE_ENV = /^(PWD|OLDPWD|SHLVL|_|TERM|COLORTERM|LS_COLORS|XDG_RUNTIME_DIR|HOSTNAME|SSH_CONNECTION|TMPDIR|TMP)$/i;
 const SEED_KEY = /(?:^|_)(SEED|RANDOM_STATE|DETERMINISTIC|CUBLAS_WORKSPACE_CONFIG|CUDA_LAUNCH_BLOCKING)(?:$|_)/i;
-const SENSITIVE_FLAG = /^(?:--?|\/)?(?:api[-_]?key|token|secret|password|passwd|authorization|auth|credential)(?:=|$)/i;
-
-function safeCommand(command: string[]): string[] {
-  let redactNext = false;
-  return command.map((part) => {
-    if (redactNext) {
-      redactNext = false;
-      return "[REDACTED_ARGUMENT]";
-    }
-    if (SENSITIVE_FLAG.test(part)) {
-      const equals = part.indexOf("=");
-      if (equals >= 0) return `${part.slice(0, equals + 1)}[REDACTED_ARGUMENT]`;
-      redactNext = true;
-    }
-    return redactSecrets(part);
-  });
-}
 
 function entropyAudit(command: string[], environment: Record<string, string>, stable: Record<string, unknown>): EnvironmentSnapshot["entropyAudit"] {
   const explicitSeedSignals = Object.entries(environment).filter(([key]) => SEED_KEY.test(key)).map(([key, value]) => `${key}=${value}`).sort();
@@ -88,7 +71,7 @@ export async function captureEnvironment(
   executor: string,
   gpu?: string,
 ): Promise<EnvironmentSnapshot> {
-  const persistedCommand = safeCommand(command);
+  const persistedCommand = redactCommand(command);
   const [head, diff, nodeProbe, pythonProbe, python3Probe, gpuProbe] = await Promise.all([
     probe(["git", "rev-parse", "HEAD"], cwd),
     runProcess(["git", "diff", "--no-ext-diff", "--binary", "HEAD"], cwd, 30_000).catch(() => null),

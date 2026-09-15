@@ -7,6 +7,25 @@ export function redactSecrets(value: string): string {
     .replace(/((?:api[_-]?key|token|secret|password|authorization)\s*[:=]\s*)([^\s,;]+)/gi, "$1[REDACTED]");
 }
 
+const SENSITIVE_COMMAND_FLAG = /^(?:--?|\/)?(?:api[-_]?key|token|secret|password|passwd|authorization|auth|credential)(?:=|$)/i;
+
+/** Redact values passed as separate or inline sensitive command arguments. */
+export function redactCommand(command: string[]): string[] {
+  let redactNext = false;
+  return command.map((part) => {
+    if (redactNext) {
+      redactNext = false;
+      return "[REDACTED_ARGUMENT]";
+    }
+    if (SENSITIVE_COMMAND_FLAG.test(part)) {
+      const equals = part.indexOf("=");
+      if (equals >= 0) return `${part.slice(0, equals + 1)}[REDACTED_ARGUMENT]`;
+      redactNext = true;
+    }
+    return redactSecrets(part);
+  });
+}
+
 export function redactStructured<T>(value: T): T {
   if (typeof value === "string") return redactSecrets(value) as T;
   if (Array.isArray(value)) return value.map((entry) => redactStructured(entry)) as T;

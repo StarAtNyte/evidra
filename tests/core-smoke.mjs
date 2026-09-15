@@ -53,7 +53,7 @@ import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment, validateEvaluationMatrix } from "../dist/core/validation.js";
 import { assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, ResearchLaneReportSchema, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
-import { isSensitiveWorkspacePath, redactSecrets, redactStructured } from "../dist/core/redaction.js";
+import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
 import { summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
@@ -3261,6 +3261,10 @@ test("environment snapshots preserve reproducibility metadata without secrets", 
     const seeded = await captureEnvironment(root, join(root, "nested", "workspace"), ["python", "train.py", "--seed", "7"], "local", "none");
     assert.ok(seeded.entropyAudit.explicitSeedSignals.includes("--seed"));
   } finally { delete process.env.EVIDRA_SMOKE_SECRET; delete process.env.EVIDRA_SMOKE_URL; rmSync(root, { recursive: true, force: true }); }
+});
+
+test("command redaction protects separate and inline credential arguments", () => {
+  assert.deepEqual(redactCommand(["submit", "--token", "secret-value", "--api-key=another-secret", "--seed", "7"]), ["submit", "--token", "[REDACTED_ARGUMENT]", "--api-key=[REDACTED_ARGUMENT]", "--seed", "7"]);
 });
 
 test("worktree isolation supports arbitrary repositories", async () => {
