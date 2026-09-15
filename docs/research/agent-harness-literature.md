@@ -604,4 +604,7 @@ semantic auditor now runs as a fresh read-only role after director/critic
 synthesis, prefers a distinct authenticated route when available, grounds
 citations against durable evidence, and gates non-pass decisions. It adds
 independent methodological review without weakening the hard controller
-checks.
+checks. Before its provider call, it independently performs bounded workspace
+inventory, Git-status, result/metric search, and artifact-integrity inspection
+through the permission boundary. Those fresh observations remain separate from
+director context and their tool provenance is available for citation grounding.

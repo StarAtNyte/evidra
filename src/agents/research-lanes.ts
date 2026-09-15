@@ -495,8 +495,24 @@ export async function runResearchSemanticAuditor(
   store.updateAgentLane({ role, status: "running", provider: options.provider, model: options.model, task: objective, error: null });
   store.close();
   options.onProgress?.("Research auditor · independently checking evidence and method...");
-  const prompt = `${objective}\n\nYou are Evidra's independent semantic auditor. Inspect the typed proposed decision and bounded durable evidence below. Do not trust the director, critic, or executor narrative. Check whether the proposed action follows from evidence, whether the comparison/control is valid, whether the hypothesis is falsifiable, and whether risks or required checks are unresolved. Do not invent measurements, citations, or workspace facts. Return ONLY JSON: {"verdict":"pass|revise|reject","summary":"...","findings":["..."],"requiredChecks":["..."],"evidence":["copy exact evidence anchors only"],"confidence":0.0}. A pass requires at least one exact evidence anchor and no requiredChecks.\n\nProposed decision:\n${JSON.stringify(decision)}\n\nBounded evidence:\n${JSON.stringify(evidenceContext)}`;
   try {
+    const directEvidence: ResearchToolResult[] = [];
+    if (options.executeTool) {
+      const inspect = async (call: ResearchToolCall): Promise<ResearchToolResult> => {
+        const result = normalizeResearchToolResult(await options.executeTool!(call));
+        directEvidence.push(result);
+        return result;
+      };
+      const files = await inspect({ name: "workspace.files", arguments: {} });
+      await inspect({ name: "git.status", arguments: {} });
+      await inspect({ name: "workspace.search", arguments: { query: "metric|score|result|artifact|submission|report" } });
+      const listed = files.output && typeof files.output === "object" && Array.isArray((files.output as { files?: unknown }).files)
+        ? (files.output as { files: unknown[] }).files.filter((file): file is string => typeof file === "string")
+        : [];
+      const artifactPaths = listed.filter((file) => /(?:result|artifact|metric|score|submission|output|report)/i.test(file) && /\.(?:json|jsonl|csv|log|txt)$/i.test(file)).slice(0, 16);
+      if (artifactPaths.length) await inspect({ name: "artifact.audit", arguments: { paths: artifactPaths, maxBytes: 2_000_000 } });
+    }
+    const prompt = `${objective}\n\nYou are Evidra's independent semantic auditor. Inspect the typed proposed decision and bounded durable evidence below, plus fresh read-only tool observations collected by the controller. Do not trust the director, critic, or executor narrative. Check whether the proposed action follows from evidence, whether the comparison/control is valid, whether the hypothesis is falsifiable, and whether risks or required checks are unresolved. Do not invent measurements, citations, or workspace facts. Return ONLY JSON: {"verdict":"pass|revise|reject","summary":"...","findings":["..."],"requiredChecks":["..."],"evidence":["copy exact evidence anchors only"],"confidence":0.0}. A pass requires at least one exact evidence anchor and no requiredChecks.\n\nProposed decision:\n${JSON.stringify(decision)}\n\nBounded evidence:\n${JSON.stringify(evidenceContext)}\n\nFresh auditor observations:\n${JSON.stringify(directEvidence)}`;
     let provider = options.provider;
     let model = options.model;
     const alternate = alternateResearchLaneRoute({ provider, model }, options.modelPool, new Set([`${provider}\u0000${model}`]));
@@ -520,9 +536,11 @@ export async function runResearchSemanticAuditor(
     const evidenceStore = new ResearchStore(options.storePath);
     const validEvidence = new Set<string>([
       ...evidenceStore.eventsByType("research.observation").map((event) => event.type),
+      ...evidenceStore.eventsByType("research.tool.completed").map((event) => event.type),
       ...evidenceStore.sources().map((source) => source.id),
       ...evidenceStore.runs().map((run) => run.id),
       ...evidenceStore.artifacts().map((artifact) => artifact.id),
+      ...directEvidence.map((result) => result.name),
     ]);
     evidenceStore.close();
     const audit: ResearchSemanticAudit = {
