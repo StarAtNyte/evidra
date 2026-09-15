@@ -215,6 +215,8 @@ When a score is recorded or polled, Evidra refreshes only the external-score cri
 
 Paired statistical comparisons also require complete, matching fold/seed cardinality and at least two paired observations. Evidra refuses to truncate unequal series or treat a single observation as replication; incomplete evidence becomes an explicit `insufficient_data` outcome for the next research decision.
 
+Repeated looks at one hypothesis use conservative alpha spending on top of the campaign's family-wise correction: autonomous validation records the one-based look number and allocates `alpha / (k(k+1))` for look `k`. This reduces false discoveries from repeatedly peeking at promising experiments while preserving the old behavior for integrations that do not declare sequential look metadata.
+
 Benchmark process and efficiency gates are task-balanced too: extra arms on one task cannot outweigh another task when evaluating reliability, alignment, or time use.
 
 The same audit is an execution gate, not just a report decoration. Autonomous research cannot mark a goal complete while durable claims are unsupported, provisional, literature-only, or conflicted. Inspect the gate directly with `evidra evidence audit` (or `--json` for automation); the controller records the rejection and continues from the missing evidence.

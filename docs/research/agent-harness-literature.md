@@ -643,3 +643,22 @@ derives `externalScoreObserved` from a durable scored submission. Recording a
 score refreshes only that criterion in the existing audit and supplies
 provenance; it does not bypass the other gates. Prepared bundles also persist
 the exact source run ID, and an external score is usable only for that run.
+
+### Sequential falsification and workflow-level evaluation
+
+POPPER argues that agent-generated hypotheses should be tested through actively
+designed falsification experiments and sequential testing with explicit Type-I
+error control, rather than repeatedly reusing one significance threshold
+([Huang et al., ICML 2025](https://proceedings.mlr.press/v267/huang25n.html)).
+Evidra now applies a conservative alpha-spending schedule to repeated looks at
+the same hypothesis: after the existing family-wise correction, look `k` gets
+`alpha/(k(k+1))`. Legacy validation calls retain their previous threshold, but
+autonomous experiment assessment supplies the hypothesis look count and records
+the resulting alpha in durable validation evidence.
+
+ScienceAgentBench evaluates scientific agents at individual workflow tasks
+with executable programs, execution results, and cost—not only an end-to-end
+answer ([Chen et al., ICLR 2025](https://proceedings.iclr.cc/paper_files/paper/2025/hash/f12b4df26344f3be803c06b555252efe-Abstract-Conference.html)).
+This supports Evidra's phase gates and process-quality scorecard: a campaign
+must preserve executable artifacts and intermediate evidence at each stage,
+while final claims remain subordinate to evaluator-backed outcomes.

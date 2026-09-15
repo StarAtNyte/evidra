@@ -19,6 +19,8 @@ export interface ValidationAcceptanceInput {
   probabilityThreshold?: number;
   /** Number of candidate comparisons in the current search family/campaign. */
   comparisonCount?: number;
+  /** One-based sequential look number for repeated testing of the same hypothesis. */
+  sequentialLook?: number;
   /** Production paths can require a paired randomization test in addition to bootstrap evidence. */
   requirePermutationTest?: boolean;
   /** Absolute normalized-gain threshold that triggers the extra scrutiny gate. */
@@ -48,6 +50,8 @@ export interface ValidationAcceptance {
   normalizedDelta: number | null;
   worstSubgroupDelta: number | null;
   adjustedProbabilityThreshold: number;
+  /** Alpha remaining for this sequential look after family-wise correction. */
+  sequentialAlpha: number;
   secondaryAssessments: Array<{
     name: string;
     direction: "minimize" | "maximize";
@@ -115,7 +119,14 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   const comparisonCount = Math.max(1, Math.floor(input.comparisonCount ?? 1));
   // Bonferroni-style family-wise correction prevents a campaign from treating
   // one lucky result among many hypotheses as statistically convincing.
-  const adjustedProbabilityThreshold = 1 - ((1 - probabilityThreshold) / comparisonCount);
+  const familyAlpha = (1 - probabilityThreshold) / comparisonCount;
+  const sequentialLook = input.sequentialLook === undefined ? undefined : Math.max(1, Math.floor(input.sequentialLook));
+  // Alpha-spending schedule: alpha/(k(k+1)). The sum over all looks is at
+  // most alpha, so repeatedly checking one hypothesis cannot silently reuse
+  // the same false-positive threshold. Legacy callers retain the original
+  // family-wise correction when no look number is supplied.
+  const sequentialAlpha = sequentialLook === undefined ? familyAlpha : familyAlpha / (sequentialLook * (sequentialLook + 1));
+  const adjustedProbabilityThreshold = 1 - sequentialAlpha;
   const secondaryResults = (input.secondaryMetrics ?? []).map((objective) => {
     const secondary = compareRuns(input.baseline, input.candidate, objective.name, objective.direction === "minimize");
     const normalized = secondary.delta === null ? null : objective.direction === "minimize" ? -secondary.delta : secondary.delta;
@@ -149,7 +160,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   if (!gates.unexpectedGainReview) reasons.push(`unexpectedly large normalized gain ${normalizedDelta?.toFixed(6) ?? "missing"} exceeds scrutiny threshold ${scrutinyThreshold.toFixed(6)}; require independent replication and review`);
   if (!gates.evaluationCoverage) reasons.push("declared fold/seed evaluation matrix is incomplete or missing the primary metric");
   if (!gates.secondaryMetrics) reasons.push(`secondary metric gate failed: ${secondaryResults.filter((result) => !result.passed).map((result) => `${result.name}=${result.normalizedDelta ?? "missing"}`).join(", ")}`);
-  return { accepted: Object.values(gates).every(Boolean), comparison, gates, reasons, normalizedDelta, worstSubgroupDelta, adjustedProbabilityThreshold, secondaryAssessments: secondaryResults };
+  return { accepted: Object.values(gates).every(Boolean), comparison, gates, reasons, normalizedDelta, worstSubgroupDelta, adjustedProbabilityThreshold, sequentialAlpha, secondaryAssessments: secondaryResults };
 }
 
 /** Compare every required validation environment, preserving split identity. */

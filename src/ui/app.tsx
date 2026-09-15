@@ -2869,6 +2869,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const candidateExperiment = candidate ? store.experiments().find((entry) => entry.id === candidate.experimentId) : undefined;
         const candidateManifest = candidateExperiment ? ExperimentManifestSchema.safeParse(candidateExperiment.payload) : undefined;
         const comparisonCount = Math.max(1, store.experiments().length);
+        const candidateHypothesisId = candidateManifest?.success ? candidateManifest.data.hypothesisId : undefined;
+        const sequentialLook = candidateHypothesisId === undefined ? undefined : Math.max(1, store.experiments().filter((entry) => (entry.payload as { hypothesisId?: unknown }).hypothesisId === candidateHypothesisId).length);
         store.close();
         if (!baseline || !candidate) { append("assistant", "Usage: /experiment compare <baseline-id> <candidate-id> (experiment or run ids accepted)"); return; }
         try {
@@ -2888,6 +2890,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
             leakageAuditPassed: false,
             reviewerApproved: false,
             comparisonCount,
+            sequentialLook,
             requirePermutationTest: true,
             subgroupDeltas: RunResultSchema.parse(candidate.payload).subgroupDeltas,
             requiresSubgroupAnalysis: (adapter.config.validation?.secondarySplits.length ?? 0) > 0,

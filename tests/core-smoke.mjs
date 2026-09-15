@@ -1598,6 +1598,9 @@ test("validation acceptance requires replicated evidence and safety gates", () =
   assert.equal(accepted.adjustedProbabilityThreshold, 0.95);
   const familyWise = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, probabilityThreshold: 0.5, comparisonCount: 2 });
   assert.equal(familyWise.adjustedProbabilityThreshold, 0.75);
+  const sequential = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, sequentialLook: 2 });
+  assert.ok(Math.abs(sequential.sequentialAlpha - (0.05 / 6)) < 1e-12);
+  assert.ok(Math.abs(sequential.adjustedProbabilityThreshold - (1 - (0.05 / 6))) < 1e-12);
   const lowerIsBetter = evaluateValidationAcceptance({ baseline: { ...base, metrics: { score: 0.8 }, metricsByFold: { score: [0.79, 0.8, 0.81] } }, candidate: { ...candidate, metrics: { score: 0.78 }, metricsByFold: { score: [0.77, 0.78, 0.79] } }, metric: "score", direction: "minimize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
   assert.ok(Math.abs(lowerIsBetter.normalizedDelta - 0.02) < 1e-12);
   assert.equal(lowerIsBetter.accepted, true);

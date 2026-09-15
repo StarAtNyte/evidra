@@ -4014,6 +4014,10 @@ experiment.command("run")
         // Failed and rejected attempts still consumed a hypothesis slot. Do
         // not let a campaign hide them by counting only completed winners.
         const comparisonCount = comparisonFamilySize(resultStore.experiments().map((candidate) => candidate.payload as { datasetVersion?: unknown; outcomeType?: unknown }), manifest.datasetVersion);
+        const sequentialLook = Math.max(1, resultStore.experiments().filter((candidate) => {
+          const candidatePayload = candidate.payload as { hypothesisId?: unknown };
+          return candidatePayload.hypothesisId === manifest.hypothesisId;
+        }).length);
         const acceptance = evaluateValidationAcceptance({
           baseline: ratchetBaselineRun,
           candidate: RunResultSchema.parse(recorded),
@@ -4028,13 +4032,14 @@ experiment.command("run")
           reviewerApproved: gates.reviewerApproved,
           independentReplicationObserved: typeof entryPayload.replicationOf === "string" || typeof manifest.parent === "string",
           comparisonCount,
+          sequentialLook,
           requirePermutationTest: true,
           subgroupDeltas: recorded.subgroupDeltas,
           requiresSubgroupAnalysis: (adapter.config.validation?.secondarySplits.length ?? 0) > 0,
           subgroupAnalysisObserved: recorded.subgroupDeltas.length > 0,
           secondaryMetrics: adapter.config.secondaryMetrics,
         });
-        resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, comparisonCount, adjustedProbabilityThreshold: acceptance.adjustedProbabilityThreshold, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });
+        resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, comparisonCount, sequentialLook, sequentialAlpha: acceptance.sequentialAlpha, adjustedProbabilityThreshold: acceptance.adjustedProbabilityThreshold, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });
         const runtimeContext = entryPayload.runtimeContext && typeof entryPayload.runtimeContext === "object" ? entryPayload.runtimeContext as { provider?: string; model?: string; phase?: string } : {};
         const declaredForecast = hypothesis?.payload && typeof hypothesis.payload === "object"
           ? (hypothesis.payload as { expectedMetricDelta?: { low?: unknown; median?: unknown; high?: unknown } }).expectedMetricDelta
