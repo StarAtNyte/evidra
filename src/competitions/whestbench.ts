@@ -6,6 +6,7 @@ export const whestbenchConfig: CompetitionConfig = {
   taskType: "white_box_estimation",
   datasetRevision: "v2-phase2",
   metric: { name: "final_layer_mse", direction: "minimize" },
+  secondaryMetrics: [],
   evaluator: {
     command: ["uv", "run", "whest", "run", "--estimator", "estimator.py", "--split", "mini", "--runner", "subprocess"],
     estimatorPath: "estimator.py",

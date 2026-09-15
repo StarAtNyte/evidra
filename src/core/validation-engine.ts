@@ -25,6 +25,8 @@ export interface ValidationAcceptanceInput {
   largeGainThreshold?: number;
   /** Result of the manifest's optional strict fold/seed coverage contract. */
   evaluationCoverage?: boolean;
+  /** Secondary objectives are protected from regression but do not replace the primary gate. */
+  secondaryMetrics?: Array<{ name: string; direction: "minimize" | "maximize"; minimumDelta?: number; maximumRegression?: number }>;
 }
 
 export interface ValidationAcceptance {
@@ -40,6 +42,7 @@ export interface ValidationAcceptance {
     leakageAudit: boolean;
     review: boolean;
     unexpectedGainReview: boolean;
+    secondaryMetrics: boolean;
   };
   reasons: string[];
   normalizedDelta: number | null;
@@ -99,6 +102,13 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   // Bonferroni-style family-wise correction prevents a campaign from treating
   // one lucky result among many hypotheses as statistically convincing.
   const adjustedProbabilityThreshold = 1 - ((1 - probabilityThreshold) / comparisonCount);
+  const secondaryResults = (input.secondaryMetrics ?? []).map((objective) => {
+    const secondary = compareRuns(input.baseline, input.candidate, objective.name, objective.direction === "minimize");
+    const normalized = secondary.delta === null ? null : objective.direction === "minimize" ? -secondary.delta : secondary.delta;
+    const minimumDelta = objective.minimumDelta ?? 0;
+    const maximumRegression = objective.maximumRegression ?? 0;
+    return { name: objective.name, normalized, passed: normalized !== null && normalized >= minimumDelta - maximumRegression };
+  });
   const gates = {
     minimumDelta: normalizedDelta !== null && normalizedDelta >= input.minimumDelta,
     statisticalConfidence: comparison.evidence === "replicated" && (comparison.probabilityImproved ?? 0) >= adjustedProbabilityThreshold,
@@ -110,6 +120,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
     review: input.reviewerApproved,
     unexpectedGainReview: !unexpectedGain || (input.independentReplicationObserved === true && input.reviewerApproved),
     evaluationCoverage: input.evaluationCoverage !== false,
+    secondaryMetrics: secondaryResults.every((result) => result.passed),
   };
   const worstSubgroupDelta = input.subgroupDeltas?.length ? Math.min(...input.subgroupDeltas) : null;
   const reasons: string[] = [];
@@ -123,6 +134,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   if (!gates.review) reasons.push("independent reviewer approval is missing");
   if (!gates.unexpectedGainReview) reasons.push(`unexpectedly large normalized gain ${normalizedDelta?.toFixed(6) ?? "missing"} exceeds scrutiny threshold ${scrutinyThreshold.toFixed(6)}; require independent replication and review`);
   if (!gates.evaluationCoverage) reasons.push("declared fold/seed evaluation matrix is incomplete or missing the primary metric");
+  if (!gates.secondaryMetrics) reasons.push(`secondary metric gate failed: ${secondaryResults.filter((result) => !result.passed).map((result) => `${result.name}=${result.normalized ?? "missing"}`).join(", ")}`);
   return { accepted: Object.values(gates).every(Boolean), comparison, gates, reasons, normalizedDelta, worstSubgroupDelta, adjustedProbabilityThreshold };
 }
 

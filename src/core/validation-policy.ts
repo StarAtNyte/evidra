@@ -25,6 +25,7 @@ export const ValidationPolicySchema = z.object({
   folds: z.array(z.number().int().nonnegative()).min(1),
   seeds: z.array(z.number().int()).min(1),
   metric: z.object({ name: z.string(), direction: z.enum(["minimize", "maximize"]) }),
+  secondaryMetrics: z.array(z.object({ name: z.string(), direction: z.enum(["minimize", "maximize"]), minimumDelta: z.number(), maximumRegression: z.number().nonnegative() })).default([]),
   acceptance: z.object({ minimumDelta: z.number(), requireReplication: z.boolean(), requireLeakageAudit: z.boolean(), requireReview: z.boolean() }),
   createdAt: z.string().datetime(),
 });
@@ -43,6 +44,7 @@ export function createValidationPolicy(competition: CompetitionConfig): Validati
     folds,
     seeds,
     metric: competition.metric,
+    secondaryMetrics: competition.secondaryMetrics ?? [],
     // Validation acceptance compares direction-normalized improvement, so a
     // useful improvement is positive for both maximize and minimize metrics.
     acceptance: { minimumDelta: 0.002, requireReplication: true, requireLeakageAudit: true, requireReview: true },

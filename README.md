@@ -38,6 +38,8 @@ problem variants → independent research lanes → evidence/artifacts
 
 The deterministic controller remains the source of truth. Agents propose hypotheses, write code in isolated worktrees, and explain evidence; evaluators, checksums, split policies, reviewers, and approval gates decide whether a result is valid. This makes the pattern useful for competitions, engineering investigations, scientific experiments, and other challenge repositories without assuming a theorem prover or a particular model family.
 
+Metric handling is similarly generic: a workspace may expose any named scalar metric (classification, regression, ranking, or a custom evaluator) and may optionally declare `secondaryMetrics` with their own maximize/minimize direction and regression tolerance. The primary metric decides the headline improvement; secondary objectives act as explicit safety gates, so optimizing one score cannot silently damage another. Non-metric outcomes use declared artifacts and verifier evidence instead of fabricated scores.
+
 Provider exhaustion is autonomous by default. The `auto` policy first selects an installed local Qwen/Ollama model, then waits durably for the Codex entitlement reset if no local model is available. Use `/limits auto`, `/limits fallback`, `/limits wait`, or `/limits stop` in the TUI to choose explicitly. The fallback model can be pinned with `EVIDRA_FALLBACK_MODEL`.
 
 The cost-conscious Codex defaults are `gpt-5.6-luna` and medium thinking effort across the CLI, TUI, autonomous research, challenge campaigns, and harness benchmarks. Evidra does not select Astra. If an older saved session names an Astra route, it is migrated to the Luna default before work starts; users can still choose another model explicitly with `/model`.

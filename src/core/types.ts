@@ -9,6 +9,13 @@ export const CompetitionConfigSchema = z.object({
     name: z.string(),
     direction: z.enum(["minimize", "maximize"]),
   }),
+  /** Optional non-primary objectives; promotion can require they do not regress. */
+  secondaryMetrics: z.array(z.object({
+    name: z.string().min(1),
+    direction: z.enum(["minimize", "maximize"]),
+    minimumDelta: z.number().default(0),
+    maximumRegression: z.number().nonnegative().default(0),
+  })).default([]),
   evaluator: z.object({
     command: z.array(z.string()),
     estimatorPath: z.string(),

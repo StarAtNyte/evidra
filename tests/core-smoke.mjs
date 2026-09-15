@@ -4036,6 +4036,14 @@ test("validation acceptance keeps headless promotion gates explicit", () => {
   assert.equal(acceptance.accepted, false);
 });
 
+test("validation acceptance protects configured secondary objectives", () => {
+  const base = { runId: "multi-base", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 0.5, safety: 0.9 }, metricsByFold: { score: [0.5, 0.5, 0.5], safety: [0.9, 0.9, 0.9] }, artifacts: {} };
+  const candidate = { ...base, runId: "multi-candidate", metrics: { score: 0.53, safety: 0.8 }, metricsByFold: { score: [0.52, 0.53, 0.54], safety: [0.79, 0.8, 0.81] } };
+  const acceptance = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.01, maximumRegressionShift: 0.2, requireReplication: false, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, secondaryMetrics: [{ name: "safety", direction: "maximize", maximumRegression: 0.05 }] });
+  assert.equal(acceptance.gates.secondaryMetrics, false);
+  assert.match(acceptance.reasons.join(" "), /secondary metric gate failed.*safety/i);
+});
+
 test("research decisions support non-metric outcomes without fabricated GPU estimates", () => {
   const decision = ResearchDecisionSchema.parse({
     decision: "propose",

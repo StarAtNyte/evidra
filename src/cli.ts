@@ -3394,6 +3394,7 @@ experiment.command("run")
           subgroupDeltas: recorded.subgroupDeltas,
           requiresSubgroupAnalysis: (adapter.config.validation?.secondarySplits.length ?? 0) > 0,
           subgroupAnalysisObserved: recorded.subgroupDeltas.length > 0,
+          secondaryMetrics: adapter.config.secondaryMetrics,
         });
         resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, comparisonCount, adjustedProbabilityThreshold: acceptance.adjustedProbabilityThreshold, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });
         const declaredForecast = hypothesis?.payload && typeof hypothesis.payload === "object"
