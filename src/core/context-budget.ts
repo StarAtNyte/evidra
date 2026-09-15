@@ -15,6 +15,7 @@ const priority = [
   "crossPollination", "laneReports", "researchMemory", "experienceReplay",
   "literatureFrontier", "literatureBenchmarkEvidence", "openCriticConstraint", "adaptiveHarnessPolicy",
   "harnessAdaptationAgenda", "harnessEvolutionPlan", "harnessBenchmarkEvidence",
+  "harnessChangeHistory",
   "recentEvents", "researchSources", "availableTools",
 ];
 

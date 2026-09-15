@@ -825,6 +825,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
       duplicates: consistencyEvents.filter((event) => event.type === "evidence.claim.duplicate_detected").length,
     };
     const researchMemory = researchMemoryContext(store, 30, objective);
+    const harnessChangeHistory = store.harnessChanges().slice(-8).map((change) => ({
+      id: change.id,
+      protocolFingerprint: change.protocolFingerprint,
+      decision: change.decision,
+      contract: change.contract,
+      outcomes: change.outcomes,
+      changedComponents: change.candidateComponents.filter((candidate) => change.baselineComponents.find((baseline) => baseline.path === candidate.path && baseline.checksum !== candidate.checksum)),
+    }));
     const peerLaneBoard = boundedPeerBoard(recentEvents);
     const recentTrajectories = store.trajectories(50);
     const latestTrajectoryAt = recentTrajectories[0]?.createdAt;
@@ -966,6 +974,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         laneReports,
         crossPollination,
         adaptiveHarnessPolicy: adaptiveHarness,
+        harnessChangeHistory,
         constraints: { no_submission: true, no_file_edits: true },
       }, {
         provider: config.provider,

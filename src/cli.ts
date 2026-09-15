@@ -1967,6 +1967,14 @@ research
         .slice(-3)
         .map((event) => event.payload)
         .slice(-3);
+      const harnessChangeHistory = store.harnessChanges().slice(-8).map((change) => ({
+        id: change.id,
+        protocolFingerprint: change.protocolFingerprint,
+        decision: change.decision,
+        contract: change.contract,
+        outcomes: change.outcomes,
+        changedComponents: change.candidateComponents.filter((candidate) => change.baselineComponents.find((baseline) => baseline.path === candidate.path && baseline.checksum !== candidate.checksum)),
+      }));
       const latestHarnessBenchmarkEvent = durableEvents
         .filter((event) => event.type === "harness.benchmark.completed" || event.type === "harness.benchmark.retest.completed")
         .at(-1);
@@ -2013,7 +2021,7 @@ research
       });
       store.appendEvent("harness.evolution.plan", { cycle, components: harnessComponents.map((component) => ({ id: component.id, path: component.path, kind: component.kind, checksum: component.checksum })), interventions: harnessEvolutionPlan, failureProfile: harnessFailureProfile, componentFailureEvidence });
       const harnessGuidance = harnessBenchmarkEvidence.length
-        ? `Harness-evolution evidence from matched benchmark runs (diagnostic, not workspace task evidence): ${JSON.stringify(harnessBenchmarkEvidence).slice(0, 8_000)}. Prioritize these checksummed, falsifiable interventions and remeasure them under the same protocol: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}${harnessAdaptationAgenda ? `\n\nLocked adaptive retest agenda (must be addressed before claiming a win): ${JSON.stringify(harnessAdaptationAgenda).slice(0, 8_000)}` : ""}${queuedHarnessRetest ? `\n\nDurable retest task queued for controller execution: ${queuedHarnessRetest.id}. It is not proof; select or reject it through the normal experiment and validation gates.` : ""}`
+        ? `Harness-evolution evidence from matched benchmark runs (diagnostic, not workspace task evidence): ${JSON.stringify(harnessBenchmarkEvidence).slice(0, 8_000)}. Prioritize these checksummed, falsifiable interventions and remeasure them under the same protocol: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}${harnessChangeHistory.length ? `\n\nPrior harness-change decisions (historical guidance, not task evidence): ${JSON.stringify(harnessChangeHistory).slice(0, 6_000)}` : ""}${harnessAdaptationAgenda ? `\n\nLocked adaptive retest agenda (must be addressed before claiming a win): ${JSON.stringify(harnessAdaptationAgenda).slice(0, 8_000)}` : ""}${queuedHarnessRetest ? `\n\nDurable retest task queued for controller execution: ${queuedHarnessRetest.id}. It is not proof; select or reject it through the normal experiment and validation gates.` : ""}`
         : `No matched harness benchmark evidence is recorded yet; preserve failure telemetry for the first comparison. The harness action space is inventory-backed; use these candidate intervention contracts when a failure is observed: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}`;
       const recentTrajectories = store.trajectories(20);
       const latestTrajectoryAt = recentTrajectories[0]?.createdAt;
@@ -2384,6 +2392,7 @@ research
             recentEvents,
             researchSources,
             harnessBenchmarkEvidence,
+            harnessChangeHistory,
             harnessEvolutionPlan,
             harnessAdaptationAgenda: harnessAdaptationAgenda ?? null,
             ultimateGoal: options.goal,

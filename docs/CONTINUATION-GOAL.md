@@ -143,6 +143,10 @@ external evaluator.
   the forecast contract, before/after component checksums, protocol fingerprint,
   measured comparison outcomes, and a conservative retain/revert/branch or
   unobserved decision for future harness evolution.
+- Recent harness-change records are now fed back into both CLI and TUI research
+  context as historical guidance, explicitly separated from current-task
+  evidence so prior harness outcomes can guide the next intervention without
+  becoming an unearned task result.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
 - Codex command activity now includes an exit code only when the provider
