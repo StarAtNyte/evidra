@@ -27,7 +27,7 @@ import { detectRouteDrift } from "./core/drift-detection.js";
 import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
 import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readCampaignRuntime, researchTurnTimeoutMs, resumeCampaign, withCampaignCheckpoint, type CampaignCheckpointStep, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
-import { auditExperiment, auditExperimentSubtask, independentReplicationObserved, refreshExperimentAudit, validateEvaluationMatrix } from "./core/validation.js";
+import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshExperimentAudit, validateEvaluationMatrix } from "./core/validation.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "./core/decision-auditor.js";
 import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance } from "./core/validation-engine.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
@@ -3582,7 +3582,7 @@ experiment.command("gate")
       const runResult = RunResultSchema.safeParse(run.payload);
       if (manifest.success && runResult.success) {
         const checksums = Object.fromEntries(store.artifacts(run.id).map((artifact) => [artifact.name, artifact.checksum]));
-        const audit = auditExperiment(manifest.data, runResult.data, { currentCommit: manifest.data.gitCommit, datasetVersion: manifest.data.datasetVersion, splitVersion: manifest.data.splitVersion, metricName: activeCompetition().config.metric.name, leakageAuditPassed: gates.leakageAuditPassed, reviewerApproved: gates.reviewerApproved, independentReplicationObserved: independentReplicationObserved(experimentId, store.experiments(), store.runs()), artifactChecksums: checksums });
+        const audit = auditExperiment(manifest.data, runResult.data, { currentCommit: manifest.data.gitCommit, datasetVersion: manifest.data.datasetVersion, splitVersion: manifest.data.splitVersion, metricName: activeCompetition().config.metric.name, leakageAuditPassed: gates.leakageAuditPassed, reviewerApproved: gates.reviewerApproved, independentReplicationObserved: independentReplicationObserved(experimentId, store.experiments(), store.runs()), externalScoreRequired: manifest.data.acceptance.requireExternalScore, externalScoreObserved: externalScoreObservedForExperiment(experimentId, store.submissions()), artifactChecksums: checksums });
         const subtaskAudit = auditExperimentSubtask(manifest.data, audit, [run.id, ...Object.keys(checksums)]);
         store.recordSubtaskAudit({ ...subtaskAudit, experimentId, runId: run.id });
         store.appendEvent("experiment.audit.refreshed", { experimentId, runId: run.id, trigger: "gate_update", accepted: audit.accepted, subtaskAudit });
@@ -3929,6 +3929,8 @@ experiment.command("run")
       leakageAuditPassed: resultStore.experimentGates(id).leakageAuditPassed,
       reviewerApproved: resultStore.experimentGates(id).reviewerApproved,
       independentReplicationObserved: independentReplicationObserved(id, resultStore.experiments(), resultStore.runs()),
+      externalScoreRequired: manifest.acceptance.requireExternalScore,
+      externalScoreObserved: externalScoreObservedForExperiment(id, resultStore.submissions()),
       artifactChecksums: Object.fromEntries(Object.entries(artifactPaths).map(([name, path]) => [name, sha256File(path)])),
     });
     resultStore.recordSubtaskAudit({ ...auditExperimentSubtask(manifest, initialExperimentAudit, [result.runId, ...Object.keys(artifactPaths)]), experimentId: id, runId: result.runId });
@@ -4094,6 +4096,8 @@ experiment.command("audit")
       leakageAuditPassed: gates.leakageAuditPassed,
       reviewerApproved: gates.reviewerApproved,
       independentReplicationObserved: replicationObserved,
+      externalScoreRequired: manifest.acceptance.requireExternalScore,
+      externalScoreObserved: externalScoreObservedForExperiment(id, store.submissions()),
       artifactChecksums,
     });
     const subtaskAudit = auditExperimentSubtask(manifest, audit, [run.id, ...Object.keys(artifactChecksums)]);

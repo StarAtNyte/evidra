@@ -638,5 +638,6 @@ distinct child manifest linked by `parent`/`replicationOf` has a completed run.
 The detector is derived from durable experiment and run state, so unrelated
 successful runs cannot satisfy it. Adapters that depend on a remote leaderboard
 or external evaluator can additionally request an `externalScoreObserved`
-criterion; recording a score supplies provenance but does not bypass the other
-gates.
+criterion by setting `acceptance.requireExternalScore: true`; the controller
+derives `externalScoreObserved` from a durable scored submission. Recording a
+score supplies provenance but does not bypass the other gates.

@@ -59,7 +59,7 @@ import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
-import { auditExperiment, auditExperimentSubtask, independentReplicationObserved, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
+import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
 import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
@@ -5695,12 +5695,14 @@ test("replication evidence is detected only from a completed independent child",
 
 test("external evaluator evidence can be required as a separate experiment gate", () => {
   const competition = { id: "external-gate", name: "External Gate", taskType: "metric", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["true"], experimentCommand: ["true"] };
-  const manifest = createExperimentManifest({ id: "external-exp", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "data", outcomeType: "metric" }, competition);
+  const manifest = createExperimentManifest({ id: "external-exp", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "data", outcomeType: "metric", requireExternalScore: true }, competition);
   const run = { runId: "external-run", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 1 }, artifacts: {}, verification: { declared: 0, executed: 0, passed: 0, failed: 0, independent: false } };
   const pending = auditExperiment(manifest, run, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, externalScoreRequired: true, externalScoreObserved: false });
   const accepted = auditExperiment(manifest, run, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, externalScoreRequired: true, externalScoreObserved: true });
   assert.equal(pending.gates.externalScoreObserved, false);
   assert.equal(accepted.gates.externalScoreObserved, true);
+  assert.equal(externalScoreObservedForExperiment("external-exp", [{ experimentId: "external-exp", status: "scored", payload: { publicScore: 0.91 } }]), true);
+  assert.equal(externalScoreObservedForExperiment("external-exp", [{ experimentId: "external-exp", status: "prepared", payload: { publicScore: 0.91 } }]), false);
 });
 
 test("scientific task runner verifies intermediate stages and resumes verified snapshots", async () => {

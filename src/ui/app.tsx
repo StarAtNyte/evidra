@@ -9,7 +9,7 @@ import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
 import { classifyProcessFailure, executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
-import { auditExperiment, auditExperimentSubtask, independentReplicationObserved, refreshExperimentAudit, validateEvaluationMatrix } from "../core/validation.js";
+import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshExperimentAudit, validateEvaluationMatrix } from "../core/validation.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "../core/decision-auditor.js";
 import { sha256File } from "../core/evidence.js";
 import { captureEnvironment } from "../core/environment.js";
@@ -1754,6 +1754,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       leakageAuditPassed: resultStore.experimentGates(id).leakageAuditPassed,
       reviewerApproved: resultStore.experimentGates(id).reviewerApproved,
       independentReplicationObserved: independentReplicationObserved(id, resultStore.experiments(), resultStore.runs()),
+      externalScoreRequired: manifest.acceptance.requireExternalScore,
+      externalScoreObserved: externalScoreObservedForExperiment(id, resultStore.submissions()),
       artifactChecksums: Object.fromEntries(Object.entries(recordedResult.artifacts).map(([name, path]) => [name, sha256File(path)])),
     });
     resultStore.recordSubtaskAudit({ ...auditExperimentSubtask(manifest, initialExperimentAudit, [result.runId, ...Object.keys(recordedResult.artifacts)]), experimentId: id, runId: result.runId });
@@ -2813,7 +2815,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const manifest = ExperimentManifestSchema.parse(payload);
           const runResult = RunResultSchema.parse(run.payload);
           const adapter = activeAdapter();
-          const audit = auditExperiment(manifest, runResult, { currentCommit: currentCommit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, splitVersion: manifest.splitVersion, metricName: adapter.config.metric.name, leakageAuditPassed: storedGates.leakageAuditPassed, reviewerApproved: storedGates.reviewerApproved, independentReplicationObserved: replicationObserved, artifactChecksums });
+          const audit = auditExperiment(manifest, runResult, { currentCommit: currentCommit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, splitVersion: manifest.splitVersion, metricName: adapter.config.metric.name, leakageAuditPassed: storedGates.leakageAuditPassed, reviewerApproved: storedGates.reviewerApproved, independentReplicationObserved: replicationObserved, externalScoreRequired: manifest.acceptance.requireExternalScore, externalScoreObserved: externalScoreObservedForExperiment(id, store.submissions()), artifactChecksums });
           const subtaskAudit = auditExperimentSubtask(manifest, audit, [run.id, ...Object.keys(artifactChecksums)]);
           const auditStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
           auditStore.recordSubtaskAudit({ ...subtaskAudit, experimentId: id, runId: run.id });
@@ -2844,7 +2846,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const runResult = RunResultSchema.safeParse(run.payload);
           if (manifest.success && runResult.success) {
             const checksums = Object.fromEntries(store.artifacts(run.id).map((artifact) => [artifact.name, artifact.checksum]));
-            const audit = auditExperiment(manifest.data, runResult.data, { currentCommit: manifest.data.gitCommit, datasetVersion: manifest.data.datasetVersion, splitVersion: manifest.data.splitVersion, metricName: activeAdapter().config.metric.name, leakageAuditPassed: gates.leakageAuditPassed, reviewerApproved: gates.reviewerApproved, independentReplicationObserved: independentReplicationObserved(id, store.experiments(), store.runs()), artifactChecksums: checksums });
+            const audit = auditExperiment(manifest.data, runResult.data, { currentCommit: manifest.data.gitCommit, datasetVersion: manifest.data.datasetVersion, splitVersion: manifest.data.splitVersion, metricName: activeAdapter().config.metric.name, leakageAuditPassed: gates.leakageAuditPassed, reviewerApproved: gates.reviewerApproved, independentReplicationObserved: independentReplicationObserved(id, store.experiments(), store.runs()), externalScoreRequired: manifest.data.acceptance.requireExternalScore, externalScoreObserved: externalScoreObservedForExperiment(id, store.submissions()), artifactChecksums: checksums });
             const subtaskAudit = auditExperimentSubtask(manifest.data, audit, [run.id, ...Object.keys(checksums)]);
             store.recordSubtaskAudit({ ...subtaskAudit, experimentId: id, runId: run.id });
             store.appendEvent("experiment.audit.refreshed", { experimentId: id, runId: run.id, trigger: "gate_update", accepted: audit.accepted, subtaskAudit });

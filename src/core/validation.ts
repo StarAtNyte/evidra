@@ -69,6 +69,19 @@ export function independentReplicationObserved(
   });
 }
 
+/** Read external-score evidence from durable submission records, never from model prose. */
+export function externalScoreObservedForExperiment(
+  experimentId: string,
+  submissions: Array<{ experimentId: string; status: string; payload: unknown }>,
+): boolean {
+  return submissions.some((entry) => {
+    if (entry.experimentId !== experimentId || (entry.status !== "scored" && entry.status !== "submitted")) return false;
+    const payload = entry.payload as { publicScore?: unknown; scoreObservation?: unknown };
+    return (typeof payload.publicScore === "number" && Number.isFinite(payload.publicScore))
+      || (payload.scoreObservation !== undefined && payload.scoreObservation !== null);
+  });
+}
+
 export function validateEvaluationMatrix(manifest: Pick<ExperimentManifest, "evaluation">, run: Pick<RunResult, "matrix">, metricName: string): { valid: boolean; expected: number; observed: number; missing: string[]; invalidMetric: string[] } {
   if (!manifest.evaluation.matrixRequired) return { valid: true, expected: 0, observed: run.matrix?.length ?? 0, missing: [], invalidMetric: [] };
   const cells = run.matrix ?? [];
@@ -119,7 +132,7 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
     verifiersPassed,
     evaluationCoverage: matrix.valid,
     replicationObserved: !manifest.acceptance.requireReplication || context.independentReplicationObserved === true,
-    ...(context.externalScoreRequired === true ? { externalScoreObserved: context.externalScoreObserved === true } : {}),
+    ...((context.externalScoreRequired === true || manifest.acceptance.requireExternalScore) ? { externalScoreObserved: context.externalScoreObserved === true } : {}),
   };
   const result = evaluateEvidenceGate(manifest, gates);
   const reasons = [...result.reasons];

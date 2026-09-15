@@ -23,6 +23,7 @@ export interface ManifestInput {
   maximumRegressionShift?: number;
   largeGainThreshold?: number;
   requireReplication?: boolean;
+  requireExternalScore?: boolean;
   parent?: string | null;
   parentHypothesisIds?: string[];
   searchOperator?: string;
@@ -63,6 +64,7 @@ export function createExperimentManifest(input: ManifestInput, competition: Comp
       minimumPrimaryDelta: input.minimumPrimaryDelta ?? 0,
       maximumRegressionShift: input.maximumRegressionShift ?? 0,
       requireReplication: input.requireReplication ?? true,
+      requireExternalScore: input.requireExternalScore ?? false,
       ...(input.largeGainThreshold !== undefined ? { largeGainThreshold: input.largeGainThreshold } : {}),
     },
     searchOperator: input.searchOperator ?? "ucb_portfolio",
@@ -78,6 +80,7 @@ export function manifestSummary(manifest: ExperimentManifest): string {
     `folds [${manifest.evaluation.folds.join(", ")}] · seeds [${manifest.evaluation.seeds.join(", ")}] · matrix ${manifest.evaluation.matrixRequired ? "required" : "optional"}`,
     `metrics ${manifest.evaluation.metrics.map((metric) => `${metric.name} (${metric.direction})`).join(", ") || "not declared"}`,
     `replication ${manifest.acceptance.requireReplication ? "required" : "not required"}`,
+    `external score ${manifest.acceptance.requireExternalScore ? "required" : "not required"}`,
   ].join("\n");
 }
 

@@ -264,7 +264,7 @@ export const ExperimentManifestSchema = z.object({
       seen.add(key);
     }
   }),
-  acceptance: z.object({ minimumPrimaryDelta: z.number(), maximumRegressionShift: z.number(), requireReplication: z.boolean(), largeGainThreshold: z.number().positive().optional() }),
+  acceptance: z.object({ minimumPrimaryDelta: z.number(), maximumRegressionShift: z.number(), requireReplication: z.boolean(), requireExternalScore: z.boolean().default(false), largeGainThreshold: z.number().positive().optional() }),
   searchOperator: z.string().min(1).default("ucb_portfolio"),
   createdAt: z.string().datetime(),
 });
