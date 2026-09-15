@@ -109,7 +109,7 @@ export class ProviderUsageLimitError extends Error {
 }
 
 export function isProviderUsageLimit(error: unknown): boolean {
-  return error instanceof ProviderUsageLimitError || /rate limit|usage limit|quota|too many requests|not enough credits/i.test(error instanceof Error ? error.message : String(error));
+  return error instanceof ProviderUsageLimitError || /rate limit|usage limit|quota|too many requests|not enough credits|at capacity|overloaded|server busy/i.test(error instanceof Error ? error.message : String(error));
 }
 
 /** Errors for which an automatic local route is a truthful startup substitute. */
@@ -605,7 +605,7 @@ export class CodexExecAgent {
       settled = true;
       if (abort.signal.aborted) throw new Error(timedOut ? "Codex request timed out." : "Codex request interrupted.");
       const diagnostic = error instanceof Error ? error.message : String(error);
-      if (/rate limit|usage limit|quota|too many requests|not enough credits|429/i.test(diagnostic)) {
+      if (isProviderUsageLimit(error) || /429/i.test(diagnostic)) {
         const retryAfterMs = providerRetryAfterMs(new Error(diagnostic));
         throw new ProviderUsageLimitError(`Codex usage limit reached. Retrying in ${Math.ceil(retryAfterMs / 60_000)} minute(s).`, retryAfterMs);
       }

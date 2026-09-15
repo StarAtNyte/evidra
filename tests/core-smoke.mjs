@@ -156,7 +156,7 @@ import { ResearchDecisionSchema, RunResultSchema } from "../dist/core/types.js";
 import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../dist/core/validation-lock.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
-import { codexIsLoggedInAsync, createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexModel, effectiveCodexSandbox, isProviderFallbackEligible, listCodexModels, MAX_PROVIDER_RESET_WAIT_MS, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveCodexModel, shouldUseLocalFallback } from "../dist/agents/codex-exec.js";
+import { codexIsLoggedInAsync, createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexModel, effectiveCodexSandbox, isProviderFallbackEligible, isProviderUsageLimit, listCodexModels, MAX_PROVIDER_RESET_WAIT_MS, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveCodexModel, shouldUseLocalFallback } from "../dist/agents/codex-exec.js";
 import { analyzeHarnessComponentFailures, assessHarnessChangePresence, evaluateHarnessChange, inventoryHarnessComponents, parseHarnessChangeContract, planHarnessInterventions } from "../dist/core/harness-evolution.js";
 import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
 import { assessStopPolicy } from "../dist/core/stop-policy.js";
@@ -504,6 +504,8 @@ test("Codex steering is asynchronous and uses the configured binary", async () =
 test("startup fallback eligibility distinguishes route failures from account model errors", () => {
   assert.equal(isProviderFallbackEligible(new Error("Codex is not logged in")), true);
   assert.equal(isProviderFallbackEligible(new Error("Codex is unreachable right now")), true);
+  assert.equal(isProviderUsageLimit(new Error("Selected model is at capacity")), true);
+  assert.equal(isProviderFallbackEligible(new Error("Selected model is at capacity")), true);
   assert.equal(isProviderFallbackEligible(new Error("The selected model is not available for your account")), false);
 });
 

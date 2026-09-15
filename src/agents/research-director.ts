@@ -49,6 +49,88 @@ function toolCacheKey(call: ResearchToolCall): string {
   return `${call.name}:${JSON.stringify(call.arguments ?? {})}`;
 }
 
+const RESEARCH_HYPOTHESIS_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["title", "formulationFamily", "outcomeType", "expectedOutcome", "mechanism", "evidence", "evidenceSourceIds", "parentHypothesisIds", "sourceAdaptation", "proposedChange", "falsificationTest", "expectedMetricDelta", "computeCostGpuHours", "implementationRisk", "leakageRisk", "dependencies", "ablationFactors"],
+  properties: {
+    title: { type: "string" },
+    formulationFamily: { type: "string" },
+    outcomeType: { type: "string", enum: ["metric", "artifact", "proof", "behavior", "system", "other"] },
+    expectedOutcome: { type: ["string", "null"] },
+    mechanism: { type: "string" },
+    evidence: { type: "array", items: { type: "string" } },
+    evidenceSourceIds: { type: "array", items: { type: "string" }, maxItems: 8 },
+    parentHypothesisIds: { type: "array", items: { type: "string" }, maxItems: 2 },
+    sourceAdaptation: {
+      anyOf: [
+        { type: "null" },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["sourceTitle", "section", "repository", "originalSetting", "competitionDifference", "expectedFailureModes"],
+          properties: {
+            sourceTitle: { type: "string" },
+            section: { type: ["string", "null"] },
+            repository: { type: ["string", "null"] },
+            originalSetting: { type: "string" },
+            competitionDifference: { type: "string" },
+            expectedFailureModes: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 8 },
+          },
+        },
+      ],
+    },
+    proposedChange: { type: "string" },
+    falsificationTest: { type: "string" },
+    expectedMetricDelta: {
+      type: "object",
+      additionalProperties: false,
+      required: ["low", "median", "high"],
+      properties: { low: { type: "number" }, median: { type: "number" }, high: { type: "number" } },
+    },
+    computeCostGpuHours: { type: "number", minimum: 0 },
+    implementationRisk: { type: "string", enum: ["low", "medium", "high"] },
+    leakageRisk: { type: "string", enum: ["low", "medium", "high"] },
+    dependencies: { type: "array", items: { type: "string" } },
+    ablationFactors: {
+      type: "array",
+      maxItems: 8,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "key", "label", "disabledValue"],
+        properties: {
+          id: { type: "string" },
+          key: { type: "string" },
+          label: { type: "string" },
+          disabledValue: { type: ["boolean", "number", "string", "null"] },
+        },
+      },
+    },
+  },
+} as const;
+
+const RESEARCH_TOOL_ARGUMENTS_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["command", "timeoutMs", "url", "refresh", "query", "path", "maxBytes", "limit", "depth", "paths", "baseline", "maxRows", "kind"],
+  properties: {
+    command: { anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }, { type: "null" }] },
+    timeoutMs: { type: ["number", "null"] },
+    url: { type: ["string", "null"] },
+    refresh: { type: ["boolean", "null"] },
+    query: { type: ["string", "null"] },
+    path: { type: ["string", "null"] },
+    maxBytes: { type: ["number", "null"] },
+    limit: { type: ["number", "null"] },
+    depth: { type: ["string", "null"], enum: ["shallow", "deep", null] },
+    paths: { anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }] },
+    baseline: { type: ["string", "null"] },
+    maxRows: { type: ["number", "null"] },
+    kind: { type: ["string", "null"], enum: ["research", "challenge", "final", null] },
+  },
+} as const;
+
 const RESEARCH_DECISION_OUTPUT_SCHEMA = JSON.stringify({
   type: "object",
   additionalProperties: false,
@@ -59,14 +141,26 @@ const RESEARCH_DECISION_OUTPUT_SCHEMA = JSON.stringify({
     decision: { type: "string", enum: ["inspect", "propose", "run", "replicate", "stop"] },
     bottleneck: { type: "string" },
     rationale: { type: "string" },
-    hypotheses: { type: "array", maxItems: 5, items: { type: "object", additionalProperties: true } },
+    hypotheses: { type: "array", maxItems: 5, items: RESEARCH_HYPOTHESIS_OUTPUT_SCHEMA },
     selectedHypothesis: { type: ["string", "null"] },
     searchOperator: { type: "string", enum: ["greedy", "ucb_portfolio", "evolutionary", "mcts", "ablation", "combination", "replication", "audit"] },
     nextAction: { type: "string" },
     // Keep the provider contract aligned with ResearchDecisionSchema. This
     // bounds one director turn before controller execution, rather than
     // relying only on local parsing after an oversized response arrives.
-    toolCalls: { type: "array", maxItems: 8, items: { type: "object", additionalProperties: true } },
+    toolCalls: {
+      type: "array",
+      maxItems: 8,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "arguments"],
+        properties: {
+          name: { type: "string" },
+          arguments: RESEARCH_TOOL_ARGUMENTS_OUTPUT_SCHEMA,
+        },
+      },
+    },
   },
 });
 
@@ -158,9 +252,16 @@ export async function runResearchDirector(
     const results: ResearchToolResult[] = [];
     for (const call of decision.toolCalls) {
       onProgress?.(`Research tool · ${call.name}`);
-      const callId = options.onToolCall?.("director", call) ?? `director-${call.name}-${results.length + 1}`;
-      const toolSpec = RESEARCH_TOOLS.find((tool) => tool.name === call.name);
-      const cacheKey = toolCacheKey(call);
+      // Strict Codex schemas represent optional tool arguments as null because
+      // every property must be required. Remove those sentinels before the
+      // controller validates the public tool contract.
+      const normalizedCall: ResearchToolCall = {
+        ...call,
+        arguments: Object.fromEntries(Object.entries(call.arguments ?? {}).filter(([, value]) => value !== null)),
+      };
+      const callId = options.onToolCall?.("director", normalizedCall) ?? `director-${normalizedCall.name}-${results.length + 1}`;
+      const toolSpec = RESEARCH_TOOLS.find((tool) => tool.name === normalizedCall.name);
+      const cacheKey = toolCacheKey(normalizedCall);
       const cacheable = toolSpec?.readOnly === true && toolSpec.cacheable !== false;
       let result: ResearchToolResult | undefined = cacheable ? readOnlyToolCache.get(cacheKey) : undefined;
       if (result) {
@@ -168,7 +269,7 @@ export async function runResearchDirector(
       } else {
         for (let attempt = 1; attempt <= maxToolAttempts; attempt += 1) {
           try {
-            result = normalizeResearchToolResult(await options.executeTool(call));
+            result = normalizeResearchToolResult(await options.executeTool(normalizedCall));
           } catch (error) {
             result = {
               name: call.name,

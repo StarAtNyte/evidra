@@ -213,7 +213,7 @@ Codex subscription limits are finite. Select the desired behavior explicitly:
 /limits stop       Stop on exhaustion
 ```
 
-Provider, timeout, stream, authentication, dependency, and tool failures use
+Provider, timeout, stream, authentication, dependency, capacity, and tool failures use
 bounded retries with backoff. After retry exhaustion, Evidra records the
 failure and suppresses an unchanged retry route. The next attempt must change
 an appropriate route dimension such as executor, provider, model, or search
@@ -224,6 +224,10 @@ When a Codex entitlement reset is required, the campaign is durably paused and
 the wait interval is excluded from its research-time budget. Retry guards use
 that pause-aware clock as well, so a long provider wait cannot consume the
 active campaign budget merely because calendar time elapsed.
+Provider responses such as “selected model is at capacity”, “overloaded”, and
+“server busy” are classified as usage-limit conditions, so the configured
+`auto`, `wait`, or `fallback` policy can take effect instead of treating them
+as an unknown permanent failure.
 Reset hints are parsed from common provider forms including `retry after`,
 `retry-after`, `try again in`, and `available in`, with a bounded 24-hour cap;
 when no hint is supplied Evidra uses its conservative default delay.

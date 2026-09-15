@@ -424,6 +424,14 @@ external evaluator.
 - Codex reset-delay parsing now understands `retry-after`, `try again in`, and
   `available in` provider hints in addition to `retry` and `reset`, while
   retaining the bounded 24-hour maximum.
+- The director’s nested Codex response schema is now strict-compatible:
+  hypothesis, source-adaptation, ablation-factor, and tool-argument objects
+  declare closed properties; nullable tool fields are removed before controller
+  validation. A real Codex run verified the previous HTTP 400 schema failure is
+  gone.
+- Codex capacity/overload responses are classified as usage-limit failures,
+  enabling the configured wait or route-fallback policy instead of opaque
+  campaign termination.
 
 ## Immediate next work
 
