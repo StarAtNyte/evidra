@@ -37,6 +37,7 @@ import { auditData, dataAuditFingerprint } from "../dist/core/data-audit.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { runReducedValidation } from "../dist/core/stage-executor.js";
 import { createToolTraceRecorder, evaluateTrajectory, parsePersistedTrace, capabilityGaps, providerActivityFailureClass, validateTrajectoryStructure } from "../dist/core/trajectories.js";
+import { recoverUncommittedTraceFiles } from "../dist/core/trajectory-recovery.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
 import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, selectCurriculum } from "../dist/core/experience.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
@@ -654,6 +655,19 @@ test("persisted trace parser bounds malformed crash artifacts and redacts payloa
   assert.equal(parsed.events.length, 1);
   assert.equal(parsed.invalidLines, 2);
   assert.equal(parsed.events[0].payload.activity, "token=[REDACTED]");
+});
+
+test("shared trace recovery registers orphaned traces once", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-trace-recovery-"));
+  const traceDirectory = join(root, ".sota", "traces");
+  mkdirSync(traceDirectory, { recursive: true });
+  writeFileSync(join(traceDirectory, "research.jsonl"), `${JSON.stringify({ id: "event-1", kind: "process", payload: { activity: "reading" } })}\n`);
+  const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+  assert.equal(recoverUncommittedTraceFiles(root, store), 1);
+  assert.equal(recoverUncommittedTraceFiles(root, store), 0);
+  assert.equal(store.eventsByType("research.trace.recovered").length, 1);
+  store.close();
+  rmSync(root, { recursive: true, force: true });
 });
 
 test("capability outcomes preserve prediction, serving action, and result", () => {

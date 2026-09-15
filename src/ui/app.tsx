@@ -33,7 +33,8 @@ import { codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexM
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { boundedPeerBoard, runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
-import { createToolTraceRecorder, evaluateTrajectory, parsePersistedTrace, providerActivityFailureClass, type TrajectoryEvent } from "../core/trajectories.js";
+import { createToolTraceRecorder, evaluateTrajectory, providerActivityFailureClass, type TrajectoryEvent } from "../core/trajectories.js";
+import { recoverUncommittedTraceFiles } from "../core/trajectory-recovery.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../core/capability-router.js";
 import { allocateNextResearch } from "../core/allocation.js";
 import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurriculum } from "../core/experience.js";
@@ -411,32 +412,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     controllerLeaseHeld.current = true;
     const recoveredStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const recoveredExperiments = recoveredStore.recoverStaleExperiments();
-    const recoveredTrajectoryPaths = new Set(recoveredStore.trajectories().flatMap((entry) => {
-      const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { tracePath?: unknown } : {};
-      return typeof payload.tracePath === "string" ? [payload.tracePath] : [];
-    }));
-    const recoveredTraceEvents = new Set(recoveredStore.eventsByType("research.trace.recovered").flatMap((event) => {
-      const payload = event.payload && typeof event.payload === "object" ? event.payload as { path?: unknown; checksum?: unknown } : {};
-      return typeof payload.path === "string" && typeof payload.checksum === "string" ? [`${payload.path}:${payload.checksum}`] : [];
-    }));
-    const traceDirectory = join(root, ".sota", "traces");
-    if (existsSync(traceDirectory)) {
-      for (const name of readdirSync(traceDirectory).filter((entry) => entry.endsWith(".jsonl")).slice(-100)) {
-        const absolute = join(traceDirectory, name);
-        try {
-          const path = relative(root, absolute);
-          const checksum = sha256File(absolute);
-          if (recoveredTrajectoryPaths.has(path) || recoveredTraceEvents.has(`${path}:${checksum}`)) continue;
-          const parsed = parsePersistedTrace(readFileSync(absolute, "utf8"));
-          if (!parsed.events.length) continue;
-          const activityTail = parsed.events.filter((event) => typeof event.payload.activity === "string").slice(-8).map((event) => String(event.payload.activity).slice(0, 240));
-          const toolNames = [...new Set(parsed.events.filter((event) => typeof event.payload.tool === "string").map((event) => String(event.payload.tool)).slice(-16))];
-          recoveredStore.appendEvent("research.trace.recovered", { path, checksum, eventCount: parsed.events.length, invalidLines: parsed.invalidLines, firstEvent: parsed.events[0]?.id, lastEvent: parsed.events.at(-1)?.id, ...(activityTail.length ? { activityTail } : {}), ...(toolNames.length ? { toolNames } : {}), reason: "uncommitted cycle trace found during controller startup" });
-        } catch { /* A corrupt or unavailable trace must not block the TUI. */ }
-      }
-    }
+    const recoveredTraces = recoverUncommittedTraceFiles(root, recoveredStore);
     recoveredStore.close();
     if (recoveredExperiments.length) append("assistant", `Recovered ${recoveredExperiments.length} experiment(s) left running by a previous controller; they are available for retry.`);
+    if (recoveredTraces) append("assistant", `Recovered ${recoveredTraces} partial Codex trace(s) from a previous controller.`);
     if (!controllerHeartbeat.current) controllerHeartbeat.current = setInterval(() => {
       const heartbeatStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
       heartbeatStore.heartbeatControllerLease(controllerLeaseId.current, configRef.current.mode, progressRef.current || "running");

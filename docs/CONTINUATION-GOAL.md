@@ -340,6 +340,9 @@ external evaluator.
 - Harness comparison now has a non-mutating `benchmark run --dry-run`
   preflight that prints the protocol fingerprint and resolved arms before any
   external harness is launched.
+- CLI and TUI now share one bounded, checksum-aware Codex trace-recovery helper;
+  orphaned traces are registered once at startup and malformed artifacts cannot
+  prevent either controller from opening.
 
 ## Immediate next work
 
