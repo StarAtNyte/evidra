@@ -57,11 +57,11 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `50c3843`.
+- Latest pushed commit: `cbbc996`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 324/324 tests passing, TypeScript check passing,
+- Latest verified baseline: 326/326 tests passing, TypeScript check passing,
   build passing, and a clean worktree.
 - Benchmark report command argv is now redacted alongside process output, with
   coverage for primary, alternate, and reproducibility routes.
@@ -107,6 +107,12 @@ external evaluator.
   descriptions or other quoted fields cannot shift the public-score column.
 - Submission polling resolves the provider submission ID from the persisted
   receipt, with a bundle-ID fallback for legacy records.
+- Added `src/core/replay-simulator.ts`, a validated offline replay-world
+  primitive inspired by Dream-RSI: alternate branch order, bounded stopping,
+  and batching can be scored from recorded outcomes without executing workers.
+- Documented the Dream-RSI and Discovery Foundation Models design translation in
+  `docs/research/literature-synthesis-2026-09.md`; replay results remain leads
+  until a fresh online rollout and held-out validation.
 
 ## Immediate next work
 
