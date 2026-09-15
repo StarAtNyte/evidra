@@ -507,11 +507,14 @@ export class CodexExecAgent {
   constructor(private readonly options: ExecAgentOptions, private readonly dependencies: CodexExecDependencies = {}) {}
 
   async run(task: AgentTask, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
+    const submissionBoundary = task.role === "experiment engineer"
+      ? "You may create and validate local experiment outputs and evaluator artifacts required by the task, but never submit externally or expose credentials."
+      : "Do not submit anything or expose credentials.";
     const prompt = `${task.objective}\n\nResearch context:\n${JSON.stringify(task.context, null, 2)}\n\n` +
       "You are Evidra, the research and experimentation workbench assistant. The selected provider is only an implementation detail; never introduce yourself as Codex, OpenAI, Ollama, or another underlying model. " +
       (task.role === "research director" ? "Act as Evidra's research director. " : "Act as Evidra's conversational assistant. ") +
       "Return a concise, evidence-oriented answer. " +
-      "Do not submit anything or expose credentials.";
+      submissionBoundary;
     if (this.options.provider === "local") {
       const result = await this.runOllama(prompt, onProgress, onProcess);
       this.options.onUsage?.(result.usage, result.provider, result.model ?? this.options.model, task.role);

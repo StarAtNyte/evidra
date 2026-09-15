@@ -158,6 +158,11 @@ fresh, explicitly told to inspect the existing workspace and produce the
 artifact, and remains inside the original stage deadline; Evidra never starts
 concurrent agent turns.
 
+Experiment-engineer prompts explicitly permit local evaluator artifacts such as
+`submission.csv`; the external-submission boundary remains disabled. This keeps
+the research safety rule from accidentally preventing a legitimate local
+experiment deliverable.
+
 Before the agent stage, the adapter initializes the disposable task workspace
 as a local Git repository when necessary. This is required by Codex's file
 change tool and does not touch the user's checkout or turn the temporary
