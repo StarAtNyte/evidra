@@ -147,6 +147,8 @@ external evaluator.
   context as historical guidance, explicitly separated from current-task
   evidence so prior harness outcomes can guide the next intervention without
   becoming an unearned task result.
+- The same history is included in one-shot `evidra research` decisions, closing
+  the memory boundary for non-campaign research as well.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
 - Codex command activity now includes an exit code only when the provider

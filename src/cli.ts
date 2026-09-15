@@ -3230,6 +3230,14 @@ research.command("propose")
     store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
     const recentEvents = store.recentEvents(20);
     const researchMemory = researchMemoryContext(store, 30, objective, { objective, taskType: "general research", context: "research" });
+    const harnessChangeHistory = store.harnessChanges().slice(-8).map((change) => ({
+      id: change.id,
+      protocolFingerprint: change.protocolFingerprint,
+      decision: change.decision,
+      contract: change.contract,
+      outcomes: change.outcomes,
+      changedComponents: change.candidateComponents.filter((candidate) => change.baselineComponents.find((baseline) => baseline.path === candidate.path && baseline.checksum !== candidate.checksum)),
+    }));
     store.close();
     console.log("Research 3/3 · analyzing observed evidence...");
     let decision = await runResearchDirector(objective, {
@@ -3241,6 +3249,7 @@ research.command("propose")
       ultimateGoal: objective,
       phaseGoal: phaseGoal ?? null,
       researchMemory,
+      harnessChangeHistory,
     }, { provider: "codex", model: DEFAULT_CODEX_MODEL, reasoningEffort: "medium", fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });
     const decisionStore = new ResearchStore(statePath);
     decision = enforceGoalTermination(decision, { currentPhase: phaseGoal?.phase });
