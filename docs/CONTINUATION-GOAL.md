@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `8237af2` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `47dd73d` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -100,10 +100,13 @@ external evaluator.
 - Each bounded memory packet is fingerprinted and recorded as
   `research.memory.retrieved`, making retrieval independently replayable and
   diagnosable.
+- Research context now includes a provider/domain-neutral falsification agenda;
+  untested hypotheses are prioritized and terminal/failed directions are kept
+  visible so autonomous cycles do not repeat unchanged routes.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 271/271 tests passing, TypeScript check passing,
+- Latest verified baseline: 388/388 tests passing, TypeScript check passing,
   and build passing. The worktree is clean; generated reports remain excluded
   from source changes.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
