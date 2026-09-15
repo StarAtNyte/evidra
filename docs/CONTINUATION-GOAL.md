@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `466a442`.
+- Latest pushed commit: `5de3ed0`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -100,6 +100,9 @@ external evaluator.
 - Codex login runs asynchronously with an interruptible child process, so
   device/browser authentication cannot freeze the TUI; this is covered by an
   integration-style regression test.
+- Codex item events now expose concise progress for MCP tools, todo plans,
+  command completion, file changes, reasoning summaries, and item failures;
+  the normalized adapter is covered by regression tests.
 - Codex thread restoration is explicit: a new terminal starts a fresh Evidra
   chat, while `/resume <session-id>` restores the saved Codex thread and
   transcript. Provider/model changes invalidate the active chat thread.
