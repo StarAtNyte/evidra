@@ -15,6 +15,8 @@ export interface BenchmarkArmSpec {
   /** Optional checksummed harness component manifest for ablation attribution. */
   componentIds?: string[];
   task: string;
+  /** Non-scoring task provenance; preserved for reports and research context. */
+  taskMetadata?: Record<string, string | number | boolean>;
   slice?: string;
   arm: string;
   seed: string | number;
@@ -114,6 +116,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
   const prepared = arms.map((arm) => {
     if (!arm.command.length || arm.command.some((part) => !part.trim())) throw new Error(`Benchmark arm '${arm.harness}' has an empty command.`);
     if (arm.provider !== undefined && (!arm.provider.trim() || arm.provider.length > 80)) throw new Error(`Benchmark arm '${arm.harness}' has an invalid provider label.`);
+    if (arm.taskMetadata !== undefined && (!arm.taskMetadata || typeof arm.taskMetadata !== "object" || Object.entries(arm.taskMetadata).some(([key, value]) => !key.trim() || (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") || (typeof value === "number" && !Number.isFinite(value))))) throw new Error(`Benchmark arm '${arm.harness}' has invalid task metadata.`);
     if (arm.requiredMetrics !== undefined && (!Array.isArray(arm.requiredMetrics) || arm.requiredMetrics.some((name) => typeof name !== "string" || !name.trim()))) throw new Error(`Benchmark arm '${arm.harness}' has invalid required metric names.`);
     if (arm.metricGates !== undefined && (!Array.isArray(arm.metricGates) || arm.metricGates.some((gate) => !gate || typeof gate.name !== "string" || !gate.name.trim() || !["maximize", "minimize"].includes(gate.direction) || (gate.maximumRegression !== undefined && (!Number.isFinite(gate.maximumRegression) || gate.maximumRegression < 0))))) throw new Error(`Benchmark arm '${arm.harness}' has invalid metric gates.`);
     if (!Number.isFinite(arm.budgetMinutes) || arm.budgetMinutes <= 0) throw new Error(`Benchmark arm '${arm.harness}' must have a positive budget.`);
@@ -200,6 +203,7 @@ export async function runBenchmarkArms(arms: BenchmarkArmSpec[], root: string, o
       ...(arm.policy ? { policy: arm.policy } : {}),
       ...(arm.componentIds ? { componentIds: [...new Set(arm.componentIds)].sort() } : {}),
       task: arm.task,
+      ...(arm.taskMetadata ? { taskMetadata: { ...arm.taskMetadata } } : {}),
       ...(arm.slice ? { slice: arm.slice } : {}),
       arm: arm.arm,
       seed: arm.seed,

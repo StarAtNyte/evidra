@@ -195,6 +195,13 @@ export function createAirsBenchmarkProtocol(discovery: AirsBenchDiscovery, optio
         harness: template.harness,
         task: `airsbench:${task.family}/${task.id}`,
         arm: `${task.family}/${task.id}`,
+        taskMetadata: Object.fromEntries(Object.entries({
+          dataset: task.dataset,
+          researchProblem: task.researchProblem,
+          category: task.category,
+          sotaScore: task.sotaScore,
+          sotaPaperUrl: task.sotaPaperUrl,
+        }).filter(([, value]) => value !== undefined)) as Record<string, string | number | boolean>,
         seed: options.seed,
         model: options.model,
         budgetMinutes: options.budgetMinutes,

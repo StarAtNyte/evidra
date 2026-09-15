@@ -3858,7 +3858,7 @@ test("AIRS protocol generation creates matched task arms with safe template expa
     schemaVersion: 1,
     repository: "/bench/airs",
     family: "rad",
-    tasks: [{ id: "TaskA", family: "rad", path: "airsbench/tasks/rad/TaskA", metadataPath: "m", descriptionPath: "d", preparePath: "p", evaluatePath: "e", evaluatePreparePath: "ep", valid: true, missingFiles: [], metric: "Accuracy", direction: "maximize", estimatedWorstScore: 0, optimalScore: 1 }],
+    tasks: [{ id: "TaskA", family: "rad", path: "airsbench/tasks/rad/TaskA", metadataPath: "m", descriptionPath: "d", preparePath: "p", evaluatePath: "e", evaluatePreparePath: "ep", valid: true, missingFiles: [], metric: "Accuracy", direction: "maximize", estimatedWorstScore: 0, optimalScore: 1, dataset: "demo", researchProblem: "classification", category: "nlp", sotaScore: 0.8, sotaPaperUrl: "https://example.test/paper" }],
     validTasks: 1,
     invalidTasks: 0,
   };
@@ -3871,6 +3871,7 @@ test("AIRS protocol generation creates matched task arms with safe template expa
   assert.equal(protocol.arms[1].harness, "mlgym");
   assert.equal(protocol.arms[0].taskBestMetric, 1);
   assert.equal(protocol.arms[0].task, "airsbench:rad/TaskA");
+  assert.deepEqual(protocol.arms[0].taskMetadata, { dataset: "demo", researchProblem: "classification", category: "nlp", sotaScore: 0.8, sotaPaperUrl: "https://example.test/paper" });
   assert.throws(() => createAirsBenchmarkProtocol(discovery, { templates: [{ harness: "evidra", command: ["run"] }], model: "m", seed: 0, budgetMinutes: 1, baselineMetric: 0 }), /at least two distinct/);
 });
 

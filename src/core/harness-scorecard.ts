@@ -9,6 +9,8 @@ export interface HarnessTrial {
   /** Optional immutable component manifest used for layered harness ablations. */
   componentIds?: string[];
   task: string;
+  /** Non-scoring task provenance retained from the benchmark protocol. */
+  taskMetadata?: Record<string, string | number | boolean>;
   /** Optional task slice/family used for slice-balanced diagnostics. */
   slice?: string;
   /** Optional protocol identity fields. Older exports remain readable. */
@@ -54,6 +56,7 @@ const HarnessTrialSchema = z.object({
   policy: z.string().min(1).optional(),
   componentIds: z.array(z.string().min(1)).optional(),
   task: z.string().min(1),
+  taskMetadata: z.record(z.union([z.string(), z.number().finite(), z.boolean()])).optional(),
   slice: z.string().min(1).optional(),
   arm: z.string().optional(),
   seed: z.union([z.string(), z.number().finite()]).optional(),
