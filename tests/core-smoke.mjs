@@ -2265,8 +2265,8 @@ test("phase completion requires durable evidence instead of model status alone",
 
 test("generic subtask auditing requires verifier evidence and preserves unmet criteria", () => {
   const contract = { id: "audit-1", objective: "produce a reproducible result", acceptanceCriteria: [
-    { id: "artifact", description: "result artifact exists" },
-    { id: "optional-note", description: "operator note exists", required: false },
+    { id: "artifact", description: "result artifact exists", weight: 3 },
+    { id: "optional-note", description: "operator note exists", required: false, weight: 1 },
   ] };
   assert.equal(validateSubtaskContract(contract).valid, true);
   // An executor's confident claim is not completion evidence.
@@ -2279,9 +2279,12 @@ test("generic subtask auditing requires verifier evidence and preserves unmet cr
   ], "2026-09-16T00:00:00.000Z");
   assert.equal(complete.complete, true);
   assert.equal(complete.status, "completed");
+  assert.equal(complete.weightedScore, 0.75);
+  assert.equal(complete.totalWeight, 4);
   assert.deepEqual(complete.criteria[0].evidenceIds, ["sha256:artifact"]);
   assert.equal(subtaskStateFromAudit(complete).status, "completed");
   assert.throws(() => assertSubtaskContract({ ...contract, acceptanceCriteria: [{ id: "x", description: "x" }, { id: "x", description: "duplicate" }] }), /duplicate/);
+  assert.throws(() => assertSubtaskContract({ ...contract, acceptanceCriteria: [{ id: "x", description: "x", weight: 0 }] }), /weight/);
 });
 
 test("phase goals expose the same auditable contract used by generic work", () => {

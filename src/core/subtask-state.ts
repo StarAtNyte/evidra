@@ -14,6 +14,8 @@ export interface SubtaskAcceptanceCriterion {
   description: string;
   required?: boolean;
   verifier?: string;
+  /** Relative importance for reporting multi-criterion research outcomes. */
+  weight?: number;
 }
 
 export interface SubtaskContract {
@@ -46,6 +48,9 @@ export interface SubtaskAudit {
   complete: boolean;
   criteria: AuditedCriterion[];
   unmetRequired: string[];
+  /** Weighted completion is diagnostic; required criteria still gate completion. */
+  weightedScore: number;
+  totalWeight: number;
   ignoredObservations: string[];
   auditedAt: string;
 }
@@ -66,6 +71,7 @@ export function validateSubtaskContract(contract: SubtaskContract): { valid: boo
     else if (ids.has(id)) reasons.push(`duplicate acceptance criterion: ${id}`);
     ids.add(id);
     if (!normalize(criterion.description)) reasons.push(`acceptance criterion description is empty: ${id || "unknown"}`);
+    if (criterion.weight !== undefined && (!Number.isFinite(criterion.weight) || criterion.weight <= 0)) reasons.push(`acceptance criterion weight must be positive: ${id || "unknown"}`);
   }
   for (const dependency of contract.dependencies ?? []) if (!normalize(dependency)) reasons.push("dependency id is empty");
   return { valid: reasons.length === 0, reasons };
@@ -84,6 +90,7 @@ export function assertSubtaskContract(contract: SubtaskContract): SubtaskContrac
       id: normalize(criterion.id),
       description: normalize(criterion.description),
       required: criterion.required !== false,
+      weight: criterion.weight === undefined ? 1 : criterion.weight,
     })),
     dependencies: contract.dependencies?.map(normalize),
   };
@@ -122,12 +129,16 @@ export function auditSubtask(contractInput: SubtaskContract, observations: Subta
     };
   });
   const unmetRequired = criteria.filter((criterion) => criterion.required !== false && !criterion.satisfied).map((criterion) => criterion.id);
+  const totalWeight = criteria.reduce((sum, criterion) => sum + (criterion.weight ?? 1), 0);
+  const weightedScore = totalWeight > 0 ? criteria.reduce((sum, criterion) => sum + (criterion.satisfied ? (criterion.weight ?? 1) : 0), 0) / totalWeight : 0;
   return {
     subtaskId: contract.id,
     status: unmetRequired.length === 0 ? "completed" : "blocked",
     complete: unmetRequired.length === 0,
     criteria,
     unmetRequired,
+    weightedScore,
+    totalWeight,
     ignoredObservations,
     auditedAt,
   };
