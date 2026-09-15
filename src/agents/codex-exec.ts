@@ -519,7 +519,9 @@ export class CodexExecAgent {
       // copy if the host cannot create Codex's normal bwrap namespace. Never
       // apply this to workspace-write experiment engineers.
       if (this.options.sandbox === "read-only" && isCodexSandboxFailure(error)) {
-        onProgress?.("Codex sandbox unavailable · retrying in an isolated workspace...");
+        const fallbackActivity = "Codex sandbox unavailable · changing route to a disposable isolated workspace";
+        onProgress?.(`${fallbackActivity}...`);
+        this.options.onActivity?.("codex", fallbackActivity);
         const retryOptions = { ...this.options, threadId: undefined, sandbox: "danger-full-access" as const };
         return await new CodexExecAgent(retryOptions, this.dependencies).runCodexSdkAttempt(prompt, onProgress, onProcess, outputSchemaText, role, "danger-full-access");
       }
