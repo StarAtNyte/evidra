@@ -110,7 +110,7 @@ export function deriveAdaptiveHarnessPolicy(input: AdaptiveHarnessInput): Adapti
   const recoveryGaps = countVerdict(quality, "errorRecovery", ["FAIL", "WARN"]);
   const terminationGaps = countVerdict(quality, "termination", ["FAIL", "WARN"]);
   const hasTransientFailure = failures.some((failure) => ["timeout", "transient_cloud", "rate_limit", "network"].includes(failure));
-  const hasContractFailure = failures.some((failure) => ["invalid_metric", "corrupt_artifact", "data_missing", "dependency", "auth"].includes(failure));
+  const hasContractFailure = failures.some((failure) => ["invalid_metric", "corrupt_artifact", "data_missing", "dependency", "auth", "sandbox"].includes(failure));
   const hasVerificationFailure = failures.some((failure) => ["verification", "verifier_failure"].includes(failure));
   const lowBudget = Number.isFinite(input.budgetRemainingMinutes) && (input.budgetRemainingMinutes ?? Infinity) < 5;
   const benchmarkPriority = input.benchmarkInterventions?.some((item) => item.priority === "critical" || item.priority === "high") ?? false;

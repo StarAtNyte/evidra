@@ -1312,6 +1312,10 @@ test("adaptive harness policy changes routing from measured failure pressure", (
   assert.equal(drift.recoveryRoute, "alternate_route");
   assert.equal(drift.requireReplication, true);
   assert.match(drift.reasons.join(" "), /environment drift/i);
+  const sandbox = deriveAdaptiveHarnessPolicy({ quality: [], failureClasses: ["sandbox"], budgetRemainingMinutes: 30 });
+  assert.equal(sandbox.profile, "recovery");
+  assert.equal(sandbox.recoveryRoute, "repair_first");
+  assert.match(sandbox.reasons.join(" "), /contract failure/i);
 });
 
 test("allocation pressure reaches the adaptive harness posture", () => {
