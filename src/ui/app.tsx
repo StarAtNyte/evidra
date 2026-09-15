@@ -1066,6 +1066,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         storePath: join(root, ".sota", "database.sqlite"),
         maxParallel: 1,
         autonomy: config.autonomy,
+        onProcess: registerProcess,
+        isCancelled: () => interruptedProcess.current,
         onProgress: setProgress,
         onActivity: toolTrace.onActivity,
         onAssistant: toolTrace.onAssistant,
