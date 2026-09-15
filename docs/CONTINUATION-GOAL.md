@@ -218,6 +218,8 @@ external evaluator.
 - Read-only shell guards now reject Git output/mutation/external-diff options
   and interpreter imports/indirection, covering common write and subprocess
   bypasses in autonomous Codex research tools.
+- Read-only Git inspection now also rejects branch-creation positional
+  arguments, closing a mutation path that was not covered by flag checks.
 - Codex sandbox resolution now prevents `EVIDRA_CODEX_SANDBOX` from elevating
   research lanes or critics above their explicit `read-only` request, while
   still allowing a tighter setting for permissive engineer routes.

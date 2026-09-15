@@ -140,6 +140,9 @@ export function guardReadOnlyInspection(command: string[]): CommandGuard {
     if (command[1].toLowerCase() === "branch" && /(^|\s)(-d|-D|-m|-M|-c|-C|--delete|--move|--copy|--edit-description)(\s|$)/.test(joined)) {
       return { allowed: false, reason: "Read-only Git inspection refuses branch mutation options." };
     }
+    if (command[1].toLowerCase() === "branch" && command.slice(2).some((argument) => !argument.startsWith("-"))) {
+      return { allowed: false, reason: "Read-only Git inspection refuses branch-creation positional arguments." };
+    }
     return { allowed: true };
   }
   if (["node", "nodejs", "python", "python3"].includes(executable)) {

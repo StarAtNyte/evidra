@@ -2331,6 +2331,7 @@ test("autonomy policy and shell guard enforce hard safety boundaries", () => {
   assert.equal(guardReadOnlyInspection(["git", "status", "--short"]).allowed, true);
   assert.equal(guardReadOnlyInspection(["git", "diff", "--output", "report.txt"]).allowed, false);
   assert.equal(guardReadOnlyInspection(["git", "branch", "-D", "main"]).allowed, false);
+  assert.equal(guardReadOnlyInspection(["git", "branch", "new-feature"]).allowed, false);
   assert.equal(guardReadOnlyInspection(["git", "checkout", "main"]).allowed, false);
   assert.equal(guardReadOnlyInspection(["python3", "-c", "open('x', 'w')"]).allowed, false);
   assert.equal(guardReadOnlyInspection(["node", "-e", "require('fs').writeFileSync('x','bad')"]).allowed, false);
