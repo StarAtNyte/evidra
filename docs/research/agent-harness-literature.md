@@ -608,3 +608,6 @@ checks. Before its provider call, it independently performs bounded workspace
 inventory, Git-status, result/metric search, and artifact-integrity inspection
 through the permission boundary. Those fresh observations remain separate from
 director context and their tool provenance is available for citation grounding.
+The semantic result also reports each supplied acceptance criterion with its own
+verdict, reasoning, and grounded evidence; missing or failed required criteria
+force a revision even when the overall model verdict says pass.
