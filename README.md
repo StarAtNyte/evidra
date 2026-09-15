@@ -209,6 +209,8 @@ Final reports also run a deterministic claim audit: measured, literature-only, p
 
 Fold/seed bootstrap replication and independent child-experiment replication are tracked separately. A manifest with `requireReplication` cannot pass promotion from repeated folds alone; the controller must observe a valid run for a distinct replication manifest.
 
+This requirement is enforced by the durable evidence audit: `replicationObserved` is derived from the linked child experiment and its completed run, and is refreshed automatically when replication finishes or an operator reruns the audit. Integrations that require a remote challenge/leaderboard result may opt into a separate `externalScoreObserved` criterion. External scores are recorded with platform and timestamp provenance, but never substitute for reproducibility, leakage, review, or evaluator-integrity checks.
+
 Paired statistical comparisons also require complete, matching fold/seed cardinality and at least two paired observations. Evidra refuses to truncate unequal series or treat a single observation as replication; incomplete evidence becomes an explicit `insufficient_data` outcome for the next research decision.
 
 Benchmark process and efficiency gates are task-balanced too: extra arms on one task cannot outweigh another task when evaluating reliability, alignment, or time use.

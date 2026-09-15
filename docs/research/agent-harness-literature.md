@@ -632,3 +632,11 @@ Replication completion also recomputes the parent experiment audit, while
 external evaluator score observations append a refreshed audit carrying the
 score, platform, and observation time. These events remain provenance rather
 than automatic promotion approval.
+Replication is now a contractual criterion, not just a lifecycle event: when a
+manifest declares `requireReplication`, its audit stays incomplete until a
+distinct child manifest linked by `parent`/`replicationOf` has a completed run.
+The detector is derived from durable experiment and run state, so unrelated
+successful runs cannot satisfy it. Adapters that depend on a remote leaderboard
+or external evaluator can additionally request an `externalScoreObserved`
+criterion; recording a score supplies provenance but does not bypass the other
+gates.

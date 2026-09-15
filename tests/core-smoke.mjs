@@ -59,7 +59,7 @@ import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
-import { auditExperiment, auditExperimentSubtask, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
+import { auditExperiment, auditExperimentSubtask, independentReplicationObserved, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
 import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
@@ -5646,7 +5646,7 @@ test("research rubric distinguishes retrieved diverse evidence from bare source 
 test("non-metric experiments can pass evidence audit through verified completion", () => {
   const competition = { id: "proof", name: "Proof", taskType: "formal", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["true"], experimentCommand: ["true"] };
   const manifest = createExperimentManifest({ id: "proof-exp", hypothesisId: "hyp-proof", outcomeType: "proof", gitCommit: "abc", datasetVersion: "data", verificationCommand: ["true"] }, competition);
-  const audit = auditExperiment(manifest, { runId: "run-proof", status: "completed", exitCode: 0, durationSeconds: 1, metrics: {}, artifacts: {}, verification: { declared: 1, executed: 1, passed: 1, failed: 0, independent: false } }, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true });
+  const audit = auditExperiment(manifest, { runId: "run-proof", status: "completed", exitCode: 0, durationSeconds: 1, metrics: {}, artifacts: {}, verification: { declared: 1, executed: 1, passed: 1, failed: 0, independent: false } }, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
   assert.equal(audit.accepted, true);
 });
 
@@ -5668,7 +5668,7 @@ test("experiment audit rejects incomplete declared verifier evidence", () => {
   assert.equal(incomplete.accepted, false);
   assert.equal(incomplete.gates.verifiersPassed, false);
   assert.equal(auditExperimentSubtask(manifest, incomplete).complete, false);
-  const complete = auditExperiment(manifest, { ...base, verification: { declared: 2, executed: 2, passed: 2, failed: 0, independent: true } }, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true });
+  const complete = auditExperiment(manifest, { ...base, verification: { declared: 2, executed: 2, passed: 2, failed: 0, independent: true } }, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
   assert.equal(complete.gates.verifiersPassed, true);
   const completeAudit = auditExperimentSubtask(manifest, complete, ["run"]);
   assert.equal(completeAudit.complete, true);
@@ -5680,9 +5680,26 @@ test("experiment audit criteria refresh when operator gates change", () => {
   const manifest = createExperimentManifest({ id: "refresh-exp", hypothesisId: "hyp", outcomeType: "proof", gitCommit: "abc", datasetVersion: "data" }, competition);
   const run = { runId: "refresh-run", status: "completed", exitCode: 0, durationSeconds: 1, metrics: {}, artifacts: {}, verification: { declared: 1, executed: 1, passed: 1, failed: 0, independent: false } };
   const pending = auditExperiment(manifest, run, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: false, reviewerApproved: false });
-  const approved = auditExperiment(manifest, run, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true });
+  const approved = auditExperiment(manifest, run, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
   assert.equal(auditExperimentSubtask(manifest, pending).complete, false);
   assert.equal(auditExperimentSubtask(manifest, approved).complete, true);
+});
+
+test("replication evidence is detected only from a completed independent child", () => {
+  const experiments = [{ id: "child", payload: { parent: "parent" } }];
+  assert.equal(independentReplicationObserved("parent", experiments, [{ experimentId: "child", status: "completed" }]), true);
+  assert.equal(independentReplicationObserved("parent", experiments, [{ experimentId: "child", status: "failed" }]), false);
+  assert.equal(independentReplicationObserved("other", experiments, [{ experimentId: "child", status: "completed" }]), false);
+});
+
+test("external evaluator evidence can be required as a separate experiment gate", () => {
+  const competition = { id: "external-gate", name: "External Gate", taskType: "metric", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["true"], experimentCommand: ["true"] };
+  const manifest = createExperimentManifest({ id: "external-exp", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "data", outcomeType: "metric" }, competition);
+  const run = { runId: "external-run", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 1 }, artifacts: {}, verification: { declared: 0, executed: 0, passed: 0, failed: 0, independent: false } };
+  const pending = auditExperiment(manifest, run, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, externalScoreRequired: true, externalScoreObserved: false });
+  const accepted = auditExperiment(manifest, run, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, externalScoreRequired: true, externalScoreObserved: true });
+  assert.equal(pending.gates.externalScoreObserved, false);
+  assert.equal(accepted.gates.externalScoreObserved, true);
 });
 
 test("scientific task runner verifies intermediate stages and resumes verified snapshots", async () => {

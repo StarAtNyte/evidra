@@ -11,6 +11,11 @@ export interface ValidationContext {
   metricName?: string;
   leakageAuditPassed?: boolean;
   reviewerApproved?: boolean;
+  /** Required only when the experiment contract requests an external score. */
+  externalScoreRequired?: boolean;
+  externalScoreObserved?: boolean;
+  /** Whether an independently executed child experiment has completed. */
+  independentReplicationObserved?: boolean;
   artifactChecksums?: Record<string, string>;
 }
 
@@ -47,6 +52,19 @@ export function auditExperimentSubtask(manifest: ExperimentManifest, audit: Expe
 export function refreshExperimentAudit(manifest: ExperimentManifest, run: RunResult, context: ValidationContext, evidenceIds: string[] = []): { audit: ExperimentAudit; subtaskAudit: SubtaskAudit } {
   const audit = auditExperiment(manifest, run, context);
   return { audit, subtaskAudit: auditExperimentSubtask(manifest, audit, evidenceIds) };
+}
+
+/** Find a completed child run without trusting a model-reported replication flag. */
+export function independentReplicationObserved(
+  experimentId: string,
+  experiments: Array<{ id: string; payload: unknown }>,
+  runs: Array<{ experimentId: string; status: string }>,
+): boolean {
+  return experiments.some((entry) => {
+    const payload = entry.payload as { parent?: unknown; replicationOf?: unknown; runId?: unknown };
+    if (payload.parent !== experimentId && payload.replicationOf !== experimentId) return false;
+    return runs.some((run) => run.experimentId === entry.id && run.status === "completed");
+  });
 }
 
 export function validateEvaluationMatrix(manifest: Pick<ExperimentManifest, "evaluation">, run: Pick<RunResult, "matrix">, metricName: string): { valid: boolean; expected: number; observed: number; missing: string[]; invalidMetric: string[] } {
@@ -98,6 +116,8 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
     reviewerApproved: context.reviewerApproved ?? false,
     verifiersPassed,
     evaluationCoverage: matrix.valid,
+    replicationObserved: !manifest.acceptance.requireReplication || context.independentReplicationObserved === true,
+    ...(context.externalScoreRequired === true ? { externalScoreObserved: context.externalScoreObserved === true } : {}),
   };
   const result = evaluateEvidenceGate(manifest, gates);
   const reasons = [...result.reasons];
