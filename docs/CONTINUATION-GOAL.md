@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `518503e`.
+- Latest pushed commit: `872d186`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -94,6 +94,9 @@ external evaluator.
   reliable `/model` and thinking selection.
 - Provider/model changes clear the active Codex thread, preventing stale
   conversation context from crossing routes or model selections.
+- Codex provider switches and successful Codex login now explicitly select
+  `gpt-5.6-luna` instead of inheriting a server-side default model; login also
+  refreshes the available model list immediately for `/model` selection.
 - Codex thread restoration is explicit: a new terminal starts a fresh Evidra
   chat, while `/resume <session-id>` restores the saved Codex thread and
   transcript. Provider/model changes invalidate the active chat thread.

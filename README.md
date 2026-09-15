@@ -10,6 +10,30 @@ The model supplies reasoning. Evidra owns the deterministic and auditable parts:
 
 The workbench is general-purpose. It can be used for ML competitions, data science, scientific experiments, benchmark optimization, algorithm research, reverse engineering, and repository investigations. AIcrowd's ARC White-Box Estimation Challenge (WhestBench) is the first included trial adapter, not the product's scope.
 
+## Start here
+
+```bash
+nvm install 22
+nvm use 22
+npm install
+npm run build
+npm link
+evidra
+```
+
+Inside the TUI, authenticate and choose the Codex route with `/login codex`,
+select a model with `/model`, and select reasoning effort with `/thinking`.
+Ordinary text is handled as normal conversation. Use `/research start` for an
+autonomous research campaign, `/challenge start` for a challenge campaign, or
+`!ls` to run an explicit terminal command. Type `/` for live command
+suggestions and Tab completion.
+
+The practical user guide is [`docs/user-guide.md`](docs/user-guide.md), and the
+complete interactive command catalog is [`docs/command-surface.md`](docs/command-surface.md).
+It covers Codex sessions, model routing, permissions, steering and queued
+messages, provider-limit recovery, autonomous phase goals, experiments,
+Modal/container execution, evidence gates, reports, and external submissions.
+
 ## Why Evidra
 
 Most coding agents optimize for one conversation and one code change. Evidra is designed for research programs that continue after the first answer:
