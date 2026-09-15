@@ -871,6 +871,23 @@ test("ensemble diversity changes the next allocation to a measured blend compari
   assert.match(allocation.strategy, /blend|OOF/i);
 });
 
+test("forecast misses steer the next allocation toward calibration", () => {
+  const allocation = allocateNextResearch({ trajectories: [], forecastCalibration: {
+    samples: 4, coverage: 0.25, overestimates: 4, underestimates: 0, meanNormalizedError: 0.8,
+  } });
+  assert.equal(allocation.focus, "evidence-validation");
+  assert.equal(allocation.priority, "high");
+  assert.match(allocation.strategy, /recalibrate|replication|uncertainty/i);
+});
+
+test("well-calibrated forecasts do not suppress exploration", () => {
+  const allocation = allocateNextResearch({ trajectories: [], forecastCalibration: {
+    samples: 6, coverage: 0.83, overestimates: 1, underestimates: 1, meanNormalizedError: 0.08,
+  } });
+  assert.equal(allocation.focus, "breadth");
+  assert.equal(allocation.priority, "normal");
+});
+
 test("harness comparison failures become a locked adaptive retest agenda", () => {
   const trials = [
     { harness: "evidra", task: "a", arm: "x", seed: 1, model: "m", budgetMinutes: 10, direction: "maximize", baselineMetric: 0.5, candidateMetric: 0.6, validRun: true, durationSeconds: 500, recovered: true, reproducible: false, failureClass: "timeout" },

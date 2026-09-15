@@ -1955,7 +1955,21 @@ research
         eligible: ensemblePayload.eligible === true,
         ...(Array.isArray(diversity) ? { pairCount: diversity.length, maxDisagreement: Math.max(0, ...diversity.map((pair) => pair && typeof pair === "object" && typeof (pair as { disagreement?: unknown }).disagreement === "number" ? (pair as { disagreement: number }).disagreement : 0)) } : {}),
       } : undefined;
-      const allocation = allocateNextResearch({ trajectories: recentTrajectories, phase: phaseGoal?.phase, evidenceConflicts, failureClasses, predictionAnalysis, ensembleAnalysis });
+      const forecastCalibrationEvents = store.eventsByType("research.forecast.assessed").slice(-24);
+      const forecastAssessments = forecastCalibrationEvents
+        .map((event) => event.payload && typeof event.payload === "object" ? (event.payload as { forecast?: { covered?: unknown; calibration?: unknown; normalizedError?: unknown } }).forecast : undefined)
+        .filter((forecast): forecast is { covered: boolean; calibration: string; normalizedError: number } => {
+          if (!forecast || typeof forecast.covered !== "boolean" || typeof forecast.calibration !== "string" || typeof forecast.normalizedError !== "number") return false;
+          return Number.isFinite(forecast.normalizedError);
+        });
+      const forecastCalibration = forecastAssessments.length >= 3 ? {
+        samples: forecastAssessments.length,
+        coverage: forecastAssessments.filter((forecast) => forecast.covered).length / forecastAssessments.length,
+        overestimates: forecastAssessments.filter((forecast) => forecast.calibration === "overestimated").length,
+        underestimates: forecastAssessments.filter((forecast) => forecast.calibration === "underestimated").length,
+        meanNormalizedError: forecastAssessments.reduce((total, forecast) => total + forecast.normalizedError, 0) / forecastAssessments.length,
+      } : undefined;
+      const allocation = allocateNextResearch({ trajectories: recentTrajectories, phase: phaseGoal?.phase, evidenceConflicts, failureClasses, predictionAnalysis, ensembleAnalysis, forecastCalibration });
       store.appendEvent("research.next_allocation", { allocation, objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}` });
       const priorStagnation = detectStagnation(store.decisions().map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3));
       const adaptiveHarness = deriveAdaptiveHarnessPolicy({

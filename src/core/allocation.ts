@@ -12,6 +12,14 @@ export interface AllocationInput {
   predictionAnalysis?: { errorRate?: number; worstSlices?: number; worstGroups?: number };
   /** Latest ensemble diagnostic, when multiple safe prediction artifacts are available. */
   ensembleAnalysis?: { eligible?: boolean; pairCount?: number; maxDisagreement?: number };
+  /** Recent hypothesis forecast calibration, used to steer exploration versus validation. */
+  forecastCalibration?: {
+    samples: number;
+    coverage: number;
+    overestimates: number;
+    underestimates: number;
+    meanNormalizedError: number;
+  };
 }
 
 export interface ResearchAllocation {
@@ -67,6 +75,20 @@ export function allocateNextResearch(input: AllocationInput): ResearchAllocation
     reasons: [
       `${predictionAnalysis?.worstSlices ?? 0} worst prediction slice(s) and ${predictionAnalysis?.worstGroups ?? 0} worst group(s) are available`,
       ...(Number.isFinite(predictionAnalysis?.errorRate) ? [`observed error rate ${(predictionAnalysis?.errorRate ?? 0) * 100}%`] : []),
+      ...(input.phase ? [`active phase: ${input.phase}`] : []),
+    ],
+  };
+  const forecastCalibration = input.forecastCalibration;
+  const forecastMisses = forecastCalibration && forecastCalibration.samples >= 3
+    && (forecastCalibration.coverage < 0.5 || forecastCalibration.meanNormalizedError >= 0.5);
+  if (forecastMisses) return {
+    focus: "evidence-validation",
+    priority: forecastCalibration!.coverage < 0.25 || forecastCalibration!.meanNormalizedError >= 1 ? "critical" : "high",
+    failedTrajectories: input.trajectories.filter((entry) => (entry.quality as { overall?: string } | null)?.overall === "FAIL").length,
+    strategy: "Recalibrate the next hypothesis with a cheap validation or replication before trusting another high-gain forecast; widen uncertainty when evidence remains sparse.",
+    reasons: [
+      `${forecastCalibration!.samples} forecast(s): ${(forecastCalibration!.coverage * 100).toFixed(0)}% interval coverage and ${(forecastCalibration!.meanNormalizedError * 100).toFixed(0)}% mean normalized error`,
+      ...(forecastCalibration!.overestimates >= forecastCalibration!.underestimates ? ["forecasts are tending to overestimate observed gains"] : ["forecasts are tending to underestimate observed gains"]),
       ...(input.phase ? [`active phase: ${input.phase}`] : []),
     ],
   };
