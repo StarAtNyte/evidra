@@ -2552,6 +2552,15 @@ test("source frontier includes durable web candidates and tracks their retrieval
   assert.ok(report.meanQualityScore > 0);
 });
 
+test("source frontier reconstructs directly retrieved evidence without a search event", () => {
+  const report = sourceFrontier([{ type: "research.source.retrieved", payload: { id: "paper", url: "https://doi.org/10.1234/example", title: "Direct paper", claimCount: 3 } }]);
+  assert.equal(report.uniqueWorks, 1);
+  assert.equal(report.retrievedWorks, 1);
+  assert.equal(report.retrievedWithClaims, 1);
+  assert.equal(report.scholarlyWorks, 1);
+  assert.ok(report.meanQualityScore > 0.7);
+});
+
 test("source identity canonicalizes fragments, host casing, default ports, and trailing slashes", () => {
   assert.equal(canonicalSourceUrl("HTTPS://Example.ORG:443/paper/#results"), "https://example.org/paper");
   assert.equal(canonicalSourceUrl("https://example.org/paper"), canonicalSourceUrl("https://EXAMPLE.org:443/paper/"));

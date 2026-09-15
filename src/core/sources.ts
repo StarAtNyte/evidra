@@ -607,7 +607,26 @@ export function sourceFrontier(events: Array<{ type: string; payload: unknown }>
     } else if (event.type === "research.source.retrieved") {
       const url = typeof payload.url === "string" ? payload.url : "";
       if (url) {
-        const key = sourceWorkKey({ url });
+        const urlKey = canonicalSourceUrl(url);
+        const matchingCandidate = [...byKey.values()].find((candidate) => canonicalSourceUrl(candidate.url) === urlKey);
+        const key = matchingCandidate?.key ?? sourceWorkKey({ url });
+        // Direct retrieval (`sources add` or a tool call) may have no prior
+        // search event. Materialize it into the frontier so durable evidence
+        // is not invisible to coverage, diversity, or rubric calculations.
+        if (!matchingCandidate && !byKey.has(key)) {
+          const title = typeof payload.title === "string" && payload.title.trim() ? payload.title : url;
+          const authors: string[] = [];
+          byKey.set(key, {
+            title,
+            url,
+            authors,
+            key,
+            queries: [],
+            retrieved: true,
+            evidenceClass: sourceEvidenceClass(url),
+            qualityScore: sourceEvidenceQuality({ url, authors }),
+          });
+        }
         retrieved.add(key);
         const claimCount = Number(payload.claimCount);
         if (Number.isFinite(claimCount) && claimCount > 0) retrievedClaimCounts.set(key, claimCount);
