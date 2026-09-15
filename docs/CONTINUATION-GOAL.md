@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `5eef4c3`.
+- Latest pushed commit: `9a6c189`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -118,6 +118,10 @@ external evaluator.
 - TUI thinking choices now derive from the active Codex model capabilities,
   and direct `/model <id>` selection rejects IDs absent from the discovered
   provider model list before execution.
+- Codex authentication probes for model discovery and turn startup are now
+  asynchronous, preventing an unavailable Codex installation from blocking
+  the TUI event loop; the configured executable path is used and covered by a
+  regression test.
 - Codex thread restoration is explicit: a new terminal starts a fresh Evidra
   chat, while `/resume <session-id>` restores the saved Codex thread and
   transcript. Provider/model changes invalidate the active chat thread.
