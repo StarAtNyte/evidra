@@ -53,6 +53,8 @@ export interface ExecAgentOptions {
   provider: AgentProvider;
   model: string;
   cwd: string;
+  /** Resume the provider conversation for the next ordinary chat turn. */
+  threadId?: string;
   reasoningEffort?: string;
   sandbox?: CodexSandboxMode;
   onThread?: (threadId: string) => void;
@@ -276,7 +278,16 @@ export class CodexExecAgent {
 
     try {
       const codex = new Codex();
-      const thread = codex.startThread({
+      const thread = this.options.threadId
+        ? codex.resumeThread(this.options.threadId, {
+          workingDirectory: isolated?.path ?? this.options.cwd,
+          skipGitRepoCheck: true,
+          model: this.options.model !== "default" ? this.options.model : undefined,
+          sandboxMode,
+          modelReasoningEffort: this.options.reasoningEffort as "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "persistent" | undefined,
+          approvalPolicy: "never",
+        })
+        : codex.startThread({
         workingDirectory: isolated?.path ?? this.options.cwd,
         skipGitRepoCheck: true,
         model: this.options.model !== "default" ? this.options.model : undefined,
@@ -303,7 +314,7 @@ export class CodexExecAgent {
       }
       settled = true;
       if (!finalText) throw new Error("Codex returned no assistant response.");
-      return { provider: this.options.provider, model: this.options.model, threadId, output: finalText, usage };
+      return { provider: this.options.provider, model: this.options.model, threadId: threadId ?? this.options.threadId, output: finalText, usage };
     } catch (error) {
       settled = true;
       if (abort.signal.aborted) throw new Error(timedOut ? "Codex request timed out." : "Codex request interrupted.");

@@ -356,6 +356,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const activeProcess = useRef<ProcessControl | null>(null);
   const activeProcesses = useRef(new Set<ProcessControl>());
   const activeSteer = useRef<((message: string) => boolean) | null>(null);
+  // Ordinary Codex chat keeps one provider thread for the lifetime of this
+  // terminal process. Autonomous research deliberately does not reuse it:
+  // the controller supplies its own bounded, durable research context.
+  const activeCodexThread = useRef<string | undefined>();
   const interruptedProcess = useRef(false);
   const controllerLeaseId = useRef(`controller_${sessionId.current}`);
   const controllerLeaseHeld = useRef(false);
@@ -3128,7 +3132,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           mode: config.mode,
           instruction: "This is ordinary conversation, not a research cycle. Answer directly and concisely. Do not inspect files, run commands, edit code, propose experiments, or claim fresh measurements. If the user wants autonomous research, tell them to use /research.",
         },
-      }, { provider: config.provider, model: config.model, cwd: root, reasoningEffort: config.reasoningEffort, sandbox: "read-only", limitPolicy: config.limitPolicy, onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, config.fallbackModel, setProgress, registerProcess);
+      }, { provider: config.provider, model: config.model, cwd: root, threadId: config.provider === "codex" ? activeCodexThread.current : undefined, reasoningEffort: config.reasoningEffort, sandbox: "read-only", limitPolicy: config.limitPolicy, onThread: (threadId) => { activeCodexThread.current = threadId; activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, config.fallbackModel, setProgress, registerProcess);
       append("assistant", String(result.output));
     } catch (error) {
       append("assistant", error instanceof Error ? error.message : String(error));
