@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `113b355`.
+- Latest pushed commit: `a111d6d`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -84,6 +84,8 @@ external evaluator.
   protocol event IDs are never shown to the user.
 - Live Codex progress is redacted before display, including inline and
   separate-argument credential forms.
+- Codex steering and login-status probes are bounded to five seconds, so a
+  broken Codex transport cannot freeze the TUI input loop.
 - Codex thread restoration is explicit: a new terminal starts a fresh Evidra
   chat, while `/resume <session-id>` restores the saved Codex thread and
   transcript. Provider/model changes invalidate the active chat thread.
