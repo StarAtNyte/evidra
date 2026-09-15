@@ -1807,7 +1807,7 @@ research
     if (options.provider === "codex" && laneLimit > 1) {
       try {
         const available = await listCodexModels();
-        researchModelPool = codexResearchModelPool(selectedModel, available, Math.min(4, laneLimit));
+        researchModelPool = codexResearchModelPool(selectedModel, available, Math.min(4, laneLimit), options.thinking);
       } catch {
         // The already-validated primary model remains usable if model discovery
         // briefly fails; diversity is optional, campaign progress is not.

@@ -283,12 +283,13 @@ export interface AvailableModel {
 
 /** Build a small heterogeneous Codex pool without silently selecting costly
  * preview models. The requested model remains the primary route. */
-export function codexResearchModelPool(primary: string, models: AvailableModel[], maxModels = 4): Array<{ provider: "codex"; model: string }> {
+export function codexResearchModelPool(primary: string, models: AvailableModel[], maxModels = 4, reasoningEffort?: string): Array<{ provider: "codex"; model: string }> {
   const selected = [primary, ...models
-    .filter((model) => !model.hidden && !/astra/i.test(model.id))
+    .filter((model) => !model.hidden && !/astra/i.test(model.id)
+      && (!reasoningEffort || !model.supportedReasoningEfforts?.length || model.supportedReasoningEfforts.includes(reasoningEffort)))
     .map((model) => model.id)]
     .filter((model, index, values) => model.trim().length > 0 && values.indexOf(model) === index)
-    .slice(0, Math.max(1, Math.min(6, Math.floor(maxModels))));
+    .slice(0, Math.max(1, Math.min(6, Number.isFinite(maxModels) ? Math.floor(maxModels) : 4)));
   return selected.map((model) => ({ provider: "codex" as const, model }));
 }
 

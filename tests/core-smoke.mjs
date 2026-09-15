@@ -1835,12 +1835,14 @@ test("Codex research model pools preserve the primary route and exclude Astra by
     { id: "gpt-6-astra", displayName: "Astra" },
     { id: "gpt-5.6-sol", displayName: "Sol" },
     { id: "gpt-5.6-terra", displayName: "Terra", hidden: true },
-    { id: "gpt-5.5", displayName: "Legacy" },
-  ], 4), [
+    { id: "gpt-5.5", displayName: "Legacy", supportedReasoningEfforts: ["low"] },
+  ], 4, "medium"), [
     { provider: "codex", model: "gpt-5.6-luna" },
     { provider: "codex", model: "gpt-5.6-sol" },
-    { provider: "codex", model: "gpt-5.5" },
   ]);
+  assert.deepEqual(codexResearchModelPool("gpt-5.6-luna", [
+    { id: "gpt-5.5", displayName: "Legacy", supportedReasoningEfforts: ["low"] },
+  ], 4, "medium"), [{ provider: "codex", model: "gpt-5.6-luna" }]);
 });
 
 test("research lane pools expose ensemble and reproducibility specialties when capacity allows", () => {
