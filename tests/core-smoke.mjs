@@ -3031,6 +3031,7 @@ test("Codex adapter accepts only a completed injected stream", async () => {
       createClient: makeClient([{ type: "item.completed", item: { type: "agent_message", text: "partial" } }]),
     });
     await assert.rejects(() => incomplete.run(task), /stream ended before the turn completed/);
+    assert.equal(Object.hasOwn(threadOptions, "webSearchEnabled"), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
