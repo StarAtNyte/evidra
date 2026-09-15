@@ -57,17 +57,21 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `48f1b94`.
+- Latest pushed commit: `a0d03bd`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 336/336 tests passing, TypeScript check passing,
+- Latest verified baseline: 338/338 tests passing, TypeScript check passing,
   and build passing. The worktree has six intentionally untracked pilot reports
   under `reports/`; do not confuse those generated artifacts with source edits.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
-  budgets remain supported. Model stages can use up to ten minutes when the
+  budgets remain supported. Model stages can use up to thirty minutes when the
   remaining campaign budget permits, and provider reset recovery can wait up to
   24 hours while paused campaign time is excluded.
+- The default Codex research-turn timeout and campaign-adaptive ceiling are now
+  30 minutes; the remaining campaign budget remains the hard upper bound. Lane
+  agreement scoring discounts findings backed only by the same artifact, so
+  shared citations cannot masquerade as independent corroboration.
 - Source discovery now persists provenance classes and conservative quality
   scores, backfills metadata for historical events, diversity-reranks providers,
   and rejects instruction-like retrieved sentences before durable claim
