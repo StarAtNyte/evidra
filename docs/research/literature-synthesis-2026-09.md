@@ -204,6 +204,9 @@ and a fluent research writer measurable:
   criterion into a typed verifier and retain criterion-level evidence. Generic
   subtask audits now also expose a normalized weighted completion score for
   diagnostics, while every required criterion remains a hard gate.
+- Scientific task stages now support the same explicit relative weighting for
+  progress reporting, so a high-value analysis stage can outweigh routine
+  setup work without weakening all-stage validity.
 - [AutoExperiment](https://arxiv.org/abs/2506.19724) and [AutoMat](https://arxiv.org/abs/2605.00803)
   test reconstruction and execution of paper workflows. They reinforce the
   need for immutable paper/source identities, environment capture, intermediate

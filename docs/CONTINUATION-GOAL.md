@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `cdee620` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `b6fd876` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -110,6 +110,7 @@ external evaluator.
 - Newly proposed current-cycle hypotheses are treated as untested before durable materialization, and the agenda is packed early so bounded agent context retains the next test.
 - External evaluation targets from AutoResearchBench, ResearchClawBench, AutoExperiment/AutoMat, and ScienceAgentBench are mapped to Evidra's literature and scientific-task protocols; no external score is claimed without matched runs.
 - Generic acceptance audits now calculate weighted criterion completion for multi-objective artifact/proof/behavior tasks while retaining hard required-criterion gates.
+- Scientific task progress now supports weighted stages; final validity still requires every declared stage and verifier to pass.
 - Latest verified baseline: 389/389 tests passing, TypeScript check passing,
   and build passing. The worktree is clean; generated reports remain excluded
   from source changes.
