@@ -198,6 +198,10 @@ failure.
 When scheduling is suppressed, Evidra records the hypothesis, attempted route,
 and suppression reason as durable controller evidence; the next cycle can then
 replan explicitly instead of silently stalling.
+Long-running campaigns also checkpoint each major phase in durable campaign and
+scheduler state, while updating the controller lease step. If a terminal is
+interrupted, `/status` and `/research resume` can identify the last phase reached
+without treating an in-progress cycle as completed.
 
 Independent lanes explore different formulations and roles. Their evidence is
 cross-pollinated through a bounded board, while shared citations are not

@@ -253,6 +253,7 @@ Implemented today:
 - the same typed failure pressure is applied to capability routing in both the CLI and TUI, increasing verification demand and constraining fan-out consistently across interfaces;
 - failed hypotheses cannot silently consume budget on an unchanged route: retries must change the executor, provider, model, or search operator, while the failed attempt remains immutable evidence;
 - suppressed duplicate or unchanged retries emit a durable scheduling event with the route and reason, so the next research cycle can replan from an explicit controller decision;
+- autonomous campaigns persist phase-level checkpoints (cycle start, lanes, director, critic, execution, and terminal/completion) into campaign state, scheduler state, and the controller lease for reliable restart and status reporting;
 - local research lanes can use a bounded heterogeneous Ollama pool: installed local models are discovered at campaign start, assigned deterministically across independent roles, and the actual model used by every lane is recorded for replay and routing analysis;
 - independently replicated methods are also distilled into ranked, provenance-linked playbook leads with explicit transfer failure modes; playbooks guide new research but never count as current-workspace proof;
 - failed, invalid, rejected, and blocked experiment directions are retained as ranked negative experience, so future cycles must change the route instead of repeating an unchanged failure;

@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `6f2376b`.
+- Latest pushed commit: `df44e95`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -148,6 +148,10 @@ external evaluator.
 - Suppressed duplicate/unchanged scheduling now emits durable controller
   evidence containing the hypothesis, route, and reason, allowing the next
   director cycle to replan explicitly rather than silently stall.
+- Autonomous campaigns now persist phase-level checkpoints for cycle start,
+  lanes, director, critic, execution, and terminal/completion. Campaign state,
+  scheduler state, and the controller lease share the checkpoint step for
+  restart/status recovery.
 - Codex structured-output schemas now cover the research director, independent
   research lanes, and critic, so every research-role response is constrained
   before durable parsing and evidence gates.
