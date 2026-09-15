@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `5de3ed0`.
+- Latest pushed commit: `aa526f9`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -103,6 +103,9 @@ external evaluator.
 - Codex item events now expose concise progress for MCP tools, todo plans,
   command completion, file changes, reasoning summaries, and item failures;
   the normalized adapter is covered by regression tests.
+- Codex usage now preserves input, output, cached-input, and
+  reasoning-output token counts through agent results, durable usage events,
+  CLI/TUI summaries, and regression coverage.
 - Codex thread restoration is explicit: a new terminal starts a fresh Evidra
   chat, while `/resume <session-id>` restores the saved Codex thread and
   transcript. Provider/model changes invalidate the active chat thread.
