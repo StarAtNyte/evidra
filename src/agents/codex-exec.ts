@@ -153,6 +153,20 @@ export function codexEventErrorMessage(event: unknown): string {
   return "Codex turn failed.";
 }
 
+/** Preserve the useful account usage fields emitted by the Codex SDK. */
+export function normalizeCodexUsage(value: unknown): AgentResult["usage"] {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const number = (key: string): number | undefined => typeof raw[key] === "number" && Number.isFinite(raw[key]) ? raw[key] as number : undefined;
+  const usage = {
+    inputTokens: number("input_tokens"),
+    outputTokens: number("output_tokens"),
+    cachedInputTokens: number("cached_input_tokens"),
+    reasoningOutputTokens: number("reasoning_output_tokens"),
+  };
+  return Object.values(usage).some((entry) => entry !== undefined) ? usage : undefined;
+}
+
 export const MAX_PROVIDER_RESET_WAIT_MS = 24 * 60 * 60_000;
 
 export function providerRetryAfterMs(error: unknown): number {
@@ -434,8 +448,7 @@ export class CodexExecAgent {
           if (value.type === "item.updated") onProgress?.(`Codex · ${progressLine(value.item.text)}`);
         }
         else if (value.type === "turn.completed") {
-          const raw = value.usage as unknown as { input_tokens?: number; output_tokens?: number } | undefined;
-          usage = raw ? { inputTokens: raw.input_tokens, outputTokens: raw.output_tokens } : undefined;
+          usage = normalizeCodexUsage(value.usage);
           onProgress?.("Completed.");
         }
         else if (value.type === "turn.failed" || value.type === "error") throw new Error(codexEventErrorMessage(value));

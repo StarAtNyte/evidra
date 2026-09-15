@@ -20,7 +20,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { runResearchDirector } from "../dist/agents/research-director.js";
-import { CodexExecAgent, codexEventErrorMessage, codexItemProgress, loginCodex, normalizeCodexModels, progressLine } from "../dist/agents/codex-exec.js";
+import { CodexExecAgent, codexEventErrorMessage, codexItemProgress, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
@@ -2805,6 +2805,13 @@ test("Codex failure events preserve nested provider diagnostics", () => {
   assert.equal(codexEventErrorMessage({ type: "turn.failed", error: { message: "rate limit reached; retry in 42 seconds" } }), "rate limit reached; retry in 42 seconds");
   assert.equal(codexEventErrorMessage({ type: "error", message: "network disconnected" }), "network disconnected");
   assert.equal(codexEventErrorMessage({ type: "turn.failed" }), "Codex turn failed.");
+});
+
+test("Codex usage preserves cache and reasoning-token accounting", () => {
+  assert.deepEqual(normalizeCodexUsage({ input_tokens: 100, cached_input_tokens: 40, output_tokens: 20, reasoning_output_tokens: 12 }), {
+    inputTokens: 100, cachedInputTokens: 40, outputTokens: 20, reasoningOutputTokens: 12,
+  });
+  assert.equal(normalizeCodexUsage({ input_tokens: "unknown" }), undefined);
 });
 
 test("Codex model responses normalize reasoning-effort objects", () => {

@@ -321,7 +321,7 @@ export interface AgentResult {
   model?: string;
   threadId?: string;
   output: unknown;
-  usage?: { inputTokens?: number; outputTokens?: number };
+  usage?: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; reasoningOutputTokens?: number };
 }
 
 export interface ResearchAgent {

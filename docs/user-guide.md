@@ -293,6 +293,9 @@ restarts. Inspect it through the TUI or CLI:
 Generated reports include provenance coverage, claims, metrics, artifacts,
 runtime, failure classes, and the quality/reliability/time frontier. Reports
 are diagnostic evidence; they do not replace an evaluator or replication.
+Codex usage telemetry preserves input, output, cached-input, and
+reasoning-output token counts so model and thinking-effort comparisons include
+context reuse and reasoning cost.
 
 ## 10. Safety and operational rules
 

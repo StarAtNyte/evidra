@@ -530,11 +530,13 @@ program.command("usage").description("Show research, experiment, and campaign us
   const project = store.project();
   const usage = summarizeUsage(store.runs(), store.experiments());
   const agentUsage = store.eventsByType("research.agent.usage").reduce((total, event) => {
-    const payload = event.payload as { inputTokens?: unknown; outputTokens?: unknown };
+    const payload = event.payload as { inputTokens?: unknown; outputTokens?: unknown; cachedInputTokens?: unknown; reasoningOutputTokens?: unknown };
     const input = typeof payload.inputTokens === "number" && Number.isFinite(payload.inputTokens) ? payload.inputTokens : 0;
     const output = typeof payload.outputTokens === "number" && Number.isFinite(payload.outputTokens) ? payload.outputTokens : 0;
-    return { calls: total.calls + 1, inputTokens: total.inputTokens + input, outputTokens: total.outputTokens + output };
-  }, { calls: 0, inputTokens: 0, outputTokens: 0 });
+    const cached = typeof payload.cachedInputTokens === "number" && Number.isFinite(payload.cachedInputTokens) ? payload.cachedInputTokens : 0;
+    const reasoning = typeof payload.reasoningOutputTokens === "number" && Number.isFinite(payload.reasoningOutputTokens) ? payload.reasoningOutputTokens : 0;
+    return { calls: total.calls + 1, inputTokens: total.inputTokens + input, outputTokens: total.outputTokens + output, cachedInputTokens: total.cachedInputTokens + cached, reasoningOutputTokens: total.reasoningOutputTokens + reasoning };
+  }, { calls: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningOutputTokens: 0 });
   console.log(`Project       ${project?.name ?? "not initialized"}`);
   console.log(`Events        ${store.eventCount()}`);
   console.log(`Hypotheses    ${counts.hypotheses}`);
@@ -548,6 +550,7 @@ program.command("usage").description("Show research, experiment, and campaign us
   console.log(`Wall time     ${usage.wallMinutes.toFixed(1)} minutes`);
   console.log(`Agent calls   ${agentUsage.calls}`);
   console.log(`Agent tokens  ${agentUsage.inputTokens + agentUsage.outputTokens} (${agentUsage.inputTokens} in / ${agentUsage.outputTokens} out)`);
+  console.log(`Agent cache   ${agentUsage.cachedInputTokens} cached input · ${agentUsage.reasoningOutputTokens} reasoning output`);
   console.log(`GPU-tagged    ${usage.gpuWallHours.toFixed(3)} hours`);
   console.log(`GPU reserved  ${store.reservedComputeGpuHours().toFixed(3)} hours`);
   for (const [executor, bucket] of Object.entries(usage.byExecutor)) console.log(`  ${executor.padEnd(11)} ${bucket.runs} runs · ${bucket.wallMinutes.toFixed(1)}m · ${bucket.gpuWallHours.toFixed(3)} GPU-h`);
@@ -2250,9 +2253,9 @@ research
       let criticReview: Awaited<ReturnType<typeof runResearchCritic>> | undefined;
       let laneReports: Awaited<ReturnType<typeof runResearchLanes>> = [];
       const toolTrace = createToolTraceRecorder(`research-${cycle}`);
-      const recordAgentUsage = (usage: { inputTokens?: number; outputTokens?: number } | undefined, provider: string, model: string, role: string): void => {
+      const recordAgentUsage = (usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; reasoningOutputTokens?: number } | undefined, provider: string, model: string, role: string): void => {
         const usageStore = new ResearchStore(statePath);
-        usageStore.appendEvent("research.agent.usage", { cycle, role, provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens });
+        usageStore.appendEvent("research.agent.usage", { cycle, role, provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens });
         usageStore.close();
       };
       let researchAttempt = 0;

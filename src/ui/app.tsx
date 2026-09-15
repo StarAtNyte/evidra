@@ -2290,16 +2290,19 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const counts = store.counts(); const events = store.eventCount(); const state = store.schedulerState(); const campaign = config.campaign; const usage = summarizeUsage(store.runs(), store.experiments()); const gpuUsed = observedGpuHours(store.runAttempts(), store.experiments(), store.hypotheses()); const gpuReserved = store.reservedComputeGpuHours();
       const agentUsage = store.eventsByType("research.agent.usage").reduce((total, event) => {
-        const payload = event.payload as { inputTokens?: unknown; outputTokens?: unknown };
+        const payload = event.payload as { inputTokens?: unknown; outputTokens?: unknown; cachedInputTokens?: unknown; reasoningOutputTokens?: unknown };
         const input = typeof payload.inputTokens === "number" && Number.isFinite(payload.inputTokens) ? payload.inputTokens : 0;
         const output = typeof payload.outputTokens === "number" && Number.isFinite(payload.outputTokens) ? payload.outputTokens : 0;
-        return { calls: total.calls + 1, inputTokens: total.inputTokens + input, outputTokens: total.outputTokens + output };
-      }, { calls: 0, inputTokens: 0, outputTokens: 0 });
+        const cached = typeof payload.cachedInputTokens === "number" && Number.isFinite(payload.cachedInputTokens) ? payload.cachedInputTokens : 0;
+        const reasoning = typeof payload.reasoningOutputTokens === "number" && Number.isFinite(payload.reasoningOutputTokens) ? payload.reasoningOutputTokens : 0;
+        return { calls: total.calls + 1, inputTokens: total.inputTokens + input, outputTokens: total.outputTokens + output, cachedInputTokens: total.cachedInputTokens + cached, reasoningOutputTokens: total.reasoningOutputTokens + reasoning };
+      }, { calls: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningOutputTokens: 0 });
       store.close();
       const elapsed = campaign ? campaignElapsedMinutes(campaign) : 0;
       const executorUsage = Object.entries(usage.byExecutor).map(([executor, bucket]) => `  ${executor}: ${bucket.runs} runs · ${bucket.wallMinutes.toFixed(1)}m · ${bucket.gpuWallHours.toFixed(3)} GPU-h`).join("\n");
       append("assistant", `Usage\n  provider: ${config.provider}\n  model: ${config.model}\n  thinking: ${config.reasoningEffort}\n  scheduler: ${state.status}\n  events: ${events}\n  hypotheses: ${counts.hypotheses} · claims: ${counts.claims} · decisions: ${counts.decisions}\n  experiments: ${counts.experiments} · runs: ${counts.runs} · attempts: ${counts.attempts} · artifacts: ${counts.artifacts}\n  run wall time: ${usage.wallMinutes.toFixed(1)} minutes\n  GPU-tagged wall time: ${usage.gpuWallHours.toFixed(3)} hours\n  GPU reserved: ${gpuReserved.toFixed(3)} hours${executorUsage ? `\n${executorUsage}` : ""}\n${campaign ? `\nCampaign\n  status: ${campaign.status}\n  elapsed: ${elapsed.toFixed(1)} / ${campaign.budgetMinutes} minutes\n  remaining: ${Math.max(0, campaign.budgetMinutes - elapsed).toFixed(1)} minutes\n  GPU committed: ${(gpuUsed + gpuReserved).toFixed(3)} / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed - gpuReserved).toFixed(3)} available)` : ""}\n  goal: ${campaign.goal}\n  stop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\n  provider retry: ${campaign.nextAttemptAt}` : ""}` : "\nNo autonomous campaign configured. Start one with /research."}`);
       append("assistant", `Agent usage\n  calls: ${agentUsage.calls}\n  tokens: ${agentUsage.inputTokens + agentUsage.outputTokens} (${agentUsage.inputTokens} in / ${agentUsage.outputTokens} out)`);
+      append("assistant", `Codex accounting\n  cached input: ${agentUsage.cachedInputTokens}\n  reasoning output: ${agentUsage.reasoningOutputTokens}`);
       return;
     }
     if (request === "/telemetry export") {
