@@ -61,7 +61,7 @@ external evaluator.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
-- Latest verified baseline: 366/366 tests passing, TypeScript check passing,
+- Latest verified baseline: 368/368 tests passing, TypeScript check passing,
   and build passing. The worktree has six intentionally untracked pilot reports
   under `reports/`; do not confuse those generated artifacts with source edits.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
@@ -124,6 +124,11 @@ external evaluator.
   regression test.
 - CLI and TUI doctor diagnostics now resolve and report the same configured
   Codex executable used by login, model discovery, steering, and SDK turns.
+- Multi-lane Codex research uses the same bounded, primary-first heterogeneous
+  model pool in the CLI and TUI. Alternatives are discovered from the
+  authenticated provider, filtered by the requested reasoning capability, and
+  assigned deterministically; Astra is excluded from automatic diversification
+  under the current cost policy while remaining directly selectable.
 - Codex activity rendering now preserves failed command and file-change status
   instead of labeling failed provider items as successful completions.
 - Codex command activity now includes an exit code only when the provider

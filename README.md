@@ -691,7 +691,12 @@ parsing, preventing an untrusted endpoint from causing unbounded memory use.
 The provider is an implementation detail behind the same research protocol:
 
 - **Codex:** the installed official codex CLI, authenticated ChatGPT/Codex account, JSON event output, persisted threads, and thread queue support. Read-only turns automatically recover once from host bwrap/network-namespace failures in a disposable isolated copy; workspace-write experiment turns never use that fallback.
-- Multi-lane Codex research uses a bounded authenticated model pool: your selected model remains primary, alternatives are assigned deterministically, and costly Astra models are excluded from automatic diversification by default.
+- Multi-lane Codex research uses the same bounded authenticated model pool in
+  both the headless CLI and interactive TUI: your selected model remains
+  primary, alternatives are discovered from the authenticated account,
+  filtered by reasoning capability, and assigned deterministically. Costly
+  Astra models are excluded from automatic diversification by default but can
+  still be selected explicitly.
 - **Local:** Ollama's local chat endpoint and the selected installed model.
 
 Evidra never extracts subscription tokens or implements unofficial ChatGPT API calls. Provider availability is checked before work begins, and local fallback is used only for configured `auto`/`fallback` policies when a local model is available and the Codex failure is classified as safely route-changeable.
