@@ -2787,6 +2787,9 @@ test("completed workers without a finite declared metric become invalid metric f
 test("metric parser accepts evaluator JSON and keyed log output", () => {
   const parsed = parseMetricOutput('{"metrics":{"rmse":0.42},"metricsByFold":{"rmse":[0.4,0.44]},"subgroupDeltas":[0.1,-0.02]}\nrmse: 0.41\n', "rmse");
   assert.equal(parsed.metrics.rmse, 0.41);
+  const suite = parseMetricOutput('{"metrics":{"score":0.8,"safety":0.95},"metricsByFold":{"score":[0.79,0.81],"safety":[0.94,0.96]}}', "score");
+  assert.deepEqual(suite.metrics, { score: 0.8, safety: 0.95 });
+  assert.deepEqual(suite.metricsByFold, { score: [0.79, 0.81], safety: [0.94, 0.96] });
   assert.deepEqual(parsed.metricsByFold.rmse, [0.4, 0.44]);
   assert.deepEqual(parsed.subgroupDeltas, [0.1, -0.02]);
   const autoresearch = parseMetricOutput("---\nval_bpb:          1.253616\ntraining_seconds: 45.0\n", "val_bpb");

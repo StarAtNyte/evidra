@@ -191,13 +191,22 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
     if (!value || typeof value !== "object" || Array.isArray(value)) return;
     const object = value as Record<string, unknown>;
     const nested = object.metrics;
-    if (nested && typeof nested === "object" && !Array.isArray(nested)) addObject(nested);
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      for (const [name, metric] of Object.entries(nested as Record<string, unknown>)) {
+        if (typeof metric === "number" && Number.isFinite(metric)) metrics[name] = metric;
+      }
+      addObject(nested);
+    }
     const primary = object[metricName];
     if (typeof primary === "number" && Number.isFinite(primary)) metrics[metricName] = primary;
     const byFold = object.metricsByFold ?? object.byFold;
     if (byFold && typeof byFold === "object" && !Array.isArray(byFold)) {
-      const series = (byFold as Record<string, unknown>)[metricName];
-      if (Array.isArray(series)) metricsByFold[metricName] = series.filter((item): item is number => typeof item === "number" && Number.isFinite(item));
+      for (const [name, series] of Object.entries(byFold as Record<string, unknown>)) {
+        if (Array.isArray(series)) {
+          const finite = series.filter((item): item is number => typeof item === "number" && Number.isFinite(item));
+          if (finite.length) metricsByFold[name] = finite;
+        }
+      }
     }
     const subgroup = object.subgroupDeltas ?? object.bySubgroupDelta ?? object.subgroupDelta;
     if (Array.isArray(subgroup)) subgroupDeltas = subgroup.filter((item): item is number => typeof item === "number" && Number.isFinite(item));
