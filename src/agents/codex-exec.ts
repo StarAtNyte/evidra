@@ -193,11 +193,26 @@ export function providerRetryAfterMs(error: unknown): number {
   return Math.max(5_000, Math.min(MAX_PROVIDER_RESET_WAIT_MS, Math.round(amount * multiplier)));
 }
 
-export function queueCodexMessage(threadId: string, message: string): boolean {
+export function queueCodexMessage(threadId: string, message: string): Promise<boolean> {
   // Steering is invoked from the TUI input handler. Never let a broken local
   // Codex transport block rendering or keyboard input indefinitely.
-  const result = spawnSync(resolveCodexBinary(), ["queue", "--thread", threadId, "--message", message], { stdio: "ignore", timeout: 5_000, killSignal: "SIGTERM" });
-  return result.status === 0;
+  return new Promise((resolve) => {
+    const child = spawn(resolveCodexBinary(), ["queue", "--thread", threadId, "--message", message], { stdio: "ignore" });
+    let settled = false;
+    const finish = (queued: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(queued);
+    };
+    const timer = setTimeout(() => {
+      try { child.kill("SIGTERM"); } catch { /* already exited */ }
+      finish(false);
+    }, 5_000);
+    timer.unref();
+    child.once("error", () => finish(false));
+    child.once("close", (code) => finish(code === 0));
+  });
 }
 
 export interface AvailableModel {

@@ -189,7 +189,8 @@ Steering is separate from queueing. While Evidra owns a tool loop, a new user
 message can be delivered at the next safe boundary and influence the active
 turn. If the provider is inside an opaque subprocess, the message remains at
 the bottom as queued until the provider exposes a boundary; Evidra never starts
-a concurrent second agent for the same campaign.
+a concurrent second agent for the same campaign. The Codex queue request itself
+is asynchronous and timeout-bounded, so steering cannot freeze the TUI.
 
 ## 6. Challenge mode
 

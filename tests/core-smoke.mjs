@@ -155,7 +155,7 @@ import { ResearchDecisionSchema, RunResultSchema } from "../dist/core/types.js";
 import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../dist/core/validation-lock.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
-import { codexIsLoggedInAsync, createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexModel, effectiveCodexSandbox, isProviderFallbackEligible, MAX_PROVIDER_RESET_WAIT_MS, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel } from "../dist/agents/codex-exec.js";
+import { codexIsLoggedInAsync, createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexModel, effectiveCodexSandbox, isProviderFallbackEligible, MAX_PROVIDER_RESET_WAIT_MS, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveCodexModel } from "../dist/agents/codex-exec.js";
 import { analyzeHarnessComponentFailures, assessHarnessChangePresence, evaluateHarnessChange, inventoryHarnessComponents, parseHarnessChangeContract, planHarnessInterventions } from "../dist/core/harness-evolution.js";
 import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
 import { assessStopPolicy } from "../dist/core/stop-policy.js";
@@ -449,6 +449,26 @@ test("Codex authentication probe is asynchronous and uses the configured binary"
   process.env.PATH = `${bin}:${previousPath ?? ""}`;
   try {
     assert.equal(await codexIsLoggedInAsync(), true);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    if (previousBin === undefined) delete process.env.EVIDRA_CODEX_BIN;
+    else process.env.EVIDRA_CODEX_BIN = previousBin;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Codex steering is asynchronous and uses the configured binary", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-codex-queue-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "codex"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const previousPath = process.env.PATH;
+  const previousBin = process.env.EVIDRA_CODEX_BIN;
+  delete process.env.EVIDRA_CODEX_BIN;
+  process.env.PATH = `${bin}:${previousPath ?? ""}`;
+  try {
+    assert.equal(await queueCodexMessage("thread-test", "steer now"), true);
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;

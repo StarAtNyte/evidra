@@ -359,7 +359,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const loopBusy = useRef(false);
   const activeProcess = useRef<ProcessControl | null>(null);
   const activeProcesses = useRef(new Set<ProcessControl>());
-  const activeSteer = useRef<((message: string) => boolean) | null>(null);
+  const activeSteer = useRef<((message: string) => boolean | Promise<boolean>) | null>(null);
   // Ordinary Codex chat keeps one provider thread for the lifetime of this
   // terminal process. Autonomous research deliberately does not reuse it:
   // the controller supplies its own bounded, durable research context.
@@ -1855,7 +1855,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     setInput("");
     if (!request) return;
     if (busy && !fromQueue) {
-      const dispatched = activeSteer.current?.(request) ?? false;
+      const dispatched = await activeSteer.current?.(request) ?? false;
       const queued = { id: `queued_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, text: request, dispatched };
       pendingRequests.current.push(queued);
       setQueuedRequests([...pendingRequests.current]);
