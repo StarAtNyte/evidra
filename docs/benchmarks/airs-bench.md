@@ -67,8 +67,12 @@ inventory is the input for a later matched protocol whose agent commands,
 model, seed, and budget are explicitly declared.
 
 Generate that matched protocol with explicit command templates. Templates may
-use `{taskId}`, `{taskPath}`, `{family}`, `{repo}`, `{model}`, `{seed}`, and
-`{budget}`:
+use `{taskId}`, `{task}`, `{taskPath}`, `{family}`, `{repo}`, `{metadataPath}`,
+`{descriptionPath}`, `{preparePath}`, `{evaluatePath}`,
+`{evaluatePreparePath}`, `{metric}`, `{direction}`, `{model}`, `{seed}`, and
+`{budget}`. This lets a real adapter receive the task contract and invoke the
+official preparation/evaluation scripts without duplicating task-discovery
+logic:
 
 For a heterogeneous suite, supply a measured baseline per task. A single
 `--baseline` is retained only as an explicit fallback for homogeneous or

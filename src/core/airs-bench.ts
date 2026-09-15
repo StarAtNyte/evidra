@@ -164,8 +164,16 @@ function metricFromTaskId(id: string): string | undefined {
 function expandTemplate(part: string, task: AirsBenchTask, repository: string, options: AirsProtocolOptions): string {
   return part
     .replaceAll("{taskId}", task.id)
+    .replaceAll("{task}", `airsbench:${task.family}/${task.id}`)
     .replaceAll("{taskPath}", task.path)
+    .replaceAll("{metadataPath}", task.metadataPath)
+    .replaceAll("{descriptionPath}", task.descriptionPath)
+    .replaceAll("{preparePath}", task.preparePath)
+    .replaceAll("{evaluatePath}", task.evaluatePath)
+    .replaceAll("{evaluatePreparePath}", task.evaluatePreparePath)
     .replaceAll("{family}", task.family)
+    .replaceAll("{metric}", task.metric ?? "")
+    .replaceAll("{direction}", task.direction ?? "")
     .replaceAll("{repo}", repository)
     .replaceAll("{model}", options.model)
     .replaceAll("{seed}", String(options.seed))
