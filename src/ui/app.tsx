@@ -52,6 +52,7 @@ import { runReducedValidation } from "../core/stage-executor.js";
 import { renderTimeline } from "../core/timeline.js";
 import { latestSourceEntries, researchMemoryContext } from "../core/research-context.js";
 import { detectStagnation } from "../core/stagnation.js";
+import { assessStopPolicy } from "../core/stop-policy.js";
 import { applyCriticGate } from "../core/critic-gate.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "../core/experiment-patches.js";
 import { recordBaselineEvidence } from "../core/baseline.js";
@@ -2032,14 +2033,29 @@ export function App({ root }: { root: string }): React.JSX.Element {
         persistCampaignCheckpoint(campaign, "cycle-complete", cycleNumber + 1);
       }
       let openFalsificationCount = 0;
-      if (campaign && cycle.decision === "stop") {
+      let stopPolicyAction: "continue" | "pause" | "stop" = "continue";
+      if (campaign) {
         const stopCheck = new ResearchStore(join(root, ".sota", "database.sqlite"));
         openFalsificationCount = researchMemoryContext(stopCheck, 30, campaign.goal).falsificationAgenda
           .filter((item) => item.status === "untested" || item.status === "inconclusive").length;
-        if (openFalsificationCount > 0) stopCheck.appendEvent("research.stop_policy.continued", { reason: "open falsification agenda", openFalsifications: openFalsificationCount, source: "tui" });
+        const rewards = stopCheck.eventsByType("research.search.reward").flatMap((event) => {
+          const payload = event.payload && typeof event.payload === "object" ? event.payload as { reward?: unknown; durationSeconds?: unknown; valid?: unknown } : {};
+          const reward = Number(payload.reward);
+          return Number.isFinite(reward) ? [{ reward, durationSeconds: Number(payload.durationSeconds), valid: payload.valid !== false }] : [];
+        });
+        const stopPolicy = assessStopPolicy({
+          stopCondition: campaign.stopCondition,
+          rewards,
+          remainingBudgetMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
+          openFalsifications: openFalsificationCount,
+        });
+        stopPolicyAction = stopPolicy.action;
+        stopCheck.appendEvent("research.stop_policy.assessed", { ...stopPolicy, source: "tui" });
+        if (openFalsificationCount > 0 && (cycle.decision === "stop" || stopPolicy.action === "stop")) stopCheck.appendEvent("research.stop_policy.continued", { reason: "open falsification agenda", openFalsifications: openFalsificationCount, source: "tui" });
         stopCheck.close();
       }
-      if (campaign && !approvalRequired && cycle.decision === "stop" && openFalsificationCount === 0) {
+      const stopRequested = cycle.decision === "stop" || stopPolicyAction === "stop";
+      if (campaign && !approvalRequired && stopRequested && stopPolicyAction !== "pause" && openFalsificationCount === 0) {
         campaign.status = "completed";
         persistCampaign(campaign);
         setConfig((current) => ({ ...current, campaign: { ...campaign, status: "completed" } }));
@@ -2048,7 +2064,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
         stopped.setSchedulerState({ status: "idle", mode: config.mode, currentStep: "campaign-complete" });
         stopped.close();
         append("assistant", "Autonomous research stopping condition accepted by the research director.");
-      } else if (campaign && !approvalRequired && cycle.decision === "stop" && openFalsificationCount > 0) {
+      } else if (campaign && stopPolicyAction === "pause") {
+        campaign.status = "paused";
+        persistCampaign(campaign);
+        setConfig((current) => ({ ...current, campaign: pauseCampaign(campaign) }));
+        if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
+        append("assistant", "Autonomous research paused by the stop policy. Inspect the failure/leakage evidence, then use /research resume.");
+      } else if (campaign && !approvalRequired && stopRequested && openFalsificationCount > 0) {
         append("assistant", `Stopping deferred: ${openFalsificationCount} falsification test(s) remain open. Continuing autonomous research.`);
       } else if (campaign && cycle.goalStatus === "blocked") {
         campaign.status = "paused";
