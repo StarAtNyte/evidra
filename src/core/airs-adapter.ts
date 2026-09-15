@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileS
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { parseMetricOutput, safeWorkerEnvironment } from "./executors.js";
 import { processFailureResult, runProcess, splitCommandLine } from "./process.js";
+import { sha256File } from "./evidence.js";
 import type { ProcessResult } from "./types.js";
 
 export interface AirsTaskLifecycleOptions {
@@ -88,7 +89,7 @@ export async function runAirsTaskLifecycle(options: AirsTaskLifecycleOptions): P
   const submissionPath = join(agentLogDir, "submission.csv");
   const planPath = join(lifecycleRoot, "PLAN.md");
   const checkpointPath = join(lifecycleRoot, ".evidra-airs-agent.json");
-  const contract = JSON.stringify({ repository, taskPath, preparePath, evaluatePreparePath, evaluatePath, globalSharedDataDir, metric: options.metric, model: options.model ?? "", seed: options.seed ?? "", effort: options.effort ?? "medium" });
+  const contract = JSON.stringify({ repository, taskPath, preparePath, evaluatePreparePath, evaluatePath, prepareHash: sha256File(preparePath), evaluatePrepareHash: sha256File(evaluatePreparePath), evaluateHash: sha256File(evaluatePath), globalSharedDataDir, metric: options.metric, model: options.model ?? "", seed: options.seed ?? "", effort: options.effort ?? "medium" });
   const resumed = existsSync(join(lifecycleRoot, ".git")) || existsSync(submissionPath) || existsSync(planPath);
   const initialArtifactBytes = existsSync(submissionPath) && statSync(submissionPath).isFile() ? statSync(submissionPath).size : 0;
   const lifecycleState = (): Pick<AirsTaskLifecycleResult, "resumed" | "initialArtifactBytes" | "finalArtifactBytes"> => ({

@@ -4822,13 +4822,23 @@ test("AIRS lifecycle rejects the seeded empty submission and accepts a real arti
     });
     assert.equal(restored.valid, true);
     assert.match(restored.stages.find((stage) => stage.stage === "agent")?.result.stdout ?? "", /Restored/);
+    writeFileSync(join(task, "evaluate.py"), "console.log('Accuracy: 0.6');\n");
+    let restarted = false;
+    const changedContract = await runAirsTaskLifecycle({
+      repository: root, taskPath: "task", preparePath: "task/prepare.py", evaluatePreparePath: "task/evaluate_prepare.py", evaluatePath: "task/evaluate.py",
+      globalSharedDataDir: globalData, python: process.execPath, workspace: resumeWorkspace, timeoutMs: 30_000,
+      agentRunner: async ({ agentLogDir }) => { restarted = true; writeFileSync(join(agentLogDir, "submission.csv"), "id,prediction\n1,changed\n"); return result(); }, metric: "Accuracy",
+    });
+    assert.equal(restarted, true);
+    assert.equal(changedContract.valid, true);
+    assert.equal(changedContract.metrics.Accuracy, 0.6);
     const complete = await runAirsTaskLifecycle({
       repository: root, taskPath: "task", preparePath: "task/prepare.py", evaluatePreparePath: "task/evaluate_prepare.py", evaluatePath: "task/evaluate.py",
       globalSharedDataDir: globalData, python: process.execPath, workspace: join(root, "complete"), timeoutMs: 30_000,
       agentRunner: async ({ agentLogDir }) => { writeFileSync(join(agentLogDir, "submission.csv"), "id,prediction\n1,ok\n"); return result(); }, metric: "Accuracy",
     });
     assert.equal(complete.valid, true);
-    assert.equal(complete.metrics.Accuracy, 0.5);
+    assert.equal(complete.metrics.Accuracy, 0.6);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

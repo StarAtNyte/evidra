@@ -212,10 +212,12 @@ creation because provider patch tools are not portable across disposable worker
 paths.
 
 After a successful agent stage, the adapter writes a contract-bound
-`.evidra-airs-agent.json` checkpoint. A later invocation with the same task,
-metric, model, seed, effort, and evaluator contract restores the completed
-artifact and reruns evaluation without launching another agent. A partial or
-failed agent stage does not create this completion checkpoint.
+`.evidra-airs-agent.json` checkpoint, including hashes of the preparation and
+evaluation scripts. A later invocation with the same task, evaluator scripts,
+metric, model, seed, and effort restores the completed artifact and reruns
+evaluation without launching another agent. Changing an evaluator invalidates
+the checkpoint; a partial or failed agent stage does not create completion
+state.
 
 Embedded Codex also receives a local `TASK.md` copy of the public task brief;
 its serialized task context uses only `TASK.md`, `data`, and `log` workspace
