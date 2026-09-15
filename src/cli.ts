@@ -201,7 +201,9 @@ function durationMinutes(value: string): number {
   const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*(m|min|minutes?|h|hours?|d|days?)?$/i);
   if (!match) throw new Error(`Invalid duration '${value}'. Use 90m, 4h, or 2d.`);
   const multiplier = (match[2] ?? "m").toLowerCase().startsWith("h") ? 60 : (match[2] ?? "m").toLowerCase().startsWith("d") ? 1440 : 1;
-  return Math.max(1, Math.round(Number(match[1]) * multiplier));
+  const minutes = Number(match[1]) * multiplier;
+  if (!Number.isFinite(minutes) || minutes <= 0) throw new Error(`Invalid duration '${value}'. Use 90m, 4h, or 2d.`);
+  return Math.max(1, Math.round(minutes));
 }
 
 function candidateEstimatorPath(payload: unknown): string | undefined {
@@ -1658,7 +1660,7 @@ challenge.command("baseline").description("Run the canonical baseline").action(a
 challenge.command("start")
   .description("Start a fully autonomous headless challenge campaign")
   .option("--goal <goal>", "ultimate challenge goal", "Win the active challenge with robust, reproducible evidence")
-  .option("--budget <duration>", "autonomous budget, e.g. 90m or 4h", "60m")
+  .option("--budget <duration>", "autonomous budget, e.g. 90m, 4h, or 2d (5m is only a smoke test)", "4h")
   .option("--gpu-budget <hours>", "maximum GPU-hours for this campaign; 0 means unlimited", "0")
   .option("--stop <condition>", "campaign stopping condition", "stop after a replicated improvement or when evidence is exhausted")
   .option("--provider <provider>", "agent provider: codex or local", "codex")
@@ -1696,7 +1698,7 @@ research.command("steer <message>")
 research
   .option("--mode <mode>", "campaign mode: research or challenge", "research")
   .option("--goal <goal>", "ultimate research goal", "Improve the current workspace or research problem with robust, reproducible evidence")
-  .option("--budget <duration>", "autonomous budget, e.g. 90m or 4h", "60m")
+  .option("--budget <duration>", "autonomous budget, e.g. 90m, 4h, or 2d (5m is only a smoke test)", "4h")
   .option("--gpu-budget <hours>", "maximum GPU-hours for this campaign; 0 means unlimited", "0")
   .option("--stop <condition>", "campaign stopping condition", "stop when the research director has sufficient evidence for the stated goal")
   .option("--provider <provider>", "agent provider: codex or local", "codex")

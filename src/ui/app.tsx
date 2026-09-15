@@ -1854,7 +1854,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
       if (setupStep === "goal") {
         setSetupDraft({ goal: request }); setSetupStep("budget");
-        append("assistant", "Step 2/3 · What is the maximum budget? Examples: 120m, 4h, 2d"); return;
+        append("assistant", "Step 2/3 · What is the maximum budget? Examples: 120m, 4h, 2d. Five minutes is suitable only for a smoke test."); return;
       }
       if (setupStep === "budget") {
         const budgetMinutes = parseBudgetMinutes(request);
@@ -1862,7 +1862,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setSetupDraft((current) => ({ ...current, budgetMinutes })); setSetupStep("stop");
         append("assistant", "Step 3/3 · When should Evidra stop? Describe the success condition, or say ‘when the current research goal is met’."); return;
       }
-      const campaign: ResearchCampaign = { goal: setupDraft.goal ?? "Advance the research project", budgetMinutes: setupDraft.budgetMinutes ?? 60, stopCondition: request, startedAt: new Date().toISOString(), status: "running", autoExecuteExperiments: true };
+        const campaign: ResearchCampaign = { goal: setupDraft.goal ?? "Advance the research project", budgetMinutes: setupDraft.budgetMinutes ?? 240, stopCondition: request, startedAt: new Date().toISOString(), status: "running", autoExecuteExperiments: true };
       ensureActiveProject(); persistCampaign(campaign); setConfig((current) => ({ ...current, campaign })); setSetupStep(null); setSetupDraft({});
       append("assistant", `Autonomous research started\n  Goal: ${campaign.goal}\n  Budget: ${campaign.budgetMinutes} minutes\n  Stop: ${campaign.stopCondition}\n\nI will define internal phase goals, inspect evidence, run permitted checks, and continue until the condition or budget is reached.`);
       setBusy(true); setProgress("Starting autonomous research...");
