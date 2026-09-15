@@ -207,6 +207,8 @@ external evaluator.
 - Recovered traces now feed `controller_crash` pressure into CLI/TUI allocation
   and capability routing, prioritizing controlled reproduction before new
   expensive exploration.
+- Crash pressure is now reconciled against the latest committed trajectory,
+  preventing historical recovery events from biasing every future cycle.
 - The Codex director's provider output schema now caps each turn at eight tool
   calls, matching the local decision schema before any tool is executed.
 - Director tool caching now distinguishes safe inspection from cacheability;

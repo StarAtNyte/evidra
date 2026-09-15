@@ -238,7 +238,8 @@ tool-name summary, allowing the next decision to understand the failure
 surface without importing an unbounded transcript.
 Recovered traces also add controller-crash pressure to the next allocation,
 which prioritizes reproduction and an alternate route before new expensive
-exploration.
+exploration. That pressure is reconciled after a newer committed trajectory,
+so an old crash does not permanently bias every later cycle.
 
 ## Production checklist
 

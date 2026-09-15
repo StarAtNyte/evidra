@@ -843,6 +843,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const researchMemory = researchMemoryContext(store, 30, objective);
     const peerLaneBoard = boundedPeerBoard(recentEvents);
     const recentTrajectories = store.trajectories(50);
+    const latestTrajectoryAt = recentTrajectories[0]?.createdAt;
+    const unreconciledTraceRecovery = store.eventsByType("research.trace.recovered", 20).some((event) => !latestTrajectoryAt || event.createdAt > latestTrajectoryAt);
     const recentFailureCount = recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
     const recentQuality = recentTrajectories.slice(0, 20).map((entry) => qualityFeedback(entry.quality));
     const failureClasses = [
@@ -860,7 +862,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           return failure ? [failure] : [];
         });
       }),
-      ...(store.eventsByType("research.trace.recovered", 5).length ? ["controller_crash"] : []),
+      ...(unreconciledTraceRecovery ? ["controller_crash"] : []),
     ];
     const campaignRemaining = campaign ? Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)) : undefined;
     const route = routeCapability({ objective, mode, provider: config.provider, model: config.model, autonomy: config.autonomy, recentFailureCount, failureClasses, recentQuality, recentOutcomes: store.recentEvents(500).filter((event) => event.type === "research.capability_outcome").slice(-12).map((event) => {
