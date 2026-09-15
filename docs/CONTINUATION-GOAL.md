@@ -383,6 +383,9 @@ external evaluator.
   of leaving a controller asleep until the retry delay ends.
 - The reset-wait primitive is directly tested for immediate abort, normal
   completion, and already-aborted signals.
+- Persisted-trace parser limits now fall back safely when callers provide
+  non-finite event or byte bounds, preventing malformed recovery parameters
+  from disabling the parser's safety ceiling.
 
 ## Immediate next work
 

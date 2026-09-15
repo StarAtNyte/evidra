@@ -681,6 +681,7 @@ test("persisted trace parser bounds malformed crash artifacts and redacts payloa
   assert.equal(parsed.events[0].payload.activity, "token=[REDACTED]");
   assert.equal(parsePersistedTrace(`${JSON.stringify({ id: "large", kind: "process", payload: { activity: "x".repeat(100) } })}\n`, 256, 32).truncated, true);
   assert.equal(MAX_TRACE_BYTES > MAX_TRACE_EVENTS, true);
+  assert.equal(parsePersistedTrace(JSON.stringify({ id: "bounded", kind: "process", payload: {} }), Number.NaN, Number.NaN).events.length, 1);
 });
 
 test("shared trace recovery registers orphaned traces once", () => {

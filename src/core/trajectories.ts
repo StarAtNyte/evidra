@@ -56,11 +56,12 @@ function boundedTracePrefix(text: string, maxBytes: number): { text: string; tru
 export function parsePersistedTrace(text: string, maxEvents = 256, maxBytes = MAX_TRACE_BYTES): { events: TrajectoryEvent[]; invalidLines: number; truncated: boolean } {
   const events: TrajectoryEvent[] = [];
   let invalidLines = 0;
-  const boundedBytes = Math.max(1, Math.min(maxBytes, MAX_TRACE_BYTES));
+  const boundedBytes = Number.isFinite(maxBytes) ? Math.max(1, Math.min(maxBytes, MAX_TRACE_BYTES)) : MAX_TRACE_BYTES;
+  const boundedEvents = Number.isFinite(maxEvents) ? Math.max(1, Math.min(maxEvents, MAX_TRACE_EVENTS)) : MAX_TRACE_EVENTS;
   const bounded = boundedTracePrefix(text, boundedBytes);
   const truncated = bounded.truncated;
   const boundedText = bounded.text;
-  for (const line of boundedText.split(/\r?\n/).filter(Boolean).slice(0, Math.max(1, Math.min(maxEvents, MAX_TRACE_EVENTS)))) {
+  for (const line of boundedText.split(/\r?\n/).filter(Boolean).slice(0, boundedEvents)) {
     try {
       const value = JSON.parse(line) as Partial<TrajectoryEvent>;
       if (!value || typeof value !== "object" || typeof value.id !== "string" || typeof value.kind !== "string" || !["user", "assistant", "tool_call", "tool_result", "process", "evaluator", "recovery", "terminal"].includes(value.kind) || !value.payload || typeof value.payload !== "object" || Array.isArray(value.payload)) {
