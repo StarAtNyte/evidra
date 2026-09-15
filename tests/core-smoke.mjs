@@ -51,7 +51,7 @@ import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js"
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { materializeResearchDecision } from "../dist/core/research-graph.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
-import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, pauseCampaign, resumeCampaign } from "../dist/core/campaign.js";
+import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, pauseCampaign, researchTurnTimeoutMs, resumeCampaign } from "../dist/core/campaign.js";
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
@@ -710,6 +710,12 @@ test("campaign child timeout is bounded by remaining active budget", () => {
   const paused = { ...campaign, status: "paused", pausedAt: "2026-01-01T00:05:00.000Z" };
   assert.equal(campaignRemainingMs(paused, Date.parse("2026-01-01T00:20:00.000Z")), 25 * 60_000);
   assert.equal(campaignRemainingMs(campaign, Date.parse("2026-01-01T00:40:00.000Z")), 0);
+});
+
+test("research model stages scale with long campaigns without exceeding their budget share", () => {
+  assert.equal(researchTurnTimeoutMs(5 * 60_000), 75_000);
+  assert.equal(researchTurnTimeoutMs(4 * 60 * 60_000), 10 * 60_000);
+  assert.equal(researchTurnTimeoutMs(0), 0);
 });
 
 test("durable campaign runtime settings are validated before resume", () => {

@@ -81,6 +81,17 @@ export function campaignRemainingMs(campaign: CampaignTimeState & { budgetMinute
   return Math.max(0, (campaign.budgetMinutes - campaignElapsedMinutes(campaign, now)) * 60_000);
 }
 
+/**
+ * Allocate one model stage from the remaining campaign budget. This keeps
+ * short smoke campaigns bounded while allowing tool-heavy turns in serious
+ * multi-hour campaigns to finish instead of inheriting an arbitrary tiny cap.
+ */
+export function researchTurnTimeoutMs(remainingBudgetMs: number, maxTimeoutMs = 10 * 60_000): number {
+  if (!Number.isFinite(remainingBudgetMs) || remainingBudgetMs <= 0) return 0;
+  const ceiling = Math.max(15_000, Number.isFinite(maxTimeoutMs) ? maxTimeoutMs : 10 * 60_000);
+  return Math.max(15_000, Math.min(ceiling, Math.floor(remainingBudgetMs / 4)));
+}
+
 export function pauseCampaign<T extends CampaignTimeState>(campaign: T, now = new Date().toISOString()): T {
   if (campaign.status === "paused") return campaign;
   return { ...campaign, status: "paused", pausedAt: now };

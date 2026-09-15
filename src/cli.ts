@@ -25,7 +25,7 @@ import { assessStopPolicy } from "./core/stop-policy.js";
 import { classifyVerifier } from "./core/formal-verification.js";
 import { detectRouteDrift } from "./core/drift-detection.js";
 import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
-import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, pauseCampaign, readCampaignRuntime, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
+import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, pauseCampaign, readCampaignRuntime, researchTurnTimeoutMs, resumeCampaign, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { auditExperiment, validateEvaluationMatrix } from "./core/validation.js";
 import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance } from "./core/validation-engine.js";
@@ -2273,8 +2273,10 @@ research
       }
       // A cycle has lanes, a director, and a critic. Reserve wall-clock for
       // each stage so a short campaign cannot overrun by multiplying one
-      // provider timeout across all three stages.
-      const agentTimeoutMs = Math.max(15_000, Math.min(120_000, Math.floor(remainingBudgetMs / 4)));
+      // provider timeout across all three stages. Long campaigns need enough
+      // room for tool-heavy reasoning; a two-minute ceiling truncated those
+      // turns even when hours of campaign budget remained.
+      const agentTimeoutMs = researchTurnTimeoutMs(remainingBudgetMs);
       while (true) {
         try {
           console.log("Research · independent lanes are investigating the evidence...");
