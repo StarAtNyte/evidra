@@ -275,9 +275,32 @@ export function codexIsLoggedIn(): boolean {
   return spawnSync(resolveCodexBinary(), ["login", "status"], { stdio: "ignore", timeout: 5_000, killSignal: "SIGTERM" }).status === 0;
 }
 
+/** Non-blocking authentication probe for the TUI and provider turn path. */
+export function codexIsLoggedInAsync(): Promise<boolean> {
+  if (process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const child = spawn(resolveCodexBinary(), ["login", "status"], { stdio: "ignore" });
+    let settled = false;
+    const finish = (loggedIn: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(loggedIn);
+    };
+    const timer = setTimeout(() => {
+      try { child.kill("SIGTERM"); } catch { /* already exited */ }
+      finish(false);
+    }, 5_000);
+    timer.unref();
+    child.once("error", () => finish(false));
+    child.once("close", (code) => finish(code === 0));
+  });
+}
+
 export function listCodexModels(): Promise<AvailableModel[]> {
-  if (!codexIsLoggedIn()) return Promise.reject(new Error("Codex is not logged in. Use /login codex first."));
-  return new Promise((resolve, reject) => {
+  return codexIsLoggedInAsync().then((loggedIn) => {
+    if (!loggedIn) throw new Error("Codex is not logged in. Use /login codex first.");
+    return new Promise<AvailableModel[]>((resolve, reject) => {
     const child = spawn(resolveCodexBinary(), ["app-server", "--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
     let buffer = "";
     let settled = false;
@@ -312,6 +335,7 @@ export function listCodexModels(): Promise<AvailableModel[]> {
     child.stdin.write(`${JSON.stringify({ method: "initialize", id: 1, params: { clientInfo: { name: "evidra", version: "0.1.0" } } })}\n`);
     child.stdin.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
     child.stdin.write(`${JSON.stringify({ method: "model/list", id: 2, params: { includeHidden: true } })}\n`);
+    });
   });
 }
 
@@ -346,7 +370,7 @@ export async function resolveLocalFallbackModel(preferred = "auto"): Promise<str
 
 export async function checkProvider(options: ExecAgentOptions): Promise<void> {
   if (options.provider === "codex") {
-    if (!codexIsLoggedIn()) throw new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription.");
+    if (!await codexIsLoggedInAsync()) throw new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription.");
     return;
   }
 
@@ -393,9 +417,10 @@ export class CodexExecAgent {
       "Do not submit anything or expose credentials.";
     if (this.options.provider === "local") return this.runOllama(prompt, onProgress, onProcess);
 
-    if (!codexIsLoggedIn()) return Promise.reject(new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription."));
-
-    return this.runCodexSdk(prompt, onProgress, onProcess);
+    return codexIsLoggedInAsync().then((loggedIn) => {
+      if (!loggedIn) throw new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription.");
+      return this.runCodexSdk(prompt, onProgress, onProcess);
+    });
   }
 
   private async runCodexSdk(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
