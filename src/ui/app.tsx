@@ -29,7 +29,7 @@ import { activePhaseGoal, definePhaseGoals, evaluatePhaseGoalEvidence, phaseGoal
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
-import { checkProvider, codexIsLoggedIn, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, resolveStartupProvider, runWithLocalFallback, runWithUsageLimitWait, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
+import { checkProvider, codexIsLoggedIn, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, resolveStartupProvider, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { boundedPeerBoard, runResearchCritic, runResearchLanes, type ResearchLaneReport, type ResearchReview } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
@@ -1235,11 +1235,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (config.provider === "codex") {
       setProgress(`Experiment ${id} · experiment engineer implementing the hypothesis...`);
       activeSteer.current = null;
-      await runWithUsageLimitWait({
+      const engineerResult = await runWithLocalFallback({
         role: "experiment engineer",
-        objective: "Implement the selected hypothesis in this isolated worktree. Inspect the existing estimator, make the smallest reproducible change, run relevant tests or smoke checks, and leave the worktree ready for evaluation. Do not touch files outside this worktree and do not submit anything.",
+        objective: "Implement the selected hypothesis in this isolated worktree. Inspect the existing estimator, make the smallest reproducible change, run relevant tests or smoke checks, and leave the worktree ready for evaluation. Do not touch files outside this worktree and do not submit anything. If the selected provider cannot edit files directly, return ONLY an applicable unified diff whose first line begins with diff --git; otherwise perform the edit and summarize it.",
         context: { manifest, hypothesis: hypothesis?.payload ?? null, worktree: experimentCwd },
-      }, { provider: config.provider, model: config.model, cwd: worktree, reasoningEffort: config.reasoningEffort, sandbox: "workspace-write", limitPolicy: "wait", onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, setProgress, registerProcess);
+      }, { provider: config.provider, model: config.model, cwd: worktree, reasoningEffort: config.reasoningEffort, sandbox: "workspace-write", limitPolicy: config.limitPolicy, onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, config.fallbackModel, setProgress, registerProcess);
+      const fallbackDiff = extractUnifiedDiff(String(engineerResult.output));
+      if (fallbackDiff) await applyUnifiedDiff(worktree, fallbackDiff);
       activeSteer.current = null;
       executionPlan = advanceExecutionStage(executionPlan, "smoke", "completed");
       const smokeStore = new ResearchStore(join(root, ".sota", "database.sqlite"));

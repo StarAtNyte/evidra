@@ -51,7 +51,7 @@ import { createBlendCandidate, diversityReport, loadPredictionVector, safePredic
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic } from "./agents/research-lanes.js";
-import { checkProvider, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listLocalModels, providerRetryAfterMs, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithUsageLimitWait, runWithLocalFallback } from "./agents/codex-exec.js";
+import { checkProvider, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listLocalModels, providerRetryAfterMs, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -230,7 +230,7 @@ async function implementCampaignHypothesis(
   experimentId: string,
   hypothesis: unknown,
   manifest: unknown,
-  options: { provider: "codex" | "local"; model: string; thinking: string; protectedCommands?: string[][] },
+  options: { provider: "codex" | "local"; model: string; thinking: string; fallbackLocalModel?: string; limitPolicy?: "auto" | "wait" | "fallback" | "stop"; protectedCommands?: string[][] },
 ): Promise<void> {
   const worktree = await ensureWorktree(rootPath, rootPath, experimentId);
   const captureCodeHealth = async (): Promise<ReturnType<typeof snapshotCodeHealth>> => {
@@ -254,7 +254,7 @@ async function implementCampaignHypothesis(
   const inventory = await runProcess(["rg", "--files", "-g", "!.git/**", "-g", "!.sota/**", "-g", "!node_modules/**"], worktree, 60_000);
   const task = {
     role: "experiment engineer",
-    objective: "Implement the selected hypothesis in this isolated worktree. Inspect the existing project, make the smallest reproducible change described by the hypothesis, run relevant smoke checks, and leave the worktree ready for evaluation. Do not touch files outside this worktree, submit anything, or invent a result.",
+    objective: "Implement the selected hypothesis in this isolated worktree. Inspect the existing project, make the smallest reproducible change described by the hypothesis, run relevant smoke checks, and leave the worktree ready for evaluation. Do not touch files outside this worktree, submit anything, or invent a result. If the selected provider cannot edit files directly, return ONLY an applicable unified diff whose first line begins with diff --git; otherwise perform the edit and summarize it.",
     context: {
       manifest,
       hypothesis,
@@ -264,14 +264,19 @@ async function implementCampaignHypothesis(
     },
   } as const;
   if (options.provider === "codex") {
-    await runWithUsageLimitWait(task, {
+    const result = await runWithLocalFallback(task, {
       provider: options.provider,
       model: options.model,
       cwd: worktree,
       reasoningEffort: options.thinking,
       sandbox: "workspace-write",
-      limitPolicy: "wait",
-    }, (message) => console.log(`Experiment ${experimentId} · ${message}`));
+      limitPolicy: options.limitPolicy ?? "auto",
+    }, options.fallbackLocalModel, (message) => console.log(`Experiment ${experimentId} · ${message}`));
+    // A local fallback cannot edit the worktree, so it returns a patch. Codex
+    // normally edits in place and returns prose; applying only a parseable
+    // diff keeps both routes compatible and avoids trusting model narration.
+    const fallbackDiff = extractUnifiedDiff(String(result.output));
+    if (fallbackDiff) await applyUnifiedDiff(worktree, fallbackDiff);
   } else {
     const result = await runWithLocalFallback({
       ...task,
@@ -2684,7 +2689,7 @@ research
             decisionStore.close();
             let run: { exitCode: number; stdout: string; stderr: string };
             try {
-              await implementCampaignHypothesis(root, experimentId, selectedHypothesis, manifest, { provider: options.provider as "codex" | "local", model: selectedModel, thinking: options.thinking, protectedCommands: [adapter.config.evaluator.command] });
+              await implementCampaignHypothesis(root, experimentId, selectedHypothesis, manifest, { provider: options.provider as "codex" | "local", model: selectedModel, thinking: options.thinking, fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", protectedCommands: [adapter.config.evaluator.command] });
               if (halvingEnabled) {
                 run = await runCampaignExperiment(root, experimentId, "reduced", campaignRemainingMs(campaign));
                 const screenStore = new ResearchStore(statePath);
