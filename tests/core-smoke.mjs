@@ -2805,6 +2805,9 @@ test("metric parser accepts evaluator JSON and keyed log output", () => {
   assert.equal(formatted.metrics.accuracy, 0.912);
   assert.equal(formatted.metrics.latency_ms, 42);
   assert.deepEqual(formatted.metricsByFold.accuracy, [0.9, 0.92]);
+  const keyedSuite = parseMetricOutput("accuracy: 91.2%\nlatency_ms=42\n", "accuracy");
+  assert.equal(keyedSuite.metrics.accuracy, 0.912);
+  assert.equal(keyedSuite.metrics.latency_ms, 42);
   assert.deepEqual(parsed.metricsByFold.rmse, [0.4, 0.44]);
   assert.deepEqual(parsed.subgroupDeltas, [0.1, -0.02]);
   const autoresearch = parseMetricOutput("---\nval_bpb:          1.253616\ntraining_seconds: 45.0\n", "val_bpb");

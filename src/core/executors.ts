@@ -231,6 +231,14 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
       const value = Number(keyed[1]);
       if (Number.isFinite(value)) metrics[metricName] = keyed[2] ? value / 100 : value;
     }
+    // Also retain secondary/custom metrics emitted as ordinary keyed log
+    // lines, e.g. `accuracy: 91.2%` and `latency_ms=42`. The label is kept
+    // deliberately strict so arbitrary prose is not treated as evidence.
+    const genericKeyed = line.match(/^\s*["']?([A-Za-z][A-Za-z0-9_./-]*)["']?\s*[:=]\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(%)?\s*$/);
+    if (genericKeyed) {
+      const value = Number(genericKeyed[2]);
+      if (Number.isFinite(value)) metrics[genericKeyed[1]] = genericKeyed[3] ? value / 100 : value;
+    }
     // Human-readable evaluator tables often render a stable machine label in
     // brackets, e.g. `Raw MSE [final_layer_mse] 2.22e-04`. Keep this parser
     // generic so competition adapters do not need to know the table's prose.
