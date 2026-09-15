@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed commit: `872d186`.
+- Latest pushed commit: `466a442`.
 - The benchmark runner supports bounded alternate routes after same-route
   retries, with route and command provenance in each attempt. The change is
   covered by the benchmark runner test.
@@ -97,6 +97,9 @@ external evaluator.
 - Codex provider switches and successful Codex login now explicitly select
   `gpt-5.6-luna` instead of inheriting a server-side default model; login also
   refreshes the available model list immediately for `/model` selection.
+- Codex login runs asynchronously with an interruptible child process, so
+  device/browser authentication cannot freeze the TUI; this is covered by an
+  integration-style regression test.
 - Codex thread restoration is explicit: a new terminal starts a fresh Evidra
   chat, while `/resume <session-id>` restores the saved Codex thread and
   transcript. Provider/model changes invalidate the active chat thread.
