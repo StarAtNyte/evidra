@@ -21,6 +21,17 @@ export interface DistributionBeliefReport {
   warning: string;
 }
 
+/** Convert durable submission payloads into safe, finite external observations. */
+export function distributionObservationsFromSubmissions(entries: Array<{ id?: string; payload: unknown }>): ExternalValidationObservation[] {
+  return entries.flatMap((entry, index) => {
+    const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { publicScore?: unknown; validationScores?: unknown } : {};
+    if (typeof payload.publicScore !== "number" || !Number.isFinite(payload.publicScore) || !payload.validationScores || typeof payload.validationScores !== "object" || Array.isArray(payload.validationScores)) return [];
+    const validationScores = Object.fromEntries(Object.entries(payload.validationScores).filter(([, value]) => typeof value === "number" && Number.isFinite(value)) as Array<[string, number]>);
+    if (!Object.keys(validationScores).length) return [];
+    return [{ id: entry.id ?? `submission-${index}`, externalScore: payload.publicScore, validationScores }];
+  });
+}
+
 function correlation(left: number[], right: number[]): number | null {
   if (left.length < 3 || right.length < 3 || left.length !== right.length) return null;
   const leftMean = left.reduce((sum, value) => sum + value, 0) / left.length;

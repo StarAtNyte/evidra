@@ -223,6 +223,12 @@ This requirement is enforced by the durable evidence audit: `replicationObserved
 
 When a score is recorded or polled, Evidra refreshes only the external-score criterion in the existing audit and preserves every other unmet gate. Prepared submission bundles carry the exact source run ID, and score evidence must match that run. A leaderboard result therefore cannot accidentally turn an unreproducible, stale, or leaked experiment into an accepted one.
 
+External scores also feed a conservative distribution-belief loop. The controller
+compares scored submissions with their recorded local validation splits, shrinks
+correlations under sparse data, and routes the next cycle toward multi-split or
+alignment experiments when uncertainty is high. A few leaderboard points never
+select a validation split or count as proof by themselves.
+
 Paired statistical comparisons also require complete, matching fold/seed cardinality and at least two paired observations. Evidra refuses to truncate unequal series or treat a single observation as replication; incomplete evidence becomes an explicit `insufficient_data` outcome for the next research decision.
 
 Repeated looks at one hypothesis use conservative alpha spending on top of the campaign's family-wise correction: autonomous validation records the one-based look number and allocates `alpha / (k(k+1))` for look `k`. This reduces false discoveries from repeatedly peeking at promising experiments while preserving the old behavior for integrations that do not declare sequential look metadata.

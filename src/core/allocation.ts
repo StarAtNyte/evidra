@@ -20,6 +20,8 @@ export interface AllocationInput {
     underestimates: number;
     meanNormalizedError: number;
   };
+  /** Conservative external-score alignment estimate; advisory, never a score gate. */
+  distributionBeliefs?: { observations: number; recommendedSplit: string | null; maxUncertainty: number };
 }
 
 export interface ResearchAllocation {
@@ -90,6 +92,19 @@ export function allocateNextResearch(input: AllocationInput): ResearchAllocation
     reasons: [
       `${forecastCalibration!.samples} forecast(s): ${(forecastCalibration!.coverage * 100).toFixed(0)}% interval coverage and ${(forecastCalibration!.meanNormalizedError * 100).toFixed(0)}% mean normalized error`,
       ...(forecastCalibration!.overestimates >= forecastCalibration!.underestimates ? ["forecasts are tending to overestimate observed gains"] : ["forecasts are tending to underestimate observed gains"]),
+      ...(input.phase ? [`active phase: ${input.phase}`] : []),
+    ],
+  };
+  const distributionBeliefs = input.distributionBeliefs;
+  if (distributionBeliefs && distributionBeliefs.observations >= 3 && (distributionBeliefs.recommendedSplit === null || distributionBeliefs.maxUncertainty >= 0.65)) return {
+    focus: "evidence-validation",
+    priority: distributionBeliefs.maxUncertainty >= 0.9 ? "critical" : "high",
+    failedTrajectories: input.trajectories.filter((entry) => (entry.quality as { overall?: string } | null)?.overall === "FAIL").length,
+    strategy: "Run matched multi-split validation or a high-information external-feedback experiment; local-to-external alignment remains uncertain and sparse leaderboard evidence must not select one split prematurely.",
+    reasons: [
+      `${distributionBeliefs.observations} external observation(s) inform split alignment`,
+      distributionBeliefs.recommendedSplit ? `provisional split candidate: ${distributionBeliefs.recommendedSplit}` : "no split has enough conservative evidence yet",
+      `maximum split uncertainty ${(distributionBeliefs.maxUncertainty * 100).toFixed(0)}%`,
       ...(input.phase ? [`active phase: ${input.phase}`] : []),
     ],
   };

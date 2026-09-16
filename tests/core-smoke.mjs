@@ -36,7 +36,7 @@ import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, submit
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../dist/core/experiment-manifest.js";
-import { estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.js";
+import { distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.js";
 import { auditData, dataAuditFingerprint } from "../dist/core/data-audit.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { runReducedValidation } from "../dist/core/stage-executor.js";
@@ -1272,6 +1272,23 @@ test("well-calibrated forecasts do not suppress exploration", () => {
   } });
   assert.equal(allocation.focus, "breadth");
   assert.equal(allocation.priority, "normal");
+});
+
+test("sparse external feedback creates conservative validation pressure", () => {
+  const observations = distributionObservationsFromSubmissions([
+    { id: "sub-1", payload: { publicScore: 0.7, validationScores: { group: 0.6, iid: 0.8 } } },
+    { id: "sub-2", payload: { publicScore: 0.8, validationScores: { group: 0.7, iid: 0.75 } } },
+    { id: "ignored", payload: { publicScore: "unknown", validationScores: { group: 0.9 } } },
+  ]);
+  assert.equal(observations.length, 2);
+  const report = estimateDistributionBeliefs(observations);
+  const allocation = allocateNextResearch({ trajectories: [], distributionBeliefs: { observations: report.observations, recommendedSplit: report.recommendedSplit, maxUncertainty: Math.max(...report.splits.map((split) => split.uncertainty)) } });
+  assert.equal(allocation.focus, "breadth");
+  assert.equal(allocation.priority, "normal");
+  const pressured = allocateNextResearch({ trajectories: [], distributionBeliefs: { observations: 3, recommendedSplit: null, maxUncertainty: 1 } });
+  assert.equal(pressured.focus, "evidence-validation");
+  assert.equal(pressured.priority, "critical");
+  assert.match(pressured.strategy, /multi-split|alignment|uncertain/i);
 });
 
 test("harness comparison failures become a locked adaptive retest agenda", () => {

@@ -16,6 +16,7 @@ import { captureEnvironment } from "../core/environment.js";
 import { compareRuns } from "../core/statistics.js";
 import { recoveryDelay, recoveryPlan, recoveryRouteDirective } from "../core/recovery.js";
 import { observedGpuHours } from "../core/compute-budget.js";
+import { distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../core/distribution-beliefs.js";
 import { campaignElapsedMinutes, pauseCampaign, readCampaignCheckpoint, resumeCampaign, withCampaignCheckpoint } from "../core/campaign.js";
 import { prepareSubmission, validateSubmissionBundle } from "../core/submissions.js";
 import { pollSubmissionScore, submitApprovedBundle } from "../core/submission-adapters.js";
@@ -886,7 +887,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return Number.isFinite(forecast.normalizedError) && ["underestimated", "overestimated", "calibrated"].includes(forecast.calibration);
       });
     const forecastCalibration = summarizeForecastAssessments(forecastAssessments);
-    const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts, failureClasses, forecastCalibration });
+    const distributionReport = estimateDistributionBeliefs(distributionObservationsFromSubmissions(store.submissions()));
+    const distributionBeliefs = distributionReport.splits.length ? { observations: distributionReport.observations, recommendedSplit: distributionReport.recommendedSplit, maxUncertainty: Math.max(...distributionReport.splits.map((split) => split.uncertainty)) } : undefined;
+    const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts, failureClasses, forecastCalibration, distributionBeliefs });
     store.appendEvent("research.next_allocation", { allocation, objective });
     const adaptiveHarness = deriveAdaptiveHarnessPolicy({
       phase: phaseGoal?.phase,

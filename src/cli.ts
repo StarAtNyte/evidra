@@ -10,7 +10,7 @@ import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "./co
 import { loadCompetitionAdapter } from "./competitions/adapters.js";
 import { auditData, dataAuditFingerprint } from "./core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "./core/validation-policy.js";
-import { estimateDistributionBeliefs, type ExternalValidationObservation } from "./core/distribution-beliefs.js";
+import { distributionObservationsFromSubmissions, estimateDistributionBeliefs, type ExternalValidationObservation } from "./core/distribution-beliefs.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "./core/execution-stages.js";
 import { retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceFrontier, sourceSearchText, sourceIsFresh } from "./core/sources.js";
 import { competitionResearchClaimType, competitionResearchSources } from "./core/competition-sources.js";
@@ -2261,7 +2261,9 @@ research
           return Number.isFinite(forecast.normalizedError) && ["underestimated", "overestimated", "calibrated"].includes(forecast.calibration);
         });
       const forecastCalibration = summarizeForecastAssessments(forecastAssessments);
-      const allocation = allocateNextResearch({ trajectories: recentTrajectories, phase: phaseGoal?.phase, evidenceConflicts, failureClasses, predictionAnalysis, ensembleAnalysis, forecastCalibration });
+      const distributionReport = estimateDistributionBeliefs(distributionObservationsFromSubmissions(store.submissions()));
+      const distributionBeliefs = distributionReport.splits.length ? { observations: distributionReport.observations, recommendedSplit: distributionReport.recommendedSplit, maxUncertainty: Math.max(...distributionReport.splits.map((split) => split.uncertainty)) } : undefined;
+      const allocation = allocateNextResearch({ trajectories: recentTrajectories, phase: phaseGoal?.phase, evidenceConflicts, failureClasses, predictionAnalysis, ensembleAnalysis, forecastCalibration, distributionBeliefs });
       store.appendEvent("research.next_allocation", { allocation, objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}` });
       const priorStagnation = detectStagnation(store.decisions().map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3));
       const adaptiveHarness = deriveAdaptiveHarnessPolicy({
