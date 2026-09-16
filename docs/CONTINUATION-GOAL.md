@@ -58,7 +58,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `7a89ab4` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `1aa2d41` (verify with `git log`).
 - Competition manifests now support typed `researchChannels` for rules,
   discussions, leaderboards, documentation, papers, and repositories. CLI/TUI
   ingestion deduplicates legacy URLs, persists channel kind with source hashes,
@@ -107,6 +107,11 @@ external evaluator.
   favored while forming ideas, while falsification, controls, failures, and
   ablations are favored during execution. The regime and quotas are included in
   the durable retrieval fingerprint; coverage is tested in the core suite.
+- Passing experiment trajectories now crystallize into separate, bounded
+  execution playbooks with executor/evaluation/verification/artifact metadata,
+  environment provenance, source trajectory IDs, and explicit transfer warnings.
+  They are retrieved into future research context and reports as procedures,
+  never as scientific proof or evaluator authority.
 - Identified duplicate findings now contribute active conflict pressure only
   when both referenced claim endpoints remain active; anonymous legacy events
   remain conservatively counted.
