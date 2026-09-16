@@ -289,7 +289,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       case "git.diff": {
         const requested = typeof args.path === "string" ? args.path.trim() : "";
         const target = requested ? relative(context.root, inside(context.root, requested)) : undefined;
-        const command = ["git", "diff", "--no-ext-diff", "--unified=3", "--", ...(target ? [target] : [])];
+        const command = ["git", "diff", "HEAD", "--no-ext-diff", "--unified=3", "--", ...(target ? [target] : [])];
         const result = await runProcess(command, context.root, 30_000, undefined, context.onProcess, workerEnvironment);
         output = { exitCode: result.exitCode, path: target, diff: result.stdout.slice(-100_000), stderr: result.stderr.slice(-4_000) };
         if (result.exitCode !== 0) {

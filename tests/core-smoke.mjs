@@ -3003,6 +3003,7 @@ test("research tool registry exposes safe workspace tools", async () => {
     execFileSync("git", ["add", "notes.txt"], { cwd: root });
     execFileSync("git", ["commit", "-qm", "baseline"], { cwd: root });
     writeFileSync(join(root, "notes.txt"), "hypothesis: tool registry\nupdated observation\n");
+    execFileSync("git", ["add", "notes.txt"], { cwd: root });
     const db = join(root, ".sota", "database.sqlite");
     const files = await executeResearchTool({ name: "workspace.files" }, { root, storePath: db, autonomy: "safe" });
     assert.equal(files.ok, true);
