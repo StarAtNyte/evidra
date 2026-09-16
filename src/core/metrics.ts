@@ -64,6 +64,7 @@ function mae(target: readonly unknown[], prediction: readonly unknown[]): number
 function logLoss(target: readonly unknown[], prediction: readonly unknown[]): number {
   const pairs = numberPairs(target, prediction);
   if (pairs.some(([actual]) => actual !== 0 && actual !== 1)) throw new Error("Log loss requires binary target labels 0 or 1.");
+  if (pairs.some(([, predicted]) => predicted < 0 || predicted > 1)) throw new Error("Log loss predictions must be probabilities in the interval [0, 1].");
   const epsilon = 1e-15;
   return -pairs.reduce((sum, [actual, predicted]) => {
     const probability = Math.min(1 - epsilon, Math.max(epsilon, predicted));
@@ -154,10 +155,10 @@ function quadraticWeightedKappa(target: readonly unknown[], prediction: readonly
 }
 
 function binaryOverlap(target: readonly unknown[], prediction: readonly unknown[], mode: "iou" | "dice"): number {
-  const pairs = paired(target, prediction);
+  const pairs = numberPairs(target, prediction);
   let intersection = 0; let targetPositive = 0; let predictionPositive = 0;
   for (const [actual, predicted] of pairs) {
-    const a = Number(actual) >= 0.5; const p = Number(predicted) >= 0.5;
+    const a = actual >= 0.5; const p = predicted >= 0.5;
     if (a) targetPositive += 1;
     if (p) predictionPositive += 1;
     if (a && p) intersection += 1;

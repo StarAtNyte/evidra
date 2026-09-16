@@ -4122,7 +4122,9 @@ test("metric registry computes common classification, regression, and ranking me
   assert.equal(computeMetric("auroc", [0, 1, 0, 1], [0.5, 0.5, 0.1, 0.1]), 0.5);
   assert.throws(() => computeMetric("auroc", [0, 2], [0.1, 0.9]), /binary target/);
   assert.throws(() => computeMetric("log_loss", [0, 2], [0.1, 0.9]), /binary target/);
+  assert.throws(() => computeMetric("log_loss", [0, 1], [-0.1, 1.1]), /probabilities/);
   assert.throws(() => computeMetric("average_precision", [0, 2], [0.1, 0.9]), /binary target/);
+  assert.throws(() => computeMetric("iou", [1, "not-a-number"], [1, 0]), /finite numeric/);
   assert.equal(metricDefinition("f1_macro").name, "macro_f1");
   assert(Math.abs(computeMetric("average_precision", [1, 0, 1], [0.9, 0.8, 0.7]) - 5 / 6) < 1e-12);
   assert(Math.abs(computeMetric("map", [1, 0, 1], [0.9, 0.8, 0.7]) - 5 / 6) < 1e-12);
