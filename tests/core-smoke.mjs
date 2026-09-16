@@ -5662,6 +5662,16 @@ test("cross-pollination does not count an evidence-free lane as corroboration", 
   assert.equal(board.needsAdversarialReview, true);
 });
 
+test("cross-pollination ignores raw lane anchors when controller verification is empty", () => {
+  const board = synthesizeLaneReports([
+    { role: "data", status: "completed", recommendations: ["use grouped folds"], evidence: ["invented-a"], verifiedEvidenceIds: [] },
+    { role: "validation", status: "completed", recommendations: ["use grouped folds"], evidence: ["invented-a"], verifiedEvidenceIds: [] },
+  ]);
+  assert.equal(board.transferCandidates[0].independentSupport, 0);
+  assert.equal(board.independentEvidenceCount, 0);
+  assert.equal(board.needsAdversarialReview, true);
+});
+
 test("cross-pollination groups independently worded recommendations conservatively", () => {
   const board = synthesizeLaneReports([
     { role: "data", status: "completed", recommendations: ["use grouped source folds to prevent leakage"], evidence: ["groups.csv"], confidence: 0.8 },

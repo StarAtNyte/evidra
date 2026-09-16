@@ -6,6 +6,8 @@ export interface LaneFinding {
   uncertainties?: string[];
   discriminatingTests?: string[];
   evidence?: string[];
+  /** Controller-grounded evidence; raw model anchors remain inspection-only. */
+  verifiedEvidenceIds?: string[];
   evidenceSourceIds?: string[];
   confidence?: number;
   status?: string;
@@ -40,8 +42,9 @@ export interface CrossPollinationBoard {
  * avoids turning one agent's repeated wording into fake consensus.
  */
 export function synthesizeLaneReports(reports: LaneFinding[]): CrossPollinationBoard {
+  const evidenceFor = (report: LaneFinding): string[] => report.verifiedEvidenceIds ?? report.evidence ?? [];
   const completed = reports.filter((report) => report.status !== "failed");
-  const findings = completed.flatMap((report) => (report.findings ?? []).map((finding) => ({ finding, role: report.role ?? "lane", confidence: report.confidence ?? 0.5, evidence: new Set(report.evidence ?? []) })));
+  const findings = completed.flatMap((report) => (report.findings ?? []).map((finding) => ({ finding, role: report.role ?? "lane", confidence: report.confidence ?? 0.5, evidence: new Set(evidenceFor(report)) })));
   const agreements: string[] = [];
   const agreementScores: number[] = [];
   for (let index = 0; index < findings.length; index += 1) {
@@ -95,7 +98,7 @@ export function synthesizeLaneReports(reports: LaneFinding[]): CrossPollinationB
       }
       target.roles.add(role);
       const roleEvidence = target.roleEvidence.get(role) ?? new Set<string>();
-      for (const item of report.evidence ?? []) { target.evidence.add(item); roleEvidence.add(item); }
+      for (const item of evidenceFor(report)) { target.evidence.add(item); roleEvidence.add(item); }
       target.roleEvidence.set(role, roleEvidence);
       target.confidence.push(report.confidence ?? 0.5);
       target.terms = new Set([...target.terms, ...terms]);
@@ -124,9 +127,9 @@ export function synthesizeLaneReports(reports: LaneFinding[]): CrossPollinationB
     .slice(0, 8);
   const tensions = completed.flatMap((report) => (report.uncertainties ?? []).map((uncertainty) => `${report.role ?? "lane"}: ${uncertainty}`));
   const discriminatingTests = unique(completed.flatMap((report) => report.discriminatingTests ?? [])).slice(0, 12);
-  const evidence = completed.flatMap((report) => report.evidence ?? []).slice(0, 18);
+  const evidence = completed.flatMap(evidenceFor).slice(0, 18);
   const familyCoverage = completed.map((report) => report.role ?? "unknown").filter((role, index, values) => values.indexOf(role) === index);
-  const independentEvidenceCount = unique(completed.flatMap((report) => report.evidence ?? [])).length;
+  const independentEvidenceCount = unique(completed.flatMap(evidenceFor)).length;
   const agreementPairs = agreementScores.length;
   const agreementStrength = agreementPairs ? agreementScores.reduce((sum, score) => sum + score, 0) / agreementPairs : 0;
   const needsAdversarialReview = completed.length < 2 || tensions.length > 0 || independentEvidenceCount < completed.length || agreementStrength < 0.6 || (tensions.length > 0 && discriminatingTests.length === 0);

@@ -45,6 +45,8 @@ export type ResearchLaneReport = z.infer<typeof ResearchLaneReportSchema> & {
   status: "completed" | "failed";
   error?: string;
   toolResults?: ResearchToolResult[];
+  /** Source IDs that the controller resolved in its durable source store. */
+  verifiedEvidenceIds?: string[];
 };
 
 export const ResearchReviewSchema = z.object({
@@ -446,9 +448,10 @@ export function boundedPeerBoard(events: Array<{ type: string; payload: unknown 
         recommendations: boundedStrings(report.recommendations, 4, 800),
         uncertainties: boundedStrings(report.uncertainties, 3, 600),
         discriminatingTests: boundedStrings(report.discriminatingTests, 3, 600),
-        evidence: boundedStrings(report.evidence, 5, 600),
-        evidenceSourceIds: boundedStrings(report.evidenceSourceIds, 5, 240),
-        confidence: typeof report.confidence === "number" && Number.isFinite(report.confidence) ? report.confidence : 0,
+    evidence: boundedStrings(report.evidence, 5, 600),
+    evidenceSourceIds: boundedStrings(report.evidenceSourceIds, 5, 240),
+    verifiedEvidenceIds: boundedStrings(report.verifiedEvidenceIds, 5, 240),
+    confidence: typeof report.confidence === "number" && Number.isFinite(report.confidence) ? report.confidence : 0,
       };
     })
     .slice(-Math.max(1, Math.min(limit, 8)));
@@ -470,16 +473,19 @@ export function laneHandoffBoard(reports: LaneFinding[], limit = 4): Array<Recor
     discriminatingTests: boundedStrings(report.discriminatingTests, 3, 600),
     evidence: boundedStrings(report.evidence, 5, 600),
     evidenceSourceIds: boundedStrings(report.evidenceSourceIds, 5, 240),
+    verifiedEvidenceIds: boundedStrings(report.verifiedEvidenceIds, 5, 240),
     confidence: typeof report.confidence === "number" && Number.isFinite(report.confidence) ? report.confidence : 0,
   })).slice(-Math.max(1, Math.min(limit, 8)));
 }
 
-function saveLaneEvent(storePath: string, role: string, report: ResearchLaneReport): void {
+function saveLaneEvent(storePath: string, role: string, report: ResearchLaneReport): string[] {
   const store = new ResearchStore(storePath);
+  let verifiedEvidenceIds: string[] = [];
   store.appendEvent(report.status === "completed" ? "research.lane.completed" : "research.lane.failed", { role, report });
   if (report.status === "completed") {
     const claimId = `claim_lane_${Date.now()}_${role.replace(/[^a-z0-9]+/gi, "-")}`;
     const sourceIds = [...new Set((report.evidenceSourceIds ?? []).filter((sourceId) => store.sources().some((source) => source.id === sourceId)))];
+    verifiedEvidenceIds = sourceIds;
     const sourceId = sourceIds[0];
     store.saveClaim({
       id: claimId,
@@ -498,6 +504,7 @@ function saveLaneEvent(storePath: string, role: string, report: ResearchLaneRepo
     for (const linkedSourceId of sourceIds) store.saveEdge({ id: `edge_${claimId}_${linkedSourceId}`, fromId: claimId, toId: linkedSourceId, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
   }
   store.close();
+  return verifiedEvidenceIds;
 }
 
 /** Run an adversarial review after independent lanes have reported. */
@@ -769,11 +776,11 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     }
     if (!parsed) throw lastError instanceof Error ? lastError : new Error("Lane did not produce a validated report.");
     const report: ResearchLaneReport = { ...parsed, role, status: "completed", ...(options.executeTool ? { toolResults } : {}) };
-    saveLaneEvent(options.storePath, role, report);
+    const verifiedEvidenceIds = saveLaneEvent(options.storePath, role, report);
     const completed = new ResearchStore(options.storePath);
     completed.updateAgentLane({ role, status: "idle", provider: report.provider ?? options.provider, model: report.model ?? options.model, task: null, error: null });
     completed.close();
-    return report;
+    return { ...report, verifiedEvidenceIds };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const report: ResearchLaneReport = { role, summary: "Lane failed before producing a validated report.", findings: [], recommendations: [], uncertainties: [message], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0, status: "failed", error: message };
