@@ -61,7 +61,7 @@ import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
-import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneHandoffBoard, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneTeamSize, researchLiteratureQueries, runResearchLanes, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
+import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, createLaneToolExecutor, laneHandoffBoard, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneTeamSize, researchLiteratureQueries, runResearchLanes, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
 import { summarizeAgentUsage, summarizeUsage } from "../dist/core/usage.js";
@@ -3079,6 +3079,30 @@ test("research lane teams share only cacheable observations within one invocatio
     await new Promise((resolve) => server.close(resolve));
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("lane observation cache never reuses a failed in-flight result", async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let attempts = 0;
+  const execute = createLaneToolExecutor(async (call) => {
+    attempts += 1;
+    if (attempts === 1) {
+      await gate;
+      return { name: call.name, ok: false, error: "temporary failure", trust: "controller_observation" };
+    }
+    return { name: call.name, ok: true, output: { files: [] }, trust: "controller_observation" };
+  });
+  const call = { name: "workspace.files", arguments: {} };
+  const first = execute(call);
+  const second = execute(call);
+  release();
+  const results = await Promise.all([first, second]);
+  assert.equal(attempts, 2);
+  assert.equal(results[0].ok, false);
+  assert.equal(results[1].ok, true);
+  assert.equal((await execute(call)).cached, true);
+  assert.equal(attempts, 2);
 });
 
 test("lane handoff boards are bounded and preserve challengeable evidence", () => {

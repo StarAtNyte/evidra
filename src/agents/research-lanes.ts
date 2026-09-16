@@ -369,6 +369,35 @@ export function researchLaneTeamSize(
   return Math.max(concurrency, Math.min(availableRoles, requestedTeamSize));
 }
 
+/** Coalesce successful read-only lane observations without memoizing failures. */
+export function createLaneToolExecutor(executeTool: (call: ResearchToolCall) => Promise<ResearchToolResult>): (call: ResearchToolCall) => Promise<ResearchToolResult> {
+  const cache = new Map<string, Promise<ResearchToolResult>>();
+  return async (call: ResearchToolCall): Promise<ResearchToolResult> => {
+    const spec = RESEARCH_TOOLS.find((candidate) => candidate.name === call.name);
+    const cacheable = spec?.readOnly === true && spec.cacheable !== false;
+    if (!cacheable) return executeTool(call);
+    const key = JSON.stringify([call.name, call.arguments ?? {}]);
+    const inFlight = cache.get(key);
+    if (inFlight) {
+      const result = await inFlight;
+      // A failed observation is not evidence and must not be returned as a
+      // cache hit. Re-enter the executor so a sibling gets its own attempt.
+      if (result.ok) return { ...result, cached: true };
+    }
+    const pending = executeTool(call);
+    cache.set(key, pending);
+    try {
+      const result = await pending;
+      if (result.ok) cache.set(key, Promise.resolve(result));
+      else cache.delete(key);
+      return result;
+    } catch (error) {
+      cache.delete(key);
+      throw error;
+    }
+  };
+}
+
 function parseJson(output: unknown): unknown {
   const text = String(output).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
   try { return JSON.parse(text); } catch {
@@ -764,25 +793,7 @@ export async function runResearchLanes(objective: string, context: Record<string
   // Share only immutable read-only observations within this invocation. The
   // promise map also collapses simultaneous identical calls from parallel
   // lanes, while cacheable=false tools (notably shell.exec) always execute.
-  const laneToolCache = new Map<string, Promise<ResearchToolResult>>();
-  const laneExecuteTool = options.executeTool ? async (call: ResearchToolCall): Promise<ResearchToolResult> => {
-    const spec = RESEARCH_TOOLS.find((candidate) => candidate.name === call.name);
-    const cacheable = spec?.readOnly === true && spec.cacheable !== false;
-    if (!cacheable) return options.executeTool!(call);
-    const key = JSON.stringify([call.name, call.arguments ?? {}]);
-    const cached = laneToolCache.get(key);
-    if (cached) return { ...(await cached), cached: true };
-    const pending = options.executeTool!(call);
-    laneToolCache.set(key, pending);
-    try {
-      const result = await pending;
-      if (!result.ok) laneToolCache.delete(key);
-      return result;
-    } catch (error) {
-      laneToolCache.delete(key);
-      throw error;
-    }
-  } : undefined;
+  const laneExecuteTool = options.executeTool ? createLaneToolExecutor(options.executeTool) : undefined;
   const laneOptions = laneExecuteTool ? { ...options, executeTool: laneExecuteTool } : options;
   const reports: ResearchLaneReport[] = [];
   // Run bounded waves. A wave remains parallel, while the next wave receives
