@@ -28,7 +28,7 @@ import { experienceReplayWorld } from "../dist/core/experience.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
 import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../dist/core/phase-goals.js";
-import { assertSubtaskContract, auditSubtask, subtaskAuditFingerprint, subtaskStateFromAudit, validateSubtaskContract } from "../dist/core/subtask-state.js";
+import { assertSubtaskContract, auditSubtask, projectVerifiedSubtaskState, subtaskAuditFingerprint, subtaskStateFromAudit, validateSubtaskContract } from "../dist/core/subtask-state.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "../dist/core/decision-auditor.js";
 import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
@@ -2410,6 +2410,15 @@ test("generic subtask auditing requires verifier evidence and preserves unmet cr
   assert.throws(() => assertSubtaskContract({ ...contract, acceptanceCriteria: [{ id: "x", description: "x" }, { id: "x", description: "duplicate" }] }), /duplicate/);
   assert.throws(() => assertSubtaskContract({ ...contract, acceptanceCriteria: [{ id: "x", description: "x", weight: 0 }] }), /weight/);
   assert.throws(() => assertSubtaskContract({ ...contract, acceptanceCriteria: [{ id: "x", description: "x", weight: 1_000_001 }] }), /1000000/);
+});
+
+test("verified subtask projection is compact and never treats executor state as verified", () => {
+  const projection = projectVerifiedSubtaskState({ subtaskId: "phase-1", complete: true, unmetRequired: [], stateFingerprint: "sha256:test", criteria: [{ id: "a", satisfied: true, evidenceIds: ["run:1"], detail: "large prose".repeat(1000) }] });
+  assert.equal(projection.status, "completed");
+  assert.deepEqual(projection.criteria, [{ id: "a", satisfied: true, evidenceIds: ["run:1"] }]);
+  const missing = projectVerifiedSubtaskState(undefined);
+  assert.equal(missing.status, "uninitialized");
+  assert.equal(missing.complete, false);
 });
 
 test("phase goals expose the same auditable contract used by generic work", () => {

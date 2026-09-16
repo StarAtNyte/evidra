@@ -33,6 +33,7 @@ import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateVali
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { processFailureResult, runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
+import { projectVerifiedSubtaskState } from "./core/subtask-state.js";
 import { classifyProcessFailure, executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "./core/executors.js";
 import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
@@ -2634,7 +2635,8 @@ research
           crossPollinationStore.close();
           recordCampaignCheckpoint(campaign, mode, cycle, "research-director");
           console.log("Research · director is cross-pollinating lane findings...");
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness }, { provider: options.provider as "codex" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, consumeSteering: () => {
+          const verifiedState = phaseGoal ? projectVerifiedSubtaskState(store.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined);
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness }, { provider: options.provider as "codex" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? (process.env.EVIDRA_FALLBACK_MODEL ?? "auto") : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, consumeSteering: () => {
             const steeringStore = new ResearchStore(statePath);
             const messages = steeringStore.consumeControllerSteers().map((item) => item.message);
             steeringStore.close();
@@ -3447,6 +3449,7 @@ research.command("propose")
       outcomes: change.outcomes,
       changedComponents: change.candidateComponents.filter((candidate) => change.baselineComponents.find((baseline) => baseline.path === candidate.path && baseline.checksum !== candidate.checksum)),
     }));
+    const verifiedState = phaseGoal ? projectVerifiedSubtaskState(store.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined);
     store.close();
     console.log("Research 3/3 · analyzing observed evidence...");
     let decision = await runResearchDirector(objective, {
@@ -3457,6 +3460,7 @@ research.command("propose")
       observation,
       ultimateGoal: objective,
       phaseGoal: phaseGoal ?? null,
+      verifiedState,
       researchMemory,
       harnessChangeHistory,
     }, { provider: "codex", model: DEFAULT_CODEX_MODEL, reasoningEffort: "medium", fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });

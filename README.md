@@ -284,6 +284,7 @@ Implemented today:
 - append-only tool feedback and recent-event histories retain their newest entries first during truncation, so the next decision sees current execution results rather than stale context;
 - context-budget accounting includes its own audit metadata, so the serialized provider envelope stays within the configured maximum rather than exceeding it after reporting truncation;
 - every newly generated phase or experiment audit carries a deterministic fingerprint of its verified criterion state; writes and restart-time reads reject stale or tampered state while legacy audits remain readable;
+- director turns receive a compact controller-owned verified-state projection showing satisfied criteria, durable evidence IDs, blockers, and the audit fingerprint; it is derived from audits and cannot be authored by the provider;
 - the same typed failure pressure is applied to capability routing in both the CLI and TUI, increasing verification demand and constraining fan-out consistently across interfaces;
 - retryable research-lane transport and timeout failures select an untried configured provider/model route before repeating a route, while single-route setups retain bounded retries and preserve the original failure as evidence;
 - director synthesis receives the same route pool and applies the same bounded untried-route recovery, avoiding a full-cycle replay on a failed model;

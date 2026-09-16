@@ -24,6 +24,7 @@ import { createBlendCandidate, diversityReport, loadPredictionVector, safePredic
 import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
 import { auditData, dataAuditFingerprint } from "../core/data-audit.js";
 import { executeResearchTool } from "../core/tools.js";
+import { projectVerifiedSubtaskState } from "../core/subtask-state.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { retrieveSource, searchResearchSources, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
 import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../core/phase-goals.js";
@@ -1030,6 +1031,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         researchSources,
         ultimateGoal: objective,
         phaseGoal: phaseGoal ?? null,
+        verifiedState: phaseGoal ? projectVerifiedSubtaskState(store.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined),
         allocation,
         evidenceConflicts,
         researchMemory,

@@ -171,3 +171,33 @@ export function auditSubtask(contractInput: SubtaskContract, observations: Subta
 export function subtaskStateFromAudit(audit: SubtaskAudit): { status: SubtaskStatus; unmetRequired: string[] } {
   return { status: audit.complete ? "completed" : "blocked", unmetRequired: audit.unmetRequired };
 }
+
+/** Project the latest controller audit into a compact, provider-safe state view. */
+export function projectVerifiedSubtaskState(value: unknown): {
+  subtaskId: string;
+  status: "completed" | "blocked" | "uninitialized";
+  complete: boolean;
+  criteria: Array<{ id: string; satisfied: boolean; evidenceIds: string[] }>;
+  unmetRequired: string[];
+  stateFingerprint?: string;
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { subtaskId: "uninitialized", status: "uninitialized", complete: false, criteria: [], unmetRequired: [] };
+  const audit = value as Record<string, unknown>;
+  const criteria = Array.isArray(audit.criteria) ? audit.criteria.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const criterion = entry as Record<string, unknown>;
+    if (typeof criterion.id !== "string") return [];
+    const evidenceIds = Array.isArray(criterion.evidenceIds) ? criterion.evidenceIds.filter((id): id is string => typeof id === "string").slice(0, 8) : [];
+    return [{ id: criterion.id, satisfied: criterion.satisfied === true, evidenceIds }];
+  }).slice(0, 32) : [];
+  const unmetRequired = Array.isArray(audit.unmetRequired) ? audit.unmetRequired.filter((id): id is string => typeof id === "string").slice(0, 32) : [];
+  const complete = audit.complete === true && unmetRequired.length === 0;
+  return {
+    subtaskId: typeof audit.subtaskId === "string" ? audit.subtaskId : "unknown",
+    status: complete ? "completed" : "blocked",
+    complete,
+    criteria,
+    unmetRequired,
+    ...(typeof audit.stateFingerprint === "string" ? { stateFingerprint: audit.stateFingerprint } : {}),
+  };
+}
