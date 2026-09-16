@@ -58,7 +58,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `0a42c46` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `345dd99` (verify with `git log`).
 - Competition manifests now support typed `researchChannels` for rules,
   discussions, leaderboards, documentation, papers, and repositories. CLI/TUI
   ingestion deduplicates legacy URLs, persists channel kind with source hashes,
@@ -84,6 +84,10 @@ external evaluator.
 - Metric-parent leave-one-factor-out ablations now require finite comparable
   variant metrics when a control metric is available and persist per-factor
   effects; process exit alone cannot complete metric ablation evidence.
+- The TUI now mirrors the CLI ablation lifecycle: it executes every declared
+  leave-one-factor-out variant, reads durable run metrics, records factor
+  effects, and emits `research.ablation.evidence` only after all variants reach
+  terminal state.
 - Identified duplicate findings now contribute active conflict pressure only
   when both referenced claim endpoints remain active; anonymous legacy events
   remain conservatively counted.
