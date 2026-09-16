@@ -21,3 +21,4 @@ __pycache__/
 # inspection without making every autonomous campaign dirty the checkout.
 reports/*.md
 reports/*.jsonl
+.vercel
