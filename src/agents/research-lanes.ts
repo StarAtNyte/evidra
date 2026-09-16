@@ -426,6 +426,12 @@ function lanePrompt(role: ResearchLaneRole, objective: string): string {
     "Recommendations must be testable and should state what would falsify them. For every material uncertainty or disagreement, propose a concrete discriminating test. A bounded prior-peer board may be present in the context: use it to challenge, extend, or explicitly reject earlier findings, but never treat it as stronger than primary evidence.";
 }
 
+function boundedStrings(value: unknown, limit: number, itemLimit: number): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim().slice(0, itemLimit)).slice(0, limit)
+    : [];
+}
+
 /** Keep cross-cycle peer communication useful without replaying unbounded transcripts. */
 export function boundedPeerBoard(events: Array<{ type: string; payload: unknown }>, limit = 4): Array<Record<string, unknown>> {
   return events
@@ -436,12 +442,12 @@ export function boundedPeerBoard(events: Array<{ type: string; payload: unknown 
       return {
         role: typeof report.role === "string" ? report.role : "unknown",
         summary: typeof report.summary === "string" ? report.summary.slice(0, 1200) : "",
-        findings: Array.isArray(report.findings) ? report.findings.slice(0, 5) : [],
-        recommendations: Array.isArray(report.recommendations) ? report.recommendations.slice(0, 4) : [],
-        uncertainties: Array.isArray(report.uncertainties) ? report.uncertainties.slice(0, 3) : [],
-        discriminatingTests: Array.isArray(report.discriminatingTests) ? report.discriminatingTests.slice(0, 3) : [],
-        evidence: Array.isArray(report.evidence) ? report.evidence.slice(0, 5) : [],
-        evidenceSourceIds: Array.isArray(report.evidenceSourceIds) ? report.evidenceSourceIds.slice(0, 5) : [],
+        findings: boundedStrings(report.findings, 5, 800),
+        recommendations: boundedStrings(report.recommendations, 4, 800),
+        uncertainties: boundedStrings(report.uncertainties, 3, 600),
+        discriminatingTests: boundedStrings(report.discriminatingTests, 3, 600),
+        evidence: boundedStrings(report.evidence, 5, 600),
+        evidenceSourceIds: boundedStrings(report.evidenceSourceIds, 5, 240),
         confidence: typeof report.confidence === "number" && Number.isFinite(report.confidence) ? report.confidence : 0,
       };
     })
@@ -458,12 +464,12 @@ export function laneHandoffBoard(reports: LaneFinding[], limit = 4): Array<Recor
   return reports.map((report) => ({
     role: typeof report.role === "string" ? report.role : "unknown",
     summary: typeof report.summary === "string" ? report.summary.slice(0, 1200) : "",
-    findings: Array.isArray(report.findings) ? report.findings.slice(0, 5) : [],
-    recommendations: Array.isArray(report.recommendations) ? report.recommendations.slice(0, 4) : [],
-    uncertainties: Array.isArray(report.uncertainties) ? report.uncertainties.slice(0, 3) : [],
-    discriminatingTests: Array.isArray(report.discriminatingTests) ? report.discriminatingTests.slice(0, 3) : [],
-    evidence: Array.isArray(report.evidence) ? report.evidence.slice(0, 5) : [],
-    evidenceSourceIds: Array.isArray(report.evidenceSourceIds) ? report.evidenceSourceIds.slice(0, 5) : [],
+    findings: boundedStrings(report.findings, 5, 800),
+    recommendations: boundedStrings(report.recommendations, 4, 800),
+    uncertainties: boundedStrings(report.uncertainties, 3, 600),
+    discriminatingTests: boundedStrings(report.discriminatingTests, 3, 600),
+    evidence: boundedStrings(report.evidence, 5, 600),
+    evidenceSourceIds: boundedStrings(report.evidenceSourceIds, 5, 240),
     confidence: typeof report.confidence === "number" && Number.isFinite(report.confidence) ? report.confidence : 0,
   })).slice(-Math.max(1, Math.min(limit, 8)));
 }

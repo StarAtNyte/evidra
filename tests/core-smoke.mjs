@@ -3114,6 +3114,9 @@ test("lane handoff boards are bounded and preserve challengeable evidence", () =
   assert.equal(board[0].role, "validation scientist");
   assert.equal(board[0].evidence[0], "run-1");
   assert.equal(board[0].summary, "Second");
+  const sanitized = laneHandoffBoard([{ role: "lane", summary: "ok", findings: ["B".repeat(2_000), { injected: true }], recommendations: [], uncertainties: [], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0.5 }]);
+  assert.equal(sanitized[0].findings.length, 1);
+  assert.equal(sanitized[0].findings[0].length, 800);
 });
 
 test("lane team size preserves safe single-pass and enables bounded peer waves", () => {
