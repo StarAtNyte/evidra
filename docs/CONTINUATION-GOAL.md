@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `95338c2` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `8c2e9dc` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -167,6 +167,8 @@ external evaluator.
   evaluation semantics.
 - GitHub Actions now verifies clean-install typechecking, the complete smoke
   suite, and distributable package contents on pushes and pull requests.
+- The CI gate also audits runtime dependencies at high severity; the current
+  lockfile reports zero production vulnerabilities.
 - Latest verified baseline: 399/399 tests passing, TypeScript check passing,
   and build passing. The worktree is clean; generated reports remain excluded
   from source changes.
