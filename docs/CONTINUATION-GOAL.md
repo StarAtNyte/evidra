@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `a8165bf` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `5d8017b` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -123,7 +123,10 @@ external evaluator.
   receive a compact, evidence-anchored peer board, and each completed-wave
   hand-off is persisted as `research.lane.handoff`; safe mode remains a single
   read-only pass.
-- Latest verified baseline: 394/394 tests passing, TypeScript check passing,
+- Literature probes are now role-specific for method and model specialists,
+  reducing duplicate retrieval work while preserving deterministic progressive
+  search and complementary coverage.
+- Latest verified baseline: 395/395 tests passing, TypeScript check passing,
   and build passing. The worktree is clean; generated reports remain excluded
   from source changes.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
