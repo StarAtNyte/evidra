@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `db45eab` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `73f1c31` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -156,6 +156,8 @@ external evaluator.
 - Evidence audits now use the manifest's declared primary metric before any
   live project configuration, preventing post-run objective drift; legacy
   manifests without a metric list retain the compatibility fallback.
+- CLI and TUI audits now snapshot external-score evidence before closing the
+  read store, preventing valid score gates from querying a closed database.
 - Latest verified baseline: 399/399 tests passing, TypeScript check passing,
   and build passing. The worktree is clean; generated reports remain excluded
   from source changes.
