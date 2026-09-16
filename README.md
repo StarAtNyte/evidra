@@ -90,9 +90,9 @@ Provider-route claims can also require task-disjoint transfer: the same comparis
 
 Provider exhaustion is autonomous by default. The `auto` policy first selects an installed local Qwen/Ollama model, then waits durably for the Codex entitlement reset if no local model is available. Use `/limits auto`, `/limits fallback`, `/limits wait`, or `/limits stop` in the TUI to choose explicitly. The fallback model can be pinned with `EVIDRA_FALLBACK_MODEL`.
 
-The cost-conscious Codex defaults are `gpt-5.6-luna` and medium thinking effort across the CLI, TUI, autonomous research, challenge campaigns, and harness benchmarks. Evidra does not select Astra. If an older saved session names an Astra route, it is migrated to the Luna default before work starts; users can still choose another model explicitly with `/model`.
+The cost-conscious Codex defaults are `gpt-5.6-luna` and medium thinking effort across the CLI, TUI, autonomous research, challenge campaigns, and harness benchmarks. Evidra does not select Astra automatically. An explicitly selected Astra route is preserved in the campaign runtime and remains visible in provenance; users can choose models explicitly with `/model`.
 
-Lane concurrency is adaptive: `safe` runs one independent lane, `fast` permits a small parallel set, and `yolo` uses the largest bounded set supported by the host and provider. Local Ollama concurrency also respects `OLLAMA_NUM_PARALLEL`; the TUI never interprets YOLO as permission to exhaust a laptop, subscription, or external service.
+Lane concurrency is adaptive: `safe` runs one independent lane, while `fast` and `yolo` use a bounded asynchronous completion-driven scheduler. Capacity is refilled as specialists finish, and each later lane receives a compact cross-pollination board from completed peers; no mutable workspace or live transcript is shared between lanes. Local Ollama concurrency also respects `OLLAMA_NUM_PARALLEL`; the TUI never interprets YOLO as permission to exhaust a laptop, subscription, or external service.
 
 ### Local controller versus Modal controller
 

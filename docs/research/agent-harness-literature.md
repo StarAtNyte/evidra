@@ -73,6 +73,29 @@ an ablation; more agents or more tokens are not evidence of a better harness.
 
 Source: [Scaling Test-time Compute for LLM Agents](https://arxiv.org/abs/2506.12928).
 
+The recent Auto-RecSys system adds an important systems-level lesson for
+long-running research: parallel execution should be distributed and
+completion-driven, while memory is centralized and recoverable. It also
+separates cognitive playbooks from deterministic execution procedures and
+maintains distinct idea- and execution-evolution loops. Evidra now applies the
+first part generically: non-safe lane teams use a bounded asynchronous
+scheduler, refill capacity as specialists finish, hand each newly launched
+lane a compact peer board, and keep observations in the shared SQLite/event
+store. Safe mode remains serialized. Playbooks and experiment manifests stay
+separate so learned procedures cannot change the evaluator or bypass evidence
+gates.
+
+Source: [Auto-RecSys](https://arxiv.org/abs/2609.10922).
+
+Memory substrate comparisons caution against maximizing retrieval volume: the
+best memory representation depends on history length and whether the task is
+retrieval-heavy or action-heavy. Evidra therefore keeps retrieval bounded,
+query-ranked, fingerprinted, and provenance-aware; future harness benchmarks
+should measure useful evidence per context token and route memory substrates by
+task regime instead of assuming that a larger context is always better.
+
+Source: [Harness the Memory](https://arxiv.org/abs/2608.15008).
+
 ## Diversity, cross-pollination, verification
 
 OpenAI's report on its Navier–Stokes effort describes heterogeneous groups,

@@ -194,6 +194,8 @@ export interface ResearchLanesOptions {
   maxParallel?: number;
   /** Total specialists in the wave-based team; defaults to the available role pool outside safe mode. */
   laneTeamSize?: number;
+  /** Collaboration scheduler. Non-safe teams default to asynchronous completion-driven hand-offs. */
+  executionMode?: "waves" | "asynchronous";
   autonomy?: AutonomyLevel;
   laneFocus?: string;
   laneRotation?: number;
@@ -809,6 +811,44 @@ export async function runResearchLanes(objective: string, context: Record<string
   const laneExecuteTool = options.executeTool ? createLaneToolExecutor(options.executeTool) : undefined;
   const laneOptions = laneExecuteTool ? { ...options, executeTool: laneExecuteTool } : options;
   const reports: ResearchLaneReport[] = [];
+  const executionMode = options.executionMode ?? (options.autonomy === "safe" ? "waves" : "asynchronous");
+  if (executionMode === "asynchronous") {
+    // Start up to the bounded concurrency ceiling and refill immediately as
+    // each lane completes. Later specialists receive the compact board that
+    // exists at their launch boundary; no mutable workspace or live model
+    // transcript is shared. This preserves independent evidence while making
+    // long-running lanes useful instead of turning them into barriers.
+    const pending = [...roles];
+    const running: Array<{ role: ResearchLaneRole; promise: Promise<ResearchLaneReport> }> = [];
+    while (pending.length || running.length) {
+      while (pending.length && running.length < concurrency) {
+        const role = pending.shift()!;
+        const peerLaneBoard = laneHandoffBoard(reports);
+        running.push({
+          role,
+          promise: runLane(role, objective, { ...context, ...(peerLaneBoard.length ? { peerLaneBoard } : {}) }, laneOptions, routes.find((route) => route.role === role)!),
+        });
+      }
+      if (!running.length) continue;
+      const finished = await Promise.race(running.map(async (entry) => ({ entry, report: await entry.promise })));
+      const index = running.indexOf(finished.entry);
+      if (index >= 0) running.splice(index, 1);
+      reports.push(finished.report);
+      if (pending.length) {
+        const handoffStore = new ResearchStore(options.storePath);
+        handoffStore.appendEvent("research.lane.handoff", {
+          objective,
+          fromRoles: [finished.report.role],
+          toRoles: pending.slice(0, concurrency).map((role) => role),
+          board: laneHandoffBoard(reports),
+          boundary: "completed-lane",
+          executionMode,
+        });
+        handoffStore.close();
+      }
+    }
+    return roles.map((role) => reports.find((report) => report.role === role)!).filter(Boolean);
+  }
   // Run bounded waves. A wave remains parallel, while the next wave receives
   // the prior wave's compact board. This gives agents a real communication
   // boundary without sharing mutable workspaces or allowing an unbounded
@@ -832,6 +872,7 @@ export async function runResearchLanes(objective: string, context: Record<string
         toRoles: roles.slice(offset + wave.length),
         board: laneHandoffBoard(reports),
         boundary: "completed-wave",
+        executionMode,
       });
       handoffStore.close();
     }
