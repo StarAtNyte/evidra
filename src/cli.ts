@@ -66,6 +66,7 @@ import { autonomyPolicy, type AutonomyLevel } from "./core/permissions.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "./core/capability-router.js";
 import { allocateNextResearch } from "./core/allocation.js";
 import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, experienceReplayWorld, selectCurriculum } from "./core/experience.js";
+import { executionPlaybookFromExperience } from "./core/execution-playbooks.js";
 import { evaluateReducedPromotion, retryRouteIsNew, type ExperimentRetryRoute } from "./core/scheduler.js";
 import { validateCompetitionContract } from "./core/competition-contract.js";
 import { assessForecast, summarizeForecastAssessments } from "./core/forecast-calibration.js";
@@ -3366,6 +3367,8 @@ research
       const experience = buildExperienceRecord({ trajectoryId, payload: trajectoryPayload, quality: researchQuality, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: options.provider, model: selectedModel } });
       const priorExperiences = decisionStore.trajectoryHistory().filter((entry) => entry.id !== trajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
       decisionStore.appendEvent("research.experience.recorded", { experience, capabilityProfile: capabilityProfile([...priorExperiences, experience]), curriculum: selectCurriculum([...priorExperiences, experience]) });
+      const executionPlaybook = executionPlaybookFromExperience(experience);
+      if (executionPlaybook) decisionStore.appendEvent("research.execution.playbook", executionPlaybook);
       const researchGaps = Object.entries(researchQuality).filter(([key, value]) => key !== "overall" && (value as { verdict: string }).verdict !== "PASS").map(([key]) => key);
       decisionStore.appendEvent("research.capability_outcome", { ...routingOutcome, objective, predictedTier: route.tier, servedProvider: options.provider, servedModel: selectedModel, lanes: laneReports.map((lane) => ({ role: lane.role, provider: lane.provider, model: lane.model, status: lane.status })), quality: researchQuality.overall, gaps: researchGaps, laneCount: laneReports.length });
       if (researchQuality.overall !== "PASS") decisionStore.appendEvent("trajectory.capability_gaps", { trajectoryType: "research", quality: researchQuality, objective });
@@ -4043,6 +4046,8 @@ experiment.command("run")
     const experimentExperience = buildExperienceRecord({ trajectoryId: experimentTrajectoryId, payload: experimentTrajectoryPayload, quality: experimentQuality });
     const priorExperiences = resultStore.trajectoryHistory().filter((entry) => entry.id !== experimentTrajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
     resultStore.appendEvent("research.experience.recorded", { experience: experimentExperience, capabilityProfile: capabilityProfile([...priorExperiences, experimentExperience]), curriculum: selectCurriculum([...priorExperiences, experimentExperience]), source: "experiment" });
+    const executionPlaybook = executionPlaybookFromExperience(experimentExperience);
+    if (executionPlaybook) resultStore.appendEvent("research.execution.playbook", executionPlaybook);
     if (experimentQuality.overall !== "PASS") resultStore.appendEvent("trajectory.capability_gaps", { trajectoryId: `trajectory_${result.runId}`, gaps: Object.entries(experimentQuality).filter(([key, value]) => key !== "overall" && (value as { verdict: string }).verdict !== "PASS").map(([key, value]) => ({ dimension: key, verdict: (value as { verdict: string }).verdict, evidence: (value as { evidence: string[] }).evidence })) });
     if (recorded.status === "completed") {
       const baselineEvent = resultStore.eventsByType("baseline.completed").at(-1);

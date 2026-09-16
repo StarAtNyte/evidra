@@ -89,6 +89,9 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     researchMemory.failedDirections.length
       ? `\nFailed directions in memory:\n${researchMemory.failedDirections.map((direction) => `- ${direction.id} · ${direction.title} · ${direction.failureClass}: ${direction.reason}`).join("\n")}`
       : "Failed directions in memory: none.");
+  sections.push("", "## Verified execution procedures", "", researchMemory.executionPlaybooks.length
+    ? researchMemory.executionPlaybooks.map((playbook) => `- ${playbook.id} · ${playbook.title} · ${playbook.task}/${playbook.domain}\n  trigger: ${playbook.trigger}\n  steps: ${playbook.steps.join("; ")}\n  environment: ${JSON.stringify(playbook.environment)}\n  source trajectory: ${playbook.sourceTrajectoryId}\n  transfer warning: ${playbook.failureModes.join("; ")}`).join("\n")
+    : "No verified execution procedures recorded.");
   sections.push("", "## Decisions", "", decisions.length ? decisions.map((decision) => `- ${decision.id} · ${decision.createdAt}\n  ${line(decision.payload)}`).join("\n") : "No decisions recorded.");
   sections.push("", "## Evidence claims", "", claims.length ? claims.slice(0, 80).map((claim) => `- ${claim.id}: ${line((claim.payload as { statement?: string }).statement ?? claim.payload)}`).join("\n") : "No claims recorded.");
   sections.push("", "## Claim verification audit", "", `Publishable: ${claimAudit.publishable ? "yes" : "no"}\nVerified: ${claimAudit.verified} · provisional: ${claimAudit.provisional} · literature-only: ${claimAudit.literatureOnly} · unsupported: ${claimAudit.unsupported} · conflicted: ${claimAudit.conflicted}`, claimAudit.entries.length ? claimAudit.entries.slice(0, 80).map((entry) => `- ${entry.status.toUpperCase()} ${entry.id} · ${entry.reasons.join("; ")}`).join("\n") : "No claims available for audit.");

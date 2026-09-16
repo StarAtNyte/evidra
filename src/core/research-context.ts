@@ -6,6 +6,7 @@ import { verifiedPlaybooksFromEvents, type VerifiedPlaybook } from "./playbooks.
 import { failedDirectionsFromExperiments, type FailedDirection } from "./failure-memory.js";
 import { canonicalSourceUrl, type RepositorySearchResult } from "./sources.js";
 import { buildFalsificationAgenda, type FalsificationAgendaItem } from "./falsification-agenda.js";
+import { executionPlaybooksFromEvents, type ExecutionPlaybook } from "./execution-playbooks.js";
 
 export type ResearchRepositoryLead = RepositorySearchResult;
 export type MemoryRetrievalRegime = "discovery" | "execution";
@@ -13,7 +14,7 @@ export type MemoryRetrievalRegime = "discovery" | "execution";
 export interface MemoryRetrievalRouting {
   regime: MemoryRetrievalRegime;
   rationale: string;
-  quotas: Record<"claims" | "quarantinedClaims" | "hypotheses" | "contradictions" | "transferableMethods" | "verifiedPlaybooks" | "failedDirections" | "repositoryLeads" | "ablationPlans" | "falsificationAgenda", number>;
+  quotas: Record<"claims" | "quarantinedClaims" | "hypotheses" | "contradictions" | "transferableMethods" | "verifiedPlaybooks" | "executionPlaybooks" | "failedDirections" | "repositoryLeads" | "ablationPlans" | "falsificationAgenda", number>;
 }
 
 /**
@@ -68,6 +69,7 @@ export interface ResearchMemoryContext {
   contradictions: Array<{ fromId: string; toId: string; confidence: number }>;
   transferableMethods: TransferableMethod[];
   verifiedPlaybooks: VerifiedPlaybook[];
+  executionPlaybooks: ExecutionPlaybook[];
   failedDirections: FailedDirection[];
   repositoryLeads: ResearchRepositoryLead[];
   ablationPlans: AblationPlan[];
@@ -178,12 +180,12 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
     ? {
       regime,
       rationale: "execution-critical retrieval preserves current tests, controls, failures, and falsification work before broad discovery leads",
-      quotas: { claims: bounded, quarantinedClaims: quota(0.25), hypotheses: bounded, contradictions: bounded, transferableMethods: quota(0.6), verifiedPlaybooks: quota(0.6), failedDirections: quota(0.8), repositoryLeads: quota(0.35), ablationPlans: bounded, falsificationAgenda: bounded },
+      quotas: { claims: bounded, quarantinedClaims: quota(0.25), hypotheses: bounded, contradictions: bounded, transferableMethods: quota(0.6), verifiedPlaybooks: quota(0.6), executionPlaybooks: bounded, failedDirections: quota(0.8), repositoryLeads: quota(0.35), ablationPlans: bounded, falsificationAgenda: bounded },
     }
     : {
       regime,
       rationale: "discovery retrieval broadens primary claims, transferable methods, repositories, and alternative leads before execution",
-      quotas: { claims: bounded, quarantinedClaims: quota(0.5), hypotheses: quota(0.75), contradictions: bounded, transferableMethods: bounded, verifiedPlaybooks: bounded, failedDirections: quota(0.5), repositoryLeads: quota(0.8), ablationPlans: quota(0.6), falsificationAgenda: bounded },
+      quotas: { claims: bounded, quarantinedClaims: quota(0.5), hypotheses: quota(0.75), contradictions: bounded, transferableMethods: bounded, verifiedPlaybooks: bounded, executionPlaybooks: quota(0.5), failedDirections: quota(0.5), repositoryLeads: quota(0.8), ablationPlans: quota(0.6), falsificationAgenda: bounded },
     };
   const claimEntries = store.claims();
   const activeIds = activeClaimIds(store);
@@ -207,11 +209,13 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
   // methods or repository discoveries from long campaigns.
   const events = store.eventsByTypes([
     "research.method.transferable",
+    "research.execution.playbook",
     "research.repository.search.completed",
     "research.ablation.plan",
   ]);
   const transferableMethods = transferableMethodsFromEvents(events, query, Math.min(8, routing.quotas.transferableMethods), transferTarget);
   const verifiedPlaybooks = verifiedPlaybooksFromEvents(events, query, Math.min(8, routing.quotas.verifiedPlaybooks));
+  const executionPlaybooks = executionPlaybooksFromEvents(events, query, Math.min(8, routing.quotas.executionPlaybooks));
   const failedDirections = failedDirectionsFromExperiments(store.experiments(), query, Math.min(8, routing.quotas.failedDirections));
   const repositoryLeads = repositoryLeadsFromEvents(events, query, Math.min(8, routing.quotas.repositoryLeads));
   const ablationPlans = ablationPlansFromEvents(events, Math.min(8, routing.quotas.ablationPlans));
@@ -223,11 +227,12 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
     activeClaimIds: claims.map((claim) => claim.id),
     quarantinedClaimIds: quarantinedClaims.map((claim) => claim.id),
     hypothesisIds: hypotheses.map((hypothesis) => hypothesis.id),
+    executionPlaybookIds: executionPlaybooks.map((playbook) => playbook.id),
     falsificationHypothesisIds: falsificationAgenda.map((item) => item.hypothesisId),
   };
   const fingerprint = `sha256:${createHash("sha256").update(JSON.stringify(retrievalBasis)).digest("hex")}`;
   // Keep the actionable agenda near the front of the packet. Context packing
   // is key-order aware, so this prevents historical prose from crowding out
   // the next falsifiable test when a prompt is tightly bounded.
-  return { claims, quarantinedClaims, hypotheses, falsificationAgenda, contradictions, transferableMethods, verifiedPlaybooks, failedDirections, repositoryLeads, ablationPlans, retrieval: { ...retrievalBasis, fingerprint } };
+  return { claims, quarantinedClaims, hypotheses, falsificationAgenda, contradictions, transferableMethods, verifiedPlaybooks, executionPlaybooks, failedDirections, repositoryLeads, ablationPlans, retrieval: { ...retrievalBasis, fingerprint } };
 }

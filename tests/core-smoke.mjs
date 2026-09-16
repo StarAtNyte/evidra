@@ -142,6 +142,7 @@ import { auditClaims, selfDescribingClaimEvidenceIds } from "../dist/core/claim-
 import { deriveAdaptiveHarnessPolicy } from "../dist/core/adaptive-harness.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "../dist/core/error-analysis.js";
 import { assessTransferApplicability, createTransferableMethod, transferableMethodsFromEvents } from "../dist/core/method-transfer.js";
+import { executionPlaybookFromExperience, executionPlaybooksFromEvents } from "../dist/core/execution-playbooks.js";
 import { createAblationPlan, ablationPlansFromEvents, evaluateAblationEvidence } from "../dist/core/ablation.js";
 import { benchmarkProtocolFingerprint, parseBenchmarkArm, runBenchmarkArms } from "../dist/core/benchmark-runner.js";
 import { createAirsBenchmarkProtocol, discoverAirsBenchTasks, parseAirsBenchDiscovery } from "../dist/core/airs-bench.js";
@@ -1646,6 +1647,28 @@ test("replicated methods become bounded playbook leads with fresh-transfer warni
   assert.deepEqual(playbook.steps, ["fit calibration on out-of-fold predictions"]);
   assert.match(playbook.failureModes[0], /may not transfer/);
   assert.deepEqual(verifiedPlaybooksFromEvents([{ type: "research.method.transferable", payload: method }, { type: "research.method.transferable", payload: method }, { type: "research.method.transferable", payload: { ...method, id: "unreplicated", replicated: false } }], "calibration ranking").map((entry) => entry.id), ["playbook_method-playbook"]);
+});
+
+test("successful experiment experience crystallizes a separate execution playbook", () => {
+  const manifest = {
+    resources: { executor: "modal" },
+    evaluation: { folds: [0, 1], seeds: [17], metrics: [{ name: "score" }], verificationCommands: [["python", "verify.py"]] },
+    datasetVersion: "dataset-v1",
+    splitVersion: "split-v1",
+    acceptance: { requireReplication: false },
+  };
+  const events = [
+    { id: "p", kind: "process", payload: { status: "completed", manifest } },
+    { id: "e", kind: "evaluator", payload: { evidenceConsistent: true } },
+    { id: "t", kind: "terminal", payload: { status: "completed", goalAttained: true } },
+  ];
+  const pass = Object.fromEntries(["structural", "goalAttainment", "instructionAdherence", "toolUse", "executionAlignment", "evidenceConsistency", "errorRecovery", "termination", "safetyControl"].map((key) => [key, { verdict: "PASS", coverage: "observed", evidence: [] }])) ;
+  const experience = buildExperienceRecord({ trajectoryId: "trajectory-procedure", payload: { objective: "replicate a robust experiment", scene: { task: "challenge", domain: "tabular", context: "workbench" }, manifest, events }, quality: { ...pass, overall: "PASS" } });
+  const playbook = executionPlaybookFromExperience(experience);
+  assert.ok(playbook);
+  assert.equal(playbook.environment.executor, "modal");
+  assert.match(playbook.steps.join(" "), /verification command/);
+  assert.deepEqual(executionPlaybooksFromEvents([{ type: "research.execution.playbook", payload: playbook }], "modal challenge").map((entry) => entry.id), ["execution_playbook_trajectory-procedure"]);
 });
 
 test("failed experiment directions become ranked negative research memory", () => {
