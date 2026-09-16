@@ -58,10 +58,11 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `5ef52d7` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `8468c03` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
-  the domain verifier/auditor; executor prose is ignored as proof.
+  the domain verifier/auditor and every accepted criterion must carry a durable
+  evidence ID; executor prose is ignored as proof.
 - A controller-owned decision auditor now records `research.decision.audit` and
   downgrades illegal or unaudited director decisions to inspection.
 - A fresh read-only provider-backed semantic auditor now checks the decision
