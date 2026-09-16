@@ -49,7 +49,7 @@ import { evaluateReducedPromotion, experimentNovelty, rankExperimentCandidates, 
 import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
 import { renderReport } from "../dist/core/reports.js";
-import { activeContradictionEdges, activeDuplicateClaimCount, latestSourceEntries, latestSourcePayloads, repositoryLeadsFromEvents, researchMemoryContext } from "../dist/core/research-context.js";
+import { activeContradictionEdges, activeDuplicateClaimCount, classifyMemoryRetrievalRegime, latestSourceEntries, latestSourcePayloads, repositoryLeadsFromEvents, researchMemoryContext } from "../dist/core/research-context.js";
 import { buildFalsificationAgenda } from "../dist/core/falsification-agenda.js";
 import { playbookFromMethod, verifiedPlaybooksFromEvents } from "../dist/core/playbooks.js";
 import { failedDirectionsFromExperiments } from "../dist/core/failure-memory.js";
@@ -2388,6 +2388,22 @@ test("research memory ranks relevant claims and hypotheses before merely recent 
     const context = researchMemoryContext(store, 1, "source leakage validation");
     assert.equal(context.claims[0].id, "relevant");
     assert.equal(context.hypotheses[0].id, "h-relevant");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("research memory routes discovery and execution contexts with durable quotas", () => {
+  assert.equal(classifyMemoryRetrievalRegime("find papers about agent memory", { context: "research" }), "discovery");
+  assert.equal(classifyMemoryRetrievalRegime("run the evaluator and replicate the result", { context: "challenge" }), "execution");
+  const root = mkdtempSync(join(tmpdir(), "evidra-memory-routing-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const discovery = researchMemoryContext(store, 8, "agent methods", { context: "research" });
+    const execution = researchMemoryContext(store, 8, "run evaluator", { context: "challenge" });
+    assert.equal(discovery.retrieval.routing.regime, "discovery");
+    assert.equal(execution.retrieval.routing.regime, "execution");
+    assert.ok(execution.retrieval.routing.quotas.repositoryLeads < discovery.retrieval.routing.quotas.repositoryLeads);
+    assert.ok(execution.retrieval.routing.quotas.falsificationAgenda >= discovery.retrieval.routing.quotas.falsificationAgenda);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

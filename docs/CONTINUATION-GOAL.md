@@ -58,7 +58,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `4ba1063` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `f547042` (verify with `git log`).
 - Competition manifests now support typed `researchChannels` for rules,
   discussions, leaderboards, documentation, papers, and repositories. CLI/TUI
   ingestion deduplicates legacy URLs, persists channel kind with source hashes,
@@ -102,6 +102,11 @@ external evaluator.
 - The literature guidance now records Auto-RecSys's asynchronous execution and
   centralized-memory lessons plus regime-aware retrieval from memory-substrate
   comparisons; README model-policy language matches explicit Astra preservation.
+- Memory retrieval now classifies turns as discovery or execution and applies
+  different bounded category quotas: broad method/repository discovery is
+  favored while forming ideas, while falsification, controls, failures, and
+  ablations are favored during execution. The regime and quotas are included in
+  the durable retrieval fingerprint; coverage is tested in the core suite.
 - Identified duplicate findings now contribute active conflict pressure only
   when both referenced claim endpoints remain active; anonymous legacy events
   remain conservatively counted.

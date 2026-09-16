@@ -92,7 +92,11 @@ best memory representation depends on history length and whether the task is
 retrieval-heavy or action-heavy. Evidra therefore keeps retrieval bounded,
 query-ranked, fingerprinted, and provenance-aware; future harness benchmarks
 should measure useful evidence per context token and route memory substrates by
-task regime instead of assuming that a larger context is always better.
+task regime instead of assuming that a larger context is always better. The
+runtime now makes this routing explicit: discovery turns receive broader method
+and repository quotas, while execution turns reserve context for active tests,
+controls, failed directions, ablations, and falsification work. The selected
+regime and exact quotas are part of the retrieval fingerprint.
 
 Source: [Harness the Memory](https://arxiv.org/abs/2608.15008).
 

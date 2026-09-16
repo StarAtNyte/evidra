@@ -8,6 +8,26 @@ import { canonicalSourceUrl, type RepositorySearchResult } from "./sources.js";
 import { buildFalsificationAgenda, type FalsificationAgendaItem } from "./falsification-agenda.js";
 
 export type ResearchRepositoryLead = RepositorySearchResult;
+export type MemoryRetrievalRegime = "discovery" | "execution";
+
+export interface MemoryRetrievalRouting {
+  regime: MemoryRetrievalRegime;
+  rationale: string;
+  quotas: Record<"claims" | "quarantinedClaims" | "hypotheses" | "contradictions" | "transferableMethods" | "verifiedPlaybooks" | "failedDirections" | "repositoryLeads" | "ablationPlans" | "falsificationAgenda", number>;
+}
+
+/**
+ * Route memory by the job the next turn must perform. Retrieval-heavy
+ * discovery benefits from broader literature and repository coverage; an
+ * execution turn must preserve actionable hypotheses, failures, controls, and
+ * falsification work instead of spending its context on stale leads.
+ */
+export function classifyMemoryRetrievalRegime(query?: string, target: TransferTarget = {}): MemoryRetrievalRegime {
+  const descriptor = `${query ?? ""} ${target.objective ?? ""} ${target.taskType ?? ""} ${target.context ?? ""}`.toLowerCase();
+  return /challenge|experiment|evaluator|execute|execution|run\b|artifact|replicat|validation|benchmark|submit|deployment|implementation/.test(descriptor)
+    ? "execution"
+    : "discovery";
+}
 
 /** Resolve active claim IDs from both claim and linked-source lifecycle state. */
 export function activeClaimIds(store: ResearchStore): Set<string> {
@@ -56,6 +76,7 @@ export interface ResearchMemoryContext {
   retrieval: {
     query: string;
     limit: number;
+    routing: MemoryRetrievalRouting;
     activeClaimIds: string[];
     quarantinedClaimIds: string[];
     hypothesisIds: string[];
@@ -149,8 +170,21 @@ export function repositoryLeadsFromEvents(events: Array<{ type: string; payload:
 }
 
 /** Build a bounded, structured memory snapshot for autonomous research context. */
-export function researchMemoryContext(store: ResearchStore, limit = 30, query?: string, transferTarget: TransferTarget = {}): ResearchMemoryContext {
+export function researchMemoryContext(store: ResearchStore, limit = 30, query?: string, transferTarget: TransferTarget = {}, options: { regime?: MemoryRetrievalRegime } = {}): ResearchMemoryContext {
   const bounded = Math.max(1, Math.min(limit, 100));
+  const regime = options.regime ?? classifyMemoryRetrievalRegime(query, transferTarget);
+  const quota = (fraction: number): number => Math.max(1, Math.min(bounded, Math.ceil(bounded * fraction)));
+  const routing: MemoryRetrievalRouting = regime === "execution"
+    ? {
+      regime,
+      rationale: "execution-critical retrieval preserves current tests, controls, failures, and falsification work before broad discovery leads",
+      quotas: { claims: bounded, quarantinedClaims: quota(0.25), hypotheses: bounded, contradictions: bounded, transferableMethods: quota(0.6), verifiedPlaybooks: quota(0.6), failedDirections: quota(0.8), repositoryLeads: quota(0.35), ablationPlans: bounded, falsificationAgenda: bounded },
+    }
+    : {
+      regime,
+      rationale: "discovery retrieval broadens primary claims, transferable methods, repositories, and alternative leads before execution",
+      quotas: { claims: bounded, quarantinedClaims: quota(0.5), hypotheses: quota(0.75), contradictions: bounded, transferableMethods: bounded, verifiedPlaybooks: bounded, failedDirections: quota(0.5), repositoryLeads: quota(0.8), ablationPlans: quota(0.6), falsificationAgenda: bounded },
+    };
   const claimEntries = store.claims();
   const activeIds = activeClaimIds(store);
   const activeClaimEntries = claimEntries.filter((entry) => activeIds.has(entry.id));
@@ -162,8 +196,8 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
       : undefined;
   };
   const claims = rankedMemory(store, activeClaimEntries, query, (entry) => JSON.stringify(entry.payload)).slice(0, bounded).flatMap((entry) => claimValue(entry) ?? []);
-  const quarantinedClaims = rankedMemory(store, quarantinedClaimEntries, query, (entry) => JSON.stringify(entry.payload)).slice(0, bounded).flatMap((entry) => claimValue(entry) ?? []);
-  const hypotheses = rankedMemory(store, store.hypotheses(), query, (entry) => JSON.stringify(entry.payload)).slice(0, bounded).flatMap((entry) => {
+  const quarantinedClaims = rankedMemory(store, quarantinedClaimEntries, query, (entry) => JSON.stringify(entry.payload)).slice(0, routing.quotas.quarantinedClaims).flatMap((entry) => claimValue(entry) ?? []);
+  const hypotheses = rankedMemory(store, store.hypotheses(), query, (entry) => JSON.stringify(entry.payload)).slice(0, routing.quotas.hypotheses).flatMap((entry) => {
     const value = entry.payload as { title?: unknown; status?: unknown; mechanism?: unknown };
     return typeof value.title === "string" ? [{ id: entry.id, title: value.title, status: typeof value.status === "string" ? value.status : "proposed", ...(typeof value.mechanism === "string" ? { mechanism: value.mechanism.slice(0, 500) } : {}) }] : [];
   });
@@ -176,15 +210,16 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
     "research.repository.search.completed",
     "research.ablation.plan",
   ]);
-  const transferableMethods = transferableMethodsFromEvents(events, query, Math.min(8, bounded), transferTarget);
-  const verifiedPlaybooks = verifiedPlaybooksFromEvents(events, query, Math.min(8, bounded));
-  const failedDirections = failedDirectionsFromExperiments(store.experiments(), query, Math.min(8, bounded));
-  const repositoryLeads = repositoryLeadsFromEvents(events, query, Math.min(8, bounded));
-  const ablationPlans = ablationPlansFromEvents(events, Math.min(8, bounded));
-  const falsificationAgenda = buildFalsificationAgenda(store.hypotheses(), store.experiments(), Math.min(8, bounded));
+  const transferableMethods = transferableMethodsFromEvents(events, query, Math.min(8, routing.quotas.transferableMethods), transferTarget);
+  const verifiedPlaybooks = verifiedPlaybooksFromEvents(events, query, Math.min(8, routing.quotas.verifiedPlaybooks));
+  const failedDirections = failedDirectionsFromExperiments(store.experiments(), query, Math.min(8, routing.quotas.failedDirections));
+  const repositoryLeads = repositoryLeadsFromEvents(events, query, Math.min(8, routing.quotas.repositoryLeads));
+  const ablationPlans = ablationPlansFromEvents(events, Math.min(8, routing.quotas.ablationPlans));
+  const falsificationAgenda = buildFalsificationAgenda(store.hypotheses(), store.experiments(), Math.min(8, routing.quotas.falsificationAgenda));
   const retrievalBasis = {
     query: query?.trim() ?? "",
     limit: bounded,
+    routing,
     activeClaimIds: claims.map((claim) => claim.id),
     quarantinedClaimIds: quarantinedClaims.map((claim) => claim.id),
     hypothesisIds: hypotheses.map((hypothesis) => hypothesis.id),
