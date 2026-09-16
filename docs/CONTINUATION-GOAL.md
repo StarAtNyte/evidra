@@ -761,6 +761,9 @@ external evaluator.
 - Generated research, challenge, and final reports now recompute and display the
   same deterministic phase-gate progress and missing checks, preserving useful
   visibility after the live session ends.
+- Long-horizon literature review now records LongHorizon-Harness, AutoLab, and
+  AARRI-Bench as design/evaluation inputs: explicit manager state, fresh-context
+  execution, independent audit, persistence, and researcher-quality checks.
 
 ## Immediate next work
 

@@ -227,3 +227,33 @@ parity, fixed budgets, valid outputs, and held-out or independent replication.
 
 The links above point to the original papers or publisher material. Claims are
 paraphrased; no generated agent summary is treated as primary evidence.
+
+## Long-horizon execution and researcher-quality evaluation
+
+Recent long-horizon work sharpens the controller boundary already used by
+Evidra. LongHorizon-Harness separates a manager that maintains explicit task
+state, a fresh-context executor, and a read-only auditor; only independently
+verified environment facts may update the next state. Evidra's durable phase
+goals, subtask audits, isolated execution, event history, and report-side gate
+recomputation implement this pattern. The remaining requirement is operational:
+every important state transition should carry the exact evidence IDs and
+artifacts that justified it, not merely a boolean completion value.
+
+AutoLab evaluates ultra-long-horizon optimization across system, challenge,
+model, and CUDA tasks. Its central lesson is directly general-purpose: repeated
+benchmarking, editing, and empirical feedback matter more than the quality of
+the first attempt. Evidra therefore treats a phase as an iterative control loop,
+keeps failed directions and route changes, and reserves budget for validation
+and replication rather than spending the whole campaign on initial ideation.
+
+AARRI-Bench adds a complementary research-professionalism test: agents can
+execute tasks while still missing subtle methodological and ethical details.
+This supports Evidra's separate semantic auditor and deterministic evidence
+gates. A polished explanation is not enough; a campaign must expose its
+criteria, unresolved checks, provenance, and executable artifacts for review.
+
+Primary sources:
+
+- [LongHorizon-Harness](https://arxiv.org/abs/2608.01964)
+- [AutoLab](https://arxiv.org/abs/2606.05080)
+- [AARRI-Bench](https://arxiv.org/abs/2606.07462)
