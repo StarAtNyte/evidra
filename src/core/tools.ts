@@ -120,7 +120,7 @@ function recordToolEvent(context: ResearchToolContext, result: ResearchToolResul
 }
 
 function toolTrust(name: string): ResearchToolTrust {
-  if (["workspace.read", "workspace.search", "shell.exec", "source.search", "source.retrieve", "web.search", "repository.search"].includes(name)) return "untrusted_content";
+  if (["workspace.read", "workspace.search", "git.diff", "shell.exec", "source.search", "source.retrieve", "web.search", "repository.search"].includes(name)) return "untrusted_content";
   if (["validation.generate", "report.generate"].includes(name)) return "permission_boundary";
   return "controller_observation";
 }
@@ -130,6 +130,7 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   { name: "workspace.search", description: "Search text or regular expressions in the workspace.", input: { query: "text or regular expression", path: "optional relative path" }, readOnly: true },
   { name: "workspace.read", description: "Read a bounded text file inside the workspace.", input: { path: "relative file path", maxBytes: "optional byte limit" }, readOnly: true },
   { name: "git.status", description: "Read the current Git status and HEAD commit.", input: {}, readOnly: true },
+  { name: "git.diff", description: "Read a bounded working-tree diff for code and configuration review.", input: { path: "optional relative path" }, readOnly: true },
   // Shell execution is inspection-compatible in SAFE mode, but it is not
   // cacheable: FAST/YOLO may run commands whose filesystem/process state can
   // change between rounds.
@@ -153,6 +154,7 @@ const TOOL_HINTS: Record<string, string> = {
   "workspace.search": "search grep find inspect code repository files logs text",
   "workspace.read": "read inspect file code configuration documentation artifact",
   "git.status": "git repository changes commit diff status provenance",
+  "git.diff": "git diff changes patch review implementation code experiment",
   "shell.exec": "run command test build execute benchmark evaluator process shell",
   "source.retrieve": "paper literature source article arxiv retrieve citation claims",
   "source.search": "paper literature scholarly research search citation method",
@@ -229,6 +231,7 @@ function validateToolArguments(name: string, value: unknown): Record<string, unk
   switch (name) {
     case "workspace.search": requiredString("query"); optionalString("path"); break;
     case "workspace.read": requiredString("path"); optionalNumber("maxBytes"); break;
+    case "git.diff": optionalString("path"); break;
     case "shell.exec": if (args.command === undefined) throw new Error("Tool argument 'command' is required."); commandArgs(args.command); optionalNumber("timeoutMs"); break;
     case "source.retrieve": requiredString("url"); if (args.refresh !== undefined && typeof args.refresh !== "boolean") throw new Error("Tool argument 'refresh' must be a boolean."); break;
     case "source.search": case "web.search": case "repository.search":
@@ -281,6 +284,18 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         const status = await runProcess(["git", "status", "--short"], context.root, 30_000, undefined, context.onProcess, workerEnvironment);
         const head = await runProcess(["git", "rev-parse", "HEAD"], context.root, 30_000, undefined, context.onProcess, workerEnvironment);
         output = { head: head.stdout.trim(), status: status.stdout.trim(), statusCode: status.exitCode };
+        break;
+      }
+      case "git.diff": {
+        const requested = typeof args.path === "string" ? args.path.trim() : "";
+        const target = requested ? relative(context.root, inside(context.root, requested)) : undefined;
+        const command = ["git", "diff", "--no-ext-diff", "--unified=3", "--", ...(target ? [target] : [])];
+        const result = await runProcess(command, context.root, 30_000, undefined, context.onProcess, workerEnvironment);
+        output = { exitCode: result.exitCode, path: target, diff: result.stdout.slice(-100_000), stderr: result.stderr.slice(-4_000) };
+        if (result.exitCode !== 0) {
+          toolOk = false;
+          toolError = result.stderr.trim() || `Git diff exited with code ${result.exitCode}.`;
+        }
         break;
       }
       case "shell.exec": {

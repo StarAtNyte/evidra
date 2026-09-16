@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import test from "node:test";
 import Database from "better-sqlite3";
 import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../dist/core/statistics.js";
@@ -2996,6 +2997,12 @@ test("research tool registry exposes safe workspace tools", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-tools-"));
   try {
     writeFileSync(join(root, "notes.txt"), "hypothesis: tool registry\n");
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    execFileSync("git", ["config", "user.email", "evidra@example.invalid"], { cwd: root });
+    execFileSync("git", ["config", "user.name", "Evidra Test"], { cwd: root });
+    execFileSync("git", ["add", "notes.txt"], { cwd: root });
+    execFileSync("git", ["commit", "-qm", "baseline"], { cwd: root });
+    writeFileSync(join(root, "notes.txt"), "hypothesis: tool registry\nupdated observation\n");
     const db = join(root, ".sota", "database.sqlite");
     const files = await executeResearchTool({ name: "workspace.files" }, { root, storePath: db, autonomy: "safe" });
     assert.equal(files.ok, true);
@@ -3004,6 +3011,10 @@ test("research tool registry exposes safe workspace tools", async () => {
     const search = await executeResearchTool({ name: "workspace.search", arguments: { query: "hypothesis" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(search.ok, true);
     assert.equal(search.trust, "untrusted_content");
+    const diff = await executeResearchTool({ name: "git.diff" }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(diff.ok, true);
+    assert.equal(diff.trust, "untrusted_content");
+    assert.match(diff.output.diff, /notes\.txt|^$/);
     const malformedArguments = await executeResearchTool({ name: "workspace.search", arguments: { query: 42 } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(malformedArguments.ok, false);
     assert.match(malformedArguments.error, /query.*required.*string/);
