@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `348050d` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `99fae86` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -144,6 +144,8 @@ external evaluator.
 - Hypotheses now carry up to eight bounded assumptions; those assumptions are
   persisted and included in executable-idea fingerprints, so transfer and
   deduplication cannot silently erase different validity conditions.
+- Each assumption is capped at 1,000 characters at the schema boundary, keeping
+  transfer conditions auditable and preventing unbounded context growth.
 - Latest verified baseline: 397/397 tests passing, TypeScript check passing,
   and build passing. The worktree is clean; generated reports remain excluded
   from source changes.
