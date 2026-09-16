@@ -58,8 +58,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `47513c9` plus the current
-  uncommitted posterior stopping work (update this hash after committing).
+- Latest pushed state: `origin/master` at commit `69506f4` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
