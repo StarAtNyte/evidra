@@ -52,6 +52,7 @@ Most coding agents optimize for one conversation and one code change. Evidra is 
 - **Span-level literature provenance.** Retrieved claims retain the exact excerpt and character offsets from the hashed source alongside the claim text, so literature-derived hypotheses can be audited back to source material instead of relying on an untraceable summary.
 - **Stale-claim quarantine.** Refreshing a source retires claims linked to the superseded content hash; they remain available as historical negative evidence but are excluded from active research memory.
 - **Active-conflict accounting.** Contradiction pressure is calculated only from active claim endpoints, so refreshed or invalidated literature cannot keep autonomous allocation permanently stuck in an obsolete conflict state.
+- Duplicate-claim pressure follows the same rule: historical duplicate events are retained, but only findings involving active claims influence allocation, audits, and reports.
 - **Concurrent lane safety.** The SQLite store uses WAL and a bounded writer wait, so parallel Codex lanes can record observations and traces without turning brief writer contention into lost research evidence.
 - **Bounded autonomy.** A campaign has an ultimate goal, internal phase goals, a budget, and a stopping condition. It pauses when genuinely blocked and can resume later.
 - **Reproducible execution.** Experiment manifests, Git worktrees, run metadata, metrics, logs, checksums, and environment snapshots make results inspectable.

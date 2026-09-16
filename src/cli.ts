@@ -19,7 +19,7 @@ import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.
 import { externalSubmissionId, pollSubmissionScore, submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
 import { renderTimeline } from "./core/timeline.js";
-import { activeContradictionEdges, latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
+import { activeContradictionEdges, activeDuplicateClaimCount, latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
 import { detectStagnation } from "./core/stagnation.js";
 import { assessStopPolicy } from "./core/stop-policy.js";
 import { classifyVerifier } from "./core/formal-verification.js";
@@ -2228,7 +2228,7 @@ research
       store.appendEvent("research.capability_route", { route, predictedTier: route.tier, servedProvider: options.provider, servedModel: selectedModel, recentQuality });
       const evidenceConflicts = {
         contradictions: activeContradictionEdges(store).length,
-        duplicates: store.recentEvents(200).filter((event) => event.type === "evidence.claim.duplicate_detected").length,
+        duplicates: activeDuplicateClaimCount(store),
       };
       const predictionEvent = store.eventsByType("prediction.analysis.completed").at(-1);
       const predictionPayload = predictionEvent?.payload && typeof predictionEvent.payload === "object" ? predictionEvent.payload as { analysis?: { errorRate?: unknown; worstSlices?: unknown[]; worstGroups?: unknown[] } } : undefined;

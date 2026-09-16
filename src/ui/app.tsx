@@ -51,7 +51,7 @@ import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "../core/execution-stages.js";
 import { runReducedValidation } from "../core/stage-executor.js";
 import { renderTimeline } from "../core/timeline.js";
-import { activeContradictionEdges, latestSourceEntries, researchMemoryContext } from "../core/research-context.js";
+import { activeContradictionEdges, activeDuplicateClaimCount, latestSourceEntries, researchMemoryContext } from "../core/research-context.js";
 import { detectStagnation } from "../core/stagnation.js";
 import { assessStopPolicy } from "../core/stop-policy.js";
 import { applyCriticGate } from "../core/critic-gate.js";
@@ -828,7 +828,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const consistencyEvents = store.recentEvents(200);
     const evidenceConflicts = {
       contradictions: activeContradictionEdges(store).length,
-      duplicates: consistencyEvents.filter((event) => event.type === "evidence.claim.duplicate_detected").length,
+      duplicates: activeDuplicateClaimCount(store),
     };
     const researchMemory = researchMemoryContext(store, 30, objective);
     store.appendEvent("research.memory.retrieved", { ...researchMemory.retrieval, context: "tui-research" });

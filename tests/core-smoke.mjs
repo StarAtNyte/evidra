@@ -48,7 +48,7 @@ import { evaluateReducedPromotion, experimentNovelty, rankExperimentCandidates, 
 import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
 import { renderReport } from "../dist/core/reports.js";
-import { activeContradictionEdges, latestSourceEntries, latestSourcePayloads, repositoryLeadsFromEvents, researchMemoryContext } from "../dist/core/research-context.js";
+import { activeContradictionEdges, activeDuplicateClaimCount, latestSourceEntries, latestSourcePayloads, repositoryLeadsFromEvents, researchMemoryContext } from "../dist/core/research-context.js";
 import { buildFalsificationAgenda } from "../dist/core/falsification-agenda.js";
 import { playbookFromMethod, verifiedPlaybooksFromEvents } from "../dist/core/playbooks.js";
 import { failedDirectionsFromExperiments } from "../dist/core/failure-memory.js";
@@ -4354,6 +4354,7 @@ test("source refresh retires claims from the superseded source hash", () => {
     assert.equal(memory.claims.some((claim) => claim.id === "claim-old"), false);
     assert.equal(memory.quarantinedClaims.some((claim) => claim.id === "claim-old"), true);
     assert.equal(activeContradictionEdges(store).length, 0);
+    assert.equal(activeDuplicateClaimCount(store), 0);
     assert.equal(store.recentEvents(20).some((event) => event.type === "research.claims.retired"), true);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }

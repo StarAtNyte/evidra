@@ -18,6 +18,18 @@ export function activeContradictionEdges(store: ResearchStore): ReturnType<Resea
   return store.edges().filter((edge) => edge.relation === "contradicts" && statusById.get(edge.fromId) === "active" && statusById.get(edge.toId) === "active");
 }
 
+/** Count duplicate findings that still involve an active claim. */
+export function activeDuplicateClaimCount(store: ResearchStore): number {
+  const activeClaims = new Set(store.claims().flatMap((claim) => {
+    const status = claim.payload && typeof claim.payload === "object" ? (claim.payload as { status?: unknown }).status : undefined;
+    return status === "superseded" || status === "invalidated" ? [] : [claim.id];
+  }));
+  return store.eventsByType("evidence.claim.duplicate_detected").filter((event) => {
+    const claimId = event.payload && typeof event.payload === "object" ? (event.payload as { claimId?: unknown }).claimId : undefined;
+    return typeof claimId !== "string" || activeClaims.has(claimId);
+  }).length;
+}
+
 export interface ResearchMemoryContext {
   claims: Array<{ id: string; statement: string; scope: string; confidence: number; sourceType: string; sourceId: string; status: string }>;
   /** Retained for audit and negative evidence, but never mixed into active claims. */

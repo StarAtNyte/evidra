@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { ResearchStore } from "./store.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "./claim-audit.js";
 import { redactCommand } from "./redaction.js";
-import { activeContradictionEdges, researchMemoryContext } from "./research-context.js";
+import { activeContradictionEdges, activeDuplicateClaimCount, researchMemoryContext } from "./research-context.js";
 import { sourceFrontier } from "./sources.js";
 
 export type ReportKind = "research" | "challenge" | "final";
@@ -40,7 +40,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const routingEvents = store.eventsByType("research.capability_outcome");
   const experienceEvents = store.eventsByType("research.experience.recorded");
   const contradictionEdges = activeContradictionEdges(store);
-  const duplicateEvents = store.eventsByType("evidence.claim.duplicate_detected");
+  const duplicateEvents = activeDuplicateClaimCount(store);
   const conflictedClaimIds = new Set(contradictionEdges.flatMap((edge) => [edge.fromId, edge.toId]));
   const claimAudit = auditClaims({
     claims: claims.map((claim) => ({ id: claim.id, payload: claim.payload })),
@@ -92,8 +92,8 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   sections.push("", "## Decisions", "", decisions.length ? decisions.map((decision) => `- ${decision.id} · ${decision.createdAt}\n  ${line(decision.payload)}`).join("\n") : "No decisions recorded.");
   sections.push("", "## Evidence claims", "", claims.length ? claims.slice(0, 80).map((claim) => `- ${claim.id}: ${line((claim.payload as { statement?: string }).statement ?? claim.payload)}`).join("\n") : "No claims recorded.");
   sections.push("", "## Claim verification audit", "", `Publishable: ${claimAudit.publishable ? "yes" : "no"}\nVerified: ${claimAudit.verified} · provisional: ${claimAudit.provisional} · literature-only: ${claimAudit.literatureOnly} · unsupported: ${claimAudit.unsupported} · conflicted: ${claimAudit.conflicted}`, claimAudit.entries.length ? claimAudit.entries.slice(0, 80).map((entry) => `- ${entry.status.toUpperCase()} ${entry.id} · ${entry.reasons.join("; ")}`).join("\n") : "No claims available for audit.");
-  sections.push("", "## Evidence consistency", "", contradictionEdges.length || duplicateEvents.length
-    ? [`Contradiction edges: ${contradictionEdges.length}`, ...contradictionEdges.slice(0, 40).map((edge) => `- ${edge.fromId} contradicts ${edge.toId} · review required`), `Duplicate findings in recent events: ${duplicateEvents.length}`].join("\n")
+  sections.push("", "## Evidence consistency", "", contradictionEdges.length || duplicateEvents
+    ? [`Contradiction edges: ${contradictionEdges.length}`, ...contradictionEdges.slice(0, 40).map((edge) => `- ${edge.fromId} contradicts ${edge.toId} · review required`), `Duplicate findings involving active claims: ${duplicateEvents}`].join("\n")
     : "No recorded duplicate or contradiction findings.");
   sections.push("", "## Trajectory quality", "", trajectories.length ? trajectories.map((trajectory) => {
     const quality = trajectory.quality as { overall?: string; [key: string]: unknown };
