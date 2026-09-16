@@ -3056,6 +3056,9 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.equal(sourceBoundary.trust, "permission_boundary");
     assert.doesNotMatch(sourceBoundary.error, /inspection tools only/);
     assert.match(sourceBoundary.error, /private or loopback/);
+    const invalidSourceKind = await executeResearchTool({ name: "source.retrieve", arguments: { url: "https://example.org/source", kind: "made-up" } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(invalidSourceKind.ok, false);
+    assert.match(invalidSourceKind.error, /supported research channel kind/);
     const channelStore = new ResearchStore(db);
     channelStore.saveSource({ id: "cached-discussion", payload: { id: "cached-discussion", url: "https://example.org/discussion", title: "Cached discussion", retrievedAt: new Date().toISOString(), contentHash: "sha256:discussion", channelKind: "discussion", claims: [] } });
     channelStore.close();
