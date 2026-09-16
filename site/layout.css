@@ -1,2 +1,14 @@
-.terminal-section,.install-section{margin-left:255px}
-@media(max-width:850px){.terminal-section,.install-section{margin-left:0}}
+:root{--content-indent:255px;--content-gap:80px}
+.shell{width:min(1340px,calc(100% - 48px))}
+.system-heading,.loop-heading,.demos-heading{margin-left:var(--content-indent);gap:var(--content-gap)}
+.feature-grid,.loop-track,.technique-grid{margin-left:var(--content-indent)}
+.terminal-section,.install-section{margin-left:var(--content-indent);gap:var(--content-gap)}
+.technique-footer{margin-left:var(--content-indent)}
+.section h2{margin-bottom:28px}
+.section-lede,.system-heading p,.loop-heading p,.demos-heading p,.terminal-intro p,.install-copy p{line-height:1.75}
+.feature p,.technique-grid p{line-height:1.7}
+@media(max-width:850px){
+  :root{--content-indent:0px;--content-gap:35px}
+  .shell{width:min(calc(100% - 36px),600px)}
+  .system-heading,.loop-heading,.demos-heading,.feature-grid,.loop-track,.terminal-section,.install-section,.technique-grid,.technique-footer{margin-left:0}
+}
