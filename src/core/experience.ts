@@ -193,14 +193,52 @@ export function capabilityProfile(records: ExperienceRecord[]): CapabilityProfil
   return profile;
 }
 
+function tierOf(item: ExperienceRecord): number {
+  return item.routing?.predictedTier ? Number(item.routing.predictedTier.slice(1)) : 0;
+}
+
+function retrospectiveDifficulty(item: ExperienceRecord): number {
+  const outcome = item.outcome.status === "failure" ? 4 : item.outcome.status === "partial" ? 2 : item.outcome.status === "unknown" ? 1 : 0;
+  const quality = item.quality.overall === "FAIL" ? 3 : item.quality.overall === "WARN" ? 1 : 0;
+  return outcome + quality + Math.min(4, item.gaps.length) + tierOf(item);
+}
+
+function experienceSignature(item: ExperienceRecord): Set<string> {
+  return new Set([
+    `task:${item.scene.task}`,
+    `domain:${item.scene.domain}`,
+    `outcome:${item.outcome.status}`,
+    `tier:${item.routing?.predictedTier ?? "unknown"}`,
+    ...item.gaps.slice(0, 4).map((gap) => `gap:${gap}`),
+  ]);
+}
+
+/** Select a deterministic difficult-and-diverse coreset for retrospective replay. */
+export function selectRetrospectiveCoreset(records: ExperienceRecord[], limit = 12): ExperienceRecord[] {
+  const usable = records.filter((item) => item.admission !== "quarantined");
+  const bounded = Math.max(0, Math.min(256, Math.floor(limit)));
+  const remaining = new Set(usable);
+  const selected: ExperienceRecord[] = [];
+  while (selected.length < bounded && remaining.size) {
+    const selectedSignatures = selected.map(experienceSignature);
+    const next = [...remaining].sort((left, right) => {
+      const novelty = (candidate: ExperienceRecord): number => {
+        const signature = experienceSignature(candidate);
+        return signature.size - selectedSignatures.reduce((overlap, prior) => overlap + [...signature].filter((value) => prior.has(value)).length, 0);
+      };
+      return retrospectiveDifficulty(right) + novelty(right) * 1.5 - (retrospectiveDifficulty(left) + novelty(left) * 1.5) || retrospectiveDifficulty(right) - retrospectiveDifficulty(left) || left.trajectoryId.localeCompare(right.trajectoryId);
+    })[0];
+    if (!next) break;
+    selected.push(next);
+    remaining.delete(next);
+  }
+  return selected;
+}
+
 /** Select a three-stage mixture: bounded coverage, broad coverage, then high-demand replay. */
 export function selectCurriculum(records: ExperienceRecord[], limit = 12): CurriculumSelection[] {
   const usable = records.filter((item) => item.admission !== "quarantined");
-  const ordered = [...usable].sort((a, b) => {
-    const tier = (item: ExperienceRecord) => item.routing?.predictedTier ? Number(item.routing.predictedTier.slice(1)) : 0;
-    return tier(a) - tier(b) || a.trajectoryId.localeCompare(b.trajectoryId);
-  });
-  const capped = ordered.slice(0, Math.max(0, limit));
+  const capped = selectRetrospectiveCoreset(usable, limit);
   const first = capped.filter((item) => !item.routing?.predictedTier || item.routing.predictedTier === "C0" || item.routing.predictedTier === "C1").slice(0, Math.ceil(capped.length / 3));
   const remaining = capped.filter((item) => !first.includes(item));
   const second = remaining.slice(0, Math.ceil(capped.length / 3));

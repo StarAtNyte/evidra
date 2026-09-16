@@ -41,7 +41,7 @@ import { runReducedValidation } from "../dist/core/stage-executor.js";
 import { createToolTraceRecorder, evaluateTrajectory, MAX_TRACE_BYTES, MAX_TRACE_EVENTS, parsePersistedTrace, capabilityGaps, providerActivityFailureClass, researchToolFailureClass, validateTrajectoryStructure } from "../dist/core/trajectories.js";
 import { recoverUncommittedTraceFiles } from "../dist/core/trajectory-recovery.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
-import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, selectCurriculum } from "../dist/core/experience.js";
+import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, selectCurriculum, selectRetrospectiveCoreset } from "../dist/core/experience.js";
 import { allocateNextResearch } from "../dist/core/allocation.js";
 import { evaluateReducedPromotion, experimentNovelty, rankExperimentCandidates, rankPriorities, retryRouteIsNew } from "../dist/core/scheduler.js";
 import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
@@ -896,6 +896,14 @@ test("experience ledger quarantines malformed traces and selects a curriculum", 
   assert.equal(malformed.admission, "quarantined");
   assert.equal(experienceJsonl([record, malformed]).trim().split("\n").length, 1);
   assert.equal(experienceJsonl([record, malformed], true).trim().split("\n").length, 1);
+});
+
+test("retrospective replay selects difficult and diverse experiences deterministically", () => {
+  const quality = (overall) => ({ overall, structural: {}, goalAttainment: {}, instructionAdherence: {}, toolUse: {}, executionAlignment: {}, evidenceConsistency: {}, errorRecovery: {}, termination: {}, safetyControl: {} });
+  const make = (id, domain, outcome, gaps, tier = "C1") => ({ trajectoryId: id, admission: "candidate", scene: { task: "research", domain, context: "test", askingOrDoing: "doing" }, goal: { objective: id, acceptance: "verified", relation: "new" }, outcome: { status: outcome, evidence: [] }, quality: quality(outcome === "failure" ? "FAIL" : "WARN"), routing: { predictedTier: tier }, gaps, events: [] });
+  const records = [make("easy-a", "same", "success", []), make("hard-a", "same", "failure", ["toolUse", "recovery"], "C3"), make("hard-b", "different", "partial", ["evidence"], "C2")];
+  assert.deepEqual(selectRetrospectiveCoreset(records, 2).map((record) => record.trajectoryId), ["hard-a", "hard-b"]);
+  assert.deepEqual(selectRetrospectiveCoreset(records, 2).map((record) => record.trajectoryId), selectRetrospectiveCoreset(records, 2).map((record) => record.trajectoryId));
 });
 
 test("critic gate converts terminal and execution decisions into inspection", () => {
