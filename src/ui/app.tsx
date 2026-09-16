@@ -157,7 +157,14 @@ const COMMANDS = [
   ["/login", "Authenticate or check provider access"],
   ["/exit", "Quit Evidra"],
 ] as const;
-const LOGO = "EVIDRA";
+const LOGO = [
+  "███████╗██╗   ██╗██╗██████╗ ██████╗  █████╗ ",
+  "██╔════╝██║   ██║██║██╔══██╗██╔══██╗██╔══██╗",
+  "█████╗  ██║   ██║██║██║  ██║██████╔╝███████║",
+  "██╔══╝  ╚██╗ ██╔╝██║██║  ██║██╔══██╗██╔══██║",
+  "███████╗ ╚████╔╝ ██║██████╔╝██║  ██║██║  ██║",
+  "╚══════╝  ╚═══╝  ╚═╝╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝",
+].join("\n");
 const REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
 const AGENT_ROLES = ["research director", "domain researcher", "method researcher", "data detective", "validation scientist", "model researcher", "ensemble scientist", "reproducibility engineer", "experiment engineer", "critic", "repair agent"] as const;
 const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
@@ -3567,7 +3574,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   return <Box flexDirection="column" padding={1}>
     <Static items={[LOGO]}>
       {(logo) => <Box key="evidra-logo" paddingX={2} flexDirection="column">
-        <Text color="white" bold>{logo}</Text>
+        <Text color="#8b6cff" bold>{(process.stdout.columns ?? 80) >= 52 ? logo : "EVIDRA"}</Text>
       </Box>}
     </Static>
     <Box paddingX={2}>
