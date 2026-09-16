@@ -1,4 +1,6 @@
 :root{--content-indent:255px;--content-gap:80px}
+.brand-mark{font-size:0;background:transparent;color:var(--purple);border-radius:0;position:relative;width:27px;height:29px;border-left:2px solid var(--purple);border-block:2px solid var(--purple)}
+.brand-mark::after{content:"";position:absolute;left:0;top:50%;width:20px;height:2px;background:var(--lime);transform:translateY(-50%)}
 .shell{width:min(1340px,calc(100% - 48px))}
 .system-heading,.loop-heading,.demos-heading{margin-left:var(--content-indent);gap:var(--content-gap)}
 .feature-grid,.loop-track,.technique-grid{margin-left:var(--content-indent)}
