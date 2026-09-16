@@ -317,6 +317,21 @@ async function implementCampaignHypothesis(
 
 type ControllerDirective = "run" | "pause" | "stop";
 
+type ModalControllerControl = { action?: string; status?: string; requestId?: string; requestedAt?: number; appliedAt?: number; appliedBy?: number };
+
+function acknowledgeModalControllerControl(action: "pause" | "resume" | "stop"): void {
+  const path = process.env.EVIDRA_CONTROLLER_CONTROL_FILE;
+  if (!path || !existsSync(path)) return;
+  try {
+    const payload = JSON.parse(readFileSync(path, "utf8")) as ModalControllerControl;
+    if (payload.action !== action || payload.status === "applied") return;
+    writeFileSync(path, JSON.stringify({ ...payload, status: "applied", appliedAt: Date.now() / 1000, appliedBy: process.pid }));
+  } catch {
+    // The next safe boundary will retry the acknowledgement. A malformed or
+    // concurrently replaced request must never stop the research loop.
+  }
+}
+
 function controllerDirective(): ControllerDirective {
   // Local controllers are controlled through the durable lease. Modal uses a
   // small control file because its controller and client have separate
@@ -335,8 +350,12 @@ function controllerDirective(): ControllerDirective {
   const path = process.env.EVIDRA_CONTROLLER_CONTROL_FILE;
   if (!path || !existsSync(path)) return "run";
   try {
-    const payload = JSON.parse(readFileSync(path, "utf8")) as { action?: string };
-    return payload.action === "pause" || payload.action === "stop" ? payload.action : "run";
+    const payload = JSON.parse(readFileSync(path, "utf8")) as ModalControllerControl;
+    // A pause is intentionally durable across controller restarts. A stop is
+    // terminal and must be acknowledged before exit, otherwise a restarted
+    // Modal function would immediately stop again on the old request.
+    if (payload.status === "applied" && payload.action === "pause") return "pause";
+    return payload.status === "applied" ? "run" : payload.action === "pause" || payload.action === "stop" ? payload.action : "run";
   } catch {
     return "run";
   }
@@ -350,12 +369,14 @@ async function waitForControllerDirective(onPause?: () => void, onResume?: () =>
     if (directive === "pause") {
       if (!paused) {
         paused = true;
+        acknowledgeModalControllerControl("pause");
         onPause?.();
       }
       await new Promise((resolve) => setTimeout(resolve, 5_000));
       continue;
     }
     if (paused) onResume?.();
+    if (paused) acknowledgeModalControllerControl("resume");
     return "run";
   }
 }
@@ -2017,6 +2038,7 @@ research
         },
       );
       if (directive === "stop") {
+        acknowledgeModalControllerControl("stop");
         campaign.status = "completed";
         const stoppedStore = new ResearchStore(statePath);
         stoppedStore.saveCampaign(campaign);

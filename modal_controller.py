@@ -77,7 +77,14 @@ def inspect_state() -> dict[str, object]:
 def set_control(action: str) -> str:
     if action not in {"pause", "resume", "stop"}:
         raise ValueError("Controller action must be pause, resume, or stop")
-    Path("/state/controller-control.json").write_text(json.dumps({"action": action}), encoding="utf-8")
+    target = Path("/state/controller-control.json")
+    # Replace the request atomically. A controller may read this file while a
+    # client is issuing a new command; partial JSON must never look like a
+    # transient network failure or silently lose a control request.
+    payload = {"requestId": f"modal-{time.time_ns()}", "action": action, "status": "requested", "requestedAt": time.time()}
+    temporary = target.with_name(f".{target.name}.tmp")
+    temporary.write_text(json.dumps(payload), encoding="utf-8")
+    temporary.replace(target)
     STATE_VOLUME.commit()
     return action
 
