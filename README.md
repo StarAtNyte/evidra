@@ -53,6 +53,7 @@ Most coding agents optimize for one conversation and one code change. Evidra is 
 - **Stale-claim quarantine.** Refreshing a source retires claims linked to the superseded content hash; they remain available as historical negative evidence but are excluded from active research memory.
 - **Active-conflict accounting.** Contradiction pressure is calculated only from active claim endpoints, so refreshed or invalidated literature cannot keep autonomous allocation permanently stuck in an obsolete conflict state.
 - Duplicate-claim pressure follows the same rule: historical duplicate events are retained, but only findings involving active claims influence allocation, audits, and reports.
+- When duplicate provenance identifies both claims, both endpoints must still be active before the finding contributes pressure; anonymous legacy events remain conservative.
 - Active-claim resolution also checks linked source lifecycle state, so older databases with superseded sources cannot reintroduce stale literature claims after restart.
 - **Concurrent lane safety.** The SQLite store uses WAL and a bounded writer wait, so parallel Codex lanes can record observations and traces without turning brief writer contention into lost research evidence.
 - **Bounded autonomy.** A campaign has an ultimate goal, internal phase goals, a budget, and a stopping condition. It pauses when genuinely blocked and can resume later.

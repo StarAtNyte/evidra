@@ -33,8 +33,10 @@ export function activeContradictionEdges(store: ResearchStore): ReturnType<Resea
 export function activeDuplicateClaimCount(store: ResearchStore): number {
   const activeClaims = activeClaimIds(store);
   return store.eventsByType("evidence.claim.duplicate_detected").filter((event) => {
-    const claimId = event.payload && typeof event.payload === "object" ? (event.payload as { claimId?: unknown }).claimId : undefined;
-    return typeof claimId !== "string" || activeClaims.has(claimId);
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as { claimId?: unknown; duplicateOf?: unknown } : {};
+    const claimActive = typeof payload.claimId !== "string" || activeClaims.has(payload.claimId);
+    const duplicateActive = typeof payload.duplicateOf !== "string" || activeClaims.has(payload.duplicateOf);
+    return claimActive && duplicateActive;
   }).length;
 }
 

@@ -4347,7 +4347,9 @@ test("source refresh retires claims from the superseded source hash", () => {
     store.saveClaim({ id: "claim-old", payload: { statement: "The old source reports a reproducible validation result.", scope: "https://example.com/paper", confidence: 0.35, sourceType: "literature", sourceId: "source-old", status: "active" } });
     store.saveClaim({ id: "claim-other", payload: { statement: "The old source does not report a reproducible validation result.", scope: "https://example.com/other", confidence: 0.35, sourceType: "literature", sourceId: "source-other", status: "active" } });
     store.saveEdge({ id: "contradiction-old-other", fromId: "claim-old", toId: "claim-other", relation: "contradicts", confidence: 0.5, evidenceIds: ["claim-old", "claim-other"] });
+    store.appendEvent("evidence.claim.duplicate_detected", { claimId: "claim-old", duplicateOf: "claim-other" });
     assert.equal(activeContradictionEdges(store).length, 1);
+    assert.equal(activeDuplicateClaimCount(store), 1);
     store.saveSource({ id: "source-new", payload: { title: "Paper v2", url: "https://example.com/paper", claims: ["new"] } });
     assert.equal(store.claims().find((claim) => claim.id === "claim-old")?.payload.status, "superseded");
     const memory = researchMemoryContext(store, 10);
