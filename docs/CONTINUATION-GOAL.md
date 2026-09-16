@@ -58,7 +58,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `952b48a` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `e491a1b` (verify with `git log`).
 - Competition manifests now support typed `researchChannels` for rules,
   discussions, leaderboards, documentation, papers, and repositories. CLI/TUI
   ingestion deduplicates legacy URLs, persists channel kind with source hashes,
@@ -701,8 +701,8 @@ external evaluator.
   checkout and never applying the fallback to workspace-write engineers.
 - Codex campaigns with multiple lanes now discover a bounded pool of authenticated
   models, keep the configured model as the primary route, assign alternatives
-  deterministically to independent lanes, and exclude Astra from that automatic
-  pool unless a future policy explicitly opts in.
+  deterministically to independent lanes, and exclude Astra from automatic
+  diversification while preserving an explicitly selected Astra primary route.
 - Codex research timeouts now receive one bounded alternate-route replan while
   campaign budget remains; a second timeout or budget exhaustion pauses the
   campaign with the failure trajectory preserved.
