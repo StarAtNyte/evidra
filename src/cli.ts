@@ -889,7 +889,11 @@ benchmark.command("score")
     }
     console.log("Harness benchmark · task-balanced evidence score");
     console.log("Harness                 Tasks  Trials  Score  Lower95  Valid  Improve  Repro  Align  TimeEff  Failures");
-    for (const scorecard of scorecards) console.log(`${scorecard.harness.padEnd(23).slice(0, 23)} ${String(scorecard.tasks).padStart(5)} ${String(scorecard.trials).padStart(7)} ${scorecard.competitiveScore.toFixed(1).padStart(6)} ${scorecard.competitiveScoreLower95.toFixed(1).padStart(8)} ${(scorecard.validRunRate * 100).toFixed(0).padStart(5)}% ${(scorecard.improvementRate * 100).toFixed(0).padStart(7)}% ${(scorecard.reproducibilityRate * 100).toFixed(0).padStart(5)}% ${scorecard.executionAlignmentRate === null ? "n/a" : `${(scorecard.executionAlignmentRate * 100).toFixed(0)}%`.padStart(5)} ${scorecard.meanTimeEfficiency === null ? "n/a" : `${(scorecard.meanTimeEfficiency * 100).toFixed(0)}%`.padStart(7)} ${Object.entries(scorecard.failureProfile).map(([name, count]) => `${name}=${count}`).join(",") || "-"}`);
+    for (const scorecard of scorecards) {
+      console.log(`${scorecard.harness.padEnd(23).slice(0, 23)} ${String(scorecard.tasks).padStart(5)} ${String(scorecard.trials).padStart(7)} ${scorecard.competitiveScore.toFixed(1).padStart(6)} ${scorecard.competitiveScoreLower95.toFixed(1).padStart(8)} ${(scorecard.validRunRate * 100).toFixed(0).padStart(5)}% ${(scorecard.improvementRate * 100).toFixed(0).padStart(7)}% ${(scorecard.reproducibilityRate * 100).toFixed(0).padStart(5)}% ${scorecard.executionAlignmentRate === null ? "n/a" : `${(scorecard.executionAlignmentRate * 100).toFixed(0)}%`.padStart(5)} ${scorecard.meanTimeEfficiency === null ? "n/a" : `${(scorecard.meanTimeEfficiency * 100).toFixed(0)}%`.padStart(7)} ${Object.entries(scorecard.failureProfile).map(([name, count]) => `${name}=${count}`).join(",") || "-"}`);
+      const passAtK = Object.entries(scorecard.passAtK).map(([k, value]) => `pass@${k}=${value === null ? "n/a" : `${(value * 100).toFixed(0)}%`}`).join(" ");
+      console.log(`  ${passAtK}`);
+    }
   });
 benchmark.command("literature-score")
   .argument("<file>", "JSON file containing { tasks: [...], observations: [...] }")
