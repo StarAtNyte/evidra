@@ -287,6 +287,7 @@ Implemented today:
 - director turns receive a compact controller-owned verified-state projection showing satisfied criteria, durable evidence IDs, blockers, and the audit fingerprint; it is derived from audits and cannot be authored by the provider;
 - before every director replan after a tool batch, that verified-state projection is refreshed from durable controller state, preventing stale phase progress from persisting across long tool loops;
 - the director refresh boundary is integration-tested: provider output cannot replace the projection, and the next request receives the controller's newly observed audit fingerprint;
+- runtime tool results are normalized at the provider/controller boundary: malformed names, status fields, trust labels, and warning payloads become explicit controller failures instead of contaminating evidence or silently weakening provenance;
 - the same typed failure pressure is applied to capability routing in both the CLI and TUI, increasing verification demand and constraining fan-out consistently across interfaces;
 - retryable research-lane transport and timeout failures select an untried configured provider/model route before repeating a route, while single-route setups retain bounded retries and preserve the original failure as evidence;
 - director synthesis receives the same route pool and applies the same bounded untried-route recovery, avoiding a full-cycle replay on a failed model;

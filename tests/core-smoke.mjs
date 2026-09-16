@@ -2879,6 +2879,16 @@ test("research tool boundaries protect sensitive paths and credentials", () => {
   rmSync(storeRoot, { recursive: true, force: true });
 });
 
+test("research tool result normalization rejects malformed runtime contracts", () => {
+  const malformed = normalizeResearchToolResult({ name: "workspace.read", ok: "yes", trust: "made-up" });
+  assert.equal(malformed.ok, false);
+  assert.equal(malformed.trust, "controller_observation");
+  assert.match(malformed.error, /malformed result contract/);
+  const valid = normalizeResearchToolResult({ name: "workspace.read", ok: false, error: "blocked", trust: "permission_boundary", securityWarnings: ["injection", 4] });
+  assert.equal(valid.trust, "permission_boundary");
+  assert.deepEqual(valid.securityWarnings, ["injection"]);
+});
+
 test("durable queue worker bounds concurrency and retries failures", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-worker-"));
   try {
