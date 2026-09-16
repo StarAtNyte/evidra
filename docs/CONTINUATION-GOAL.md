@@ -58,7 +58,10 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `8d9b53a` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `2d7a40f` (verify with `git log`).
+- Read-only `shell.exec` now preserves command output while marking nonzero
+  exits as failed tool results, ensuring the director replans after failed
+  tests, benchmarks, or inspections.
 - Controller decision audits now reject duplicate hypothesis titles and
   selections that are absent from the exact typed decision payload, preventing
   ambiguous provider output from driving execution.
