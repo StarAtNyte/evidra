@@ -53,6 +53,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
       ...claims.map((claim) => claim.id),
       ...selfDescribingClaimEvidenceIds(claims),
     ]),
+    literatureEvidenceIds: new Set(sources.map((source) => source.id)),
     conflictedClaimIds,
   });
   const title = kind === "research" ? "Research report" : kind === "challenge" ? "Challenge report" : "Final provenance report";

@@ -299,6 +299,7 @@ Implemented today:
 - fast and YOLO TUI campaigns can run a bounded fresh-lane peer-review pass over contested findings before director synthesis; safe mode stays single-pass and read-only;
 - TUI and CLI now grade literature evidence with the same quality, claim-coverage, and provenance-diversity signals;
 - paper-derived adaptations require retrieved source claims before they can enter the durable research graph;
+- claim audits also resolve provenance against controller-owned source records, so relabeling a literature source as an observation cannot promote it into verified workspace evidence;
 - TUI trajectories preserve the synthesized cross-pollination board and its evidence/agreement metrics for replay and audit;
 - Escape cancellation is wired through TUI critic, lane, and director processes, so interruption stops the active provider work;
 - CLI trajectories preserve the synthesized cross-pollination board for the same replay and audit parity as the TUI;

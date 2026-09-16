@@ -25,6 +25,8 @@ export interface ClaimAuditInput {
   claims: Array<{ id: string; payload: unknown }>;
   /** IDs of durable objects that can substantiate a claim's sourceId. */
   knownEvidenceIds: Set<string>;
+  /** Controller-derived source IDs whose durable object is literature, regardless of model labels. */
+  literatureEvidenceIds?: Set<string>;
   /** Claim IDs participating in contradiction edges. */
   conflictedClaimIds?: Set<string>;
 }
@@ -59,9 +61,11 @@ export function auditClaims(input: ClaimAuditInput): ClaimAuditReport {
     if (!statement || !sourceId || !input.knownEvidenceIds.has(sourceId)) {
       status = "unsupported";
       reasons.push(!statement ? "claim has no statement" : !sourceId ? "claim has no provenance source" : `provenance source '${sourceId}' is not durable`);
-    } else if (sourceType === "literature") {
+    } else if (sourceType === "literature" || input.literatureEvidenceIds?.has(sourceId)) {
       status = "literature_only";
-      reasons.push("literature can motivate a hypothesis but does not verify a workspace result");
+      reasons.push(input.literatureEvidenceIds?.has(sourceId) && sourceType !== "literature"
+        ? "claim provenance resolves to a literature source; model labels cannot promote it to workspace evidence"
+        : "literature can motivate a hypothesis but does not verify a workspace result");
     } else if (sourceType === "external_score" || (confidence >= 0.8 && ["observation", "run", "experiment", "review"].includes(sourceType))) {
       status = "verified";
       reasons.push(sourceType === "external_score" ? "external score is durably recorded" : "durable workspace evidence meets the confidence threshold");

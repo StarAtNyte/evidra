@@ -1358,6 +1358,7 @@ test("claim audit separates measured, literature, unsupported, and conflicted ev
       { id: "conflict", payload: { statement: "conflicted score", confidence: 0.9, sourceType: "experiment", sourceId: "run-2" } },
     ],
     knownEvidenceIds: new Set(["run-1", "run-2", "paper-1"]),
+    literatureEvidenceIds: new Set(["paper-1"]),
     conflictedClaimIds: new Set(["conflict"]),
   });
   assert.equal(report.verified, 2);
@@ -1365,6 +1366,17 @@ test("claim audit separates measured, literature, unsupported, and conflicted ev
   assert.equal(report.unsupported, 1);
   assert.equal(report.conflicted, 1);
   assert.equal(report.publishable, false);
+});
+
+test("claim audit cannot promote a literature source through a model relabel", () => {
+  const report = auditClaims({
+    claims: [{ id: "relabelled", payload: { statement: "paper result", confidence: 1, sourceType: "observation", sourceId: "paper-1" } }],
+    knownEvidenceIds: new Set(["paper-1"]),
+    literatureEvidenceIds: new Set(["paper-1"]),
+  });
+  assert.equal(report.verified, 0);
+  assert.equal(report.literatureOnly, 1);
+  assert.match(report.entries[0].reasons[0], /model labels cannot promote/);
 });
 
 test("critic approval is downgraded when required checks remain", () => {
