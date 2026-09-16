@@ -58,7 +58,10 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `f5b277d` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `80da60a` (verify with `git log`).
+- Source refreshes now cascade retirement to claims linked to the superseded
+  content hash; stale literature remains auditable as history but is excluded
+  from active research memory.
 - Literature claim ingestion now retains exact source excerpts and character
   spans alongside each durable claim, in both CLI and TUI paths, while keeping
   the existing string-list source schema compatible.
