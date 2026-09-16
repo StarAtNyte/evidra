@@ -576,17 +576,35 @@ export async function retrieveSource(url: string, signal?: AbortSignal): Promise
   return { ...source, contentType, text, excerpt: text.slice(0, 1200) };
 }
 
-export function sourceClaims(text: string, limit = 12): string[] {
-  return text
-    .split(/(?<=[.!?])\s+/)
-    .map((sentence) => sentence.trim())
-    .filter((sentence) => sentence.length >= 50 && sentence.length <= 500)
+export interface SourceClaimRecord {
+  statement: string;
+  excerpt: string;
+  start: number;
+  end: number;
+}
+
+/** Extract bounded claims while retaining their exact source spans for audit. */
+export function sourceClaimRecords(text: string, limit = 12): SourceClaimRecord[] {
+  const records: SourceClaimRecord[] = [];
+  for (const match of text.matchAll(/[^.!?]+(?:[.!?]+|$)/g)) {
+    const raw = match[0] ?? "";
+    const statement = raw.trim();
+    const leading = raw.search(/\S/);
+    const start = (match.index ?? 0) + Math.max(0, leading);
+    if (statement.length < 50 || statement.length > 500) continue;
     // Retrieved text is evidence material, never an instruction channel. Do
     // not let prompt-injection or operational directions become durable claims
     // just because the sentence also mentions a model, result, or dataset.
-    .filter((sentence) => !/ignore\s+(all\s+)?previous|disregard\s+(the\s+)?(?:system|developer)|follow\s+these\s+instructions|disable\s+(?:safety|permissions?|sandbox)|reveal\s+(?:the\s+)?(?:token|password|credential|api\s*key)|you\s+must\s+(?:run|execute|upload|submit)/i.test(sentence))
-    .filter((sentence) => /\b(show|find|improv|decreas|increas|result|method|dataset|model|validation|leak|error|accuracy|score)\b/i.test(sentence))
-    .slice(0, limit);
+    if (/ignore\s+(all\s+)?previous|disregard\s+(the\s+)?(?:system|developer)|follow\s+these\s+instructions|disable\s+(?:safety|permissions?|sandbox)|reveal\s+(?:the\s+)?(?:token|password|credential|api\s*key)|you\s+must\s+(?:run|execute|upload|submit)/i.test(statement)) continue;
+    if (!/\b(show|find|improv|decreas|increas|result|method|dataset|model|validation|leak|error|accuracy|score)\b/i.test(statement)) continue;
+    records.push({ statement, excerpt: text.slice(start, start + statement.length), start, end: start + statement.length });
+    if (records.length >= Math.max(1, limit)) break;
+  }
+  return records;
+}
+
+export function sourceClaims(text: string, limit = 12): string[] {
+  return sourceClaimRecords(text, limit).map((record) => record.statement);
 }
 
 export function sourceSearchText(source: { payload: unknown }): string {

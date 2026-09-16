@@ -26,7 +26,7 @@ import { auditData, dataAuditFingerprint } from "../core/data-audit.js";
 import { executeResearchTool } from "../core/tools.js";
 import { projectVerifiedSubtaskState } from "../core/subtask-state.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
-import { retrieveSource, searchResearchSources, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
+import { retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
 import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../core/phase-goals.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
@@ -703,11 +703,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
       setProgress(`Challenge research · retrieving ${new URL(url).hostname}...`);
       try {
         const source = await retrieveSource(url);
-        const claims = sourceClaims(source.text);
+        const claimRecords = sourceClaimRecords(source.text);
+        const claims = claimRecords.map((claim) => claim.statement);
         store.saveSource({ id: source.id, payload: { ...source, claims } });
-        for (const [index, statement] of claims.entries()) {
+        for (const [index, claim] of claimRecords.entries()) {
+          const statement = claim.statement;
           const claimId = `${source.id}_claim_${index + 1}`;
-          store.saveClaim({ id: claimId, payload: { id: claimId, statement, scope: source.url, confidence: 0.35, sourceType: "literature", sourceId: source.id, status: "active" } });
+          store.saveClaim({ id: claimId, payload: { id: claimId, statement, excerpt: claim.excerpt, sourceSpan: { start: claim.start, end: claim.end }, scope: source.url, confidence: 0.35, sourceType: "literature", sourceId: source.id, status: "active" } });
           store.saveEdge({ id: `edge_${claimId}_${source.id}`, fromId: claimId, toId: source.id, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
         }
         store.appendEvent(prior ? "challenge.source.refreshed" : "challenge.source.ingested", { url, title: source.title, claims: claims.length, previousSource: prior ? (prior.payload as { id?: string }).id : undefined });
@@ -3371,12 +3373,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const timeout = setTimeout(() => controller.abort(), 20_000);
       try {
         const retrieved = await retrieveSource(url, controller.signal);
-        const claims = sourceClaims(retrieved.text);
+        const claimRecords = sourceClaimRecords(retrieved.text);
+        const claims = claimRecords.map((claim) => claim.statement);
         const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
         store.saveSource({ id: retrieved.id, payload: { ...retrieved, claims } });
-        for (const [index, statement] of claims.entries()) {
+        for (const [index, claim] of claimRecords.entries()) {
+          const statement = claim.statement;
           const claimId = `${retrieved.id}_claim_${index + 1}`;
-          store.saveClaim({ id: claimId, payload: { id: claimId, statement, scope: retrieved.url, confidence: 0.35, sourceType: "literature", sourceId: retrieved.id, status: "active" } });
+          store.saveClaim({ id: claimId, payload: { id: claimId, statement, excerpt: claim.excerpt, sourceSpan: { start: claim.start, end: claim.end }, scope: retrieved.url, confidence: 0.35, sourceType: "literature", sourceId: retrieved.id, status: "active" } });
           store.saveEdge({ id: `edge_${claimId}_${retrieved.id}`, fromId: claimId, toId: retrieved.id, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
         }
         store.appendEvent("research.source.retrieved", { id: retrieved.id, url: retrieved.url, contentHash: retrieved.contentHash, claimCount: claims.length });
