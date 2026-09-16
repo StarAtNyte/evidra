@@ -61,7 +61,7 @@ import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
-import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLiteratureQueries, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
+import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneHandoffBoard, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLiteratureQueries, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
 import { summarizeAgentUsage, summarizeUsage } from "../dist/core/usage.js";
@@ -3036,6 +3036,17 @@ test("deep literature search creates bounded deterministic progressive probes", 
   assert.equal(new Set(probes).size, probes.length);
   assert.ok(probes.every((probe) => probe.length <= 300));
   assert.deepEqual(probes, researchSearchQueries("agent harness validation benchmark reproducibility experiments", "deep"));
+});
+
+test("lane handoff boards are bounded and preserve challengeable evidence", () => {
+  const board = laneHandoffBoard([
+    { role: "domain researcher", summary: "A".repeat(2_000), findings: ["finding"], recommendations: ["test"], uncertainties: ["unknown"], discriminatingTests: ["run test"], evidence: ["source-1"], evidenceSourceIds: ["source-1"], confidence: 0.8, status: "completed" },
+    { role: "validation scientist", summary: "Second", findings: [], recommendations: [], uncertainties: [], discriminatingTests: [], evidence: ["run-1"], evidenceSourceIds: [], confidence: 0.6, status: "completed" },
+  ], 1);
+  assert.equal(board.length, 1);
+  assert.equal(board[0].role, "validation scientist");
+  assert.equal(board[0].evidence[0], "run-1");
+  assert.equal(board[0].summary, "Second");
 });
 
 test("literature benchmark separates deep recall, wide recall, grounding, and query budget", () => {

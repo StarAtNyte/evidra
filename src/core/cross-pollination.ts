@@ -6,6 +6,7 @@ export interface LaneFinding {
   uncertainties?: string[];
   discriminatingTests?: string[];
   evidence?: string[];
+  evidenceSourceIds?: string[];
   confidence?: number;
   status?: string;
 }

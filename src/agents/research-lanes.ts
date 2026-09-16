@@ -8,6 +8,7 @@ import type { ProcessControl } from "../core/process.js";
 import type { AutonomyLevel } from "../core/permissions.js";
 import { normalizeResearchToolResult, toolFailureTrust, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
 import { boundResearchContext } from "../core/context-budget.js";
+import type { LaneFinding } from "../core/cross-pollination.js";
 
 export const RESEARCH_LANE_ROLES = [
   "data detective",
@@ -189,6 +190,8 @@ export interface ResearchLanesOptions {
   cwd: string;
   storePath: string;
   maxParallel?: number;
+  /** Total specialists in the wave-based team; defaults to the available role pool outside safe mode. */
+  laneTeamSize?: number;
   autonomy?: AutonomyLevel;
   laneFocus?: string;
   laneRotation?: number;
@@ -395,6 +398,26 @@ export function boundedPeerBoard(events: Array<{ type: string; payload: unknown 
       };
     })
     .slice(-Math.max(1, Math.min(limit, 8)));
+}
+
+/**
+ * Convert completed lane reports into a small, explicit hand-off board.
+ * Unlike the full reports this board is safe to pass to another lane: it is
+ * bounded, preserves evidence anchors, and makes it clear that peer output is
+ * a challenge surface rather than ground truth.
+ */
+export function laneHandoffBoard(reports: LaneFinding[], limit = 4): Array<Record<string, unknown>> {
+  return reports.map((report) => ({
+    role: typeof report.role === "string" ? report.role : "unknown",
+    summary: typeof report.summary === "string" ? report.summary.slice(0, 1200) : "",
+    findings: Array.isArray(report.findings) ? report.findings.slice(0, 5) : [],
+    recommendations: Array.isArray(report.recommendations) ? report.recommendations.slice(0, 4) : [],
+    uncertainties: Array.isArray(report.uncertainties) ? report.uncertainties.slice(0, 3) : [],
+    discriminatingTests: Array.isArray(report.discriminatingTests) ? report.discriminatingTests.slice(0, 3) : [],
+    evidence: Array.isArray(report.evidence) ? report.evidence.slice(0, 5) : [],
+    evidenceSourceIds: Array.isArray(report.evidenceSourceIds) ? report.evidenceSourceIds.slice(0, 5) : [],
+    confidence: typeof report.confidence === "number" && Number.isFinite(report.confidence) ? report.confidence : 0,
+  })).slice(-Math.max(1, Math.min(limit, 8)));
 }
 
 function saveLaneEvent(storePath: string, role: string, report: ResearchLaneReport): void {
@@ -716,16 +739,42 @@ export async function runResearchLanes(objective: string, context: Record<string
   const mayUseLocalFallback = options.provider === "local"
     || Boolean(options.fallbackLocalModel && (options.limitPolicy === "auto" || options.limitPolicy === "fallback"));
   const concurrency = researchLaneConcurrency({ autonomy: options.autonomy, provider: mayUseLocalFallback ? "local" : options.provider, requested: options.maxParallel });
-  const roles = selectResearchLaneRoles(objective, concurrency, { focus: options.laneFocus, rotation: options.laneRotation });
+  const mlOrCompetition = /\b(dataset|training|train|model|estimator|competition|leaderboard|metric|fold|gpu|prediction|baseline)\b/i.test(objective);
+  const availableRoles = mlOrCompetition ? RESEARCH_LANE_ROLES.length : GENERAL_RESEARCH_LANE_ROLES.length;
+  const defaultTeamSize = options.autonomy === "safe" ? concurrency : availableRoles;
+  const requestedTeamSize = typeof options.laneTeamSize === "number" && Number.isFinite(options.laneTeamSize)
+    ? Math.floor(options.laneTeamSize)
+    : defaultTeamSize;
+  const teamSize = Math.max(concurrency, Math.min(availableRoles, requestedTeamSize));
+  const roles = selectResearchLaneRoles(objective, teamSize, { focus: options.laneFocus, rotation: options.laneRotation });
   const routes = assignResearchLaneRoutes(roles, options);
   const reports: ResearchLaneReport[] = [];
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < roles.length) {
-      const role = roles[next++];
-      reports.push(await runLane(role, objective, context, options, routes.find((route) => route.role === role)!));
+  // Run bounded waves. A wave remains parallel, while the next wave receives
+  // the prior wave's compact board. This gives agents a real communication
+  // boundary without sharing mutable workspaces or allowing an unbounded
+  // transcript to leak into every prompt.
+  for (let offset = 0; offset < roles.length; offset += concurrency) {
+    const wave = roles.slice(offset, offset + concurrency);
+    const peerLaneBoard = laneHandoffBoard(reports);
+    const waveReports = await Promise.all(wave.map((role) => runLane(
+      role,
+      objective,
+      { ...context, ...(peerLaneBoard.length ? { peerLaneBoard } : {}) },
+      options,
+      routes.find((route) => route.role === role)!,
+    )));
+    reports.push(...waveReports);
+    if (offset + wave.length < roles.length && waveReports.length) {
+      const handoffStore = new ResearchStore(options.storePath);
+      handoffStore.appendEvent("research.lane.handoff", {
+        objective,
+        fromRoles: waveReports.map((report) => report.role),
+        toRoles: roles.slice(offset + wave.length),
+        board: laneHandoffBoard(reports),
+        boundary: "completed-wave",
+      });
+      handoffStore.close();
     }
-  };
-  await Promise.all(Array.from({ length: Math.min(roles.length, concurrency) }, () => worker()));
+  }
   return roles.map((role) => reports.find((report) => report.role === role)!).filter(Boolean);
 }
