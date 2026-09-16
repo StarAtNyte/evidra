@@ -223,7 +223,9 @@ This requirement is enforced by the durable evidence audit: `replicationObserved
 
 When a score is recorded or polled, Evidra refreshes only the external-score criterion in the existing audit and preserves every other unmet gate. Prepared submission bundles carry the exact source run ID, and score evidence must match that run. A leaderboard result therefore cannot accidentally turn an unreproducible, stale, or leaked experiment into an accepted one.
 
-External scores also feed a conservative distribution-belief loop. The controller
+External scores also feed a conservative distribution-belief loop. Submission
+provenance bundles retain the finite local run metrics, and polling or recording
+a score carries those metrics into the durable observation automatically. The controller
 compares scored submissions with their recorded local validation splits, shrinks
 correlations under sparse data, and routes the next cycle toward multi-split or
 alignment experiments when uncertainty is high. A few leaderboard points never

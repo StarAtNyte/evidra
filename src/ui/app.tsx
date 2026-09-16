@@ -18,7 +18,7 @@ import { recoveryDelay, recoveryPlan, recoveryRouteDirective } from "../core/rec
 import { observedGpuHours } from "../core/compute-budget.js";
 import { distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../core/distribution-beliefs.js";
 import { campaignElapsedMinutes, pauseCampaign, readCampaignCheckpoint, resumeCampaign, withCampaignCheckpoint } from "../core/campaign.js";
-import { prepareSubmission, validateSubmissionBundle } from "../core/submissions.js";
+import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../core/submissions.js";
 import { pollSubmissionScore, submitApprovedBundle } from "../core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "../core/submission-policy.js";
 import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "../core/ensemble.js";
@@ -3178,7 +3178,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         try {
           const observation = await pollSubmissionScore(root, entry.path, bundleId, activeAdapter().config, registerProcess);
           const recordedAt = observation.observedAt;
-          store.updateSubmissionStatus(bundleId, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: observation.score, platform: observation.platform, recordedAt, scoreObservation: observation });
+          const validationScores = submissionValidationScores(entry.path);
+          store.updateSubmissionStatus(bundleId, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: observation.score, platform: observation.platform, recordedAt, scoreObservation: observation, ...(Object.keys(validationScores).length ? { validationScores } : {}) });
           store.saveClaim({ id: `claim_external_score_${bundleId}_${Date.now()}`, payload: { statement: `External ${observation.platform} score for ${bundleId}: ${observation.score}`, scope: entry.experimentId, confidence: 1, sourceType: "external_score", sourceId: bundleId, status: "active", score: observation.score, platform: observation.platform, recordedAt } });
           store.appendEvent("submission.score.polled", { id: bundleId, score: observation.score, platform: observation.platform, recordedAt });
           const currentAudit = store.latestSubtaskAudit(`experiment_audit:${entry.experimentId}`);
@@ -3195,17 +3196,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const bundleId = parts[2];
         const score = Number(parts[3]);
         const platform = parts[4] ?? "manual";
-        let validationScores: Record<string, number> = {};
-        if (parts[5]) {
-          try {
-            const parsed = JSON.parse(parts[5]) as Record<string, unknown>;
-            validationScores = Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value === "number" && Number.isFinite(value)) as Array<[string, number]>);
-          } catch { append("assistant", "Validation scores must be compact JSON, e.g. {\"group\":0.81,\"temporal\":0.79}"); return; }
-        }
         if (!bundleId || !Number.isFinite(score)) { append("assistant", "Usage: /submission record <bundle-id> <public-score> [platform] [split-json]"); return; }
         const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
         const entry = store.submissions().find((candidate) => candidate.id === bundleId);
         if (!entry) { store.close(); append("assistant", `Submission bundle ${bundleId} is not registered.`); return; }
+        let validationScores: Record<string, number> = submissionValidationScores(entry.path);
+        if (parts[5]) {
+          try {
+            const parsed = JSON.parse(parts[5]) as Record<string, unknown>;
+            validationScores = Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value === "number" && Number.isFinite(value)) as Array<[string, number]>);
+          } catch { store.close(); append("assistant", "Validation scores must be compact JSON, e.g. {\"group\":0.81,\"temporal\":0.79}"); return; }
+        }
         const report = validateSubmissionBundle(entry.path);
         if (!report.valid) { store.close(); append("assistant", "Bundle is not valid; score was not recorded."); return; }
         const recordedAt = new Date().toISOString();

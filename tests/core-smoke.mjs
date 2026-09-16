@@ -10,7 +10,7 @@ import Database from "better-sqlite3";
 import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../dist/core/statistics.js";
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
-import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submissions.js";
+import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaimRecords, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { CompetitionConfigSchema, ExperimentManifestSchema } from "../dist/core/types.js";
@@ -4370,6 +4370,7 @@ test("source claims and submission provenance are auditable", () => {
     const run = { runId: "run-1", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 1 }, artifacts: { submission: artifact } };
     const bundle = prepareSubmission(root, "exp-1", manifest, run, { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } });
     assert.equal(validateSubmissionBundle(bundle.path).valid, true);
+    assert.deepEqual(submissionValidationScores(bundle.path), { score: 1 });
     assert.doesNotMatch(readFileSync(join(bundle.path, "provenance.json"), "utf8"), /sk-test_/);
     assert.throws(() => prepareSubmission(root, "exp-1", manifest, { ...run, status: "failed" }, { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } }), /not successfully completed/);
   } finally { rmSync(root, { recursive: true, force: true }); }

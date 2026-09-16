@@ -16,7 +16,7 @@ import { retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims
 import { competitionResearchClaimType, competitionResearchSources } from "./core/competition-sources.js";
 import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "./core/literature-bench.js";
 import { parseAutoResearchBenchEvaluation } from "./core/autoresearch-bench.js";
-import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
+import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "./core/submissions.js";
 import { externalSubmissionId, pollSubmissionScore, submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
 import { renderTimeline } from "./core/timeline.js";
@@ -1569,7 +1569,8 @@ submission.command("poll").argument("<bundle>").description("Poll a configured e
     const providerSubmissionId = externalSubmissionId(entry.payload, bundle);
     const observation = await pollSubmissionScore(root, entry.path, providerSubmissionId, adapter.config);
     const recordedAt = observation.observedAt;
-    store.updateSubmissionStatus(bundle, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: observation.score, platform: observation.platform, recordedAt, scoreObservation: observation });
+    const validationScores = submissionValidationScores(entry.path);
+    store.updateSubmissionStatus(bundle, "scored", { ...(typeof entry.payload === "object" && entry.payload ? entry.payload : {}), publicScore: observation.score, platform: observation.platform, recordedAt, scoreObservation: observation, ...(Object.keys(validationScores).length ? { validationScores } : {}) });
     store.saveClaim({ id: `claim_external_score_${bundle}_${Date.now()}`, payload: { statement: `External ${observation.platform} score for ${bundle}: ${observation.score}`, scope: entry.experimentId, confidence: 1, sourceType: "external_score", sourceId: bundle, status: "active", score: observation.score, platform: observation.platform, recordedAt } });
     store.appendEvent("submission.score.polled", { id: bundle, score: observation.score, platform: observation.platform, recordedAt });
     const currentAudit = store.latestSubtaskAudit(`experiment_audit:${entry.experimentId}`);
@@ -1589,7 +1590,7 @@ submission.command("record").argument("<bundle>").requiredOption("--public-score
   const validation = validateSubmissionBundle(entry.path);
   if (!validation.valid) { store.close(); throw new Error(`Submission bundle is not valid; score was not recorded.`); }
   const recordedAt = new Date().toISOString();
-  let validationScores: Record<string, number> = {};
+  let validationScores: Record<string, number> = submissionValidationScores(entry.path);
   if (options.validation) {
     const parsed = JSON.parse(options.validation) as Record<string, unknown>;
     validationScores = Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value === "number" && Number.isFinite(value)) as Array<[string, number]>);
