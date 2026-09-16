@@ -4116,6 +4116,7 @@ test("metric registry computes common classification, regression, and ranking me
   assert(Math.abs(computeMetric("macro_f1", [0, 1, 1, 0], [0, 1, 0, 0]) - 11 / 15) < 1e-12);
   assert.equal(computeMetric("mse", [1, 3], [1, 2]), 0.5);
   assert.equal(metricDefinition("mse").direction, "minimize");
+  assert.equal(metricDefinition("  F1_MACRO ").name, "macro_f1");
   assert(Math.abs(computeMetric("rmse", [1, 3], [1, 2]) - 1 / Math.sqrt(2)) < 1e-12);
   assert.equal(computeMetric("mae", [1, 3], [1, 2]), 0.5);
   assert.equal(computeMetric("auroc", [0, 1, 0, 1], [0.1, 0.9, 0.2, 0.8]), 1);

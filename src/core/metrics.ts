@@ -206,7 +206,8 @@ const aliases = new Map([
 ]);
 
 export function metricDefinition(name: string): MetricDefinition {
-  const canonical = aliases.get(name.toLowerCase()) ?? name.toLowerCase();
+  const normalized = name.trim().toLowerCase();
+  const canonical = aliases.get(normalized) ?? normalized;
   const definition = METRIC_REGISTRY.find((metric) => metric.name === canonical);
   if (!definition) throw new Error(`No built-in metric '${name}' is registered; use the workspace evaluator for custom metrics.`);
   return definition;
