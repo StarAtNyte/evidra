@@ -37,7 +37,11 @@ export interface ResearchMemoryContext {
 export function latestSourceEntries<T extends { id: string; payload: unknown; createdAt: string }>(entries: T[], limit = 12, query?: string, store?: ResearchStore): T[] {
   const seen = new Set<string>();
   const result: T[] = [];
-  for (const entry of entries) {
+  const currentEntries = entries.filter((entry) => {
+    const status = entry.payload && typeof entry.payload === "object" ? (entry.payload as { status?: unknown }).status : undefined;
+    return status !== "superseded" && status !== "invalidated";
+  });
+  for (const entry of currentEntries) {
     const payload = entry.payload as { url?: unknown };
     const key = typeof payload.url === "string" && payload.url ? canonicalSourceUrl(payload.url) : entry.id;
     if (seen.has(key)) continue;

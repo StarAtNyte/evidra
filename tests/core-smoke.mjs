@@ -935,6 +935,7 @@ test("active research context keeps only the newest source version per URL", () 
     { id: "new", createdAt: "2026-01-02T00:00:00.000Z", payload: { url: "https://example.com/discussion", title: "new" } },
     { id: "old", createdAt: "2026-01-01T00:00:00.000Z", payload: { url: "https://example.com/discussion", title: "old" } },
     { id: "other", createdAt: "2025-12-31T00:00:00.000Z", payload: { url: "https://example.com/paper", title: "paper" } },
+    { id: "invalidated", createdAt: "2026-01-03T00:00:00.000Z", payload: { url: "https://example.com/invalidated", title: "invalidated", status: "invalidated" } },
   ];
   assert.deepEqual(latestSourcePayloads(sources, 12).map((source) => source.title), ["new", "paper"]);
   assert.deepEqual(latestSourceEntries(sources, 12).map((source) => source.id), ["new", "other"]);
