@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `2855a6c` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `7ee87e1` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -138,6 +138,9 @@ external evaluator.
 - Non-metric hypotheses now require an explicit expected outcome at the schema
   boundary; proof, artifact, behavior, system, and other research cannot pass
   with an implicit zero-valued metric forecast.
+- Portfolio scoring now ignores scalar forecasts for non-metric candidates and
+  schedules them through explicit information value, novelty, risk, cost, and
+  falsification state instead of inventing a comparable task metric.
 - Latest verified baseline: 397/397 tests passing, TypeScript check passing,
   and build passing. The worktree is clean; generated reports remain excluded
   from source changes.
