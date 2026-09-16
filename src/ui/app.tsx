@@ -71,7 +71,7 @@ import { deriveAdaptiveHarnessPolicy } from "../core/adaptive-harness.js";
 import { synthesizeLaneReports } from "../core/cross-pollination.js";
 import { analyzePredictionRows, parsePredictionRows } from "../core/error-analysis.js";
 import { createTransferableMethod } from "../core/method-transfer.js";
-import { createAblationPlan } from "../core/ablation.js";
+import { createAblationPlan, evaluateAblationEvidence } from "../core/ablation.js";
 import { buildMlflowRunExports } from "../core/mlflow.js";
 import { summarizeForecastAssessments } from "../core/forecast-calibration.js";
 
@@ -1335,7 +1335,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     return { id: manifest.id, text: `\n\nIndependent replication ${manifest.id} prepared for ${parentId}.\n${manifestSummary(manifest)}` };
   };
 
-  const prepareAutomaticAblations = (parentId: string): { ids: string[]; text: string } | null => {
+  const prepareAutomaticAblations = (parentId: string): { ids: string[]; text: string; plan: ReturnType<typeof createAblationPlan> } | null => {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const parent = store.experiments().find((candidate) => candidate.id === parentId);
     if (!parent) { store.close(); return null; }
@@ -1350,7 +1350,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     const plan = createAblationPlan({ hypothesisId, factors: payload.ablationFactors as Parameters<typeof createAblationPlan>[0]["factors"] });
     const ids: string[] = [];
-    for (const variant of plan.variants.filter((candidate) => !candidate.control).slice(0, 4)) {
+    for (const variant of plan.variants.filter((candidate) => !candidate.control)) {
       const id = `abl_${parentId}_${variant.factorId}`.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 96);
       if (!store.experiments().some((candidate) => candidate.id === id)) {
         const manifest = createExperimentManifest({
@@ -1383,14 +1383,34 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     store.appendEvent("research.ablation.plan", plan);
     store.close();
-    return { ids, text: `\n\nAblation plan prepared for ${parentId}: ${ids.join(", ")}` };
+    return { ids, text: `\n\nAblation plan prepared for ${parentId}: ${ids.join(", ")}`, plan };
   };
 
-  const latestExperimentComparison = (experimentId: string): { direction?: string; evidence?: string; note?: string } | undefined => {
+  const latestExperimentComparison = (experimentId: string): { direction?: string; evidence?: string; note?: string; baseline?: number | null; candidate?: number | null } | undefined => {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const event = store.recentEvents(500).reverse().find((candidate) => candidate.type === "experiment.comparison.completed" && (candidate.payload as { experimentId?: unknown }).experimentId === experimentId);
     store.close();
-    return event?.payload && typeof event.payload === "object" ? (event.payload as { comparison?: { direction?: string; evidence?: string; note?: string } }).comparison : undefined;
+    return event?.payload && typeof event.payload === "object" ? (event.payload as { comparison?: { direction?: string; evidence?: string; note?: string; baseline?: number | null; candidate?: number | null } }).comparison : undefined;
+  };
+
+  const recordAutomaticAblationEvidence = (parentId: string, plan: ReturnType<typeof createAblationPlan>, ids: string[], controlMetric: number | null | undefined, direction: "minimize" | "maximize"): string | undefined => {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const adapter = activeAdapter();
+    const variants = plan.variants.filter((variant) => !variant.control);
+    const results = ids.map((id, index) => {
+      const experiment = store.experiments().find((entry) => entry.id === id);
+      const payload = experiment?.payload && typeof experiment.payload === "object" ? experiment.payload as { status?: unknown; runId?: unknown } : {};
+      const run = typeof payload.runId === "string" ? store.runs().find((entry) => entry.id === payload.runId) : undefined;
+      const runPayload = run?.payload && typeof run.payload === "object" ? run.payload as { exitCode?: unknown; metrics?: Record<string, unknown> } : {};
+      const metric = runPayload.metrics?.[adapter.config.metric.name];
+      return { id: variants[index]?.id ?? id, exitCode: payload.status === "completed" && runPayload.exitCode === 0 ? 0 : 1, terminal: ["completed", "failed", "cancelled", "orphaned"].includes(String(payload.status)), ...(typeof metric === "number" && Number.isFinite(metric) ? { metric } : {}) };
+    });
+    const evidence = evaluateAblationEvidence(plan, results, { controlMetric: typeof controlMetric === "number" ? controlMetric : undefined, direction });
+    const allTerminal = results.length === variants.length && results.every((result) => result.terminal);
+    if (!allTerminal) { store.close(); return undefined; }
+    store.appendEvent("research.ablation.evidence", { parentId, ...evidence });
+    store.close();
+    return `\nAblation evidence: ${evidence.complete ? "complete" : "incomplete"}${evidence.missingMetrics.length ? ` · missing metrics for ${evidence.missingMetrics.join(", ")}` : ""}`;
   };
 
   const recordTransferableMethodIfReplicated = (experimentId: string): void => {
@@ -2028,6 +2048,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
                 const ablationText = [ablations.text];
                 if (permissionAllowsExecution) {
                   for (const ablationId of ablations.ids) ablationText.push(await executeExperiment(ablationId));
+                  const evidenceText = recordAutomaticAblationEvidence(proposed.id, ablations.plan, ablations.ids, comparison?.candidate, activeAdapter().config.metric.direction);
+                  if (evidenceText) ablationText.push(evidenceText);
                 } else {
                   ablationText.push(`Approval required: run /experiment run ${ablations.ids.join(" or ")}`);
                 }
