@@ -255,6 +255,8 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
     const args = validateToolArguments(call.name, call.arguments);
     const workerEnvironment = safeWorkerEnvironment({ HOME: prepareWorkerHome(context.root) });
     let output: unknown;
+    let toolOk = true;
+    let toolError: string | undefined;
     switch (call.name) {
       case "workspace.files": {
         const result = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], context.root, 30_000, undefined, context.onProcess, workerEnvironment);
@@ -295,6 +297,10 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         context.onProgress?.(`Tool shell.exec · ${command.join(" ")}`);
         const result = await runProcess(command, context.root, timeout, undefined, context.onProcess, workerEnvironment);
         output = { exitCode: result.exitCode, stdout: redactSecrets(result.stdout.slice(-50_000)), stderr: redactSecrets(result.stderr.slice(-10_000)), durationMs: result.durationMs };
+        if (result.exitCode !== 0) {
+          toolOk = false;
+          toolError = result.stderr.trim() || `Command exited with code ${result.exitCode}.`;
+        }
         break;
       }
       case "source.retrieve": {
@@ -481,7 +487,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
     }
     const trust = toolTrust(call.name);
     const securityWarnings = trust === "untrusted_content" ? untrustedContentWarnings(output) : [];
-    const result = { name: call.name, ok: true, output, trust, ...(securityWarnings.length ? { securityWarnings } : {}) };
+    const result = { name: call.name, ok: toolOk, output, trust, ...(toolError ? { error: toolError } : {}), ...(securityWarnings.length ? { securityWarnings } : {}) };
     recordToolEvent(context, result);
     return result;
   } catch (error) {

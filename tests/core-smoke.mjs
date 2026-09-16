@@ -3027,6 +3027,10 @@ test("research tool registry exposes safe workspace tools", async () => {
     const denied = await executeResearchTool({ name: "shell.exec", arguments: { command: ["touch", "blocked.txt"] } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(denied.ok, false);
     assert.match(denied.error, /SAFE mode/);
+    const failedCommand = await executeResearchTool({ name: "shell.exec", arguments: { command: [process.execPath, "-e", "process.exit(7)"] } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(failedCommand.ok, false);
+    assert.equal(failedCommand.output.exitCode, 7);
+    assert.match(failedCommand.error, /exited with code 7/);
     const reportDenied = await executeResearchTool({ name: "report.generate", arguments: { kind: "research" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(reportDenied.ok, false);
     assert.match(reportDenied.error, /inspection tools only/);

@@ -46,6 +46,7 @@ Most coding agents optimize for one conversation and one code change. Evidra is 
 - **Falsifiable research.** Decisions contain phases, goals, hypotheses, expected effects, costs, risks, dependencies, and explicit falsification tests.
 - **Durable state.** SQLite and an append-only event log preserve projects, claims, sources, hypotheses, decisions, experiments, runs, artifacts, phase goals, agent lanes, sessions, and queue tasks.
 - **Typed decision integrity.** Before a research or challenge decision can drive execution, the controller rejects duplicate hypothesis titles and selections that do not exist in that exact decision payload; ambiguous model output is downgraded to inspection and retained in the audit trail.
+- **Honest tool outcomes.** Read-only shell observations preserve bounded stdout/stderr, but a nonzero process exit is reported as `ok: false` so the director replans from failed tests instead of treating them as evidence of success.
 - **Concurrent lane safety.** The SQLite store uses WAL and a bounded writer wait, so parallel Codex lanes can record observations and traces without turning brief writer contention into lost research evidence.
 - **Bounded autonomy.** A campaign has an ultimate goal, internal phase goals, a budget, and a stopping condition. It pauses when genuinely blocked and can resume later.
 - **Reproducible execution.** Experiment manifests, Git worktrees, run metadata, metrics, logs, checksums, and environment snapshots make results inspectable.
