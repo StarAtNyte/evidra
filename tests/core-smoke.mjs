@@ -452,13 +452,14 @@ test("run attempts remain separately queryable across retries and reopen", () =>
     const store = new ResearchStore(db);
     store.recordRunAttempt({ id: "exp-1:full:1", experimentId: "exp-1", attempt: 1, stage: "full_validation", status: "running", command: ["python", "train.py"], cwd: root, executor: "local" });
     store.recordRunAttempt({ id: "exp-1:full:1", experimentId: "exp-1", runId: "run-1", attempt: 1, stage: "full_validation", status: "failed", exitCode: 1, failureClass: "timeout", durationSeconds: 4, command: ["python", "train.py"], cwd: root, executor: "local" });
-    store.recordRunAttempt({ id: "exp-1:full:2", experimentId: "exp-1", runId: "run-2", attempt: 2, stage: "full_validation", status: "completed", exitCode: 0, metric: 0.8, metrics: { score: 0.8, safety: 0.9 }, durationSeconds: 3, command: ["python", "train.py"], cwd: root, executor: "local" });
+    store.recordRunAttempt({ id: "exp-1:full:2", experimentId: "exp-1", runId: "run-2", attempt: 2, stage: "full_validation", status: "completed", exitCode: 0, metric: 0.8, metrics: { score: 0.8, safety: 0.9 }, metricConflicts: [{ name: "aux", values: [1, 2] }], durationSeconds: 3, command: ["python", "train.py"], cwd: root, executor: "local" });
     store.close();
     const reopened = new ResearchStore(db);
     const attempts = reopened.runAttempts("exp-1");
     assert.deepEqual(attempts.map((attempt) => [attempt.attempt, attempt.status, attempt.failureClass]), [[1, "failed", "timeout"], [2, "completed", null]]);
     assert.equal(reopened.runAttempts()[0].command[0], "python");
     assert.deepEqual(reopened.runAttempts()[1].metrics, { score: 0.8, safety: 0.9 });
+    assert.deepEqual(reopened.runAttempts()[1].metricConflicts, [{ name: "aux", values: [1, 2] }]);
     assert.match(renderReport(reopened, "final"), /metrics score=0\.8, safety=0\.9/);
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }

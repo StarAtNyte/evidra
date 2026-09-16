@@ -304,6 +304,7 @@ Implemented today:
 - source ingestion streams response bodies through a hard byte cap, including responses without `content-length`, so untrusted research endpoints cannot exhaust controller memory;
 - DNS resolution for source retrieval is bounded independently of fetch timeouts, keeping malformed or hostile research URLs from hanging an autonomous controller before network I/O begins;
 - evaluator parsing retains distinct metric values and rejects completed runs with an unresolved primary-metric conflict, while permitting explicitly step-indexed learning curves;
+- metric-conflict diagnostics are persisted on every run attempt, so retries, crash recovery, and post-hoc reports retain the exact evaluator-integrity failure;
 - TUI trajectories preserve the synthesized cross-pollination board and its evidence/agreement metrics for replay and audit;
 - Escape cancellation is wired through TUI critic, lane, and director processes, so interruption stops the active provider work;
 - CLI trajectories preserve the synthesized cross-pollination board for the same replay and audit parity as the TUI;
