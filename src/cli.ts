@@ -2844,6 +2844,7 @@ research
       const hypothesisQuality = decision.hypotheses.map((hypothesis) => assessHypothesisQuality({
         title: hypothesis.title,
         mechanism: hypothesis.mechanism,
+        assumptions: hypothesis.assumptions,
         evidence: hypothesis.evidence,
         proposedChange: hypothesis.proposedChange,
         falsificationTest: hypothesis.falsificationTest,

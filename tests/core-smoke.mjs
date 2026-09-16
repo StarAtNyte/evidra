@@ -5632,11 +5632,13 @@ test("run evidence carries a structured verifier summary", () => {
 });
 
 test("hypothesis quality rewards falsifiable grounded proposals", () => {
-  const strong = assessHypothesisQuality({ title: "group-aware validation", mechanism: "Group-aware folds prevent source identity from crossing validation boundaries.", evidence: ["audit report"], proposedChange: "Use grouped cross-validation by source_id.", falsificationTest: "Reject the change if held-out group accuracy does not improve across three seeds.", expectedDelta: 0.08, costGpuHours: 1, implementationRisk: "low", leakageRisk: "low" });
+  const strong = assessHypothesisQuality({ title: "group-aware validation", mechanism: "Group-aware folds prevent source identity from crossing validation boundaries.", assumptions: ["source_id remains stable across the evaluation split"], evidence: ["audit report"], proposedChange: "Use grouped cross-validation by source_id.", falsificationTest: "Reject the change if held-out group accuracy does not improve across three seeds.", expectedDelta: 0.08, costGpuHours: 1, implementationRisk: "low", leakageRisk: "low" });
   const weak = assessHypothesisQuality({ title: "try thing", mechanism: "maybe better", evidence: [], proposedChange: "change it", falsificationTest: "see if good", expectedDelta: 0, costGpuHours: 1, implementationRisk: "high", leakageRisk: "high" });
   assert.ok(strong.score > weak.score);
   assert.equal(strong.verdict, "strong");
   assert.equal(weak.verdict, "weak");
+  assert.ok(!strong.reasons.includes("validity assumptions are not explicit"));
+  assert.ok(weak.reasons.includes("validity assumptions are not explicit"));
 });
 
 test("validation acceptance keeps headless promotion gates explicit", () => {
