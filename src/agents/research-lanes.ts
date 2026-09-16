@@ -6,7 +6,7 @@ import type { AgentResult } from "../core/types.js";
 import { isProviderUsageLimit, isRetryableAgentError, resolveLocalFallbackModel, runWithLocalFallback } from "./codex-exec.js";
 import type { ProcessControl } from "../core/process.js";
 import type { AutonomyLevel } from "../core/permissions.js";
-import { normalizeResearchToolResult, toolFailureTrust, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
+import { normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
 import { boundResearchContext } from "../core/context-budget.js";
 import type { LaneFinding } from "../core/cross-pollination.js";
 
@@ -761,6 +761,29 @@ export async function runResearchLanes(objective: string, context: Record<string
   const teamSize = researchLaneTeamSize(objective, concurrency, options);
   const roles = selectResearchLaneRoles(objective, teamSize, { focus: options.laneFocus, rotation: options.laneRotation });
   const routes = assignResearchLaneRoutes(roles, options);
+  // Share only immutable read-only observations within this invocation. The
+  // promise map also collapses simultaneous identical calls from parallel
+  // lanes, while cacheable=false tools (notably shell.exec) always execute.
+  const laneToolCache = new Map<string, Promise<ResearchToolResult>>();
+  const laneExecuteTool = options.executeTool ? async (call: ResearchToolCall): Promise<ResearchToolResult> => {
+    const spec = RESEARCH_TOOLS.find((candidate) => candidate.name === call.name);
+    const cacheable = spec?.readOnly === true && spec.cacheable !== false;
+    if (!cacheable) return options.executeTool!(call);
+    const key = JSON.stringify([call.name, call.arguments ?? {}]);
+    const cached = laneToolCache.get(key);
+    if (cached) return { ...(await cached), cached: true };
+    const pending = options.executeTool!(call);
+    laneToolCache.set(key, pending);
+    try {
+      const result = await pending;
+      if (!result.ok) laneToolCache.delete(key);
+      return result;
+    } catch (error) {
+      laneToolCache.delete(key);
+      throw error;
+    }
+  } : undefined;
+  const laneOptions = laneExecuteTool ? { ...options, executeTool: laneExecuteTool } : options;
   const reports: ResearchLaneReport[] = [];
   // Run bounded waves. A wave remains parallel, while the next wave receives
   // the prior wave's compact board. This gives agents a real communication
@@ -773,7 +796,7 @@ export async function runResearchLanes(objective: string, context: Record<string
       role,
       objective,
       { ...context, ...(peerLaneBoard.length ? { peerLaneBoard } : {}) },
-      options,
+      laneOptions,
       routes.find((route) => route.role === role)!,
     )));
     reports.push(...waveReports);

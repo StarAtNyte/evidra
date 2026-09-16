@@ -61,7 +61,7 @@ import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
-import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneHandoffBoard, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneTeamSize, researchLiteratureQueries, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
+import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneHandoffBoard, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneTeamSize, researchLiteratureQueries, runResearchLanes, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
 import { summarizeAgentUsage, summarizeUsage } from "../dist/core/usage.js";
@@ -3045,6 +3045,40 @@ test("research lane literature probes diversify method and model search", () => 
   assert.equal(method.length, 3);
   assert.equal(model.length, 3);
   assert.deepEqual(method, researchLiteratureQueries("autonomous scientific discovery", "method researcher"));
+});
+
+test("research lane teams share only cacheable observations within one invocation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-lane-cache-"));
+  const previousHost = process.env.OLLAMA_HOST;
+  const calls = new Map();
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk.toString(); });
+    request.on("end", () => {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ message: { content: JSON.stringify({ role: "peer", summary: "bounded report", findings: [], recommendations: [], uncertainties: [], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0.5 }) } }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${address.port}`;
+  try {
+    const reports = await runResearchLanes("prove a theorem", {}, {
+      provider: "local", model: "test", autonomy: "fast", maxParallel: 1, laneTeamSize: 2,
+      cwd: root, storePath: join(root, ".sota", "database.sqlite"), timeoutMs: 5_000,
+      executeTool: async (call) => {
+        calls.set(call.name, (calls.get(call.name) ?? 0) + 1);
+        return { name: call.name, ok: true, output: { files: [], results: [] }, trust: "controller_observation" };
+      },
+    });
+    assert.equal(reports.length, 2);
+    assert.equal(calls.get("workspace.files"), 1);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("lane handoff boards are bounded and preserve challengeable evidence", () => {

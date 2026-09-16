@@ -45,6 +45,8 @@ export interface ResearchToolResult {
   error?: string;
   /** Trust class prevents retrieved text or workspace instructions becoming agent directives. */
   trust: ResearchToolTrust;
+  /** True when this lane reused an observation produced by a sibling lane in the same team. */
+  cached?: boolean;
   /** Deterministic signals found in untrusted content; signals never execute or rewrite content. */
   securityWarnings?: string[];
 }
