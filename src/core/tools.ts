@@ -131,6 +131,42 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   { name: "report.generate", description: "Write a durable research, challenge, or final report.", input: { kind: "research|challenge|final" }, readOnly: false },
 ];
 
+const TOOL_HINTS: Record<string, string> = {
+  "workspace.files": "workspace repository files project inventory inspect code",
+  "workspace.search": "search grep find inspect code repository files logs text",
+  "workspace.read": "read inspect file code configuration documentation artifact",
+  "git.status": "git repository changes commit diff status provenance",
+  "shell.exec": "run command test build execute benchmark evaluator process shell",
+  "source.retrieve": "paper literature source article arxiv retrieve citation claims",
+  "source.search": "paper literature scholarly research search citation method",
+  "web.search": "web official documentation competition forum discussion dataset leaderboard",
+  "repository.search": "repository implementation github code method reproduce",
+  "data.audit": "data dataset audit duplicate distribution missing leakage split",
+  "artifact.audit": "artifact output checksum file result integrity validity",
+  "prediction.analyze": "prediction error residual confusion regression slice baseline",
+  "ensemble.analyze": "ensemble blend diversity oof prediction models",
+  "validation.generate": "validation policy evaluator split leakage contract",
+  "report.generate": "report summarize publish findings final",
+};
+
+/** Retrieve relevant tool descriptions without changing the full executor registry. */
+export function selectResearchTools(objective: string, limit = 12): ResearchToolSpec[] {
+  const boundedLimit = Math.max(4, Math.min(RESEARCH_TOOLS.length, Math.floor(limit)));
+  const query = objective.toLowerCase();
+  const core = new Set(["workspace.files", "workspace.search", "workspace.read", "git.status"]);
+  const ranked = RESEARCH_TOOLS.map((tool, index) => {
+    const terms = `${tool.name} ${tool.description} ${TOOL_HINTS[tool.name] ?? ""}`.toLowerCase().split(/[^a-z0-9]+/).filter((term) => term.length >= 3);
+    const score = terms.reduce((total, term) => total + (query.includes(term) ? (term.length >= 6 ? 2 : 1) : 0), 0);
+    return { tool, score, index };
+  }).sort((left, right) => right.score - left.score || left.index - right.index);
+  const selected = new Set<string>(core);
+  for (const entry of ranked) {
+    if (selected.size >= boundedLimit) break;
+    selected.add(entry.tool.name);
+  }
+  return RESEARCH_TOOLS.filter((tool) => selected.has(tool.name));
+}
+
 function inside(root: string, requested: string): string {
   const rootPath = realpathSync(root);
   const path = resolve(rootPath, requested);

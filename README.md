@@ -277,6 +277,7 @@ Implemented today:
 - interrupted or crashed turns close in-flight tool calls with explicit aborted results, preserving causal structure and making partial work resumable instead of silently quarantining the entire cycle;
 - native Codex failures are classified into the generic recovery vocabulary and fed into the next cycle's allocation policy, so timeout, rate-limit, auth, and dependency failures trigger targeted route changes;
 - typed research-tool failures use that same vocabulary, so repeated retrieval, shell, artifact, or workspace failures also trigger targeted recovery rather than repeating an unhealthy route;
+- director turns retrieve a bounded, objective-aware tool catalog with an always-on inspection core; catalog pruning reduces context noise without changing the controller's complete permission registry;
 - the same typed failure pressure is applied to capability routing in both the CLI and TUI, increasing verification demand and constraining fan-out consistently across interfaces;
 - retryable research-lane transport and timeout failures select an untried configured provider/model route before repeating a route, while single-route setups retain bounded retries and preserve the original failure as evidence;
 - director synthesis receives the same route pool and applies the same bounded untried-route recovery, avoiding a full-cycle replay on a failed model;

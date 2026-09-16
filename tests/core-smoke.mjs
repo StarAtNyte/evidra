@@ -18,7 +18,7 @@ import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
 import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInspection, guardWorkspaceCommand } from "../dist/core/permissions.js";
 import { QueueWorker } from "../dist/core/queue-worker.js";
-import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
+import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, selectResearchTools, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { normalizeResearchDecisionPayload, runResearchDirector } from "../dist/agents/research-director.js";
 import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, classifyProcessFailure, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
@@ -2965,6 +2965,16 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert(events.includes("research.tool.completed"));
     assert(events.includes("research.tool.failed"));
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("research tool retrieval keeps an inspection core and ranks domain tools", () => {
+  const literature = selectResearchTools("find and retrieve arxiv papers about agent research methods");
+  assert(literature.every((tool) => ["workspace.files", "workspace.search", "workspace.read", "git.status"].includes(tool.name)) || literature.length >= 4);
+  assert(literature.some((tool) => tool.name === "source.search" || tool.name === "source.retrieve"));
+  const challenge = selectResearchTools("run the benchmark evaluator and analyze prediction artifacts");
+  assert(challenge.some((tool) => tool.name === "shell.exec"));
+  assert(challenge.some((tool) => tool.name === "artifact.audit" || tool.name === "prediction.analyze"));
+  assert(selectResearchTools("general task", 4).length === 4);
 });
 
 test("autonomous research tools do not inherit controller credentials", async () => {
