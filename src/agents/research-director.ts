@@ -77,13 +77,14 @@ function toolCacheKey(call: ResearchToolCall): string {
 const RESEARCH_HYPOTHESIS_OUTPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["title", "formulationFamily", "outcomeType", "expectedOutcome", "mechanism", "evidence", "evidenceSourceIds", "parentHypothesisIds", "sourceAdaptation", "proposedChange", "falsificationTest", "expectedMetricDelta", "computeCostGpuHours", "implementationRisk", "leakageRisk", "dependencies", "ablationFactors"],
+  required: ["title", "formulationFamily", "outcomeType", "expectedOutcome", "mechanism", "assumptions", "evidence", "evidenceSourceIds", "parentHypothesisIds", "sourceAdaptation", "proposedChange", "falsificationTest", "expectedMetricDelta", "computeCostGpuHours", "implementationRisk", "leakageRisk", "dependencies", "ablationFactors"],
   properties: {
     title: { type: "string" },
     formulationFamily: { type: "string" },
     outcomeType: { type: "string", enum: ["metric", "artifact", "proof", "behavior", "system", "other"] },
     expectedOutcome: { type: ["string", "null"] },
     mechanism: { type: "string" },
+    assumptions: { type: "array", maxItems: 8, items: { type: "string" } },
     evidence: { type: "array", items: { type: "string" } },
     evidenceSourceIds: { type: "array", items: { type: "string" }, maxItems: 8 },
     parentHypothesisIds: { type: "array", items: { type: "string" }, maxItems: 2 },
@@ -221,6 +222,7 @@ export async function runResearchDirector(
     "outcomeType": "metric|artifact|proof|behavior|system|other",
     "expectedOutcome": "what success looks like when this is not a scalar metric",
     "mechanism": "why it should work",
+    "assumptions": ["conditions that must hold for the mechanism to transfer"],
     "evidence": ["observed evidence or explicitly empty"],
     "evidenceSourceIds": ["exact durable source IDs when evidence is literature-derived"],
     "parentHypothesisIds": ["exact durable parent hypothesis IDs for an evolutionary offspring, otherwise empty"],

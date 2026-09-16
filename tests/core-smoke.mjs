@@ -5716,6 +5716,7 @@ test("research decisions support non-metric outcomes without fabricated GPU esti
   assert.equal(decision.hypotheses[0].outcomeType, "proof");
   assert.equal(decision.hypotheses[0].computeCostGpuHours, 0);
   assert.equal(decision.hypotheses[0].expectedMetricDelta.median, 0);
+  assert.deepEqual(decision.hypotheses[0].assumptions, []);
   assert.throws(() => ResearchDecisionSchema.parse({
     ...decision,
     hypotheses: [{ ...decision.hypotheses[0], expectedOutcome: undefined }],

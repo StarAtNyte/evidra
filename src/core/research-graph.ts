@@ -18,7 +18,7 @@ function slug(value: string): string {
  * create a new search direction unless the intervention itself changes.
  */
 function hypothesisFingerprint(hypothesis: ResearchDecision["hypotheses"][number]): string {
-  return [hypothesis.title, hypothesis.mechanism, hypothesis.proposedChange, hypothesis.falsificationTest]
+  return [hypothesis.title, hypothesis.mechanism, ...(hypothesis.assumptions ?? []), hypothesis.proposedChange, hypothesis.falsificationTest]
     .map((value) => value.trim().toLowerCase().replace(/\s+/g, " "))
     .join("\u001f");
 }
