@@ -78,6 +78,7 @@ import { planPortfolio } from "./core/portfolio.js";
 import { promoteHalvingStage } from "./core/successive-halving.js";
 import { estimateCost, type CostObservation } from "./core/cost-model.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
+import { discoverAutoLabTasks } from "./core/autolab.js";
 import { learnPromotionPolicy, promotionObservations } from "./core/promotion-learning.js";
 import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, evaluateProviderGeneralization, harnessParetoFrontier, parseHarnessTrial, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol, type HarnessTrial } from "./core/harness-scorecard.js";
 import { captureProtectedFiles, changedProtectedFiles } from "./core/integrity.js";
@@ -1312,6 +1313,18 @@ airsBenchmark.command("protocol")
     const output = `${JSON.stringify(protocol, null, 2)}\n`;
     if (options.out) writeFileSync(resolve(options.out), output);
     else process.stdout.write(output);
+  });
+const autolabBenchmark = benchmark.command("autolab").description("Discover AutoLab long-horizon research and engineering task contracts");
+autolabBenchmark.command("discover")
+  .argument("<repository>", "AutoLab repository checkout")
+  .option("--out <file>", "write the normalized task inventory to JSON")
+  .description("Read public AutoLab task.toml contracts without installing Harbor or executing tasks")
+  .action((repository: string, options: { out?: string }) => {
+    const report = discoverAutoLabTasks(repository);
+    const output = `${JSON.stringify(report, null, 2)}\n`;
+    if (options.out) writeFileSync(resolve(options.out), output);
+    else process.stdout.write(output);
+    if (report.invalidTasks > 0) process.exitCode = 2;
   });
 program.addCommand(benchmark);
 

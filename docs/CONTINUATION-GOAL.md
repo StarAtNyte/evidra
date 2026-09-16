@@ -764,6 +764,9 @@ external evaluator.
 - Long-horizon literature review now records LongHorizon-Harness, AutoLab, and
   AARRI-Bench as design/evaluation inputs: explicit manager state, fresh-context
   execution, independent audit, persistence, and researcher-quality checks.
+- Added a provider-neutral AutoLab contract adapter and CLI discovery command;
+  the current public checkout normalizes 36 valid task contracts without
+  executing Harbor or claiming benchmark performance.
 
 ## Immediate next work
 

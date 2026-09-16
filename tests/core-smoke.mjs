@@ -38,6 +38,7 @@ import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../dist/core/experiment-manifest.js";
 import { distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.js";
 import { auditData, dataAuditFingerprint } from "../dist/core/data-audit.js";
+import { discoverAutoLabTasks, parseAutoLabDiscovery } from "../dist/core/autolab.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { runReducedValidation } from "../dist/core/stage-executor.js";
 import { createToolTraceRecorder, evaluateTrajectory, MAX_TRACE_BYTES, MAX_TRACE_EVENTS, parsePersistedTrace, capabilityGaps, providerActivityFailureClass, researchToolFailureClass, validateTrajectoryStructure } from "../dist/core/trajectories.js";
@@ -5362,6 +5363,29 @@ test("AIRS-Bench discovery normalizes task metadata and flags incomplete contrac
     assert.equal(task?.dataset, "demo/data");
     assert.ok(task?.missingFiles.length === 0);
     assert.ok(report.tasks.find((entry) => entry.id === "TaskB")?.missingFiles.includes("evaluatePath"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("AutoLab discovery normalizes task contracts, resources, and validity", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-autolab-"));
+  try {
+    const valid = join(root, "tasks", "stack_machine_golf");
+    const invalid = join(root, "tasks", "missing_contract");
+    mkdirSync(valid, { recursive: true });
+    mkdirSync(invalid, { recursive: true });
+    writeFileSync(join(valid, "instruction.md"), "# task\n");
+    writeFileSync(join(valid, "task.toml"), `[metadata]\ndifficulty = "hard"\ndomain = "puzzle_and_challenge"\ntags = ["stack-machine", "optimization"]\n\n[agent]\ntimeout_sec = 7200\n\n[verifier]\ntimeout_sec = 300\n\n[environment]\ncpus = 1\nmemory_mb = 512\ngpus = 0\nallow_internet = false\n\n[optimization]\nmetric = "instruction_count"\ndirection = "lower"\n\n[optimization.baseline]\nscore = 5132\nmethod = "loop"\n\n[optimization.reference]\nscore = 3530\nmethod = "unrolled"\n`);
+    const report = discoverAutoLabTasks(root);
+    assert.equal(report.validTasks, 1);
+    assert.equal(report.invalidTasks, 1);
+    const task = report.tasks.find((entry) => entry.id === "stack_machine_golf");
+    assert.equal(task?.valid, true);
+    assert.equal(task?.direction, "minimize");
+    assert.equal(task?.baseline?.score, 5132);
+    assert.equal(task?.reference?.score, 3530);
+    assert.deepEqual(task?.resources, { cpus: 1, memoryMb: 512, gpus: 0, allowInternet: false });
+    assert.equal(task?.agentTimeoutSec, 7200);
+    assert.equal(parseAutoLabDiscovery(report).tasks.length, 2);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
