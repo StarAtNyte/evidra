@@ -58,7 +58,9 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `837bad3` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `1a0ff64` (verify with `git log`).
+- The bounded `git.diff` research tool compares `HEAD`, so agents now see both
+  staged and unstaged implementation changes during review and recovery.
 - The research tool registry now includes a bounded, read-only `git.diff`
   observation for implementation and recovery review; diff contents remain
   untrusted workspace data and nonzero Git exits are preserved as failures.
