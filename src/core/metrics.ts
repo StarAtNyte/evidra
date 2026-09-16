@@ -51,6 +51,11 @@ function rmse(target: readonly unknown[], prediction: readonly unknown[]): numbe
   return Math.sqrt(pairs.reduce((sum, [actual, predicted]) => sum + (actual - predicted) ** 2, 0) / pairs.length);
 }
 
+function mse(target: readonly unknown[], prediction: readonly unknown[]): number {
+  const pairs = numberPairs(target, prediction);
+  return pairs.reduce((sum, [actual, predicted]) => sum + (actual - predicted) ** 2, 0) / pairs.length;
+}
+
 function mae(target: readonly unknown[], prediction: readonly unknown[]): number {
   const pairs = numberPairs(target, prediction);
   return pairs.reduce((sum, [actual, predicted]) => sum + Math.abs(actual - predicted), 0) / pairs.length;
@@ -180,6 +185,7 @@ export const METRIC_REGISTRY: readonly MetricDefinition[] = [
   { name: "accuracy", direction: "maximize", description: "Exact classification accuracy.", compute: accuracy },
   { name: "macro_f1", direction: "maximize", description: "Unweighted mean F1 across labels.", compute: (target, prediction) => f1(target, prediction, "macro") },
   { name: "micro_f1", direction: "maximize", description: "Global F1 across labels.", compute: (target, prediction) => f1(target, prediction, "micro") },
+  { name: "mse", direction: "minimize", description: "Mean squared error.", compute: mse },
   { name: "rmse", direction: "minimize", description: "Root mean squared error.", compute: rmse },
   { name: "mae", direction: "minimize", description: "Mean absolute error.", compute: mae },
   { name: "log_loss", direction: "minimize", description: "Binary logarithmic loss for probabilities.", compute: logLoss },
@@ -193,7 +199,7 @@ export const METRIC_REGISTRY: readonly MetricDefinition[] = [
 ];
 
 const aliases = new Map([
-  ["f1_macro", "macro_f1"], ["f1_micro", "micro_f1"], ["roc_auc", "auroc"], ["mse", "rmse"],
+  ["f1_macro", "macro_f1"], ["f1_micro", "micro_f1"], ["roc_auc", "auroc"],
   ["ap", "average_precision"], ["map", "average_precision"], ["qwk", "quadratic_weighted_kappa"],
   ["intersection_over_union", "iou"], ["f1_overlap", "dice"],
 ]);
