@@ -53,17 +53,22 @@ function boundValue(value: unknown, budget: number, path: string, truncated: str
   }
   if (Array.isArray(value)) {
     const output: unknown[] = [];
-    for (let index = 0; index < value.length; index += 1) {
-      const remaining = Math.max(128, Math.floor((budget - size(output)) / Math.max(1, value.length - index)));
+    // Feedback-bearing histories are append-only; preserve the newest entries
+    // when the provider context is too small, then restore chronological order.
+    const newestFirst = path === "toolResults" || path === "recentEvents";
+    const indices = newestFirst ? [...value.keys()].reverse() : [...value.keys()];
+    for (let position = 0; position < indices.length; position += 1) {
+      const index = indices[position];
+      const remaining = Math.max(128, Math.floor((budget - size(output)) / Math.max(1, indices.length - position)));
       const item = boundValue(value[index], remaining, `${path}[${index}]`, truncated);
       if (item === undefined) { truncated.push(path); break; }
       output.push(item);
       if (size(output) >= budget * 0.95) {
-        if (index + 1 < value.length) truncated.push(path);
+        if (position + 1 < indices.length) truncated.push(path);
         break;
       }
     }
-    return output;
+    return newestFirst ? output.reverse() : output;
   }
   if (value && typeof value === "object") {
     const output: Record<string, unknown> = {};

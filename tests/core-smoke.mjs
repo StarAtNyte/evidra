@@ -192,6 +192,17 @@ test("research context caps oversized observations without evicting phase state"
   assert.ok(packed.report.truncated.includes("observation.output") || packed.report.dropped.includes("observation"));
 });
 
+test("research context retains newest tool feedback when history is oversized", () => {
+  const packed = boundResearchContext({
+    toolResults: [
+      { name: "old", output: "x".repeat(30_000) },
+      { name: "latest", output: "the current verified observation" },
+    ],
+    phaseGoal: { phase: "execution", objective: "use the latest result" },
+  }, 4_000);
+  assert.equal(packed.context.toolResults.at(-1).name, "latest");
+});
+
 test("strict Codex research output normalizes nullable optional fields", () => {
   const payload = normalizeResearchDecisionPayload({ selectedHypothesis: null, hypotheses: [{ expectedOutcome: null, sourceAdaptation: { sourceTitle: "paper", section: null, repository: null, originalSetting: "setting", competitionDifference: "difference", expectedFailureModes: ["failure"] } }] });
   assert.equal(payload.hypotheses[0].expectedOutcome, undefined);
