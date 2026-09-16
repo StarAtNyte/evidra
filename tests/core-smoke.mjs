@@ -190,6 +190,7 @@ test("research context caps oversized observations without evicting phase state"
   assert.equal(packed.context.phaseGoal.phase, "validation");
   assert.equal(packed.context.allocation.focus, "evidence-validation");
   assert.ok(packed.report.truncated.includes("observation.output") || packed.report.dropped.includes("observation"));
+  assert.ok(JSON.stringify(packed.context).length <= packed.report.maxChars);
 });
 
 test("research context retains newest tool feedback when history is oversized", () => {

@@ -95,6 +95,10 @@ function boundValue(value: unknown, budget: number, path: string, truncated: str
  */
 export function boundResearchContext(input: Record<string, unknown>, maxChars = Number(process.env.EVIDRA_CONTEXT_MAX_CHARS ?? 48_000)): BoundedContext {
   const budget = Math.max(4_000, Math.floor(maxChars));
+  // Reserve room for the audit report that is attached to the model context
+  // after packing. Without this margin the advertised budget could be exceeded
+  // by the report itself.
+  const packingBudget = Math.max(256, budget - 512);
   const truncated: string[] = [];
   const dropped: string[] = [];
   const keys = Object.keys(input).sort((left, right) => {
@@ -104,7 +108,7 @@ export function boundResearchContext(input: Record<string, unknown>, maxChars = 
   });
   const context: Record<string, unknown> = {};
   for (const [index, key] of keys.entries()) {
-    const remaining = budget - size(context);
+    const remaining = packingBudget - size(context);
     if (remaining < 256) { dropped.push(key); continue; }
     const remainingProtected = keys.slice(index + 1).filter((candidate) => protectedSections.has(candidate) && input[candidate] !== undefined).length;
     const available = Math.max(256, remaining - remainingProtected * protectedSectionReserve);
