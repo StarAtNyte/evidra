@@ -2,7 +2,8 @@
 .shell{width:min(1340px,calc(100% - 48px))}
 .system-heading,.loop-heading,.demos-heading{margin-left:var(--content-indent);gap:var(--content-gap)}
 .feature-grid,.loop-track,.technique-grid{margin-left:var(--content-indent)}
-.terminal-section,.install-section{margin-left:var(--content-indent);gap:var(--content-gap)}
+.terminal-section,.install-section{margin-left:0;display:grid;grid-template-columns:180px 1fr;gap:75px;align-items:center}
+.terminal-content,.install-content{display:grid;grid-template-columns:.85fr 1.15fr;gap:var(--content-gap);align-items:center}
 .technique-footer{margin-left:var(--content-indent)}
 .section h2{margin-bottom:28px}
 .section-lede,.system-heading p,.loop-heading p,.demos-heading p,.terminal-intro p,.install-copy p{line-height:1.75}
@@ -11,4 +12,6 @@
   :root{--content-indent:0px;--content-gap:35px}
   .shell{width:min(calc(100% - 36px),600px)}
   .system-heading,.loop-heading,.demos-heading,.feature-grid,.loop-track,.terminal-section,.install-section,.technique-grid,.technique-footer{margin-left:0}
+  .terminal-section,.install-section{display:block}
+  .terminal-content,.install-content{display:block}
 }
