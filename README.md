@@ -764,6 +764,13 @@ The provider is an implementation detail behind the same research protocol:
   still be selected explicitly.
 - **Local:** Ollama's local chat endpoint and the selected installed model.
 
+Competition manifests may additionally declare typed `researchChannels` such as
+`rules`, `discussion`, `leaderboard`, `documentation`, `paper`, or `repository`.
+The autonomous loop ingests these through the same SSRF-safe retrieval path as
+literature, records the channel kind and content hash, and applies channel-specific
+refresh intervals. Channel content is discovery evidence only: it cannot masquerade
+as a locally measured metric or an externally verified submission score.
+
 Evidra never extracts subscription tokens or implements unofficial ChatGPT API calls. Provider availability is checked before work begins, and local fallback is used only for configured `auto`/`fallback` policies when a local model is available and the Codex failure is classified as safely route-changeable.
 
 ## Development
@@ -783,8 +790,8 @@ data/leakage audits, a typed worker protocol with heartbeats and artifact checks
 screening and cost-aware scheduling, persistent lane state with independent critics, and
 OOF/prediction analysis with ensemble candidates. The remaining research-lab layers are:
 
-1. richer platform-specific leaderboard/discussion integrations on top of the
-   provider-neutral HTTP adapter;
+1. richer platform-specific leaderboard/discussion parsing on top of the new
+   provider-neutral typed research-channel layer;
 2. Slurm and additional remote executor backends;
 3. a local browser dashboard on top of the same event/state model.
 

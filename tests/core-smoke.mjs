@@ -14,6 +14,7 @@ import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submis
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaimRecords, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { CompetitionConfigSchema, ExperimentManifestSchema } from "../dist/core/types.js";
+import { competitionResearchSources } from "../dist/core/competition-sources.js";
 import { processFailureResult, runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
@@ -6014,6 +6015,23 @@ test("competition metric suites reject ambiguous objective names", () => {
   assert.throws(() => CompetitionConfigSchema.parse({ ...base, secondaryMetrics: [{ name: "score", direction: "maximize" }] }), /unique.*duplicate/i);
   const parsed = CompetitionConfigSchema.parse({ ...base, secondaryMetrics: [{ name: "latency_ms", direction: "minimize", maximumRegression: 5 }] });
   assert.equal(parsed.secondaryMetrics[0].minimumDelta, 0);
+});
+
+test("competition research channels are typed, deduplicated, and preserve refresh policy", () => {
+  const config = CompetitionConfigSchema.parse({
+    id: "channels", name: "Channels", taskType: "generic", datasetRevision: "v1",
+    metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "estimator.py" },
+    researchSources: ["https://example.com/rules", "https://example.com/notes"],
+    researchChannels: [
+      { kind: "rules", url: "https://example.com/rules" },
+      { kind: "discussion", url: "https://example.com/discussion", refreshMinutes: 30 },
+    ],
+  });
+  assert.deepEqual(competitionResearchSources(config), [
+    { kind: "rules", url: "https://example.com/rules" },
+    { kind: "general", url: "https://example.com/notes" },
+    { kind: "discussion", url: "https://example.com/discussion", refreshMinutes: 30 },
+  ]);
 });
 
 test("experiment manifests carry the complete metric contract to workers", () => {

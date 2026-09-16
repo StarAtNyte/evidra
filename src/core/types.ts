@@ -24,6 +24,12 @@ export const CompetitionConfigSchema = z.object({
   baselineCommand: z.array(z.string()).optional(),
   experimentCommand: z.array(z.string()).optional(),
   researchSources: z.array(z.string().url()).default([]),
+  /** Named external channels that the research loop should observe and refresh. */
+  researchChannels: z.array(z.object({
+    kind: z.enum(["rules", "discussion", "leaderboard", "documentation", "paper", "repository", "other"]),
+    url: z.string().url(),
+    refreshMinutes: z.number().positive().finite().optional(),
+  })).default([]),
   evaluatorTimeoutMinutes: z.number().positive().default(60),
   submission: z.object({
     platform: z.enum(["manual", "kaggle", "command", "http"]).default("manual"),

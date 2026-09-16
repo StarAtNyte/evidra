@@ -18,6 +18,13 @@ export const whestbenchConfig: CompetitionConfig = {
     "https://github.com/AIcrowd/whest-starterkit",
     "https://github.com/AIcrowd/whestbench",
   ],
+  researchChannels: [
+    { kind: "rules", url: "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026" },
+    { kind: "discussion", url: "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026/discussion", refreshMinutes: 30 },
+    { kind: "leaderboard", url: "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026/leaderboards", refreshMinutes: 15 },
+    { kind: "repository", url: "https://github.com/AIcrowd/whest-starterkit" },
+    { kind: "repository", url: "https://github.com/AIcrowd/whestbench" },
+  ],
   evaluatorTimeoutMinutes: 60,
   submission: {
     platform: "command",

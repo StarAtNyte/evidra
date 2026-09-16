@@ -13,6 +13,7 @@ import { createValidationPolicy, writeValidationPolicy } from "./core/validation
 import { estimateDistributionBeliefs, type ExternalValidationObservation } from "./core/distribution-beliefs.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "./core/execution-stages.js";
 import { retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceFrontier, sourceSearchText, sourceIsFresh } from "./core/sources.js";
+import { competitionResearchSources } from "./core/competition-sources.js";
 import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "./core/literature-bench.js";
 import { parseAutoResearchBenchEvaluation } from "./core/autoresearch-bench.js";
 import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.js";
@@ -436,28 +437,31 @@ function recordCampaignCheckpoint<T extends { status: string }>(campaign: T, mod
 }
 
 async function ingestCompetitionSources(adapter: ReturnType<typeof activeCompetition>): Promise<void> {
-  if (!adapter.config.researchSources?.length) return;
+  const configuredSources = competitionResearchSources(adapter.config);
+  if (!configuredSources.length) return;
   const store = new ResearchStore(statePath);
   const known = new Map<string, { payload: unknown; createdAt: string }>();
   for (const entry of store.sources()) {
     const url = (entry.payload as { url?: string }).url;
     if (url && !known.has(url)) known.set(url, entry);
   }
-  for (const url of adapter.config.researchSources) {
+  for (const configured of configuredSources) {
+    const { url } = configured;
     const prior = known.get(url);
-    if (prior && sourceIsFresh(prior)) continue;
+    const refreshMs = configured.refreshMinutes ? configured.refreshMinutes * 60_000 : undefined;
+    if (prior && sourceIsFresh(prior, refreshMs)) continue;
     try {
       const source = await retrieveSource(url);
       const claimRecords = sourceClaimRecords(source.text);
       const claims = claimRecords.map((claim) => claim.statement);
-      store.saveSource({ id: source.id, payload: { ...source, claims } });
+      store.saveSource({ id: source.id, payload: { ...source, claims, channelKind: configured.kind } });
       for (const [index, claim] of claimRecords.entries()) {
         const statement = claim.statement;
         const claimId = `${source.id}_claim_${index + 1}`;
         store.saveClaim({ id: claimId, payload: { id: claimId, statement, excerpt: claim.excerpt, sourceSpan: { start: claim.start, end: claim.end }, scope: source.url, confidence: 0.35, sourceType: "literature", sourceId: source.id, status: "active" } });
         store.saveEdge({ id: `edge_${claimId}_${source.id}`, fromId: claimId, toId: source.id, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
       }
-      store.appendEvent(prior ? "challenge.source.refreshed" : "challenge.source.ingested", { url, title: source.title, claims: claims.length, previousSource: prior ? (prior.payload as { id?: string }).id : undefined });
+      store.appendEvent(prior ? "challenge.source.refreshed" : "challenge.source.ingested", { url, title: source.title, claims: claims.length, channelKind: configured.kind, previousSource: prior ? (prior.payload as { id?: string }).id : undefined });
     } catch (error) {
       store.appendEvent("challenge.source.failed", { url, error: error instanceof Error ? error.message : String(error) });
     }

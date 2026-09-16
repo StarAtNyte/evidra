@@ -27,6 +27,7 @@ import { executeResearchTool } from "../core/tools.js";
 import { projectVerifiedSubtaskState } from "../core/subtask-state.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
+import { competitionResearchSources } from "../core/competition-sources.js";
 import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../core/phase-goals.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
@@ -688,8 +689,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
   };
 
   const ingestCompetitionSources = async (adapter: ReturnType<typeof activeAdapter>): Promise<string[]> => {
-    const urls = adapter.config.researchSources ?? [];
-    if (!urls.length) return [];
+    const configuredSources = competitionResearchSources(adapter.config);
+    if (!configuredSources.length) return [];
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const known = new Map<string, { payload: unknown; createdAt: string }>();
     for (const entry of store.sources()) {
@@ -697,22 +698,24 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (url && !known.has(url)) known.set(url, entry);
     }
     const ingested: string[] = [];
-    for (const url of urls) {
+    for (const configured of configuredSources) {
+      const { url } = configured;
       const prior = known.get(url);
-      if (prior && sourceIsFresh(prior)) continue;
+      const refreshMs = configured.refreshMinutes ? configured.refreshMinutes * 60_000 : undefined;
+      if (prior && sourceIsFresh(prior, refreshMs)) continue;
       setProgress(`Challenge research · retrieving ${new URL(url).hostname}...`);
       try {
         const source = await retrieveSource(url);
         const claimRecords = sourceClaimRecords(source.text);
         const claims = claimRecords.map((claim) => claim.statement);
-        store.saveSource({ id: source.id, payload: { ...source, claims } });
+        store.saveSource({ id: source.id, payload: { ...source, claims, channelKind: configured.kind } });
         for (const [index, claim] of claimRecords.entries()) {
           const statement = claim.statement;
           const claimId = `${source.id}_claim_${index + 1}`;
           store.saveClaim({ id: claimId, payload: { id: claimId, statement, excerpt: claim.excerpt, sourceSpan: { start: claim.start, end: claim.end }, scope: source.url, confidence: 0.35, sourceType: "literature", sourceId: source.id, status: "active" } });
           store.saveEdge({ id: `edge_${claimId}_${source.id}`, fromId: claimId, toId: source.id, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
         }
-        store.appendEvent(prior ? "challenge.source.refreshed" : "challenge.source.ingested", { url, title: source.title, claims: claims.length, previousSource: prior ? (prior.payload as { id?: string }).id : undefined });
+        store.appendEvent(prior ? "challenge.source.refreshed" : "challenge.source.ingested", { url, title: source.title, claims: claims.length, channelKind: configured.kind, previousSource: prior ? (prior.payload as { id?: string }).id : undefined });
         ingested.push(source.title);
       } catch (error) {
         store.appendEvent("challenge.source.failed", { url, error: error instanceof Error ? error.message : String(error) });
