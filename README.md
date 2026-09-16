@@ -265,6 +265,7 @@ Implemented today:
 - unattended experiment runs also record the same quality-scored process/evaluator/recovery trajectory used by the interactive workbench;
 - capability routing learns from prior trajectory quality: failed or warning-heavy cycles raise verification pressure, bound lane fan-out, and persist predicted tier versus served provider/model and observed outcome;
 - bounded research teams are focus-aware and cycle-rotated: a measured evidence or recovery gap keeps its specialist first, while the remaining seats rotate across independent data, method, model, ensemble, domain, and reproducibility perspectives;
+- non-safe teams communicate through bounded parallel waves: later specialists receive a compact peer board with exact evidence anchors, while each wave hand-off is persisted for replay and audit; safe mode remains a single read-only pass;
 - peer review is an empirically budgeted resource: Evidra records whether a review produced actionable disagreement or required checks, retains collaboration while history is sparse, and suppresses repeated no-value reviews unless hard evidence pressure forces them;
 - autonomous experiment worktrees receive a language-agnostic code-health check before evaluation; severe test deletion or extreme untested growth is rejected, while smaller maintainability drift remains visible as evidence;
 - code-health evidence is cumulative across the recent edit history, so repeated individually-small regressions can eventually trigger a repair gate;

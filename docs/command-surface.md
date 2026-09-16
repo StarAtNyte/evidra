@@ -38,6 +38,12 @@ Research mode emphasizes sources, claims, ideas, hypotheses, and decisions. Chal
 
 An explicit autonomous campaign owns the full local loop: research lanes, implementation in an isolated worktree, evaluation, retries, and replication. It can be controlled or recovered without losing durable state:
 
+`--lanes` is the maximum number of specialists running concurrently. In `fast`
+and `yolo`, Evidra may schedule the bounded role pool in multiple waves so
+later specialists can challenge earlier findings; the hand-offs are durable
+`research.lane.handoff` events. `safe` remains a single read-only specialist
+pass.
+
 ```text
 /research start               Start autonomous research setup
 /research pause               Pause active research workers
