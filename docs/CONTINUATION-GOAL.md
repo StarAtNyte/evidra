@@ -58,7 +58,10 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `1a0ff64` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `3487307` (verify with `git log`).
+- Workspace inventory now includes hidden project control files while excluding
+  `.git`, `.sota`, and dependency trees, reducing blind spots in evidence
+  gathering and implementation review.
 - The bounded `git.diff` research tool compares `HEAD`, so agents now see both
   staged and unstaged implementation changes during review and recovery.
 - The research tool registry now includes a bounded, read-only `git.diff`
