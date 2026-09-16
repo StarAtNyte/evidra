@@ -1119,9 +1119,9 @@ export class ResearchStore {
     if (!parsed.success) {
       throw new Error(`Invalid evidence claim ${claim.id}: ${parsed.error.issues.map((issue) => `${issue.path.join(".")} ${issue.message}`).join("; ")}`);
     }
-    if (parsed.data.sourceType === "literature") {
+    if (parsed.data.sourceType === "literature" || parsed.data.sourceType === "external_source") {
       const source = this.db.prepare("SELECT 1 AS present FROM research_sources WHERE id = ?").get(parsed.data.sourceId) as { present: number } | undefined;
-      if (!source) throw new Error(`Literature claim ${claim.id} references missing source ${parsed.data.sourceId}.`);
+      if (!source) throw new Error(`External source claim ${claim.id} references missing source ${parsed.data.sourceId}.`);
     }
     const safeCandidate = redactStructured(candidate);
     const durablePayload = safeJson(safeCandidate);

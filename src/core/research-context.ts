@@ -18,7 +18,7 @@ export function activeClaimIds(store: ResearchStore): Set<string> {
   return new Set(store.claims().flatMap((claim) => {
     const payload = claim.payload && typeof claim.payload === "object" ? claim.payload as { status?: unknown; sourceType?: unknown; sourceId?: unknown } : {};
     if (payload.status === "superseded" || payload.status === "invalidated") return [];
-    if (payload.sourceType === "literature" && typeof payload.sourceId === "string" && sourceStatus.get(payload.sourceId) !== "active") return [];
+    if ((payload.sourceType === "literature" || payload.sourceType === "external_source") && typeof payload.sourceId === "string" && sourceStatus.get(payload.sourceId) !== "active") return [];
     return [claim.id];
   }));
 }

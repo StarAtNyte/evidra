@@ -14,7 +14,7 @@ import { prepareSubmission, validateSubmissionBundle } from "../dist/core/submis
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaimRecords, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { CompetitionConfigSchema, ExperimentManifestSchema } from "../dist/core/types.js";
-import { competitionResearchSources } from "../dist/core/competition-sources.js";
+import { competitionResearchClaimType, competitionResearchSources } from "../dist/core/competition-sources.js";
 import { processFailureResult, runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
@@ -2182,8 +2182,9 @@ test("evidence claims require provenance and grounded literature sources", () =>
     assert.throws(() => store.saveClaim({ id: "orphan", payload: { statement: "paper claim", scope: "paper", confidence: 0.5, sourceType: "literature", sourceId: "missing-source", status: "active" } }), /missing source/);
     store.saveSource({ id: "paper-1", payload: { title: "Paper", url: "https://example.com/paper", claims: [] } });
     store.saveClaim({ id: "grounded", payload: { statement: "paper claim is valid", scope: "paper", confidence: 0.5, sourceType: "literature", sourceId: "paper-1", status: "active", excerpt: "quoted context" } });
-    assert.equal(store.claims()[0].id, "grounded");
-    assert.equal(store.claims()[0].payload.excerpt, "quoted context");
+    store.saveSource({ id: "discussion-1", payload: { title: "Discussion", url: "https://example.com/discussion", channelKind: "discussion", claims: [] } });
+    store.saveClaim({ id: "external-channel", payload: { statement: "A discussion proposes a possible approach", scope: "https://example.com/discussion", confidence: 0.35, sourceType: "external_source", sourceId: "discussion-1", status: "active" } });
+    assert.equal(store.claims().find((claim) => claim.id === "grounded")?.payload.excerpt, "quoted context");
     store.saveClaim({ id: "contrary", payload: { statement: "paper claim is not valid", scope: "paper", confidence: 0.5, sourceType: "literature", sourceId: "paper-1", status: "active" } });
     assert.ok(store.edges().some((edge) => edge.relation === "contradicts" && edge.evidenceIds.includes("grounded") && edge.evidenceIds.includes("contrary")));
     store.close();
@@ -6032,6 +6033,8 @@ test("competition research channels are typed, deduplicated, and preserve refres
     { kind: "general", url: "https://example.com/notes" },
     { kind: "discussion", url: "https://example.com/discussion", refreshMinutes: 30 },
   ]);
+  assert.equal(competitionResearchClaimType("paper"), "literature");
+  assert.equal(competitionResearchClaimType("discussion"), "external_source");
 });
 
 test("experiment manifests carry the complete metric contract to workers", () => {

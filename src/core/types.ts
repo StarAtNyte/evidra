@@ -203,7 +203,7 @@ export const EvidenceClaimSchema = z.object({
   statement: z.string().min(1),
   scope: z.string().min(1),
   confidence: z.number().min(0).max(1),
-  sourceType: z.enum(["observation", "run", "review", "literature", "external_score"]),
+  sourceType: z.enum(["observation", "run", "review", "literature", "external_source", "external_score"]),
   sourceId: z.string().min(1),
   status: z.enum(["active", "superseded", "invalidated"]).default("active"),
 });

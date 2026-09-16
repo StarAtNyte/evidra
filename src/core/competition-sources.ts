@@ -8,6 +8,11 @@ export interface CompetitionResearchSource {
   refreshMinutes?: number;
 }
 
+/** Keep external channel observations distinct from paper-derived evidence. */
+export function competitionResearchClaimType(kind: CompetitionResearchChannelKind): "literature" | "external_source" {
+  return kind === "general" || kind === "paper" ? "literature" : "external_source";
+}
+
 /** Combine legacy anonymous URLs with typed channels without fetching duplicates. */
 export function competitionResearchSources(config: CompetitionConfig): CompetitionResearchSource[] {
   const sources: CompetitionResearchSource[] = (config.researchSources ?? []).map((url) => ({ url, kind: "general" }));

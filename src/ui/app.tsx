@@ -27,7 +27,7 @@ import { executeResearchTool } from "../core/tools.js";
 import { projectVerifiedSubtaskState } from "../core/subtask-state.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
-import { competitionResearchSources } from "../core/competition-sources.js";
+import { competitionResearchClaimType, competitionResearchSources } from "../core/competition-sources.js";
 import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../core/phase-goals.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
@@ -712,7 +712,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         for (const [index, claim] of claimRecords.entries()) {
           const statement = claim.statement;
           const claimId = `${source.id}_claim_${index + 1}`;
-          store.saveClaim({ id: claimId, payload: { id: claimId, statement, excerpt: claim.excerpt, sourceSpan: { start: claim.start, end: claim.end }, scope: source.url, confidence: 0.35, sourceType: "literature", sourceId: source.id, status: "active" } });
+          store.saveClaim({ id: claimId, payload: { id: claimId, statement, excerpt: claim.excerpt, sourceSpan: { start: claim.start, end: claim.end }, scope: source.url, confidence: 0.35, sourceType: competitionResearchClaimType(configured.kind), sourceId: source.id, status: "active" } });
           store.saveEdge({ id: `edge_${claimId}_${source.id}`, fromId: claimId, toId: source.id, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
         }
         store.appendEvent(prior ? "challenge.source.refreshed" : "challenge.source.ingested", { url, title: source.title, claims: claims.length, channelKind: configured.kind, previousSource: prior ? (prior.payload as { id?: string }).id : undefined });
