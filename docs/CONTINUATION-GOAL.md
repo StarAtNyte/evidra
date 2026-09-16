@@ -58,7 +58,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `8dc9153` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `4ba1063` (verify with `git log`).
 - Competition manifests now support typed `researchChannels` for rules,
   discussions, leaderboards, documentation, papers, and repositories. CLI/TUI
   ingestion deduplicates legacy URLs, persists channel kind with source hashes,
@@ -95,6 +95,13 @@ external evaluator.
   durable requested/applied status. Pause survives controller restarts, resume
   clears the pause, and an applied stop cannot be replayed by a restarted
   controller.
+- Non-safe research lane teams now use a bounded completion-driven asynchronous
+  scheduler: capacity is refilled as lanes finish, later lanes receive the
+  compact completed-peer board, and each hand-off is durably recorded. Safe mode
+  retains serialized lane execution.
+- The literature guidance now records Auto-RecSys's asynchronous execution and
+  centralized-memory lessons plus regime-aware retrieval from memory-substrate
+  comparisons; README model-policy language matches explicit Astra preservation.
 - Identified duplicate findings now contribute active conflict pressure only
   when both referenced claim endpoints remain active; anonymous legacy events
   remain conservatively counted.
