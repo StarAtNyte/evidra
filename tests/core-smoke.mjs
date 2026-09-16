@@ -180,6 +180,18 @@ test("research context packing preserves priority and records truncation", () =>
   assert.ok(packed.context.contextBudget);
 });
 
+test("research context caps oversized observations without evicting phase state", () => {
+  const packed = boundResearchContext({
+    observation: { output: "x".repeat(100_000) },
+    phaseGoal: { phase: "validation", objective: "verify the candidate" },
+    allocation: { focus: "evidence-validation", priority: "critical" },
+    availableTools: RESEARCH_TOOLS,
+  }, 4_000);
+  assert.equal(packed.context.phaseGoal.phase, "validation");
+  assert.equal(packed.context.allocation.focus, "evidence-validation");
+  assert.ok(packed.report.truncated.includes("observation.output") || packed.report.dropped.includes("observation"));
+});
+
 test("strict Codex research output normalizes nullable optional fields", () => {
   const payload = normalizeResearchDecisionPayload({ selectedHypothesis: null, hypotheses: [{ expectedOutcome: null, sourceAdaptation: { sourceTitle: "paper", section: null, repository: null, originalSetting: "setting", competitionDifference: "difference", expectedFailureModes: ["failure"] } }] });
   assert.equal(payload.hypotheses[0].expectedOutcome, undefined);

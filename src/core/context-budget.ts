@@ -19,6 +19,27 @@ const priority = [
   "recentEvents", "researchSources", "availableTools",
 ];
 
+// Keep the controller's authoritative state visible even when a provider or
+// workspace emits an unusually large observation. These are context caps, not
+// storage caps: the complete values remain durable in the store/artifacts.
+const sectionCaps: Record<string, number> = {
+  observation: 12_000,
+  phaseGoal: 6_000,
+  allocation: 6_000,
+  evidenceConflicts: 4_000,
+  toolResults: 12_000,
+  crossPollination: 6_000,
+  laneReports: 10_000,
+  researchMemory: 8_000,
+  experienceReplay: 8_000,
+  literatureFrontier: 6_000,
+  recentEvents: 8_000,
+  researchSources: 8_000,
+  availableTools: 8_000,
+};
+const protectedSections = new Set(["observation", "phaseGoal", "allocation", "evidenceConflicts"]);
+const protectedSectionReserve = 512;
+
 function size(value: unknown): number {
   try { return JSON.stringify(value).length; } catch { return 0; }
 }
@@ -77,10 +98,12 @@ export function boundResearchContext(input: Record<string, unknown>, maxChars = 
     return (leftIndex < 0 ? priority.length : leftIndex) - (rightIndex < 0 ? priority.length : rightIndex) || left.localeCompare(right);
   });
   const context: Record<string, unknown> = {};
-  for (const key of keys) {
+  for (const [index, key] of keys.entries()) {
     const remaining = budget - size(context);
     if (remaining < 256) { dropped.push(key); continue; }
-    const bounded = boundValue(input[key], remaining, key, truncated);
+    const remainingProtected = keys.slice(index + 1).filter((candidate) => protectedSections.has(candidate) && input[candidate] !== undefined).length;
+    const available = Math.max(256, remaining - remainingProtected * protectedSectionReserve);
+    const bounded = boundValue(input[key], Math.min(available, sectionCaps[key] ?? available), key, truncated);
     if (bounded === undefined) dropped.push(key);
     else context[key] = bounded;
   }

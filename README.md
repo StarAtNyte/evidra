@@ -279,6 +279,8 @@ Implemented today:
 - typed research-tool failures use that same vocabulary, so repeated retrieval, shell, artifact, or workspace failures also trigger targeted recovery rather than repeating an unhealthy route;
 - director turns retrieve a bounded, objective-aware tool catalog with an always-on inspection core; catalog pruning reduces context noise without changing the controller's complete permission registry;
 - retrospective experience replay selects a bounded deterministic coreset that favors difficult outcomes while diversifying task, domain, capability tier, and observed gap signatures;
+- context packing applies per-section ceilings so oversized observations or tool output cannot evict the active phase goal, allocation, or evidence-conflict state from a provider turn;
+- protected context sections also reserve bounded space for one another under emergency-small budgets, preventing a single large high-priority payload from starving the rest of the controller state;
 - the same typed failure pressure is applied to capability routing in both the CLI and TUI, increasing verification demand and constraining fan-out consistently across interfaces;
 - retryable research-lane transport and timeout failures select an untried configured provider/model route before repeating a route, while single-route setups retain bounded retries and preserve the original failure as evidence;
 - director synthesis receives the same route pool and applies the same bounded untried-route recovery, avoiding a full-cycle replay on a failed model;
