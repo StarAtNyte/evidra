@@ -350,6 +350,21 @@ export function researchLaneConcurrency(options: { autonomy?: AutonomyLevel; pro
   return Math.max(1, Math.min(options.requested ?? moodCeiling, hostCeiling, localCeiling, moodCeiling));
 }
 
+/** Select total team size separately from concurrency so later waves can peer-review earlier ones. */
+export function researchLaneTeamSize(
+  objective: string,
+  concurrency: number,
+  options: Pick<ResearchLanesOptions, "autonomy" | "laneTeamSize"> = {},
+): number {
+  const mlOrCompetition = /\b(dataset|training|train|model|estimator|competition|leaderboard|metric|fold|gpu|prediction|baseline)\b/i.test(objective);
+  const availableRoles = mlOrCompetition ? RESEARCH_LANE_ROLES.length : GENERAL_RESEARCH_LANE_ROLES.length;
+  const defaultTeamSize = (options.autonomy ?? "safe") === "safe" ? concurrency : availableRoles;
+  const requestedTeamSize = typeof options.laneTeamSize === "number" && Number.isFinite(options.laneTeamSize)
+    ? Math.floor(options.laneTeamSize)
+    : defaultTeamSize;
+  return Math.max(concurrency, Math.min(availableRoles, requestedTeamSize));
+}
+
 function parseJson(output: unknown): unknown {
   const text = String(output).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
   try { return JSON.parse(text); } catch {
@@ -739,13 +754,7 @@ export async function runResearchLanes(objective: string, context: Record<string
   const mayUseLocalFallback = options.provider === "local"
     || Boolean(options.fallbackLocalModel && (options.limitPolicy === "auto" || options.limitPolicy === "fallback"));
   const concurrency = researchLaneConcurrency({ autonomy: options.autonomy, provider: mayUseLocalFallback ? "local" : options.provider, requested: options.maxParallel });
-  const mlOrCompetition = /\b(dataset|training|train|model|estimator|competition|leaderboard|metric|fold|gpu|prediction|baseline)\b/i.test(objective);
-  const availableRoles = mlOrCompetition ? RESEARCH_LANE_ROLES.length : GENERAL_RESEARCH_LANE_ROLES.length;
-  const defaultTeamSize = options.autonomy === "safe" ? concurrency : availableRoles;
-  const requestedTeamSize = typeof options.laneTeamSize === "number" && Number.isFinite(options.laneTeamSize)
-    ? Math.floor(options.laneTeamSize)
-    : defaultTeamSize;
-  const teamSize = Math.max(concurrency, Math.min(availableRoles, requestedTeamSize));
+  const teamSize = researchLaneTeamSize(objective, concurrency, options);
   const roles = selectResearchLaneRoles(objective, teamSize, { focus: options.laneFocus, rotation: options.laneRotation });
   const routes = assignResearchLaneRoutes(roles, options);
   const reports: ResearchLaneReport[] = [];

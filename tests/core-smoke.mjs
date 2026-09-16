@@ -61,7 +61,7 @@ import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
-import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneHandoffBoard, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLiteratureQueries, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
+import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, laneHandoffBoard, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneTeamSize, researchLiteratureQueries, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
 import { summarizeAgentUsage, summarizeUsage } from "../dist/core/usage.js";
@@ -3047,6 +3047,13 @@ test("lane handoff boards are bounded and preserve challengeable evidence", () =
   assert.equal(board[0].role, "validation scientist");
   assert.equal(board[0].evidence[0], "run-1");
   assert.equal(board[0].summary, "Second");
+});
+
+test("lane team size preserves safe single-pass and enables bounded peer waves", () => {
+  assert.equal(researchLaneTeamSize("prove a theorem", 1), 1);
+  assert.equal(researchLaneTeamSize("prove a theorem", 2, { autonomy: "fast" }), 4);
+  assert.equal(researchLaneTeamSize("train a model", 2, { autonomy: "fast", laneTeamSize: 3 }), 3);
+  assert.equal(researchLaneTeamSize("train a model", 4, { autonomy: "fast", laneTeamSize: 2 }), 4);
 });
 
 test("literature benchmark separates deep recall, wide recall, grounding, and query budget", () => {
