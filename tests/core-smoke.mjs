@@ -2880,10 +2880,12 @@ test("research tool boundaries protect sensitive paths and credentials", () => {
 });
 
 test("research tool result normalization rejects malformed runtime contracts", () => {
-  const malformed = normalizeResearchToolResult({ name: "workspace.read", ok: "yes", trust: "made-up" });
-  assert.equal(malformed.ok, false);
-  assert.equal(malformed.trust, "controller_observation");
-  assert.match(malformed.error, /malformed result contract/);
+  for (const input of [null, [], undefined, { name: "workspace.read", ok: "yes", trust: "made-up" }]) {
+    const malformed = normalizeResearchToolResult(input);
+    assert.equal(malformed.ok, false);
+    assert.equal(malformed.trust, "controller_observation");
+    assert.match(malformed.error, /malformed result contract/);
+  }
   const valid = normalizeResearchToolResult({ name: "workspace.read", ok: false, error: "blocked", trust: "permission_boundary", securityWarnings: ["injection", 4] });
   assert.equal(valid.trust, "permission_boundary");
   assert.deepEqual(valid.securityWarnings, ["injection"]);

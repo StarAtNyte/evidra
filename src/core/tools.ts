@@ -61,8 +61,10 @@ export interface ResearchToolSpec {
 }
 
 /** Apply the safest default when a provider or test double omits provenance metadata. */
-export function normalizeResearchToolResult(result: ResearchToolResult): ResearchToolResult {
-  const value = result as Partial<ResearchToolResult>;
+export function normalizeResearchToolResult(result: unknown): ResearchToolResult {
+  const value = result && typeof result === "object" && !Array.isArray(result)
+    ? result as Partial<ResearchToolResult>
+    : {};
   const trust = value.trust === "controller_observation" || value.trust === "untrusted_content" || value.trust === "permission_boundary"
     ? value.trust
     : "untrusted_content";
@@ -77,7 +79,7 @@ export function normalizeResearchToolResult(result: ResearchToolResult): Researc
       ...(Array.isArray(value.securityWarnings) ? { securityWarnings: value.securityWarnings.filter((warning): warning is string => typeof warning === "string") } : {}),
     };
   }
-  return { ...result, name, ok, trust, ...(Array.isArray(value.securityWarnings) ? { securityWarnings: value.securityWarnings.filter((warning): warning is string => typeof warning === "string") } : {}) };
+  return { ...value, name, ok, trust, ...(Array.isArray(value.securityWarnings) ? { securityWarnings: value.securityWarnings.filter((warning): warning is string => typeof warning === "string") } : {}) };
 }
 
 /** Classify only explicit policy/containment denials as permission-boundary events. */
