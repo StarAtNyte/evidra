@@ -210,6 +210,7 @@ export const ResearchSourceSchema = z.object({
   url: z.string().url(),
   retrievedAt: z.string().datetime(),
   contentHash: z.string().min(1),
+  status: z.enum(["active", "superseded", "invalidated"]).default("active"),
   license: z.string().optional(),
   evidenceClass: z.enum(["scholarly", "official", "implementation", "discovery"]).optional(),
   qualityScore: z.number().min(0).max(1).optional(),

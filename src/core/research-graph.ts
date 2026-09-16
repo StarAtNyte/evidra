@@ -28,10 +28,14 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
   const decision = ResearchDecisionSchema.parse(value);
   const durableSources = store.sources();
   const durableSourceIds = new Set(durableSources.map((source) => source.id));
+  const supersededSourceIds = new Set(store.edges().filter((edge) => edge.relation === "supersedes").map((edge) => edge.toId));
   for (const hypothesis of decision.hypotheses) {
     const missingSourceIds = (hypothesis.evidenceSourceIds ?? []).filter((sourceId) => !durableSourceIds.has(sourceId));
     if (missingSourceIds.length > 0) throw new Error(`Hypothesis '${hypothesis.title}' cites unknown durable research source(s): ${missingSourceIds.join(", ")}`);
     if (hypothesis.sourceAdaptation) {
+      const adaptationSourceIds = [...new Set([...(hypothesis.evidenceSourceIds ?? []), ...(options.evidenceSourceId ? [options.evidenceSourceId] : [])])];
+      const staleSourceIds = adaptationSourceIds.filter((sourceId) => supersededSourceIds.has(sourceId) || (durableSources.find((entry) => entry.id === sourceId)?.payload as { status?: unknown } | undefined)?.status === "invalidated");
+      if (staleSourceIds.length > 0) throw new Error(`Hypothesis '${hypothesis.title}' adapts superseded or invalidated source(s): ${staleSourceIds.join(", ")}`);
       const withoutClaims = (hypothesis.evidenceSourceIds ?? []).filter((sourceId) => {
         const source = durableSources.find((entry) => entry.id === sourceId);
         const payload = source?.payload && typeof source.payload === "object" ? source.payload as { claims?: unknown } : {};

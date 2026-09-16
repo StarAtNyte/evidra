@@ -1103,16 +1103,27 @@ export class ResearchStore {
 
   saveSource(source: { id: string; payload: unknown }): void {
     const createdAt = new Date().toISOString();
-    const payload = safeJson(source.payload);
-    const sourceUrl = source.payload && typeof source.payload === "object" && !Array.isArray(source.payload) && typeof (source.payload as { url?: unknown }).url === "string"
-      ? (source.payload as { url: string }).url
+    const normalizedSource = source.payload && typeof source.payload === "object" && !Array.isArray(source.payload)
+      ? { ...(source.payload as Record<string, unknown>), status: ["active", "superseded", "invalidated"].includes(String((source.payload as Record<string, unknown>).status)) ? (source.payload as Record<string, unknown>).status : "active" }
+      : source.payload;
+    const payload = safeJson(normalizedSource);
+    const sourceUrl = normalizedSource && typeof normalizedSource === "object" && !Array.isArray(normalizedSource) && typeof (normalizedSource as { url?: unknown }).url === "string"
+      ? (normalizedSource as { url: string }).url
       : undefined;
     const prior = sourceUrl
       ? this.sources().find((entry) => entry.id !== source.id && typeof (entry.payload as { url?: unknown }).url === "string" && canonicalSourceUrl((entry.payload as { url: string }).url) === canonicalSourceUrl(sourceUrl))
       : undefined;
+    if (prior) {
+      const priorPayload = prior.payload && typeof prior.payload === "object" && !Array.isArray(prior.payload)
+        ? { ...(prior.payload as Record<string, unknown>), status: "superseded" }
+        : prior.payload;
+      this.db.prepare("UPDATE research_sources SET payload_json = ? WHERE id = ?").run(safeJson(priorPayload), prior.id);
+      this.indexMemory("source", prior.id, safeJson(priorPayload), prior.createdAt);
+      this.appendEvent("research.source.superseded", { sourceId: prior.id, supersededBy: source.id });
+    }
     this.db.prepare(`INSERT OR REPLACE INTO research_sources (id, payload_json, created_at) VALUES (?, ?, ?)`).run(source.id, payload, createdAt);
     this.indexMemory("source", source.id, payload, createdAt);
-    this.appendEvent("research.source.created", source.payload);
+    this.appendEvent("research.source.created", normalizedSource);
     if (prior) this.saveEdge({ id: `edge_${source.id}_${prior.id}_supersedes`, fromId: source.id, toId: prior.id, relation: "supersedes", confidence: 1, evidenceIds: [] });
   }
 

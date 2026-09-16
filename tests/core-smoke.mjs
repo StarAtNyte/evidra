@@ -2084,6 +2084,13 @@ test("source adaptation preserves literature provenance through the research gra
     store.saveSource({ id: "paper-adapt", payload: { title: "Paper", url: "https://example.com/paper", claims: ["test claim"] } });
     store.saveSource({ id: "paper-adapt-v2", payload: { title: "Paper", url: "https://example.com/paper", claims: ["updated claim"] } });
     assert.ok(store.edges().some((edge) => edge.fromId === "paper-adapt-v2" && edge.toId === "paper-adapt" && edge.relation === "supersedes"));
+    assert.equal(store.sources().find((entry) => entry.id === "paper-adapt")?.payload.status, "superseded");
+    assert.equal(store.sources().find((entry) => entry.id === "paper-adapt-v2")?.payload.status, "active");
+    assert.throws(() => materializeResearchDecision(store, {
+      phase: "hypothesis", goalStatus: "active", decision: "propose", bottleneck: "Use current literature", rationale: "The old revision must not drive transfer.",
+      hypotheses: [{ title: "Stale adaptation", mechanism: "The source mechanism may transfer.", evidence: ["old claim"], evidenceSourceIds: ["paper-adapt"], sourceAdaptation: { sourceTitle: "Paper", originalSetting: "old", competitionDifference: "target differs", expectedFailureModes: ["stale revision"] }, proposedChange: "test", falsificationTest: "the transfer fails", expectedMetricDelta: { low: 0, median: 0, high: 0 } }],
+      selectedHypothesis: null, nextAction: "use the current source", toolCalls: [],
+    }), /superseded or invalidated source/);
     assert.throws(() => materializeResearchDecision(store, {
       phase: "hypothesis", goalStatus: "active", decision: "propose", bottleneck: "Need grounded evidence", rationale: "This source was not retrieved.",
       hypotheses: [{ title: "Ungrounded adaptation", mechanism: "unknown", evidence: ["paper claim"], evidenceSourceIds: ["missing-paper"], sourceAdaptation: { sourceTitle: "Missing paper", originalSetting: "unknown", competitionDifference: "unknown", expectedFailureModes: ["unknown"] }, proposedChange: "test", falsificationTest: "fail", expectedMetricDelta: { low: 0, median: 0, high: 0 } }],
@@ -2106,11 +2113,11 @@ test("source adaptation preserves literature provenance through the research gra
       selectedHypothesis: "Paper-derived test",
       nextAction: "Run the controlled test",
       toolCalls: [],
-    }, { evidenceSourceId: "paper-adapt", evidenceScope: "paper" });
+    }, { evidenceSourceId: "paper-adapt-v2", evidenceScope: "paper" });
     const claim = store.claims().find((entry) => entry.id === materialized.claimIds[0]);
     assert.equal(claim?.payload.sourceType, "literature");
-    assert.equal(claim?.payload.sourceId, "paper-adapt");
-    assert.ok(store.edges().some((edge) => edge.fromId === materialized.claimIds[0] && edge.toId === "paper-adapt" && edge.relation === "derived_from"));
+    assert.equal(claim?.payload.sourceId, "paper-adapt-v2");
+    assert.ok(store.edges().some((edge) => edge.fromId === materialized.claimIds[0] && edge.toId === "paper-adapt-v2" && edge.relation === "derived_from"));
     assert.equal(ablationPlansFromEvents(store.recentEvents(50)).length, 1);
     const autonomousMaterialized = materializeResearchDecision(store, {
       phase: "hypothesis",
@@ -2118,7 +2125,7 @@ test("source adaptation preserves literature provenance through the research gra
       decision: "propose",
       bottleneck: "Need a paper-grounded test",
       rationale: "A retrieved source supports the direction.",
-      hypotheses: [{ title: "Autonomous paper link", mechanism: "The source mechanism may transfer.", evidence: ["The retrieved source reports a relevant effect."], evidenceSourceIds: ["paper-adapt"], proposedChange: "Run a controlled transfer test.", falsificationTest: "The transfer test fails on the locked split.", expectedMetricDelta: { low: 0, median: 0, high: 0 }, computeCostGpuHours: 0, implementationRisk: "low", leakageRisk: "low", dependencies: [], ablationFactors: [] }],
+      hypotheses: [{ title: "Autonomous paper link", mechanism: "The source mechanism may transfer.", evidence: ["The retrieved source reports a relevant effect."], evidenceSourceIds: ["paper-adapt-v2"], proposedChange: "Run a controlled transfer test.", falsificationTest: "The transfer test fails on the locked split.", expectedMetricDelta: { low: 0, median: 0, high: 0 }, computeCostGpuHours: 0, implementationRisk: "low", leakageRisk: "low", dependencies: [], ablationFactors: [] }],
       searchOperator: "greedy",
       selectedHypothesis: null,
       nextAction: "Run the controlled transfer test",
@@ -2126,7 +2133,7 @@ test("source adaptation preserves literature provenance through the research gra
     });
     const autonomousClaim = store.claims().find((entry) => entry.id === autonomousMaterialized.claimIds[0]);
     assert.equal(autonomousClaim?.payload.sourceType, "literature");
-    assert.equal(autonomousClaim?.payload.sourceId, "paper-adapt");
+    assert.equal(autonomousClaim?.payload.sourceId, "paper-adapt-v2");
     const unlinked = materializeResearchDecision(store, {
       phase: "hypothesis", goalStatus: "active", decision: "propose", bottleneck: "Need a local observation", rationale: "The workspace observation is not literature-derived.",
       hypotheses: [{ title: "Local observation test", mechanism: "The observed workspace condition can be tested directly.", evidence: ["The workspace contains the relevant condition."], proposedChange: "Run the smallest local test.", falsificationTest: "The local test fails to reproduce the condition.", expectedMetricDelta: { low: 0, median: 0, high: 0 }, computeCostGpuHours: 0, implementationRisk: "low", leakageRisk: "low", dependencies: [], ablationFactors: [] }],
