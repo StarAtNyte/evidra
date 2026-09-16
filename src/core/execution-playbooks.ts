@@ -64,7 +64,10 @@ function text(value: unknown, fallback: string, max = 500): string {
  */
 export function executionPlaybookFromExperience(experience: ExperienceRecord): ExecutionPlaybook | undefined {
   if (experience.admission !== "candidate" || experience.outcome.status !== "success" || experience.quality.overall !== "PASS") return undefined;
-  const manifest = object(experience.events.find((event) => object(event.payload).manifest)?.payload && object(experience.events.find((event) => object(event.payload).manifest)?.payload).manifest);
+  const eventManifest = experience.events.find((event) => Object.keys(object(object(event.payload).manifest)).length);
+  const manifest = Object.keys(experience.manifest ?? {}).length
+    ? object(experience.manifest)
+    : object(eventManifest?.payload && object(eventManifest.payload).manifest);
   const resources = object(manifest.resources);
   const evaluation = object(manifest.evaluation);
   const metrics = Array.isArray(evaluation.metrics)

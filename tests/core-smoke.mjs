@@ -1664,9 +1664,12 @@ test("successful experiment experience crystallizes a separate execution playboo
   ];
   const pass = Object.fromEntries(["structural", "goalAttainment", "instructionAdherence", "toolUse", "executionAlignment", "evidenceConsistency", "errorRecovery", "termination", "safetyControl"].map((key) => [key, { verdict: "PASS", coverage: "observed", evidence: [] }])) ;
   const experience = buildExperienceRecord({ trajectoryId: "trajectory-procedure", payload: { objective: "replicate a robust experiment", scene: { task: "challenge", domain: "tabular", context: "workbench" }, manifest, events }, quality: { ...pass, overall: "PASS" } });
+  assert.equal(experience.manifest.datasetVersion, "dataset-v1");
   const playbook = executionPlaybookFromExperience(experience);
   assert.ok(playbook);
   assert.equal(playbook.environment.executor, "modal");
+  assert.equal(playbook.environment.datasetVersion, "dataset-v1");
+  assert.equal(playbook.environment.splitVersion, "split-v1");
   assert.match(playbook.steps.join(" "), /verification command/);
   assert.deepEqual(executionPlaybooksFromEvents([{ type: "research.execution.playbook", payload: playbook }], "modal challenge").map((entry) => entry.id), ["execution_playbook_trajectory-procedure"]);
 });

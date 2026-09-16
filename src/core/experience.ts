@@ -11,6 +11,8 @@ export interface ExperienceRecord {
   scene: { task: string; domain: string; context: string; askingOrDoing: "asking" | "doing" | "unknown" };
   goal: { objective: string; acceptance: string; relation: "new" | "continued" | "modified" | "resumed" | "unknown" };
   outcome: { status: "success" | "partial" | "failure" | "unknown"; evidence: string[] };
+  /** Redacted execution contract retained for procedural-memory derivation. */
+  manifest?: Record<string, unknown>;
   verification?: { declared: number; executed: number; passed: number; failed: number; independent: boolean };
   quality: TrajectoryQuality;
   routing?: { predictedTier: CapabilityTier; tierScores?: Record<CapabilityTier, number>; provider?: string; model?: string };
@@ -167,6 +169,7 @@ export function buildExperienceRecord(input: {
       relation: ["new", "continued", "modified", "resumed"].includes(String(goal.relation)) ? String(goal.relation) as ExperienceRecord["goal"]["relation"] : "unknown",
     },
     outcome: { status, evidence: input.quality.goalAttainment.evidence },
+    ...(Object.keys(manifest).length ? { manifest: record(redactStructured(manifest)) } : {}),
     ...(verification ? { verification } : {}),
     quality: input.quality,
     routing,
