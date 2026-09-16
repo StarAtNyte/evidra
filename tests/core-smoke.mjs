@@ -3424,6 +3424,8 @@ test("research director executes typed tools and reasons over returned evidence"
   let toolAttempts = 0;
   const usageRoles = [];
   let observedSteering = false;
+  let observedRefreshedState = false;
+  let refreshes = 0;
   const server = createServer((request, response) => {
     calls += 1;
     const decision = calls === 1
@@ -3433,6 +3435,7 @@ test("research director executes typed tools and reasons over returned evidence"
     request.on("data", (chunk) => { body += chunk.toString(); });
     request.on("end", () => {
       if (body.includes("focus on falsification")) observedSteering = true;
+      if (body.includes("sha256:refreshed-state")) observedRefreshedState = true;
       response.setHeader("content-type", "application/json");
       response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
     });
@@ -3445,11 +3448,13 @@ test("research director executes typed tools and reasons over returned evidence"
       toolAttempts += 1;
       if (toolAttempts === 1) return { name: call.name, ok: false, error: "temporary network unavailable" };
       return { name: call.name, ok: true, output: { files: ["notes.txt"] } };
-    }, onUsage: (_usage, _provider, _model, role) => usageRoles.push(role), consumeSteering: () => calls === 1 ? ["focus on falsification"] : [] });
+    }, onUsage: (_usage, _provider, _model, role) => usageRoles.push(role), consumeSteering: () => calls === 1 ? ["focus on falsification"] : [], refreshVerifiedState: () => { refreshes += 1; return { subtaskId: "phase-1", status: "blocked", complete: false, criteria: [], unmetRequired: ["criterion_1"], stateFingerprint: "sha256:refreshed-state" }; } });
     assert.equal(calls, 2);
     assert.equal(toolAttempts, 2);
     assert.deepEqual(usageRoles, ["director", "director"]);
     assert.equal(observedSteering, true);
+    assert.equal(refreshes, 1);
+    assert.equal(observedRefreshedState, true);
     assert.equal(decision.decision, "propose");
     assert.equal(decision.toolCalls.length, 0);
   } finally {
