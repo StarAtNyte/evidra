@@ -1,6 +1,6 @@
 # Evidra
 
-Evidra is a local-first research and experimentation workbench for people who want an agent to do more than write code.
+Evidra is a research and experimentation workbench for people who want an agent to do more than write code.
 
 It turns a research workspace, competition repository, or empirical engineering problem into a durable loop:
 
