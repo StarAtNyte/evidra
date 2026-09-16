@@ -58,7 +58,10 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `2075003` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `4a35956` (verify with `git log`).
+- Independent evaluator output now uses the same metric-conflict policy as worker
+  output: unresolved conflicting primary values fail the run instead of silently
+  overwriting its score, with the conflict retained in run diagnostics.
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor and every accepted criterion must carry a durable
