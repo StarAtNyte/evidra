@@ -1,0 +1,6 @@
+{
+  "buildCommand": "mkdir -p public && cp -R site/. public/",
+  "outputDirectory": "public",
+  "cleanUrls": true,
+  "trailingSlash": false
+}

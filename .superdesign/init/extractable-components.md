@@ -1,31 +1,19 @@
-# Extractable Evidra components
+# Extractable components
 
-## WorkbenchHeader
-- Source: `src/ui/app.tsx`
+No browser components currently exist.
+
+Potential components for the companion site:
+
+## TerminalPreview
+- Source: new site component
 - Category: layout
-- Description: ASCII logo and compact provider/mode/thinking/permission state.
-- Extractable props: mode, provider, model, reasoningEffort, autonomy
+- Description: Static visual preview of Evidra's terminal workflow.
+- Extractable props: none initially
+- Hardcoded: illustrative transcript and status labels
 
-## Transcript
-- Source: `src/ui/app.tsx`
-- Category: layout
-- Description: Color-coded user, assistant, and system research conversation.
-- Extractable props: messages, maxVisibleMessages
-
-## CommandPalette
-- Source: `src/ui/app.tsx`
+## InstallCommand
+- Source: new site component
 - Category: basic
-- Description: Filtered slash command list with keyboard selection and Tab completion.
-- Extractable props: input, suggestions, suggestionIndex
-
-## SelectorPanel
-- Source: `src/ui/app.tsx`
-- Category: basic
-- Description: Modal model, thinking, mode, and permissions picker.
-- Extractable props: picker, choices, pickerIndex
-
-## ExecutionStatus
-- Source: `src/ui/app.tsx`
-- Category: basic
-- Description: Spinner and latest command/agent progress message.
-- Extractable props: busy, progress
+- Description: Copyable install command with platform hints.
+- Extractable props: command (string), label (string)
+- Hardcoded: button treatment and terminal styling

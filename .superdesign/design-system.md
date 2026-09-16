@@ -1,31 +1,30 @@
-# Evidra Workbench design system
+# Evidra public MVP — design system
 
-Evidra is a local-first autonomous research laboratory for competitions. Its primary surface is a keyboard-first full-screen terminal workbench used by technical researchers. The design must feel like a serious scientific control room: dense, calm, legible, and state-aware.
+## Product character
+
+Evidra is a research harness for people who want an AI system to investigate, build, test, and learn over time. The site should feel like a serious instrument: precise, calm, technical, and alive while work is happening.
 
 ## Visual direction
-- Dark terminal canvas, no marketing-dashboard decoration.
-- Cyan is the Evidra research identity.
-- Yellow means user action, selected state, or permission.
-- Magenta means active execution/progress.
-- Green means completed assistant/evidence output.
-- Gray is metadata and secondary telemetry.
-- Use compact panels and eliminate unused vertical space.
 
-## Sections
-1. Compact identity/status header
-2. Research transcript with role-coded messages
-3. Live execution telemetry
-4. Contextual command/model/mode/permission palette
-5. Single-line command input
-6. Persistent state rail under input
+Use a dark, editorial, terminal-native interface inspired by the information density and live-agent previews of herdr.dev, but make Evidra's identity distinct. Use a deep blue-black canvas, warm ivory typography, vivid ultraviolet/cobalt accents, and a controlled signal-lime verification state. Favor asymmetric editorial sections, compact data labels, cinematic product surfaces, and a large copyable install command. Avoid generic SaaS gradients, stock photography, fake metrics, and unverified adoption claims.
 
-## Interaction rules
-- `/` opens/filter commands; ↑/↓ moves selection; Tab completes; Enter executes.
-- `/model`, `/mode`, and `/permissions` open modal pickers and lock the text input until selection or Esc.
-- Every autonomous action exposes current phase, provider, model, mode, and permission level.
+## Tokens
 
-## Constraints
-- Preserve terminal monospace rendering.
-- Preserve full-screen alternate-buffer behavior.
-- Do not introduce decorative imagery, gradients, browser-only controls, or mouse-only interactions.
-- Use only the existing Ink primitives and terminal-safe colors.
+- Ink: `#080a14`
+- Panel: `#101426`
+- Rule: `#2b3150`
+- Paper: `#f6f2e8`
+- Muted: `#9da2bb`
+- Ultraviolet: `#8b6cff`
+- Cobalt: `#4d8dff`
+- Lime: `#c7ff4a`
+- Amber: `#ffc857`
+- Red: `#ff6b7a`
+- Display: a memorable high-contrast editorial face
+- UI/data: crisp technical sans plus `ui-monospace`, `SFMono-Regular`, `Menlo`, `monospace`
+- Radius: 2–8px
+- Shadows: minimal; use borders and contrast instead
+
+## Content rules
+
+Lead with the individual researcher. Explain the loop plainly: question → evidence → hypothesis → experiment → evaluation → replication. Show real install commands: `npm install -g evidra`, `evidra`, `/research start`. Link to the public repository and existing Markdown docs.

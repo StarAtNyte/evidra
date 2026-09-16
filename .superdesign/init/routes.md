@@ -1,10 +1,8 @@
-# Evidra routes
+# Routes
 
-This is a full-screen terminal application with no HTTP routes or browser pages.
+No web router or browser routes exist in the current project.
 
-| Surface | Entry | Purpose |
-|---|---|---|
-| Workbench | `src/ui/app.tsx:App` | Research and challenge session |
-| CLI bootstrap | `src/cli.ts` | Starts Ink TUI when no CLI arguments are supplied |
-| Research mode | `/research` in `src/ui/app.tsx` | Evidence-gathering research cycle |
-| Challenge mode | `/challenge` in `src/ui/app.tsx` | Baseline, experiments, and runs |
+Planned companion site:
+
+- `/` — landing page with product pitch, install command, workflow, feature highlights, and links to GitHub/docs.
+- `/docs` — future documentation surface; initially link to repository Markdown docs.

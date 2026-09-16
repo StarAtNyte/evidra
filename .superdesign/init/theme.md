@@ -1,32 +1,13 @@
-# Evidra terminal design tokens
+# Theme summary
 
-## Compact token summary
-- Background: terminal default / near-black
-- Primary accent: cyan
-- Input accent: yellow
-- Progress accent: magenta
-- Assistant output: green
-- User input: yellow
-- System metadata: gray
-- Borders: round, one-cell inset
-- Layout: full terminal height, 1-cell outer padding, compact vertical rhythm
-- Typography: terminal monospace default; bold cyan wordmark; dim gray metadata
-- Interaction: arrow-key modal pickers, live slash filtering, Tab completion, Enter execution
+Evidra's existing UI is terminal-first: near-black background, warm off-white text, high-contrast accent colors for user input and activity, restrained borders, and monospace typography. The companion site should preserve this character while adding generous editorial typography and responsive layouts.
 
-## Current source tokens
+- Background: ink black / charcoal
+- Foreground: warm paper white
+- Accent: electric lime or mint for verified progress
+- Secondary accent: amber for active work and warnings
+- Typography: monospace for commands and data; neutral sans/serif display type may be added for marketing hierarchy
+- Shape: small radii, hairline borders, terminal-inspired panels
+- Motion: subtle cursor/pulse only; respect reduced motion
 
-```tsx
-const LOGO = [/* Evidra ASCII wordmark in src/ui/app.tsx */];
-<Box borderStyle="round" borderColor="cyan" paddingX={2}>
-<Text color="cyan" bold>...</Text>
-<Text color="gray">...</Text>
-<Box borderStyle="round" borderColor={busy ? "gray" : "yellow"}>
-<Text color="yellow">› </Text>
-```
-
-## Desired premium direction
-- Dense dark command-center composition
-- Strong cyan research identity with amber permission state
-- Clear separation between conversation, execution telemetry, and controls
-- Avoid large empty vertical gaps
-- Preserve terminal legibility and keyboard-first interaction
+No Tailwind, CSS, or web theme files exist yet.
