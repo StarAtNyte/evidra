@@ -2696,6 +2696,9 @@ test("research lanes use bounded role-specific workspace observations", () => {
   assert.equal(validationQueries.length, 3);
   assert.equal(new Set(validationQueries).size, validationQueries.length);
   assert.match(validationQueries[1], /replication|limitations|evaluation/i);
+  const validationSearchCalls = laneToolCalls("validation scientist", "compare robust validation methods").filter((call) => call.name === "source.search");
+  assert.equal(validationSearchCalls[0].arguments.depth, "deep");
+  assert(validationSearchCalls.slice(1).every((call) => call.arguments.depth === "shallow"));
   const domainCalls = laneToolCalls("domain researcher", "derive a stable theorem-informed method for fluid dynamics");
   const methodCalls = laneToolCalls("method researcher", "compare optimization methods for robust generalization");
   assert.equal(domainCalls.filter((call) => call.name === "source.search").length, 3);

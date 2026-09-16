@@ -256,7 +256,7 @@ export function laneToolCalls(role: ResearchLaneRole, objective = ""): ResearchT
   // candidate frontier; retrieval and claim verification still happen through
   // the evidence-aware source workflow.
   if (role === "domain researcher" || role === "method researcher" || role === "model researcher" || role === "validation scientist") {
-    for (const literatureQuery of researchLiteratureQueries(objective, role)) calls.push({ name: "source.search", arguments: { query: literatureQuery, limit: 6, depth: "deep" } });
+    researchLiteratureQueries(objective, role).forEach((literatureQuery, index) => calls.push({ name: "source.search", arguments: { query: literatureQuery, limit: 6, depth: index === 0 ? "deep" : "shallow" } }));
   }
   if (role === "domain researcher" || role === "data detective") {
     calls.push({ name: "web.search", arguments: { query: objective.trim().slice(0, 500) || "official documentation discussions datasets", limit: 6 } });
