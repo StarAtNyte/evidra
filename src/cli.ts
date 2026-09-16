@@ -876,13 +876,17 @@ benchmark.command("validate")
 benchmark.command("score")
   .argument("<file>", "JSON file containing a trial array or { trials: [...] }")
   .option("--json", "emit machine-readable scorecards")
+  .option("--pass-at-k <values>", "comma-separated attempt counts for pass@k diagnostics", "1,3,5,10")
   .description("Score task-balanced, evaluator-backed harness trials")
-  .action((file: string, options: { json?: boolean }) => {
+  .action((file: string, options: { json?: boolean; passAtK?: string }) => {
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
     const raw = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray((parsed as { trials?: unknown }).trials) ? (parsed as { trials: unknown[] }).trials : undefined;
     if (!raw?.length) throw new Error("Benchmark input must contain a non-empty JSON trial array.");
     const trials = raw.map((value, index) => parseHarnessTrial(value, `Benchmark trial ${index + 1}`));
-    const scorecards = scoreHarnessTrials(trials);
+    const passAtKValues = (options.passAtK ?? "1,3,5,10").split(",").map((value) => Number(value.trim()));
+    if (!passAtKValues.length || passAtKValues.some((value) => !Number.isInteger(value) || value < 1)) throw new Error("--pass-at-k must contain positive integer values such as 1,3,5,10.");
+    const uniquePassAtKValues = [...new Set(passAtKValues)];
+    const scorecards = scoreHarnessTrials(trials, uniquePassAtKValues);
     if (options.json) {
       console.log(JSON.stringify(scorecards, null, 2));
       return;

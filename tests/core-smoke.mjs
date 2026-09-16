@@ -4520,6 +4520,7 @@ test("pass@k estimates repeated stochastic success without overstating sparse ta
   const curve = passAtKCurve([...attempts, trial("task-b", 0.6), trial("task-b", 0.4), trial("task-b", 0.4), trial("task-b", 0.4), trial("task-b", 0.4)], [1, 3]);
   assert.ok(Math.abs((curve["1"] ?? 0) - 0.4) < 1e-12);
   assert.ok(Math.abs((curve["3"] ?? 0) - ((1 + (1 - (4 / 5) * (3 / 4) * (2 / 3))) / 2)) < 1e-12);
+  assert.deepEqual(scoreHarnessTrials(attempts, [2])[0].passAtK, { "2": 0.9 });
 });
 
 test("harness scorecard incorporates optional process and alignment evidence", () => {

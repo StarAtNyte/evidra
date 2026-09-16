@@ -35,12 +35,14 @@ evidra benchmark run protocol.json --challenger evidra --incumbent incumbent
 evidra benchmark validate trials.json
 evidra benchmark score trials.json
 evidra benchmark score trials.json --json
+evidra benchmark score trials.json --pass-at-k 1,2,4,8
 evidra benchmark compare trials.json evidra incumbent
 evidra benchmark export --out evidra-trials.json
 ```
 
-For stochastic agents, the scorecard also emits a task-balanced `passAtK`
-curve for `k = 1, 3, 5, 10`. A success is a valid evaluator-backed positive
+For stochastic agents, the scorecard emits a task-balanced `passAtK` curve for
+the requested values (default `k = 1, 3, 5, 10`; customize with
+`--pass-at-k`). A success is a valid evaluator-backed positive
 improvement in the declared metric direction. Evidra uses the standard
 `1 - C(n-c,k) / C(n,k)` estimator per task and averages only tasks with at
 least `k` attempts; unavailable sample sizes are reported as `null`. This is

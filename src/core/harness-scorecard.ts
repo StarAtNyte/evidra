@@ -784,7 +784,7 @@ export function evaluateHarnessGeneralization(
  * unmeasured runs never count as improvements, preventing optimistic scores
  * from agents that produce impressive narratives without durable evidence.
  */
-export function scoreHarnessTrials(trials: HarnessTrial[]): HarnessScorecard[] {
+export function scoreHarnessTrials(trials: HarnessTrial[], passAtKValues: number[] = [1, 3, 5, 10]): HarnessScorecard[] {
   const grouped = new Map<string, HarnessTrial[]>();
   for (const trial of trials) grouped.set(trial.harness, [...(grouped.get(trial.harness) ?? []), trial]);
   return [...grouped.entries()].map(([harness, entries]) => {
@@ -834,7 +834,7 @@ export function scoreHarnessTrials(trials: HarnessTrial[]): HarnessScorecard[] {
       executionAlignmentRate: alignmentValues.length ? alignmentValues.reduce<number>((sum, value) => sum + value, 0) / alignmentValues.length : null,
       meanTimeEfficiency: efficiencyValues.length ? efficiencyValues.reduce((sum, value) => sum + value, 0) / efficiencyValues.length : null,
       failureProfile,
-      passAtK: passAtKCurve(entries),
+      passAtK: passAtKCurve(entries, passAtKValues),
     };
   }).sort((a, b) => b.competitiveScore - a.competitiveScore);
 }
