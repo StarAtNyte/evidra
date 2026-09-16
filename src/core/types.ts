@@ -96,7 +96,7 @@ export const ResearchHypothesisSchema = z.object({
   expectedOutcome: z.string().trim().min(1).optional(),
   mechanism: z.string().min(1),
   /** Conditions that must hold for the mechanism or transfer claim to be plausible. */
-  assumptions: z.array(z.string().trim().min(1)).max(8).default([]),
+  assumptions: z.array(z.string().trim().min(1).max(1_000)).max(8).default([]),
   evidence: z.array(z.string()).default([]),
   /** Durable source IDs supporting the literature-derived evidence above. */
   evidenceSourceIds: z.array(z.string().min(1)).max(8).default([]),

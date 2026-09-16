@@ -5719,6 +5719,10 @@ test("research decisions support non-metric outcomes without fabricated GPU esti
   assert.deepEqual(decision.hypotheses[0].assumptions, []);
   assert.throws(() => ResearchDecisionSchema.parse({
     ...decision,
+    hypotheses: [{ ...decision.hypotheses[0], assumptions: ["x".repeat(1_001)] }],
+  }), /assumptions.*1000|String must contain at most 1000 character/);
+  assert.throws(() => ResearchDecisionSchema.parse({
+    ...decision,
     hypotheses: [{ ...decision.hypotheses[0], expectedOutcome: undefined }],
   }), /non-metric outcomes require an explicit expectedOutcome/);
   assert.throws(() => ResearchDecisionSchema.parse({
