@@ -10,6 +10,9 @@ export interface PortfolioCandidate {
   risk?: number;
   family?: string;
   quality?: number;
+  /** Declared outcome family; non-metric candidates must not be ranked by a scalar metric forecast. */
+  outcomeType?: "metric" | "artifact" | "proof" | "behavior" | "system" | "other";
+  expectedOutcome?: string;
   /** Controller-derived evidence state for the hypothesis' falsification test. */
   falsificationStatus?: "untested" | "tested" | "supported" | "rejected" | "inconclusive";
   falsificationPriority?: number;
@@ -112,7 +115,8 @@ function score(candidate: PortfolioCandidate, history?: CostObservation[], conte
   // changed route can still revisit a rejected direction, while untouched
   // hypotheses receive the information-value boost they deserve.
   const falsificationBonus = statusAdjustment + (agendaPriority ?? 0) * 0.15;
-  return (candidate.expectedValue * quality + novelty * 0.2 + informationValue * 0.25 - risk * 0.1 + falsificationBonus) / cost;
+  const scalarValue = candidate.outcomeType && candidate.outcomeType !== "metric" ? 0 : candidate.expectedValue * quality;
+  return (scalarValue + novelty * 0.2 + informationValue * 0.25 - risk * 0.1 + falsificationBonus) / cost;
 }
 import { estimateCost, type CostContext, type CostEstimate, type CostObservation } from "./cost-model.js";
 import { planSuccessiveHalving, type SuccessiveHalvingPlan } from "./successive-halving.js";

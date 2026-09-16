@@ -5249,6 +5249,14 @@ test("portfolio planning rewards bounded value of information", () => {
   assert.equal(plan.selected[0]?.id, "uncertain");
 });
 
+test("portfolio planning does not treat non-metric outcomes as scalar metric forecasts", () => {
+  const plan = planPortfolio([
+    { id: "proof", title: "proof", operator: "audit", outcomeType: "proof", expectedOutcome: "checker accepts", expectedValue: 999, informationValue: 0, costMinutes: 1, family: "proof" },
+    { id: "metric", title: "metric", operator: "greedy", expectedValue: 0.1, costMinutes: 1, family: "metric" },
+  ], { maxCandidates: 1, maxParallel: 1, budgetMinutes: 2 });
+  assert.equal(plan.selected[0]?.id, "metric");
+});
+
 test("portfolio planning prioritizes open falsification work without hard-blocking revisits", () => {
   const plan = planPortfolio([
     { id: "tested", title: "tested direction", operator: "greedy", expectedValue: 0.4, costMinutes: 1, family: "tested", falsificationStatus: "tested", falsificationPriority: 35 },
