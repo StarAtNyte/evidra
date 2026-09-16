@@ -157,6 +157,7 @@ import { learnPromotionPolicy, promotionObservations } from "../dist/core/promot
 import { captureProtectedFiles, changedProtectedFiles } from "../dist/core/integrity.js";
 import { assessHypothesisQuality } from "../dist/core/hypothesis-quality.js";
 import { ResearchDecisionSchema, RunResultSchema } from "../dist/core/types.js";
+import { evidraVersion } from "../dist/version.js";
 import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../dist/core/validation-lock.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
@@ -167,6 +168,11 @@ import { assessStopPolicy, betaPosteriorTail } from "../dist/core/stop-policy.js
 import { classifyVerifier, verifierKind } from "../dist/core/formal-verification.js";
 import { detectRouteDrift } from "../dist/core/drift-detection.js";
 import { boundResearchContext } from "../dist/core/context-budget.js";
+
+test("runtime version is sourced from package metadata", () => {
+  assert.equal(evidraVersion(), "0.1.0");
+  assert.match(evidraVersion(), /^\d+\.\d+\.\d+/);
+});
 
 test("research context packing preserves priority and records truncation", () => {
   const packed = boundResearchContext({

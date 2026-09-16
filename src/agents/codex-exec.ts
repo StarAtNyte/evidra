@@ -6,6 +6,7 @@ import { Codex } from "@openai/codex-sdk";
 import type { AgentResult, AgentTask } from "../core/types.js";
 import type { ProcessControl } from "../core/process.js";
 import { redactSecrets } from "../core/redaction.js";
+import { evidraVersion } from "../version.js";
 
 export type AgentProvider = "codex" | "local";
 
@@ -432,7 +433,7 @@ export function listCodexModels(): Promise<AvailableModel[]> {
       finish(() => reject(new Error(`Codex model listing exited with ${code ?? 1}.`)));
     });
     try {
-      child.stdin.write(`${JSON.stringify({ method: "initialize", id: 1, params: { clientInfo: { name: "evidra", version: "0.1.0" } } })}\n`);
+      child.stdin.write(`${JSON.stringify({ method: "initialize", id: 1, params: { clientInfo: { name: "evidra", version: evidraVersion() } } })}\n`);
       child.stdin.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
       child.stdin.write(`${JSON.stringify({ method: "model/list", id: 2, params: { includeHidden: true } })}\n`);
     } catch (error) {

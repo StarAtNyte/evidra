@@ -60,6 +60,7 @@ import { render } from "ink";
 import React from "react";
 import { App } from "./ui/app.js";
 import { findWorkspaceRoot } from "./core/workspace.js";
+import { evidraVersion } from "./version.js";
 import { autonomyPolicy, type AutonomyLevel } from "./core/permissions.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "./core/capability-router.js";
 import { allocateNextResearch } from "./core/allocation.js";
@@ -462,7 +463,7 @@ async function ingestCompetitionSources(adapter: ReturnType<typeof activeCompeti
   store.close();
 }
 
-program.name("evidra").description("Research-focused autonomous experimentation workbench").version("0.1.0");
+program.name("evidra").description("Research-focused autonomous experimentation workbench").version(evidraVersion());
 
 program.command("init")
   .argument("<workspace>", "workspace or competition manifest to initialize")
