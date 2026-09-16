@@ -2520,6 +2520,12 @@ test("controller decision auditor independently downgrades unaudited completion 
   const valid = auditResearchDecision({ ...base, goalStatus: "met" }, { currentPhase: "evaluation", phaseAuditComplete: true });
   assert.equal(valid.verdict, "pass");
   assert.deepEqual(valid.evidence, ["subtask.audit:complete"]);
+  const missingSelection = auditResearchDecision({ ...base, decision: "run", goalStatus: "active", hypotheses: [{ title: "known" }], selectedHypothesis: "missing" });
+  assert.equal(missingSelection.verdict, "reject");
+  assert.match(missingSelection.reasons.join(" "), /not present/);
+  const duplicateSelection = auditResearchDecision({ ...base, decision: "propose", goalStatus: "active", hypotheses: [{ title: "same" }, { title: "same" }], selectedHypothesis: null });
+  assert.equal(duplicateSelection.verdict, "reject");
+  assert.match(duplicateSelection.reasons.join(" "), /duplicate hypothesis/);
 });
 
 test("semantic auditor output is grounded before it can pass", () => {

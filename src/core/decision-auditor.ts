@@ -29,6 +29,12 @@ export function auditResearchDecision(
   const reasons: string[] = [];
   const requiredChecks: string[] = [];
   const evidence: string[] = [];
+  const hypothesisTitles = decision.hypotheses.map((hypothesis) => hypothesis.title.trim());
+  const duplicateHypotheses = hypothesisTitles.filter((title, index) => title && hypothesisTitles.indexOf(title) !== index);
+  if (duplicateHypotheses.length) reasons.push(`decision contains duplicate hypothesis title(s): ${[...new Set(duplicateHypotheses)].join(", ")}`);
+  if (decision.selectedHypothesis?.trim() && !hypothesisTitles.includes(decision.selectedHypothesis.trim())) {
+    reasons.push(`selected hypothesis '${decision.selectedHypothesis}' is not present in the typed decision`);
+  }
   if (input.currentPhase && decision.phase !== input.currentPhase) reasons.push(`decision phase ${decision.phase} does not match active phase ${input.currentPhase}`);
   if (decision.decision === "run" && !decision.selectedHypothesis?.trim()) reasons.push("run decision has no selected hypothesis");
   if (decision.decision === "propose" && decision.hypotheses.length === 0) reasons.push("propose decision contains no hypothesis");
