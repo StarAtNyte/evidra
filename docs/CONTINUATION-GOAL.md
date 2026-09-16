@@ -58,7 +58,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `480f120` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `0d27cc3` (verify with `git log`).
 - Competition manifests now support typed `researchChannels` for rules,
   discussions, leaderboards, documentation, papers, and repositories. CLI/TUI
   ingestion deduplicates legacy URLs, persists channel kind with source hashes,
@@ -68,6 +68,9 @@ external evaluator.
   `external_source` provenance type. They require a durable source, remain
   discovery-only in claim audits, and follow source lifecycle retirement just
   like literature claims.
+- The director now has a bounded `competition.observe` tool that selects a
+  configured channel, uses its refresh policy, persists a hashed observation,
+  and returns untrusted channel content with typed provenance.
 - Identified duplicate findings now contribute active conflict pressure only
   when both referenced claim endpoints remain active; anonymous legacy events
   remain conservatively counted.
