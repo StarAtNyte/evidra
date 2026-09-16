@@ -4440,6 +4440,16 @@ test("source retrieval refuses loopback hosts before fetching", async () => {
   assert.equal(SOURCE_REQUEST_TIMEOUT_MS, 30_000);
 });
 
+test("source retrieval bounds responses without trusting content-length", async () => {
+  const previousFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response(new Uint8Array(2 * 1024 * 1024 + 1), { status: 200, headers: { "content-type": "text/plain" } });
+    await assert.rejects(() => retrieveSource("http://93.184.216.34/oversized"), /larger than/);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("PDF source extraction reads common text operators without binary garbage", () => {
   const pdf = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Length 62 >>\nstream\nBT\n(An experimental method improves accuracy.) Tj\nET\nendstream\nendobj\n%%EOF\n', "latin1");
   const text = extractPdfText(pdf);

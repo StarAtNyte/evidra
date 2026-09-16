@@ -410,6 +410,37 @@ async function assertPublicUrl(url: URL): Promise<void> {
   if (!addresses.length || addresses.some(privateAddress)) throw new Error(`Refusing private or loopback research source host: ${hostname}`);
 }
 
+/** Read a response incrementally so an unadvertised large body cannot exhaust the controller. */
+async function boundedResponseBytes(response: Response): Promise<Uint8Array> {
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > MAX_BYTES) throw new Error(`Source is larger than the ${MAX_BYTES} byte retrieval limit.`);
+    return bytes;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      const chunk = next.value;
+      total += chunk.byteLength;
+      if (total > MAX_BYTES) {
+        await reader.cancel("source exceeds bounded retrieval limit");
+        throw new Error(`Source is larger than the ${MAX_BYTES} byte retrieval limit.`);
+      }
+      chunks.push(chunk);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return bytes;
+}
+
 /** Canonicalize equivalent HTTP source references without changing query semantics. */
 export function canonicalSourceUrl(value: string): string {
   const raw = value.trim();
@@ -508,8 +539,7 @@ export async function retrieveSource(url: string, signal?: AbortSignal): Promise
   const contentType = response.headers.get("content-type") ?? "application/octet-stream";
   const length = Number(response.headers.get("content-length") ?? 0);
   if (length > MAX_BYTES) throw new Error(`Source is larger than the ${MAX_BYTES} byte retrieval limit.`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > MAX_BYTES) throw new Error(`Source is larger than the ${MAX_BYTES} byte retrieval limit.`);
+  const bytes = await boundedResponseBytes(response);
   const contentHash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   const raw = new TextDecoder().decode(bytes);
   const isPdf = contentType.toLowerCase().includes("pdf") || raw.startsWith("%PDF-");
