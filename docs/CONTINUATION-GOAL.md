@@ -119,7 +119,11 @@ external evaluator.
 - The TUI autonomous loop now applies the same durable open-falsification stop check as the headless CLI, preventing provider-path-dependent premature completion.
 - TUI campaigns now also evaluate and persist the full stop policy, including reward history, repeated failures, leakage, remaining budget, and open falsification work.
 - Progressive literature search uses one deep primary probe plus shallow complementary probes, avoiding accidental query multiplication while retaining replication and robustness coverage.
-- Latest verified baseline: 389/389 tests passing, TypeScript check passing,
+- Non-safe research teams now run in bounded parallel waves: later specialists
+  receive a compact, evidence-anchored peer board, and each completed-wave
+  hand-off is persisted as `research.lane.handoff`; safe mode remains a single
+  read-only pass.
+- Latest verified baseline: 393/393 tests passing, TypeScript check passing,
   and build passing. The worktree is clean; generated reports remain excluded
   from source changes.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
