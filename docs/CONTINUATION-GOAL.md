@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `8c2e9dc` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `fe39c35` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -169,6 +169,9 @@ external evaluator.
   suite, and distributable package contents on pushes and pull requests.
 - The CI gate also audits runtime dependencies at high severity; the current
   lockfile reports zero production vulnerabilities.
+- Decision-derived evidence claims now use the explicit `decision_<id>`
+  provenance namespace; reports retain compatibility with legacy numeric
+  decision IDs so CLI and report audits classify claims consistently.
 - Latest verified baseline: 399/399 tests passing, TypeScript check passing,
   and build passing. The worktree is clean; generated reports remain excluded
   from source changes.
