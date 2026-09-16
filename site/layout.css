@@ -12,6 +12,13 @@
 .section h2{margin-bottom:28px}
 .section-lede,.system-heading p,.loop-heading p,.demos-heading p,.terminal-intro p,.install-copy p{line-height:1.75}
 .feature p,.technique-grid p{line-height:1.7}
+.feature-grid .feature{display:flex;flex-direction:column;gap:0;padding:32px;min-width:0}
+.feature-grid .feature-wide{grid-column:auto}
+.feature-grid .feature-no{display:block;margin-bottom:22px}
+.feature-grid .feature h3{margin-bottom:16px}
+.feature-grid .feature p{max-width:none;margin-bottom:26px}
+.feature-grid .feature-code{line-height:1.8;overflow-wrap:anywhere}
+.feature-grid .gate-list{gap:12px 20px;line-height:1.8}
 @media(max-width:1100px) and (min-width:851px){
   .terminal-content,.install-content{grid-template-columns:1fr;gap:45px}
   .technique-grid{grid-template-columns:repeat(2,1fr)}
