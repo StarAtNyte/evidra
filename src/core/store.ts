@@ -661,8 +661,50 @@ export class ResearchStore {
     this.appendEvent("phase_goal.updated", goal.payload);
   }
 
+  /** Resolve an audit reference against durable controller-owned evidence. */
+  evidenceReferenceExists(reference: string): boolean {
+    const id = reference.trim();
+    if (!id) return false;
+    if (this.eventsByType(id, 1).length > 0) return true;
+    const prefixed = id.match(/^(event|run|artifact|claim|source|hypothesis|submission):(.+)$/);
+    const value = prefixed?.[2] ?? id;
+    const references = [...new Set([id, value])];
+    if (prefixed?.[1] === "event") return this.eventsByType(value, 1).length > 0;
+    if (prefixed?.[1] === "run" || !prefixed) {
+      if (references.some((reference) => this.db.prepare("SELECT 1 FROM runs WHERE id = ? LIMIT 1").get(reference))) return true;
+    }
+    if (prefixed?.[1] === "artifact" || !prefixed) {
+      if (references.some((reference) => this.db.prepare("SELECT 1 FROM artifacts WHERE id = ? OR path = ? OR name = ? OR checksum = ? LIMIT 1").get(reference, reference, reference, reference))) return true;
+    }
+    if (prefixed?.[1] === "claim" || !prefixed) {
+      if (references.some((reference) => this.db.prepare("SELECT 1 FROM evidence_claims WHERE id = ? LIMIT 1").get(reference))) return true;
+    }
+    if (prefixed?.[1] === "source" || !prefixed) {
+      if (references.some((reference) => this.db.prepare("SELECT 1 FROM research_sources WHERE id = ? LIMIT 1").get(reference))) return true;
+    }
+    if (prefixed?.[1] === "hypothesis" || !prefixed) {
+      if (references.some((reference) => this.db.prepare("SELECT 1 FROM hypotheses WHERE id = ? LIMIT 1").get(reference))) return true;
+    }
+    if (prefixed?.[1] === "submission" || !prefixed) {
+      if (references.some((reference) => this.db.prepare("SELECT 1 FROM submissions WHERE id = ? LIMIT 1").get(reference))) return true;
+    }
+    return id === "subtask.audit:complete" && this.eventsByType("subtask.audit", 1).some((event) => (event.payload as { complete?: unknown }).complete === true);
+  }
+
   /** Persist the controller's structured subtask audit as first-class evidence. */
   recordSubtaskAudit(audit: unknown): void {
+    if (audit && typeof audit === "object" && !Array.isArray(audit)) {
+      const payload = audit as { criteria?: unknown };
+      if (Array.isArray(payload.criteria)) {
+        const missing = payload.criteria.flatMap((criterion) => {
+          if (!criterion || typeof criterion !== "object") return [];
+          const value = criterion as { satisfied?: unknown; evidenceIds?: unknown };
+          if (value.satisfied !== true || !Array.isArray(value.evidenceIds)) return [];
+          return value.evidenceIds.filter((reference): reference is string => typeof reference === "string" && !this.evidenceReferenceExists(reference));
+        });
+        if (missing.length) throw new Error(`Subtask audit references unavailable evidence: ${[...new Set(missing)].join(", ")}`);
+      }
+    }
     this.appendEvent("subtask.audit", audit);
   }
 

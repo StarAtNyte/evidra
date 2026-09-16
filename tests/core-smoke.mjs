@@ -2387,8 +2387,12 @@ test("subtask audits are durable controller evidence", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-subtask-audit-"));
   try {
     const store = new ResearchStore(join(root, "state.sqlite"));
+    store.saveRun({ id: "run:1", experimentId: "exp", status: "completed", payload: {} });
     const audit = auditSubtask({ id: "durable-1", objective: "check a result", acceptanceCriteria: [{ id: "check", description: "check passes" }] }, [{ criterionId: "check", satisfied: true, source: "verifier", evidenceIds: ["run:1"] }]);
     store.recordSubtaskAudit(audit);
+    assert.equal(store.evidenceReferenceExists("run:1"), true);
+    assert.equal(store.evidenceReferenceExists("run:missing"), false);
+    assert.throws(() => store.recordSubtaskAudit({ ...audit, criteria: [{ ...audit.criteria[0], evidenceIds: ["run:missing"] }] }), /unavailable evidence/);
     assert.equal(store.latestSubtaskAudit("durable-1").complete, true);
     store.close();
     const reopened = new ResearchStore(join(root, "state.sqlite"));
