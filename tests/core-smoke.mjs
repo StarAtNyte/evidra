@@ -1690,6 +1690,10 @@ test("ablation evidence blocks transfer until every factor is tested", () => {
   assert.deepEqual(failed.failed, ["h-ablate:without:a"]);
   assert.equal(failed.complete, false);
   assert.equal(evaluateAblationEvidence(plan, [{ id: "h-ablate:without:a", exitCode: 0 }, { id: "h-ablate:without:b", exitCode: 0 }]).complete, true);
+  const measured = evaluateAblationEvidence(plan, [{ id: "h-ablate:without:a", exitCode: 0, metric: 0.8 }, { id: "h-ablate:without:b", exitCode: 0 }], { controlMetric: 0.7, direction: "maximize" });
+  assert.equal(measured.complete, false);
+  assert.deepEqual(measured.missingMetrics, ["h-ablate:without:b"]);
+  assert.equal(measured.effects[0].direction, "improved");
 });
 
 test("experiment scheduler ranks expected information per cost", () => {

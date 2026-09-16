@@ -30,6 +30,8 @@ export interface AblationEvidenceResult {
   complete: boolean;
   missing: string[];
   failed: string[];
+  missingMetrics: string[];
+  effects: Array<{ id: string; metric: number | null; delta: number | null; direction: "improved" | "regressed" | "unchanged" | "unknown" }>;
 }
 
 /** Build a deterministic control plus leave-one-factor-out variants. */
@@ -55,12 +57,22 @@ export function createAblationPlan(input: { hypothesisId: string; factors: Ablat
 }
 
 /** Require every declared leave-one-factor-out variant to finish before a composite method transfers. */
-export function evaluateAblationEvidence(plan: AblationPlan, results: Array<{ id: string; exitCode: number }>): AblationEvidenceResult {
+export function evaluateAblationEvidence(plan: AblationPlan, results: Array<{ id: string; exitCode: number; metric?: number }>, options: { controlMetric?: number; direction?: "minimize" | "maximize" } = {}): AblationEvidenceResult {
   const observed = new Map(results.map((result) => [result.id, result.exitCode]));
+  const metrics = new Map(results.map((result) => [result.id, typeof result.metric === "number" && Number.isFinite(result.metric) ? result.metric : undefined]));
   const required = plan.variants.filter((variant) => !variant.control);
   const missing = required.filter((variant) => !observed.has(variant.id)).map((variant) => variant.id);
   const failed = required.filter((variant) => observed.get(variant.id) !== undefined && observed.get(variant.id) !== 0).map((variant) => variant.id);
-  return { complete: missing.length === 0 && failed.length === 0, missing, failed };
+  const requiresMetrics = Number.isFinite(options.controlMetric);
+  const missingMetrics = requiresMetrics ? required.filter((variant) => observed.get(variant.id) === 0 && metrics.get(variant.id) === undefined).map((variant) => variant.id) : [];
+  const effects = required.map((variant) => {
+    const metric = metrics.get(variant.id) ?? null;
+    if (metric === null || !Number.isFinite(options.controlMetric)) return { id: variant.id, metric, delta: null, direction: "unknown" as const };
+    const delta = metric - options.controlMetric!;
+    const improved = options.direction === "minimize" ? delta < 0 : delta > 0;
+    return { id: variant.id, metric, delta, direction: delta === 0 ? "unchanged" as const : improved ? "improved" as const : "regressed" as const };
+  });
+  return { complete: missing.length === 0 && failed.length === 0 && missingMetrics.length === 0, missing, failed, missingMetrics, effects };
 }
 
 /** Read valid plans from durable events and keep the newest plan per hypothesis. */

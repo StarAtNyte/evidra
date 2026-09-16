@@ -3006,7 +3006,7 @@ research
         const completionStore = new ResearchStore(statePath);
         completionStore.appendEvent(run.exitCode === 0 ? "experiment.autonomous.completed" : "experiment.autonomous.failed", { experimentId, exitCode: run.exitCode, stdout: run.stdout.slice(-4000), stderr: run.stderr.slice(-4000) });
         const comparisonEvent = completionStore.eventsByType("experiment.comparison.completed").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === experimentId);
-        const comparison = comparisonEvent?.payload as { comparison?: { direction?: string } } | undefined;
+        const comparison = comparisonEvent?.payload as { comparison?: { direction?: string; candidate?: number } } | undefined;
         const parent = completionStore.experiments().find((entry) => entry.id === experimentId);
         const parentManifest = parent ? ExperimentManifestSchema.safeParse(parent.payload) : undefined;
         let ablationEvidence = { complete: true, missing: [] as string[], failed: [] as string[] };
@@ -3020,12 +3020,15 @@ research
             : undefined;
           if (ablationPlan) {
             const ablationIds: string[] = [];
-            const ablationResults: Array<{ id: string; exitCode: number }> = [];
+            const ablationResults: Array<{ id: string; exitCode: number; metric?: number }> = [];
             for (const variant of ablationPlan.variants.filter((candidate) => !candidate.control)) {
               const ablationId = `abl_${experimentId}_${variant.factorId}`.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 96);
               const existing = completionStore.experiments().find((entry) => entry.id === ablationId);
               if (existing) {
-                ablationResults.push({ id: variant.id, exitCode: (existing.payload as { status?: unknown }).status === "completed" ? 0 : 1 });
+                const existingRunId = (existing.payload as { runId?: unknown }).runId;
+                const existingRun = typeof existingRunId === "string" ? completionStore.runs().find((entry) => entry.id === existingRunId) : undefined;
+                const existingMetric = existingRun ? (existingRun.payload as { metrics?: Record<string, unknown> }).metrics?.[adapter.config.metric.name] : undefined;
+                ablationResults.push({ id: variant.id, exitCode: (existing.payload as { status?: unknown }).status === "completed" ? 0 : 1, ...(typeof existingMetric === "number" && Number.isFinite(existingMetric) ? { metric: existingMetric } : {}) });
                 continue;
               }
               const ablationManifest = createExperimentManifest({
@@ -3064,12 +3067,17 @@ research
             for (const ablationId of ablationIds) {
               const ablationRun = await runCampaignExperiment(root, ablationId, "all", campaignRemainingMs(campaign));
               const variantId = ablationPlan.variants.find((variant) => ablationId.includes(`_${variant.factorId}`))?.id;
-              if (variantId) ablationResults.push({ id: variantId, exitCode: ablationRun.exitCode });
+              if (variantId) {
+                const parsedAblation = parseMetricOutput(ablationRun.stdout, adapter.config.metric.name);
+                const metric = parsedAblation.metrics[adapter.config.metric.name];
+                ablationResults.push({ id: variantId, exitCode: ablationRun.exitCode, ...(typeof metric === "number" && Number.isFinite(metric) ? { metric } : {}) });
+              }
               const ablationStore = new ResearchStore(statePath);
               ablationStore.appendEvent(ablationRun.exitCode === 0 ? "research.ablation.variant.completed" : "research.ablation.variant.failed", { parentId: experimentId, experimentId: ablationId, exitCode: ablationRun.exitCode, stdout: ablationRun.stdout.slice(-4000), stderr: ablationRun.stderr.slice(-4000) });
               ablationStore.close();
             }
-            ablationEvidence = evaluateAblationEvidence(ablationPlan, ablationResults);
+            const controlMetric = typeof comparison?.comparison?.candidate === "number" && Number.isFinite(comparison.comparison.candidate) ? comparison.comparison.candidate : undefined;
+            ablationEvidence = evaluateAblationEvidence(ablationPlan, ablationResults, { controlMetric, direction: adapter.config.metric.direction });
             const evidenceStore = new ResearchStore(statePath);
             evidenceStore.appendEvent("research.ablation.evidence", { parentId: experimentId, ...ablationEvidence });
             evidenceStore.close();
