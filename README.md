@@ -12,6 +12,20 @@ The workbench is general-purpose. It can be used for ML competitions, data scien
 
 ## Start here
 
+Install the latest source build globally with Node.js 22 or newer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/StarAtNyte/evidra/master/install.sh | sh
+```
+
+Or install directly from the public GitHub repository:
+
+```bash
+npm install --global https://github.com/StarAtNyte/evidra.git
+```
+
+For local development, use the checkout workflow below:
+
 ```bash
 nvm install 22
 nvm use 22
