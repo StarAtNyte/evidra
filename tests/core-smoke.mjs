@@ -21,7 +21,7 @@ import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, selectResearchTools, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { normalizeResearchDecisionPayload, runResearchDirector } from "../dist/agents/research-director.js";
 import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
-import { LocalExecutor, classifyProcessFailure, containerCommand, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
+import { LocalExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
 import { experienceReplayWorld } from "../dist/core/experience.js";
@@ -3974,6 +3974,14 @@ test("completed workers reject unresolved conflicting primary metric output", as
     assert.deepEqual(result.metricConflicts, [{ name: "score", values: [0.4, 0.6] }]);
     assert.match(result.stderr, /Conflicting declared metric outputs/);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("independent evaluator output cannot overwrite a run with conflicting primary metrics", () => {
+  const merged = mergeEvaluatorResult({ runId: "base", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 0.4 }, metricsByFold: {}, artifacts: {}, stdout: "score: 0.4", stderr: "" }, { command: ["evaluate"], cwd: ".", exitCode: 0, durationMs: 1, stdout: "score: 0.5\nscore: 0.6", stderr: "" }, "score");
+  assert.equal(merged.status, "failed");
+  assert.equal(merged.failureClass, "invalid_metric");
+  assert.match(merged.stderr, /Conflicting declared evaluator metric outputs/);
+  assert.deepEqual(merged.metricConflicts, [{ name: "score", values: [0.5, 0.6] }]);
 });
 
 test("primary metric validation can classify a worker failure before recovery", () => {

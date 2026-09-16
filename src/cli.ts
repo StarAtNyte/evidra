@@ -34,7 +34,7 @@ import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { processFailureResult, runProcess } from "./core/process.js";
 import { executeResearchTool } from "./core/tools.js";
 import { projectVerifiedSubtaskState } from "./core/subtask-state.js";
-import { classifyProcessFailure, executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "./core/executors.js";
+import { classifyProcessFailure, executorFor, mergeEvaluatorResult, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "./core/executors.js";
 import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
@@ -3889,8 +3889,7 @@ experiment.command("run")
         evaluatorAttempt += 1;
       }
       evaluator = { stdout: evaluated.stdout, stderr: evaluated.stderr, exitCode: evaluated.exitCode };
-      const parsed = parseMetricOutput(evaluated.stdout, primaryMetricName);
-      result = { ...result, status: evaluated.exitCode === 0 ? "completed" : "failed", exitCode: evaluated.exitCode, metrics: { ...result.metrics, ...parsed.metrics }, metricsByFold: { ...result.metricsByFold, ...parsed.metricsByFold }, subgroupDeltas: parsed.subgroupDeltas, stdout: `${result.stdout ?? ""}\n[EVALUATOR]\n${evaluated.stdout}`, stderr: `${result.stderr ?? ""}\n[EVALUATOR]\n${evaluated.stderr}`, ...(evaluated.exitCode === 0 ? {} : { failureClass: classifyProcessFailure(evaluated) ?? "unknown" }) };
+      result = mergeEvaluatorResult(result, evaluated, primaryMetricName);
     }
     const verificationCommands = [...(manifest.evaluation.verificationCommand ? [manifest.evaluation.verificationCommand] : []), ...(manifest.evaluation.verificationCommands ?? [])];
     if (result.status === "completed") {

@@ -280,6 +280,29 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
   return { metrics, metricsByFold, subgroupDeltas, conflicts: [...observed.entries()].filter(([, values]) => values.size > 1).map(([name, values]) => ({ name, values: [...values] })) };
 }
 
+/** Merge an independent evaluator without allowing ambiguous output to rewrite a run. */
+export function mergeEvaluatorResult(base: RunResult, evaluator: ProcessResult, metricName: string): RunResult {
+  const parsed = parseMetricOutput(evaluator.stdout, metricName);
+  const learningCurve = parseLearningCurve(evaluator.stdout, metricName);
+  const conflicts = parsed.conflicts.filter((conflict) => conflict.name === metricName && learningCurve.length === 0);
+  const metricFailure = evaluator.exitCode === 0 && conflicts.length > 0;
+  const evaluatorError = metricFailure
+    ? `Conflicting declared evaluator metric outputs: ${conflicts.map((conflict) => `${conflict.name}=[${conflict.values.join(", ")}]`).join("; ")}`
+    : evaluator.stderr;
+  return {
+    ...base,
+    status: evaluator.exitCode === 0 && !metricFailure ? "completed" : "failed",
+    exitCode: metricFailure ? 65 : evaluator.exitCode,
+    metrics: { ...base.metrics, ...parsed.metrics },
+    metricsByFold: { ...base.metricsByFold, ...parsed.metricsByFold },
+    subgroupDeltas: parsed.subgroupDeltas,
+    stdout: `${base.stdout ?? ""}\n[EVALUATOR]\n${evaluator.stdout}`,
+    stderr: `${base.stderr ?? ""}\n[EVALUATOR]\n${evaluatorError}`,
+    ...(base.metricConflicts?.length || parsed.conflicts.length ? { metricConflicts: [...(base.metricConflicts ?? []), ...parsed.conflicts] } : {}),
+    ...(metricFailure ? { failureClass: "invalid_metric" as const } : evaluator.exitCode === 0 ? {} : { failureClass: classifyProcessFailure(evaluator) ?? "unknown" }),
+  };
+}
+
 function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metricName: string, remote = false): RunResult {
   const parsed = parseMetricOutput(result.stdout, metricName);
   const matrix = parseEvaluationMatrix(result.stdout, metricName);
