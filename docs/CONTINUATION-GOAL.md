@@ -758,6 +758,9 @@ external evaluator.
 - The CLI and TUI evaluate that gate on every cycle, not only after a model
   claims completion, so active phases receive usable progress and missing-check
   signals during autonomous steering.
+- Generated research, challenge, and final reports now recompute and display the
+  same deterministic phase-gate progress and missing checks, preserving useful
+  visibility after the live session ends.
 
 ## Immediate next work
 

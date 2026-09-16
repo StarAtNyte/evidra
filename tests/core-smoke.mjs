@@ -2713,6 +2713,7 @@ test("reports expose the objective identity for phase goals", () => {
     store.savePhaseGoal({ id: "goal-research-set-orientation", phase: "orientation", status: "active", payload: definePhaseGoals("report objective", "research")[0] });
     const report = renderReport(store, "research");
     assert.match(report, /goal-set [a-z0-9]+/);
+    assert.match(report, /Gate progress: 0\/1 checks \(0%\)/);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

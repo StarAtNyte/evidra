@@ -5,6 +5,7 @@ import { auditClaims, selfDescribingClaimEvidenceIds } from "./claim-audit.js";
 import { redactCommand } from "./redaction.js";
 import { activeContradictionEdges, activeDuplicateClaimCount, researchMemoryContext } from "./research-context.js";
 import { sourceFrontier } from "./sources.js";
+import { evaluatePhaseGoalEvidence, phaseGoalEventsSince, phaseGoalRecordsSince, PHASE_GOAL_EVENT_TYPES } from "./phase-goals.js";
 
 export type ReportKind = "research" | "challenge" | "final";
 
@@ -39,6 +40,27 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const harnessChanges = store.harnessChanges();
   const routingEvents = store.eventsByType("research.capability_outcome");
   const experienceEvents = store.eventsByType("research.experience.recorded");
+  const phaseEvidence = (goal: typeof goals[number]) => {
+    const mode = goal.id.startsWith("goal_challenge_") ? "challenge" as const : "research" as const;
+    const payload = goal.payload as { createdAt?: unknown };
+    const createdAt = typeof payload.createdAt === "string" ? payload.createdAt : goal.updatedAt;
+    const phaseEvents = phaseGoalEventsSince({ createdAt }, store.eventsByTypes([...PHASE_GOAL_EVENT_TYPES]));
+    const latestDecision = decisions.at(-1)?.payload as { hypotheses?: Array<{ title?: string; falsificationTest?: string }>; selectedHypothesis?: string | null } | undefined;
+    const hypotheses = latestDecision?.hypotheses ?? [];
+    return evaluatePhaseGoalEvidence({ phase: goal.phase as import("./types.js").ResearchPhase }, {
+      mode,
+      eventTypes: phaseEvents.map((event) => event.type),
+      eventPayloads: phaseEvents.map((event) => ({ type: event.type, payload: event.payload })),
+      ...counts,
+      hypotheses: phaseGoalRecordsSince({ createdAt }, hypotheses.map((hypothesis) => ({ createdAt, ...hypothesis }))),
+      experiments: phaseGoalRecordsSince({ createdAt }, experiments),
+      runs: phaseGoalRecordsSince({ createdAt }, runs),
+      artifacts: phaseGoalRecordsSince({ createdAt }, artifacts),
+      candidateHypotheses: hypotheses.length,
+      falsifiableHypotheses: hypotheses.filter((hypothesis) => typeof hypothesis.falsificationTest === "string" && hypothesis.falsificationTest.trim().length > 0).length,
+      selectedHypothesisFalsifiable: Boolean(latestDecision?.selectedHypothesis && hypotheses.some((hypothesis) => hypothesis.title === latestDecision.selectedHypothesis && typeof hypothesis.falsificationTest === "string" && hypothesis.falsificationTest.trim().length > 0)),
+    });
+  };
   const contradictionEdges = activeContradictionEdges(store);
   const duplicateEvents = activeDuplicateClaimCount(store);
   const conflictedClaimIds = new Set(contradictionEdges.flatMap((edge) => [edge.fromId, edge.toId]));
@@ -79,7 +101,9 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     "",
     goals.length ? goals.map((goal) => {
       const payload = goal.payload as { title?: string; objective?: string; status?: string; attempts?: number; goalSetId?: string };
-      return `- **${goal.phase}** · ${payload.status ?? goal.status} · attempts ${payload.attempts ?? 0}${payload.goalSetId ? ` · goal-set ${payload.goalSetId}` : ""}\n  ${payload.title ?? "Untitled"}\n  ${payload.objective ?? ""}`;
+      const gate = phaseEvidence(goal);
+      const progress = `${gate.progress.completed}/${gate.progress.total} checks (${(gate.progress.ratio * 100).toFixed(0)}%)`;
+      return `- **${goal.phase}** · ${payload.status ?? goal.status} · attempts ${payload.attempts ?? 0}${payload.goalSetId ? ` · goal-set ${payload.goalSetId}` : ""}\n  ${payload.title ?? "Untitled"}\n  ${payload.objective ?? ""}\n  Gate progress: ${progress}${gate.met ? " · complete" : gate.missing.length ? ` · missing: ${gate.missing.join(", ")}` : ""}`;
     }).join("\n") : "No phase goals recorded.",
   ];
   if (kind !== "challenge") sections.push("", "## Hypotheses", "", hypotheses.length ? hypotheses.map((hypothesis) => `- ${hypothesis.id}: ${line((hypothesis.payload as { title?: string }).title ?? hypothesis.payload)}`).join("\n") : "No hypotheses recorded.");
