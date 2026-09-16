@@ -6,6 +6,7 @@ import { EvidenceClaimSchema } from "./types.js";
 import { compareClaims } from "./claim-consistency.js";
 import { redactCommand, redactStructured } from "./redaction.js";
 import { canonicalSourceUrl } from "./sources.js";
+import { subtaskAuditFingerprint } from "./subtask-state.js";
 
 function safeJson(value: unknown): string {
   return JSON.stringify(redactStructured(value));
@@ -471,7 +472,10 @@ export class ResearchStore {
     return this.eventsByType("subtask.audit").flatMap((event) => {
       const payload = event.payload as { subtaskId?: unknown; complete?: unknown; status?: unknown; criteria?: unknown };
       if (typeof payload.subtaskId !== "string" || (subtaskId !== undefined && payload.subtaskId !== subtaskId)) return [];
-      const grounded = Array.isArray(payload.criteria) && payload.criteria.every((criterion) => {
+      const hasFingerprintState = Array.isArray(payload.criteria) && Array.isArray((payload as { unmetRequired?: unknown }).unmetRequired) && typeof payload.complete === "boolean";
+      const fingerprintValid = typeof (payload as { stateFingerprint?: unknown }).stateFingerprint !== "string"
+        || (hasFingerprintState && (payload as { stateFingerprint: string }).stateFingerprint === subtaskAuditFingerprint(payload as Parameters<typeof subtaskAuditFingerprint>[0]));
+      const grounded = fingerprintValid && Array.isArray(payload.criteria) && payload.criteria.every((criterion) => {
         if (!criterion || typeof criterion !== "object") return false;
         const value = criterion as { satisfied?: unknown; evidenceIds?: unknown };
         if (value.satisfied !== true) return true;
@@ -702,7 +706,8 @@ export class ResearchStore {
   /** Persist the controller's structured subtask audit as first-class evidence. */
   recordSubtaskAudit(audit: unknown): void {
     if (audit && typeof audit === "object" && !Array.isArray(audit)) {
-      const payload = audit as { criteria?: unknown };
+      const payload = audit as { criteria?: unknown; stateFingerprint?: unknown };
+      if (typeof payload.stateFingerprint === "string" && (!Array.isArray(payload.criteria) || !Array.isArray((audit as { unmetRequired?: unknown }).unmetRequired) || typeof (audit as { complete?: unknown }).complete !== "boolean" || payload.stateFingerprint !== subtaskAuditFingerprint(audit as Parameters<typeof subtaskAuditFingerprint>[0]))) throw new Error("Subtask audit state fingerprint does not match its criteria.");
       if (Array.isArray(payload.criteria)) {
         const missing = payload.criteria.flatMap((criterion) => {
           if (!criterion || typeof criterion !== "object") return [];

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 /**
  * Provider-neutral contract for one unit of autonomous work.
  *
@@ -52,7 +54,20 @@ export interface SubtaskAudit {
   weightedScore: number;
   totalWeight: number;
   ignoredObservations: string[];
+  /** Digest of the controller-verified criterion state at this audit boundary. */
+  stateFingerprint?: string;
   auditedAt: string;
+}
+
+/** Hash only controller state, excluding prose and timestamps that do not define state. */
+export function subtaskAuditFingerprint(audit: Pick<SubtaskAudit, "subtaskId" | "criteria" | "unmetRequired" | "complete">): string {
+  const state = {
+    subtaskId: audit.subtaskId,
+    complete: audit.complete,
+    unmetRequired: [...audit.unmetRequired].sort(),
+    criteria: audit.criteria.map((criterion) => ({ id: criterion.id, satisfied: criterion.satisfied, evidenceIds: [...criterion.evidenceIds].sort(), source: criterion.source ?? null })),
+  };
+  return `sha256:${createHash("sha256").update(JSON.stringify(state)).digest("hex")}`;
 }
 
 function normalize(value: string): string {
@@ -139,7 +154,7 @@ export function auditSubtask(contractInput: SubtaskContract, observations: Subta
   const unmetRequired = criteria.filter((criterion) => criterion.required !== false && !criterion.satisfied).map((criterion) => criterion.id);
   const totalWeight = criteria.reduce((sum, criterion) => sum + (criterion.weight ?? 1), 0);
   const weightedScore = totalWeight > 0 ? criteria.reduce((sum, criterion) => sum + (criterion.satisfied ? (criterion.weight ?? 1) : 0), 0) / totalWeight : 0;
-  return {
+  const audit: SubtaskAudit = {
     subtaskId: contract.id,
     status: unmetRequired.length === 0 ? "completed" : "blocked",
     complete: unmetRequired.length === 0,
@@ -150,6 +165,7 @@ export function auditSubtask(contractInput: SubtaskContract, observations: Subta
     ignoredObservations,
     auditedAt,
   };
+  return { ...audit, stateFingerprint: subtaskAuditFingerprint(audit) };
 }
 
 export function subtaskStateFromAudit(audit: SubtaskAudit): { status: SubtaskStatus; unmetRequired: string[] } {

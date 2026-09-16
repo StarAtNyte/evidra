@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { evaluateEvidenceGate, sha256File } from "./evidence.js";
 import type { ExperimentManifest, RunResult } from "./types.js";
-import { auditSubtask, type SubtaskAudit, type SubtaskContract } from "./subtask-state.js";
+import { auditSubtask, subtaskAuditFingerprint, type SubtaskAudit, type SubtaskContract } from "./subtask-state.js";
 
 export interface ValidationContext {
   currentCommit: string;
@@ -95,7 +95,8 @@ export function refreshAuditWithExternalScore(audit: SubtaskAudit, evidenceId: s
     ? { ...criterion, satisfied: true, evidenceIds: [...new Set([...criterion.evidenceIds, evidenceId])], source: "auditor" as const, detail }
     : criterion);
   const unmetRequired = criteria.filter((criterion) => criterion.required !== false && !criterion.satisfied).map((criterion) => criterion.id);
-  return { ...audit, status: unmetRequired.length === 0 ? "completed" : "blocked", complete: unmetRequired.length === 0, criteria, unmetRequired, auditedAt: new Date().toISOString() };
+  const refreshed: SubtaskAudit = { ...audit, status: unmetRequired.length === 0 ? "completed" : "blocked", complete: unmetRequired.length === 0, criteria, unmetRequired, auditedAt: new Date().toISOString() };
+  return { ...refreshed, stateFingerprint: subtaskAuditFingerprint(refreshed) };
 }
 
 export function validateEvaluationMatrix(manifest: Pick<ExperimentManifest, "evaluation">, run: Pick<RunResult, "matrix">, metricName: string): { valid: boolean; expected: number; observed: number; missing: string[]; invalidMetric: string[] } {

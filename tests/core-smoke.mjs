@@ -28,7 +28,7 @@ import { experienceReplayWorld } from "../dist/core/experience.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
 import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../dist/core/phase-goals.js";
-import { assertSubtaskContract, auditSubtask, subtaskStateFromAudit, validateSubtaskContract } from "../dist/core/subtask-state.js";
+import { assertSubtaskContract, auditSubtask, subtaskAuditFingerprint, subtaskStateFromAudit, validateSubtaskContract } from "../dist/core/subtask-state.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "../dist/core/decision-auditor.js";
 import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
@@ -2404,6 +2404,8 @@ test("generic subtask auditing requires verifier evidence and preserves unmet cr
   assert.equal(complete.weightedScore, 0.75);
   assert.equal(complete.totalWeight, 4);
   assert.deepEqual(complete.criteria[0].evidenceIds, ["sha256:artifact"]);
+  assert.match(complete.stateFingerprint, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(complete.stateFingerprint, subtaskAuditFingerprint(complete));
   assert.equal(subtaskStateFromAudit(complete).status, "completed");
   assert.throws(() => assertSubtaskContract({ ...contract, acceptanceCriteria: [{ id: "x", description: "x" }, { id: "x", description: "duplicate" }] }), /duplicate/);
   assert.throws(() => assertSubtaskContract({ ...contract, acceptanceCriteria: [{ id: "x", description: "x", weight: 0 }] }), /weight/);
@@ -2448,7 +2450,9 @@ test("subtask audits are durable controller evidence", () => {
     store.recordSubtaskAudit(audit);
     assert.equal(store.evidenceReferenceExists("run:1"), true);
     assert.equal(store.evidenceReferenceExists("run:missing"), false);
-    assert.throws(() => store.recordSubtaskAudit({ ...audit, criteria: [{ ...audit.criteria[0], evidenceIds: ["run:missing"] }] }), /unavailable evidence/);
+    assert.throws(() => store.recordSubtaskAudit({ ...audit, criteria: [{ ...audit.criteria[0], evidenceIds: ["run:missing"] }] }), /state fingerprint/);
+    assert.throws(() => store.recordSubtaskAudit({ ...audit, stateFingerprint: undefined, criteria: [{ ...audit.criteria[0], evidenceIds: ["run:missing"] }] }), /unavailable evidence/);
+    assert.throws(() => store.recordSubtaskAudit({ ...audit, stateFingerprint: "sha256:bad" }), /state fingerprint/);
     assert.equal(store.latestSubtaskAudit("durable-1").complete, true);
     store.close();
     const reopened = new ResearchStore(join(root, "state.sqlite"));
