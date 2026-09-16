@@ -46,8 +46,9 @@ scorecard are implemented in `src/`.
 Benchmark support currently includes generic metric suites, secondary gates,
 task-balanced paired comparisons, bootstrap lower bounds, Pareto diagnostics,
 provider and held-out comparisons, component ablations/failure evidence,
-reproducibility checks, adaptive retest agendas, AIRS-Bench discovery, and
-scientific/autoresearch benchmark contracts.
+reproducibility checks, task-balanced pass@k diagnostics for stochastic trials,
+adaptive retest agendas, AIRS-Bench discovery, and scientific/autoresearch
+benchmark contracts.
 
 AIRS-Bench discovery has been tested against the public checkout with 40 valid
 task contracts and 0 invalid contracts. This is discovery/protocol evidence,

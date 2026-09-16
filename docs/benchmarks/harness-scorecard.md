@@ -39,6 +39,14 @@ evidra benchmark compare trials.json evidra incumbent
 evidra benchmark export --out evidra-trials.json
 ```
 
+For stochastic agents, the scorecard also emits a task-balanced `passAtK`
+curve for `k = 1, 3, 5, 10`. A success is a valid evaluator-backed positive
+improvement in the declared metric direction. Evidra uses the standard
+`1 - C(n-c,k) / C(n,k)` estimator per task and averages only tasks with at
+least `k` attempts; unavailable sample sizes are reported as `null`. This is
+a diagnostic for repeated sampling, not a replacement for matched-arm win
+gates or independent replication.
+
 `benchmark validate` is the required preflight for a competitive claim. Each
 trial must declare a task arm, seed, model, reasoning effort, and budget; every harness must be
 present on every matched arm, with the same metric direction and baseline

@@ -227,6 +227,8 @@ export interface HarnessScorecard {
   executionAlignmentRate: number | null;
   meanTimeEfficiency: number | null;
   failureProfile: Record<string, number>;
+  /** Task-balanced probability of finding a valid improvement within k attempts. */
+  passAtK: Record<string, number | null>;
 }
 
 export interface HarnessComparison {
@@ -343,6 +345,42 @@ function trialQuality(trial: HarnessTrial): number {
   const alignment = trial.executionAlignment === undefined ? (trial.validRun ? 1 : 0) : trial.executionAlignment ? 1 : 0;
   const efficiency = timeEfficiency(trial) ?? (trial.validRun ? 0.5 : 0);
   return 100 * (0.30 * improvement + 0.18 * (trial.validRun ? 1 : 0) + 0.14 * (trial.validRun && trial.reproducible ? 1 : 0) + 0.1 * (trial.recovered ? 1 : 0) + 0.1 * process + 0.1 * alignment + 0.08 * efficiency);
+}
+
+/**
+ * Estimate pass@k for one task's independent attempts. This is the usual
+ * unbiased estimator: 1 - C(n-c,k) / C(n,k), where c attempts succeed.
+ * Returning null when there are fewer than k attempts prevents a small
+ * sample from being presented as evidence for a larger-k claim.
+ */
+export function estimatePassAtK(trials: HarnessTrial[], k: number): number | null {
+  if (!Number.isInteger(k) || k < 1) throw new Error("pass@k requires a positive integer k");
+  const attempts = trials.length;
+  if (attempts < k) return null;
+  const successes = trials.filter((trial) => delta(trial) !== undefined && (delta(trial) ?? 0) > 0).length;
+  if (successes === 0) return 0;
+  if (successes === attempts) return 1;
+  let probabilityAllFail = 1;
+  for (let index = 0; index < k; index += 1) {
+    probabilityAllFail *= (attempts - successes - index) / (attempts - index);
+    if (probabilityAllFail <= 0) return 1;
+  }
+  return Math.max(0, Math.min(1, 1 - probabilityAllFail));
+}
+
+/**
+ * Compute a task-balanced pass@k curve. Tasks without k attempts are excluded
+ * for that k and therefore yield null when no task has enough attempts.
+ */
+export function passAtKCurve(trials: HarnessTrial[], ks: number[] = [1, 3, 5, 10]): Record<string, number | null> {
+  const grouped = new Map<string, HarnessTrial[]>();
+  for (const trial of trials) grouped.set(trial.task, [...(grouped.get(trial.task) ?? []), trial]);
+  return Object.fromEntries([...new Set(ks)].sort((left, right) => left - right).map((k) => {
+    const values = [...grouped.values()]
+      .map((taskTrials) => estimatePassAtK(taskTrials, k))
+      .filter((value): value is number => value !== null);
+    return [String(k), values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null];
+  }));
 }
 
 function processReliability(trial: HarnessTrial): number | undefined {
@@ -796,6 +834,7 @@ export function scoreHarnessTrials(trials: HarnessTrial[]): HarnessScorecard[] {
       executionAlignmentRate: alignmentValues.length ? alignmentValues.reduce<number>((sum, value) => sum + value, 0) / alignmentValues.length : null,
       meanTimeEfficiency: efficiencyValues.length ? efficiencyValues.reduce((sum, value) => sum + value, 0) / efficiencyValues.length : null,
       failureProfile,
+      passAtK: passAtKCurve(entries),
     };
   }).sort((a, b) => b.competitiveScore - a.competitiveScore);
 }

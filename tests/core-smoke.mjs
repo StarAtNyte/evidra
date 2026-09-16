@@ -69,7 +69,7 @@ import { validateCompetitionContract } from "../dist/core/competition-contract.j
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { assessForecast, summarizeForecastAssessments } from "../dist/core/forecast-calibration.js";
 import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
-import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, evaluateProviderGeneralization, harnessParetoFrontier, parseHarnessTrial, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
+import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, estimatePassAtK, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, evaluateProviderGeneralization, harnessParetoFrontier, parseHarnessTrial, passAtKCurve, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, ScientificTaskSchema } from "../dist/core/scientific-tasks.js";
 import { runSafetyBenchmark } from "../dist/core/safety-bench.js";
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "../dist/core/scientific-suite.js";
@@ -4481,6 +4481,22 @@ test("harness scorecard rewards valid reproducible improvements and rejects narr
   assert.ok(scorecards[0].competitiveScoreLower95 <= scorecards[0].competitiveScore);
   assert.equal(scorecards[1].competitiveScore, 0);
   assert.equal(scorecards[1].failureProfile.unknown, 1);
+  assert.deepEqual(scorecards.find((scorecard) => scorecard.harness === "evidra")?.passAtK, { "1": 0.5, "3": null, "5": null, "10": null });
+});
+
+test("pass@k estimates repeated stochastic success without overstating sparse tasks", () => {
+  const trial = (task, candidateMetric, validRun = true) => ({
+    harness: "evidra", task, direction: "maximize", baselineMetric: 0.5, candidateMetric,
+    validRun, durationSeconds: 1, recovered: false, reproducible: false,
+  });
+  const attempts = [trial("task-a", 0.6), trial("task-a", 0.4), trial("task-a", 0.7), trial("task-a", 0.3), trial("task-a", 0.8)];
+  assert.equal(estimatePassAtK(attempts, 1), 0.6);
+  assert.equal(estimatePassAtK(attempts, 3), 1 - (2 / 5) * (1 / 4) * (0 / 3));
+  assert.equal(estimatePassAtK(attempts.slice(0, 2), 3), null);
+  assert.throws(() => estimatePassAtK(attempts, 0), /positive integer/);
+  const curve = passAtKCurve([...attempts, trial("task-b", 0.6), trial("task-b", 0.4), trial("task-b", 0.4), trial("task-b", 0.4), trial("task-b", 0.4)], [1, 3]);
+  assert.ok(Math.abs((curve["1"] ?? 0) - 0.4) < 1e-12);
+  assert.ok(Math.abs((curve["3"] ?? 0) - ((1 + (1 - (4 / 5) * (3 / 4) * (2 / 3))) / 2)) < 1e-12);
 });
 
 test("harness scorecard incorporates optional process and alignment evidence", () => {
