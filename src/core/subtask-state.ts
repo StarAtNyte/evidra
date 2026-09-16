@@ -114,9 +114,17 @@ export function auditSubtask(contractInput: SubtaskContract, observations: Subta
       ignoredObservations.push(observation.criterionId);
       continue;
     }
+    const evidenceIds = [...new Set((observation.evidenceIds ?? []).filter((id): id is string => typeof id === "string" && id.trim().length > 0))];
+    if (observation.satisfied && evidenceIds.length === 0) {
+      // A verifier/auditor label is not provenance by itself. Requiring a
+      // durable evidence reference prevents semantic or model-generated
+      // assertions from satisfying a long-running phase gate.
+      ignoredObservations.push(`${observation.criterionId}:missing-evidence`);
+      continue;
+    }
     // The latest verifier result is authoritative: a later failure revokes an
     // earlier pass, while a later successful recheck can repair a failure.
-    byCriterion.set(observation.criterionId, observation);
+    byCriterion.set(observation.criterionId, { ...observation, evidenceIds });
   }
   const criteria = contract.acceptanceCriteria.map((criterion) => {
     const observation = byCriterion.get(criterion.id);

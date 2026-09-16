@@ -2337,6 +2337,9 @@ test("generic subtask auditing requires verifier evidence and preserves unmet cr
   assert.equal(blocked.complete, false);
   assert.deepEqual(blocked.unmetRequired, ["artifact"]);
   assert.deepEqual(blocked.ignoredObservations, ["artifact"]);
+  const ungrounded = auditSubtask(contract, [{ criterionId: "artifact", satisfied: true, source: "verifier", detail: "done" }]);
+  assert.equal(ungrounded.complete, false);
+  assert.deepEqual(ungrounded.ignoredObservations, ["artifact:missing-evidence"]);
   const complete = auditSubtask(contract, [
     { criterionId: "artifact", satisfied: true, source: "verifier", evidenceIds: ["sha256:artifact"] },
   ], "2026-09-16T00:00:00.000Z");
@@ -5927,7 +5930,8 @@ test("experiment audit criteria refresh when operator gates change", () => {
   const pending = auditExperiment(manifest, run, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: false, reviewerApproved: false });
   const approved = auditExperiment(manifest, run, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
   assert.equal(auditExperimentSubtask(manifest, pending).complete, false);
-  assert.equal(auditExperimentSubtask(manifest, approved).complete, true);
+  assert.equal(auditExperimentSubtask(manifest, approved).complete, false);
+  assert.equal(auditExperimentSubtask(manifest, approved, ["run"]).complete, true);
 });
 
 test("replication evidence is detected only from a completed independent child", () => {
