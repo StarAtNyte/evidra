@@ -31,5 +31,15 @@ git clone --quiet --depth 1 "$REPO_URL" "$INSTALL_DIR/evidra"
 cd "$INSTALL_DIR/evidra"
 echo "Installing dependencies and building..."
 npm install
-npm install --global . --ignore-scripts
+# Install an archive, not a link into the temporary checkout. Dependency
+# install scripts must run so native modules such as better-sqlite3 work.
+npm pack --ignore-scripts --quiet >/dev/null
+PACKAGE_VERSION=$(node -p "require('./package.json').version")
+npm install --global "$INSTALL_DIR/evidra/evidra-$PACKAGE_VERSION.tgz"
+GLOBAL_PREFIX=$(npm prefix --global)
+"$GLOBAL_PREFIX/bin/evidra" --version >/dev/null
 echo "Evidra installed globally. Run: evidra"
+case ":$PATH:" in
+  *":$GLOBAL_PREFIX/bin:"*) ;;
+  *) echo "Add $GLOBAL_PREFIX/bin to your PATH to run evidra." ;;
+esac
