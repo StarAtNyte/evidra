@@ -20,8 +20,25 @@ export function researchFailureRecord(
 ): ResearchFailureRecord {
   const message = error instanceof Error ? error.message : String(error);
   const stamp = `research-${Date.now()}-${cycle}`;
+  const completedCallIds = new Set(toolEvents.filter((event) => event.kind === "tool_result" && typeof event.callId === "string").map((event) => event.callId as string));
+  const abortedCalls: TrajectoryEvent[] = toolEvents
+    .filter((event) => event.kind === "tool_call" && typeof event.callId === "string" && !completedCallIds.has(event.callId))
+    .map((event) => ({
+      id: `${event.callId}-aborted`,
+      kind: "tool_result" as const,
+      callId: event.callId,
+      at: new Date().toISOString(),
+      payload: {
+        tool: typeof event.payload.tool === "string" ? event.payload.tool : "unknown",
+        ok: false,
+        status: "failed",
+        aborted: true,
+        error: "agent turn ended before the tool returned",
+      },
+    }));
   const events: TrajectoryEvent[] = [
     ...toolEvents,
+    ...abortedCalls,
     ...failedLanes.map((lane, index) => ({
       id: `${stamp}-lane-${index}`,
       kind: "process" as const,

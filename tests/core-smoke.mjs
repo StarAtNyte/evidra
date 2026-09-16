@@ -728,6 +728,17 @@ test("exhausted research-agent failures close a resumable failed trajectory", ()
   assert.match(failure.error, /did not return JSON/);
 });
 
+test("failed research cycles close in-flight tool calls as aborted results", () => {
+  const failure = researchFailureRecord(5, new Error("provider stopped"), [
+    { id: "call", kind: "tool_call", callId: "c1", payload: { tool: "shell.exec" } },
+  ], []);
+  assert.equal(validateTrajectoryStructure(failure.events).status, "complete");
+  const aborted = failure.events.find((event) => event.kind === "tool_result");
+  assert.equal(aborted?.callId, "c1");
+  assert.equal(aborted?.payload.aborted, true);
+  assert.equal(failure.quality.toolUse.verdict, "WARN");
+});
+
 test("tool trace recorder preserves causal call/result pairs and redacts secrets", () => {
   const persisted = [];
   const trace = createToolTraceRecorder("smoke", { onEvent: (event) => persisted.push(event) });
