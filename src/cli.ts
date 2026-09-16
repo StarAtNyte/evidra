@@ -2860,7 +2860,7 @@ research
       const claimGateBefore = decision;
       decision = enforceClaimTermination(decision, claimAudit);
       if (decision !== claimGateBefore) decisionStore.appendEvent("research.claim_gate.rejected", { ...claimAudit, phase: phaseGoal?.phase ?? null });
-      if (phaseGoal && decision.goalStatus === "met") {
+      if (phaseGoal) {
         const phaseEvents = phaseGoalEventsSince(phaseGoal, decisionStore.eventsByTypes([...PHASE_GATE_EVENT_TYPES]));
         const gate = evaluatePhaseGoalEvidence(phaseGoal, {
           mode,
@@ -2878,7 +2878,7 @@ research
         const domainAudit = auditPhaseGoalGate(phaseGoal, gate, phaseEvents.map((event) => event.type));
         decisionStore.recordSubtaskAudit(domainAudit);
         if (semanticAudit) decisionStore.recordSubtaskAudit(mergePhaseGoalAudits(phaseGoal, domainAudit, semanticAudit.criteria));
-        if (!gate.met) {
+        if (decision.goalStatus === "met" && !gate.met) {
           decision = { ...decision, goalStatus: "active", nextAction: decision.nextAction + " (phase gate missing: " + gate.missing.join(", ") + ")" };
           decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal.phase, missing: gate.missing, progress: gate.progress });
         }
@@ -3515,7 +3515,7 @@ research.command("propose")
     const claimGateBefore = decision;
     decision = enforceClaimTermination(decision, claimAudit);
     if (decision !== claimGateBefore) decisionStore.appendEvent("research.claim_gate.rejected", { ...claimAudit, phase: phaseGoal?.phase ?? null });
-    if (phaseGoal && decision.goalStatus === "met") {
+    if (phaseGoal) {
       const phaseEvents = phaseGoalEventsSince(phaseGoal, decisionStore.eventsByTypes([...PHASE_GATE_EVENT_TYPES]));
       const gate = evaluatePhaseGoalEvidence(phaseGoal, {
         mode: "research",
@@ -3531,7 +3531,7 @@ research.command("propose")
         selectedHypothesisFalsifiable: Boolean(decision.selectedHypothesis && decision.hypotheses.some((hypothesis) => hypothesis.title === decision.selectedHypothesis && hypothesis.falsificationTest.trim().length > 0)),
       });
       decisionStore.recordSubtaskAudit(auditPhaseGoalGate(phaseGoal, gate, phaseEvents.map((event) => event.type)));
-      if (!gate.met) {
+      if (decision.goalStatus === "met" && !gate.met) {
         decision = { ...decision, goalStatus: "active", nextAction: decision.nextAction + " (phase gate missing: " + gate.missing.join(", ") + ")" };
         decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal.phase, missing: gate.missing, progress: gate.progress });
       }

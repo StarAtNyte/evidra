@@ -755,6 +755,9 @@ external evaluator.
 - Phase gates now expose deterministic progress (`completed`, `total`, `ratio`)
   alongside missing checks. This improves long-campaign steering and resume
   visibility while preserving the all-required-evidence completion gate.
+- The CLI and TUI evaluate that gate on every cycle, not only after a model
+  claims completion, so active phases receive usable progress and missing-check
+  signals during autonomous steering.
 
 ## Immediate next work
 
