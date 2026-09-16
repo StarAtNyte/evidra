@@ -593,10 +593,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
               ? (current.provider === "local" ? current.model : "qwen3.6:27b")
               : (current.provider === "codex" ? current.model : DEFAULT_CODEX_MODEL),
           }));
-          setOnboardingComplete(true);
+          setOnboardingComplete(provider === "local");
           setPicker(null);
           if (provider === "codex") {
-            append("assistant", "Codex selected. Evidra will verify authentication before each model request. Run /login codex if the route is not connected.");
+            append("assistant", "Connect your ChatGPT account to Codex. Starting device login; open the displayed link on your own device to authorize.");
+            setTimeout(() => { void submitRef.current("/login codex"); }, 0);
           } else {
             append("assistant", "Local provider selected. Evidra will use Ollama when it is running and has a compatible model. Use /doctor to verify the local setup.");
           }
@@ -2520,8 +2521,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
             ? (current.provider === "local" ? current.model : "qwen3.6:27b")
             : (current.provider === "codex" ? current.model : DEFAULT_CODEX_MODEL),
         }));
-        setOnboardingComplete(true);
+        setOnboardingComplete(provider === "local");
         append("assistant", `Provider selected: ${provider}`);
+        if (provider === "codex") {
+          setTimeout(() => { void submitRef.current("/login codex"); }, 0);
+        }
       }
       return;
     }
@@ -3539,7 +3543,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
       append("assistant", String(result.output));
     } catch (error) {
-      append("assistant", error instanceof Error ? error.message : String(error));
+      if (isProviderUsageLimit(error)) {
+        const retryAt = new Date(Date.now() + providerRetryAfterMs(error)).toLocaleString();
+        append("assistant", `Codex usage limit reached. Suggested retry time: ${retryAt}. Use /login codex to switch accounts, or resend your message after your allowance resets. Authentication succeeded, but this account has no available capacity right now.`);
+      } else append("assistant", error instanceof Error ? error.message : String(error));
     } finally { activeSteer.current = null; setBusy(false); setProgress(""); }
   };
   submitRef.current = submit;
