@@ -123,8 +123,13 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
       && verification.passed === declaredVerifiers
       && verification.failed === 0
       && (declaredVerifiers < 2 || verification.independent === true);
-  const matrix = validateEvaluationMatrix(manifest, run, context.metricName ?? "");
-  const declaredMetricNames = [...new Set([context.metricName, ...(manifest.evaluation.metrics ?? []).map((objective) => objective.name)].filter((name): name is string => Boolean(name)))];
+  // The manifest is the experiment's pre-registered protocol. The context
+  // metric is only a compatibility fallback for legacy manifests; a current
+  // project configuration must not be able to change the objective after a
+  // run has been recorded.
+  const primaryMetricName = manifest.evaluation.metrics?.[0]?.name ?? context.metricName;
+  const matrix = validateEvaluationMatrix(manifest, run, primaryMetricName ?? "");
+  const declaredMetricNames = [...new Set([primaryMetricName, ...(manifest.evaluation.metrics ?? []).map((objective) => objective.name)].filter((name): name is string => Boolean(name)))];
   const missingMetrics = nonMetric ? [] : declaredMetricNames.filter((name) => typeof run.metrics[name] !== "number" || !Number.isFinite(run.metrics[name]));
   const metricsRecomputed = nonMetric
     ? run.status === "completed" && nonMetricEvidenceDeclared

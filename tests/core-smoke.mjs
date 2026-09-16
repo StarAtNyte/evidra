@@ -2432,13 +2432,14 @@ test("evidence audit rejects missing declared artifact files", () => {
   try {
     const artifact = join(root, "predictions.json");
     writeFileSync(artifact, "{}\n");
-    const manifest = { id: "exp", gitCommit: "commit", datasetVersion: "data", splitVersion: "split", change: { configPatch: {} }, resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0], seeds: [0], requiredArtifacts: ["predictions.json"] }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 1, requireReplication: false }, createdAt: new Date().toISOString() };
+    const manifest = { id: "exp", gitCommit: "commit", datasetVersion: "data", splitVersion: "split", change: { configPatch: {} }, resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0], seeds: [0], requiredArtifacts: ["predictions.json"], metrics: [{ name: "score", direction: "maximize" }] }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 1, requireReplication: false }, createdAt: new Date().toISOString() };
     const run = { runId: "run", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 1 }, metricsByFold: {}, artifacts: { "predictions.json": artifact } };
     const context = { currentCommit: "commit", datasetVersion: "data", splitVersion: "split", leakageAuditPassed: true, reviewerApproved: true };
     assert.equal(auditExperiment(manifest, run, context).gates.outputsComplete, true);
     assert.equal(auditExperiment(manifest, { ...run, metrics: { loss: 0.1 } }, { ...context, metricName: "score" }).gates.metricsRecomputed, false);
     assert.deepEqual(auditExperiment(manifest, { ...run, metrics: { loss: 0.1 } }, { ...context, metricName: "score" }).missingMetrics, ["score"]);
     assert.equal(auditExperiment(manifest, run, { ...context, metricName: "score" }).gates.metricsRecomputed, true);
+    assert.deepEqual(auditExperiment(manifest, { ...run, metrics: { loss: 0.1 } }, { ...context, metricName: "loss" }).missingMetrics, ["score"]);
     assert.equal(auditExperiment(manifest, run, { ...context, artifactChecksums: { "predictions.json": "sha256:tampered" } }).gates.outputsComplete, false);
     const checksum = createHash("sha256").update(readFileSync(artifact)).digest("hex");
     assert.equal(auditExperiment(manifest, run, { ...context, artifactChecksums: { "predictions.json": `sha256:${checksum}` } }).gates.outputsComplete, true);
