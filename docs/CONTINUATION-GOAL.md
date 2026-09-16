@@ -58,7 +58,10 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `80da60a` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `4696696` (verify with `git log`).
+- Conflict pressure now considers only contradictions whose claim endpoints
+  remain active; superseded or invalidated source claims stay in history but do
+  not distort autonomous allocation, audits, or reports.
 - Source refreshes now cascade retirement to claims linked to the superseded
   content hash; stale literature remains auditable as history but is excluded
   from active research memory.
