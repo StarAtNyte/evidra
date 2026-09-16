@@ -27,6 +27,9 @@ export async function withExecutionHeartbeat<T>(operation: () => Promise<T>, opt
       // Liveness telemetry must never turn a valid worker result into a failure.
     }
   };
+  // Record liveness immediately; waiting for the first interval leaves a
+  // restart window in which a healthy short-lived worker looks stale.
+  heartbeat();
   const timer = setInterval(heartbeat, intervalMs);
   timer.unref();
   try {

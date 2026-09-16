@@ -4547,6 +4547,18 @@ test("long-running execution emits durable run heartbeats", async () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("execution heartbeat records liveness before the first interval", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-immediate-heartbeat-"));
+  const db = join(root, ".sota", "database.sqlite");
+  try {
+    await withExecutionHeartbeat(() => Promise.resolve(), { storePath: db, experimentId: "exp-immediate", intervalMs: 60_000 });
+    const store = new ResearchStore(db);
+    const heartbeat = store.eventsByType("run.heartbeat")[0];
+    assert.equal(heartbeat.payload.experimentId, "exp-immediate");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("missing process executables reject without retaining the timeout", async () => {
   const started = Date.now();
   await assert.rejects(() => runProcess(["evidra-command-that-does-not-exist"], process.cwd(), 30_000));
