@@ -58,7 +58,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `2b5fc70` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `b60ec96` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor and every accepted criterion must carry a durable
@@ -71,6 +71,9 @@ external evaluator.
 - A fresh read-only provider-backed semantic auditor now checks the decision
   against bounded evidence, grounds anchors, persists success/failure, and
   gates non-pass decisions before execution.
+- Lane cross-pollination now uses only controller-grounded source IDs for
+  independent-support and evidence-diversity calculations; raw model anchors
+  remain visible for inspection but cannot strengthen consensus.
 - The semantic auditor independently gathers workspace, Git, and artifact
   evidence through the permission-controlled tool path before its model call.
 - Semantic audits now return criterion-level verdicts and grounded evidence;
