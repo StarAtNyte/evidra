@@ -58,7 +58,10 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `4a35956` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `8d9b53a` (verify with `git log`).
+- Controller decision audits now reject duplicate hypothesis titles and
+  selections that are absent from the exact typed decision payload, preventing
+  ambiguous provider output from driving execution.
 - Independent evaluator output now uses the same metric-conflict policy as worker
   output: unresolved conflicting primary values fail the run instead of silently
   overwriting its score, with the conflict retained in run diagnostics.
