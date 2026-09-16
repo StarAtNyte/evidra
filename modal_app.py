@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import base64
+import selectors
 from pathlib import Path
 
 import modal
@@ -26,6 +27,7 @@ WORKER_ENV_KEYS = {
     "CUDA_HOME", "CUDA_PATH", "CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES",
     "NVIDIA_DRIVER_CAPABILITIES", "LD_LIBRARY_PATH", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
 }
+MAX_CAPTURE_BYTES = 16 * 1024 * 1024
 
 
 def worker_environment() -> dict[str, str]:
@@ -99,7 +101,33 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]") -> dict[str
             environment["EVIDRA_MATRIX_REQUIRED"] = "1" if config.get("evaluation", {}).get("matrixRequired") else "0"
         except (OSError, ValueError, KeyError, TypeError):
             pass
-    completed = subprocess.run(command, cwd=working_directory, capture_output=True, text=True, check=False, env=environment)
+    # Stream worker output for long GPU jobs while retaining a bounded copy for
+    # the controller's structured RunResult. Buffering the whole subprocess
+    # made Modal experiments appear hung and could grow memory without bound.
+    process = subprocess.Popen(command, cwd=working_directory, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
+    assert process.stdout is not None and process.stderr is not None
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+    captured: dict[str, list[str]] = {"stdout": [], "stderr": []}
+    captured_bytes = {"stdout": 0, "stderr": 0}
+    while selector.get_map():
+        for key, _ in selector.select(timeout=1.0):
+            line = key.fileobj.readline()
+            if line == "":
+                selector.unregister(key.fileobj)
+                continue
+            stream = key.data
+            print(f"[evidra-worker:{stream}] {line}", end="", flush=True)
+            encoded = line.encode("utf-8", errors="replace")
+            remaining = MAX_CAPTURE_BYTES - captured_bytes[stream]
+            if remaining > 0:
+                portion = encoded[:remaining].decode("utf-8", errors="replace")
+                captured[stream].append(portion)
+                captured_bytes[stream] += len(portion.encode("utf-8", errors="replace"))
+    process.wait()
+    completed_stdout = "".join(captured["stdout"])
+    completed_stderr = "".join(captured["stderr"])
     artifact_payload: dict[str, str] = {}
     for artifact in json.loads(artifacts_json):
         relative_artifact = Path(artifact)
@@ -112,9 +140,9 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]") -> dict[str
         if artifact_path.is_file() and artifact_path.stat().st_size <= 64 * 1024 * 1024:
             artifact_payload[str(relative_artifact)] = base64.b64encode(artifact_path.read_bytes()).decode("ascii")
     return {
-        "exitCode": completed.returncode,
-        "stdout": completed.stdout[-16 * 1024 * 1024 :],
-        "stderr": completed.stderr[-16 * 1024 * 1024 :],
+        "exitCode": process.returncode,
+        "stdout": completed_stdout,
+        "stderr": completed_stderr,
         "artifacts": artifact_payload,
     }
 

@@ -103,7 +103,7 @@ local TUI/controller ──► local experiment worker
                      └─► Modal GPU experiment worker
 ```
 
-Use `/compute local`, `/compute container`, or `/compute modal` before proposing an experiment, or use `evidra experiment propose --executor container`. Container workers use Docker or Podman (auto-detected, or selected with `EVIDRA_CONTAINER_RUNTIME`), mount only the isolated experiment worktree, disable network access by default, and use `EVIDRA_CONTAINER_IMAGE` or the manifest image (default `python:3.11-slim`). Modal workers receive the workspace and declared command, return logs and declared artifacts, and are evaluated by the same local evidence gates.
+Use `/compute local`, `/compute container`, or `/compute modal` before proposing an experiment, or use `evidra experiment propose --executor container`. Container workers use Docker or Podman (auto-detected, or selected with `EVIDRA_CONTAINER_RUNTIME`), mount only the isolated experiment worktree, disable network access by default, and use `EVIDRA_CONTAINER_IMAGE` or the manifest image (default `python:3.11-slim`). Modal workers receive the workspace and declared command, stream prefixed `[evidra-worker:stdout]`/`[evidra-worker:stderr]` progress while running, and return bounded logs plus declared artifacts. The controller evaluates the result through the same local evidence gates.
 
 For unattended operation, `modal_controller.py` runs the Node controller headlessly in Modal and stores durable `.sota` state in a Modal Volume:
 

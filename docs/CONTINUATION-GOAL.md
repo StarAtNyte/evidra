@@ -88,6 +88,9 @@ external evaluator.
   leave-one-factor-out variant, reads durable run metrics, records factor
   effects, and emits `research.ablation.evidence` only after all variants reach
   terminal state.
+- Modal experiment workers now stream stdout/stderr progress while retaining
+  bounded 16 MiB copies for structured results, preventing long GPU jobs from
+  appearing hung or accumulating unbounded log memory.
 - Identified duplicate findings now contribute active conflict pressure only
   when both referenced claim endpoints remain active; anonymous legacy events
   remain conservatively counted.
