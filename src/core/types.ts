@@ -289,6 +289,8 @@ export const RunResultSchema = z.object({
   metrics: z.record(z.string(), z.number().finite()).default({}),
   metricsByFold: z.record(z.string(), z.array(z.number().finite())).default({}),
   learningCurve: z.array(z.object({ step: z.number().finite(), metric: z.number().finite() })).optional(),
+  /** Distinct values emitted for one metric; completed runs with unresolved primary conflicts are invalid. */
+  metricConflicts: z.array(z.object({ name: z.string().min(1), values: z.array(z.number().finite()).min(2) })).optional(),
   subgroupDeltas: z.array(z.number().finite()).default([]),
   matrix: z.array(z.object({ fold: z.number().int().nonnegative(), seed: z.number().int(), metrics: z.record(z.string(), z.number().finite()) })).optional(),
   artifacts: z.record(z.string(), z.string()).default({}),

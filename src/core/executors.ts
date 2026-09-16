@@ -199,10 +199,17 @@ function safeArtifactPath(root: string, name: string): string | undefined {
   return destination;
 }
 
-export function parseMetricOutput(stdout: string, metricName: string): { metrics: Record<string, number>; metricsByFold: Record<string, number[]>; subgroupDeltas: number[] } {
+export function parseMetricOutput(stdout: string, metricName: string): { metrics: Record<string, number>; metricsByFold: Record<string, number[]>; subgroupDeltas: number[]; conflicts: Array<{ name: string; values: number[] }> } {
   const metrics: Record<string, number> = {};
   const metricsByFold: Record<string, number[]> = {};
+  const observed = new Map<string, Set<number>>();
   let subgroupDeltas: number[] = [];
+  const setMetric = (name: string, value: number): void => {
+    const values = observed.get(name) ?? new Set<number>();
+    values.add(value);
+    observed.set(name, values);
+    metrics[name] = value;
+  };
   const addObject = (value: unknown): void => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return;
     const object = value as Record<string, unknown>;
@@ -210,13 +217,13 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
     if (nested && typeof nested === "object" && !Array.isArray(nested)) {
       for (const [name, metric] of Object.entries(nested as Record<string, unknown>)) {
         const parsed = finiteMetricValue(metric);
-        if (parsed !== undefined) metrics[name] = parsed;
+        if (parsed !== undefined) setMetric(name, parsed);
       }
       addObject(nested);
     }
     const primary = object[metricName];
     const parsedPrimary = finiteMetricValue(primary);
-    if (parsedPrimary !== undefined) metrics[metricName] = parsedPrimary;
+    if (parsedPrimary !== undefined) setMetric(metricName, parsedPrimary);
     // Structured evaluators commonly emit a primary metric beside auxiliary
     // objectives at the top level, e.g. {score, latency_ms, safety}. Preserve
     // every finite scalar here; callers decide which names are required by
@@ -246,7 +253,7 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
     const keyed = line.match(new RegExp(`(?:^|\\s)[\\\"']?${escapedMetric}[\\\"']?\\s*[:=]\\s*(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)(%)?`, "i"));
     if (keyed) {
       const value = Number(keyed[1]);
-      if (Number.isFinite(value)) metrics[metricName] = keyed[2] ? value / 100 : value;
+      if (Number.isFinite(value)) setMetric(metricName, keyed[2] ? value / 100 : value);
     }
     // Also retain secondary/custom metrics emitted as ordinary keyed log
     // lines, e.g. `accuracy: 91.2%` and `latency_ms=42`. The label is kept
@@ -254,7 +261,7 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
     const genericKeyed = line.match(/^\s*["']?([A-Za-z][A-Za-z0-9_./-]*)["']?\s*[:=]\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(%)?\s*$/);
     if (genericKeyed) {
       const value = Number(genericKeyed[2]);
-      if (Number.isFinite(value)) metrics[genericKeyed[1]] = genericKeyed[3] ? value / 100 : value;
+      if (Number.isFinite(value)) setMetric(genericKeyed[1], genericKeyed[3] ? value / 100 : value);
     }
     // Human-readable evaluator tables often render a stable machine label in
     // brackets, e.g. `Raw MSE [final_layer_mse] 2.22e-04`. Keep this parser
@@ -262,15 +269,15 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
     const bracketed = line.match(new RegExp(`\\[${escapedMetric}\\]\\s+(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)(%)?`, "i"));
     if (bracketed) {
       const value = Number(bracketed[1]);
-      if (Number.isFinite(value)) metrics[metricName] = bracketed[2] ? value / 100 : value;
+      if (Number.isFinite(value)) setMetric(metricName, bracketed[2] ? value / 100 : value);
     }
     const columns = line.split("|").map((column) => column.trim());
     if (columns.length >= 5 && /^\d[\d,]*$/.test(columns[0])) {
       const value = Number(columns[columns.length - 1]);
-      if (Number.isFinite(value)) metrics[metricName] = value;
+      if (Number.isFinite(value)) setMetric(metricName, value);
     }
   }
-  return { metrics, metricsByFold, subgroupDeltas };
+  return { metrics, metricsByFold, subgroupDeltas, conflicts: [...observed.entries()].filter(([, values]) => values.size > 1).map(([name, values]) => ({ name, values: [...values] })) };
 }
 
 function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metricName: string, remote = false): RunResult {
@@ -292,6 +299,7 @@ function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metric
     }
   }
   const learningCurve = parseLearningCurve(result.stdout, metricName);
+  const metricConflicts = parsed.conflicts.filter((conflict) => conflict.name === metricName && learningCurve.length === 0);
   const artifacts: Record<string, string> = {};
   const missing: string[] = [];
   for (const name of manifest.evaluation?.requiredArtifacts ?? []) {
@@ -304,11 +312,16 @@ function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metric
     }
   }
   const artifactFailure = result.exitCode === 0 && missing.length > 0;
-  const stderr = artifactFailure ? `${result.stderr}\nMissing required artifacts: ${missing.join(", ")}` : result.stderr;
+  const metricFailure = result.exitCode === 0 && metricConflicts.length > 0;
+  const stderr = artifactFailure
+    ? `${result.stderr}\nMissing required artifacts: ${missing.join(", ")}`
+    : metricFailure
+      ? `${result.stderr}\nConflicting declared metric outputs: ${metricConflicts.map((conflict) => `${conflict.name}=[${conflict.values.join(", ")}]`).join("; ")}`
+      : result.stderr;
   return {
     runId: `${manifest.id}-${Date.now()}`,
-    status: result.exitCode === 0 && !artifactFailure ? "completed" : "failed",
-    exitCode: artifactFailure ? 65 : result.exitCode,
+    status: result.exitCode === 0 && !artifactFailure && !metricFailure ? "completed" : "failed",
+    exitCode: artifactFailure || metricFailure ? 65 : result.exitCode,
     durationSeconds: result.durationMs / 1000,
     metrics,
     metricsByFold,
@@ -320,7 +333,8 @@ function toRunResult(manifest: ExperimentManifest, result: ProcessResult, metric
     stderr,
     command: result.command,
     cwd: result.cwd,
-    ...(artifactFailure ? { failureClass: "corrupt_artifact" as const } : result.exitCode === 0 ? {} : { failureClass: classifyProcessFailure(result, remote) }),
+    ...(artifactFailure ? { failureClass: "corrupt_artifact" as const } : metricFailure ? { failureClass: "invalid_metric" as const } : result.exitCode === 0 ? {} : { failureClass: classifyProcessFailure(result, remote) }),
+    ...(parsed.conflicts.length ? { metricConflicts: parsed.conflicts } : {}),
   };
 }
 

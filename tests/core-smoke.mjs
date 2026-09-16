@@ -3946,6 +3946,17 @@ test("completed workers require the complete declared metric suite", () => {
   assert.equal(validateRunMetrics({ ...result, metrics: { score: 0.8, safety: 0.9 } }, ["score", "safety"]).status, "completed");
 });
 
+test("completed workers reject unresolved conflicting primary metric output", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-conflicting-metric-"));
+  try {
+    const result = await new LocalExecutor().run({ id: "conflict", resources: { executor: "local", timeoutMinutes: 1 } }, root, [process.execPath, "-e", "console.log('score: 0.4\\nscore: 0.6')"], undefined, "score");
+    assert.equal(result.status, "failed");
+    assert.equal(result.failureClass, "invalid_metric");
+    assert.deepEqual(result.metricConflicts, [{ name: "score", values: [0.4, 0.6] }]);
+    assert.match(result.stderr, /Conflicting declared metric outputs/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("primary metric validation can classify a worker failure before recovery", () => {
   const result = { runId: "early-invalid", status: "completed", exitCode: 0, durationSeconds: 1, metrics: {}, artifacts: {} };
   const classified = validateRunMetrics(result, ["score"]);
@@ -3957,6 +3968,7 @@ test("primary metric validation can classify a worker failure before recovery", 
 test("metric parser accepts evaluator JSON and keyed log output", () => {
   const parsed = parseMetricOutput('{"metrics":{"rmse":0.42},"metricsByFold":{"rmse":[0.4,0.44]},"subgroupDeltas":[0.1,-0.02]}\nrmse: 0.41\n', "rmse");
   assert.equal(parsed.metrics.rmse, 0.41);
+  assert.deepEqual(parsed.conflicts, [{ name: "rmse", values: [0.42, 0.41] }]);
   const suite = parseMetricOutput('{"metrics":{"score":0.8,"safety":0.95},"metricsByFold":{"score":[0.79,0.81],"safety":[0.94,0.96]}}', "score");
   assert.deepEqual(suite.metrics, { score: 0.8, safety: 0.95 });
   assert.deepEqual(suite.metricsByFold, { score: [0.79, 0.81], safety: [0.94, 0.96] });
