@@ -4111,6 +4111,7 @@ experiment.command("audit")
     const gates = store.experimentGates(id);
     const artifactChecksums = Object.fromEntries(store.artifacts(run.id).map((artifact) => [artifact.name, artifact.checksum]));
     const replicationObserved = independentReplicationObserved(id, store.experiments(), store.runs());
+    const externalScoreObserved = externalScoreObservedForExperiment(id, store.submissions(), run.id);
     const currentCommit = await runProcess(["git", "rev-parse", "HEAD"], root);
     store.close();
     const manifest = ExperimentManifestSchema.parse(payload);
@@ -4125,7 +4126,7 @@ experiment.command("audit")
       reviewerApproved: gates.reviewerApproved,
       independentReplicationObserved: replicationObserved,
       externalScoreRequired: manifest.acceptance.requireExternalScore,
-      externalScoreObserved: externalScoreObservedForExperiment(id, store.submissions(), run.id),
+      externalScoreObserved,
       artifactChecksums,
     });
     const subtaskAudit = auditExperimentSubtask(manifest, audit, [run.id, ...Object.keys(artifactChecksums)]);

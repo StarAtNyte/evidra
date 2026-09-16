@@ -2843,6 +2843,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const artifactChecksums = run ? Object.fromEntries(store.artifacts(run.id).map((artifact) => [artifact.name, artifact.checksum])) : {};
         const storedGates = store.experimentGates(id);
         const replicationObserved = independentReplicationObserved(id, store.experiments(), store.runs());
+        const externalScoreObserved = run ? externalScoreObservedForExperiment(id, store.submissions(), run.id) : false;
         const currentCommit = await runProcess(["git", "rev-parse", "HEAD"], root);
         store.close();
         if (!run) { append("assistant", `No run recorded for ${id}. Run the experiment first.`); return; }
@@ -2850,7 +2851,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const manifest = ExperimentManifestSchema.parse(payload);
           const runResult = RunResultSchema.parse(run.payload);
           const adapter = activeAdapter();
-          const audit = auditExperiment(manifest, runResult, { currentCommit: currentCommit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, splitVersion: manifest.splitVersion, metricName: adapter.config.metric.name, leakageAuditPassed: storedGates.leakageAuditPassed, reviewerApproved: storedGates.reviewerApproved, independentReplicationObserved: replicationObserved, externalScoreRequired: manifest.acceptance.requireExternalScore, externalScoreObserved: externalScoreObservedForExperiment(id, store.submissions(), run.id), artifactChecksums });
+          const audit = auditExperiment(manifest, runResult, { currentCommit: currentCommit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, splitVersion: manifest.splitVersion, metricName: adapter.config.metric.name, leakageAuditPassed: storedGates.leakageAuditPassed, reviewerApproved: storedGates.reviewerApproved, independentReplicationObserved: replicationObserved, externalScoreRequired: manifest.acceptance.requireExternalScore, externalScoreObserved, artifactChecksums });
           const subtaskAudit = auditExperimentSubtask(manifest, audit, [run.id, ...Object.keys(artifactChecksums)]);
           const auditStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
           auditStore.recordSubtaskAudit({ ...subtaskAudit, experimentId: id, runId: run.id });
