@@ -58,7 +58,10 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `4696696` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `d0ed89c` (verify with `git log`).
+- Duplicate-claim pressure now ignores findings tied to superseded or
+  invalidated claims, matching active contradiction accounting across the
+  controller, TUI, memory, audits, and reports.
 - Conflict pressure now considers only contradictions whose claim endpoints
   remain active; superseded or invalidated source claims stay in history but do
   not distort autonomous allocation, audits, or reports.
