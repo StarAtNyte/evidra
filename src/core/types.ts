@@ -93,7 +93,7 @@ export const ResearchHypothesisSchema = z.object({
   title: z.string().min(1),
   formulationFamily: z.string().min(1).max(80).default("unspecified"),
   outcomeType: z.enum(["metric", "artifact", "proof", "behavior", "system", "other"]).default("metric"),
-  expectedOutcome: z.string().min(1).optional(),
+  expectedOutcome: z.string().trim().min(1).optional(),
   mechanism: z.string().min(1),
   evidence: z.array(z.string()).default([]),
   /** Durable source IDs supporting the literature-derived evidence above. */
@@ -126,6 +126,13 @@ export const ResearchHypothesisSchema = z.object({
     disabledValue: z.unknown(),
   })).max(8).default([]),
 }).superRefine((hypothesis, context) => {
+  if (hypothesis.outcomeType !== "metric" && !hypothesis.expectedOutcome) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["expectedOutcome"],
+      message: "non-metric outcomes require an explicit expectedOutcome",
+    });
+  }
   if (hypothesis.sourceAdaptation && hypothesis.evidenceSourceIds.length === 0) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
