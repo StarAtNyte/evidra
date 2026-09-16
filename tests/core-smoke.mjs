@@ -4436,6 +4436,7 @@ test("submission polling resolves the persisted provider submission id", () => {
 
 test("source retrieval refuses loopback hosts before fetching", async () => {
   await assert.rejects(() => retrieveSource("http://127.0.0.1:9/private"), /private or loopback/);
+  await assert.rejects(() => retrieveSource("http://[::ffff:127.0.0.1]:9/private"), /private or loopback/);
   assert.equal(SOURCE_REQUEST_TIMEOUT_MS, 30_000);
 });
 

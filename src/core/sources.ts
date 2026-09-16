@@ -377,10 +377,25 @@ function privateAddress(address: string): boolean {
     const octets = address.split(".").map(Number);
     return octets[0] === 10 || octets[0] === 127 || (octets[0] === 169 && octets[1] === 254) ||
       (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
-      (octets[0] === 192 && octets[1] === 168) || octets[0] === 0;
+      (octets[0] === 192 && octets[1] === 168) || octets[0] === 0 ||
+      (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127) ||
+      (octets[0] === 192 && octets[1] === 0) ||
+      (octets[0] === 198 && octets[1] >= 18 && octets[1] <= 19) ||
+      octets[0] >= 224;
   }
   if (isIP(address) === 6) {
     const normalized = address.toLowerCase();
+    // WHATWG URL parsing renders IPv4-mapped IPv6 addresses in hexadecimal,
+    // e.g. ::ffff:7f00:1 for 127.0.0.1. Decode that suffix before applying
+    // the IPv4 private/reserved-range policy.
+    if (normalized.startsWith("::ffff:")) {
+      const groups = normalized.slice("::ffff:".length).split(":");
+      if (groups.length === 2 && groups.every((group) => /^[0-9a-f]{1,4}$/.test(group))) {
+        const first = Number.parseInt(groups[0], 16);
+        const second = Number.parseInt(groups[1], 16);
+        return privateAddress(`${first >> 8}.${first & 255}.${second >> 8}.${second & 255}`);
+      }
+    }
     return normalized === "::1" || normalized === "::" || normalized.startsWith("fe80:") ||
       normalized.startsWith("fc") || normalized.startsWith("fd");
   }
@@ -390,8 +405,9 @@ function privateAddress(address: string): boolean {
 async function assertPublicUrl(url: URL): Promise<void> {
   if (!/^https?:$/.test(url.protocol)) throw new Error("Only http and https research sources are supported.");
   if (url.username || url.password) throw new Error("Research source URLs may not contain credentials.");
-  const addresses = isIP(url.hostname) ? [url.hostname] : (await lookup(url.hostname, { all: true })).map((entry) => entry.address);
-  if (!addresses.length || addresses.some(privateAddress)) throw new Error(`Refusing private or loopback research source host: ${url.hostname}`);
+  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  const addresses = isIP(hostname) ? [hostname] : (await lookup(hostname, { all: true })).map((entry) => entry.address);
+  if (!addresses.length || addresses.some(privateAddress)) throw new Error(`Refusing private or loopback research source host: ${hostname}`);
 }
 
 /** Canonicalize equivalent HTTP source references without changing query semantics. */
