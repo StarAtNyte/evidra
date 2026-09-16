@@ -1172,6 +1172,19 @@ export class ResearchStore {
     const prior = sourceUrl
       ? this.sources().find((entry) => entry.id !== source.id && typeof (entry.payload as { url?: unknown }).url === "string" && canonicalSourceUrl((entry.payload as { url: string }).url) === canonicalSourceUrl(sourceUrl))
       : undefined;
+    const retireClaims = (sourceId: string, status: "superseded" | "invalidated"): void => {
+      const retired: string[] = [];
+      for (const claim of this.claims()) {
+        const claimPayload = claim.payload && typeof claim.payload === "object" && !Array.isArray(claim.payload) ? claim.payload as Record<string, unknown> : undefined;
+        if (claimPayload?.sourceId !== sourceId || claimPayload.status === status || claimPayload.status === "invalidated") continue;
+        const updated = { ...claimPayload, status };
+        const serialized = safeJson(updated);
+        this.db.prepare("UPDATE evidence_claims SET payload_json = ? WHERE id = ?").run(serialized, claim.id);
+        this.indexMemory("claim", claim.id, serialized, claim.createdAt);
+        retired.push(claim.id);
+      }
+      if (retired.length) this.appendEvent("research.claims.retired", { sourceId, status, claimIds: retired });
+    };
     if (prior) {
       const priorPayload = prior.payload && typeof prior.payload === "object" && !Array.isArray(prior.payload)
         ? { ...(prior.payload as Record<string, unknown>), status: "superseded" }
@@ -1179,10 +1192,12 @@ export class ResearchStore {
       this.db.prepare("UPDATE research_sources SET payload_json = ? WHERE id = ?").run(safeJson(priorPayload), prior.id);
       this.indexMemory("source", prior.id, safeJson(priorPayload), prior.createdAt);
       this.appendEvent("research.source.superseded", { sourceId: prior.id, supersededBy: source.id });
+      retireClaims(prior.id, "superseded");
     }
     this.db.prepare(`INSERT OR REPLACE INTO research_sources (id, payload_json, created_at) VALUES (?, ?, ?)`).run(source.id, payload, createdAt);
     this.indexMemory("source", source.id, payload, createdAt);
     this.appendEvent("research.source.created", normalizedSource);
+    if (normalizedSource && typeof normalizedSource === "object" && !Array.isArray(normalizedSource) && (normalizedSource as { status?: unknown }).status === "invalidated") retireClaims(source.id, "invalidated");
     if (prior) this.saveEdge({ id: `edge_${source.id}_${prior.id}_supersedes`, fromId: source.id, toId: prior.id, relation: "supersedes", confidence: 1, evidenceIds: [] });
   }
 
