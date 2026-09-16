@@ -5674,6 +5674,17 @@ test("cross-pollination groups independently worded recommendations conservative
   assert.deepEqual(board.transferCandidates[0].evidence, ["groups.csv", "split-report.json"]);
 });
 
+test("cross-pollination merges transitive recommendation agreement chains", () => {
+  const board = synthesizeLaneReports([
+    { role: "lane-a", status: "completed", recommendations: ["use grouped source folds"], evidence: ["a.json"] },
+    { role: "lane-b", status: "completed", recommendations: ["use source folds validation"], evidence: ["b.json"] },
+    { role: "lane-c", status: "completed", recommendations: ["folds validation drift"], evidence: ["c.json"] },
+  ]);
+  assert.equal(board.transferCandidates.length, 1);
+  assert.deepEqual(board.transferCandidates[0].sourceRoles, ["lane-a", "lane-b", "lane-c"]);
+  assert.equal(board.transferCandidates[0].independentSupport, 3);
+});
+
 test("promotion learning stays conservative until paired evidence is sufficient", () => {
   const events = [];
   for (let index = 0; index < 8; index += 1) {

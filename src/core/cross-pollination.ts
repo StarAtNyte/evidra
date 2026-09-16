@@ -74,15 +74,32 @@ export function synthesizeLaneReports(reports: LaneFinding[]): CrossPollinationB
       // Exact matches remain the strongest signal. Otherwise require two
       // discriminative shared terms before merging independently worded
       // recommendations; one shared domain word is too easy to manufacture.
-      const group = recommendationGroups.find((candidate) => candidate.recommendation.trim().toLowerCase().replace(/\s+/g, " ") === normalized || intersectionSize(candidate.terms, terms) >= 2);
+      const matches = recommendationGroups.filter((candidate) => candidate.recommendation.trim().toLowerCase().replace(/\s+/g, " ") === normalized || intersectionSize(candidate.terms, terms) >= 2);
       const role = report.role ?? "lane";
-      const target = group ?? { recommendation, roles: new Set<string>(), evidence: new Set<string>(), roleEvidence: new Map<string, Set<string>>(), confidence: [], terms };
+      const target = matches[0] ?? { recommendation, roles: new Set<string>(), evidence: new Set<string>(), roleEvidence: new Map<string, Set<string>>(), confidence: [], terms: new Set<string>() };
+      // Merge every matching cluster, not only the first one. Updating the
+      // term union makes agreement transitive: A↔B and B↔C become one bounded
+      // hand-off while still requiring two discriminative terms at each link.
+      for (const other of matches.slice(1)) {
+        for (const otherRole of other.roles) target.roles.add(otherRole);
+        for (const item of other.evidence) target.evidence.add(item);
+        for (const [otherRole, otherEvidence] of other.roleEvidence) {
+          const roleEvidence = target.roleEvidence.get(otherRole) ?? new Set<string>();
+          for (const item of otherEvidence) roleEvidence.add(item);
+          target.roleEvidence.set(otherRole, roleEvidence);
+        }
+        target.confidence.push(...other.confidence);
+        target.terms = new Set([...target.terms, ...other.terms]);
+        const index = recommendationGroups.indexOf(other);
+        if (index >= 0) recommendationGroups.splice(index, 1);
+      }
       target.roles.add(role);
       const roleEvidence = target.roleEvidence.get(role) ?? new Set<string>();
       for (const item of report.evidence ?? []) { target.evidence.add(item); roleEvidence.add(item); }
       target.roleEvidence.set(role, roleEvidence);
       target.confidence.push(report.confidence ?? 0.5);
-      if (!group) recommendationGroups.push(target);
+      target.terms = new Set([...target.terms, ...terms]);
+      if (!matches.length) recommendationGroups.push(target);
     }
   }
   const transferCandidates = recommendationGroups
