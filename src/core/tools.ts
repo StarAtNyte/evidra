@@ -7,7 +7,8 @@ import { splitCommandLine } from "./process.js";
 import { prepareWorkerHome, safeWorkerEnvironment } from "./executors.js";
 import { renderReport, writeReport, type ReportKind } from "./reports.js";
 import { createValidationPolicy, writeValidationPolicy } from "./validation-policy.js";
-import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, researchSearchQueries, retrieveSource, searchResearchRepositories, searchResearchSources, searchResearchWeb, sourceClaims, sourceFrontier, sourceIsFresh } from "./sources.js";
+import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, researchSearchQueries, retrieveSource, searchResearchRepositories, searchResearchSources, searchResearchWeb, sourceClaimRecords, sourceClaims, sourceFrontier, sourceIsFresh } from "./sources.js";
+import { competitionResearchClaimType, competitionResearchSources, type CompetitionResearchSource, type CompetitionResearchChannelKind } from "./competition-sources.js";
 import { ResearchStore } from "./store.js";
 import type { CompetitionConfig } from "./types.js";
 import { isSensitiveWorkspacePath, redactSecrets } from "./redaction.js";
@@ -120,7 +121,7 @@ function recordToolEvent(context: ResearchToolContext, result: ResearchToolResul
 }
 
 function toolTrust(name: string): ResearchToolTrust {
-  if (["workspace.read", "workspace.search", "git.diff", "shell.exec", "source.search", "source.retrieve", "web.search", "repository.search"].includes(name)) return "untrusted_content";
+  if (["workspace.read", "workspace.search", "git.diff", "shell.exec", "source.search", "source.retrieve", "competition.observe", "web.search", "repository.search"].includes(name)) return "untrusted_content";
   if (["validation.generate", "report.generate"].includes(name)) return "permission_boundary";
   return "controller_observation";
 }
@@ -138,6 +139,7 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   // Retrieval writes only durable local evidence; it does not mutate the
   // workspace or perform an external action, so safe research may use it.
   { name: "source.retrieve", description: "Retrieve, hash, excerpt, and store a research source with extracted claims; reuse a fresh cached copy unless refresh is requested.", input: { url: "HTTP(S) URL", refresh: "optional boolean to bypass the fresh-source cache" }, readOnly: true },
+  { name: "competition.observe", description: "Observe a configured research channel such as rules, discussion, leaderboard, paper, or repository; hash and store it with typed discovery provenance.", input: { kind: "optional channel kind", url: "optional configured HTTP(S) URL", refresh: "optional boolean to bypass the channel cache" }, readOnly: true },
   { name: "source.search", description: "Search scholarly works and return ranked candidates for later retrieval; use deep depth for bounded progressive query probing.", input: { query: "research question or keywords", limit: "optional result count", depth: "optional shallow|deep" }, readOnly: true },
   { name: "web.search", description: "Search public web pages for official documentation, discussions, datasets, and implementation leads; results are untrusted until retrieved and hashed.", input: { query: "research question or keywords", limit: "optional result count" }, readOnly: true },
   { name: "repository.search", description: "Search public implementation repositories for reproducible method leads; repository metadata is not experimental evidence.", input: { query: "method, paper, or implementation keywords", limit: "optional result count" }, readOnly: true },
@@ -157,6 +159,7 @@ const TOOL_HINTS: Record<string, string> = {
   "git.diff": "git diff changes patch review implementation code experiment",
   "shell.exec": "run command test build execute benchmark evaluator process shell",
   "source.retrieve": "paper literature source article arxiv retrieve citation claims",
+  "competition.observe": "competition challenge rules discussion forum leaderboard score repository observe",
   "source.search": "paper literature scholarly research search citation method",
   "web.search": "web official documentation competition forum discussion dataset leaderboard",
   "repository.search": "repository implementation github code method reproduce",
@@ -234,6 +237,11 @@ function validateToolArguments(name: string, value: unknown): Record<string, unk
     case "git.diff": optionalString("path"); break;
     case "shell.exec": if (args.command === undefined) throw new Error("Tool argument 'command' is required."); commandArgs(args.command); optionalNumber("timeoutMs"); break;
     case "source.retrieve": requiredString("url"); if (args.refresh !== undefined && typeof args.refresh !== "boolean") throw new Error("Tool argument 'refresh' must be a boolean."); break;
+    case "competition.observe":
+      optionalString("kind"); optionalString("url");
+      if (args.refresh !== undefined && typeof args.refresh !== "boolean") throw new Error("Tool argument 'refresh' must be a boolean.");
+      if (args.kind !== undefined && !["rules", "discussion", "leaderboard", "documentation", "paper", "repository", "other", "general"].includes(args.kind as string)) throw new Error("Tool argument 'kind' is not a supported research channel kind.");
+      break;
     case "source.search": case "web.search": case "repository.search":
       requiredString("query"); optionalNumber("limit");
       if (name === "source.search" && args.depth !== undefined && args.depth !== "shallow" && args.depth !== "deep") throw new Error("Tool argument 'depth' must be 'shallow' or 'deep'.");
@@ -347,6 +355,45 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         store.appendEvent("research.source.retrieved", { id: retrieved.id, url: retrieved.url, claimCount: claims.length });
         store.close();
         output = { id: retrieved.id, title: retrieved.title, url: retrieved.url, claims, excerpt: retrieved.excerpt };
+        break;
+      }
+      case "competition.observe": {
+        if (!context.competition) throw new Error("No active competition or research manifest is configured.");
+        const requestedKind = typeof args.kind === "string" ? args.kind : undefined;
+        const requestedUrl = typeof args.url === "string" ? args.url : undefined;
+        const configured = competitionResearchSources(context.competition);
+        const selected: CompetitionResearchSource | undefined = requestedUrl
+          ? configured.find((entry) => canonicalSourceUrl(entry.url) === canonicalSourceUrl(requestedUrl)) ?? { url: requestedUrl, kind: (requestedKind ?? "general") as CompetitionResearchChannelKind }
+          : configured.find((entry) => !requestedKind || entry.kind === requestedKind);
+        if (!selected) throw new Error(requestedKind ? `No configured research channel has kind '${requestedKind}'.` : "No configured research channels are available.");
+        const forceRefresh = args.refresh === true;
+        const cacheStore = new ResearchStore(context.storePath);
+        const cached = !forceRefresh ? cacheStore.sources().find((entry) => {
+          const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { url?: unknown; channelKind?: unknown } : {};
+          const maxAge = selected.refreshMinutes ? selected.refreshMinutes * 60_000 : DEFAULT_SOURCE_REFRESH_MS;
+          return payload.channelKind === selected.kind && typeof payload.url === "string" && canonicalSourceUrl(payload.url) === canonicalSourceUrl(selected.url) && sourceIsFresh(entry, maxAge);
+        }) : undefined;
+        if (cached) {
+          cacheStore.appendEvent("research.competition.channel.cache_hit", { url: selected.url, channelKind: selected.kind, sourceId: cached.id });
+          cacheStore.close();
+          output = { ...(cached.payload as Record<string, unknown>), id: cached.id, cached: true };
+          break;
+        }
+        cacheStore.close();
+        context.onProgress?.(`Tool competition.observe · ${selected.kind} · ${new URL(selected.url).hostname}`);
+        const retrieved = await retrieveSource(selected.url);
+        const claimRecords = sourceClaimRecords(retrieved.text);
+        const claims = claimRecords.map((claim) => claim.statement);
+        const store = new ResearchStore(context.storePath);
+        store.saveSource({ id: retrieved.id, payload: { ...retrieved, claims, channelKind: selected.kind } });
+        for (const [index, claim] of claimRecords.entries()) {
+          const claimId = `${retrieved.id}_claim_${index + 1}`;
+          store.saveClaim({ id: claimId, payload: { id: claimId, statement: claim.statement, excerpt: claim.excerpt, sourceSpan: { start: claim.start, end: claim.end }, scope: retrieved.url, confidence: 0.35, sourceType: competitionResearchClaimType(selected.kind), sourceId: retrieved.id, status: "active" } });
+          store.saveEdge({ id: `edge_${claimId}_${retrieved.id}`, fromId: claimId, toId: retrieved.id, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
+        }
+        store.appendEvent("research.competition.channel.observed", { sourceId: retrieved.id, url: retrieved.url, channelKind: selected.kind, claimCount: claims.length });
+        store.close();
+        output = { id: retrieved.id, title: retrieved.title, url: retrieved.url, channelKind: selected.kind, contentHash: retrieved.contentHash, claims, excerpt: retrieved.excerpt, cached: false };
         break;
       }
       case "source.search": {

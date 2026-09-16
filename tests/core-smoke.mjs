@@ -3056,6 +3056,14 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.equal(sourceBoundary.trust, "permission_boundary");
     assert.doesNotMatch(sourceBoundary.error, /inspection tools only/);
     assert.match(sourceBoundary.error, /private or loopback/);
+    const channelStore = new ResearchStore(db);
+    channelStore.saveSource({ id: "cached-discussion", payload: { id: "cached-discussion", url: "https://example.org/discussion", title: "Cached discussion", retrievedAt: new Date().toISOString(), contentHash: "sha256:discussion", channelKind: "discussion", claims: [] } });
+    channelStore.close();
+    const channel = await executeResearchTool({ name: "competition.observe", arguments: { kind: "discussion" } }, { root, storePath: db, autonomy: "safe", competition: { id: "tool-competition", name: "Tool competition", taskType: "generic", datasetRevision: "v1", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "estimator.py" }, researchSources: [], researchChannels: [{ kind: "discussion", url: "https://example.org/discussion", refreshMinutes: 30 }] } });
+    assert.equal(channel.ok, true);
+    assert.equal(channel.trust, "untrusted_content");
+    assert.equal(channel.output.cached, true);
+    assert.equal(channel.output.channelKind, "discussion");
     assert.equal(existsSync(join(root, "reports")), false);
     const predictionA = join(root, "pred-a.json");
     const predictionB = join(root, "pred-b.json");

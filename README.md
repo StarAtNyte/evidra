@@ -770,6 +770,8 @@ The autonomous loop ingests these through the same SSRF-safe retrieval path as
 literature, records the channel kind and content hash, and applies channel-specific
 refresh intervals. Channel content is discovery evidence only: it cannot masquerade
 as a locally measured metric or an externally verified submission score.
+The director can request a configured channel directly with the bounded
+`competition.observe` tool; it uses the same durable cache and provenance rules.
 
 Evidra never extracts subscription tokens or implements unofficial ChatGPT API calls. Provider availability is checked before work begins, and local fallback is used only for configured `auto`/`fallback` policies when a local model is available and the Codex failure is classified as safely route-changeable.
 
