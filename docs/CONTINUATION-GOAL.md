@@ -58,7 +58,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `e491a1b` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `0048be7` (verify with `git log`).
 - Competition manifests now support typed `researchChannels` for rules,
   discussions, leaderboards, documentation, papers, and repositories. CLI/TUI
   ingestion deduplicates legacy URLs, persists channel kind with source hashes,
@@ -74,6 +74,10 @@ external evaluator.
 - Direct `source.retrieve` calls now accept the same optional channel kind, so
   standalone research can classify documentation, discussions, leaderboards,
   and repositories without pretending they are papers; cache reuse is kind-aware.
+- Durable scored submissions now feed conservative distribution beliefs into
+  autonomous allocation. Sparse or high-uncertainty local-to-external alignment
+  triggers multi-split validation pressure; a few leaderboard points cannot
+  select a split or satisfy a score/evidence gate.
 - Identified duplicate findings now contribute active conflict pressure only
   when both referenced claim endpoints remain active; anonymous legacy events
   remain conservatively counted.
