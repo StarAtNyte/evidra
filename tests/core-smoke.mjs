@@ -2401,6 +2401,9 @@ test("subtask audits are durable controller evidence", () => {
     assert.equal(events[0].payload.subtaskId, "durable-1");
     assert.equal(events[0].payload.complete, true);
     assert.equal(reopened.latestSubtaskAudit("durable-1").status, "completed");
+    reopened.appendEvent("subtask.audit", { ...audit, criteria: [{ ...audit.criteria[0], evidenceIds: ["run:missing"] }] });
+    assert.equal(reopened.latestSubtaskAudit("durable-1").complete, false);
+    assert.equal(reopened.latestSubtaskAudit("durable-1").status, "blocked");
     reopened.close();
   } finally {
     rmSync(root, { recursive: true, force: true });

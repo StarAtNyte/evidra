@@ -469,9 +469,17 @@ export class ResearchStore {
   /** Read structured subtask audits from the complete event history. */
   subtaskAudits(subtaskId?: string): Array<{ subtaskId: string; complete: boolean; status: string; payload: unknown; createdAt: string }> {
     return this.eventsByType("subtask.audit").flatMap((event) => {
-      const payload = event.payload as { subtaskId?: unknown; complete?: unknown; status?: unknown };
+      const payload = event.payload as { subtaskId?: unknown; complete?: unknown; status?: unknown; criteria?: unknown };
       if (typeof payload.subtaskId !== "string" || (subtaskId !== undefined && payload.subtaskId !== subtaskId)) return [];
-      return [{ subtaskId: payload.subtaskId, complete: payload.complete === true, status: typeof payload.status === "string" ? payload.status : "blocked", payload: event.payload, createdAt: event.createdAt }];
+      const grounded = Array.isArray(payload.criteria) && payload.criteria.every((criterion) => {
+        if (!criterion || typeof criterion !== "object") return false;
+        const value = criterion as { satisfied?: unknown; evidenceIds?: unknown };
+        if (value.satisfied !== true) return true;
+        return Array.isArray(value.evidenceIds) && value.evidenceIds.length > 0
+          && value.evidenceIds.every((reference) => typeof reference === "string" && this.evidenceReferenceExists(reference));
+      });
+      const complete = payload.complete === true && grounded;
+      return [{ subtaskId: payload.subtaskId, complete, status: complete ? "completed" : "blocked", payload: event.payload, createdAt: event.createdAt }];
     });
   }
 
