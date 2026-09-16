@@ -58,7 +58,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `0d27cc3` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `952b48a` (verify with `git log`).
 - Competition manifests now support typed `researchChannels` for rules,
   discussions, leaderboards, documentation, papers, and repositories. CLI/TUI
   ingestion deduplicates legacy URLs, persists channel kind with source hashes,
@@ -71,6 +71,9 @@ external evaluator.
 - The director now has a bounded `competition.observe` tool that selects a
   configured channel, uses its refresh policy, persists a hashed observation,
   and returns untrusted channel content with typed provenance.
+- Direct `source.retrieve` calls now accept the same optional channel kind, so
+  standalone research can classify documentation, discussions, leaderboards,
+  and repositories without pretending they are papers; cache reuse is kind-aware.
 - Identified duplicate findings now contribute active conflict pressure only
   when both referenced claim endpoints remain active; anonymous legacy events
   remain conservatively counted.
