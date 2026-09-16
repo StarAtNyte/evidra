@@ -58,7 +58,10 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `1458abb` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `abbe07e` (verify with `git log`).
+- Identified duplicate findings now contribute active conflict pressure only
+  when both referenced claim endpoints remain active; anonymous legacy events
+  remain conservatively counted.
 - Active claim resolution now checks both claim status and linked source
   lifecycle status, protecting legacy databases from reintroducing claims from
   superseded or invalidated literature after restart.
