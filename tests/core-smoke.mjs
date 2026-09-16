@@ -241,8 +241,8 @@ test("stop policy keeps open falsification tests alive during apparent convergen
 });
 
 test("stop policy can use conservative posterior evidence for meaningful gains", () => {
-  assert.equal(betaPosteriorTail(0, 5), 1 / 64);
-  assert.equal(betaPosteriorTail(5, 0), 63 / 64);
+  assert.ok(Math.abs(betaPosteriorTail(0, 5) - (1 / 64)) < 1e-12);
+  assert.ok(Math.abs(betaPosteriorTail(5, 0) - (63 / 64)) < 1e-12);
   const result = assessStopPolicy({
     stopCondition: "stop when posterior probability of meaningful improvement is low",
     rewards: Array.from({ length: 5 }, () => ({ reward: -0.1, valid: true, durationSeconds: 60 })),

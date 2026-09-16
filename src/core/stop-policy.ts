@@ -33,10 +33,28 @@ export interface StopPolicyResult {
   openFalsifications: number;
 }
 
+function logGamma(value: number): number {
+  // Lanczos approximation; only positive integer arguments are used here.
+  const coefficients = [0.9999999999998099, 676.5203681218851, -1259.1392167224028, 771.3234287776531, -176.6150291621406, 12.507343278686905, -0.13857109526572012, 9.984369578019572e-6, 1.5056327351493116e-7];
+  if (value < 0.5) return Math.log(Math.PI) - Math.log(Math.sin(Math.PI * value)) - logGamma(1 - value);
+  const shifted = value - 1;
+  let sum = coefficients[0];
+  for (let index = 1; index < coefficients.length; index += 1) sum += coefficients[index] / (shifted + index);
+  const t = shifted + coefficients.length - 1.5;
+  return 0.5 * Math.log(2 * Math.PI) + (shifted + 0.5) * Math.log(t) - t + Math.log(sum);
+}
+
+function logAdd(left: number, right: number): number {
+  if (!Number.isFinite(left)) return right;
+  if (!Number.isFinite(right)) return left;
+  const larger = Math.max(left, right);
+  return larger + Math.log(Math.exp(left - larger) + Math.exp(right - larger));
+}
+
 /**
  * Exact Beta(1 + successes, 1 + failures) posterior tail for an integer
- * threshold. The binomial identity avoids a numerical-special-function
- * dependency while remaining stable for the bounded campaign sample sizes.
+ * threshold. The binomial identity is evaluated in log-space so long-lived
+ * campaigns cannot overflow on large combinatorial coefficients.
  */
 export function betaPosteriorTail(successes: number, failures: number, threshold = 0.5): number {
   if (!Number.isInteger(successes) || successes < 0 || !Number.isInteger(failures) || failures < 0) throw new Error("Beta posterior counts must be non-negative integers");
@@ -44,14 +62,15 @@ export function betaPosteriorTail(successes: number, failures: number, threshold
   if (threshold <= 0) return 1;
   if (threshold >= 1) return 0;
   const alpha = successes + 1;
+  const beta = failures + 1;
   const total = successes + failures + 1;
-  let coefficient = 1;
-  let tail = 0;
+  let logTail = Number.NEGATIVE_INFINITY;
   for (let j = 0; j < alpha; j += 1) {
-    tail += coefficient * (threshold ** j) * ((1 - threshold) ** (total - j));
-    coefficient *= (total - j) / (j + 1);
+    const logTerm = logGamma(total + 1) - logGamma(j + 1) - logGamma(total - j + 1)
+      + j * Math.log(threshold) + (total - j) * Math.log(1 - threshold);
+    logTail = logAdd(logTail, logTerm);
   }
-  return Math.max(0, Math.min(1, tail));
+  return Math.max(0, Math.min(1, Math.exp(logTail)));
 }
 
 /**
