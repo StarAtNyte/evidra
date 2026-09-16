@@ -3038,6 +3038,15 @@ test("deep literature search creates bounded deterministic progressive probes", 
   assert.deepEqual(probes, researchSearchQueries("agent harness validation benchmark reproducibility experiments", "deep"));
 });
 
+test("research lane literature probes diversify method and model search", () => {
+  const method = researchLiteratureQueries("autonomous scientific discovery", "method researcher");
+  const model = researchLiteratureQueries("autonomous scientific discovery", "model researcher");
+  assert.notDeepEqual(method, model);
+  assert.equal(method.length, 3);
+  assert.equal(model.length, 3);
+  assert.deepEqual(method, researchLiteratureQueries("autonomous scientific discovery", "method researcher"));
+});
+
 test("lane handoff boards are bounded and preserve challengeable evidence", () => {
   const board = laneHandoffBoard([
     { role: "domain researcher", summary: "A".repeat(2_000), findings: ["finding"], recommendations: ["test"], uncertainties: ["unknown"], discriminatingTests: ["run test"], evidence: ["source-1"], evidenceSourceIds: ["source-1"], confidence: 0.8, status: "completed" },

@@ -278,8 +278,12 @@ export function researchLiteratureQueries(objective: string, role: ResearchLaneR
   const base = objective.trim().slice(0, 500) || `${role} methods and evidence`;
   const probes = role === "validation scientist"
     ? ["replication limitations evaluation protocol", "robustness ablation independent validation"]
-    : role === "domain researcher"
+      : role === "domain researcher"
       ? ["definitions assumptions competing explanations", "open problems evidence and counterexamples"]
+      : role === "method researcher"
+        ? ["alternative algorithms implementation details replication", "ablation transfer limitations benchmark"]
+        : role === "model researcher"
+          ? ["representation inductive bias optimization generalization", "architecture ablation robustness out of distribution"]
       : ["implementation replication limitations", "ablation generalization benchmark evaluation"];
   return [...new Set([base, ...probes.map((probe) => `${base} ${probe}`)])].slice(0, 3);
 }
