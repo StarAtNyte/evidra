@@ -209,7 +209,8 @@ function loadConfig(path: string): SessionConfig {
     // Permissions are intentionally session-scoped. Never inherit fast/YOLO from a prior terminal.
     config.autonomy = defaultConfig.autonomy;
     // Older Evidra sessions used a model name that ChatGPT-account Codex does not accept.
-    if (config.provider === "codex" && (config.model === "default" || config.model === "gpt-5.3-codex" || /gpt-6.*astra/i.test(config.model))) config.model = DEFAULT_CODEX_MODEL;
+    // Preserve an explicitly selected current model, including an opt-in Astra route.
+    if (config.provider === "codex" && (config.model === "default" || config.model === "gpt-5.3-codex")) config.model = DEFAULT_CODEX_MODEL;
     if (config.provider === "local" && /^(gpt|codex)/i.test(config.model)) config.model = "unconfigured";
     if (!["auto", "wait", "fallback", "stop"].includes(config.limitPolicy)) config.limitPolicy = defaultConfig.limitPolicy;
     if (!config.fallbackModel) config.fallbackModel = defaultConfig.fallbackModel;

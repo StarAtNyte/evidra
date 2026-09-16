@@ -761,7 +761,8 @@ The provider is an implementation detail behind the same research protocol:
   primary, alternatives are discovered from the authenticated account,
   filtered by reasoning capability, and assigned deterministically. Costly
   Astra models are excluded from automatic diversification by default but can
-  still be selected explicitly.
+  still be selected explicitly; an explicit Astra selection is never silently
+  rewritten to the Luna default.
 - **Local:** Ollama's local chat endpoint and the selected installed model.
 
 Competition manifests may additionally declare typed `researchChannels` such as

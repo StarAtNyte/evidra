@@ -1919,9 +1919,9 @@ research
       options.limitPolicy = savedRuntime.limitPolicy;
       options.executor = savedRuntime.executor;
     }
-    // Never resume an older campaign onto the expensive Astra route after the
-    // cost-conscious default has changed.
-    if (options.provider === "codex" && (options.model === "default" || /gpt-6.*astra/i.test(options.model))) options.model = DEFAULT_CODEX_MODEL;
+    // Keep the cost-conscious default migration, but preserve an explicitly
+    // selected model when resuming (including an opt-in Astra route).
+    if (options.provider === "codex" && options.model === "default") options.model = DEFAULT_CODEX_MODEL;
     if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
     if (!["auto", "wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'auto', 'wait', 'fallback', or 'stop'.");
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Mode must be 'research' or 'challenge'.");
