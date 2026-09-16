@@ -1065,6 +1065,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         onActivity: toolTrace.onActivity,
         onAssistant: toolTrace.onAssistant,
         onUsage: recordAgentUsage,
+        refreshVerifiedState: () => phaseGoal ? projectVerifiedSubtaskState(store.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined),
       }, setProgress);
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
       criticReview = await runResearchCritic(objective, decision, laneReports, {

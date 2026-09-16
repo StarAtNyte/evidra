@@ -59,6 +59,8 @@ export interface ResearchDirectorOptions {
   onUsage?: (usage: AgentResult["usage"], provider: string, model: string, role: string) => void;
   /** Consume operator steering after each completed tool, before replanning. */
   consumeSteering?: () => string[];
+  /** Refresh controller-owned verified state at each tool-feedback boundary. */
+  refreshVerifiedState?: () => unknown;
   maxToolRounds?: number;
   maxToolAttempts?: number;
   /** Bounded retries for the director provider call itself. */
@@ -333,6 +335,8 @@ export async function runResearchDirector(
         onProgress?.(`Operator steering applied at the next safe tool boundary (${newSteering.length} instruction${newSteering.length === 1 ? "" : "s"}).`);
       }
     }
+    let verifiedState: unknown;
+    try { verifiedState = options.refreshVerifiedState?.(); } catch { /* State refresh is diagnostic; the durable audit remains authoritative. */ }
     workingContext = boundResearchContext({
       ...workingContext,
       toolResults: [
@@ -340,6 +344,7 @@ export async function runResearchDirector(
         ...results,
       ],
       lastDecision: { ...decision, toolCalls: [] },
+      ...(verifiedState === undefined ? {} : { verifiedState }),
       ...(steering.length ? { operatorSteering: steering.slice(-8) } : {}),
       toolInstruction: steering.length
         ? "Use the tool results above and incorporate the operator steering instructions at this safe boundary while preserving all evidence, permission, and validation gates. Request another tool only if it is necessary; otherwise return the final decision with toolCalls: []."
