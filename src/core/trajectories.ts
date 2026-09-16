@@ -84,6 +84,19 @@ export function providerActivityFailureClass(activity: string): "timeout" | "rat
   return "unknown";
 }
 
+/** Map a typed research-tool failure to the same recovery vocabulary as executors. */
+export function researchToolFailureClass(result: Pick<ResearchToolResult, "ok" | "error" | "trust" | "securityWarnings">): "timeout" | "rate_limit" | "auth" | "dependency" | "sandbox" | "disk" | "unknown" | undefined {
+  if (result.ok || result.trust === "permission_boundary") return undefined;
+  const text = `${result.error ?? ""} ${(result.securityWarnings ?? []).join(" ")}`;
+  if (/rate limit|quota|too many requests|429/i.test(text)) return "rate_limit";
+  if (/not logged in|auth|credential|unauthorized|forbidden/i.test(text)) return "auth";
+  if (/timeout|timed out|network|unreachable|connection|econnreset|ePIPE|502|503|504/i.test(text)) return "timeout";
+  if (/module not found|dependency|package|executable not found|command not found/i.test(text)) return "dependency";
+  if (/disk full|no space left|enospc/i.test(text)) return "disk";
+  if (/sandbox|loopback|bwrap|escapes the workspace|symlink/i.test(text)) return "sandbox";
+  return "unknown";
+}
+
 /** Capture interleaved tool activity without retaining provider protocol noise or credentials. */
 export function createToolTraceRecorder(prefix = "research", options: ToolTraceRecorderOptions = {}): ToolTraceRecorder {
   const events: TrajectoryEvent[] = [];

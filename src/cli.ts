@@ -38,7 +38,7 @@ import { sha256File } from "./core/evidence.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree } from "./core/worktree.js";
 import { compareRuns } from "./core/statistics.js";
-import { createToolTraceRecorder, evaluateTrajectory, providerActivityFailureClass, type TrajectoryEvent } from "./core/trajectories.js";
+import { createToolTraceRecorder, evaluateTrajectory, providerActivityFailureClass, researchToolFailureClass, type TrajectoryEvent } from "./core/trajectories.js";
 import { recoverUncommittedTraceFiles } from "./core/trajectory-recovery.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "./core/experiment-patches.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "./core/critic-gate.js";
@@ -2176,9 +2176,14 @@ research
           const eventPayload = (event as { payload?: unknown }).payload;
           if (!eventPayload || typeof eventPayload !== "object") return [];
           const value = eventPayload as { providerActivity?: unknown; activity?: unknown };
-          if (value.providerActivity !== true || typeof value.activity !== "string") return [];
-          const failure = providerActivityFailureClass(value.activity);
-          return failure ? [failure] : [];
+          if (value.providerActivity === true && typeof value.activity === "string") {
+            const failure = providerActivityFailureClass(value.activity);
+            return failure ? [failure] : [];
+          }
+          if ((event as { kind?: unknown }).kind !== "tool_result") return [];
+          const toolEvent = eventPayload as Record<string, unknown>;
+          const toolFailure = researchToolFailureClass({ ok: toolEvent.ok === true, error: typeof toolEvent.error === "string" ? toolEvent.error : undefined, trust: typeof toolEvent.trust === "string" ? toolEvent.trust as "controller_observation" | "untrusted_content" | "permission_boundary" : "untrusted_content", securityWarnings: Array.isArray(toolEvent.securityWarnings) ? toolEvent.securityWarnings.filter((item): item is string => typeof item === "string") : undefined });
+          return toolFailure ? [toolFailure] : [];
         });
       });
       const failureClasses: string[] = [

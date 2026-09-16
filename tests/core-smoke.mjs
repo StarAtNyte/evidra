@@ -38,7 +38,7 @@ import { estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.j
 import { auditData, dataAuditFingerprint } from "../dist/core/data-audit.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { runReducedValidation } from "../dist/core/stage-executor.js";
-import { createToolTraceRecorder, evaluateTrajectory, MAX_TRACE_BYTES, MAX_TRACE_EVENTS, parsePersistedTrace, capabilityGaps, providerActivityFailureClass, validateTrajectoryStructure } from "../dist/core/trajectories.js";
+import { createToolTraceRecorder, evaluateTrajectory, MAX_TRACE_BYTES, MAX_TRACE_EVENTS, parsePersistedTrace, capabilityGaps, providerActivityFailureClass, researchToolFailureClass, validateTrajectoryStructure } from "../dist/core/trajectories.js";
 import { recoverUncommittedTraceFiles } from "../dist/core/trajectory-recovery.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
 import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, selectCurriculum } from "../dist/core/experience.js";
@@ -774,6 +774,13 @@ test("tool trace recorder preserves causal call/result pairs and redacts secrets
   failedTool.onToolResult("director", failedCall, { name: "shell.exec", ok: false, error: "exit code 1", trust: "controller_observation" });
   failedTool.events.push({ id: "terminal", kind: "terminal", payload: { status: "completed" } });
   assert.equal(evaluateTrajectory(failedTool.events).toolUse.verdict, "WARN");
+});
+
+test("typed tool failures share recovery classification with provider failures", () => {
+  assert.equal(researchToolFailureClass({ ok: false, error: "connection refused", trust: "untrusted_content" }), "timeout");
+  assert.equal(researchToolFailureClass({ ok: false, error: "permission denied", trust: "permission_boundary" }), undefined);
+  assert.equal(researchToolFailureClass({ ok: false, error: "No space left on device", trust: "controller_observation" }), "disk");
+  assert.equal(researchToolFailureClass({ ok: true, trust: "untrusted_content" }), undefined);
 });
 
 test("Codex agent messages are extracted before generic item progress", () => {

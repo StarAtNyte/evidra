@@ -34,7 +34,7 @@ import { codexLoginStatus, codexResearchModelPool, DEFAULT_CODEX_MODEL, isProvid
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { boundedPeerBoard, runResearchCritic, runResearchLanes, runResearchSemanticAuditor, type ResearchLaneReport, type ResearchReview, type ResearchSemanticAudit } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
-import { createToolTraceRecorder, evaluateTrajectory, providerActivityFailureClass, type TrajectoryEvent } from "../core/trajectories.js";
+import { createToolTraceRecorder, evaluateTrajectory, providerActivityFailureClass, researchToolFailureClass, type TrajectoryEvent } from "../core/trajectories.js";
 import { recoverUncommittedTraceFiles } from "../core/trajectory-recovery.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../core/capability-router.js";
 import { allocateNextResearch } from "../core/allocation.js";
@@ -853,9 +853,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const eventPayload = (event as { payload?: unknown }).payload;
           if (!eventPayload || typeof eventPayload !== "object") return [];
           const value = eventPayload as { providerActivity?: unknown; activity?: unknown };
-          if (value.providerActivity !== true || typeof value.activity !== "string") return [];
-          const failure = providerActivityFailureClass(value.activity);
-          return failure ? [failure] : [];
+          if (value.providerActivity === true && typeof value.activity === "string") {
+            const failure = providerActivityFailureClass(value.activity);
+            return failure ? [failure] : [];
+          }
+          if ((event as { kind?: unknown }).kind !== "tool_result") return [];
+          const toolEvent = eventPayload as Record<string, unknown>;
+          const toolFailure = researchToolFailureClass({ ok: toolEvent.ok === true, error: typeof toolEvent.error === "string" ? toolEvent.error : undefined, trust: typeof toolEvent.trust === "string" ? toolEvent.trust as "controller_observation" | "untrusted_content" | "permission_boundary" : "untrusted_content", securityWarnings: Array.isArray(toolEvent.securityWarnings) ? toolEvent.securityWarnings.filter((item): item is string => typeof item === "string") : undefined });
+          return toolFailure ? [toolFailure] : [];
         });
       }),
       ...(unreconciledTraceRecovery ? ["controller_crash"] : []),
