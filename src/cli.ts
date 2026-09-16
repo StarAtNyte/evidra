@@ -3632,6 +3632,10 @@ experiment.command("run")
       throw new Error("--skip-reduced requires a durable completed reduced screening for this experiment.");
     }
     const manifest = ExperimentManifestSchema.parse(entry.payload);
+    const declaredPrimaryMetric = manifest.evaluation.metrics[0];
+    const primaryMetricName = declaredPrimaryMetric?.name ?? adapter.config.metric.name;
+    const primaryMetricDirection = declaredPrimaryMetric?.direction ?? adapter.config.metric.direction;
+    const declaredSecondaryMetrics = manifest.evaluation.metrics.slice(1);
     const validationPathsForRun = validationPaths();
     if (readValidationPolicyLock(validationPathsForRun.lock)?.locked) {
       assertValidationPolicy(validationPathsForRun.policy, validationPathsForRun.lock);
@@ -3699,12 +3703,12 @@ experiment.command("run")
         throw new Error(`Smoke feasibility check failed:\n${smokeContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
       }
       const smoke = await withExecutionHeartbeat(
-        () => runReducedValidation(executor, manifest, experimentCwd, smokeCommand, adapter.config.metric.name),
+        () => runReducedValidation(executor, manifest, experimentCwd, smokeCommand, primaryMetricName),
         { storePath: statePath, experimentId: id, stage: "smoke", executor: manifest.resources.executor },
       );
       executionPlan = advanceExecutionStage(executionPlan, "smoke", smoke.status === "completed" ? "completed" : "failed");
       const smokeStore = new ResearchStore(statePath);
-      smokeStore.appendEvent(smoke.status === "completed" ? "experiment.stage.smoke.completed" : "experiment.stage.smoke.failed", { experimentId: id, runId: smoke.runId, metric: smoke.metrics[adapter.config.metric.name] ?? null, exitCode: smoke.exitCode, command: smokeCommand });
+      smokeStore.appendEvent(smoke.status === "completed" ? "experiment.stage.smoke.completed" : "experiment.stage.smoke.failed", { experimentId: id, runId: smoke.runId, metric: smoke.metrics[primaryMetricName] ?? null, exitCode: smoke.exitCode, command: smokeCommand });
       if (smoke.status !== "completed") smokeStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "failed", executionPlan } });
       smokeStore.close();
       if (smoke.status !== "completed") throw new Error(`Smoke validation failed (${smoke.exitCode}): ${smoke.stderr || smoke.stdout}`);
@@ -3732,12 +3736,12 @@ experiment.command("run")
         throw new Error(`Reduced validation feasibility check failed:\n${reducedContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
       }
       const reduced = await withExecutionHeartbeat(
-        () => runReducedValidation(executor, manifest, experimentCwd, reducedCommand, adapter.config.metric.name),
+        () => runReducedValidation(executor, manifest, experimentCwd, reducedCommand, primaryMetricName),
         { storePath: statePath, experimentId: id, stage: "reduced_validation", executor: manifest.resources.executor },
       );
       executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", reduced.status === "completed" ? "completed" : "failed");
       const reducedStore = new ResearchStore(statePath);
-      reducedStore.appendEvent(reduced.status === "completed" ? "experiment.stage.reduced_validation.completed" : "experiment.stage.reduced_validation.failed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[adapter.config.metric.name] ?? null, exitCode: reduced.exitCode, command: reducedCommand });
+      reducedStore.appendEvent(reduced.status === "completed" ? "experiment.stage.reduced_validation.completed" : "experiment.stage.reduced_validation.failed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[primaryMetricName] ?? null, exitCode: reduced.exitCode, command: reducedCommand });
       if (reduced.status !== "completed") reducedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "failed", executionPlan } });
       reducedStore.close();
       if (reduced.status !== "completed") throw new Error(`Reduced validation failed (${reduced.exitCode}): ${reduced.stderr || reduced.stdout}`);
@@ -3746,10 +3750,10 @@ experiment.command("run")
         const promotionStore = new ResearchStore(statePath);
         const baselineEvent = promotionStore.eventsByType("baseline.completed").at(-1);
         const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string } | undefined;
-        const baselineMetric = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] : undefined;
-        const learned = learnPromotionPolicy(promotionObservations(promotionStore.eventsByTypes([...PROMOTION_LEARNING_EVENT_TYPES]), adapter.config.metric.direction), promotionPolicy.minimumDelta);
-        const gate = evaluateReducedPromotion({ candidateMetric: reduced.metrics[adapter.config.metric.name], baselineMetric, direction: adapter.config.metric.direction, minimumDelta: learned.minimumDelta, tolerance: promotionPolicy.tolerance });
-        promotionStore.appendEvent(gate.promote ? "experiment.stage.reduced_validation.promoted" : "experiment.stage.reduced_validation.rejected", { experimentId: id, runId: reduced.runId, ...gate, configuredMinimumDelta: promotionPolicy.minimumDelta, learnedPromotion: learned, baselineMetric, candidateMetric: reduced.metrics[adapter.config.metric.name] ?? null });
+        const baselineMetric = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, primaryMetricName).metrics[primaryMetricName] : undefined;
+        const learned = learnPromotionPolicy(promotionObservations(promotionStore.eventsByTypes([...PROMOTION_LEARNING_EVENT_TYPES]), primaryMetricDirection), promotionPolicy.minimumDelta);
+        const gate = evaluateReducedPromotion({ candidateMetric: reduced.metrics[primaryMetricName], baselineMetric, direction: primaryMetricDirection, minimumDelta: learned.minimumDelta, tolerance: promotionPolicy.tolerance });
+        promotionStore.appendEvent(gate.promote ? "experiment.stage.reduced_validation.promoted" : "experiment.stage.reduced_validation.rejected", { experimentId: id, runId: reduced.runId, ...gate, configuredMinimumDelta: promotionPolicy.minimumDelta, learnedPromotion: learned, baselineMetric, candidateMetric: reduced.metrics[primaryMetricName] ?? null });
         if (!gate.promote) {
           executionPlan = advanceExecutionStage(executionPlan, "full_validation", "skipped");
           promotionStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "rejected", rejection: gate.reason, executionPlan } });
@@ -3760,12 +3764,12 @@ experiment.command("run")
       }
       if (options.reducedOnly) {
         const screenedStore = new ResearchStore(statePath);
-        screenedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "screened", reducedRunId: reduced.runId, reducedMetric: reduced.metrics[adapter.config.metric.name] ?? null, executionPlan } });
-        screenedStore.appendEvent("experiment.screening.completed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[adapter.config.metric.name] ?? null, metrics: reduced.metrics, command: reducedCommand });
+        screenedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "screened", reducedRunId: reduced.runId, reducedMetric: reduced.metrics[primaryMetricName] ?? null, executionPlan } });
+        screenedStore.appendEvent("experiment.screening.completed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[primaryMetricName] ?? null, metrics: reduced.metrics, command: reducedCommand });
         screenedStore.close();
         console.log(`Experiment ${id}: reduced screening completed`);
         console.log(`Run: ${reduced.runId}`);
-        console.log(`Metric (${adapter.config.metric.name}): ${reduced.metrics[adapter.config.metric.name] ?? "not parsed"}`);
+        console.log(`Metric (${primaryMetricName}): ${reduced.metrics[primaryMetricName] ?? "not parsed"}`);
         return;
       }
     } else {
@@ -3789,7 +3793,7 @@ experiment.command("run")
     };
     const recordAttempt = (attemptNumber: number, attemptResult: typeof result): void => {
       const attemptStore = new ResearchStore(statePath);
-      attemptStore.recordRunAttempt({ id: `${id}:full_validation:${attemptNumber}`, experimentId: id, runId: attemptResult.runId, attempt: attemptNumber, stage: "full_validation", status: attemptResult.status, exitCode: attemptResult.exitCode, durationSeconds: attemptResult.durationSeconds, metric: attemptResult.metrics[adapter.config.metric.name] ?? null, metrics: attemptResult.metrics, failureClass: attemptResult.failureClass ?? null, command: attemptResult.command ?? command, cwd: attemptResult.cwd ?? experimentCwd, executor: manifest.resources.executor });
+      attemptStore.recordRunAttempt({ id: `${id}:full_validation:${attemptNumber}`, experimentId: id, runId: attemptResult.runId, attempt: attemptNumber, stage: "full_validation", status: attemptResult.status, exitCode: attemptResult.exitCode, durationSeconds: attemptResult.durationSeconds, metric: attemptResult.metrics[primaryMetricName] ?? null, metrics: attemptResult.metrics, failureClass: attemptResult.failureClass ?? null, command: attemptResult.command ?? command, cwd: attemptResult.cwd ?? experimentCwd, executor: manifest.resources.executor });
       attemptStore.appendEvent("run.attempt.completed", {
         experimentId: id,
         attempt: attemptNumber,
@@ -3797,7 +3801,7 @@ experiment.command("run")
         status: attemptResult.status,
         exitCode: attemptResult.exitCode,
         durationSeconds: attemptResult.durationSeconds,
-        metric: attemptResult.metrics[adapter.config.metric.name] ?? null,
+        metric: attemptResult.metrics[primaryMetricName] ?? null,
         failureClass: attemptResult.failureClass ?? null,
         command: attemptResult.command ?? command,
         cwd: attemptResult.cwd ?? experimentCwd,
@@ -3806,10 +3810,10 @@ experiment.command("run")
     };
     recordAttemptStarted(attempt);
     let result = await withExecutionHeartbeat(
-      () => executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name),
+      () => executor.run(manifest, experimentCwd, command, undefined, primaryMetricName),
       { storePath: statePath, experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
     );
-    if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [adapter.config.metric.name]);
+    if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [primaryMetricName]);
     recordAttempt(attempt, result);
     while (result.status !== "completed") {
       const plan = recoveryPlan(result.failureClass);
@@ -3823,10 +3827,10 @@ experiment.command("run")
       attempt += 1;
       recordAttemptStarted(attempt);
       result = await withExecutionHeartbeat(
-        () => executor.run(manifest, experimentCwd, command, undefined, adapter.config.metric.name),
+        () => executor.run(manifest, experimentCwd, command, undefined, primaryMetricName),
         { storePath: statePath, experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
       );
-      if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [adapter.config.metric.name]);
+      if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [primaryMetricName]);
       recordAttempt(attempt, result);
     }
     if (result.status !== "completed") {
@@ -3867,7 +3871,7 @@ experiment.command("run")
         evaluatorAttempt += 1;
       }
       evaluator = { stdout: evaluated.stdout, stderr: evaluated.stderr, exitCode: evaluated.exitCode };
-      const parsed = parseMetricOutput(evaluated.stdout, adapter.config.metric.name);
+      const parsed = parseMetricOutput(evaluated.stdout, primaryMetricName);
       result = { ...result, status: evaluated.exitCode === 0 ? "completed" : "failed", exitCode: evaluated.exitCode, metrics: { ...result.metrics, ...parsed.metrics }, metricsByFold: { ...result.metricsByFold, ...parsed.metricsByFold }, subgroupDeltas: parsed.subgroupDeltas, stdout: `${result.stdout ?? ""}\n[EVALUATOR]\n${evaluated.stdout}`, stderr: `${result.stderr ?? ""}\n[EVALUATOR]\n${evaluated.stderr}`, ...(evaluated.exitCode === 0 ? {} : { failureClass: classifyProcessFailure(evaluated) ?? "unknown" }) };
     }
     const verificationCommands = [...(manifest.evaluation.verificationCommand ? [manifest.evaluation.verificationCommand] : []), ...(manifest.evaluation.verificationCommands ?? [])];
@@ -3908,10 +3912,10 @@ experiment.command("run")
         if (checked.exitCode !== 0) break;
       }
     }
-    if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [adapter.config.metric.name, ...(adapter.config.secondaryMetrics ?? []).map((objective) => objective.name)]);
+    if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [primaryMetricName, ...declaredSecondaryMetrics.map((objective) => objective.name)]);
     executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
     const fullStageStore = new ResearchStore(statePath);
-    fullStageStore.appendEvent(result.status === "completed" ? "experiment.stage.full_validation.completed" : "experiment.stage.full_validation.failed", { experimentId: id, runId: result.runId, outcomeType: manifest.outcomeType, metric: result.metrics[adapter.config.metric.name] ?? null, declaredArtifactCount: manifest.evaluation.requiredArtifacts.length, verificationPassed: verifications.filter((verification) => verification.exitCode === 0).length, exitCode: result.exitCode, attempts: attempt });
+    fullStageStore.appendEvent(result.status === "completed" ? "experiment.stage.full_validation.completed" : "experiment.stage.full_validation.failed", { experimentId: id, runId: result.runId, outcomeType: manifest.outcomeType, metric: result.metrics[primaryMetricName] ?? null, declaredArtifactCount: manifest.evaluation.requiredArtifacts.length, verificationPassed: verifications.filter((verification) => verification.exitCode === 0).length, exitCode: result.exitCode, attempts: attempt });
     fullStageStore.close();
     const artifactDir = join(root, ".sota", "artifacts", result.runId);
     mkdirSync(artifactDir, { recursive: true });
@@ -3948,7 +3952,7 @@ experiment.command("run")
       currentCommit: manifest.gitCommit,
       datasetVersion: manifest.datasetVersion,
       splitVersion: manifest.splitVersion,
-      metricName: adapter.config.metric.name,
+      metricName: manifest.evaluation.metrics[0]?.name ?? adapter.config.metric.name,
       leakageAuditPassed: resultStore.experimentGates(id).leakageAuditPassed,
       reviewerApproved: resultStore.experimentGates(id).reviewerApproved,
       independentReplicationObserved: independentReplicationObserved(id, resultStore.experiments(), resultStore.runs()),
@@ -3961,18 +3965,18 @@ experiment.command("run")
         { id: `${result.runId}-process`, kind: "process", payload: { status: recorded.status, exitCode: recorded.exitCode, failureClass: recorded.failureClass ?? null } },
         ...Array.from({ length: Math.max(0, attempt - 1) }, (_, index) => ({ id: `${result.runId}-recovery-${index + 1}`, kind: "recovery" as const, payload: { attempt: index + 1, status: "completed" } })),
       { id: `${result.runId}-evaluator`, kind: "evaluator", payload: {
-        metric: recorded.metrics[adapter.config.metric.name] ?? null,
+        metric: recorded.metrics[primaryMetricName] ?? null,
         metrics: recorded.metrics,
         outcomeType: manifest.outcomeType,
         durationMinutes: recorded.durationSeconds / 60,
         // Replay utility is normalized to the simulator's higher-is-better
         // convention, but remains merely an offline policy signal.
-        ...(manifest.outcomeType === "metric" && typeof recorded.metrics[adapter.config.metric.name] === "number" && Number.isFinite(recorded.metrics[adapter.config.metric.name])
-          ? { replayUtility: adapter.config.metric.direction === "minimize" ? -recorded.metrics[adapter.config.metric.name] : recorded.metrics[adapter.config.metric.name] }
+        ...(manifest.outcomeType === "metric" && typeof recorded.metrics[primaryMetricName] === "number" && Number.isFinite(recorded.metrics[primaryMetricName])
+          ? { replayUtility: primaryMetricDirection === "minimize" ? -recorded.metrics[primaryMetricName] : recorded.metrics[primaryMetricName] }
           : {}),
         evidenceConsistent: recorded.status === "completed",
       } },
-      { id: `${result.runId}-terminal`, kind: "terminal", payload: { status: recorded.status, goalAttained: recorded.status === "completed" && (manifest.outcomeType !== "metric" || recorded.metrics[adapter.config.metric.name] !== undefined) } },
+      { id: `${result.runId}-terminal`, kind: "terminal", payload: { status: recorded.status, goalAttained: recorded.status === "completed" && (manifest.outcomeType !== "metric" || recorded.metrics[primaryMetricName] !== undefined) } },
     ];
     const experimentQuality = evaluateTrajectory(experimentTrajectoryEvents);
     const experimentTrajectoryId = `trajectory_${result.runId}`;
@@ -3985,7 +3989,7 @@ experiment.command("run")
     if (recorded.status === "completed") {
       const baselineEvent = resultStore.eventsByType("baseline.completed").at(-1);
       const baselinePayload = baselineEvent?.payload as { metric?: unknown; metrics?: Record<string, number>; metricsByFold?: Record<string, number[]>; stdout?: string; stderr?: string; durationMs?: number; command?: string[]; cwd?: string } | undefined;
-      const metricName = adapter.config.metric.name;
+      const metricName = primaryMetricName;
       const parsedBaseline = baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, metricName) : { metrics: {} as Record<string, number>, metricsByFold: {} as Record<string, number[]>, subgroupDeltas: [] };
       const baselineMetric = typeof baselinePayload?.metric === "number" && Number.isFinite(baselinePayload.metric)
         ? baselinePayload.metric
@@ -4005,7 +4009,7 @@ experiment.command("run")
           command: baselinePayload?.command,
           cwd: baselinePayload?.cwd,
         };
-        const comparison = compareRuns(baselineRun, RunResultSchema.parse(recorded), metricName, adapter.config.metric.direction === "minimize");
+        const comparison = compareRuns(baselineRun, RunResultSchema.parse(recorded), metricName, primaryMetricDirection === "minimize");
         const acceptedExperimentIds = new Set(resultStore.eventsByType("experiment.validation.assessed")
           .filter((event) => Boolean((event.payload as { acceptance?: { accepted?: unknown } }).acceptance?.accepted))
           .map((event) => (event.payload as { experimentId?: unknown }).experimentId)
@@ -4023,10 +4027,10 @@ experiment.command("run")
         const ratchet = selectRatchetReference(
           { id: baselineRun.runId, metric: baselineMetric },
           historicalRuns.map(({ id: historicalId, metric }) => ({ id: historicalId, metric, accepted: true })),
-          adapter.config.metric.direction,
+          primaryMetricDirection,
         );
         const ratchetBaselineRun = historicalRuns.find((entry) => entry.id === ratchet.sourceId)?.run ?? baselineRun;
-        const ratchetComparison = ratchet.sourceId === baselineRun.runId ? comparison : compareRuns(ratchetBaselineRun, RunResultSchema.parse(recorded), metricName, adapter.config.metric.direction === "minimize");
+        const ratchetComparison = ratchet.sourceId === baselineRun.runId ? comparison : compareRuns(ratchetBaselineRun, RunResultSchema.parse(recorded), metricName, primaryMetricDirection === "minimize");
         resultStore.appendEvent("experiment.ratchet.checked", { experimentId: id, originalBaseline: baselineMetric, reference: ratchet, referenceRunId: ratchet.sourceId, referenceMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, comparison: ratchetComparison });
         const operator = manifest.searchOperator ?? "ucb_portfolio";
         resultStore.appendEvent("experiment.comparison.completed", { experimentId: id, baselineSource: baselineEvent?.createdAt ?? "baseline", comparison, searchOperator: operator });
@@ -4042,7 +4046,7 @@ experiment.command("run")
           baseline: ratchetBaselineRun,
           candidate: RunResultSchema.parse(recorded),
           metric: metricName,
-          direction: adapter.config.metric.direction,
+          direction: primaryMetricDirection,
           minimumDelta: manifest.acceptance.minimumPrimaryDelta,
           maximumRegressionShift: manifest.acceptance.maximumRegressionShift,
           requireReplication: manifest.acceptance.requireReplication,
@@ -4057,7 +4061,7 @@ experiment.command("run")
           subgroupDeltas: recorded.subgroupDeltas,
           requiresSubgroupAnalysis: (adapter.config.validation?.secondarySplits.length ?? 0) > 0,
           subgroupAnalysisObserved: recorded.subgroupDeltas.length > 0,
-          secondaryMetrics: adapter.config.secondaryMetrics,
+          secondaryMetrics: declaredSecondaryMetrics,
         });
         resultStore.appendEvent("experiment.validation.assessed", { experimentId: id, acceptance, comparisonCount, sequentialLook, sequentialAlpha: acceptance.sequentialAlpha, adjustedProbabilityThreshold: acceptance.adjustedProbabilityThreshold, gates: acceptance.gates, normalizedDelta: acceptance.normalizedDelta, worstSubgroupDelta: acceptance.worstSubgroupDelta });
         const runtimeContext = entryPayload.runtimeContext && typeof entryPayload.runtimeContext === "object" ? entryPayload.runtimeContext as { provider?: string; model?: string; phase?: string } : {};
@@ -4070,7 +4074,7 @@ experiment.command("run")
           resultStore.appendEvent("research.forecast.assessed", { experimentId: id, hypothesisId: manifest.hypothesisId, competitionId: adapter.id, provider: runtimeContext.provider, model: runtimeContext.model, forecast });
         }
         if (operator) {
-          const improvementDelta = ratchetComparison.delta === null ? undefined : adapter.config.metric.direction === "minimize" ? -ratchetComparison.delta : ratchetComparison.delta;
+        const improvementDelta = ratchetComparison.delta === null ? undefined : primaryMetricDirection === "minimize" ? -ratchetComparison.delta : ratchetComparison.delta;
           resultStore.appendEvent("research.search.reward", { experimentId: id, competitionId: adapter.id, datasetRevision: manifest.datasetVersion, operator, reward: searchReward(improvementDelta, recorded.status === "completed", comparison.evidence === "replicated"), valid: recorded.status === "completed", reproducible: comparison.evidence === "replicated", delta: improvementDelta, durationSeconds: recorded.durationSeconds, executor: manifest.resources.executor, provider: runtimeContext.provider, model: runtimeContext.model, phase: runtimeContext.phase, gpu: manifest.resources.gpu ?? undefined });
         }
       } else {
@@ -4086,7 +4090,8 @@ experiment.command("run")
       const parentRun = parentRunId ? resultStore.runs().find((candidate) => candidate.id === parentRunId) : undefined;
       if (parentManifest?.success && parentRun) {
         const parentChecksums = Object.fromEntries(resultStore.artifacts(parentRun.id).map((artifact) => [artifact.name, artifact.checksum]));
-        const refreshed = refreshExperimentAudit(parentManifest.data, RunResultSchema.parse(parentRun.payload), { currentCommit: parentManifest.data.gitCommit, datasetVersion: parentManifest.data.datasetVersion, splitVersion: parentManifest.data.splitVersion, metricName: adapter.config.metric.name, leakageAuditPassed: resultStore.experimentGates(manifest.parent).leakageAuditPassed, reviewerApproved: resultStore.experimentGates(manifest.parent).reviewerApproved, independentReplicationObserved: true, artifactChecksums: parentChecksums }, [parentRun.id, ...Object.keys(parentChecksums), `replication:${id}`]);
+        const parentMetricName = parentManifest.data.evaluation.metrics[0]?.name ?? primaryMetricName;
+        const refreshed = refreshExperimentAudit(parentManifest.data, RunResultSchema.parse(parentRun.payload), { currentCommit: parentManifest.data.gitCommit, datasetVersion: parentManifest.data.datasetVersion, splitVersion: parentManifest.data.splitVersion, metricName: parentMetricName, leakageAuditPassed: resultStore.experimentGates(manifest.parent).leakageAuditPassed, reviewerApproved: resultStore.experimentGates(manifest.parent).reviewerApproved, independentReplicationObserved: true, artifactChecksums: parentChecksums }, [parentRun.id, ...Object.keys(parentChecksums), `replication:${id}`]);
         resultStore.recordSubtaskAudit({ ...refreshed.subtaskAudit, experimentId: manifest.parent, runId: parentRun.id, refreshTrigger: "replication_completed", replicationExperimentId: id });
         resultStore.appendEvent("experiment.audit.refreshed", { experimentId: manifest.parent, runId: parentRun.id, trigger: "replication_completed", replicationExperimentId: id, accepted: refreshed.audit.accepted, subtaskAudit: refreshed.subtaskAudit });
       }
@@ -4094,7 +4099,7 @@ experiment.command("run")
     resultStore.close();
     console.log(`Experiment ${id}: ${recorded.status}`);
     console.log(`Run: ${result.runId}`);
-    console.log(`Metric (${adapter.config.metric.name}): ${recorded.metrics[adapter.config.metric.name] ?? "not parsed"}`);
+    console.log(`Metric (${primaryMetricName}): ${recorded.metrics[primaryMetricName] ?? "not parsed"}`);
     console.log(`Artifacts: ${Object.keys(artifactPaths).join(", ")}`);
     if (recorded.exitCode !== 0) process.exitCode = recorded.exitCode;
   });
@@ -4121,7 +4126,7 @@ experiment.command("audit")
       currentCommit: currentCommit.stdout.trim(),
       datasetVersion: adapter.config.datasetRevision,
       splitVersion: manifest.splitVersion,
-      metricName: adapter.config.metric.name,
+      metricName: manifest.evaluation.metrics[0]?.name ?? adapter.config.metric.name,
       leakageAuditPassed: gates.leakageAuditPassed,
       reviewerApproved: gates.reviewerApproved,
       independentReplicationObserved: replicationObserved,

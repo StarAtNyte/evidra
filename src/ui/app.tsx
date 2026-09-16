@@ -1439,6 +1439,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
       ? (entry.payload as { executionPlan: ExecutionStage[] }).executionPlan
       : createExecutionPlan(manifest);
     const adapter = activeAdapter();
+    const declaredPrimaryMetric = manifest.evaluation.metrics[0];
+    const primaryMetricName = declaredPrimaryMetric?.name ?? adapter.config.metric.name;
+    const primaryMetricDirection = declaredPrimaryMetric?.direction ?? adapter.config.metric.direction;
+    const declaredSecondaryMetrics = manifest.evaluation.metrics.slice(1);
     requireActiveContract();
     const hypothesis = store.hypotheses().find((candidate) => candidate.id === manifest.hypothesisId);
     const entryPayload = entry.payload as Record<string, unknown>;
@@ -1512,13 +1516,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
         throw new Error(`Smoke feasibility check failed:\n${smokeContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
       }
       const smoke = await withExecutionHeartbeat(
-        () => runReducedValidation(executor, manifest, experimentCwd, smokeCommand, adapter.config.metric.name, registerProcess),
+        () => runReducedValidation(executor, manifest, experimentCwd, smokeCommand, primaryMetricName, registerProcess),
         { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, stage: "smoke", executor: manifest.resources.executor },
       );
       activeProcess.current = null;
       executionPlan = advanceExecutionStage(executionPlan, "smoke", smoke.status === "completed" ? "completed" : "failed");
       const smokeStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      smokeStore.appendEvent(smoke.status === "completed" ? "experiment.stage.smoke.completed" : "experiment.stage.smoke.failed", { experimentId: id, runId: smoke.runId, metric: smoke.metrics[adapter.config.metric.name] ?? null, exitCode: smoke.exitCode, command: smokeCommand });
+      smokeStore.appendEvent(smoke.status === "completed" ? "experiment.stage.smoke.completed" : "experiment.stage.smoke.failed", { experimentId: id, runId: smoke.runId, metric: smoke.metrics[primaryMetricName] ?? null, exitCode: smoke.exitCode, command: smokeCommand });
       if (smoke.status !== "completed") smokeStore.saveExperiment({ id, payload: { ...entryPayload, status: "failed", executionPlan } });
       smokeStore.close();
       if (smoke.status !== "completed") throw new Error(`Smoke validation failed (${smoke.exitCode}): ${smoke.stderr || smoke.stdout}`);
@@ -1537,13 +1541,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
         throw new Error(`Reduced validation feasibility check failed:\n${reducedContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
       }
       const reduced = await withExecutionHeartbeat(
-        () => runReducedValidation(executor, manifest, experimentCwd, reducedCommand, adapter.config.metric.name, registerProcess),
+        () => runReducedValidation(executor, manifest, experimentCwd, reducedCommand, primaryMetricName, registerProcess),
         { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, stage: "reduced_validation", executor: manifest.resources.executor },
       );
       activeProcess.current = null;
       executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", reduced.status === "completed" ? "completed" : "failed");
       const reducedStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      reducedStore.appendEvent(reduced.status === "completed" ? "experiment.stage.reduced_validation.completed" : "experiment.stage.reduced_validation.failed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[adapter.config.metric.name] ?? null, exitCode: reduced.exitCode, command: reducedCommand });
+      reducedStore.appendEvent(reduced.status === "completed" ? "experiment.stage.reduced_validation.completed" : "experiment.stage.reduced_validation.failed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[primaryMetricName] ?? null, exitCode: reduced.exitCode, command: reducedCommand });
       if (reduced.status !== "completed") reducedStore.saveExperiment({ id, payload: { ...entryPayload, status: "failed", executionPlan } });
       reducedStore.close();
       if (reduced.status !== "completed") throw new Error(`Reduced validation failed (${reduced.exitCode}): ${reduced.stderr || reduced.stdout}`);
@@ -1552,10 +1556,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const promotionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
         const baselineEvent = promotionStore.recentEvents(500).reverse().find((event) => event.type === "baseline.completed");
         const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string } | undefined;
-        const baselineMetric = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] : undefined;
-        const learned = learnPromotionPolicy(promotionObservations(promotionStore.recentEvents(2_000), adapter.config.metric.direction), promotionPolicy.minimumDelta);
-        const gate = evaluateReducedPromotion({ candidateMetric: reduced.metrics[adapter.config.metric.name], baselineMetric, direction: adapter.config.metric.direction, minimumDelta: learned.minimumDelta, tolerance: promotionPolicy.tolerance });
-        promotionStore.appendEvent(gate.promote ? "experiment.stage.reduced_validation.promoted" : "experiment.stage.reduced_validation.rejected", { experimentId: id, runId: reduced.runId, ...gate, configuredMinimumDelta: promotionPolicy.minimumDelta, learnedPromotion: learned, baselineMetric, candidateMetric: reduced.metrics[adapter.config.metric.name] ?? null });
+        const baselineMetric = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, primaryMetricName).metrics[primaryMetricName] : undefined;
+        const learned = learnPromotionPolicy(promotionObservations(promotionStore.recentEvents(2_000), primaryMetricDirection), promotionPolicy.minimumDelta);
+        const gate = evaluateReducedPromotion({ candidateMetric: reduced.metrics[primaryMetricName], baselineMetric, direction: primaryMetricDirection, minimumDelta: learned.minimumDelta, tolerance: promotionPolicy.tolerance });
+        promotionStore.appendEvent(gate.promote ? "experiment.stage.reduced_validation.promoted" : "experiment.stage.reduced_validation.rejected", { experimentId: id, runId: reduced.runId, ...gate, configuredMinimumDelta: promotionPolicy.minimumDelta, learnedPromotion: learned, baselineMetric, candidateMetric: reduced.metrics[primaryMetricName] ?? null });
         if (!gate.promote) {
           executionPlan = advanceExecutionStage(executionPlan, "full_validation", "skipped");
           promotionStore.saveExperiment({ id, payload: { ...entryPayload, status: "rejected", rejection: gate.reason, executionPlan } });
@@ -1581,10 +1585,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     let attempt = 1;
     recordAttemptStarted(attempt);
     let result = await withExecutionHeartbeat(
-      () => executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name),
+      () => executor.run(manifest, experimentCwd, command, registerProcess, primaryMetricName),
       { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
     );
-    if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [adapter.config.metric.name]);
+    if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [primaryMetricName]);
     const recoveryEvents: TrajectoryEvent[] = [];
     while (result.status !== "completed") {
       const plan = recoveryPlan(result.failureClass);
@@ -1599,10 +1603,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
       attempt += 1;
       recordAttemptStarted(attempt);
       result = await withExecutionHeartbeat(
-        () => executor.run(manifest, experimentCwd, command, registerProcess, adapter.config.metric.name),
+        () => executor.run(manifest, experimentCwd, command, registerProcess, primaryMetricName),
         { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
       );
-      if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [adapter.config.metric.name]);
+      if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [primaryMetricName]);
     }
     if (result.status !== "completed") {
       const route = recoveryRouteDirective(result.failureClass);
@@ -1643,7 +1647,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
       activeProcess.current = null;
       evaluatorOutput = { stdout: evaluated.stdout, stderr: evaluated.stderr, exitCode: evaluated.exitCode };
-      const metrics = parseMetricOutput(evaluated.stdout, adapter.config.metric.name);
+      const metrics = parseMetricOutput(evaluated.stdout, primaryMetricName);
       result = {
         ...result,
         status: evaluated.exitCode === 0 ? "completed" : "failed",
@@ -1695,10 +1699,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (checked.exitCode !== 0) break;
       }
     }
-    if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [adapter.config.metric.name, ...(adapter.config.secondaryMetrics ?? []).map((objective) => objective.name)]);
+    if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [primaryMetricName, ...declaredSecondaryMetrics.map((objective) => objective.name)]);
     executionPlan = advanceExecutionStage(executionPlan, "full_validation", result.status === "completed" ? "completed" : "failed");
     const fullStageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    fullStageStore.appendEvent(result.status === "completed" ? "experiment.stage.full_validation.completed" : "experiment.stage.full_validation.failed", { experimentId: id, runId: result.runId, metric: result.metrics[adapter.config.metric.name] ?? null, exitCode: result.exitCode, attempts: attempt });
+    fullStageStore.appendEvent(result.status === "completed" ? "experiment.stage.full_validation.completed" : "experiment.stage.full_validation.failed", { experimentId: id, runId: result.runId, metric: result.metrics[primaryMetricName] ?? null, exitCode: result.exitCode, attempts: attempt });
     fullStageStore.close();
     const artifactDir = join(root, ".sota", "artifacts", result.runId);
     mkdirSync(artifactDir, { recursive: true });
@@ -1754,7 +1758,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       currentCommit: manifest.gitCommit,
       datasetVersion: manifest.datasetVersion,
       splitVersion: manifest.splitVersion,
-      metricName: activeAdapter().config.metric.name,
+      metricName: primaryMetricName,
       leakageAuditPassed: resultStore.experimentGates(id).leakageAuditPassed,
       reviewerApproved: resultStore.experimentGates(id).reviewerApproved,
       independentReplicationObserved: independentReplicationObserved(id, resultStore.experiments(), resultStore.runs()),
@@ -1766,7 +1770,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (recordedResult.status === "completed") {
       const baselineEvent = resultStore.recentEvents(500).reverse().find((event) => event.type === "baseline.completed");
       const baselinePayload = baselineEvent?.payload as { metric?: unknown; stdout?: string; stderr?: string; durationMs?: number; command?: string[]; cwd?: string } | undefined;
-      const baselineMetricName = activeAdapter().config.metric.name;
+      const baselineMetricName = primaryMetricName;
       const parsedBaseline = baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, baselineMetricName) : { metrics: {} as Record<string, number>, metricsByFold: {} as Record<string, number[]>, subgroupDeltas: [] };
       const baselineMetric = typeof baselinePayload?.metric === "number" && Number.isFinite(baselinePayload.metric)
         ? baselinePayload.metric
@@ -1786,7 +1790,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           command: baselinePayload?.command,
           cwd: baselinePayload?.cwd,
         };
-        const comparison = compareRuns(baselineRun, RunResultSchema.parse(recordedResult), baselineMetricName, activeAdapter().config.metric.direction === "minimize");
+        const comparison = compareRuns(baselineRun, RunResultSchema.parse(recordedResult), baselineMetricName, primaryMetricDirection === "minimize");
         resultStore.appendEvent("experiment.comparison.completed", { experimentId: id, baselineSource: baselineEvent?.createdAt ?? "baseline", comparison });
       } else {
         resultStore.appendEvent("experiment.comparison.insufficient_data", { experimentId: id, reason: "No finite baseline metric was available." });
@@ -1800,7 +1804,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const parentRun = parentRunId ? resultStore.runs().find((candidate) => candidate.id === parentRunId) : undefined;
       if (parentManifest?.success && parentRun) {
         const parentChecksums = Object.fromEntries(resultStore.artifacts(parentRun.id).map((artifact) => [artifact.name, artifact.checksum]));
-        const refreshed = refreshExperimentAudit(parentManifest.data, RunResultSchema.parse(parentRun.payload), { currentCommit: parentManifest.data.gitCommit, datasetVersion: parentManifest.data.datasetVersion, splitVersion: parentManifest.data.splitVersion, metricName: activeAdapter().config.metric.name, leakageAuditPassed: resultStore.experimentGates(manifest.parent).leakageAuditPassed, reviewerApproved: resultStore.experimentGates(manifest.parent).reviewerApproved, independentReplicationObserved: true, artifactChecksums: parentChecksums }, [parentRun.id, ...Object.keys(parentChecksums), `replication:${id}`]);
+        const parentMetricName = parentManifest.data.evaluation.metrics[0]?.name ?? primaryMetricName;
+        const refreshed = refreshExperimentAudit(parentManifest.data, RunResultSchema.parse(parentRun.payload), { currentCommit: parentManifest.data.gitCommit, datasetVersion: parentManifest.data.datasetVersion, splitVersion: parentManifest.data.splitVersion, metricName: parentMetricName, leakageAuditPassed: resultStore.experimentGates(manifest.parent).leakageAuditPassed, reviewerApproved: resultStore.experimentGates(manifest.parent).reviewerApproved, independentReplicationObserved: true, artifactChecksums: parentChecksums }, [parentRun.id, ...Object.keys(parentChecksums), `replication:${id}`]);
         resultStore.recordSubtaskAudit({ ...refreshed.subtaskAudit, experimentId: manifest.parent, runId: parentRun.id, refreshTrigger: "replication_completed", replicationExperimentId: id });
         resultStore.appendEvent("experiment.audit.refreshed", { experimentId: manifest.parent, runId: parentRun.id, trigger: "replication_completed", replicationExperimentId: id, accepted: refreshed.audit.accepted, subtaskAudit: refreshed.subtaskAudit });
       }
@@ -1808,8 +1813,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const trajectoryEvents: TrajectoryEvent[] = [
       { id: `${result.runId}-process`, kind: "process", payload: { status: recordedResult.status, exitCode: recordedResult.exitCode, failureClass: recordedResult.failureClass ?? null } },
       ...recoveryEvents,
-      { id: `${result.runId}-evaluator`, kind: "evaluator", payload: { metric: recordedResult.metrics[activeAdapter().config.metric.name] ?? null, evidenceConsistent: recordedResult.status === "completed" } },
-      { id: `${result.runId}-terminal`, kind: "terminal", payload: { status: recordedResult.status, goalAttained: recordedResult.status === "completed" && (manifest.outcomeType !== "metric" || recordedResult.metrics[activeAdapter().config.metric.name] !== undefined) } },
+      { id: `${result.runId}-evaluator`, kind: "evaluator", payload: { metric: recordedResult.metrics[primaryMetricName] ?? null, evidenceConsistent: recordedResult.status === "completed" } },
+      { id: `${result.runId}-terminal`, kind: "terminal", payload: { status: recordedResult.status, goalAttained: recordedResult.status === "completed" && (manifest.outcomeType !== "metric" || recordedResult.metrics[primaryMetricName] !== undefined) } },
     ];
     const quality = evaluateTrajectory(trajectoryEvents);
     const experimentTrajectoryId = `trajectory_${result.runId}`;
@@ -1821,7 +1826,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (quality.overall !== "PASS") resultStore.appendEvent("trajectory.capability_gaps", { trajectoryId: `trajectory_${result.runId}`, gaps: Object.entries(quality).filter(([key, value]) => key !== "overall" && (value as { verdict: string }).verdict !== "PASS").map(([key, value]) => ({ dimension: key, verdict: (value as { verdict: string }).verdict, evidence: (value as { evidence: string[] }).evidence })) });
     resultStore.close();
     recordTransferableMethodIfReplicated(id);
-    const metricName = activeAdapter().config.metric.name;
+    const metricName = primaryMetricName;
     return `\n\nExperiment ${id} ${recordedResult.status}\nRun: ${recordedResult.runId}\nExit code: ${recordedResult.exitCode}\nDuration: ${recordedResult.durationSeconds.toFixed(1)}s\nMetric (${metricName}): ${recordedResult.metrics[metricName] ?? "not parsed"}\nArtifacts: ${Object.keys(recordedResult.artifacts).join(", ")}\nFailure: ${recordedResult.failureClass ?? "none"}`;
     } catch (error) {
       activeProcess.current = null;
