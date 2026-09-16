@@ -2127,6 +2127,12 @@ test("source adaptation preserves literature provenance through the research gra
     const autonomousClaim = store.claims().find((entry) => entry.id === autonomousMaterialized.claimIds[0]);
     assert.equal(autonomousClaim?.payload.sourceType, "literature");
     assert.equal(autonomousClaim?.payload.sourceId, "paper-adapt");
+    const unlinked = materializeResearchDecision(store, {
+      phase: "hypothesis", goalStatus: "active", decision: "propose", bottleneck: "Need a local observation", rationale: "The workspace observation is not literature-derived.",
+      hypotheses: [{ title: "Local observation test", mechanism: "The observed workspace condition can be tested directly.", evidence: ["The workspace contains the relevant condition."], proposedChange: "Run the smallest local test.", falsificationTest: "The local test fails to reproduce the condition.", expectedMetricDelta: { low: 0, median: 0, high: 0 }, computeCostGpuHours: 0, implementationRisk: "low", leakageRisk: "low", dependencies: [], ablationFactors: [] }],
+      searchOperator: "audit", selectedHypothesis: null, nextAction: "Run the local test", toolCalls: [],
+    });
+    assert.match(String(store.claims().find((entry) => entry.id === unlinked.claimIds[0])?.payload.sourceId), /^decision_/);
     const offspring = materializeResearchDecision(store, {
       phase: "hypothesis", goalStatus: "active", decision: "propose",
       bottleneck: "Test a measured combination",

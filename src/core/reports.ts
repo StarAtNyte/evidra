@@ -47,6 +47,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     knownEvidenceIds: new Set([
       ...sources.map((source) => source.id),
       ...decisions.map((decision) => `decision_${decision.id}`),
+      ...decisions.map((decision) => String(decision.id)),
       ...runs.map((run) => run.id),
       ...artifacts.map((artifact) => artifact.id),
       ...claims.map((claim) => claim.id),

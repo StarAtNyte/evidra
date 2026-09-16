@@ -76,7 +76,7 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
       const claimId = `claim_${stamp}_${String(index + 1).padStart(2, "0")}_${evidenceIndex + 1}`;
       claimIds.push(claimId);
       const literature = linkedSourceIds.length > 0;
-      store.saveClaim({ id: claimId, payload: { id: claimId, statement, scope: options.evidenceScope ?? (literature ? "durable literature source" : "director decision context"), confidence: literature ? 0.35 : 0.5, sourceType: literature ? "literature" : "observation", sourceId: linkedSourceIds[0] ?? decisionId.toString(), status: "active" } });
+      store.saveClaim({ id: claimId, payload: { id: claimId, statement, scope: options.evidenceScope ?? (literature ? "durable literature source" : "director decision context"), confidence: literature ? 0.35 : 0.5, sourceType: literature ? "literature" : "observation", sourceId: linkedSourceIds[0] ?? `decision_${decisionId}`, status: "active" } });
       store.saveEdge({ id: `edge_${claimId}_${hypothesisId}`, fromId: claimId, toId: hypothesisId, relation: "supports", confidence: literature ? 0.35 : 0.5, evidenceIds: [claimId] });
       for (const sourceId of linkedSourceIds) store.saveEdge({ id: `edge_${claimId}_${sourceId}`, fromId: claimId, toId: sourceId, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
     });
