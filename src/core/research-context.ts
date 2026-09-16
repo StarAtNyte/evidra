@@ -9,21 +9,29 @@ import { buildFalsificationAgenda, type FalsificationAgendaItem } from "./falsif
 
 export type ResearchRepositoryLead = RepositorySearchResult;
 
+/** Resolve active claim IDs from both claim and linked-source lifecycle state. */
+export function activeClaimIds(store: ResearchStore): Set<string> {
+  const sourceStatus = new Map(store.sources().map((source) => {
+    const status = source.payload && typeof source.payload === "object" ? (source.payload as { status?: unknown }).status : undefined;
+    return [source.id, status === "superseded" || status === "invalidated" ? status : "active"] as const;
+  }));
+  return new Set(store.claims().flatMap((claim) => {
+    const payload = claim.payload && typeof claim.payload === "object" ? claim.payload as { status?: unknown; sourceType?: unknown; sourceId?: unknown } : {};
+    if (payload.status === "superseded" || payload.status === "invalidated") return [];
+    if (payload.sourceType === "literature" && typeof payload.sourceId === "string" && sourceStatus.get(payload.sourceId) !== "active") return [];
+    return [claim.id];
+  }));
+}
+
 /** Return only contradictions whose two claim endpoints are still active. */
 export function activeContradictionEdges(store: ResearchStore): ReturnType<ResearchStore["edges"]> {
-  const statusById = new Map(store.claims().map((claim) => {
-    const status = claim.payload && typeof claim.payload === "object" ? (claim.payload as { status?: unknown }).status : undefined;
-    return [claim.id, status === "superseded" || status === "invalidated" ? status : "active"] as const;
-  }));
-  return store.edges().filter((edge) => edge.relation === "contradicts" && statusById.get(edge.fromId) === "active" && statusById.get(edge.toId) === "active");
+  const active = activeClaimIds(store);
+  return store.edges().filter((edge) => edge.relation === "contradicts" && active.has(edge.fromId) && active.has(edge.toId));
 }
 
 /** Count duplicate findings that still involve an active claim. */
 export function activeDuplicateClaimCount(store: ResearchStore): number {
-  const activeClaims = new Set(store.claims().flatMap((claim) => {
-    const status = claim.payload && typeof claim.payload === "object" ? (claim.payload as { status?: unknown }).status : undefined;
-    return status === "superseded" || status === "invalidated" ? [] : [claim.id];
-  }));
+  const activeClaims = activeClaimIds(store);
   return store.eventsByType("evidence.claim.duplicate_detected").filter((event) => {
     const claimId = event.payload && typeof event.payload === "object" ? (event.payload as { claimId?: unknown }).claimId : undefined;
     return typeof claimId !== "string" || activeClaims.has(claimId);
@@ -142,14 +150,9 @@ export function repositoryLeadsFromEvents(events: Array<{ type: string; payload:
 export function researchMemoryContext(store: ResearchStore, limit = 30, query?: string, transferTarget: TransferTarget = {}): ResearchMemoryContext {
   const bounded = Math.max(1, Math.min(limit, 100));
   const claimEntries = store.claims();
-  const activeClaimEntries = claimEntries.filter((entry) => {
-    const status = (entry.payload as { status?: unknown }).status;
-    return status !== "invalidated" && status !== "superseded";
-  });
-  const quarantinedClaimEntries = claimEntries.filter((entry) => {
-    const status = (entry.payload as { status?: unknown }).status;
-    return status === "invalidated" || status === "superseded";
-  });
+  const activeIds = activeClaimIds(store);
+  const activeClaimEntries = claimEntries.filter((entry) => activeIds.has(entry.id));
+  const quarantinedClaimEntries = claimEntries.filter((entry) => !activeIds.has(entry.id));
   const claimValue = (entry: { id: string; payload: unknown }): ResearchMemoryContext["claims"][number] | undefined => {
     const value = entry.payload as Partial<ResearchMemoryContext["claims"][number]>;
     return typeof value.statement === "string" && typeof value.scope === "string" && typeof value.confidence === "number" && typeof value.sourceType === "string" && typeof value.sourceId === "string"
