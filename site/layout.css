@@ -2,16 +2,20 @@
 .shell{width:min(1340px,calc(100% - 48px))}
 .system-heading,.loop-heading,.demos-heading{margin-left:var(--content-indent);gap:var(--content-gap)}
 .feature-grid,.loop-track,.technique-grid{margin-left:var(--content-indent)}
-.terminal-section,.install-section{margin-left:0;display:grid;grid-template-columns:180px 1fr;gap:75px;align-items:center}
+.terminal-section,.install-section{margin-left:0;grid-template-columns:180px 1fr;gap:75px;align-items:center}
 .terminal-content,.install-content{display:grid;grid-template-columns:.85fr 1.15fr;gap:var(--content-gap);align-items:center}
 .technique-footer{margin-left:var(--content-indent)}
 .section h2{margin-bottom:28px}
 .section-lede,.system-heading p,.loop-heading p,.demos-heading p,.terminal-intro p,.install-copy p{line-height:1.75}
 .feature p,.technique-grid p{line-height:1.7}
+@media(max-width:1100px) and (min-width:851px){
+  .terminal-content,.install-content{grid-template-columns:1fr;gap:45px}
+  .technique-grid{grid-template-columns:repeat(2,1fr)}
+}
 @media(max-width:850px){
   :root{--content-indent:0px;--content-gap:35px}
   .shell{width:min(calc(100% - 36px),600px)}
   .system-heading,.loop-heading,.demos-heading,.feature-grid,.loop-track,.terminal-section,.install-section,.technique-grid,.technique-footer{margin-left:0}
-  .terminal-section,.install-section{display:block}
+  .terminal-section,.install-section{grid-template-columns:1fr;gap:35px}
   .terminal-content,.install-content{display:block}
 }
