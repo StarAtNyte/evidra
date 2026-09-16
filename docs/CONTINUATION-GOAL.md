@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `2a75b7a` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `3ac0146` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -150,7 +150,10 @@ external evaluator.
   structural signal: proposals without validity assumptions receive a review
   reason, while the score remains advisory rather than treating stated
   assumptions as experimental proof.
-- Latest verified baseline: 398/398 tests passing, TypeScript check passing,
+- Pre-registered experiment manifests are now immutable at the store boundary:
+  lifecycle status updates remain allowed, while protocol mutations are
+  rejected and recorded as `experiment.manifest.mutation.rejected`.
+- Latest verified baseline: 399/399 tests passing, TypeScript check passing,
   and build passing. The worktree is clean; generated reports remain excluded
   from source changes.
 - Autonomous campaign defaults are four hours; explicit `90m`, `4h`, and `2d`
