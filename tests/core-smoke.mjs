@@ -163,7 +163,7 @@ import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { codexIsLoggedInAsync, createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexModel, effectiveCodexSandbox, isProviderFallbackEligible, isProviderUsageLimit, listCodexModels, MAX_PROVIDER_RESET_WAIT_MS, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveCodexModel, shouldUseLocalFallback } from "../dist/agents/codex-exec.js";
 import { analyzeHarnessComponentFailures, assessHarnessChangePresence, evaluateHarnessChange, inventoryHarnessComponents, parseHarnessChangeContract, planHarnessInterventions } from "../dist/core/harness-evolution.js";
 import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
-import { assessStopPolicy } from "../dist/core/stop-policy.js";
+import { assessStopPolicy, betaPosteriorTail } from "../dist/core/stop-policy.js";
 import { classifyVerifier, verifierKind } from "../dist/core/formal-verification.js";
 import { detectRouteDrift } from "../dist/core/drift-detection.js";
 import { boundResearchContext } from "../dist/core/context-budget.js";
@@ -238,6 +238,29 @@ test("stop policy keeps open falsification tests alive during apparent convergen
   assert.equal(assessStopPolicy({ ...input, openFalsifications: 1 }).action, "continue");
   assert.match(assessStopPolicy({ ...input, openFalsifications: 1 }).reason, /falsification/);
   assert.equal(assessStopPolicy({ ...input, openFalsifications: 0 }).action, "stop");
+});
+
+test("stop policy can use conservative posterior evidence for meaningful gains", () => {
+  assert.equal(betaPosteriorTail(0, 5), 1 / 64);
+  assert.equal(betaPosteriorTail(5, 0), 63 / 64);
+  const result = assessStopPolicy({
+    stopCondition: "stop when posterior probability of meaningful improvement is low",
+    rewards: Array.from({ length: 5 }, () => ({ reward: -0.1, valid: true, durationSeconds: 60 })),
+    remainingBudgetMinutes: 10,
+    minimumSamples: 5,
+    meaningfulRewardThreshold: 0.05,
+    minimumPosteriorProbability: 0.1,
+  });
+  assert.equal(result.action, "stop");
+  assert.match(result.reason, /posterior meaningful-improvement probability/);
+  assert.ok((result.posteriorMeaningfulProbability ?? 1) < 0.1);
+  assert.equal(assessStopPolicy({
+    stopCondition: "stop when posterior probability of meaningful improvement is low",
+    rewards: Array.from({ length: 5 }, () => ({ reward: -0.1, valid: true, durationSeconds: 60 })),
+    remainingBudgetMinutes: 10,
+    minimumSamples: 5,
+    openFalsifications: 1,
+  }).action, "continue");
 });
 
 test("durable research state and queue survive store reopen", () => {

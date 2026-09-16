@@ -164,6 +164,19 @@ When optional trajectory fields are present, process quality and alignment also
 affect the competitive score; older trial files remain readable and fall back to
 their evaluator-backed fields.
 
+## Evidence-aware stopping
+
+Autonomous campaigns may opt into a posterior stopping rule by using a stopping
+condition containing `posterior probability` or `meaningful improvement`. The
+controller treats each finite reward as a Bernoulli observation, where rewards
+at or above `meaningfulRewardThreshold` count as meaningful successes, and
+computes an exact Beta(1,1) posterior tail for the probability that the success
+rate exceeds 50%. After the minimum sample count, a posterior below the
+configured threshold can stop the campaign family. Open falsification tests,
+leakage review, and repeated-failure safeguards still take precedence. The
+posterior is an allocation/stopping signal, never evaluator evidence or a
+promotion gate.
+
 Failed benchmark attempts are also classified from bounded process output using
 the same failure vocabulary as experiment recovery (`cuda_oom`, `timeout`,
 `dependency`, `data_missing`, `auth`, `rate_limit`, `disk`, `sandbox`, `invalid_metric`,
