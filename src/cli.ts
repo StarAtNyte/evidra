@@ -2880,7 +2880,7 @@ research
         if (semanticAudit) decisionStore.recordSubtaskAudit(mergePhaseGoalAudits(phaseGoal, domainAudit, semanticAudit.criteria));
         if (!gate.met) {
           decision = { ...decision, goalStatus: "active", nextAction: decision.nextAction + " (phase gate missing: " + gate.missing.join(", ") + ")" };
-          decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal.phase, missing: gate.missing });
+          decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal.phase, missing: gate.missing, progress: gate.progress });
         }
       }
       const decisionAudit = auditResearchDecision(decision, {
@@ -3533,7 +3533,7 @@ research.command("propose")
       decisionStore.recordSubtaskAudit(auditPhaseGoalGate(phaseGoal, gate, phaseEvents.map((event) => event.type)));
       if (!gate.met) {
         decision = { ...decision, goalStatus: "active", nextAction: decision.nextAction + " (phase gate missing: " + gate.missing.join(", ") + ")" };
-        decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal.phase, missing: gate.missing });
+        decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal.phase, missing: gate.missing, progress: gate.progress });
       }
     }
     const decisionAudit = auditResearchDecision(decision, {

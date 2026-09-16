@@ -2470,11 +2470,14 @@ test("phase completion requires durable evidence instead of model status alone",
   const goal = definePhaseGoals("test", "research").find((entry) => entry.phase === "baseline");
   const missing = evaluatePhaseGoalEvidence(goal, { eventTypes: [], eventPayloads: [], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
   assert.equal(missing.met, false);
-  assert.deepEqual(missing.missing, ["successful baseline"]);
+  assert.deepEqual(missing.missing, ["successful baseline", "parsed primary baseline metric", "checksummed baseline artifacts"]);
+  assert.deepEqual(missing.progress, { completed: 0, total: 3, ratio: 0 });
   const incomplete = evaluatePhaseGoalEvidence(goal, { eventTypes: ["baseline.completed"], eventPayloads: [{ type: "baseline.completed", payload: { exitCode: 0 } }], hypotheses: 0, experiments: 0, runs: 0, artifacts: 2 });
-  assert.deepEqual(incomplete.missing, ["parsed primary baseline metric"]);
+  assert.deepEqual(incomplete.missing, ["parsed primary baseline metric", "checksummed baseline artifacts"]);
+  assert.deepEqual(incomplete.progress, { completed: 1, total: 3, ratio: 1 / 3 });
   const complete = evaluatePhaseGoalEvidence(goal, { eventTypes: ["baseline.completed"], eventPayloads: [{ type: "baseline.completed", payload: { exitCode: 0, metric: 0.42, artifactChecksums: { "stdout.log": "sha256:test" } } }], hypotheses: 0, experiments: 0, runs: 0, artifacts: 2 });
   assert.equal(complete.met, true);
+  assert.deepEqual(complete.progress, { completed: 3, total: 3, ratio: 1 });
   const repaired = evaluatePhaseGoalEvidence(goal, { eventTypes: ["baseline.completed"], eventPayloads: [
     { type: "baseline.completed", payload: { exitCode: 0, metric: 0.4 } },
     { type: "baseline.completed", payload: { exitCode: 0, metric: 0.42, artifactChecksums: { "stdout.log": "sha256:test" } } },
@@ -2735,7 +2738,7 @@ test("evaluation phase requires a measured primary metric", () => {
     eventPayloads: [{ type: "experiment.stage.full_validation.completed", payload: { exitCode: 0, metric: null } }, { type: "run.completed", payload: {} }],
     hypotheses: 1, experiments: 1, runs: 1, artifacts: 1,
   });
-  assert.deepEqual(missing.missing, ["completed evaluated run with primary metric"]);
+  assert.deepEqual(missing.missing, ["completed evaluated run with primary metric", "baseline comparison"]);
   const complete = evaluatePhaseGoalEvidence(goal, {
     mode: "research",
     eventTypes: ["experiment.stage.full_validation.completed", "run.completed"],

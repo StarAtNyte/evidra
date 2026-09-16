@@ -155,6 +155,8 @@ export interface PhaseGoalEvidence {
 export interface PhaseGoalGate {
   met: boolean;
   missing: string[];
+  /** Dense steering signal; this never overrides the all-required-checks gate. */
+  progress: { completed: number; total: number; ratio: number };
 }
 
 /** Deterministically check whether a model-reported phase completion has evidence. */
@@ -162,49 +164,54 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
   const has = (type: string): boolean => evidence.eventTypes.includes(type);
   const payloads = (type: string): unknown[] => evidence.eventPayloads.filter((event) => event.type === type).map((event) => event.payload);
   const missing: string[] = [];
+  const checks: boolean[] = [];
+  const requireCheck = (satisfied: boolean, message: string): void => {
+    checks.push(satisfied);
+    if (!satisfied) missing.push(message);
+  };
   switch (goal.phase) {
-    case "orientation": if (!has("research.observation") && !has("project.created")) missing.push("workspace observation"); break;
+    case "orientation": requireCheck(has("research.observation") || has("project.created"), "workspace observation"); break;
     case "baseline": {
       if (evidence.mode === "research") {
-        if (!has("research.observation")) missing.push("reference observation");
+        requireCheck(has("research.observation"), "reference observation");
         break;
       }
       // A project can contain legacy and retried baselines. Evaluate the newest
       // successful record so a valid rerun can repair an older incomplete one.
       const baseline = payloads("baseline.completed").reverse().find((payload) => (payload as { exitCode?: unknown }).exitCode === 0);
-      if (!baseline) missing.push("successful baseline");
-      else if (typeof (baseline as { metric?: unknown }).metric !== "number" || !Number.isFinite((baseline as { metric?: number }).metric)) missing.push("parsed primary baseline metric");
-      else if (!Object.keys((baseline as { artifactChecksums?: Record<string, unknown> }).artifactChecksums ?? {}).length) missing.push("checksummed baseline artifacts");
+      requireCheck(Boolean(baseline), "successful baseline");
+      requireCheck(Boolean(baseline && typeof (baseline as { metric?: unknown }).metric === "number" && Number.isFinite((baseline as { metric?: number }).metric)), "parsed primary baseline metric");
+      requireCheck(Boolean(baseline && Object.keys((baseline as { artifactChecksums?: Record<string, unknown> }).artifactChecksums ?? {}).length), "checksummed baseline artifacts");
       break;
     }
     case "data_audit": {
       const reports = payloads("data.audit.completed");
-      if (!reports.length) missing.push("data audit report");
-      else {
+      requireCheck(reports.length > 0, "data audit report");
+      if (reports.length) {
         const latest = reports.at(-1) as { fingerprint?: unknown; duplicateGroups?: unknown[]; distributionShift?: unknown[]; warnings?: unknown[] };
         const clean = (latest.duplicateGroups?.length ?? 0) === 0 && (latest.distributionShift?.length ?? 0) === 0 && (latest.warnings?.length ?? 0) === 0;
         const accepted = payloads("data.audit.accepted").some((payload) => {
           const value = payload as { accepted?: unknown; fingerprint?: unknown };
           return value.accepted === true && typeof latest.fingerprint === "string" && value.fingerprint === latest.fingerprint;
         });
-        if (!clean && !accepted) missing.push("critical audit findings resolved or explicitly accepted");
+        requireCheck(clean || accepted, "critical audit findings resolved or explicitly accepted");
       }
       break;
     }
     case "validation": {
-      if (!has("validation.policy.created")) missing.push("versioned validation policy");
+      requireCheck(has("validation.policy.created"), "versioned validation policy");
       const policyLifecycle = evidence.eventPayloads.filter((event) => ["validation.policy.created", "validation.policy.locked", "validation.policy.unlocked"].includes(event.type));
       const latestPolicyEvent = policyLifecycle.at(-1)?.type;
-      if (latestPolicyEvent !== "validation.policy.locked") missing.push("validation policy locked");
+      requireCheck(latestPolicyEvent === "validation.policy.locked", "validation policy locked");
       break;
     }
     case "hypothesis":
-      if ((evidence.hypotheses + (evidence.candidateHypotheses ?? 0)) < 1) missing.push("durable hypothesis");
-      if ((evidence.falsifiableHypotheses ?? 0) < 1) missing.push("falsifiable hypothesis");
-      if (evidence.selectedHypothesisFalsifiable !== true) missing.push("selected hypothesis has a falsification test");
-      if (evidence.experiments < 1 && !has("experiment.created")) missing.push("experiment manifest");
+      requireCheck((evidence.hypotheses + (evidence.candidateHypotheses ?? 0)) >= 1, "durable hypothesis");
+      requireCheck((evidence.falsifiableHypotheses ?? 0) >= 1, "falsifiable hypothesis");
+      requireCheck(evidence.selectedHypothesisFalsifiable === true, "selected hypothesis has a falsification test");
+      requireCheck(evidence.experiments >= 1 || has("experiment.created"), "experiment manifest");
       break;
-    case "implementation": if (!has("experiment.stage.smoke.completed") && !has("experiment.stage.full_validation.completed")) missing.push("completed implementation or smoke stage"); break;
+    case "implementation": requireCheck(has("experiment.stage.smoke.completed") || has("experiment.stage.full_validation.completed"), "completed implementation or smoke stage"); break;
     case "evaluation": {
       const validated = payloads("experiment.stage.full_validation.completed").some((payload) => {
         const value = payload as { exitCode?: unknown; metric?: unknown; outcomeType?: unknown; declaredArtifactCount?: unknown; verificationPassed?: unknown };
@@ -216,11 +223,11 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
         if (value.outcomeType && value.outcomeType !== "metric") return Number(value.declaredArtifactCount ?? 0) > 0 || Number(value.verificationPassed ?? 0) > 0;
         return typeof value.metric === "number" && Number.isFinite(value.metric);
       });
-      if (!validated) missing.push(payloads("experiment.stage.full_validation.completed").some((payload) => (payload as { outcomeType?: unknown }).outcomeType && (payload as { outcomeType?: unknown }).outcomeType !== "metric")
+      requireCheck(validated, payloads("experiment.stage.full_validation.completed").some((payload) => (payload as { outcomeType?: unknown }).outcomeType && (payload as { outcomeType?: unknown }).outcomeType !== "metric")
         ? "completed evaluated run with the declared outcome evidence"
         : "completed evaluated run with primary metric");
-      else if (!has("run.completed")) missing.push("completed evaluated run");
-      else if (evidence.mode !== "research" && !has("experiment.comparison.completed")) missing.push("baseline comparison");
+      requireCheck(has("run.completed"), "completed evaluated run");
+      if (evidence.mode !== "research") requireCheck(has("experiment.comparison.completed"), "baseline comparison");
       break;
     }
     case "replication": {
@@ -233,16 +240,17 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
         const value = event.payload as { experimentId?: unknown; exitCode?: unknown };
         return value.exitCode === 0 && typeof value.experimentId === "string" && replicationIds.has(value.experimentId);
       });
-      if (!replicationIds.size || evidence.runs < 2 || !successfulReplication) missing.push("independent replication run");
+      requireCheck(Boolean(replicationIds.size && evidence.runs >= 2 && successfulReplication), "independent replication run");
       break;
     }
     case "promotion": {
-      if (!payloads("experiment.gates.updated").some((payload) => { const value = payload as { leakageAuditPassed?: unknown; reviewerApproved?: unknown }; return value.leakageAuditPassed === true && value.reviewerApproved === true; })) missing.push("approved leakage and reviewer gates");
-      if (!payloads("experiment.validation.assessed").some((payload) => { const value = payload as { acceptance?: { accepted?: unknown } }; return value.acceptance?.accepted === true; })) missing.push("accepted validation assessment");
+      requireCheck(payloads("experiment.gates.updated").some((payload) => { const value = payload as { leakageAuditPassed?: unknown; reviewerApproved?: unknown }; return value.leakageAuditPassed === true && value.reviewerApproved === true; }), "approved leakage and reviewer gates");
+      requireCheck(payloads("experiment.validation.assessed").some((payload) => { const value = payload as { acceptance?: { accepted?: unknown } }; return value.acceptance?.accepted === true; }), "accepted validation assessment");
       const ablationPlans = payloads("research.ablation.plan");
-      if (ablationPlans.length && !payloads("research.ablation.evidence").some((payload) => (payload as { complete?: unknown }).complete === true)) missing.push("complete ablation evidence");
+      if (ablationPlans.length) requireCheck(payloads("research.ablation.evidence").some((payload) => (payload as { complete?: unknown }).complete === true), "complete ablation evidence");
       break;
     }
   }
-  return { met: missing.length === 0, missing };
+  const completed = checks.filter(Boolean).length;
+  return { met: missing.length === 0, missing, progress: { completed, total: checks.length, ratio: checks.length ? completed / checks.length : 1 } };
 }

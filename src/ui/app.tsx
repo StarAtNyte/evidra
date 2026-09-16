@@ -1202,7 +1202,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     } : undefined;
     const phaseGate = phaseGoal && decision.goalStatus === "met" && phaseEvidence
       ? evaluatePhaseGoalEvidence(phaseGoal, phaseEvidence)
-      : { met: decision.goalStatus === "met", missing: [] };
+      : { met: decision.goalStatus === "met", missing: [], progress: { completed: 0, total: 0, ratio: 1 } };
     if (phaseGoal && phaseEvidence) {
       const audit = auditPhaseGoalGate(phaseGoal, phaseGate, phaseEvidence.eventTypes);
       decisionStore.recordSubtaskAudit(audit);
@@ -1211,7 +1211,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const effectiveDecision = decision.goalStatus === "met" && !phaseGate.met
       ? { ...decision, goalStatus: "active" as const, nextAction: decision.nextAction + " (phase gate missing: " + phaseGate.missing.join(", ") + ")" }
       : decision;
-    if (decision.goalStatus === "met" && !phaseGate.met) decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal?.phase, missing: phaseGate.missing });
+    if (decision.goalStatus === "met" && !phaseGate.met) decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal?.phase, missing: phaseGate.missing, progress: phaseGate.progress });
     const decisionAudit = auditResearchDecision(effectiveDecision, {
       currentPhase: phaseGoal?.phase,
       durableEventTypes: new Set(decisionStore.eventsByTypes(PHASE_GOAL_EVENT_TYPES as unknown as string[]).map((event) => event.type)),

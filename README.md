@@ -697,6 +697,8 @@ Campaigns also have an evidence-based stop policy. If the configured stop condit
 
 Phase advancement is evidence-gated. A model cannot advance orientation, baseline, auditing, validation, implementation, evaluation, replication, or promotion by returning `goalStatus: met` alone; the controller checks the corresponding durable events and gates. Challenge mode requires a parsed primary evaluator baseline, general research mode requires a durable reference observation, and evaluation requires a finite primary experiment metric. Otherwise Evidra records `research.phase_gate.rejected` and keeps the phase active.
 
+Each phase gate also exposes a deterministic progress breakdown (`completed`, `total`, and `ratio`) in rejection events and durable controller state. This is a steering signal for long-running campaigns, not a relaxed completion rule: a phase advances only when all required checks pass. Progress is calculated from controller-verifiable evidence, so model prose cannot make a partially completed phase appear complete.
+
 ## Experiments and permissions
 
 Experiment execution is intended to be isolated and reproducible:
