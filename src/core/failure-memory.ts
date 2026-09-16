@@ -4,6 +4,7 @@ export interface FailedDirection {
   id: string;
   title: string;
   proposedChange?: string;
+  route?: { executor?: string; provider?: string; model?: string; searchOperator?: string };
   failureClass: string;
   reason: string;
   scope: "current-workspace";
@@ -38,7 +39,14 @@ export function failedDirectionsFromExperiments(
       const proposedChange = typeof value.proposedChange === "string" ? value.proposedChange : undefined;
       const failureClass = typeof value.failureClass === "string" ? value.failureClass : status;
       const reason = typeof value.failureReason === "string" ? value.failureReason : typeof value.reason === "string" ? value.reason : `experiment ended with status ${status}`;
-      return [{ schemaVersion: 1 as const, id: experiment.id, title, ...(proposedChange ? { proposedChange } : {}), failureClass, reason, scope: "current-workspace" as const, status: "failed_direction" as const }];
+      const runtime = value.runtimeContext && typeof value.runtimeContext === "object" ? value.runtimeContext as Record<string, unknown> : {};
+      const route = Object.fromEntries([
+        ["executor", typeof value.executor === "string" ? value.executor : runtime.executor],
+        ["provider", typeof value.provider === "string" ? value.provider : runtime.provider],
+        ["model", typeof value.model === "string" ? value.model : runtime.model],
+        ["searchOperator", typeof value.searchOperator === "string" ? value.searchOperator : undefined],
+      ].filter(([, entry]) => typeof entry === "string" && entry.trim().length > 0)) as NonNullable<FailedDirection["route"]>;
+      return [{ schemaVersion: 1 as const, id: experiment.id, title, ...(proposedChange ? { proposedChange } : {}), ...(Object.keys(route).length ? { route } : {}), failureClass, reason, scope: "current-workspace" as const, status: "failed_direction" as const }];
     })
     .filter((direction) => {
       if (seen.has(direction.id)) return false;

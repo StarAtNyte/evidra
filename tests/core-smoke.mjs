@@ -1521,12 +1521,13 @@ test("replicated methods become bounded playbook leads with fresh-transfer warni
 test("failed experiment directions become ranked negative research memory", () => {
   const directions = failedDirectionsFromExperiments([
     { id: "failed-unrelated", payload: { status: "failed", title: "Unrelated route", failureClass: "timeout" } },
-    { id: "failed-calibration", payload: { status: "invalid", title: "Calibration route", proposedChange: "fit calibration", failureClass: "invalid_metric", failureReason: "metric missing" } },
+    { id: "failed-calibration", payload: { status: "invalid", title: "Calibration route", proposedChange: "fit calibration", failureClass: "invalid_metric", failureReason: "metric missing", runtimeContext: { provider: "codex", model: "gpt-test", executor: "modal" }, searchOperator: "ucb_portfolio" } },
     { id: "ignored-success", payload: { status: "completed", title: "Successful route" } },
   ], "calibration metric");
   assert.deepEqual(directions.map((direction) => direction.id), ["failed-calibration", "failed-unrelated"]);
   assert.equal(directions[0].status, "failed_direction");
   assert.equal(directions[0].reason, "metric missing");
+  assert.deepEqual(directions[0].route, { executor: "modal", provider: "codex", model: "gpt-test", searchOperator: "ucb_portfolio" });
 });
 
 test("ablation planner creates reproducible leave-one-factor-out controls", () => {
