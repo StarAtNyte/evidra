@@ -58,7 +58,12 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `abbe07e` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `e2ba234` (verify with `git log`).
+- Competition manifests now support typed `researchChannels` for rules,
+  discussions, leaderboards, documentation, papers, and repositories. CLI/TUI
+  ingestion deduplicates legacy URLs, persists channel kind with source hashes,
+  and honors per-channel refresh intervals; channel content remains discovery
+  evidence rather than a metric or external-score assertion.
 - Identified duplicate findings now contribute active conflict pressure only
   when both referenced claim endpoints remain active; anonymous legacy events
   remain conservatively counted.
