@@ -618,6 +618,20 @@ test("experiment updates preserve creation provenance", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("pre-registered experiment manifests cannot be changed in place", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-manifest-lock-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const competition = { id: "lock-test", name: "Lock test", taskType: "general", datasetRevision: "data-v1", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["node", "eval.js"], estimatorPath: "estimator.js" }, researchSources: [], evaluatorTimeoutMinutes: 1 };
+    const manifest = createExperimentManifest({ id: "immutable-exp", hypothesisId: "hyp-1", gitCommit: "abc123", datasetVersion: "data-v1" }, competition);
+    store.saveExperiment({ id: manifest.id, payload: { ...manifest, status: "proposed" } });
+    assert.throws(() => store.saveExperiment({ id: manifest.id, payload: { ...manifest, datasetVersion: "tampered", status: "proposed" } }), /immutable pre-registered manifest/);
+    assert.equal((store.experiments()[0].payload).datasetVersion, "data-v1");
+    assert.equal(store.recentEvents(5).at(-1)?.type, "experiment.manifest.mutation.rejected");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("critic revision is not recorded as evidence-consistent", () => {
   const quality = evaluateTrajectory([
     { id: "evaluator", kind: "evaluator", payload: { evidenceConsistent: false, criticVerdict: "revise" } },

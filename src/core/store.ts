@@ -11,6 +11,30 @@ function safeJson(value: unknown): string {
   return JSON.stringify(redactStructured(value));
 }
 
+const IMMUTABLE_MANIFEST_FIELDS = [
+  "schemaVersion", "id", "parent", "parentHypothesisIds", "hypothesisId",
+  "outcomeType", "gitCommit", "datasetVersion", "splitVersion", "change",
+  "resources", "evaluation", "acceptance", "searchOperator", "createdAt",
+] as const;
+
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => [key, canonicalValue(entry)]));
+}
+
+/** Return the pre-registered portion of a persisted experiment, if present. */
+function registeredManifest(payload: unknown): Record<string, unknown> | null {
+  if (!payload || typeof payload !== "object") return null;
+  const candidate = payload as Record<string, unknown>;
+  if (typeof candidate.schemaVersion !== "number" || !candidate.change || !candidate.resources || !candidate.evaluation || !candidate.acceptance) return null;
+  return Object.fromEntries(IMMUTABLE_MANIFEST_FIELDS
+    .filter((field) => field in candidate)
+    .map((field) => [field, candidate[field]]));
+}
+
 export type QueueTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export interface QueuedTask {
   id: string;
@@ -495,9 +519,17 @@ export class ResearchStore {
   }
 
   saveExperiment(experiment: { id: string; payload: unknown }): void {
-    const existing = this.db.prepare("SELECT 1 AS present FROM experiments WHERE id = ?").get(experiment.id) as { present: number } | undefined;
+    const existing = this.db.prepare("SELECT payload_json FROM experiments WHERE id = ?").get(experiment.id) as { payload_json: string } | undefined;
     const now = new Date().toISOString();
     const safePayload = redactStructured(experiment.payload);
+    if (existing) {
+      const previousManifest = registeredManifest(JSON.parse(existing.payload_json));
+      const nextManifest = registeredManifest(safePayload);
+      if (previousManifest && nextManifest && JSON.stringify(canonicalValue(previousManifest)) !== JSON.stringify(canonicalValue(nextManifest))) {
+        this.appendEvent("experiment.manifest.mutation.rejected", { id: experiment.id, reason: "pre-registered manifest is immutable", fields: IMMUTABLE_MANIFEST_FIELDS.filter((field) => JSON.stringify(canonicalValue(previousManifest[field])) !== JSON.stringify(canonicalValue(nextManifest[field]))) });
+        throw new Error(`Experiment ${experiment.id} has an immutable pre-registered manifest; create a new experiment for protocol changes.`);
+      }
+    }
     this.db.prepare(`
       INSERT INTO experiments (id, payload_json, created_at)
       VALUES (?, ?, ?)
