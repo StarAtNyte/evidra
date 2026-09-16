@@ -671,7 +671,7 @@ test("trajectory quality records execution alignment separately from tool closur
     { id: "evaluator", kind: "evaluator", payload: { executionAlignment: false, evidenceConsistent: false } },
     { id: "terminal", kind: "terminal", payload: { status: "completed", goalAttained: false } },
   ]);
-  assert.equal(quality.toolUse.verdict, "PASS");
+  assert.equal(quality.toolUse.verdict, "WARN");
   assert.equal(quality.executionAlignment.verdict, "FAIL");
   assert.equal(quality.overall, "FAIL");
 });
@@ -735,6 +735,7 @@ test("tool trace recorder preserves causal call/result pairs and redacts secrets
   trace.onToolResult("director", callId, { name: "workspace.search", ok: true, output: { value: "token=sk-test_12345678901234567890" }, trust: "untrusted_content" });
   assert.equal(trace.events[1].payload.output.value, "token=[REDACTED]");
   assert.equal(trace.events[1].payload.trust, "untrusted_content");
+  assert.equal(typeof trace.events[1].payload.durationMs, "number");
   trace.onActivity("codex", "Running: upload --api-key=sk-test_12345678901234567890");
   assert.equal(trace.events[2].kind, "process");
   assert.equal(trace.events[2].payload.activity, "Running: upload --api-key=[REDACTED]");
@@ -757,6 +758,11 @@ test("tool trace recorder preserves causal call/result pairs and redacts secrets
   blocked.onToolResult("director", blockedCall, { name: "shell.exec", ok: false, error: "blocked", trust: "permission_boundary" });
   blocked.events.push({ id: "terminal", kind: "terminal", payload: { status: "completed" } });
   assert.equal(evaluateTrajectory(blocked.events).safetyControl.verdict, "PASS");
+  const failedTool = createToolTraceRecorder("failed-tool");
+  const failedCall = failedTool.onToolCall("director", { name: "shell.exec" });
+  failedTool.onToolResult("director", failedCall, { name: "shell.exec", ok: false, error: "exit code 1", trust: "controller_observation" });
+  failedTool.events.push({ id: "terminal", kind: "terminal", payload: { status: "completed" } });
+  assert.equal(evaluateTrajectory(failedTool.events).toolUse.verdict, "WARN");
 });
 
 test("Codex agent messages are extracted before generic item progress", () => {

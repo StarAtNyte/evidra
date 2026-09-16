@@ -273,6 +273,7 @@ Implemented today:
 - every research cycle now emits a durable experience record: validated trajectory events, scene/goal/outcome metadata, independent quality verdicts, C0-C3 demand scores, admission status, capability-gap profile, and a three-stage curriculum for subsequent cycles;
 - Codex-native commands, searches, file changes, plans, and reasoning milestones are captured as bounded, secret-redacted process events in the durable trajectory, so the provider's real work remains auditable after the TUI closes;
 - native Codex command, file-change, and tool failures now enter deterministic trajectory error-recovery scoring, preventing failed provider work from being mistaken for a clean successful cycle;
+- tool trajectories retain bounded per-call latency and distinguish controlled permission denials from genuine execution failures, making efficiency and tool reliability visible to routing and replay;
 - native Codex failures are classified into the generic recovery vocabulary and fed into the next cycle's allocation policy, so timeout, rate-limit, auth, and dependency failures trigger targeted route changes;
 - the same typed failure pressure is applied to capability routing in both the CLI and TUI, increasing verification demand and constraining fan-out consistently across interfaces;
 - retryable research-lane transport and timeout failures select an untried configured provider/model route before repeating a route, while single-route setups retain bounded retries and preserve the original failure as evidence;

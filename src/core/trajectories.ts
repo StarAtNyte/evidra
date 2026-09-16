@@ -87,6 +87,7 @@ export function providerActivityFailureClass(activity: string): "timeout" | "rat
 /** Capture interleaved tool activity without retaining provider protocol noise or credentials. */
 export function createToolTraceRecorder(prefix = "research", options: ToolTraceRecorderOptions = {}): ToolTraceRecorder {
   const events: TrajectoryEvent[] = [];
+  const callStartedAt = new Map<string, number>();
   let sequence = 0;
   let traceTruncated = false;
   let droppedEvents = 0;
@@ -116,11 +117,15 @@ export function createToolTraceRecorder(prefix = "research", options: ToolTraceR
     events,
     onToolCall: (source, call) => {
       const callId = `${prefix}-tool-${++sequence}`;
+      callStartedAt.set(callId, Date.now());
       record({ id: `${callId}-call`, kind: "tool_call", callId, at: new Date().toISOString(), payload: redactStructured({ tool: call.name, arguments: call.arguments ?? {}, source }) });
       return callId;
     },
     onToolResult: (source, callId, result) => {
-      record({ id: `${callId}-result`, kind: "tool_result", callId, at: new Date().toISOString(), payload: redactStructured({ tool: result.name, ok: result.ok, output: result.output, error: result.error, trust: result.trust, securityWarnings: result.securityWarnings, permissionChecked: result.trust === "permission_boundary", permissionDenied: result.trust === "permission_boundary" && result.ok === false, source }) });
+      const startedAt = callStartedAt.get(callId);
+      callStartedAt.delete(callId);
+      const durationMs = startedAt === undefined ? undefined : Math.max(0, Date.now() - startedAt);
+      record({ id: `${callId}-result`, kind: "tool_result", callId, at: new Date().toISOString(), payload: redactStructured({ tool: result.name, ok: result.ok, output: result.output, error: result.error, trust: result.trust, securityWarnings: result.securityWarnings, permissionChecked: result.trust === "permission_boundary", permissionDenied: result.trust === "permission_boundary" && result.ok === false, ...(durationMs === undefined ? {} : { durationMs }), source }) });
     },
     onActivity: (source, activity) => {
       if (!activity.trim()) return;
@@ -228,6 +233,7 @@ export function evaluateTrajectory(events: TrajectoryEvent[]): TrajectoryQuality
   const evaluatorEvents = events.filter((event) => event.kind === "evaluator");
   const nativeProviderFailures = processEvents.filter((event) => event.payload.providerActivity === true && typeof event.payload.activity === "string" && /^(?:Command failed|Tool failed|File change failed|Codex item error):?/i.test(event.payload.activity));
   const failures = events.filter((event) => event.payload.error || event.payload.status === "failed");
+  const failedToolResults = events.filter((event) => event.kind === "tool_result" && event.payload.ok === false && event.payload.permissionDenied !== true);
   const failureCount = failures.length + nativeProviderFailures.length;
   const recoveries = events.filter((event) => event.kind === "recovery");
   const completed = events.some((event) => event.kind === "terminal" && event.payload.status === "completed");
@@ -257,6 +263,8 @@ export function evaluateTrajectory(events: TrajectoryEvent[]): TrajectoryQuality
     ? dimension("NOT_EVALUATED", "missing", "no tool calls in trajectory")
     : unresolved.length
       ? dimension("FAIL", "observed", "at least one tool call was not closed")
+      : failedToolResults.length
+        ? dimension("WARN", "partial", `${failedToolResults.length} tool call(s) returned an execution failure`)
       : dimension("PASS", "observed", `${calls.length} tool call(s) closed with results`);
   const executionAlignment = calls.length === 0
     ? dimension("PASS", "observed", "no tool-feedback boundary was required")
