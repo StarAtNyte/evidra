@@ -2,7 +2,7 @@
 .shell{width:min(1340px,calc(100% - 48px))}
 .system-heading,.loop-heading,.demos-heading{margin-left:var(--content-indent);gap:var(--content-gap)}
 .feature-grid,.loop-track,.technique-grid{margin-left:var(--content-indent)}
-.terminal-section,.install-section{margin-left:0;grid-template-columns:180px 1fr;gap:75px;align-items:center}
+.terminal-section,.install-section{margin-left:0;grid-template-columns:180px 1fr;gap:75px;align-items:start}
 .terminal-content,.install-content{display:grid;grid-template-columns:.85fr 1.15fr;gap:var(--content-gap);align-items:center}
 .technique-footer{margin-left:var(--content-indent)}
 .section h2{margin-bottom:28px}
