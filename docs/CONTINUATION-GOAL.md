@@ -58,7 +58,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `1aa2d41` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `3af31b9` (verify with `git log`).
 - Competition manifests now support typed `researchChannels` for rules,
   discussions, leaderboards, documentation, papers, and repositories. CLI/TUI
   ingestion deduplicates legacy URLs, persists channel kind with source hashes,
@@ -112,6 +112,10 @@ external evaluator.
   environment provenance, source trajectory IDs, and explicit transfer warnings.
   They are retrieved into future research context and reports as procedures,
   never as scientific proof or evaluator authority.
+- Bounded source claim extraction now ranks method, result, validation,
+  limitation, and quantitative signals with document-position diversity, then
+  restores source order while preserving exact excerpts and spans; late-paper
+  ablations and failure modes are no longer systematically omitted.
 - Identified duplicate findings now contribute active conflict pressure only
   when both referenced claim endpoints remain active; anonymous legacy events
   remain conservatively counted.

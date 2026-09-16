@@ -585,7 +585,10 @@ export interface SourceClaimRecord {
 
 /** Extract bounded claims while retaining their exact source spans for audit. */
 export function sourceClaimRecords(text: string, limit = 12): SourceClaimRecord[] {
-  const records: SourceClaimRecord[] = [];
+  const candidates: Array<SourceClaimRecord & { score: number; bucket: number; index: number }> = [];
+  const boundedLimit = Math.max(1, Math.min(50, Math.floor(Number.isFinite(limit) ? limit : 12)));
+  const sourceLength = Math.max(1, text.length);
+  let index = 0;
   for (const match of text.matchAll(/[^.!?]+(?:[.!?]+|$)/g)) {
     const raw = match[0] ?? "";
     const statement = raw.trim();
@@ -597,10 +600,34 @@ export function sourceClaimRecords(text: string, limit = 12): SourceClaimRecord[
     // just because the sentence also mentions a model, result, or dataset.
     if (/ignore\s+(all\s+)?previous|disregard\s+(the\s+)?(?:system|developer)|follow\s+these\s+instructions|disable\s+(?:safety|permissions?|sandbox)|reveal\s+(?:the\s+)?(?:token|password|credential|api\s*key)|you\s+must\s+(?:run|execute|upload|submit)/i.test(statement)) continue;
     if (!/\b(show|find|improv|decreas|increas|result|method|dataset|model|validation|leak|error|accuracy|score)\b/i.test(statement)) continue;
-    records.push({ statement, excerpt: text.slice(start, start + statement.length), start, end: start + statement.length });
-    if (records.length >= Math.max(1, limit)) break;
+    const methodSignal = /\b(method|approach|algorithm|model|procedure|technique)\b/i.test(statement) ? 1.2 : 0;
+    const resultSignal = /\b(result|improv|increas|decreas|accuracy|score|performance|outperform|gain)\b/i.test(statement) ? 1.4 : 0;
+    const validationSignal = /\b(validation|held[- ]out|test|benchmark|replicat|ablat|baseline|leak)\b/i.test(statement) ? 1.3 : 0;
+    const limitationSignal = /\b(limit|fail|weakness|risk|uncertain|however|despite|future work|does not)\b/i.test(statement) ? 1.5 : 0;
+    const quantitativeSignal = /\b\d+(?:\.\d+)?\s*%?|\b(?:significant|statistically)\b/i.test(statement) ? 0.35 : 0;
+    candidates.push({ statement, excerpt: text.slice(start, start + statement.length), start, end: start + statement.length, score: methodSignal + resultSignal + validationSignal + limitationSignal + quantitativeSignal, bucket: Math.min(3, Math.floor((start / sourceLength) * 4)), index: index++ });
   }
-  return records;
+  const selected: typeof candidates = [];
+  const buckets = new Set<number>();
+  while (selected.length < boundedLimit && candidates.length) {
+    let best = 0;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+      const candidate = candidates[candidateIndex];
+      const diversityBonus = buckets.has(candidate.bucket) ? 0 : 0.55;
+      const score = candidate.score + diversityBonus;
+      if (score > bestScore || (score === bestScore && candidate.index < candidates[best].index)) {
+        best = candidateIndex;
+        bestScore = score;
+      }
+    }
+    const [chosen] = candidates.splice(best, 1);
+    selected.push(chosen);
+    buckets.add(chosen.bucket);
+  }
+  // Preserve source order in the durable excerpt list. Ranking only controls
+  // which claims survive the bounded extraction budget.
+  return selected.sort((left, right) => left.start - right.start).map(({ score: _score, bucket: _bucket, index: _index, ...record }) => record);
 }
 
 export function sourceClaims(text: string, limit = 12): string[] {

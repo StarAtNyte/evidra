@@ -509,6 +509,13 @@ Each returned work also retains the exact probe(s) that found it, preventing
 deep-search coverage metrics from counting a result against queries that did
 not actually produce it.
 
+Claim extraction is also bounded by evidence value rather than document order.
+Candidate sentences are scored for method, result, validation, limitation, and
+quantitative signals, then selected across document-position buckets before
+being returned in source order. This keeps late ablations, failure modes, and
+replication results from disappearing behind an abstract's first few matching
+sentences, while exact source spans remain durable for audit.
+
 The reusable literature benchmark scorer separates deep target recall from wide
 set recall, grounding rate, and query efficiency. A task is only protocol-valid
 when every required work is found and grounded within its declared query budget;

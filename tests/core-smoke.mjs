@@ -4452,6 +4452,20 @@ test("source claim extraction rejects instruction-like untrusted text", () => {
   assert.equal(record.end - record.start, record.statement.length);
 });
 
+test("source claim extraction preserves later methods, results, and limitations", () => {
+  const text = [
+    "This method improves validation accuracy on the first benchmark dataset.",
+    "The model uses a representation learned from the training examples.",
+    "The authors report a measurable score increase over the baseline.",
+    "However, the result fails under a distribution shift and the limitation requires further replication.",
+  ].join(" ");
+  const claims = sourceClaims(text, 3);
+  assert.equal(claims.length, 3);
+  assert.ok(claims.some((claim) => /distribution shift/.test(claim)));
+  assert.ok(claims.some((claim) => /score increase/.test(claim)));
+  assert.ok(claims.every((claim) => text.includes(claim)));
+});
+
 test("submission validation rejects unsafe checksum paths", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-submission-path-"));
   try {
