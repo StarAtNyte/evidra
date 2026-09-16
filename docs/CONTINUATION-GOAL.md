@@ -58,7 +58,10 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `2d7a40f` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `837bad3` (verify with `git log`).
+- The research tool registry now includes a bounded, read-only `git.diff`
+  observation for implementation and recovery review; diff contents remain
+  untrusted workspace data and nonzero Git exits are preserved as failures.
 - Read-only `shell.exec` now preserves command output while marking nonzero
   exits as failed tool results, ensuring the director replans after failed
   tests, benchmarks, or inspections.
