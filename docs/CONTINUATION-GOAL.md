@@ -58,7 +58,10 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `d0ed89c` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `1458abb` (verify with `git log`).
+- Active claim resolution now checks both claim status and linked source
+  lifecycle status, protecting legacy databases from reintroducing claims from
+  superseded or invalidated literature after restart.
 - Duplicate-claim pressure now ignores findings tied to superseded or
   invalidated claims, matching active contradiction accounting across the
   controller, TUI, memory, audits, and reports.
