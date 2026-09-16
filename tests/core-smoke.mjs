@@ -48,7 +48,7 @@ import { evaluateReducedPromotion, experimentNovelty, rankExperimentCandidates, 
 import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance, evaluateMultiSplitValidation } from "../dist/core/validation-engine.js";
 import { renderTimeline, summarizeTimelineEvent } from "../dist/core/timeline.js";
 import { renderReport } from "../dist/core/reports.js";
-import { latestSourceEntries, latestSourcePayloads, repositoryLeadsFromEvents, researchMemoryContext } from "../dist/core/research-context.js";
+import { activeContradictionEdges, latestSourceEntries, latestSourcePayloads, repositoryLeadsFromEvents, researchMemoryContext } from "../dist/core/research-context.js";
 import { buildFalsificationAgenda } from "../dist/core/falsification-agenda.js";
 import { playbookFromMethod, verifiedPlaybooksFromEvents } from "../dist/core/playbooks.js";
 import { failedDirectionsFromExperiments } from "../dist/core/failure-memory.js";
@@ -4343,12 +4343,17 @@ test("source refresh retires claims from the superseded source hash", () => {
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.saveSource({ id: "source-old", payload: { title: "Paper v1", url: "https://example.com/paper", claims: ["old"] } });
+    store.saveSource({ id: "source-other", payload: { title: "Other", url: "https://example.com/other", claims: ["other"] } });
     store.saveClaim({ id: "claim-old", payload: { statement: "The old source reports a reproducible validation result.", scope: "https://example.com/paper", confidence: 0.35, sourceType: "literature", sourceId: "source-old", status: "active" } });
+    store.saveClaim({ id: "claim-other", payload: { statement: "The old source does not report a reproducible validation result.", scope: "https://example.com/other", confidence: 0.35, sourceType: "literature", sourceId: "source-other", status: "active" } });
+    store.saveEdge({ id: "contradiction-old-other", fromId: "claim-old", toId: "claim-other", relation: "contradicts", confidence: 0.5, evidenceIds: ["claim-old", "claim-other"] });
+    assert.equal(activeContradictionEdges(store).length, 1);
     store.saveSource({ id: "source-new", payload: { title: "Paper v2", url: "https://example.com/paper", claims: ["new"] } });
     assert.equal(store.claims().find((claim) => claim.id === "claim-old")?.payload.status, "superseded");
     const memory = researchMemoryContext(store, 10);
     assert.equal(memory.claims.some((claim) => claim.id === "claim-old"), false);
     assert.equal(memory.quarantinedClaims.some((claim) => claim.id === "claim-old"), true);
+    assert.equal(activeContradictionEdges(store).length, 0);
     assert.equal(store.recentEvents(20).some((event) => event.type === "research.claims.retired"), true);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }

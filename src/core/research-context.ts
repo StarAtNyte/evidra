@@ -9,6 +9,15 @@ import { buildFalsificationAgenda, type FalsificationAgendaItem } from "./falsif
 
 export type ResearchRepositoryLead = RepositorySearchResult;
 
+/** Return only contradictions whose two claim endpoints are still active. */
+export function activeContradictionEdges(store: ResearchStore): ReturnType<ResearchStore["edges"]> {
+  const statusById = new Map(store.claims().map((claim) => {
+    const status = claim.payload && typeof claim.payload === "object" ? (claim.payload as { status?: unknown }).status : undefined;
+    return [claim.id, status === "superseded" || status === "invalidated" ? status : "active"] as const;
+  }));
+  return store.edges().filter((edge) => edge.relation === "contradicts" && statusById.get(edge.fromId) === "active" && statusById.get(edge.toId) === "active");
+}
+
 export interface ResearchMemoryContext {
   claims: Array<{ id: string; statement: string; scope: string; confidence: number; sourceType: string; sourceId: string; status: string }>;
   /** Retained for audit and negative evidence, but never mixed into active claims. */
@@ -141,7 +150,7 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
     const value = entry.payload as { title?: unknown; status?: unknown; mechanism?: unknown };
     return typeof value.title === "string" ? [{ id: entry.id, title: value.title, status: typeof value.status === "string" ? value.status : "proposed", ...(typeof value.mechanism === "string" ? { mechanism: value.mechanism.slice(0, 500) } : {}) }] : [];
   });
-  const contradictions = store.edges().filter((edge) => edge.relation === "contradicts").slice(0, bounded).map((edge) => ({ fromId: edge.fromId, toId: edge.toId, confidence: edge.confidence }));
+  const contradictions = activeContradictionEdges(store).slice(0, bounded).map((edge) => ({ fromId: edge.fromId, toId: edge.toId, confidence: edge.confidence }));
   // Learning memory is durable; only the final ranked context is bounded.
   // recentEvents() is a UI timeline and must not silently erase old transfer
   // methods or repository discoveries from long campaigns.

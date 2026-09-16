@@ -51,7 +51,7 @@ import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "../core/execution-stages.js";
 import { runReducedValidation } from "../core/stage-executor.js";
 import { renderTimeline } from "../core/timeline.js";
-import { latestSourceEntries, researchMemoryContext } from "../core/research-context.js";
+import { activeContradictionEdges, latestSourceEntries, researchMemoryContext } from "../core/research-context.js";
 import { detectStagnation } from "../core/stagnation.js";
 import { assessStopPolicy } from "../core/stop-policy.js";
 import { applyCriticGate } from "../core/critic-gate.js";
@@ -102,7 +102,7 @@ function auditEvidenceStore(store: ResearchStore) {
   const decisions = store.decisions();
   const runs = store.runs();
   const artifacts = store.artifacts();
-  const edges = store.edges().filter((edge) => edge.relation === "contradicts");
+  const edges = activeContradictionEdges(store);
   const selfDescribing = selfDescribingClaimEvidenceIds(claims);
   return auditClaims({
     claims: claims.map((claim) => ({ id: claim.id, payload: claim.payload })),
@@ -827,7 +827,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const recentEvents = store.recentEvents(20);
     const consistencyEvents = store.recentEvents(200);
     const evidenceConflicts = {
-      contradictions: store.edges().filter((edge) => edge.relation === "contradicts").length,
+      contradictions: activeContradictionEdges(store).length,
       duplicates: consistencyEvents.filter((event) => event.type === "evidence.claim.duplicate_detected").length,
     };
     const researchMemory = researchMemoryContext(store, 30, objective);

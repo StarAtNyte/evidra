@@ -19,7 +19,7 @@ import { prepareSubmission, validateSubmissionBundle } from "./core/submissions.
 import { externalSubmissionId, pollSubmissionScore, submitApprovedBundle } from "./core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
 import { renderTimeline } from "./core/timeline.js";
-import { latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
+import { activeContradictionEdges, latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
 import { detectStagnation } from "./core/stagnation.js";
 import { assessStopPolicy } from "./core/stop-policy.js";
 import { classifyVerifier } from "./core/formal-verification.js";
@@ -139,7 +139,7 @@ function auditCurrentClaims(store: ResearchStore): ClaimAuditReport {
   const decisions = store.decisions();
   const runs = store.runs();
   const artifacts = store.artifacts();
-  const contradictionEdges = store.edges().filter((edge) => edge.relation === "contradicts");
+  const contradictionEdges = activeContradictionEdges(store);
   const selfDescribingEvidenceIds = selfDescribingClaimEvidenceIds(claims);
   return auditClaims({
     claims: claims.map((claim) => ({ id: claim.id, payload: claim.payload })),
@@ -2227,7 +2227,7 @@ research
       const experimentParallelism = Math.max(1, Math.min(effectiveLaneLimit, executorParallelCeiling));
       store.appendEvent("research.capability_route", { route, predictedTier: route.tier, servedProvider: options.provider, servedModel: selectedModel, recentQuality });
       const evidenceConflicts = {
-        contradictions: store.edges().filter((edge) => edge.relation === "contradicts").length,
+        contradictions: activeContradictionEdges(store).length,
         duplicates: store.recentEvents(200).filter((event) => event.type === "evidence.claim.duplicate_detected").length,
       };
       const predictionEvent = store.eventsByType("prediction.analysis.completed").at(-1);

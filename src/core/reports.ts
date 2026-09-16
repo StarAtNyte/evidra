@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { ResearchStore } from "./store.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "./claim-audit.js";
 import { redactCommand } from "./redaction.js";
-import { researchMemoryContext } from "./research-context.js";
+import { activeContradictionEdges, researchMemoryContext } from "./research-context.js";
 import { sourceFrontier } from "./sources.js";
 
 export type ReportKind = "research" | "challenge" | "final";
@@ -39,7 +39,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   const harnessChanges = store.harnessChanges();
   const routingEvents = store.eventsByType("research.capability_outcome");
   const experienceEvents = store.eventsByType("research.experience.recorded");
-  const contradictionEdges = store.edges().filter((edge) => edge.relation === "contradicts");
+  const contradictionEdges = activeContradictionEdges(store);
   const duplicateEvents = store.eventsByType("evidence.claim.duplicate_detected");
   const conflictedClaimIds = new Set(contradictionEdges.flatMap((edge) => [edge.fromId, edge.toId]));
   const claimAudit = auditClaims({
