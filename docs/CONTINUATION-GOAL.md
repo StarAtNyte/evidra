@@ -58,7 +58,10 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `3487307` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `f5b277d` (verify with `git log`).
+- Literature claim ingestion now retains exact source excerpts and character
+  spans alongside each durable claim, in both CLI and TUI paths, while keeping
+  the existing string-list source schema compatible.
 - Workspace inventory now includes hidden project control files while excluding
   `.git`, `.sota`, and dependency trees, reducing blind spots in evidence
   gathering and implementation review.
