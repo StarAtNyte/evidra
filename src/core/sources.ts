@@ -124,6 +124,7 @@ export interface RepositorySearchResult {
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
 export const SOURCE_REQUEST_TIMEOUT_MS = 30_000;
+export const SOURCE_DNS_TIMEOUT_MS = 5_000;
 export const DEFAULT_SOURCE_REFRESH_MS = 6 * 60 * 60 * 1000;
 
 function reconstructAbstract(invertedIndex: unknown): string | undefined {
@@ -406,7 +407,19 @@ async function assertPublicUrl(url: URL): Promise<void> {
   if (!/^https?:$/.test(url.protocol)) throw new Error("Only http and https research sources are supported.");
   if (url.username || url.password) throw new Error("Research source URLs may not contain credentials.");
   const hostname = url.hostname.replace(/^\[|\]$/g, "");
-  const addresses = isIP(hostname) ? [hostname] : (await lookup(hostname, { all: true })).map((entry) => entry.address);
+  const addresses = isIP(hostname) ? [hostname] : await (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        lookup(hostname, { all: true }).then((entries) => entries.map((entry) => entry.address)),
+        new Promise<string[]>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`DNS lookup timed out after ${SOURCE_DNS_TIMEOUT_MS}ms.`)), SOURCE_DNS_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  })();
   if (!addresses.length || addresses.some(privateAddress)) throw new Error(`Refusing private or loopback research source host: ${hostname}`);
 }
 
