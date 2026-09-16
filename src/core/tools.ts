@@ -262,7 +262,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
     let toolError: string | undefined;
     switch (call.name) {
       case "workspace.files": {
-        const result = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], context.root, 30_000, undefined, context.onProcess, workerEnvironment);
+        const result = await runProcess(["rg", "--files", "--hidden", "-g", "!.git/**", "-g", "!.sota/**", "-g", "!node_modules/**"], context.root, 30_000, undefined, context.onProcess, workerEnvironment);
         output = { exitCode: result.exitCode, files: result.stdout.split("\n").filter(Boolean).slice(0, 2_000) };
         break;
       }

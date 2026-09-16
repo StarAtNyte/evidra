@@ -2997,6 +2997,8 @@ test("research tool registry exposes safe workspace tools", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-tools-"));
   try {
     writeFileSync(join(root, "notes.txt"), "hypothesis: tool registry\n");
+    mkdirSync(join(root, ".github"), { recursive: true });
+    writeFileSync(join(root, ".github", "workflow.yml"), "name: test\n");
     execFileSync("git", ["init", "-q"], { cwd: root });
     execFileSync("git", ["config", "user.email", "evidra@example.invalid"], { cwd: root });
     execFileSync("git", ["config", "user.name", "Evidra Test"], { cwd: root });
@@ -3009,6 +3011,7 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.equal(files.ok, true);
     assert.equal(files.trust, "controller_observation");
     assert.equal(files.output.files.includes("notes.txt"), true);
+    assert.equal(files.output.files.includes(".github/workflow.yml"), true);
     const search = await executeResearchTool({ name: "workspace.search", arguments: { query: "hypothesis" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(search.ok, true);
     assert.equal(search.trust, "untrusted_content");
