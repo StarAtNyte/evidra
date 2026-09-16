@@ -1146,6 +1146,18 @@ test("stale running experiments are recovered for retry after controller restart
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("stale recovery preserves experiments with a fresh worker heartbeat", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-live-heartbeat-recovery-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.saveExperiment({ id: "live", payload: { id: "live", status: "running" } });
+    store.appendEvent("run.heartbeat", { experimentId: "live", heartbeatAt: new Date().toISOString(), stage: "full_validation" });
+    assert.deepEqual(store.recoverStaleExperiments(), []);
+    assert.equal(store.experiments()[0].payload.status, "running");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("experiment gate events contain the complete promotion snapshot", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-gates-"));
   try {

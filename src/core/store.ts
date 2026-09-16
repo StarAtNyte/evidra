@@ -1235,11 +1235,26 @@ export class ResearchStore {
   }
 
   /** Mark experiments left running by a dead controller as failed and retryable. */
-  recoverStaleExperiments(): string[] {
+  recoverStaleExperiments(staleAfterMs = 30_000): string[] {
     const recovered: string[] = [];
+    const cutoff = Math.max(0, staleAfterMs);
+    const freshHeartbeats = new Map<string, string>();
+    for (const event of this.eventsByType("run.heartbeat")) {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload as { experimentId?: unknown; heartbeatAt?: unknown } : {};
+      if (typeof payload.experimentId !== "string") continue;
+      const heartbeatAt = typeof payload.heartbeatAt === "string" ? payload.heartbeatAt : event.createdAt;
+      const previous = freshHeartbeats.get(payload.experimentId);
+      if (!previous || Date.parse(heartbeatAt) > Date.parse(previous)) freshHeartbeats.set(payload.experimentId, heartbeatAt);
+    }
+    const now = Date.now();
     for (const experiment of this.experiments()) {
       const payload = experiment.payload && typeof experiment.payload === "object" ? experiment.payload as Record<string, unknown> : {};
       if (payload.status !== "running") continue;
+      const heartbeatAt = freshHeartbeats.get(experiment.id);
+      if (heartbeatAt) {
+        const age = now - Date.parse(heartbeatAt);
+        if (Number.isFinite(age) && age >= 0 && age <= cutoff) continue;
+      }
       const updated = { ...payload, status: "failed", failure: "Controller exited before experiment finalization.", recoveredAt: new Date().toISOString(), stale: true, recoveryAttempted: false };
       this.saveExperiment({ id: experiment.id, payload: updated });
       this.appendEvent("experiment.stale.recovered", { experimentId: experiment.id, previousStatus: "running" });

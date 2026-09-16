@@ -306,6 +306,7 @@ Implemented today:
 - evaluator parsing retains distinct metric values and rejects completed runs with an unresolved primary-metric conflict, while permitting explicitly step-indexed learning curves;
 - metric-conflict diagnostics are persisted on every run attempt, so retries, crash recovery, and post-hoc reports retain the exact evaluator-integrity failure;
 - CLI help/version output and Codex client identification are resolved from shipped package metadata, preventing release/version drift when the package version changes;
+- controller restart recovery checks the latest durable worker heartbeat before quarantining a running experiment, preventing duplicate recovery while a local, container, or Modal worker is still alive;
 - TUI trajectories preserve the synthesized cross-pollination board and its evidence/agreement metrics for replay and audit;
 - Escape cancellation is wired through TUI critic, lane, and director processes, so interruption stops the active provider work;
 - CLI trajectories preserve the synthesized cross-pollination board for the same replay and audit parity as the TUI;
