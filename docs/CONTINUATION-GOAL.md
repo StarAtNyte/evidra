@@ -57,7 +57,7 @@ external evaluator.
 
 ## Latest repository state
 
-- Latest pushed state: `origin/master` at commit `142f7fa` (verify with `git log`).
+- Latest pushed state: `origin/master` at commit `5736472` (verify with `git log`).
 - Generic auditable-subtask contracts are now persisted in the live CLI/TUI
   phase-gate path as `subtask.audit` events. Required criteria only pass from
   the domain verifier/auditor; executor prose is ignored as proof.
@@ -132,6 +132,9 @@ external evaluator.
 - Failed in-flight observations are explicitly excluded from the lane cache;
   concurrent siblings receive a fresh attempt instead of treating a transient
   failure as durable evidence.
+- Peer hand-off serialization now accepts only bounded strings for findings,
+  recommendations, tests, evidence anchors, and source IDs, preventing
+  malformed lane payloads from expanding or steering later agent context.
 - Latest verified baseline: 397/397 tests passing, TypeScript check passing,
   and build passing. The worktree is clean; generated reports remain excluded
   from source changes.
