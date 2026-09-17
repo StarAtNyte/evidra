@@ -142,6 +142,8 @@ const COMMANDS = [
   ["/submission", "Prepare and validate a submission bundle"],
   ["/queue", "Show durable research work queue"],
   ["/sessions", "List saved terminal sessions"],
+  ["/clear", "Clear the current conversation"],
+  ["/new", "Start a fresh terminal session"],
   ["/resume", "Resume a saved session explicitly"],
   ["/ensemble", "Analyze prediction diversity and blends"],
   ["/report", "Generate portable research reports"],
@@ -205,7 +207,9 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
-  "/resume": [["/resume", "Resume the latest saved session"], ["/resume ", "Resume a selected session"]],
+  "/clear": [["/clear", "Clear the current conversation"]],
+  "/new": [["/new", "Start a fresh terminal session"]],
+  "/resume": [["/resume", "Choose a saved session to resume"], ["/resume ", "Resume a selected session"]],
   "/ensemble": [["/ensemble candidates", "List prediction artifacts"], ["/ensemble diversity", "Compare prediction diversity"], ["/ensemble propose", "Create an OOF blend candidate"], ["/ensemble validate", "Verify a blend candidate"], ["/ensemble promote", "Promote a validated candidate"], ["/ensemble reject", "Reject a candidate"]],
   "/report": [["/report research", "Write a research report"], ["/report challenge", "Write a challenge report"], ["/report final", "Write a provenance report"]],
   "/timeline": [["/timeline", "Show recent autonomous progress"]],
@@ -358,8 +362,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [modelLoadError, setModelLoadError] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<AvailableModel | null>(null);
-  const [picker, setPicker] = useState<"provider" | "model" | "reasoning" | "mode" | "permissions" | null>(null);
+  const [picker, setPicker] = useState<"provider" | "model" | "reasoning" | "mode" | "permissions" | "resume" | null>(null);
   const [pickerIndex, setPickerIndex] = useState(0);
+  const [resumeChoices, setResumeChoices] = useState<Array<{ id: string; status: string; startedAt: string }>>([]);
   const [firstRun] = useState(() => !existsSync(configPath));
   const [onboardingComplete, setOnboardingComplete] = useState(() => !firstRun);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
@@ -590,12 +595,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (picker) {
-      const choices = picker === "provider" ? providerChoices : picker === "model" ? availableModels : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : permissionChoices;
+      const choices = picker === "provider" ? providerChoices : picker === "model" ? availableModels : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : picker === "permissions" ? permissionChoices : resumeChoices;
       if (key.escape) { setPicker(null); return; }
       if (key.downArrow) { setPickerIndex((current) => (current + 1) % choices.length); return; }
       if (key.upArrow) { setPickerIndex((current) => (current - 1 + choices.length) % choices.length); return; }
       if (key.return && choices.length > 0) {
-        if (picker === "provider") {
+        if (picker === "resume") {
+          const saved = resumeChoices[pickerIndex];
+          setPicker(null);
+          if (saved) setTimeout(() => { void submitRef.current(`/resume ${saved.id}`); }, 0);
+        } else if (picker === "provider") {
           const provider = providerChoices[pickerIndex];
           activeCodexThread.current = undefined;
           setConfig((current) => ({
@@ -2316,6 +2325,25 @@ export function App({ root }: { root: string }): React.JSX.Element {
       else { setConfig((current) => ({ ...current, autonomy: level })); append("assistant", `Permissions selected: ${level}`); }
       return;
     }
+    if (request === "/clear") {
+      setMessages([]);
+      return;
+    }
+    if (request === "/new") {
+      if (busy) { append("assistant", "Pause the active work before starting a new session."); return; }
+      const previousId = sessionId.current;
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      store.saveSession(previousId, { pid: process.pid, config: configRef.current, messages: messagesRef.current });
+      store.closeSession(previousId, "completed");
+      sessionId.current = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      activeCodexThread.current = undefined;
+      setConfig((current) => ({ ...current, campaign: undefined, codexThreadId: undefined }));
+      setSetupStep(null); setSetupDraft({}); setMessages([{ role: "system", text: "New Evidra session. Previous work remains available with /resume." }]);
+      const fresh = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      fresh.startSession(sessionId.current, { pid: process.pid, config: configRef.current, messages: [] });
+      fresh.close();
+      return;
+    }
     if (request === "/sessions" || request.startsWith("/resume")) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       if (request === "/sessions") {
@@ -2325,6 +2353,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
       const requestedId = request.split(/\s+/)[1];
+      if (!requestedId) {
+        const choices = store.sessions(20).filter((session) => session.id !== sessionId.current && session.status !== "active");
+        setResumeChoices(choices.map(({ id, status, startedAt }) => ({ id, status, startedAt })));
+        store.close();
+        if (!choices.length) { append("assistant", "No resumable sessions found yet."); return; }
+        setPicker("resume"); setPickerIndex(0);
+        append("assistant", "Choose a saved session with ↑/↓ and Enter. Esc cancels.");
+        return;
+      }
       const saved = requestedId ? store.session(requestedId) : store.sessions(20).find((session) => session.id !== sessionId.current && session.status !== "active");
       store.close();
       if (!saved) { append("assistant", "No saved session found. Use /sessions to list resumable sessions."); return; }
@@ -3637,14 +3674,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
       <Text color={UI.amber} bold>{["⠋", "⠙", "⠹", "⠸"][busyFrame]}  {progress || "Working..."}</Text><Text color={UI.muted}>  (esc to interrupt)</Text>
     </Box>}
     {picker && <Box borderStyle="round" borderColor={UI.purple} paddingX={2} flexDirection="column" marginTop={1}>
-      <Text color={UI.purple} bold>{picker === "provider" ? "Choose a provider" : picker === "model" ? `Select ${config.provider} model` : picker === "reasoning" ? "Select thinking effort" : picker === "mode" ? "Select workbench mode" : "Select permissions"}</Text>
+      <Text color={UI.purple} bold>{picker === "provider" ? "Choose a provider" : picker === "model" ? `Select ${config.provider} model` : picker === "reasoning" ? "Select thinking effort" : picker === "mode" ? "Select workbench mode" : picker === "resume" ? "Choose a session to resume" : "Select permissions"}</Text>
       <Text color={UI.muted}>↑/↓ navigate · Enter select · Esc cancel</Text>
-      {(picker === "provider" ? providerChoices : picker === "model" ? availableModels : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : permissionChoices).slice(Math.max(0, pickerIndex - 5), pickerIndex + 7).map((entry, index) => {
+      {(picker === "provider" ? providerChoices : picker === "model" ? availableModels : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : picker === "resume" ? resumeChoices : permissionChoices).slice(Math.max(0, pickerIndex - 5), pickerIndex + 7).map((entry, index) => {
         const actualIndex = Math.max(0, pickerIndex - 5) + index;
         const label = typeof entry === "string"
           ? entry === "codex" ? "Codex · ChatGPT subscription"
             : entry === "local" ? "Local · Ollama on this machine" : entry
-          : `${entry.displayName}  ${entry.id}${entry.isDefault ? " · default" : ""}${entry.hidden ? " · hidden" : ""}`;
+          : "displayName" in entry ? `${entry.displayName}  ${entry.id}${entry.isDefault ? " · default" : ""}${entry.hidden ? " · hidden" : ""}`
+            : `${entry.id} · ${entry.status} · ${entry.startedAt}`;
         return <Text key={typeof entry === "string" ? entry : entry.id} color={actualIndex === pickerIndex ? UI.lime : UI.paper}>
           {actualIndex === pickerIndex ? "› " : "  "}{label}
         </Text>;
@@ -3658,7 +3696,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         </Text>
       </Box>)}
     </Box>}
-    <Box borderStyle="single" borderColor={busy ? UI.amber : UI.rule} paddingX={1} paddingY={0} marginTop={1}>
+    <Box borderStyle="single" borderColor={busy ? UI.amber : UI.rule} paddingX={2} paddingY={1} marginTop={1}>
       <Text color={busy ? UI.amber : UI.lime} bold>{busy ? "⟳ " : "› "}</Text>
       <TextInput key={inputMount} focus={!picker} showCursor={!picker} value={input} onChange={setInput} onSubmit={submit} placeholder="Talk normally, or type /research for autonomous work..." />
     </Box>
