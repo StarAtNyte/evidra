@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { requiresProviderSetup } from "./onboarding.js";
 import { Box, Static, Text, useApp, useInput } from "ink";
-import TextInput from "ink-text-input";
+import MultilineInput from "./multiline-input.js";
 import { dirname, join, relative, resolve } from "node:path";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
@@ -34,7 +34,7 @@ import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoa
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
-import { codexLoginStatus, codexResearchModelPool, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveStartupProvider, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
+import { codexLoginStatus, codexResearchModelPool, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, logoutCodex, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveStartupProvider, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { boundedPeerBoard, runResearchCritic, runResearchLanes, runResearchSemanticAuditor, type ResearchLaneReport, type ResearchReview, type ResearchSemanticAudit } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
@@ -158,6 +158,7 @@ const COMMANDS = [
   ["/autonomy", "Select safe, fast, or YOLO policy"],
   ["/permissions", "Select what Evidra may do automatically"],
   ["/login", "Authenticate or check provider access"],
+  ["/logout", "Sign out of the Codex account"],
   ["/exit", "Quit Evidra"],
 ] as const;
 const LOGO = [
@@ -191,6 +192,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/thinking": REASONING_LEVELS.map((level) => [`/thinking ${level}`, `Thinking effort: ${level}`] as const),
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
+  "/logout": [["/logout", "Sign out of the Codex account"]],
   "/research": [["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research steer ", "Guide the active campaign at the next safe boundary"], ["/research resume", "Resume the saved campaign"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
   "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge steer ", "Guide the active campaign at the next safe boundary"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
@@ -651,6 +653,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
       return;
     }
+    // MultilineInput owns Shift+Enter. Do not let the command suggestion
+    // handler interpret the same keypress as a submit.
+    if (key.shift && key.return) return;
     if (!suggestions.length) return;
     if (key.tab) {
       setInput(suggestions[suggestionIndex][0]);
@@ -2190,12 +2195,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
       suppressNextSubmit.current = false;
       return;
     }
-    const pastedLines = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    if (pastedLines.length > 1) {
-      setInput("");
-      for (const line of pastedLines) await submit(line);
-      return;
-    }
     const request = value.trim();
     setInput("");
     if (!request) return;
@@ -2605,6 +2604,25 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setSelectedModel(available ?? null);
         setConfig((current) => ({ ...current, model, codexThreadId: undefined }));
         append("assistant", `Model selected: ${model}`);
+      }
+      return;
+    }
+    if (request === "/logout" || request === "/logout codex") {
+      setBusy(true); setProgress("Signing out of Codex...");
+      try {
+        const output = logoutCodex();
+        activeCodexThread.current = undefined;
+        setAvailableModels([]);
+        setSelectedModel(null);
+        setOnboardingComplete(false);
+        setConfig((current) => ({ ...current, provider: "codex", codexThreadId: undefined }));
+        append("assistant", output
+          ? `Codex logout completed.\n${output}\n\nSelect a provider or run /login codex to continue.`
+          : "Codex logout completed. Select a provider or run /login codex to continue.");
+      } catch (error) {
+        appendError(error);
+      } finally {
+        setBusy(false); setProgress("");
       }
       return;
     }
@@ -3696,9 +3714,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         </Text>
       </Box>)}
     </Box>}
-    <Box borderStyle="single" borderColor={busy ? UI.amber : UI.rule} paddingX={2} paddingY={1} marginTop={1}>
+    <Box paddingX={2} paddingY={1} marginTop={1}>
       <Text color={busy ? UI.amber : UI.lime} bold>{busy ? "⟳ " : "› "}</Text>
-      <TextInput key={inputMount} focus={!picker} showCursor={!picker} value={input} onChange={setInput} onSubmit={submit} placeholder="Talk normally, or type /research for autonomous work..." />
+      <MultilineInput key={inputMount} focus={!picker} showCursor={!picker} value={input} onChange={setInput} onSubmit={submit} placeholder="Talk normally, or type /research for autonomous work..." />
     </Box>
     <Box marginLeft={2} marginTop={0}>
       <Text color={UI.purple} bold>{config.provider.toUpperCase()}</Text><Text color={UI.muted}> · </Text><Text color={UI.paper} bold>{config.model}</Text><Text color={UI.muted}> · </Text><Text color={UI.amber} bold>THINKING: {config.reasoningEffort.toUpperCase()}</Text><Text color={UI.muted}> · </Text><Text color={UI.purple} bold>MODE: {config.mode.toUpperCase()}</Text><Text color={UI.muted}> · </Text><Text color={UI.lime} bold>PERMISSIONS: {config.autonomy.toUpperCase()}</Text>

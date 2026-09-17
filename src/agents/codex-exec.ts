@@ -361,6 +361,15 @@ export function codexLoginStatus(): string {
   return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
 }
 
+/** Remove credentials managed by the Codex CLI. Environment API keys are not modified. */
+export function logoutCodex(): string {
+  const result = spawnSync(resolveCodexBinary(), ["logout"], { encoding: "utf8", timeout: 10_000, killSignal: "SIGTERM" });
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(output || `Codex logout failed with exit code ${result.status ?? "unknown"}.`);
+  return output;
+}
+
 export function codexIsLoggedIn(): boolean {
   if (process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY) return true;
   return spawnSync(resolveCodexBinary(), ["login", "status"], { stdio: "ignore", timeout: 5_000, killSignal: "SIGTERM" }).status === 0;
