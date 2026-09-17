@@ -3714,12 +3714,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         </Text>
       </Box>)}
     </Box>}
-    <Box width="100%" paddingX={2} paddingY={1} marginTop={1}>
-      <Text backgroundColor="#101426">
-        {" "}<Text color={busy ? UI.amber : UI.lime} bold>{busy ? "⟳ " : "› "}</Text>
-        <MultilineInput key={inputMount} focus={!picker} showCursor={!picker} value={input} onChange={setInput} onSubmit={submit} placeholder="Talk normally, or type /research for autonomous work..." />
-        {" ".repeat(Math.max(0, (process.stdout.columns ?? 80) - 8))}
-      </Text>
+    <Box borderStyle="single" borderColor={busy ? UI.amber : UI.rule} paddingX={2} paddingY={1} marginTop={1}>
+      <Text color={busy ? UI.amber : UI.lime} bold>{busy ? "⟳ " : "› "}</Text>
+      <MultilineInput key={inputMount} focus={!picker} showCursor={!picker} value={input} onChange={setInput} onSubmit={submit} placeholder="Talk normally, or type /research for autonomous work..." />
     </Box>
     <Box marginLeft={2} marginTop={0}>
       <Text color={UI.purple} bold>{config.provider.toUpperCase()}</Text><Text color={UI.muted}> · </Text><Text color={UI.paper} bold>{config.model}</Text><Text color={UI.muted}> · </Text><Text color={UI.amber} bold>THINKING: {config.reasoningEffort.toUpperCase()}</Text><Text color={UI.muted}> · </Text><Text color={UI.purple} bold>MODE: {config.mode.toUpperCase()}</Text><Text color={UI.muted}> · </Text><Text color={UI.lime} bold>PERMISSIONS: {config.autonomy.toUpperCase()}</Text>
