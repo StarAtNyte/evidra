@@ -23,21 +23,48 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 
 INSTALL_DIR=$(mktemp -d "${TMPDIR:-/tmp}/evidra-install.XXXXXX")
-cleanup() { rm -rf "$INSTALL_DIR"; }
+PROGRESS_PID=""
+cleanup() {
+  if [ -n "$PROGRESS_PID" ]; then kill "$PROGRESS_PID" 2>/dev/null || :; fi
+  rm -rf "$INSTALL_DIR"
+}
 trap cleanup EXIT INT TERM
 
-echo "Downloading Evidra..."
-git clone --quiet --depth 1 "$REPO_URL" "$INSTALL_DIR/evidra"
+run_stage() {
+  STAGE_LABEL=$1
+  shift
+  printf '\n→ %s\n' "$STAGE_LABEL"
+  (
+    ELAPSED=0
+    while sleep 5; do
+      ELAPSED=$((ELAPSED + 5))
+      printf '  %s… %ss elapsed\n' "$STAGE_LABEL" "$ELAPSED"
+    done
+  ) &
+  PROGRESS_PID=$!
+  STAGE_STATUS=0
+  "$@" >"$INSTALL_DIR/stage.log" 2>&1 || STAGE_STATUS=$?
+  kill "$PROGRESS_PID" 2>/dev/null || :
+  wait "$PROGRESS_PID" 2>/dev/null || :
+  PROGRESS_PID=""
+  if [ "$STAGE_STATUS" -ne 0 ]; then
+    printf '✗ %s failed (exit %s)\n' "$STAGE_LABEL" "$STAGE_STATUS" >&2
+    cat "$INSTALL_DIR/stage.log" >&2
+    exit "$STAGE_STATUS"
+  fi
+  printf '✓ %s complete\n' "$STAGE_LABEL"
+}
+
+run_stage "1/4 Downloading Evidra" git clone --quiet --depth 1 "$REPO_URL" "$INSTALL_DIR/evidra"
 cd "$INSTALL_DIR/evidra"
-echo "Installing dependencies and building..."
-npm install
+run_stage "2/4 Installing dependencies and building" npm install
 # Install an archive, not a link into the temporary checkout. Dependency
 # install scripts must run so native modules such as better-sqlite3 work.
-npm pack --ignore-scripts --quiet >/dev/null
+run_stage "3/4 Packaging CLI" npm pack --ignore-scripts --quiet
 PACKAGE_VERSION=$(node -p "require('./package.json').version")
-npm install --global "$INSTALL_DIR/evidra/evidra-$PACKAGE_VERSION.tgz"
+run_stage "4/4 Installing global command" npm install --global "$INSTALL_DIR/evidra/evidra-$PACKAGE_VERSION.tgz"
 GLOBAL_PREFIX=$(npm prefix --global)
-"$GLOBAL_PREFIX/bin/evidra" --version >/dev/null
+run_stage "Verifying installation" "$GLOBAL_PREFIX/bin/evidra" --version
 echo "Evidra installed globally. Run: evidra"
 case ":$PATH:" in
   *":$GLOBAL_PREFIX/bin:"*) ;;
