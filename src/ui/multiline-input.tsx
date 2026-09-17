@@ -16,6 +16,13 @@ export default function MultilineInput({ value, placeholder = "", focus = true, 
 
   useInput((input, key) => {
     if (!focus || key.upArrow || key.downArrow || key.tab || (key.ctrl && input === "c")) return;
+    // Some terminals encode Shift+Enter as a CSI sequence instead of setting
+    // Ink's key.shift flag. Consume both common encodings as a line break.
+    if (/\u001b\[(?:27;2;13~|13;2u)/.test(input)) {
+      const next = value.slice(0, cursor) + "\n" + value.slice(cursor);
+      setCursor(cursor + 1); onChange(next);
+      return;
+    }
     if (key.return) {
       if (key.shift) {
         const next = value.slice(0, cursor) + "\n" + value.slice(cursor);
