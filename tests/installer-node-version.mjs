@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { spawnSync } from 'node:child_process';
 
 test('installer enforces the package Node minimum before downloading', () => {
   const installer = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
@@ -14,5 +15,17 @@ test('installer enforces the package Node minimum before downloading', () => {
     let status;
     runInNewContext(probe[1], { process: { versions: { node: version }, exit: (code) => { status = code; } } });
     assert.equal(status, expected, version);
+  }
+});
+
+test('installer signal traps exit without advancing and clean the workspace', () => {
+  const installer = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
+  const traps = installer.split('\n').filter(line => line.startsWith('trap ')).join('\n');
+  for (const [signal, expected] of [['INT', 130], ['TERM', 143]]) {
+    const result = spawnSync('sh', ['-c', `cleanup() { printf 'CLEANED\\n'; }\n${traps}\nkill -${signal} $$\nprintf 'NEXT_STAGE\\n'`], { encoding: 'utf8', timeout: 5000 });
+    assert.equal(result.status, expected);
+    assert.match(result.stdout, /CLEANED/);
+    assert.doesNotMatch(result.stdout, /NEXT_STAGE/);
+    assert.match(result.stderr, /Installation (interrupted|terminated)/);
   }
 });

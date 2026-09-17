@@ -28,7 +28,9 @@ cleanup() {
   if [ -n "$PROGRESS_PID" ]; then kill "$PROGRESS_PID" 2>/dev/null || :; fi
   rm -rf "$INSTALL_DIR"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'printf "\nInstallation interrupted.\n" >&2; exit 130' INT
+trap 'printf "\nInstallation terminated.\n" >&2; exit 143' TERM
 
 run_stage() {
   STAGE_LABEL=$1
