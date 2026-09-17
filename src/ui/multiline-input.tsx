@@ -39,7 +39,7 @@ export default function MultilineInput({ value, placeholder = "", focus = true, 
   const before = value ? value.slice(0, cursor) : "";
   const atCursor = showCursor && focus ? (value[cursor] ?? " ") : "";
   const after = value ? value.slice(cursor + (showCursor && focus ? 1 : 0)) : "";
-  return <Text backgroundColor="#101426" color={value ? "#f6f2e8" : "#858ba8"}>
+  return <Text color={value ? "#f6f2e8" : "#858ba8"}>
     {value ? <>{before}<Text inverse={showCursor && focus}>{atCursor}</Text>{after}</> : <>{visible}<Text inverse={showCursor && focus}> </Text></>}
   </Text>;
 }
