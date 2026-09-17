@@ -662,15 +662,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
       setInputMount((current) => current + 1);
       return;
     }
-    if (key.return) {
-      suppressNextSubmit.current = true;
-      const selected = suggestions[suggestionIndex][0];
-      setTimeout(() => {
-        suppressNextSubmit.current = false;
-        void submitRef.current(selected);
-      }, 0);
-      return;
-    }
     if (key.downArrow) {
       setSuggestionIndex((current) => (current + 1) % suggestions.length);
       return;
@@ -3716,7 +3707,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
     </Box>}
     <Box borderStyle="single" borderColor={busy ? UI.amber : UI.rule} paddingX={2} paddingY={1} marginTop={1}>
       <Text color={busy ? UI.amber : UI.lime} bold>{busy ? "⟳ " : "› "}</Text>
-      <MultilineInput key={inputMount} focus={!picker} showCursor={!picker} value={input} onChange={setInput} onSubmit={submit} placeholder="Talk normally, or type /research for autonomous work..." />
+      <MultilineInput
+        key={inputMount}
+        focus={!picker}
+        showCursor={!picker}
+        value={input}
+        onChange={setInput}
+        onSubmit={(value) => { void submit(suggestions[suggestionIndex]?.[0] ?? value); }}
+        placeholder="Talk normally, or type /research for autonomous work..."
+      />
     </Box>
     <Box marginLeft={2} marginTop={0}>
       <Text color={UI.purple} bold>{config.provider.toUpperCase()}</Text><Text color={UI.muted}> · </Text><Text color={UI.paper} bold>{config.model}</Text><Text color={UI.muted}> · </Text><Text color={UI.amber} bold>THINKING: {config.reasoningEffort.toUpperCase()}</Text><Text color={UI.muted}> · </Text><Text color={UI.purple} bold>MODE: {config.mode.toUpperCase()}</Text><Text color={UI.muted}> · </Text><Text color={UI.lime} bold>PERMISSIONS: {config.autonomy.toUpperCase()}</Text>
