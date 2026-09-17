@@ -22,7 +22,7 @@
     "build": "tsc -p tsconfig.json",
     "prepare": "npm run build",
     "prepack": "npm run build",
-    "test": "npm run build && node --test tests/core-smoke.mjs tests/installer-node-version.mjs",
+    "test": "npm run build && node --test tests/core-smoke.mjs tests/installer-node-version.mjs tests/onboarding.mjs",
     "start": "node dist/cli.js",
     "check": "tsc -p tsconfig.json --noEmit"
   },

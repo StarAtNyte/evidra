@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { requiresProviderSetup } from "./onboarding.js";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { dirname, join, relative, resolve } from "node:path";
@@ -2180,6 +2181,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const request = value.trim();
     setInput("");
     if (!request) return;
+    if (!busy && requiresProviderSetup(onboardingComplete, request)) {
+      append("assistant", "Provider setup is incomplete. Select a provider and finish login before starting a conversation or research. Use /login codex to sign in, or /provider local to use Ollama.");
+      setPicker("provider"); setPickerIndex(0);
+      return;
+    }
     if (busy && !fromQueue) {
       const dispatched = await activeSteer.current?.(request) ?? false;
       const queued = { id: `queued_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, text: request, dispatched };
@@ -2574,7 +2580,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
             .catch(() => { setAvailableModels([]); setModelLoadError("Codex login succeeded, but the model list is unavailable. Try /model again."); });
           setOnboardingComplete(true);
           append("assistant", "Codex login completed. Evidra is ready.");
-        } else append("assistant", "Codex login did not complete. Setup remains available; run /login codex again when ready.");
+        } else {
+          setOnboardingComplete(false);
+          append("assistant", "Codex login did not complete. Setup remains available; run /login codex again when ready.");
+        }
+      } catch (error) {
+        setOnboardingComplete(false);
+        appendError(error);
       } finally {
         if (wasRaw) process.stdin.setRawMode?.(true);
         setBusy(false); setProgress("");
