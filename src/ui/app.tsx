@@ -166,6 +166,15 @@ const LOGO = [
   "███████╗ ╚████╔╝ ██║██████╔╝██║  ██║██║  ██║",
   "╚══════╝  ╚═══╝  ╚═╝╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝",
 ].join("\n");
+const UI = {
+  paper: "#f6f2e8",
+  muted: "#858ba8",
+  rule: "#2b3150",
+  purple: "#8b6cff",
+  lime: "#c7ff4a",
+  amber: "#ffc857",
+  red: "#ff6b6b",
+} as const;
 const REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
 const AGENT_ROLES = ["research director", "domain researcher", "method researcher", "data detective", "validation scientist", "model researcher", "ensemble scientist", "reproducibility engineer", "experiment engineer", "critic", "repair agent"] as const;
 const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
@@ -299,9 +308,9 @@ function RichText({ text }: { text: string }): React.JSX.Element {
     if (!codeLines.length) return;
     const captured = codeLines;
     blocks.push(
-      <Box key={`code-${blocks.length}`} borderStyle="single" borderColor="cyan" paddingX={1} flexDirection="column" marginTop={1} marginBottom={1}>
+      <Box key={`code-${blocks.length}`} borderStyle="single" borderColor={UI.rule} paddingX={1} flexDirection="column" marginTop={1} marginBottom={1}>
         {captured.map((line, index) => {
-          const color = line.startsWith("+") && !line.startsWith("+++") ? "green" : line.startsWith("-") && !line.startsWith("---") ? "red" : line.startsWith("@@") ? "cyan" : "white";
+          const color = line.startsWith("+") && !line.startsWith("+++") ? UI.lime : line.startsWith("-") && !line.startsWith("---") ? UI.red : line.startsWith("@@") ? UI.purple : UI.paper;
           return <Text key={`${index}-${line}`} color={color}>{line || " "}</Text>;
         })}
       </Box>,
@@ -311,21 +320,21 @@ function RichText({ text }: { text: string }): React.JSX.Element {
   lines.forEach((line, index) => {
     if (line.trimStart().startsWith("```")) {
       if (inCode) flushCode();
-      else blocks.push(<Text key={`fence-${index}`} color="cyan">{line}</Text>);
+      else blocks.push(<Text key={`fence-${index}`} color={UI.purple}>{line}</Text>);
       inCode = !inCode;
       return;
     }
     if (inCode) { codeLines.push(line); return; }
-    const diffColor = line.startsWith("+") && !line.startsWith("+++") ? "green" : line.startsWith("-") && !line.startsWith("---") ? "red" : line.startsWith("@@") ? "cyan" : line.startsWith("✓") ? "green" : line.startsWith("✗") ? "red" : line.startsWith("⚠") ? "yellow" : undefined;
+    const diffColor = line.startsWith("+") && !line.startsWith("+++") ? UI.lime : line.startsWith("-") && !line.startsWith("---") ? UI.red : line.startsWith("@@") ? UI.purple : line.startsWith("✓") ? UI.lime : line.startsWith("✗") ? UI.red : line.startsWith("⚠") ? UI.amber : undefined;
     const field = line.match(/^(\s*)([A-Za-z][A-Za-z0-9 _/-]{0,28}:)(.*)$/);
     if (field) {
-      blocks.push(<Text key={`line-${index}`}><Text color="cyan">{field[1]}{field[2]}</Text><Text color="white">{field[3]}</Text></Text>);
+      blocks.push(<Text key={`line-${index}`}><Text color={UI.purple}>{field[1]}{field[2]}</Text><Text color={UI.paper}>{field[3]}</Text></Text>);
     } else if (line.trim().endsWith("?")) {
-      blocks.push(<Text key={`line-${index}`} color="yellow" bold>{line}</Text>);
+      blocks.push(<Text key={`line-${index}`} color={UI.amber} bold>{line}</Text>);
     } else if (/^(Autonomous research setup|Step \d+\/\d+)/i.test(line.trim())) {
-      blocks.push(<Text key={`line-${index}`} color="magenta" bold>{line}</Text>);
+      blocks.push(<Text key={`line-${index}`} color={UI.purple} bold>{line}</Text>);
     } else {
-      blocks.push(<Text key={`line-${index}`} color={diffColor ?? "white"}>{line || " "}</Text>);
+      blocks.push(<Text key={`line-${index}`} color={diffColor ?? UI.paper}>{line || " "}</Text>);
     }
   });
   if (inCode) flushCode();
@@ -3586,29 +3595,32 @@ export function App({ root }: { root: string }): React.JSX.Element {
   return <Box flexDirection="column" padding={1}>
     <Static items={[LOGO]}>
       {(logo) => <Box key="evidra-logo" paddingX={2} flexDirection="column">
-        <Text color="#8b6cff" bold>{(process.stdout.columns ?? 80) >= 52 ? logo : "EVIDRA"}</Text>
+        <Text color={UI.purple} bold>{(process.stdout.columns ?? 80) >= 52 ? logo : "EVIDRA"}</Text>
       </Box>}
     </Static>
-    <Box paddingX={2}>
-      <Text color="gray"><Text color="cyan" bold>EVIDRA WORKBENCH</Text>  │  MODE: <Text color="yellow" bold>{config.mode.toUpperCase()}</Text>  │  THINKING: {config.reasoningEffort}  │  PERMISSIONS: <Text color="yellow" bold>{config.autonomy.toUpperCase()}</Text></Text>
+    <Box borderStyle="single" borderColor={UI.rule} paddingX={1} marginTop={1} justifyContent="space-between">
+      <Text color={UI.muted}>● ● ●  evidra / campaign</Text><Text color={UI.lime}>● connected</Text>
+    </Box>
+    <Box paddingX={2} marginTop={1}>
+      <Text color={UI.paper} bold>EVIDRA</Text><Text color={UI.muted}>  RESEARCH DIRECTOR</Text><Text color={UI.rule}>  │  </Text><Text color={UI.purple} bold>{config.mode.toUpperCase()}</Text><Text color={UI.rule}>  │  </Text><Text color={UI.amber} bold>THINKING: {config.reasoningEffort.toUpperCase()}</Text><Text color={UI.rule}>  │  </Text><Text color={UI.lime} bold>{config.autonomy.toUpperCase()}</Text>
     </Box>
     <Box flexDirection="column" marginTop={1} paddingX={1}>
       {messages.slice(-16).map((message, index) => {
         if (message.role === "assistant" && /^Interrupted\b/i.test(message.text)) {
           const detail = message.text.replace(/^Interrupted\s*[·:-]?\s*/i, "");
           return <Box key={`${index}-${message.text}`} marginBottom={1} paddingX={1}>
-            <Text color="red" bold>✕ INTERRUPTED</Text><Text color="red">  {detail || "Active work was stopped."}</Text>
+            <Text color={UI.red} bold>✕ INTERRUPTED</Text><Text color={UI.red}>  {detail || "Active work was stopped."}</Text>
           </Box>;
         }
         if (message.kind === "tool") {
           const [headline, ...details] = message.text.split("\n");
           return <Box key={`${index}-${message.text}`} flexDirection="column" marginBottom={1} paddingLeft={2}>
-            <Text color="gray" bold>• {headline}</Text>
+            <Text color={UI.muted} bold>• {headline}</Text>
             {details.length > 0 && <Box paddingLeft={2}><RichText text={details.map((line) => `└ ${line}`).join("\n")} /></Box>}
           </Box>;
         }
         const errorLike = message.role === "assistant" && /unreachable|not configured|not logged|failed|error|unavailable|refus|interrupted/i.test(message.text);
-        const accent = message.role === "user" ? "yellow" : message.role === "system" ? "gray" : errorLike ? "red" : "green";
+        const accent = message.role === "user" ? UI.lime : message.role === "system" ? UI.muted : errorLike ? UI.red : UI.paper;
         const label = messageLabel(message);
         const body = label && message.role === "assistant" ? message.text.split("\n").slice(1).join("\n") : message.text;
         return <Box key={`${index}-${message.text}`} flexDirection="column" marginBottom={1} paddingX={1}>
@@ -3618,40 +3630,40 @@ export function App({ root }: { root: string }): React.JSX.Element {
       })}
     </Box>
     {queuedRequests.length > 0 && <Box flexDirection="column" paddingX={1} marginTop={1}>
-      <Text color="yellow" bold>• QUEUED · {queuedRequests.length} waiting</Text>
-      {queuedRequests.map((queued) => <Text key={queued.id} color="yellow">  ↳ {queued.dispatched ? "steering next boundary · " : "waiting · "}{queued.text}</Text>)}
+      <Text color={UI.amber} bold>• QUEUED · {queuedRequests.length} waiting</Text>
+      {queuedRequests.map((queued) => <Text key={queued.id} color={UI.amber}>  ↳ {queued.dispatched ? "steering next boundary · " : "waiting · "}{queued.text}</Text>)}
     </Box>}
     {busy && <Box paddingX={1} marginTop={1}>
-      <Text color="magenta" bold>{["⠋", "⠙", "⠹", "⠸"][busyFrame]}  {progress || "Working..."}</Text><Text color="gray">  (esc to interrupt)</Text>
+      <Text color={UI.amber} bold>{["⠋", "⠙", "⠹", "⠸"][busyFrame]}  {progress || "Working..."}</Text><Text color={UI.muted}>  (esc to interrupt)</Text>
     </Box>}
-    {picker && <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column" marginTop={1}>
-      <Text color="cyan" bold>{picker === "provider" ? "Choose a provider" : picker === "model" ? `Select ${config.provider} model` : picker === "reasoning" ? "Select thinking effort" : picker === "mode" ? "Select workbench mode" : "Select permissions"}</Text>
-      <Text color="gray">↑/↓ navigate · Enter select · Esc cancel</Text>
+    {picker && <Box borderStyle="round" borderColor={UI.purple} paddingX={2} flexDirection="column" marginTop={1}>
+      <Text color={UI.purple} bold>{picker === "provider" ? "Choose a provider" : picker === "model" ? `Select ${config.provider} model` : picker === "reasoning" ? "Select thinking effort" : picker === "mode" ? "Select workbench mode" : "Select permissions"}</Text>
+      <Text color={UI.muted}>↑/↓ navigate · Enter select · Esc cancel</Text>
       {(picker === "provider" ? providerChoices : picker === "model" ? availableModels : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : permissionChoices).slice(Math.max(0, pickerIndex - 5), pickerIndex + 7).map((entry, index) => {
         const actualIndex = Math.max(0, pickerIndex - 5) + index;
         const label = typeof entry === "string"
           ? entry === "codex" ? "Codex · ChatGPT subscription"
             : entry === "local" ? "Local · Ollama on this machine" : entry
           : `${entry.displayName}  ${entry.id}${entry.isDefault ? " · default" : ""}${entry.hidden ? " · hidden" : ""}`;
-        return <Text key={typeof entry === "string" ? entry : entry.id} color={actualIndex === pickerIndex ? "yellow" : "white"}>
+        return <Text key={typeof entry === "string" ? entry : entry.id} color={actualIndex === pickerIndex ? UI.lime : UI.paper}>
           {actualIndex === pickerIndex ? "› " : "  "}{label}
         </Text>;
       })}
     </Box>}
-    {suggestions.length > 0 && <Box borderStyle="round" borderColor="cyan" flexDirection="column" marginTop={1}>
-      <Text color="black" backgroundColor="cyan" bold> SUGGESTIONS </Text>
+    {suggestions.length > 0 && <Box borderStyle="round" borderColor={UI.purple} flexDirection="column" marginTop={1}>
+      <Text color="black" backgroundColor={UI.purple} bold> SUGGESTIONS </Text>
       {suggestions.map(([command, description], index) => <Box key={command} paddingX={2}>
-        <Text color={index === suggestionIndex ? "black" : "gray"} backgroundColor={index === suggestionIndex ? "cyan" : undefined}>
+        <Text color={index === suggestionIndex ? "black" : UI.muted} backgroundColor={index === suggestionIndex ? UI.purple : undefined}>
           {index === suggestionIndex ? "› " : "  "}{command.padEnd(26, " ")} {description}
         </Text>
       </Box>)}
     </Box>}
-    <Box borderStyle="round" borderColor={busy ? "magenta" : "cyan"} paddingX={1} paddingY={0} marginTop={1}>
-      <Text color={busy ? "magenta" : "cyan"} bold>{busy ? "⟳ " : "› "}</Text>
+    <Box borderStyle="single" borderColor={busy ? UI.amber : UI.rule} paddingX={1} paddingY={0} marginTop={1}>
+      <Text color={busy ? UI.amber : UI.lime} bold>{busy ? "⟳ " : "› "}</Text>
       <TextInput key={inputMount} focus={!picker} showCursor={!picker} value={input} onChange={setInput} onSubmit={submit} placeholder="Talk normally, or type /research for autonomous work..." />
     </Box>
     <Box marginLeft={2} marginTop={0}>
-      <Text color="cyan" bold>{config.provider.toUpperCase()}</Text><Text color="gray"> · </Text><Text color="green" bold>{config.model}</Text><Text color="gray"> · </Text><Text color="magenta" bold>THINKING: {config.reasoningEffort.toUpperCase()}</Text><Text color="gray"> · </Text><Text color="blue" bold>MODE: {config.mode.toUpperCase()}</Text><Text color="gray"> · </Text><Text color="yellow" bold>PERMISSIONS: {config.autonomy.toUpperCase()}</Text>
+      <Text color={UI.purple} bold>{config.provider.toUpperCase()}</Text><Text color={UI.muted}> · </Text><Text color={UI.paper} bold>{config.model}</Text><Text color={UI.muted}> · </Text><Text color={UI.amber} bold>THINKING: {config.reasoningEffort.toUpperCase()}</Text><Text color={UI.muted}> · </Text><Text color={UI.purple} bold>MODE: {config.mode.toUpperCase()}</Text><Text color={UI.muted}> · </Text><Text color={UI.lime} bold>PERMISSIONS: {config.autonomy.toUpperCase()}</Text>
     </Box>
   </Box>;
 }
