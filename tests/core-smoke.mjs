@@ -1087,6 +1087,7 @@ test("durable campaign runtime settings are validated before resume", () => {
     mode: "challenge",
     provider: "local",
     model: "qwen3.6:27b",
+    fallbackModel: "qwen3.6:27b",
     thinking: "high",
     lanes: 4,
     autonomy: "fast",

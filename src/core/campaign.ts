@@ -50,6 +50,8 @@ export interface CampaignRuntimeConfig {
   mode: "research" | "challenge";
   provider: "codex" | "local";
   model: string;
+  /** Optional local Ollama route used when Codex is exhausted or unavailable. */
+  fallbackModel?: string;
   thinking: string;
   lanes: number;
   autonomy: "safe" | "fast" | "yolo";
@@ -71,6 +73,7 @@ export function campaignRuntimeFingerprint(runtime: CampaignRuntimeConfig): stri
     mode: runtime.mode,
     provider: runtime.provider,
     model: runtime.model,
+    ...(runtime.fallbackModel ? { fallbackModel: runtime.fallbackModel } : {}),
     thinking: runtime.thinking,
     lanes: runtime.lanes,
     autonomy: runtime.autonomy,
@@ -97,6 +100,7 @@ export function readCampaignRuntime(value: unknown): CampaignRuntimeConfig | und
     mode: candidate.mode as CampaignRuntimeConfig["mode"],
     provider: candidate.provider as CampaignRuntimeConfig["provider"],
     model: candidate.model,
+    ...(typeof candidate.fallbackModel === "string" && candidate.fallbackModel ? { fallbackModel: candidate.fallbackModel } : {}),
     thinking: candidate.thinking,
     lanes: candidate.lanes,
     autonomy: candidate.autonomy as CampaignRuntimeConfig["autonomy"],

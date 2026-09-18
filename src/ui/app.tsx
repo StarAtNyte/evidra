@@ -845,6 +845,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       mode: savedRuntime?.mode ?? configRef.current.mode,
       provider: savedRuntime?.provider ?? configRef.current.provider,
       model: savedRuntime?.model ?? configRef.current.model,
+      fallbackModel: savedRuntime?.fallbackModel ?? configRef.current.fallbackModel,
       thinking: savedRuntime?.thinking ?? configRef.current.reasoningEffort,
       lanes: savedRuntime?.lanes ?? (configRef.current.autonomy === "safe" ? 1 : configRef.current.autonomy === "fast" ? 2 : 4),
       autonomy: configRef.current.autonomy,
