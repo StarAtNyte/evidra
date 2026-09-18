@@ -925,6 +925,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const payload = entry.payload as { title?: string; url?: string; excerpt?: string; claims?: string[]; qualityScore?: number; evidenceClass?: string };
       return { id: entry.id, title: payload.title, url: payload.url, excerpt: payload.excerpt, claims: payload.claims?.slice(0, 8), qualityScore: payload.qualityScore, evidenceClass: payload.evidenceClass };
     });
+    const readVerifiedState = (): ReturnType<typeof projectVerifiedSubtaskState> => {
+      if (!phaseGoal) return projectVerifiedSubtaskState(undefined);
+      const refreshStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      try {
+        return projectVerifiedSubtaskState(refreshStore.latestSubtaskAudit(phaseGoal.id)?.payload);
+      } finally {
+        refreshStore.close();
+      }
+    };
     store.close();
     const laneStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     laneStore.updateAgentLane({ role: "research director", status: "running", provider: config.provider, model: config.model, task: objective });
@@ -1057,7 +1066,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         researchSources,
         ultimateGoal: objective,
         phaseGoal: phaseGoal ?? null,
-        verifiedState: phaseGoal ? projectVerifiedSubtaskState(store.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined),
+        verifiedState: readVerifiedState(),
         allocation,
         evidenceConflicts,
         researchMemory,
@@ -1091,7 +1100,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         onActivity: toolTrace.onActivity,
         onAssistant: toolTrace.onAssistant,
         onUsage: recordAgentUsage,
-        refreshVerifiedState: () => phaseGoal ? projectVerifiedSubtaskState(store.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined),
+        refreshVerifiedState: readVerifiedState,
       }, setProgress);
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
       criticReview = await runResearchCritic(objective, decision, laneReports, {
