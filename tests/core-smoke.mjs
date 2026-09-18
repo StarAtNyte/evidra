@@ -16,6 +16,7 @@ import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVecto
 import { CompetitionConfigSchema, ExperimentManifestSchema } from "../dist/core/types.js";
 import { competitionResearchClaimType, competitionResearchSources } from "../dist/core/competition-sources.js";
 import { extractCompetitionInsights } from "../dist/core/competition-insights.js";
+import { dashboardHtml, dashboardSnapshot } from "../dist/core/dashboard.js";
 import { processFailureResult, runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
@@ -6561,6 +6562,21 @@ test("compiled CLI boots and exposes scientific benchmark command", async () => 
   });
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /scientific/);
+});
+
+test("dashboard read model is bounded and secret-redacted", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-dashboard-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.appendEvent("test.dashboard", { token: "sk-test-dashboard-secret-value", command: ["tool", "--token", "secret-value"] });
+    const snapshot = dashboardSnapshot(store);
+    store.close();
+    assert.equal(snapshot.counts.events, undefined);
+    const serialized = JSON.stringify(snapshot);
+    assert.doesNotMatch(serialized, /sk-test-dashboard-secret-value|secret-value/);
+    assert.match(dashboardHtml(), /EVIDRA<\/span> \/ DASHBOARD/);
+    assert.match(dashboardHtml(), /\/api\/status/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("headless channel inspection has a stable JSON contract before ingestion", async () => {

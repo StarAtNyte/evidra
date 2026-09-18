@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { appendFileSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { createServer } from "node:http";
 import { dirname, join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
@@ -16,6 +17,7 @@ import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, 
 import { canonicalSourceUrl, retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceFrontier, sourceSearchText, sourceIsFresh } from "./core/sources.js";
 import { competitionResearchClaimType, competitionResearchSources } from "./core/competition-sources.js";
 import { extractCompetitionInsights } from "./core/competition-insights.js";
+import { dashboardHtml, dashboardSnapshot } from "./core/dashboard.js";
 import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "./core/literature-bench.js";
 import { parseAutoResearchBenchEvaluation } from "./core/autoresearch-bench.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "./core/submissions.js";
@@ -579,6 +581,44 @@ program.command("doctor").description("Check local providers, runtimes, and exec
   checks.push(`modal auth    ${modalAuth}`);
   console.log(checks.join("\n"));
 });
+
+program.command("dashboard")
+  .option("--port <port>", "localhost HTTP port", "4310")
+  .description("Serve a read-only live dashboard for durable Evidra state")
+  .action(async (options: { port: string }) => {
+    const port = Number.parseInt(options.port, 10);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Dashboard port must be an integer between 1 and 65535.");
+    const server = createServer((request, response) => {
+      if (request.method !== "GET") { response.writeHead(405, { allow: "GET" }); response.end("Method Not Allowed"); return; }
+      if (request.url === "/" || request.url === "/index.html") {
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+        response.end(dashboardHtml());
+        return;
+      }
+      if (request.url === "/api/status") {
+        try {
+          const store = new ResearchStore(statePath);
+          const snapshot = dashboardSnapshot(store);
+          store.close();
+          response.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+          response.end(JSON.stringify(snapshot));
+        } catch (error) {
+          response.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+          response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+        }
+        return;
+      }
+      response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      response.end("Not Found");
+    });
+    await new Promise<void>((resolveServer, rejectServer) => {
+      const shutdown = (): void => { server.close(() => resolveServer()); };
+      process.once("SIGINT", shutdown);
+      process.once("SIGTERM", shutdown);
+      server.once("error", rejectServer);
+      server.listen(port, "127.0.0.1", () => console.log(`Evidra dashboard: http://127.0.0.1:${port}`));
+    });
+  });
 
 const controller = new Command("controller").description("Inspect or control a headless Modal Evidra controller");
 function controllerEntrypoint(): string {

@@ -508,6 +508,16 @@ Useful commands:
     /research steer ...   Guide the next safe research cycle
     /loop                 Run or control the autonomous loop
     /workbench            Select Research or Challenge mode
+
+The controller also exposes a read-only local browser view:
+
+```bash
+evidra dashboard --port 4310
+```
+
+Open `http://127.0.0.1:4310`. The dashboard polls the same durable SQLite
+state and event log as the TUI, shows campaign/phases/agents/runs/events, and
+does not expose mutation endpoints.
     /provider             Select Codex or local provider
     /model                Select an available provider model
     /thinking             Select reasoning effort
@@ -862,7 +872,8 @@ OOF/prediction analysis with ensemble candidates. The remaining research-lab lay
    split/seed/replication signals from untrusted channel text; inspect them in
    the TUI with `/sources channels`;
 2. additional remote executor backends such as Kubernetes, RunPod, and Vast.ai (Slurm is now supported);
-3. a local browser dashboard on top of the same event/state model.
+3. deeper dashboard visualizations and remote controls; the read-only local
+   dashboard is now available with `evidra dashboard`.
 
 These are separate from the core TUI so Evidra remains useful for non-Kaggle research and can be operated entirely from a terminal.
 

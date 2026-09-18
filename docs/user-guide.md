@@ -372,6 +372,10 @@ restarts. Inspect it through the TUI or CLI:
 /telemetry export        Secret-free MLflow-shaped run telemetry
 ```
 
+For a browser view of the active workspace, run `evidra dashboard --port 4310`
+and open `http://127.0.0.1:4310`. It is read-only, localhost-bound, and polls
+the same durable state used by the TUI.
+
 Generated reports include provenance coverage, claims, metrics, artifacts,
 runtime, failure classes, and the quality/reliability/time frontier. Reports
 are diagnostic evidence; they do not replace an evaluator or replication.
