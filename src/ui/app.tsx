@@ -18,7 +18,7 @@ import { compareRuns } from "../core/statistics.js";
 import { recoveryDelay, recoveryPlan, recoveryRouteDirective } from "../core/recovery.js";
 import { observedGpuHours } from "../core/compute-budget.js";
 import { distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../core/distribution-beliefs.js";
-import { bindCampaignRuntime, campaignElapsedMinutes, pauseCampaign, readCampaignCheckpoint, resumeCampaign, withCampaignCheckpoint, type CampaignRuntimeConfig } from "../core/campaign.js";
+import { bindCampaignRuntime, campaignElapsedMinutes, pauseCampaign, readCampaignCheckpoint, resolveCampaignMode, resumeCampaign, withCampaignCheckpoint, type CampaignRuntimeConfig } from "../core/campaign.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../core/submissions.js";
 import { formatResearchStarterBriefs } from "../core/research-starters.js";
 import { classifyResearchSetupInput } from "../core/research-setup.js";
@@ -2544,45 +2544,51 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const lifecycleMode = request.startsWith("/challenge") ? "challenge" : "research";
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const saved = store.campaign() as ResearchCampaign | undefined;
+      const actualMode = resolveCampaignMode(saved?.runtime?.mode, lifecycleMode);
+      if (saved && actualMode !== lifecycleMode) {
+        store.close();
+        append("assistant", `The active campaign is ${actualMode}. Use /${actualMode} ${action}.`);
+        return;
+      }
       if (action === "status") {
         const scheduler = store.schedulerState();
         const lease = store.liveControllerLease();
         store.close();
         const runtime = saved?.runtime;
-        append("assistant", saved ? `${lifecycleMode === "challenge" ? "Challenge" : "Research"} campaign\n  status: ${saved.status}\n  goal: ${saved.goal}\n  budget: ${saved.budgetMinutes} minutes\n  autonomous experiments: ${saved.autoExecuteExperiments ? "enabled" : "approval-gated"}\n  route: ${runtime ? `${runtime.provider}/${runtime.model} · thinking ${runtime.thinking} · executor ${runtime.executor}` : "legacy campaign route unavailable"}\n  permissions: terminal-scoped (${config.autonomy})\n  scheduler: ${scheduler.status}\n  step: ${scheduler.currentStep ?? "idle"}` : `No ${lifecycleMode} campaign exists. Use /${lifecycleMode} start.`);
+        append("assistant", saved ? `${actualMode === "challenge" ? "Challenge" : "Research"} campaign\n  status: ${saved.status}\n  goal: ${saved.goal}\n  budget: ${saved.budgetMinutes} minutes\n  autonomous experiments: ${saved.autoExecuteExperiments ? "enabled" : "approval-gated"}\n  route: ${runtime ? `${runtime.provider}/${runtime.model} · thinking ${runtime.thinking} · executor ${runtime.executor}` : "legacy campaign route unavailable"}\n  permissions: terminal-scoped (${config.autonomy})\n  scheduler: ${scheduler.status}\n  step: ${scheduler.currentStep ?? "idle"}` : `No ${lifecycleMode} campaign exists. Use /${lifecycleMode} start.`);
         if (lease) append("assistant", `Controller: running · pid ${lease.pid} · step ${lease.currentStep ?? "unknown"}`);
         return;
       }
       if (!saved) { store.close(); append("assistant", `No ${lifecycleMode} campaign exists. Use /${lifecycleMode} start.`); return; }
       if (action === "resume" && saved.status === "completed") {
         store.close();
-        append("assistant", `${lifecycleMode === "challenge" ? "Challenge" : "Research"} campaign is completed/stopped. Start a new campaign with /${lifecycleMode} start.`);
+        append("assistant", `${actualMode === "challenge" ? "Challenge" : "Research"} campaign is completed/stopped. Start a new campaign with /${actualMode} start.`);
         return;
       }
       if (action === "pause") {
         pauseActiveProcesses();
         if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
         const paused = pauseCampaign(saved);
-        store.saveCampaign(paused); store.setSchedulerState({ status: "paused", mode: lifecycleMode, currentStep: "paused" }); store.close();
+        store.saveCampaign(paused); store.setSchedulerState({ status: "paused", mode: actualMode, currentStep: "paused" }); store.close();
         releaseControllerLease();
-        setConfig((current) => ({ ...current, mode: lifecycleMode, campaign: paused }));
-        append("assistant", `${lifecycleMode === "challenge" ? "Challenge" : "Research"} paused. Active workers are paused and the campaign is resumable.`);
+        setConfig((current) => ({ ...current, mode: actualMode, campaign: paused }));
+        append("assistant", `${actualMode === "challenge" ? "Challenge" : "Research"} paused. Active workers are paused and the campaign is resumable.`);
         return;
       }
       if (action === "stop") {
         terminateActiveProcesses();
         if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
         const stopped = { ...saved, status: "completed" as const };
-        store.saveCampaign(stopped); store.setSchedulerState({ status: "idle", mode: lifecycleMode, currentStep: "stopped" }); store.close();
+        store.saveCampaign(stopped); store.setSchedulerState({ status: "idle", mode: actualMode, currentStep: "stopped" }); store.close();
         releaseControllerLease();
-        setConfig((current) => ({ ...current, mode: lifecycleMode, campaign: stopped }));
-        append("assistant", `${lifecycleMode === "challenge" ? "Challenge" : "Research"} stopped. It remains saved for inspection, but will not resume automatically.`);
+        setConfig((current) => ({ ...current, mode: actualMode, campaign: stopped }));
+        append("assistant", `${actualMode === "challenge" ? "Challenge" : "Research"} stopped. It remains saved for inspection, but will not resume automatically.`);
         return;
       }
       const resumed = { ...resumeCampaign(saved), nextAttemptAt: undefined, limitMessage: undefined };
-      store.saveCampaign(resumed); store.setSchedulerState({ status: "running", mode: lifecycleMode, currentStep: "resuming" }); store.close();
-      setConfig((current) => ({ ...current, mode: lifecycleMode, campaign: resumed }));
-      append("assistant", `${lifecycleMode === "challenge" ? "Challenge" : "Research"} resumed. Evidra will continue from the latest durable phase, evidence, and experiment state.`);
+      store.saveCampaign(resumed); store.setSchedulerState({ status: "running", mode: actualMode, currentStep: "resuming" }); store.close();
+      setConfig((current) => ({ ...current, mode: actualMode, campaign: resumed }));
+      append("assistant", `${actualMode === "challenge" ? "Challenge" : "Research"} resumed. Evidra will continue from the latest durable phase, evidence, and experiment state.`);
       setTimeout(() => { void runAutonomousCycle(resumed, true); }, 0);
       return;
     }
