@@ -2058,12 +2058,12 @@ research.command("plan")
   .action(() => {
     const store = new ResearchStore(statePath);
     const campaign = store.campaign() as { goal?: string; runtime?: { mode?: unknown } } | undefined;
-    const mode = resolveCampaignMode(campaign?.runtime?.mode, store.schedulerState().mode);
-    const goals = phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode);
+    const researchCampaign = campaign?.runtime?.mode === "research" ? campaign : undefined;
+    const goals = phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), "research");
     const stages = researchStageProgress(goals);
     store.close();
     const progress = stages.map((stage) => `   State: ${stage.completed}/${stage.total} internal phases · ${stage.status}`).join("\n");
-    console.log(`Research plan\n\n${formatResearchStagePlan()}\n\nInternal phase progress\n${progress}${campaign?.goal ? `\n\nActive goal\n   ${campaign.goal}` : ""}`);
+    console.log(`Research plan\n\n${formatResearchStagePlan()}\n\nInternal phase progress\n${progress}${researchCampaign?.goal ? `\n\nActive goal\n   ${researchCampaign.goal}` : ""}`);
   });
 research.command("status")
   .description("Show durable research campaign and three-stage progress")
