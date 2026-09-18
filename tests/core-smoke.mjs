@@ -15,6 +15,7 @@ import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, S
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { CompetitionConfigSchema, ExperimentManifestSchema } from "../dist/core/types.js";
 import { competitionResearchClaimType, competitionResearchSources } from "../dist/core/competition-sources.js";
+import { extractCompetitionInsights } from "../dist/core/competition-insights.js";
 import { processFailureResult, runProcess } from "../dist/core/process.js";
 import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
@@ -6215,6 +6216,16 @@ test("competition research channels are typed, deduplicated, and preserve refres
   ]);
   assert.equal(competitionResearchClaimType("paper"), "literature");
   assert.equal(competitionResearchClaimType("discussion"), "external_source");
+});
+
+test("competition channel insights parse bounded leaderboard and discussion observations", () => {
+  const leaderboard = extractCompetitionInsights("1 | alice | score: 0.812\n2 | bob | score: 0.799\nfooter", "leaderboard");
+  assert.equal(leaderboard.leaderboard.length, 2);
+  assert.deepEqual(leaderboard.leaderboard[0], { rank: 1, participant: "alice", score: 0.812, raw: "1 | alice | score: 0.812" });
+  const discussion = extractCompetitionInsights("# Baseline replication\nUse group splits and report seed variance.\n# Navigation", "discussion");
+  assert.deepEqual(discussion.discussions.map((entry) => entry.title), ["Baseline replication"]);
+  assert.equal(discussion.signals.length, 1);
+  assert.match(discussion.signals[0], /seed variance/i);
 });
 
 test("experiment manifests carry the complete metric contract to workers", () => {

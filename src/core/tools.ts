@@ -16,6 +16,7 @@ import { readValidationPolicyLock } from "./validation-lock.js";
 import { sha256File } from "./evidence.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "./error-analysis.js";
 import { diversityReport, loadPredictionVector, safePredictionPath } from "./ensemble.js";
+import { extractCompetitionInsights } from "./competition-insights.js";
 
 const SOURCE_FRONTIER_EVENT_TYPES = [
   "research.source.search.completed",
@@ -350,8 +351,9 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         }
         const retrieved = await retrieveSource(url);
         const claims = sourceClaims(retrieved.text);
+        const insights = extractCompetitionInsights(retrieved.text, kind);
         const store = new ResearchStore(context.storePath);
-        store.saveSource({ id: retrieved.id, payload: { ...retrieved, claims, channelKind: kind } });
+        store.saveSource({ id: retrieved.id, payload: { ...retrieved, claims, channelKind: kind, insights } });
         for (const [index, statement] of claims.entries()) {
           const claimId = `${retrieved.id}_claim_${index + 1}`;
           store.saveClaim({ id: claimId, payload: { id: claimId, statement, scope: retrieved.url, confidence: 0.35, sourceType: competitionResearchClaimType(kind), sourceId: retrieved.id, status: "active" } });
@@ -359,7 +361,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         }
         store.appendEvent("research.source.retrieved", { id: retrieved.id, url: retrieved.url, channelKind: kind, claimCount: claims.length });
         store.close();
-        output = { id: retrieved.id, title: retrieved.title, url: retrieved.url, channelKind: kind, claims, excerpt: retrieved.excerpt };
+        output = { id: retrieved.id, title: retrieved.title, url: retrieved.url, channelKind: kind, claims, insights, excerpt: retrieved.excerpt };
         break;
       }
       case "competition.observe": {
@@ -389,16 +391,17 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         const retrieved = await retrieveSource(selected.url);
         const claimRecords = sourceClaimRecords(retrieved.text);
         const claims = claimRecords.map((claim) => claim.statement);
+        const insights = extractCompetitionInsights(retrieved.text, selected.kind);
         const store = new ResearchStore(context.storePath);
-        store.saveSource({ id: retrieved.id, payload: { ...retrieved, claims, channelKind: selected.kind } });
+        store.saveSource({ id: retrieved.id, payload: { ...retrieved, claims, channelKind: selected.kind, insights } });
         for (const [index, claim] of claimRecords.entries()) {
           const claimId = `${retrieved.id}_claim_${index + 1}`;
           store.saveClaim({ id: claimId, payload: { id: claimId, statement: claim.statement, excerpt: claim.excerpt, sourceSpan: { start: claim.start, end: claim.end }, scope: retrieved.url, confidence: 0.35, sourceType: competitionResearchClaimType(selected.kind), sourceId: retrieved.id, status: "active" } });
           store.saveEdge({ id: `edge_${claimId}_${retrieved.id}`, fromId: claimId, toId: retrieved.id, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
         }
-        store.appendEvent("research.competition.channel.observed", { sourceId: retrieved.id, url: retrieved.url, channelKind: selected.kind, claimCount: claims.length });
+        store.appendEvent("research.competition.channel.observed", { sourceId: retrieved.id, url: retrieved.url, channelKind: selected.kind, claimCount: claims.length, insightCounts: { leaderboard: insights.leaderboard.length, discussions: insights.discussions.length, signals: insights.signals.length } });
         store.close();
-        output = { id: retrieved.id, title: retrieved.title, url: retrieved.url, channelKind: selected.kind, contentHash: retrieved.contentHash, claims, excerpt: retrieved.excerpt, cached: false };
+        output = { id: retrieved.id, title: retrieved.title, url: retrieved.url, channelKind: selected.kind, contentHash: retrieved.contentHash, claims, insights, excerpt: retrieved.excerpt, cached: false };
         break;
       }
       case "source.search": {
