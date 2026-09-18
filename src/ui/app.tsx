@@ -2957,6 +2957,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     const challengeSubcommand = request.split(/\s+/)[1] ?? "";
     if (request.startsWith("/challenge ") && (challengeSubcommand === "start" || !["status", "list", "inspect", "audit", "policy", "baseline", "init"].includes(challengeSubcommand))) {
+      const campaignStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const durableCampaign = campaignStore.campaign() as ResearchCampaign | undefined;
+      const liveController = campaignStore.liveControllerLease();
+      const schedulerMode = campaignStore.schedulerState().mode;
+      campaignStore.close();
+      if (durableCampaign?.status === "running") {
+        const activeMode = resolveCampaignMode(durableCampaign.runtime?.mode, liveController?.mode ?? schedulerMode);
+        const controllerHint = liveController ? ` (pid ${liveController.pid})` : " (saved controller state)";
+        append("assistant", `An autonomous ${activeMode} campaign is already running${controllerHint}. Use /${activeMode} status, /${activeMode} resume, or /${activeMode} stop before starting a new Challenge.`);
+        return;
+      }
       const challengeUrl = request.match(/https?:\/\/\S+/)?.[0];
       const goal = challengeSubcommand === "start"
         ? "Win the active challenge with a reproducible, generalizing solution"
