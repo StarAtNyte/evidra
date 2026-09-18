@@ -501,7 +501,10 @@ Useful commands:
     /research             Start or run an evidence-gathering cycle
     /research start       Start a fully autonomous research campaign
     /research examples    Show contemporary starter briefs with metrics and stop rules
+    /research examples --json
+                          Export starter briefs for an external runner
     /research plan        Show the three high-level steps and internal phase goals
+    /research plan --json Export the stages and current phase progress as JSON
     /research pause       Pause workers and preserve the campaign
     /research resume      Resume the saved research campaign
     /research stop        Stop the campaign without deleting evidence

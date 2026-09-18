@@ -2754,6 +2754,16 @@ test("research starter briefs are shared across interactive and headless entrypo
   assert.equal(selectResearchStarter("custom"), undefined);
 });
 
+test("research plan and starter briefs expose stable machine-readable contracts", () => {
+  const cli = join(process.cwd(), "dist", "cli.js");
+  const plan = JSON.parse(execFileSync(process.execPath, [cli, "research", "plan", "--json"], { encoding: "utf8" }));
+  const examples = JSON.parse(execFileSync(process.execPath, [cli, "research", "examples", "--json"], { encoding: "utf8" }));
+  assert.equal(plan.stages.length, 3);
+  assert.equal(plan.internalPhaseProgress.length, 3);
+  assert.equal(examples.briefs.length, 3);
+  assert.ok(examples.briefs.every((brief) => typeof brief.question === "string" && typeof brief.answer === "string"));
+});
+
 test("guided research setup does not consume slash commands as answers", () => {
   assert.equal(classifyResearchSetupInput("goal", "/research"), "repeat");
   assert.equal(classifyResearchSetupInput("budget", "/help"), "repeat");
