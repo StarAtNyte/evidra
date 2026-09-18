@@ -2360,7 +2360,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (request === "/exit" || request === "/quit") { exit(); return; }
     if (request === "/help") { append("assistant", help()); return; }
     if (request === "/workbench research" || request === "/mode research") {
-      setConfig((current) => ({ ...current, mode: "research" }));
+      const nextConfig = { ...configRef.current, mode: "research" as const };
+      configRef.current = nextConfig;
+      setConfig(nextConfig);
       append("assistant", "Research mode active. Natural-language prompts become research questions; challenge execution remains explicit.");
       return;
     }
@@ -2612,7 +2614,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request === "/research" || request === "/research start") {
       if (config.campaign?.status === "running") { append("assistant", "An autonomous research campaign is already running. Use /research status or /research pause."); return; }
-      setConfig((current) => ({ ...current, mode: "research" }));
+      const nextConfig = { ...configRef.current, mode: "research" as const };
+      configRef.current = nextConfig;
+      setConfig(nextConfig);
       setSetupDraft({}); setSetupStep("goal");
       append("assistant", researchSetupPrompt("goal"));
       return;
@@ -2916,11 +2920,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (request === "/status" || request === "/project status") {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const project = store.project();
-      const campaign = config.campaign;
+      const campaign = store.campaign() as ResearchCampaign | undefined;
+      const scheduler = store.schedulerState();
+      const statusMode = resolveCampaignMode(campaign?.runtime?.mode, scheduler.mode);
       const integrity = store.verifyEventChain();
       const eventCount = store.eventCount();
       const gpuUsed = observedGpuHours(store.runAttempts(), store.experiments(), store.hypotheses()); const gpuReserved = store.reservedComputeGpuHours();
-      append("assistant", project ? `Project: ${project.name}\nWorkspace: ${project.competitionId}\nMode: ${config.mode}\nAutonomy: ${config.autonomy}\nEvents: ${eventCount}\nIntegrity: ${integrity.status.toUpperCase()}${integrity.legacy ? ` (${integrity.legacy} legacy)` : ""}${campaign ? `\nCampaign: ${campaign.status}\nGoal: ${campaign.goal}\nBudget: ${campaign.budgetMinutes} minutes\nGPU committed: ${(gpuUsed + gpuReserved).toFixed(3)} / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed - gpuReserved).toFixed(3)} available)` : ""}\nStop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\nProvider retry: ${campaign.nextAttemptAt}` : ""}` : ""}` : "No Evidra project initialized. Start with /research to configure an autonomous campaign.");
+      append("assistant", project ? `Project: ${project.name}\nWorkspace: ${project.competitionId}\nMode: ${statusMode}\nAutonomy: ${config.autonomy}\nEvents: ${eventCount}\nIntegrity: ${integrity.status.toUpperCase()}${integrity.legacy ? ` (${integrity.legacy} legacy)` : ""}${campaign ? `\nCampaign: ${campaign.status}\nGoal: ${campaign.goal}\nBudget: ${campaign.budgetMinutes} minutes\nGPU committed: ${(gpuUsed + gpuReserved).toFixed(3)} / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed - gpuReserved).toFixed(3)} available)` : ""}\nStop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\nProvider retry: ${campaign.nextAttemptAt}` : ""}` : ""}` : "No Evidra project initialized. Start with /research to configure an autonomous campaign.");
       store.close();
       return;
     }
