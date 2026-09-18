@@ -133,7 +133,7 @@ export function pauseCampaign<T extends CampaignTimeState>(campaign: T, now = ne
 }
 
 export function resumeCampaign<T extends CampaignTimeState>(campaign: T, now = new Date().toISOString()): T {
-  if (campaign.status === "completed") return campaign;
+  if (campaign.status === "completed" || campaign.status === "setup") return campaign;
   if (campaign.status !== "paused" || !campaign.pausedAt) return { ...campaign, status: "running" };
   const pausedMs = Math.max(0, Date.parse(now) - Date.parse(campaign.pausedAt));
   return {

@@ -2454,13 +2454,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
         }
         setOnboardingComplete(true);
         activeCodexThread.current = resumedConfig.provider === "codex" ? resumedConfig.codexThreadId : undefined;
-        if (campaign && campaign.status !== "completed") {
+        if (campaign && (campaign.status === "paused" || campaign.status === "running")) {
           const activeCampaign = resumeCampaign(campaign) as ResearchCampaign;
           persistCampaign(activeCampaign);
           setConfig((current) => ({ ...current, campaign: activeCampaign }));
           setTimeout(() => { void runAutonomousCycle(activeCampaign, true); }, 0);
-        } else if (campaign?.status === "completed") {
-          append("assistant", "Saved campaign restored as completed. No workers were restarted; use /research start for a new campaign.");
+        } else if (campaign) {
+          append("assistant", `Saved campaign restored as ${campaign.status}. No workers were restarted; use /research start for a new campaign.`);
         }
       } catch {
         setPicker("provider"); setPickerIndex(resumedConfig.provider === "codex" ? 0 : 1);

@@ -1054,6 +1054,8 @@ test("campaign child timeout is bounded by remaining active budget", () => {
   assert.equal(campaignRemainingMs(campaign, Date.parse("2026-01-01T00:40:00.000Z")), 0);
   const completed = { ...campaign, status: "completed" };
   assert.deepEqual(resumeCampaign(completed, "2026-01-01T01:00:00.000Z"), completed);
+  const setup = { ...campaign, status: "setup" };
+  assert.deepEqual(resumeCampaign(setup, "2026-01-01T01:00:00.000Z"), setup);
 });
 
 test("research model stages scale with long campaigns without exceeding their budget share", () => {
