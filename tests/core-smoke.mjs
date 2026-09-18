@@ -29,7 +29,7 @@ import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist
 import { experienceReplayWorld } from "../dist/core/experience.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
-import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "../dist/core/phase-goals.js";
+import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageForPhase, researchStageProgress } from "../dist/core/phase-goals.js";
 import { assertSubtaskContract, auditSubtask, projectVerifiedSubtaskState, subtaskAuditFingerprint, subtaskStateFromAudit, validateSubtaskContract } from "../dist/core/subtask-state.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "../dist/core/decision-auditor.js";
 import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, submitApprovedBundle } from "../dist/core/submission-adapters.js";
@@ -2696,6 +2696,22 @@ test("research and challenge phase machines remain isolated in one durable proje
   assert.equal(phaseGoalsForMode(mixed, "challenge").length, challenge.length);
   const completedResearch = research.map((goal) => ({ ...goal, status: "met" }));
   assert.equal(activePhaseGoal([...completedResearch, ...challenge], "challenge")?.id, challenge[0].id);
+});
+
+test("three-stage research progress is derived from detailed durable goals", () => {
+  const goals = definePhaseGoals("stage mapping", "research");
+  assert.equal(researchStageForPhase("orientation"), "orient");
+  assert.equal(researchStageForPhase("hypothesis"), "discover");
+  assert.equal(researchStageForPhase("replication"), "validate");
+  const progress = researchStageProgress(goals);
+  assert.deepEqual(progress.map((stage) => [stage.stage, stage.completed, stage.total, stage.status]), [
+    ["orient", 0, 3, "active"],
+    ["discover", 0, 3, "pending"],
+    ["validate", 0, 3, "pending"],
+  ]);
+  const advanced = goals.map((goal, index) => index < 3 ? { ...goal, status: "met" } : index === 3 ? { ...goal, status: "active" } : goal);
+  assert.equal(researchStageProgress(advanced)[0].status, "met");
+  assert.equal(researchStageProgress(advanced)[1].status, "active");
 });
 
 test("phase goal sets isolate separate objectives within one mode", () => {

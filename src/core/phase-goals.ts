@@ -1,6 +1,50 @@
 import { PhaseGoalSchema, type PhaseGoal, type ResearchPhase } from "./types.js";
 import { auditSubtask, type SubtaskAudit, type SubtaskContract, type SubtaskObservation } from "./subtask-state.js";
 
+export type ResearchStage = "orient" | "discover" | "validate";
+
+const STAGE_PHASES: Record<ResearchStage, readonly ResearchPhase[]> = {
+  orient: ["orientation", "baseline", "data_audit"],
+  discover: ["validation", "hypothesis", "implementation"],
+  validate: ["evaluation", "replication", "promotion"],
+};
+
+/** Map the detailed phase machine to the three user-facing research stages. */
+export function researchStageForPhase(phase: ResearchPhase): ResearchStage {
+  for (const [stage, phases] of Object.entries(STAGE_PHASES) as Array<[ResearchStage, readonly ResearchPhase[]]>) {
+    if (phases.includes(phase)) return stage;
+  }
+  return "orient";
+}
+
+export interface ResearchStageProgress {
+  stage: ResearchStage;
+  completed: number;
+  total: number;
+  ratio: number;
+  activePhase?: ResearchPhase;
+  status: "pending" | "active" | "blocked" | "met";
+}
+
+/** Summarize durable phase goals without letting model prose advance a stage. */
+export function researchStageProgress(goals: readonly Pick<PhaseGoal, "phase" | "status">[]): ResearchStageProgress[] {
+  return (Object.keys(STAGE_PHASES) as ResearchStage[]).map((stage) => {
+    const phaseSet = STAGE_PHASES[stage];
+    const scoped = goals.filter((goal) => phaseSet.includes(goal.phase));
+    const completed = scoped.filter((goal) => goal.status === "met").length;
+    const active = scoped.find((goal) => goal.status === "active" || goal.status === "blocked");
+    const status: ResearchStageProgress["status"] = active?.status ?? (scoped.length > 0 && completed === scoped.length ? "met" : completed > 0 ? "active" : "pending");
+    return {
+      stage,
+      completed,
+      total: phaseSet.length,
+      ratio: phaseSet.length ? completed / phaseSet.length : 0,
+      activePhase: active?.phase,
+      status,
+    };
+  });
+}
+
 /** Create a short deterministic identity for one mode/objective goal set. */
 export function phaseGoalSetId(ultimateGoal: string, mode: "research" | "challenge"): string {
   let hash = 2166136261;
