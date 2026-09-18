@@ -559,27 +559,49 @@ program.command("backup")
     console.log(`State backup created\n${path}`);
   });
 
-program.command("doctor").description("Check local providers, runtimes, and execution backends").action(async () => {
+program.command("doctor")
+  .option("--json", "emit machine-readable diagnostics")
+  .description("Check local providers, runtimes, and execution backends")
+  .action(async (options: { json?: boolean }) => {
   const checks: string[] = [`workspace     ${root}`, `node          ${process.versions.node}`];
+  const diagnostics: Array<{ name: string; status: "ok" | "missing" | "unavailable"; detail: string }> = [
+    { name: "workspace", status: "ok", detail: root },
+    { name: "node", status: "ok", detail: process.versions.node },
+  ];
   for (const command of ["git", "uv", "ollama", "modal", "docker", "podman", "sbatch", "squeue", "sacct"]) {
     const result = await runProcess(["which", command], root, 5_000);
-    checks.push(`${command.padEnd(13)}${result.exitCode === 0 ? result.stdout.trim() : "not found"}`);
+    const detail = result.exitCode === 0 ? result.stdout.trim() : "not found";
+    checks.push(`${command.padEnd(13)}${detail}`);
+    diagnostics.push({ name: command, status: result.exitCode === 0 ? "ok" : "missing", detail });
   }
   const codexPath = resolveCodexBinary();
   const codexResult = await runProcess(["which", codexPath], root, 5_000);
-  checks.push(`codex        ${codexResult.exitCode === 0 ? codexResult.stdout.trim() : "not found"} (${codexPath})`);
-  checks.push(`codex auth    ${codexLoginStatus() || "not authenticated"}`);
+  const codexBinary = codexResult.exitCode === 0 ? codexResult.stdout.trim() : "not found";
+  checks.push(`codex        ${codexBinary} (${codexPath})`);
+  diagnostics.push({ name: "codex", status: codexResult.exitCode === 0 ? "ok" : "missing", detail: `${codexBinary} (${codexPath})` });
+  const codexAuth = codexLoginStatus() || "not authenticated";
+  checks.push(`codex auth    ${codexAuth}`);
+  diagnostics.push({ name: "codex-auth", status: /not authenticated|not logged/i.test(codexAuth) ? "unavailable" : "ok", detail: redactSecrets(codexAuth) });
   try {
     const models = await listLocalModels();
-    checks.push(`ollama models ${models.length ? models.map((model) => model.id).join(", ") : "none installed"}`);
+    const detail = models.length ? models.map((model) => model.id).join(", ") : "none installed";
+    checks.push(`ollama models ${detail}`);
+    diagnostics.push({ name: "ollama-models", status: models.length ? "ok" : "unavailable", detail });
   } catch (error) {
-    checks.push(`ollama API    ${error instanceof Error ? error.message : String(error)}`);
+    const detail = redactSecrets(error instanceof Error ? error.message : String(error));
+    checks.push(`ollama API    ${detail}`);
+    diagnostics.push({ name: "ollama-api", status: "unavailable", detail });
   }
   const modalAuth = process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET
     ? "environment credentials"
     : (await runProcess(["modal", "profile", "current"], root, 10_000)).exitCode === 0 ? "CLI profile selected" : "not configured";
   checks.push(`modal auth    ${modalAuth}`);
-  console.log(checks.join("\n"));
+  diagnostics.push({ name: "modal-auth", status: modalAuth === "not configured" ? "unavailable" : "ok", detail: modalAuth });
+  if (options.json) {
+    console.log(JSON.stringify({ workspace: root, node: process.versions.node, checks: diagnostics }, null, 2));
+  } else {
+    console.log(checks.join("\n"));
+  }
 });
 
 program.command("dashboard")

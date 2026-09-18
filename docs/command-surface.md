@@ -277,6 +277,7 @@ Roles are director, domain researcher, method researcher, data detective, valida
 /config                       Show effective configuration
 /config validate              Validate project configuration
 /doctor                      Diagnose Node, Python, uv, Ollama, Codex, and Modal
+/doctor --json               Export machine-readable diagnostics for automation
 ```
 
 Provider limits are part of scheduling. The default `auto` policy uses the configured local model when Codex reaches a usage/rate limit; if no local model is available, it waits durably for the provider reset window. `wait`, `fallback`, and `stop` remain explicit alternatives. Provider switches are recorded on the run and never change the experiment identity.

@@ -6590,6 +6590,16 @@ test("compiled CLI boots and exposes scientific benchmark command", async () => 
   assert.match(result.stdout, /scientific/);
 });
 
+test("doctor exposes a bounded machine-readable diagnostics contract", () => {
+  const output = execFileSync(process.execPath, [join(process.cwd(), "dist", "cli.js"), "doctor", "--json"], { encoding: "utf8", timeout: 30_000 });
+  const report = JSON.parse(output);
+  assert.equal(typeof report.workspace, "string");
+  assert.equal(typeof report.node, "string");
+  assert.ok(Array.isArray(report.checks));
+  assert.ok(report.checks.some((check) => check.name === "codex-auth"));
+  assert.doesNotMatch(output, /sk-[A-Za-z0-9]{12,}|Bearer\s+[A-Za-z0-9._-]+/i);
+});
+
 test("dashboard read model is bounded and secret-redacted", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-dashboard-"));
   try {

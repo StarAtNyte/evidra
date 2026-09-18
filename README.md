@@ -555,6 +555,7 @@ does not expose mutation endpoints.
     /sessions             List saved sessions
     /resume               Resume a saved session explicitly
     /doctor               Diagnose dependencies and provider access
+    evidra doctor --json  Export machine-readable provider/backend diagnostics
     /exit                 Leave the current session
 
 Explicit shell escapes are available for operator-directed work:
