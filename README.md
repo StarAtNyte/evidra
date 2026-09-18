@@ -523,6 +523,7 @@ state and event log as the TUI, shows campaign/phases/agents/runs/events, and
 does not expose mutation endpoints.
     /provider             Select Codex or local provider
     /model                Select an available provider model
+    /fallback             Select the local model used after Codex exhaustion
     /thinking             Select reasoning effort
     /permissions          Select safe, fast, or YOLO automation
     /sources              Retrieve/search durable research sources

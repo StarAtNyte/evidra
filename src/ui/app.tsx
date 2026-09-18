@@ -140,6 +140,7 @@ const COMMANDS = [
   ["/validation", "Inspect or generate validation policy"],
   ["/agents", "Show research-agent lanes and health"],
   ["/limits", "Choose what happens when provider usage is exhausted"],
+  ["/fallback", "Select the local model used after Codex exhaustion"],
   ["/compute", "Show execution and compute health"],
   ["/submission", "Prepare and validate a submission bundle"],
   ["/queue", "Show durable research work queue"],
@@ -310,6 +311,7 @@ function help(): string {
     "/backup [path]              Create a durable state backup",
     "/provider [codex|local]      Select ChatGPT Codex or local Ollama",
     `/model [name]                Show or select the model (default: ${DEFAULT_CODEX_MODEL})`,
+    "/fallback [name]             Select the local model used after Codex exhaustion",
     "/thinking [level]            Select model thinking effort",
     "/login [codex|status]        Authenticate or check provider access",
     "/autonomy [safe|fast|yolo]   Set autonomous execution policy",
@@ -386,7 +388,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [modelLoadError, setModelLoadError] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<AvailableModel | null>(null);
-  const [picker, setPicker] = useState<"provider" | "model" | "reasoning" | "mode" | "permissions" | "resume" | null>(null);
+  const [fallbackModels, setFallbackModels] = useState<AvailableModel[]>([]);
+  const [picker, setPicker] = useState<"provider" | "model" | "fallback" | "reasoning" | "mode" | "permissions" | "resume" | null>(null);
   const [pickerIndex, setPickerIndex] = useState(0);
   const [resumeChoices, setResumeChoices] = useState<Array<{ id: string; status: string; startedAt: string }>>([]);
   const [firstRun] = useState(() => !existsSync(configPath));
@@ -670,7 +673,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (picker) {
-      const choices = picker === "provider" ? providerChoices : picker === "model" ? availableModels : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : picker === "permissions" ? permissionChoices : resumeChoices;
+      const choices = picker === "provider" ? providerChoices : picker === "model" || picker === "fallback" ? (picker === "fallback" ? fallbackModels : availableModels) : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : picker === "permissions" ? permissionChoices : resumeChoices;
       if (key.escape) { setPicker(null); return; }
       if (key.downArrow) { setPickerIndex((current) => (current + 1) % choices.length); return; }
       if (key.upArrow) { setPickerIndex((current) => (current - 1 + choices.length) % choices.length); return; }
@@ -709,6 +712,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
           setPicker("reasoning");
           const chosenEfforts = chosen.supportedReasoningEfforts?.length ? chosen.supportedReasoningEfforts : REASONING_LEVELS;
           setPickerIndex(Math.max(0, chosenEfforts.findIndex((effort) => effort === config.reasoningEffort)));
+        } else if (picker === "fallback") {
+          const chosen = fallbackModels[pickerIndex];
+          if (chosen) {
+            setConfig((current) => ({ ...current, fallbackModel: chosen.id }));
+            append("assistant", `Fallback model selected: ${chosen.displayName} (${chosen.id})`);
+          }
+          setPicker(null);
         } else if (picker === "reasoning") {
           const effort = reasoningChoices[pickerIndex];
           setConfig((current) => ({ ...current, reasoningEffort: effort }));
@@ -2475,7 +2485,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (request === "/limits" || request.startsWith("/limits ")) {
       const policy = request.split(/\s+/)[1] as LimitPolicy | undefined;
       if (!policy) {
-        append("assistant", `Provider limit policy: ${config.limitPolicy}\nFallback model: ${config.fallbackModel}\nUse /limits auto, /limits wait, /limits fallback, or /limits stop.`);
+        append("assistant", `Provider limit policy: ${config.limitPolicy}\nFallback model: ${config.fallbackModel}\nUse /fallback to choose an installed local model, or /limits auto, /limits wait, /limits fallback, or /limits stop.`);
       } else if (!["auto", "wait", "fallback", "stop"].includes(policy)) {
         append("assistant", "Choose auto, wait, fallback, or stop.");
       } else {
@@ -2831,6 +2841,33 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setSelectedModel(available ?? null);
         setConfig((current) => ({ ...current, model, codexThreadId: undefined }));
         append("assistant", `Model selected: ${model}`);
+      }
+      return;
+    }
+    if (request === "/fallback" || request.startsWith("/fallback ")) {
+      const requested = request.split(/\s+/)[1];
+      setBusy(true); setProgress("Loading local fallback models...");
+      try {
+        const models = await listLocalModels();
+        setFallbackModels(models);
+        if (!models.length) {
+          append("assistant", "No local Ollama models are available. Start Ollama and pull a model such as qwen3.6:27b.");
+        } else if (requested) {
+          const chosen = models.find((model) => model.id === requested);
+          if (!chosen) append("assistant", `Local fallback model '${requested}' is not installed. Use /fallback to choose from the available models.`);
+          else {
+            setConfig((current) => ({ ...current, fallbackModel: chosen.id }));
+            append("assistant", `Fallback model selected: ${chosen.displayName} (${chosen.id})`);
+          }
+        } else {
+          setPicker("fallback");
+          setPickerIndex(Math.max(0, models.findIndex((model) => model.id === config.fallbackModel)));
+          append("assistant", "Choose the local model Evidra should use after Codex exhaustion. Esc cancels.");
+        }
+      } catch (error) {
+        append("assistant", `Local fallback models are unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        setBusy(false); setProgress("");
       }
       return;
     }
@@ -3971,9 +4008,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       <Text color={UI.amber} bold>{["⠋", "⠙", "⠹", "⠸"][busyFrame]}  {progress || "Working..."}</Text><Text color={UI.muted}>  (esc to interrupt)</Text>
     </Box>}
     {picker && <Box borderStyle="round" borderColor={UI.purple} paddingX={2} flexDirection="column" marginTop={1}>
-      <Text color={UI.purple} bold>{picker === "provider" ? "Choose a provider" : picker === "model" ? `Select ${config.provider} model` : picker === "reasoning" ? "Select thinking effort" : picker === "mode" ? "Select workbench mode" : picker === "resume" ? "Choose a session to resume" : "Select permissions"}</Text>
+      <Text color={UI.purple} bold>{picker === "provider" ? "Choose a provider" : picker === "model" ? `Select ${config.provider} model` : picker === "fallback" ? "Select local fallback model" : picker === "reasoning" ? "Select thinking effort" : picker === "mode" ? "Select workbench mode" : picker === "resume" ? "Choose a session to resume" : "Select permissions"}</Text>
       <Text color={UI.muted}>↑/↓ navigate · Enter select · Esc cancel</Text>
-      {(picker === "provider" ? providerChoices : picker === "model" ? availableModels : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : picker === "resume" ? resumeChoices : permissionChoices).slice(Math.max(0, pickerIndex - 5), pickerIndex + 7).map((entry, index) => {
+      {(picker === "provider" ? providerChoices : picker === "model" ? availableModels : picker === "fallback" ? fallbackModels : picker === "reasoning" ? reasoningChoices : picker === "mode" ? modeChoices : picker === "resume" ? resumeChoices : permissionChoices).slice(Math.max(0, pickerIndex - 5), pickerIndex + 7).map((entry, index) => {
         const actualIndex = Math.max(0, pickerIndex - 5) + index;
         const label = typeof entry === "string"
           ? entry === "codex" ? "Codex · ChatGPT subscription"
