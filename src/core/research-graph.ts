@@ -71,7 +71,28 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
   const durableSourceIdsAfterExecutionBackfill = new Set(store.sources().map((source) => source.id));
   for (const claim of store.claims()) {
     const sourceId = (claim.payload as { sourceId?: unknown }).sourceId;
-    if (typeof sourceId === "string" && durableSourceIdsAfterExecutionBackfill.has(sourceId)) aliases.set(claim.id, sourceId);
+    if (typeof sourceId !== "string") continue;
+    if (sourceId === claim.id && !durableSourceIdsAfterExecutionBackfill.has(claim.id)) {
+      const payload = claim.payload as { statement?: unknown; scope?: unknown; confidence?: unknown; sourceType?: unknown };
+      store.saveSource({
+        id: claim.id,
+        payload: {
+          id: claim.id,
+          title: `Evidra review claim ${claim.id}`,
+          url: `https://evidra.local/claim/${claim.id}`,
+          retrievedAt: new Date().toISOString(),
+          contentHash: claim.id,
+          evidenceClass: "review",
+          claims: [typeof payload.statement === "string" ? payload.statement : "Recovered durable review claim."],
+          scope: payload.scope ?? "research decision review",
+          confidence: payload.confidence ?? null,
+          sourceType: payload.sourceType ?? "review",
+        },
+      });
+      aliases.set(claim.id, claim.id);
+      continue;
+    }
+    if (durableSourceIdsAfterExecutionBackfill.has(sourceId)) aliases.set(claim.id, sourceId);
   }
   const decision = ResearchDecisionSchema.parse({
     ...parsedDecision,
