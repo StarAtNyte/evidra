@@ -968,10 +968,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
     setProgress("Research 3/3 · asking the director to analyze observed evidence and select the next experiment...");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const project = store.project();
-    const goalSet = phaseGoalSetId(objective, mode);
+    // Retry context belongs to this cycle's prompt, not to the campaign's
+    // identity. Keep one durable phase graph for the immutable ultimate goal
+    // so failures retry the active phase instead of spawning a new graph.
+    const ultimateGoal = campaign?.goal ?? objective;
+    const goalSet = phaseGoalSetId(ultimateGoal, mode);
     const persistedGoals = store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));
     if (!phaseGoalsForMode(persistedGoals, mode, goalSet).length) {
-      for (const goal of definePhaseGoals(objective, mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
+      for (const goal of definePhaseGoals(ultimateGoal, mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
     }
     const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, goalSet));
     const recentEvents = store.recentEvents(20);
@@ -2040,9 +2044,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
   };
 
   const runAutonomousCycle = async (campaignOverride?: ResearchCampaign, autoContinue = false): Promise<void> => {
-    const mode = configRef.current.mode;
     if (loopBusy.current || busy) return;
     let pendingCampaign = campaignOverride ?? config.campaign;
+    const mode = pendingCampaign?.runtime?.mode ?? configRef.current.mode;
     if (pendingCampaign?.nextAttemptAt && Date.parse(pendingCampaign.nextAttemptAt) > Date.now()) return;
     // A provider-limit wait is represented as a durable pause. Resume it only
     // once the retry window has elapsed; otherwise the paused interval would
