@@ -215,7 +215,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/research": [["/research plan", "Show the three high-level research steps"], ["/research examples", "Show contemporary starter research briefs"], ["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research steer ", "Guide the active campaign at the next safe boundary"], ["/research resume", "Resume the saved campaign"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
   "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge steer ", "Guide the active campaign at the next safe boundary"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
-  "/sources": [["/sources list", "List retrieved sources"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources discover", "Search scholarly literature"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
+  "/sources": [["/sources list", "List retrieved sources"], ["/sources channels", "Show discussion and leaderboard insights"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources discover", "Search scholarly literature"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
   "/benchmark": [["/benchmark literature-score ", "Score Evidra literature discovery"], ["/benchmark autoresearch ", "Import official AutoResearchBench evaluation"]],
   "/telemetry": [["/telemetry export", "Export MLflow-compatible run telemetry"]],
   "/evidence": [["/evidence audit", "Audit claim provenance and completion blockers"], ["/evidence analyze", "Analyze prediction errors and worst groups"]],
@@ -291,7 +291,7 @@ function help(): string {
     "/status                      Show complete workbench state",
     "/experience [export]       Show or export trajectory experience",
     "/usage                       Show budgets and research activity",
-    "/sources [add|discover|search|show] Retrieve or search research sources",
+    "/sources [channels|add|discover|search|show] Retrieve or search research sources",
     "/memory [recent|search]      Search durable evidence memory",
     "/data audit                 Audit challenge files and duplicates",
     "/validation [inspect|generate] Show validation policy",
@@ -3679,10 +3679,24 @@ export function App({ root }: { root: string }): React.JSX.Element {
       finally { setBusy(false); setProgress(""); }
       return;
     }
-    if (request === "/sources" || request === "/sources list" || request.startsWith("/sources search ") || request.startsWith("/sources show ")) {
+    if (request === "/sources channels" || request === "/sources" || request === "/sources list" || request.startsWith("/sources search ") || request.startsWith("/sources show ")) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const sources = store.sources();
       const parts = request.split(/\s+/);
+      if (parts[1] === "channels") {
+        const channels = sources.filter((source) => {
+          const payload = source.payload as { channelKind?: unknown };
+          return ["rules", "discussion", "leaderboard", "documentation", "repository", "other"].includes(String(payload.channelKind));
+        });
+        const text = channels.length ? channels.map((source) => {
+          const payload = source.payload as { title?: string; url?: string; channelKind?: string; insights?: { leaderboard?: unknown[]; discussions?: unknown[]; signals?: string[] } };
+          const insights = payload.insights;
+          return `${String(payload.channelKind).toUpperCase()} · ${payload.title ?? source.id}\n  ${payload.url ?? ""}\n  leaderboard rows: ${insights?.leaderboard?.length ?? 0} · discussion topics: ${insights?.discussions?.length ?? 0}\n  signals: ${insights?.signals?.join(" · ") || "none recorded"}`;
+        }).join("\n\n") : "No typed competition channels cached yet. Start a Challenge or use competition.observe.";
+        store.close();
+        append("assistant", `Competition channels\n\n${text}`);
+        return;
+      }
       if (parts[1] === "search") {
         const query = request.slice("/sources search ".length).trim().toLowerCase();
         const matches = sources.filter((source) => sourceSearchText(source).includes(query)).slice(0, 20);
