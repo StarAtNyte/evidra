@@ -2041,8 +2041,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
 
   const runAutonomousCycle = async (campaignOverride?: ResearchCampaign, autoContinue = false): Promise<void> => {
     if (loopBusy.current || busy) return;
-    let pendingCampaign = campaignOverride ?? config.campaign;
+    let pendingCampaign = campaignOverride;
+    if (!pendingCampaign) {
+      const snapshotStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      pendingCampaign = snapshotStore.campaign() as ResearchCampaign | undefined;
+      snapshotStore.close();
+      pendingCampaign ??= configRef.current.campaign;
+    }
     const mode = pendingCampaign?.runtime?.mode ?? configRef.current.mode;
+    const campaignProvider = pendingCampaign?.runtime?.provider ?? configRef.current.provider;
+    const campaignLimitPolicy = pendingCampaign?.runtime?.limitPolicy ?? configRef.current.limitPolicy;
     if (pendingCampaign?.nextAttemptAt && Date.parse(pendingCampaign.nextAttemptAt) > Date.now()) return;
     // A provider-limit wait is represented as a durable pause. Resume it only
     // once the retry window has elapsed; otherwise the paused interval would
@@ -2065,7 +2073,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     store.setSchedulerState({ status: "running", mode, currentStep: "research" });
     const requestedAction = store.controllerLease()?.requestedAction;
     if (requestedAction === "pause" || requestedAction === "stop") {
-      const saved = (campaignOverride ?? config.campaign) as ResearchCampaign | undefined;
+      const saved = pendingCampaign;
       if (saved) {
         const updated = { ...saved, status: requestedAction === "stop" ? "completed" as const : "paused" as const };
         store.saveCampaign(updated);
@@ -2118,7 +2126,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     let queueTaskId: string | undefined;
     try {
-      const campaign = campaignOverride ?? config.campaign;
+      const campaign = pendingCampaign;
       const cycleNumber = campaign?.currentCycle ?? 0;
       if (campaign) persistCampaignCheckpoint(campaign, "research-lanes", cycleNumber);
       if (campaign?.nextAttemptAt) {
@@ -2293,8 +2301,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", "Autonomous research will continue automatically. Use /loop pause or /loop stop to halt it.");
       }
     } catch (error) {
-      const campaign = campaignOverride ?? config.campaign;
-      if (campaign && isProviderUsageLimit(error) && (config.limitPolicy === "auto" || config.limitPolicy === "wait")) {
+      const campaign = pendingCampaign;
+      if (campaign && isProviderUsageLimit(error) && (campaignLimitPolicy === "auto" || campaignLimitPolicy === "wait")) {
         const retryAfterMs = providerRetryAfterMs(error);
         const nextAttemptAt = new Date(Date.now() + retryAfterMs).toISOString();
         const waiting = { ...pauseCampaign(campaign), nextAttemptAt, limitMessage: error instanceof Error ? error.message : String(error) };
@@ -2302,7 +2310,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setConfig((current) => ({ ...current, campaign: waiting }));
         const waitingStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
         waitingStore.setSchedulerState({ status: "paused", mode, currentStep: `provider-limit-until-${nextAttemptAt}` });
-        waitingStore.appendEvent("research.provider_limit.waiting", { retryAt: nextAttemptAt, retryAfterMs, provider: config.provider });
+        waitingStore.appendEvent("research.provider_limit.waiting", { retryAt: nextAttemptAt, retryAfterMs, provider: campaignProvider });
         waitingStore.close();
         if (!loopTimer.current) loopTimer.current = setInterval(() => { void runAutonomousCycle(); }, 60_000);
         append("assistant", `Provider usage limit reached. Research is paused safely and will retry at ${nextAttemptAt}. The campaign budget remains durable; use /loop stop to cancel waiting.`);
