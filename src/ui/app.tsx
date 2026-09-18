@@ -373,7 +373,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const [pickerIndex, setPickerIndex] = useState(0);
   const [resumeChoices, setResumeChoices] = useState<Array<{ id: string; status: string; startedAt: string }>>([]);
   const [firstRun] = useState(() => !existsSync(configPath));
-  const [onboardingComplete, setOnboardingComplete] = useState(() => !firstRun && config.provider === "local");
+  const [onboardingComplete, setOnboardingComplete] = useState(() => false);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [setupStep, setSetupStep] = useState<"goal" | "budget" | "stop" | null>(null);
   const [setupDraft, setSetupDraft] = useState<{ goal?: string; budgetMinutes?: number }>({});
@@ -501,18 +501,40 @@ export function App({ root }: { root: string }): React.JSX.Element {
 
   useEffect(() => {
     // Existing sessions must revalidate provider access on every terminal
-    // start. Persisted model/provider preferences are not proof of auth.
-    if (firstRun || config.provider !== "codex") return undefined;
+    // start. Persisted model/provider preferences are not proof of readiness.
+    if (firstRun) return undefined;
     let active = true;
-    void codexIsLoggedInAsync().then((loggedIn) => {
-      if (!active) return;
-      setOnboardingComplete(loggedIn);
-      if (!loggedIn) {
-        append("assistant", "Codex authentication is required for this terminal. Select a provider or run /login codex before sending a prompt.");
-        setPicker("provider");
-        setPickerIndex(0);
+    const verifyProvider = async (): Promise<void> => {
+      if (config.provider === "codex") {
+        const loggedIn = await codexIsLoggedInAsync();
+        if (!active) return;
+        setOnboardingComplete(loggedIn);
+        if (!loggedIn) {
+          append("assistant", "Codex authentication is required for this terminal. Select a provider or run /login codex before sending a prompt.");
+          setPicker("provider");
+          setPickerIndex(0);
+        }
+        return;
       }
-    });
+      try {
+        const models = await listLocalModels();
+        if (!active) return;
+        const ready = models.length > 0;
+        setOnboardingComplete(ready);
+        if (!ready) {
+          append("assistant", "Local provider is unavailable. Start Ollama with at least one model, or select Codex before sending a prompt.");
+          setPicker("provider");
+          setPickerIndex(1);
+        }
+      } catch {
+        if (!active) return;
+        setOnboardingComplete(false);
+        append("assistant", "Local provider is unavailable. Start Ollama, or select Codex before sending a prompt.");
+        setPicker("provider");
+        setPickerIndex(1);
+      }
+    };
+    void verifyProvider();
     return () => { active = false; };
   }, [firstRun]);
 
