@@ -178,6 +178,7 @@ const UI = {
   amber: "#ffc857",
   red: "#ff6b6b",
 } as const;
+const RESEARCH_PLAN = "01 · Orient      define the question, workspace, data, and validation contract\n02 · Discover   gather evidence and form falsifiable hypotheses\n03 · Validate   run controlled experiments, replicate, and decide";
 const REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
 const AGENT_ROLES = ["research director", "domain researcher", "method researcher", "data detective", "validation scientist", "model researcher", "ensemble scientist", "reproducibility engineer", "experiment engineer", "critic", "repair agent"] as const;
 const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
@@ -2214,7 +2215,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
         const campaign: ResearchCampaign = { goal: setupDraft.goal ?? "Advance the research project", budgetMinutes: setupDraft.budgetMinutes ?? 240, stopCondition: request, startedAt: new Date().toISOString(), status: "running", autoExecuteExperiments: true };
       ensureActiveProject(); persistCampaign(campaign); setConfig((current) => ({ ...current, campaign })); setSetupStep(null); setSetupDraft({});
-      append("assistant", `Autonomous research started\n  Goal: ${campaign.goal}\n  Budget: ${campaign.budgetMinutes} minutes\n  Stop: ${campaign.stopCondition}\n\nI will define internal phase goals, inspect evidence, run permitted checks, and continue until the condition or budget is reached.`);
+      append("assistant", `Autonomous research started\n  Goal: ${campaign.goal}\n  Budget: ${campaign.budgetMinutes} minutes\n  Stop: ${campaign.stopCondition}\n\nResearch plan\n${RESEARCH_PLAN}\n\nI will define the detailed phase goals, inspect evidence, run permitted checks, and continue until the condition or budget is reached.`);
       setBusy(true); setProgress("Starting autonomous research...");
       try {
         await runAutonomousCycle(campaign, true);
@@ -2441,7 +2442,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (config.campaign?.status === "running") { append("assistant", "An autonomous research campaign is already running. Use /research status or /research pause."); return; }
       setConfig((current) => ({ ...current, mode: "research" }));
       setSetupDraft({}); setSetupStep("goal");
-      append("assistant", "Autonomous research setup · Step 1/3\nWhat is the ultimate research goal?\n\nEvidra will implement, test, and evaluate isolated research candidates until your stopping condition or budget is reached. Use /research pause, /research resume, or /research stop at any time.");
+      append("assistant", `Autonomous research setup · Step 1/3\nWhat is the ultimate research goal?\n\nResearch plan\n${RESEARCH_PLAN}\n\nEvidra will define the detailed phase goals and continue until your stopping condition or budget is reached. Use /research pause, /research resume, or /research stop at any time.`);
       return;
     }
     if (request === "/loop" || request.startsWith("/loop ") || request === "/scheduler" || request.startsWith("/scheduler ")) {
@@ -3570,7 +3571,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (!objective || objective === "start") {
         if (config.campaign?.status === "running") { append("assistant", "An autonomous research campaign is already running. Use /status or /usage to inspect it."); return; }
         setSetupDraft({}); setSetupStep("goal");
-        append("assistant", "Autonomous research setup · Step 1/3\nWhat is the ultimate research goal?\n\nEvidra will define internal phase goals and continue until your stopping condition or budget is reached. Type /cancel to stop setup.");
+        append("assistant", `Autonomous research setup · Step 1/3\nWhat is the ultimate research goal?\n\nResearch plan\n${RESEARCH_PLAN}\n\nEvidra will define the detailed phase goals and continue until your stopping condition or budget is reached. Type /cancel to stop setup.`);
         return;
       }
       if (objective === "next") {
