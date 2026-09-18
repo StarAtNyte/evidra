@@ -597,6 +597,13 @@ Continue a paused or interrupted headless campaign explicitly with `--resume`:
 
     evidra research --resume --provider codex --limit-policy fallback
 
+The same lifecycle can be controlled without starting a second controller:
+
+    evidra research status
+    evidra research pause
+    evidra research resume
+    evidra research stop
+
 Headless research acquires a durable controller lease and heartbeats it while running. A
 second controller for the same project is refused instead of competing for SQLite state;
 an interrupted process leaves the campaign resumable and its stale lease recoverable.
