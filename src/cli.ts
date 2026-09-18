@@ -2791,7 +2791,9 @@ research
       }
       const observation = { gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40), repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120), ...(baseline ? { baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: redactSecrets(baseline.stdout.slice(-4000)), stderr: redactSecrets(baseline.stderr.slice(-4000)) } } : {}) };
       store.appendEvent("research.observation", observation);
-      store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
+      const observationId = `observation_${Date.now()}`;
+      store.saveSource({ id: observationId, payload: { id: observationId, title: "Evidra workspace observation", url: `https://evidra.local/observation/${observationId}`, retrievedAt: new Date().toISOString(), contentHash: observationId, evidenceClass: "implementation", claims: [] } });
+      store.saveClaim({ id: `claim_${observationId}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: observationId, status: "active", observation } });
       store.close();
       const projectStore = new ResearchStore(statePath);
       const activeProject = projectStore.project();
@@ -2944,8 +2946,15 @@ research
           crossPollinationStore.close();
           recordCampaignCheckpoint(campaign, mode, cycle, "research-director");
           console.log("Research · director is cross-pollinating lane findings...");
-          const verifiedState = phaseGoal ? projectVerifiedSubtaskState(store.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined);
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness }, { provider: options.provider as "codex" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, refreshVerifiedState: () => phaseGoal ? projectVerifiedSubtaskState(store.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined), consumeSteering: () => {
+          const verifiedStateStore = new ResearchStore(statePath);
+          const verifiedState = phaseGoal ? projectVerifiedSubtaskState(verifiedStateStore.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined);
+          verifiedStateStore.close();
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, crossPollination, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness }, { provider: options.provider as "codex" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, refreshVerifiedState: () => {
+            const refreshStore = new ResearchStore(statePath);
+            const payload = phaseGoal ? refreshStore.latestSubtaskAudit(phaseGoal.id)?.payload : undefined;
+            refreshStore.close();
+            return phaseGoal ? projectVerifiedSubtaskState(payload) : projectVerifiedSubtaskState(undefined);
+          }, consumeSteering: () => {
             const steeringStore = new ResearchStore(statePath);
             const messages = steeringStore.consumeControllerSteers().map((item) => item.message);
             steeringStore.close();
@@ -3763,7 +3772,9 @@ research.command("propose")
       console.log("· No valid competition evaluator; continuing as general research.");
     }
     store.appendEvent("research.observation", observation);
-    store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: baseline ? "Repository inspection and canonical baseline execution completed before the research decision." : "Repository inspection completed before the general research decision; no competition evaluator was available.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
+    const observationId = `observation_${Date.now()}`;
+    store.saveSource({ id: observationId, payload: { id: observationId, title: "Evidra workspace observation", url: `https://evidra.local/observation/${observationId}`, retrievedAt: new Date().toISOString(), contentHash: observationId, evidenceClass: "implementation", claims: [] } });
+    store.saveClaim({ id: `claim_${observationId}`, payload: { statement: baseline ? "Repository inspection and canonical baseline execution completed before the research decision." : "Repository inspection completed before the general research decision; no competition evaluator was available.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: observationId, status: "active", observation } });
     const recentEvents = store.recentEvents(20);
     const researchMemory = researchMemoryContext(store, 30, objective, { objective, taskType: "general research", context: "research" });
     store.appendEvent("research.memory.retrieved", { ...researchMemory.retrieval, context: "one-shot-research" });

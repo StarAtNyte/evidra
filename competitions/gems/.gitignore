@@ -1,0 +1,13 @@
+data/
+.sota/
+reference/.git/
+reference/.venv/
+reference/data/*.tif
+reference/data/*.json
+reference/artifacts/
+reference/*.executed.ipynb
+reference/README.md
+reference/environment*.yml
+reference/pyproject.toml
+reference/uv.lock
+reference/unet-mc-cv-reference-solution.ipynb
