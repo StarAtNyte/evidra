@@ -56,6 +56,8 @@ export interface CampaignRuntimeConfig {
   executor: "local" | "container" | "modal";
 }
 
+export type DurableCampaignRuntime = CampaignRuntimeConfig & { fingerprint: string };
+
 /** Stable integrity binding for the safety-relevant campaign route. */
 export function campaignRuntimeFingerprint(runtime: CampaignRuntimeConfig): string {
   const canonical = JSON.stringify({
@@ -94,6 +96,13 @@ export function readCampaignRuntime(value: unknown): CampaignRuntimeConfig | und
     limitPolicy: candidate.limitPolicy as CampaignRuntimeConfig["limitPolicy"],
     executor: candidate.executor as CampaignRuntimeConfig["executor"],
   };
+}
+
+/** Attach an immutable route fingerprint while preserving an existing valid route. */
+export function bindCampaignRuntime<T extends object>(campaign: T, fallback: CampaignRuntimeConfig): T & { runtime: DurableCampaignRuntime } {
+  const existing = readCampaignRuntime(campaign);
+  const runtime = existing ?? fallback;
+  return { ...campaign, runtime: { ...runtime, fingerprint: campaignRuntimeFingerprint(runtime) } };
 }
 
 /** Wall-clock campaign usage excluding durable paused intervals. */

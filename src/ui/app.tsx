@@ -18,7 +18,7 @@ import { compareRuns } from "../core/statistics.js";
 import { recoveryDelay, recoveryPlan, recoveryRouteDirective } from "../core/recovery.js";
 import { observedGpuHours } from "../core/compute-budget.js";
 import { distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../core/distribution-beliefs.js";
-import { campaignElapsedMinutes, pauseCampaign, readCampaignCheckpoint, resumeCampaign, withCampaignCheckpoint } from "../core/campaign.js";
+import { bindCampaignRuntime, campaignElapsedMinutes, pauseCampaign, readCampaignCheckpoint, resumeCampaign, withCampaignCheckpoint, type CampaignRuntimeConfig } from "../core/campaign.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../core/submissions.js";
 import { pollSubmissionScore, submitApprovedBundle } from "../core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "../core/submission-policy.js";
@@ -81,7 +81,7 @@ type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "me
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
 type WorkbenchMode = "research" | "challenge";
 type AutonomyLevel = "safe" | "fast" | "yolo";
-type ResearchCampaign = { goal: string; budgetMinutes: number; gpuBudgetHours?: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean; currentCycle?: number; currentStep?: string; checkpointedAt?: string };
+type ResearchCampaign = { goal: string; budgetMinutes: number; gpuBudgetHours?: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean; currentCycle?: number; currentStep?: string; checkpointedAt?: string; runtime?: CampaignRuntimeConfig & { fingerprint: string } };
 type LimitPolicy = "auto" | "wait" | "fallback" | "stop";
 type ExperimentExecutorKind = "local" | "container" | "modal";
 type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; limitPolicy: LimitPolicy; fallbackModel: string; experimentExecutor: ExperimentExecutorKind; campaign?: ResearchCampaign; codexThreadId?: string };
@@ -179,6 +179,39 @@ const UI = {
   red: "#ff6b6b",
 } as const;
 const RESEARCH_PLAN = "01 · Orient      define the question, workspace, data, and validation contract\n02 · Discover   gather evidence and form falsifiable hypotheses\n03 · Validate   run controlled experiments, replicate, and decide";
+const RESEARCH_STARTER_TOPICS = [
+  {
+    title: "Robust video understanding",
+    goal: "Improve long-video event retrieval when camera motion, lighting, and frame rate shift between training and deployment.",
+    answer: "Measure retrieval mAP, calibration, latency, and worst-group performance across clean and shifted splits; stop after a replicated gain with no subgroup regression.",
+  },
+  {
+    title: "Open-vocabulary segmentation",
+    goal: "Test whether uncertainty-aware pseudo-label selection improves open-vocabulary segmentation with limited annotations.",
+    answer: "Compare against a frozen baseline on mIoU, rare-class IoU, abstention quality, and label budget; require a held-out replication and an error audit.",
+  },
+  {
+    title: "Efficient multimodal reasoning",
+    goal: "Find a cheaper image-text inference strategy that preserves answer quality under a fixed compute budget.",
+    answer: "Track task score, joules or GPU-hours, tokens, and failure modes across multiple seeds; accept only a Pareto improvement confirmed by an independent run.",
+  },
+] as const;
+
+const RESEARCH_SETUP_STEPS = `01 · Orient\n   Question: What should change, and why does it matter?\n   Answer: State the target, scope, available assets, and measurable outcome.\n\n02 · Discover\n   Question: What evidence and competing explanations should be tested?\n   Answer: Evidra retrieves sources, inspects the workspace, creates falsifiable hypotheses, and allocates research lanes.\n\n03 · Validate\n   Question: What would count as a trustworthy result?\n   Answer: Define the baseline, held-out evaluation, replication rule, budget, and stopping condition.`;
+
+function researchStarterText(): string {
+  return RESEARCH_STARTER_TOPICS.map((topic, index) => `${String(index + 1).padStart(2, "0")} · ${topic.title}\n   Goal: ${topic.goal}\n   Answer: ${topic.answer}`).join("\n\n");
+}
+
+function researchSetupPrompt(step: "goal" | "budget" | "stop"): string {
+  if (step === "goal") {
+    return `Autonomous research setup · Step 1/3\nWhat is the ultimate research goal?\n\n${RESEARCH_SETUP_STEPS}\n\nContemporary starter topics\n${researchStarterText()}\n\nReply with a goal in one sentence, or adapt one of the examples. Evidra will turn it into internal phase goals. Type /cancel to stop setup.`;
+  }
+  if (step === "budget") {
+    return "Autonomous research setup · Step 2/3\nWhat is the maximum budget?\n\nAnswer with time, such as 120m, 4h, or 2d. Set any GPU or cost limit later in the campaign policy. Five minutes is suitable only for a smoke test.";
+  }
+  return "Autonomous research setup · Step 3/3\nWhen should Evidra stop?\n\nAnswer with a measurable stopping condition. Example: ‘stop after a replicated +3% mAP improvement with no subgroup falling by more than 1%, or when the budget is exhausted.’ You can also say: when the current research goal is met.";
+}
 const REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
 const AGENT_ROLES = ["research director", "domain researcher", "method researcher", "data detective", "validation scientist", "model researcher", "ensemble scientist", "reproducibility engineer", "experiment engineer", "critic", "repair agent"] as const;
 const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
@@ -811,8 +844,20 @@ export function App({ root }: { root: string }): React.JSX.Element {
   };
 
   const persistCampaign = (campaign: ResearchCampaign): void => {
+    const runtime: CampaignRuntimeConfig = {
+      mode: configRef.current.mode,
+      provider: configRef.current.provider,
+      model: configRef.current.model,
+      thinking: configRef.current.reasoningEffort,
+      lanes: configRef.current.autonomy === "safe" ? 1 : configRef.current.autonomy === "fast" ? 2 : 4,
+      autonomy: configRef.current.autonomy,
+      limitPolicy: configRef.current.limitPolicy,
+      executor: configRef.current.experimentExecutor,
+    };
+    const durable = bindCampaignRuntime(campaign, runtime) as ResearchCampaign;
+    Object.assign(campaign, durable);
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    store.saveCampaign(campaign);
+    store.saveCampaign(durable);
     store.close();
   };
 
@@ -2280,13 +2325,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
       if (setupStep === "goal") {
         setSetupDraft({ goal: request }); setSetupStep("budget");
-        append("assistant", "Step 2/3 · What is the maximum budget? Examples: 120m, 4h, 2d. Five minutes is suitable only for a smoke test."); return;
+        append("assistant", researchSetupPrompt("budget")); return;
       }
       if (setupStep === "budget") {
         const budgetMinutes = parseBudgetMinutes(request);
         if (!budgetMinutes) { append("assistant", "Please enter a positive budget such as 90m, 4h, or 2d."); return; }
         setSetupDraft((current) => ({ ...current, budgetMinutes })); setSetupStep("stop");
-        append("assistant", "Step 3/3 · When should Evidra stop? Describe the success condition, or say ‘when the current research goal is met’."); return;
+        append("assistant", researchSetupPrompt("stop")); return;
       }
         const campaign: ResearchCampaign = { goal: setupDraft.goal ?? "Advance the research project", budgetMinutes: setupDraft.budgetMinutes ?? 240, stopCondition: request, startedAt: new Date().toISOString(), status: "running", autoExecuteExperiments: true };
       ensureActiveProject(); persistCampaign(campaign); setConfig((current) => ({ ...current, campaign })); setSetupStep(null); setSetupDraft({});
@@ -2548,7 +2593,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (config.campaign?.status === "running") { append("assistant", "An autonomous research campaign is already running. Use /research status or /research pause."); return; }
       setConfig((current) => ({ ...current, mode: "research" }));
       setSetupDraft({}); setSetupStep("goal");
-      append("assistant", `Autonomous research setup · Step 1/3\nWhat is the ultimate research goal?\n\nResearch plan\n${RESEARCH_PLAN}\n\nEvidra will define the detailed phase goals and continue until your stopping condition or budget is reached. Use /research pause, /research resume, or /research stop at any time.`);
+      append("assistant", researchSetupPrompt("goal"));
       return;
     }
     if (request === "/loop" || request.startsWith("/loop ") || request === "/scheduler" || request.startsWith("/scheduler ")) {
@@ -3691,7 +3736,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (!objective || objective === "start") {
         if (config.campaign?.status === "running") { append("assistant", "An autonomous research campaign is already running. Use /status or /usage to inspect it."); return; }
         setSetupDraft({}); setSetupStep("goal");
-        append("assistant", `Autonomous research setup · Step 1/3\nWhat is the ultimate research goal?\n\nResearch plan\n${RESEARCH_PLAN}\n\nEvidra will define the detailed phase goals and continue until your stopping condition or budget is reached. Type /cancel to stop setup.`);
+        append("assistant", researchSetupPrompt("goal"));
         return;
       }
       if (objective === "next") {
