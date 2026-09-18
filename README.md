@@ -513,6 +513,7 @@ Useful commands:
     /thinking             Select reasoning effort
     /permissions          Select safe, fast, or YOLO automation
     /sources              Retrieve/search durable research sources
+    /sources channels     Show typed discussion and leaderboard insights
     /sources frontier     Inspect deduplicated literature-search coverage
     /evidence audit       Audit claim provenance and completion blockers
     /memory               Search durable evidence and research memory
@@ -855,8 +856,11 @@ data/leakage audits, a typed worker protocol with heartbeats and artifact checks
 screening and cost-aware scheduling, persistent lane state with independent critics, and
 OOF/prediction analysis with ensemble candidates. The remaining research-lab layers are:
 
-1. richer platform-specific leaderboard/discussion parsing on top of the new
-   provider-neutral typed research-channel layer;
+1. richer platform-specific leaderboard/discussion adapters on top of the
+   provider-neutral typed research-channel layer. The current layer already
+   extracts bounded leaderboard rows, discussion topics, and metric/leakage/
+   split/seed/replication signals from untrusted channel text; inspect them in
+   the TUI with `/sources channels`;
 2. Slurm and additional remote executor backends;
 3. a local browser dashboard on top of the same event/state model.
 

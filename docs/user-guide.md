@@ -361,6 +361,7 @@ restarts. Inspect it through the TUI or CLI:
 /status                 Project and campaign summary
 /workbench               Graph, goals, budgets, and active work
 /sources                 Cached source frontier
+/sources channels        Typed discussion and leaderboard insights
 /memory recent           Recent evidence and decisions
 /evidence audit          Claim completion blockers
 /queue status            Queued, running, stale, and failed tasks
