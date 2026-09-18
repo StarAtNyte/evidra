@@ -3387,7 +3387,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request === "/doctor") {
       const checks: string[] = [`node ${process.versions.node}`, `cwd ${root}`];
-      for (const command of ["git", "uv", "docker", "podman"]) {
+      for (const command of ["git", "uv", "docker", "podman", "sbatch", "squeue", "sacct"]) {
         try {
           const result = await runProcess(["which", command], root, 5_000);
           checks.push(`${command}: ${result.exitCode === 0 ? result.stdout.trim() : "not found"}`);

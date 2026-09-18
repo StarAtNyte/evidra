@@ -559,7 +559,7 @@ program.command("backup")
 
 program.command("doctor").description("Check local providers, runtimes, and execution backends").action(async () => {
   const checks: string[] = [`workspace     ${root}`, `node          ${process.versions.node}`];
-  for (const command of ["git", "uv", "ollama", "modal", "docker", "podman"]) {
+  for (const command of ["git", "uv", "ollama", "modal", "docker", "podman", "sbatch", "squeue", "sacct"]) {
     const result = await runProcess(["which", command], root, 5_000);
     checks.push(`${command.padEnd(13)}${result.exitCode === 0 ? result.stdout.trim() : "not found"}`);
   }
