@@ -28,6 +28,7 @@ import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
 import { experienceReplayWorld } from "../dist/core/experience.js";
 import { formatResearchStarterBriefs, RESEARCH_STARTER_BRIEFS } from "../dist/core/research-starters.js";
+import { classifyResearchSetupInput } from "../dist/core/research-setup.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
 import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageForPhase, researchStageProgress } from "../dist/core/phase-goals.js";
@@ -2734,6 +2735,13 @@ test("research starter briefs are shared across interactive and headless entrypo
   assert.match(formatted, /Open-vocabulary segmentation/);
   assert.match(formatted, /Efficient multimodal reasoning/);
   assert.match(formatted, /Answer:/);
+});
+
+test("guided research setup does not consume slash commands as answers", () => {
+  assert.equal(classifyResearchSetupInput("goal", "/research"), "repeat");
+  assert.equal(classifyResearchSetupInput("budget", "/help"), "repeat");
+  assert.equal(classifyResearchSetupInput("stop", "/cancel"), "cancel");
+  assert.equal(classifyResearchSetupInput("goal", "Improve robust video retrieval"), "answer");
 });
 
 test("phase goal sets isolate separate objectives within one mode", () => {

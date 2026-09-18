@@ -21,6 +21,7 @@ import { distributionObservationsFromSubmissions, estimateDistributionBeliefs } 
 import { bindCampaignRuntime, campaignElapsedMinutes, pauseCampaign, readCampaignCheckpoint, resumeCampaign, withCampaignCheckpoint, type CampaignRuntimeConfig } from "../core/campaign.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../core/submissions.js";
 import { formatResearchStarterBriefs } from "../core/research-starters.js";
+import { classifyResearchSetupInput } from "../core/research-setup.js";
 import { pollSubmissionScore, submitApprovedBundle } from "../core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "../core/submission-policy.js";
 import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "../core/ensemble.js";
@@ -2328,8 +2329,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
     interruptedProcess.current = false;
     if (!fromQueue) append("user", request);
     if (setupStep) {
-      if (request === "/cancel") {
+      const setupInput = classifyResearchSetupInput(setupStep, request);
+      if (setupInput === "cancel") {
         setSetupStep(null); setSetupDraft({}); append("assistant", "Autonomous research setup cancelled."); return;
+      }
+      if (setupInput === "repeat") {
+        append("assistant", researchSetupPrompt(setupStep));
+        return;
       }
       if (setupStep === "goal") {
         setSetupDraft({ goal: request }); setSetupStep("budget");
@@ -2598,7 +2604,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", request === "/pause" ? "Scheduling paused. Running jobs are unchanged." : "Scheduling resumed.");
       return;
     }
-    if (request === "/research start") {
+    if (request === "/research" || request === "/research start") {
       if (config.campaign?.status === "running") { append("assistant", "An autonomous research campaign is already running. Use /research status or /research pause."); return; }
       setConfig((current) => ({ ...current, mode: "research" }));
       setSetupDraft({}); setSetupStep("goal");
