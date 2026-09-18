@@ -3728,10 +3728,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       if (action === "status") {
         const state = store.schedulerState();
-        const scopedGoals = phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), config.mode);
+        const campaign = store.campaign() as ResearchCampaign | undefined;
+        const statusMode = resolveCampaignMode(campaign?.runtime?.mode, state.mode);
+        const scopedGoals = phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), statusMode);
         const goal = activePhaseGoal(scopedGoals);
         const stages = researchStageProgress(scopedGoals);
-        const campaign = config.campaign;
         const checkpoint = readCampaignCheckpoint(campaign);
         const counts = store.counts();
         const stageText = stages.map((stage) => `  ${stage.stage.padEnd(7)} ${stage.completed}/${stage.total} · ${stage.status}${stage.activePhase ? ` · ${stage.activePhase}` : ""}`).join("\n");
