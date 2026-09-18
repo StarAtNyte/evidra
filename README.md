@@ -591,6 +591,8 @@ From the shell:
       --budget 4h \
       --stop "stop after a replicated improvement or when evidence is inconclusive"
 
+Research is not restricted to competition repositories. If the active workspace exposes a valid evaluator, Evidra records its baseline; otherwise it continues with repository inspection, source retrieval, hypotheses, experiments, and declared artifact or proof validation. Challenge mode remains evaluator-strict.
+
 Continue a paused or interrupted headless campaign explicitly with `--resume`:
 
     evidra research --resume --provider codex --limit-policy fallback

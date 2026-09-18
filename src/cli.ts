@@ -3490,20 +3490,27 @@ research.command("propose")
     console.log("Research 1/3 · inspecting repository...");
     const gitStatus = await runProcess(["git", "status", "--short"], root);
     const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
-    console.log("Research 2/3 · running canonical baseline...");
+    console.log("Research 2/3 · checking for an evaluator and collecting available evidence...");
     const adapter = activeCompetition();
-    requireCompetitionContract(adapter);
-    const baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
+    const contract = validateCompetitionContract(adapter.config, adapter.workspacePath(root));
+    const baseline = contract.valid
+      ? await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000)
+      : undefined;
     const observation = {
       gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40),
       repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120),
-      baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: redactSecrets(baseline.stdout.slice(-4000)), stderr: redactSecrets(baseline.stderr.slice(-4000)) },
+      evaluator: { available: contract.valid, checks: contract.checks.filter((check) => !check.passed).map((check) => `${check.name}: ${check.detail}`) },
+      ...(baseline ? { baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: redactSecrets(baseline.stdout.slice(-4000)), stderr: redactSecrets(baseline.stderr.slice(-4000)) } } : {}),
     };
-    const parsed = parseMetricOutput(baseline.stdout, adapter.config.metric.name);
-    const metric = parsed.metrics[adapter.config.metric.name] ?? null;
-    recordBaselineEvidence(store, root, baseline, metric, parsed.metrics, parsed.metricsByFold);
+    if (baseline) {
+      const parsed = parseMetricOutput(baseline.stdout, adapter.config.metric.name);
+      const metric = parsed.metrics[adapter.config.metric.name] ?? null;
+      recordBaselineEvidence(store, root, baseline, metric, parsed.metrics, parsed.metricsByFold);
+    } else {
+      console.log("· No valid competition evaluator; continuing as general research.");
+    }
     store.appendEvent("research.observation", observation);
-    store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
+    store.saveClaim({ id: `claim_observation_${Date.now()}`, payload: { statement: baseline ? "Repository inspection and canonical baseline execution completed before the research decision." : "Repository inspection completed before the general research decision; no competition evaluator was available.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: `observation_${Date.now()}`, status: "active", observation } });
     const recentEvents = store.recentEvents(20);
     const researchMemory = researchMemoryContext(store, 30, objective, { objective, taskType: "general research", context: "research" });
     store.appendEvent("research.memory.retrieved", { ...researchMemory.retrieval, context: "one-shot-research" });
