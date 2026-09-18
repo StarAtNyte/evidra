@@ -1832,6 +1832,7 @@ for (const action of ["pause", "resume", "stop"] as const) {
     const campaign = store.campaign() as Record<string, unknown> | undefined;
     if (!campaign) { store.close(); throw new Error("No challenge campaign exists. Start one in the Evidra TUI with /challenge start."); }
     if (action === "resume" && campaign.status === "completed") { store.close(); throw new Error("The challenge campaign is completed/stopped. Start a new campaign with evidra challenge start."); }
+    if (action === "pause" && campaign.status === "completed") { store.close(); throw new Error("The challenge campaign is already completed/stopped."); }
     const lease = store.liveControllerLease();
     if (lease) {
       store.requestControllerAction(action);
@@ -1840,8 +1841,9 @@ for (const action of ["pause", "resume", "stop"] as const) {
       console.log(`Challenge ${action} requested; active controller pid ${lease.pid} will apply it at the next safe boundary.`);
       return;
     }
-    const status = action === "resume" ? "running" : action === "pause" ? "paused" : "completed";
-    const updated = { ...campaign, status };
+    const updated = action === "resume"
+      ? resumeCampaign(campaign as { startedAt: string; status: "paused" | "running"; pausedAt?: string; pausedDurationMinutes?: number })
+      : { ...campaign, status: action === "pause" ? "paused" : "completed" };
     store.saveCampaign(updated);
     store.setSchedulerState({ status: action === "stop" ? "idle" : action === "resume" ? "running" : "paused", mode: "challenge", currentStep: action });
     store.close();
@@ -1947,8 +1949,9 @@ for (const action of ["pause", "resume", "stop"] as const) {
       const campaign = store.campaign() as Record<string, unknown> | undefined;
       if (!campaign) { store.close(); throw new Error("No research campaign exists. Start one with evidra research --goal \"...\"."); }
       const runtime = campaign.runtime && typeof campaign.runtime === "object" ? campaign.runtime as { mode?: unknown } : undefined;
-      if (runtime?.mode === "challenge") { store.close(); throw new Error("The active campaign is a challenge. Use evidra challenge ${action}."); }
+      if (runtime?.mode === "challenge") { store.close(); throw new Error(`The active campaign is a challenge. Use evidra challenge ${action}.`); }
       if (action === "resume" && campaign.status === "completed") { store.close(); throw new Error("The research campaign is completed/stopped. Start a new campaign with evidra research --goal \"...\"."); }
+      if (action === "pause" && campaign.status === "completed") { store.close(); throw new Error("The research campaign is already completed/stopped."); }
       const lease = store.liveControllerLease();
       if (lease) {
         store.requestControllerAction(action);
@@ -1957,8 +1960,10 @@ for (const action of ["pause", "resume", "stop"] as const) {
         console.log(`Research ${action} requested; active controller pid ${lease.pid} will apply it at the next safe boundary.`);
         return;
       }
-      const status = action === "resume" ? "running" : action === "pause" ? "paused" : "completed";
-      store.saveCampaign({ ...campaign, status });
+      const updated = action === "resume"
+        ? resumeCampaign(campaign as { startedAt: string; status: "paused" | "running"; pausedAt?: string; pausedDurationMinutes?: number })
+        : { ...campaign, status: action === "pause" ? "paused" : "completed" };
+      store.saveCampaign(updated);
       store.setSchedulerState({ status: action === "stop" ? "idle" : action === "resume" ? "running" : "paused", mode: "research", currentStep: action });
       store.close();
       console.log(`Research campaign ${action === "stop" ? "stopped" : `${action}d`}.`);
