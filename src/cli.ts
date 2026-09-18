@@ -5,7 +5,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "./core/experiment-manifest.js";
-import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode } from "./core/phase-goals.js";
+import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageProgress } from "./core/phase-goals.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "./core/types.js";
 import { loadCompetitionAdapter } from "./competitions/adapters.js";
 import { auditData, dataAuditFingerprint } from "./core/data-audit.js";
@@ -525,6 +525,14 @@ program.command("status").action(() => {
     console.log(`Events        ${store.eventCount()}`);
     const integrity = store.verifyEventChain();
     console.log(`Integrity     ${integrity.status.toUpperCase()}${integrity.legacy ? ` (${integrity.legacy} legacy)` : ""}`);
+    const campaign = store.campaign() as { runtime?: { mode?: unknown } } | undefined;
+    const scheduler = store.schedulerState();
+    const mode = campaign?.runtime?.mode === "challenge" || scheduler.mode === "challenge" ? "challenge" : "research";
+    const goals = phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode);
+    if (goals.length) {
+      console.log(`Mode          ${mode}`);
+      console.log("Stages        " + researchStageProgress(goals).map((stage) => `${stage.stage} ${stage.completed}/${stage.total} ${stage.status}`).join(" · "));
+    }
     const lease = store.liveControllerLease();
     const running = store.experiments().filter((entry) => (entry.payload as { status?: unknown }).status === "running");
     if (!lease && running.length) console.log(`Stale experiments ${running.length} (no live controller; run research/challenge to recover safely)`);

@@ -5,7 +5,8 @@ import { auditClaims, selfDescribingClaimEvidenceIds } from "./claim-audit.js";
 import { redactCommand } from "./redaction.js";
 import { activeContradictionEdges, activeDuplicateClaimCount, researchMemoryContext } from "./research-context.js";
 import { sourceFrontier } from "./sources.js";
-import { evaluatePhaseGoalEvidence, phaseGoalEventsSince, phaseGoalRecordsSince, PHASE_GOAL_EVENT_TYPES } from "./phase-goals.js";
+import { evaluatePhaseGoalEvidence, phaseGoalEventsSince, phaseGoalRecordsSince, PHASE_GOAL_EVENT_TYPES, phaseGoalsForMode, researchStageProgress } from "./phase-goals.js";
+import { PhaseGoalSchema } from "./types.js";
 
 export type ReportKind = "research" | "challenge" | "final";
 
@@ -79,6 +80,9 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     conflictedClaimIds,
   });
   const title = kind === "research" ? "Research report" : kind === "challenge" ? "Challenge report" : "Final provenance report";
+  const stageMode = kind === "challenge" ? "challenge" as const : "research" as const;
+  const stageGoals = phaseGoalsForMode(goals.map((goal) => PhaseGoalSchema.parse(goal.payload)), stageMode);
+  const stageProgress = researchStageProgress(stageGoals);
   const sections = [
     `# ${title}`,
     "",
@@ -105,6 +109,10 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
       const progress = `${gate.progress.completed}/${gate.progress.total} checks (${(gate.progress.ratio * 100).toFixed(0)}%)`;
       return `- **${goal.phase}** · ${payload.status ?? goal.status} · attempts ${payload.attempts ?? 0}${payload.goalSetId ? ` · goal-set ${payload.goalSetId}` : ""}\n  ${payload.title ?? "Untitled"}\n  ${payload.objective ?? ""}\n  Gate progress: ${progress}${gate.met ? " · complete" : gate.missing.length ? ` · missing: ${gate.missing.join(", ")}` : ""}`;
     }).join("\n") : "No phase goals recorded.",
+    "",
+    "## Three-stage progress",
+    "",
+    stageProgress.map((stage) => `- ${stage.stage}: ${stage.completed}/${stage.total} · ${stage.status}${stage.activePhase ? ` · active phase ${stage.activePhase}` : ""}`).join("\n"),
   ];
   if (kind !== "challenge") sections.push("", "## Hypotheses", "", hypotheses.length ? hypotheses.map((hypothesis) => `- ${hypothesis.id}: ${line((hypothesis.payload as { title?: string }).title ?? hypothesis.payload)}`).join("\n") : "No hypotheses recorded.");
   sections.push("", "## Learned transfer memory", "", researchMemory.verifiedPlaybooks.length
