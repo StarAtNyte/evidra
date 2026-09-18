@@ -20,6 +20,7 @@ import { observedGpuHours } from "../core/compute-budget.js";
 import { distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../core/distribution-beliefs.js";
 import { bindCampaignRuntime, campaignElapsedMinutes, pauseCampaign, readCampaignCheckpoint, resumeCampaign, withCampaignCheckpoint, type CampaignRuntimeConfig } from "../core/campaign.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../core/submissions.js";
+import { formatResearchStarterBriefs } from "../core/research-starters.js";
 import { pollSubmissionScore, submitApprovedBundle } from "../core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "../core/submission-policy.js";
 import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "../core/ensemble.js";
@@ -179,28 +180,10 @@ const UI = {
   red: "#ff6b6b",
 } as const;
 const RESEARCH_PLAN = "01 · Orient      define the question, workspace, data, and validation contract\n02 · Discover   gather evidence and form falsifiable hypotheses\n03 · Validate   run controlled experiments, replicate, and decide";
-const RESEARCH_STARTER_TOPICS = [
-  {
-    title: "Robust video understanding",
-    goal: "Improve long-video event retrieval when camera motion, lighting, and frame rate shift between training and deployment.",
-    answer: "Measure retrieval mAP, calibration, latency, and worst-group performance across clean and shifted splits; stop after a replicated gain with no subgroup regression.",
-  },
-  {
-    title: "Open-vocabulary segmentation",
-    goal: "Test whether uncertainty-aware pseudo-label selection improves open-vocabulary segmentation with limited annotations.",
-    answer: "Compare against a frozen baseline on mIoU, rare-class IoU, abstention quality, and label budget; require a held-out replication and an error audit.",
-  },
-  {
-    title: "Efficient multimodal reasoning",
-    goal: "Find a cheaper image-text inference strategy that preserves answer quality under a fixed compute budget.",
-    answer: "Track task score, joules or GPU-hours, tokens, and failure modes across multiple seeds; accept only a Pareto improvement confirmed by an independent run.",
-  },
-] as const;
-
 const RESEARCH_SETUP_STEPS = `01 · Orient\n   Question: What should change, and why does it matter?\n   Answer: State the target, scope, available assets, and measurable outcome.\n\n02 · Discover\n   Question: What evidence and competing explanations should be tested?\n   Answer: Evidra retrieves sources, inspects the workspace, creates falsifiable hypotheses, and allocates research lanes.\n\n03 · Validate\n   Question: What would count as a trustworthy result?\n   Answer: Define the baseline, held-out evaluation, replication rule, budget, and stopping condition.`;
 
 function researchStarterText(): string {
-  return RESEARCH_STARTER_TOPICS.map((topic, index) => `${String(index + 1).padStart(2, "0")} · ${topic.title}\n   Goal: ${topic.goal}\n   Answer: ${topic.answer}`).join("\n\n");
+  return formatResearchStarterBriefs();
 }
 
 function researchSetupPrompt(step: "goal" | "budget" | "stop"): string {

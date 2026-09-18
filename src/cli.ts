@@ -4,6 +4,7 @@ import { appendFileSync, mkdirSync, writeFileSync, existsSync, readFileSync, rea
 import { dirname, join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
+import { formatResearchStarterBriefs } from "./core/research-starters.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "./core/experiment-manifest.js";
 import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageProgress } from "./core/phase-goals.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "./core/types.js";
@@ -1915,6 +1916,11 @@ challenge.command("start")
 program.addCommand(challenge);
 
 const research = new Command("research").description("Ask the embedded research agent for the next research decision");
+research.command("examples")
+  .description("Show contemporary starter research briefs with metrics and stop rules")
+  .action(() => {
+    console.log(`Research starter briefs\n\n${formatResearchStarterBriefs()}\n\nAdapt a brief into: evidra research --goal \"...\"`);
+  });
 research.command("steer <message>")
   .description("Deliver guidance to the active campaign at its next safe cycle boundary")
   .action((message: string) => {

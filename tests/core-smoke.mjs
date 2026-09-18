@@ -27,6 +27,7 @@ import { LocalExecutor, classifyProcessFailure, containerCommand, mergeEvaluator
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
 import { experienceReplayWorld } from "../dist/core/experience.js";
+import { formatResearchStarterBriefs, RESEARCH_STARTER_BRIEFS } from "../dist/core/research-starters.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
 import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageForPhase, researchStageProgress } from "../dist/core/phase-goals.js";
@@ -2712,6 +2713,15 @@ test("three-stage research progress is derived from detailed durable goals", () 
   const advanced = goals.map((goal, index) => index < 3 ? { ...goal, status: "met" } : index === 3 ? { ...goal, status: "active" } : goal);
   assert.equal(researchStageProgress(advanced)[0].status, "met");
   assert.equal(researchStageProgress(advanced)[1].status, "active");
+});
+
+test("research starter briefs are shared across interactive and headless entrypoints", () => {
+  assert.equal(RESEARCH_STARTER_BRIEFS.length, 3);
+  const formatted = formatResearchStarterBriefs();
+  assert.match(formatted, /Robust video understanding/);
+  assert.match(formatted, /Open-vocabulary segmentation/);
+  assert.match(formatted, /Efficient multimodal reasoning/);
+  assert.match(formatted, /Answer:/);
 });
 
 test("phase goal sets isolate separate objectives within one mode", () => {
