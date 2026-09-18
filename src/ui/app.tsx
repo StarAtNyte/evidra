@@ -735,7 +735,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const checkId = ++providerCheckId.current;
     setOnboardingComplete(false);
     void listLocalModels().then((models) => {
-      if (checkId !== providerCheckId.current || configRef.current.provider !== "local") return;
+      if (checkId !== providerCheckId.current) return;
       if (models.length > 0) {
         setOnboardingComplete(true);
         append("assistant", `Local provider ready · ${models.length} model${models.length === 1 ? "" : "s"} available.`);
@@ -744,7 +744,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setPicker("provider"); setPickerIndex(1);
       }
     }).catch(() => {
-      if (checkId !== providerCheckId.current || configRef.current.provider !== "local") return;
+      if (checkId !== providerCheckId.current) return;
       append("assistant", "Local provider is unavailable. Start Ollama, or select Codex.");
       setPicker("provider"); setPickerIndex(1);
     });
