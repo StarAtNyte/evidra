@@ -90,11 +90,13 @@ def set_control(action: str) -> str:
 
 
 @app.function(image=image, secrets=secrets, volumes={"/state": STATE_VOLUME}, timeout=24 * 60 * 60)
-def execute(goal: str, budget: str, mode: str = "research", autonomy: str = "safe", provider: str = "codex", model: str = "default", lanes: int = 3, competition: str = "local-research", executor: str = "local") -> int:
+def execute(goal: str, budget: str, mode: str = "research", autonomy: str = "safe", provider: str = "codex", model: str = "default", fallback_model: str = "auto", limit_policy: str = "wait", lanes: int = 3, competition: str = "local-research", executor: str = "local") -> int:
     if mode not in {"research", "challenge"}:
         raise ValueError("Controller mode must be research or challenge")
     if autonomy not in {"safe", "fast", "yolo"}:
         raise ValueError("Controller autonomy must be safe, fast, or yolo")
+    if limit_policy not in {"auto", "wait", "fallback", "stop"}:
+        raise ValueError("Controller limit policy must be auto, wait, fallback, or stop")
     if executor not in {"local", "modal"}:
         raise ValueError("The Modal controller supports local or modal experiment workers; use container from a local controller.")
     environment = {
@@ -103,7 +105,11 @@ def execute(goal: str, budget: str, mode: str = "research", autonomy: str = "saf
         "EVIDRA_CONTROLLER_MODE": "modal",
         "EVIDRA_CONTROLLER_CONTROL_FILE": "/state/controller-control.json",
     }
-    install = subprocess.run(["npm", "ci", "--ignore-scripts"], cwd=REMOTE_WORKSPACE, env=environment, text=True, check=False)
+    # Native dependencies (notably better-sqlite3) need their install hooks in
+    # the remote image. The checkout is the trusted Evidra source tree; skipping
+    # scripts here produces a controller that builds but fails on first SQLite
+    # access.
+    install = subprocess.run(["npm", "ci"], cwd=REMOTE_WORKSPACE, env=environment, text=True, check=False)
     if install.returncode != 0:
         return install.returncode
     build = subprocess.run(["npm", "run", "build"], cwd=REMOTE_WORKSPACE, env=environment, text=True, check=False)
@@ -121,8 +127,9 @@ def execute(goal: str, budget: str, mode: str = "research", autonomy: str = "saf
         "--budget", budget,
         "--provider", provider,
         "--model", model,
+        "--fallback-model", fallback_model,
         "--lanes", str(max(1, min(lanes, 6))),
-        "--limit-policy", "wait",
+        "--limit-policy", limit_policy,
         "--executor", executor,
     ]
     process = subprocess.Popen(command, cwd=REMOTE_WORKSPACE, env=environment, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -141,7 +148,7 @@ def execute(goal: str, budget: str, mode: str = "research", autonomy: str = "saf
 
 
 @app.local_entrypoint()
-def run(action: str = "start", goal: str = "", budget: str = "4h", mode: str = "research", autonomy: str = "safe", provider: str = "codex", model: str = "default", lanes: int = 3, competition: str = "local-research", executor: str = "local") -> None:
+def run(action: str = "start", goal: str = "", budget: str = "4h", mode: str = "research", autonomy: str = "safe", provider: str = "codex", model: str = "default", fallback_model: str = "auto", limit_policy: str = "wait", lanes: int = 3, competition: str = "local-research", executor: str = "local") -> None:
     if action == "status":
         print(json.dumps(inspect_state.remote(), indent=2, default=str))
         return
@@ -150,4 +157,4 @@ def run(action: str = "start", goal: str = "", budget: str = "4h", mode: str = "
         return
     if action != "start" or not goal:
         raise ValueError("Start requires --goal; actions are start, status, pause, resume, and stop")
-    raise SystemExit(execute.remote(goal, budget, mode, autonomy, provider, model, lanes, competition, executor))
+    raise SystemExit(execute.remote(goal, budget, mode, autonomy, provider, model, fallback_model, limit_policy, lanes, competition, executor))

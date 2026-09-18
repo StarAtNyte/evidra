@@ -139,6 +139,12 @@ EVIDRA_MODAL_WORKSPACE="$PWD" modal run modal_controller.py::run \
   --goal "maximize robust validation performance" --budget 4h --mode challenge --competition arc-whestbench-2026 --executor local --autonomy fast --lanes 3
 ```
 
+The Modal controller also accepts `--limit-policy` and `--fallback-model`.
+For example, `--limit-policy auto --fallback-model qwen3.6:27b` uses a healthy
+local route when one is available in the controller image; the default Modal
+policy remains `wait` because the controller image does not include an Ollama
+server by default.
+
 The headless controller is controllable without attaching a second interactive agent. Its
 state is durable in the shared Modal Volume, and controls take effect at the next safe
 research-cycle boundary:
