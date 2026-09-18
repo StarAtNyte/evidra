@@ -1098,9 +1098,14 @@ test("durable campaign runtime settings are validated before resume", () => {
   assert.notEqual(campaignRuntimeFingerprint(runtime), campaignRuntimeFingerprint({ ...runtime, autonomy: "yolo" }));
   const bound = bindCampaignRuntime({ goal: "route-bound" }, runtime);
   assert.equal(bound.runtime.fingerprint, campaignRuntimeFingerprint(runtime));
+  assert.equal(bound.runtimeFingerprint, campaignRuntimeFingerprint(runtime));
+  assert.equal(readDurableCampaignRuntime(bound)?.model, runtime.model);
   const preserved = bindCampaignRuntime({ runtime: { ...runtime, fingerprint: campaignRuntimeFingerprint(runtime) } }, { ...runtime, model: "different" });
   assert.equal(preserved.runtime.model, runtime.model);
   assert.equal(preserved.runtime.fingerprint, campaignRuntimeFingerprint(runtime));
+  const legacyEnvelope = bindCampaignRuntime({ runtime }, runtime);
+  delete legacyEnvelope.runtime.fingerprint;
+  assert.equal(readDurableCampaignRuntime(legacyEnvelope)?.provider, runtime.provider);
   assert.equal(readDurableCampaignRuntime({ runtime: { ...runtime, fingerprint: "old" } }), undefined);
 });
 

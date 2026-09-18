@@ -102,18 +102,22 @@ export function readCampaignRuntime(value: unknown): CampaignRuntimeConfig | und
 export function readDurableCampaignRuntime(value: unknown): DurableCampaignRuntime | undefined {
   const runtime = readCampaignRuntime(value);
   if (!runtime || !value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const candidate = (value as { runtime?: unknown }).runtime;
-  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return undefined;
-  const fingerprint = (candidate as { fingerprint?: unknown }).fingerprint;
+  const envelope = value as { runtime?: unknown; runtimeFingerprint?: unknown };
+  const candidate = envelope.runtime;
+  const nestedFingerprint = candidate && typeof candidate === "object" && !Array.isArray(candidate)
+    ? (candidate as { fingerprint?: unknown }).fingerprint
+    : undefined;
+  const fingerprint = typeof nestedFingerprint === "string" ? nestedFingerprint : envelope.runtimeFingerprint;
   if (typeof fingerprint !== "string" || fingerprint !== campaignRuntimeFingerprint(runtime)) return undefined;
   return { ...runtime, fingerprint };
 }
 
 /** Attach an immutable route fingerprint while preserving an existing valid route. */
-export function bindCampaignRuntime<T extends object>(campaign: T, fallback: CampaignRuntimeConfig): T & { runtime: DurableCampaignRuntime } {
+export function bindCampaignRuntime<T extends object>(campaign: T, fallback: CampaignRuntimeConfig): T & { runtime: DurableCampaignRuntime; runtimeFingerprint: string } {
   const existing = readDurableCampaignRuntime(campaign);
   const runtime = existing ?? fallback;
-  return { ...campaign, runtime: { ...runtime, fingerprint: campaignRuntimeFingerprint(runtime) } };
+  const fingerprint = campaignRuntimeFingerprint(runtime);
+  return { ...campaign, runtime: { ...runtime, fingerprint }, runtimeFingerprint: fingerprint };
 }
 
 /** Wall-clock campaign usage excluding durable paused intervals. */

@@ -27,7 +27,7 @@ import { assessStopPolicy } from "./core/stop-policy.js";
 import { classifyVerifier } from "./core/formal-verification.js";
 import { detectRouteDrift } from "./core/drift-detection.js";
 import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
-import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readCampaignRuntime, researchTurnTimeoutMs, resumeCampaign, withCampaignCheckpoint, type CampaignCheckpointStep, type CampaignRuntimeConfig } from "./core/campaign.js";
+import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readDurableCampaignRuntime, researchTurnTimeoutMs, resumeCampaign, withCampaignCheckpoint, type CampaignCheckpointStep, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "./core/validation.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "./core/decision-auditor.js";
@@ -1957,7 +1957,7 @@ research
     // whichever defaults the current terminal happens to have. Legacy
     // campaigns without runtime metadata retain the explicit CLI settings.
     const savedRuntime = options.resume && savedCampaign && savedCampaign.status !== "completed"
-      ? readCampaignRuntime(savedCampaign)
+      ? readDurableCampaignRuntime(savedCampaign)
       : undefined;
     if (savedRuntime) {
       options.mode = savedRuntime.mode;
