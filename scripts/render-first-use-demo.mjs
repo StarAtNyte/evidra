@@ -5,47 +5,37 @@ mkdirSync(out, { recursive: true });
 
 const slides = [
   {
-    title: "FROM AN EMPTY WORKSPACE",
+    title: "01  /  ORIENT",
     prompt: "/research",
     lines: [
-      "Build a reproducible forecasting system for next-hour bike rentals.",
-      "Start from an empty workspace. Find a public dataset, establish a",
-      "leakage-safe baseline, research useful methods, and validate every change.",
+      "Can open-vocabulary vision detect unseen defects with 1% labels?",
+      "Dataset: public industrial anomaly benchmark",
+      "Metric: image AUROC + pixel AUPRO",
+      "Holdout: defect categories hidden until evaluation",
     ],
-    status: ["GOAL RECEIVED", "Defining internal phase goals", "Metric · time-based MAE", "Validation · chronological holdout"],
+    status: ["GOAL RECEIVED", "TASK  anomaly detection", "LEAKAGE  guarded", "BUDGET  bounded + resumable"],
   },
   {
-    title: "EVIDENCE BEFORE EXPERIMENTS",
-    prompt: "Phase 02 · Discovery",
+    title: "02  /  DISCOVER",
+    prompt: "Phase 02 · Evidence",
     lines: [
-      "Searching forecasting literature",
-      "Retrieving dataset documentation",
-      "Recording source hashes and leakage risks",
-      "Building the evidence graph",
+      "Researching open-vocabulary and self-supervised vision",
+      "Comparing DINOv2 features, CLIP prompts, and anomaly scoring",
+      "Checking methods against the held-out-category protocol",
+      "Forming a falsifiable hybrid-method hypothesis",
     ],
-    status: ["SOURCES  08", "CLAIMS   12", "HYPOTHESES 03", "LANES ACTIVE 04"],
+    status: ["SOURCES  14", "CLAIMS   23", "METHODS  04", "LANES ACTIVE 04"],
   },
   {
-    title: "CONTROLLED RESEARCH",
-    prompt: "Phase 04 · Experiment",
+    title: "03  /  VALIDATE",
+    prompt: "Phase 03 · Experiment + replication",
     lines: [
-      "Experiment 001 · cyclic time features",
-      "Experiment 002 · lag features",
-      "Experiment 003 · gradient-boosted model",
-      "Independent replication queued",
+      "Baseline: supervised CNN with 1% labeled training data",
+      "Candidate: frozen DINOv2 features + fixed defect prompts",
+      "Three seeds · unseen categories · fixed protocol",
+      "Failed prompt-tuning route recorded as negative evidence",
     ],
-    status: ["BASELINE     MAE 42.31", "CANDIDATE    RUNNING", "REPLICATION  QUEUED", "NEGATIVE EVIDENCE  RECORDED"],
-  },
-  {
-    title: "A RESULT YOU CAN TRUST",
-    prompt: "Phase 05 · Validation complete",
-    lines: [
-      "Baseline       MAE 42.31",
-      "Best candidate  MAE 36.84",
-      "Improvement    12.93%",
-      "Replication    PASSED",
-    ],
-    status: ["LEAKAGE AUDIT  PASSED", "PROVENANCE      COMPLETE", "DECISION        RETAIN", "STATE           RESUMABLE"],
+    status: ["BASELINE  AUROC 0.781", "CANDIDATE AUROC 0.836", "REPLICATION  PASSED", "DECISION  RETAIN"],
   },
 ];
 
@@ -67,7 +57,7 @@ slides.forEach((slide, index) => {
   ${textLines(slide.status, 792, 270, "#c7ff4a", 19, 55)}
   <rect x="82" y="605" width="1085" height="42" rx="8" fill="#151b30"/>
   <text x="105" y="632" fill="#858ba8" font-family="DejaVu Sans Mono" font-size="16">research · experiment · validate · resume</text>
-  <text x="1075" y="632" fill="#8b6cff" font-family="DejaVu Sans Mono" font-size="16">${String(index + 1).padStart(2, "0")} / 04</text>
+  <text x="1075" y="632" fill="#8b6cff" font-family="DejaVu Sans Mono" font-size="16">${String(index + 1).padStart(2, "0")} / ${String(slides.length).padStart(2, "0")}</text>
   </svg>`;
   writeFileSync(`${out}/frame-${String(index + 1).padStart(2, "0")}.svg`, svg);
 });
