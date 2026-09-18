@@ -965,7 +965,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     const mode = config.mode;
     const observation = await performResearchObservation();
-    setProgress("Research 3/3 · asking the director to analyze observed evidence and select the next experiment...");
+    setProgress("Research 2/3 · discovering evidence, competing hypotheses, and the next information gain...");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const project = store.project();
     // Retry context belongs to this cycle's prompt, not to the campaign's
@@ -1089,7 +1089,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     };
     try {
       activeSteer.current = null;
-      setProgress(`Research 3/4 · route ${route.tier} · ${route.reasoningEffort} reasoning · investigating...`);
+      setProgress(`Research 2/3 · route ${route.tier} · ${route.reasoningEffort} reasoning · investigating...`);
       const allocatedObjective = `${objective}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}`;
       const researchModelPool = config.provider === "codex" && route.parallelLanes > 1
         ? await listCodexModels().then((models) => codexResearchModelPool(config.model, models, Math.min(4, route.parallelLanes), config.reasoningEffort)).catch(() => [{ provider: "codex" as const, model: config.model }])
@@ -1136,7 +1136,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         onUsage: recordAgentUsage,
       });
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
-      setProgress("Research 4/4 · director is cross-pollinating lane findings...");
+      setProgress("Research 3/3 · validating lane findings, auditing evidence, and selecting the next action...");
       crossPollination = synthesizeLaneReports(laneReports);
       // Keep the TUI on the same bounded collaboration protocol as the CLI:
       // fast/YOLO campaigns can send a fresh lane set over contested findings
