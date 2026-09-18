@@ -59,7 +59,7 @@ import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js"
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { materializeResearchDecision } from "../dist/core/research-graph.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
-import { bindCampaignRuntime, campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, researchTurnTimeoutMs, resumeCampaign, withCampaignCheckpoint } from "../dist/core/campaign.js";
+import { bindCampaignRuntime, campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readDurableCampaignRuntime, researchTurnTimeoutMs, resumeCampaign, withCampaignCheckpoint } from "../dist/core/campaign.js";
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
@@ -1097,9 +1097,10 @@ test("durable campaign runtime settings are validated before resume", () => {
   assert.notEqual(campaignRuntimeFingerprint(runtime), campaignRuntimeFingerprint({ ...runtime, autonomy: "yolo" }));
   const bound = bindCampaignRuntime({ goal: "route-bound" }, runtime);
   assert.equal(bound.runtime.fingerprint, campaignRuntimeFingerprint(runtime));
-  const preserved = bindCampaignRuntime({ runtime: { ...runtime, fingerprint: "old" } }, { ...runtime, model: "different" });
+  const preserved = bindCampaignRuntime({ runtime: { ...runtime, fingerprint: campaignRuntimeFingerprint(runtime) } }, { ...runtime, model: "different" });
   assert.equal(preserved.runtime.model, runtime.model);
   assert.equal(preserved.runtime.fingerprint, campaignRuntimeFingerprint(runtime));
+  assert.equal(readDurableCampaignRuntime({ runtime: { ...runtime, fingerprint: "old" } }), undefined);
 });
 
 test("controller leases prevent duplicate workers and trajectories expose capability gaps", () => {

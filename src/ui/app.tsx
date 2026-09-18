@@ -936,7 +936,24 @@ export function App({ root }: { root: string }): React.JSX.Element {
   };
 
   const runResearchCycle = async (objective: string, campaign?: ResearchCampaign): Promise<{ text: string; goalStatus: "active" | "blocked" | "met"; decision: "inspect" | "propose" | "run" | "replicate" | "stop" }> => {
-    const requestedConfig = configRef.current;
+    // A resumed campaign owns its model route. Keep permissions and limit
+    // policy terminal-scoped, however: a previous session must never restore
+    // YOLO authority into a fresh terminal.
+    const savedRuntime = campaign?.runtime;
+    const requestedConfig = savedRuntime
+      ? {
+          ...configRef.current,
+          mode: savedRuntime.mode,
+          provider: savedRuntime.provider,
+          model: savedRuntime.model,
+          reasoningEffort: savedRuntime.thinking,
+          experimentExecutor: savedRuntime.executor,
+        }
+      : configRef.current;
+    if (savedRuntime) {
+      configRef.current = requestedConfig;
+      setConfig(requestedConfig);
+    }
     const startupRoute = await resolveStartupProvider({ provider: requestedConfig.provider, model: requestedConfig.model, cwd: root, limitPolicy: requestedConfig.limitPolicy }, requestedConfig.fallbackModel);
     const config = startupRoute.fallback
       ? { ...requestedConfig, provider: startupRoute.provider, model: startupRoute.model }
@@ -946,7 +963,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       setConfig(config);
       setProgress(`Codex unavailable · continuing with local/${startupRoute.model}...`);
     }
-    const mode = configRef.current.mode;
+    const mode = config.mode;
     const observation = await performResearchObservation();
     setProgress("Research 3/3 · asking the director to analyze observed evidence and select the next experiment...");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -1005,7 +1022,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const route = routeCapability({ objective, mode, provider: config.provider, model: config.model, autonomy: config.autonomy, recentFailureCount, failureClasses, recentQuality, recentOutcomes: store.recentEvents(500).filter((event) => event.type === "research.capability_outcome").slice(-12).map((event) => {
       const payload = event.payload as { mode?: unknown; servedProvider?: unknown; servedModel?: unknown; outcome?: unknown; quality?: unknown };
       return { mode: typeof payload.mode === "string" ? payload.mode : undefined, provider: typeof payload.servedProvider === "string" ? payload.servedProvider : undefined, model: typeof payload.servedModel === "string" ? payload.servedModel : undefined, outcome: typeof payload.outcome === "string" ? payload.outcome : undefined, quality: typeof payload.quality === "string" ? payload.quality : undefined };
-    }), budgetRemainingMinutes: campaignRemaining, requestedParallel: 3 });
+    }), budgetRemainingMinutes: campaignRemaining, requestedParallel: savedRuntime?.lanes ?? 3 });
     store.appendEvent("research.capability_route", { route, objective, recentFailureCount, recentQuality, predictedTier: route.tier, servedProvider: config.provider, servedModel: config.model });
     const forecastAssessments = store.eventsByType("research.forecast.assessed")
       .slice(-24)
@@ -2534,7 +2551,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const scheduler = store.schedulerState();
         const lease = store.liveControllerLease();
         store.close();
-        append("assistant", saved ? `${lifecycleMode === "challenge" ? "Challenge" : "Research"} campaign\n  status: ${saved.status}\n  goal: ${saved.goal}\n  budget: ${saved.budgetMinutes} minutes\n  autonomous experiments: ${saved.autoExecuteExperiments ? "enabled" : "approval-gated"}\n  scheduler: ${scheduler.status}\n  step: ${scheduler.currentStep ?? "idle"}` : `No ${lifecycleMode} campaign exists. Use /${lifecycleMode} start.`);
+        const runtime = saved?.runtime;
+        append("assistant", saved ? `${lifecycleMode === "challenge" ? "Challenge" : "Research"} campaign\n  status: ${saved.status}\n  goal: ${saved.goal}\n  budget: ${saved.budgetMinutes} minutes\n  autonomous experiments: ${saved.autoExecuteExperiments ? "enabled" : "approval-gated"}\n  route: ${runtime ? `${runtime.provider}/${runtime.model} · thinking ${runtime.thinking} · executor ${runtime.executor}` : "legacy campaign route unavailable"}\n  permissions: terminal-scoped (${config.autonomy})\n  scheduler: ${scheduler.status}\n  step: ${scheduler.currentStep ?? "idle"}` : `No ${lifecycleMode} campaign exists. Use /${lifecycleMode} start.`);
         if (lease) append("assistant", `Controller: running · pid ${lease.pid} · step ${lease.currentStep ?? "unknown"}`);
         return;
       }

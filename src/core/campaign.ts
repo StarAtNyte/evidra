@@ -98,9 +98,20 @@ export function readCampaignRuntime(value: unknown): CampaignRuntimeConfig | und
   };
 }
 
+/** Read a runtime only when its durable integrity binding is present and correct. */
+export function readDurableCampaignRuntime(value: unknown): DurableCampaignRuntime | undefined {
+  const runtime = readCampaignRuntime(value);
+  if (!runtime || !value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = (value as { runtime?: unknown }).runtime;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return undefined;
+  const fingerprint = (candidate as { fingerprint?: unknown }).fingerprint;
+  if (typeof fingerprint !== "string" || fingerprint !== campaignRuntimeFingerprint(runtime)) return undefined;
+  return { ...runtime, fingerprint };
+}
+
 /** Attach an immutable route fingerprint while preserving an existing valid route. */
 export function bindCampaignRuntime<T extends object>(campaign: T, fallback: CampaignRuntimeConfig): T & { runtime: DurableCampaignRuntime } {
-  const existing = readCampaignRuntime(campaign);
+  const existing = readDurableCampaignRuntime(campaign);
   const runtime = existing ?? fallback;
   return { ...campaign, runtime: { ...runtime, fingerprint: campaignRuntimeFingerprint(runtime) } };
 }
