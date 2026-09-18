@@ -388,6 +388,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const loopBusy = useRef(false);
   const activeProcess = useRef<ProcessControl | null>(null);
   const activeProcesses = useRef(new Set<ProcessControl>());
+  const providerCheckId = useRef(0);
   const activeSteer = useRef<((message: string) => boolean | Promise<boolean>) | null>(null);
   // Ordinary Codex chat keeps one provider thread for the lifetime of this
   // terminal process. Autonomous research deliberately does not reuse it:
@@ -504,10 +505,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
     // start. Persisted model/provider preferences are not proof of readiness.
     if (firstRun) return undefined;
     let active = true;
+    const checkId = ++providerCheckId.current;
     const verifyProvider = async (): Promise<void> => {
       if (config.provider === "codex") {
         const loggedIn = await codexIsLoggedInAsync();
-        if (!active) return;
+        if (!active || checkId !== providerCheckId.current) return;
         setOnboardingComplete(loggedIn);
         if (!loggedIn) {
           append("assistant", "Codex authentication is required for this terminal. Select a provider or run /login codex before sending a prompt.");
@@ -518,7 +520,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
       try {
         const models = await listLocalModels();
-        if (!active) return;
+        if (!active || checkId !== providerCheckId.current) return;
         const ready = models.length > 0;
         setOnboardingComplete(ready);
         if (!ready) {
@@ -527,7 +529,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           setPickerIndex(1);
         }
       } catch {
-        if (!active) return;
+        if (!active || checkId !== providerCheckId.current) return;
         setOnboardingComplete(false);
         append("assistant", "Local provider is unavailable. Start Ollama, or select Codex before sending a prompt.");
         setPicker("provider");
@@ -651,6 +653,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           if (saved) setTimeout(() => { void submitRef.current(`/resume ${saved.id}`); }, 0);
         } else if (picker === "provider") {
           const provider = providerChoices[pickerIndex];
+          providerCheckId.current += 1;
           activeCodexThread.current = undefined;
           setConfig((current) => ({
             ...current,
@@ -660,13 +663,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
               ? (current.provider === "local" ? current.model : "qwen3.6:27b")
               : (current.provider === "codex" ? current.model : DEFAULT_CODEX_MODEL),
           }));
-          setOnboardingComplete(provider === "local");
+          setOnboardingComplete(false);
           setPicker(null);
           if (provider === "codex") {
             append("assistant", "Connect your ChatGPT account to Codex. Starting device login; open the displayed link on your own device to authorize.");
             setTimeout(() => { void submitRef.current("/login codex"); }, 0);
           } else {
-            append("assistant", "Local provider selected. Evidra will use Ollama when it is running and has a compatible model. Use /doctor to verify the local setup.");
+            append("assistant", "Local provider selected. Checking Ollama readiness...");
+            checkLocalProvider();
           }
         } else if (picker === "model") {
           const chosen = availableModels[pickerIndex];
@@ -725,6 +729,25 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const appendError = (error: unknown): void => {
     if (interruptedProcess.current) return;
     append("assistant", error instanceof Error ? error.message : String(error));
+  };
+
+  const checkLocalProvider = (): void => {
+    const checkId = ++providerCheckId.current;
+    setOnboardingComplete(false);
+    void listLocalModels().then((models) => {
+      if (checkId !== providerCheckId.current || configRef.current.provider !== "local") return;
+      if (models.length > 0) {
+        setOnboardingComplete(true);
+        append("assistant", `Local provider ready · ${models.length} model${models.length === 1 ? "" : "s"} available.`);
+      } else {
+        append("assistant", "Local provider is unavailable. Start Ollama with at least one model, or select Codex.");
+        setPicker("provider"); setPickerIndex(1);
+      }
+    }).catch(() => {
+      if (checkId !== providerCheckId.current || configRef.current.provider !== "local") return;
+      append("assistant", "Local provider is unavailable. Start Ollama, or select Codex.");
+      setPicker("provider"); setPickerIndex(1);
+    });
   };
 
   const activeAdapter = () => {
@@ -2605,6 +2628,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (!provider) append("assistant", `Provider: ${config.provider}\nModel: ${config.model}\nUse /provider codex or /provider local.`);
       else if (provider !== "codex" && provider !== "local") append("assistant", "Choose codex or local.");
       else {
+        providerCheckId.current += 1;
         activeCodexThread.current = undefined;
         setConfig((current) => ({
           ...current,
@@ -2614,10 +2638,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
             ? (current.provider === "local" ? current.model : "qwen3.6:27b")
             : (current.provider === "codex" ? current.model : DEFAULT_CODEX_MODEL),
         }));
-        setOnboardingComplete(provider === "local");
+        setOnboardingComplete(false);
         append("assistant", `Provider selected: ${provider}`);
         if (provider === "codex") {
           setTimeout(() => { void submitRef.current("/login codex"); }, 0);
+        } else {
+          checkLocalProvider();
         }
       }
       return;
