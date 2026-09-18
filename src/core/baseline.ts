@@ -62,6 +62,20 @@ export function recordBaselineEvidence(
     artifactPaths,
     artifactChecksums,
   };
+  // Baselines are first-class durable evidence, not only an event payload.
+  // This gives director hypotheses a stable provenance source to cite.
+  store.saveSource({
+    id: runId,
+    payload: {
+      id: runId,
+      title: "Evidra canonical baseline",
+      url: `https://evidra.local/baseline/${runId}`,
+      retrievedAt: new Date().toISOString(),
+      contentHash: runId,
+      evidenceClass: "implementation",
+      claims: [metric === null ? "Baseline completed without a finite primary metric." : `Baseline primary metric: ${metric}`],
+    },
+  });
   store.appendEvent(result.exitCode === 0 ? "baseline.completed" : "baseline.failed", evidence);
   return evidence;
 }

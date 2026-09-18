@@ -25,7 +25,22 @@ function hypothesisFingerprint(hypothesis: ResearchDecision["hypotheses"][number
 
 /** Turn a validated director decision into durable graph entities. */
 export function materializeResearchDecision(store: ResearchStore, value: ResearchDecision, options: { evidenceSourceId?: string; evidenceScope?: string } = {}): MaterializedDecision {
-  const decision = ResearchDecisionSchema.parse(value);
+  const parsedDecision = ResearchDecisionSchema.parse(value);
+  // Models sometimes refer to durable event families from their context
+  // rather than the concrete source ID. Resolve only known aliases from the
+  // latest persisted records; all other IDs remain strict and are rejected.
+  const latestBaseline = store.eventsByType("baseline.completed").at(-1)?.payload as { runId?: unknown } | undefined;
+  const latestObservation = store.eventsByType("research.observation").at(-1)?.payload as { sourceId?: unknown } | undefined;
+  const aliases = new Map<string, string>();
+  if (typeof latestBaseline?.runId === "string") aliases.set("baseline.completed", latestBaseline.runId);
+  if (typeof latestObservation?.sourceId === "string") aliases.set("research.observation", latestObservation.sourceId);
+  const decision = ResearchDecisionSchema.parse({
+    ...parsedDecision,
+    hypotheses: parsedDecision.hypotheses.map((hypothesis) => ({
+      ...hypothesis,
+      evidenceSourceIds: hypothesis.evidenceSourceIds.map((sourceId) => aliases.get(sourceId) ?? sourceId),
+    })),
+  });
   const durableSources = store.sources();
   const durableSourceIds = new Set(durableSources.map((source) => source.id));
   const supersededSourceIds = new Set(store.edges().filter((edge) => edge.relation === "supersedes").map((edge) => edge.toId));

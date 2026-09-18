@@ -2790,8 +2790,8 @@ research
         recordBaselineEvidence(store, root, baseline, metric, parsed.metrics, parsed.metricsByFold);
       }
       const observation = { gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40), repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120), ...(baseline ? { baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: redactSecrets(baseline.stdout.slice(-4000)), stderr: redactSecrets(baseline.stderr.slice(-4000)) } } : {}) };
-      store.appendEvent("research.observation", observation);
       const observationId = `observation_${Date.now()}`;
+      store.appendEvent("research.observation", { ...observation, sourceId: observationId });
       store.saveSource({ id: observationId, payload: { id: observationId, title: "Evidra workspace observation", url: `https://evidra.local/observation/${observationId}`, retrievedAt: new Date().toISOString(), contentHash: observationId, evidenceClass: "implementation", claims: [] } });
       store.saveClaim({ id: `claim_${observationId}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: observationId, status: "active", observation } });
       store.close();
