@@ -34,7 +34,7 @@ import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoa
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
-import { codexLoginStatus, codexResearchModelPool, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, logoutCodex, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveStartupProvider, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
+import { codexIsLoggedInAsync, codexLoginStatus, codexResearchModelPool, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, logoutCodex, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveStartupProvider, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { boundedPeerBoard, runResearchCritic, runResearchLanes, runResearchSemanticAuditor, type ResearchLaneReport, type ResearchReview, type ResearchSemanticAudit } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
@@ -373,7 +373,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const [pickerIndex, setPickerIndex] = useState(0);
   const [resumeChoices, setResumeChoices] = useState<Array<{ id: string; status: string; startedAt: string }>>([]);
   const [firstRun] = useState(() => !existsSync(configPath));
-  const [onboardingComplete, setOnboardingComplete] = useState(() => !firstRun);
+  const [onboardingComplete, setOnboardingComplete] = useState(() => !firstRun && config.provider === "local");
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [setupStep, setSetupStep] = useState<"goal" | "budget" | "stop" | null>(null);
   const [setupDraft, setSetupDraft] = useState<{ goal?: string; budgetMinutes?: number }>({});
@@ -497,6 +497,23 @@ export function App({ root }: { root: string }): React.JSX.Element {
     append("assistant", "Welcome to Evidra. Before the first conversation, choose how the research director should run. Codex uses your ChatGPT subscription; Local uses an Ollama server on this machine.");
     setPicker("provider");
     setPickerIndex(0);
+  }, [firstRun]);
+
+  useEffect(() => {
+    // Existing sessions must revalidate provider access on every terminal
+    // start. Persisted model/provider preferences are not proof of auth.
+    if (firstRun || config.provider !== "codex") return undefined;
+    let active = true;
+    void codexIsLoggedInAsync().then((loggedIn) => {
+      if (!active) return;
+      setOnboardingComplete(loggedIn);
+      if (!loggedIn) {
+        append("assistant", "Codex authentication is required for this terminal. Select a provider or run /login codex before sending a prompt.");
+        setPicker("provider");
+        setPickerIndex(0);
+      }
+    });
+    return () => { active = false; };
   }, [firstRun]);
 
   useEffect(() => {
