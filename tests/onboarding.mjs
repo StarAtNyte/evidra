@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { requiresProviderSetup } from '../dist/ui/onboarding.js';
+import { insertAtCursor, isShiftEnterSequence } from '../dist/ui/input-keys.js';
 
 test('unfinished provider setup blocks chat, research, and queued execution', () => {
   for (const request of ['hi', '/research start', '/challenge start', '!ls', '/loop resume']) {
@@ -14,4 +15,12 @@ test('failed login leaves recovery and exit controls available', () => {
     assert.equal(requiresProviderSetup(false, request), false, request);
   }
   assert.equal(requiresProviderSetup(false, '/login-malformed'), true);
+});
+
+test('terminal Shift+Enter encodings become a single inserted newline', () => {
+  assert.equal(isShiftEnterSequence('\u001b[27;2;13~'), true);
+  assert.equal(isShiftEnterSequence('\u001b[13;2u'), true);
+  assert.equal(isShiftEnterSequence('ordinary text'), false);
+  assert.deepEqual(insertAtCursor('abcd', 2, '\n'), { value: 'ab\ncd', cursor: 3 });
+  assert.deepEqual(insertAtCursor('abcd', 99, 'x'), { value: 'abcdx', cursor: 5 });
 });

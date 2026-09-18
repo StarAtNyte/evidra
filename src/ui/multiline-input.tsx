@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Text, useInput } from "ink";
+import { insertAtCursor, isShiftEnterSequence } from "./input-keys.js";
 
 type Props = {
   value: string;
@@ -18,15 +19,15 @@ export default function MultilineInput({ value, placeholder = "", focus = true, 
     if (!focus || key.upArrow || key.downArrow || key.tab || (key.ctrl && input === "c")) return;
     // Some terminals encode Shift+Enter as a CSI sequence instead of setting
     // Ink's key.shift flag. Consume both common encodings as a line break.
-    if (/\u001b\[(?:27;2;13~|13;2u)/.test(input)) {
-      const next = value.slice(0, cursor) + "\n" + value.slice(cursor);
-      setCursor(cursor + 1); onChange(next);
+    if (isShiftEnterSequence(input)) {
+      const next = insertAtCursor(value, cursor, "\n");
+      setCursor(next.cursor); onChange(next.value);
       return;
     }
     if (key.return) {
       if (key.shift) {
-        const next = value.slice(0, cursor) + "\n" + value.slice(cursor);
-        setCursor(cursor + 1); onChange(next);
+        const next = insertAtCursor(value, cursor, "\n");
+        setCursor(next.cursor); onChange(next.value);
       } else onSubmit?.(value);
       return;
     }
@@ -38,8 +39,8 @@ export default function MultilineInput({ value, placeholder = "", focus = true, 
       setCursor(cursor - 1); onChange(next); return;
     }
     if (!input) return;
-    const next = value.slice(0, cursor) + input + value.slice(cursor);
-    setCursor(cursor + input.length); onChange(next);
+    const next = insertAtCursor(value, cursor, input);
+    setCursor(next.cursor); onChange(next.value);
   }, { isActive: focus });
 
   const visible = value || placeholder;
