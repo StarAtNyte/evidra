@@ -6,11 +6,11 @@
   "workspacePath": "competitions/gems/reference",
   "metric": { "name": "local_dti", "direction": "maximize" },
   "evaluator": {
-    "command": ["uv", "run", "--no-sync", "python", "train.py", "--mode", "train", "--epochs", "5", "--output", "artifacts/submission.tif"],
+    "command": ["uv", "run", "python", "train.py", "--mode", "train", "--epochs", "5", "--output", "artifacts/submission.tif"],
     "estimatorPath": "train.py"
   },
-  "baselineCommand": ["uv", "run", "--no-sync", "python", "train.py", "--mode", "baseline", "--output", "artifacts/baseline.tif"],
-  "experimentCommand": ["uv", "run", "--no-sync", "python", "train.py", "--mode", "train", "--epochs", "5", "--output", "artifacts/submission.tif"],
+  "baselineCommand": ["uv", "run", "python", "train.py", "--mode", "baseline", "--output", "artifacts/baseline.tif"],
+  "experimentCommand": ["uv", "run", "python", "train.py", "--mode", "train", "--epochs", "5", "--output", "artifacts/submission.tif"],
   "researchSources": [
     "https://www.drivendata.org/competitions/306/competition-doe-gems/page/967/",
     "https://github.com/drivendataorg/gems-prize-reference-solution"
@@ -23,6 +23,7 @@
   ],
   "evaluatorTimeoutMinutes": 240,
   "execution": {
+    "dataPaths": ["competitions/gems/data"],
     "requiredArtifacts": ["artifacts/submission.tif"],
     "matrixRequired": false
   },

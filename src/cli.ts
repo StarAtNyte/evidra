@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { appendFileSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { appendFileSync, cpSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
@@ -194,6 +194,23 @@ function requireCompetitionContract(adapter: ReturnType<typeof activeCompetition
   const report = validateCompetitionContract(adapter.config, adapter.workspacePath(root));
   if (!report.valid) {
     throw new Error(`Invalid ${adapter.config.name} contract. Run 'evidra validate' for details.\n${report.checks.filter((check) => !check.passed).map((check) => `- ${check.name}: ${check.detail}`).join("\n")}`);
+  }
+}
+
+/** Stage explicitly declared datasets into an isolated experiment worktree.
+ * Untracked data is intentionally not copied implicitly; manifests must declare
+ * it so provenance, cost, and reproducibility remain visible to the harness.
+ */
+function stageDeclaredExperimentData(worktree: string, paths: string[]): void {
+  const workspacePrefix = root.endsWith("/") ? root : `${root}/`;
+  for (const declared of paths) {
+    const source = resolve(root, declared);
+    if (!source.startsWith(workspacePrefix) || source === root) throw new Error(`Declared experiment data path must stay inside the workspace: ${declared}`);
+    if (!existsSync(source)) throw new Error(`Declared experiment data path is missing: ${declared}`);
+    const destination = resolve(worktree, declared);
+    const worktreePrefix = worktree.endsWith("/") ? worktree : `${worktree}/`;
+    if (!destination.startsWith(worktreePrefix)) throw new Error(`Declared experiment data path escapes the isolated worktree: ${declared}`);
+    cpSync(source, destination, { recursive: true, force: true, dereference: true });
   }
 }
 
@@ -4018,6 +4035,7 @@ experiment.command("run")
     store.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "running" } });
     store.close();
     const worktreePath = await ensureWorktree(root, root, id);
+    stageDeclaredExperimentData(worktreePath, adapter.config.execution?.dataPaths ?? []);
     const experimentCwd = join(worktreePath, relative(root, adapter.workspacePath(root)));
     const experimentEnvironment = prepareExperimentEnvironment(manifest, experimentCwd);
     const protectedReference = captureProtectedFiles(adapter.workspacePath(root), [adapter.config.evaluator.command]);

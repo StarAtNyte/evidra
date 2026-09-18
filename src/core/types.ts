@@ -67,6 +67,8 @@ export const CompetitionConfigSchema = z.object({
     verificationCommand: z.array(z.string()).min(1).optional(),
     verificationCommands: z.array(z.array(z.string()).min(1)).min(1).optional(),
     requiredArtifacts: z.array(z.string()).default([]),
+    /** Workspace-relative datasets staged into isolated experiment worktrees. */
+    dataPaths: z.array(z.string().min(1)).default([]),
   }).optional(),
   validation: z.object({
     primarySplit: z.string().min(1).default("mini"),
