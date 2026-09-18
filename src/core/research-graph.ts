@@ -65,6 +65,14 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
       },
     });
   }
+  // Some older director turns placed a claim ID in evidenceSourceIds. Keep
+  // the graph strict by translating only claims that already point to a
+  // durable source; never promote an ungrounded claim into a source.
+  const durableSourceIdsAfterExecutionBackfill = new Set(store.sources().map((source) => source.id));
+  for (const claim of store.claims()) {
+    const sourceId = (claim.payload as { sourceId?: unknown }).sourceId;
+    if (typeof sourceId === "string" && durableSourceIdsAfterExecutionBackfill.has(sourceId)) aliases.set(claim.id, sourceId);
+  }
   const decision = ResearchDecisionSchema.parse({
     ...parsedDecision,
     hypotheses: parsedDecision.hypotheses.map((hypothesis) => ({
