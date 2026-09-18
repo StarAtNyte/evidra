@@ -155,7 +155,6 @@ def main() -> None:
         return
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_x, train_y, _ = make_patches(features, labels, args.patch_size, validation=False)
-    val_x, val_y, _ = make_patches(features, labels, args.patch_size, validation=True)
     heldout_labels = validation_target(labels, args.patch_size)
     model = smp.Unet(encoder_name="resnet18", encoder_weights=None, in_channels=features.shape[-1], classes=1).to(device)
     loader = DataLoader(TensorDataset(torch.from_numpy(train_x), torch.from_numpy(train_y[:, None])), batch_size=args.batch_size, shuffle=True, num_workers=0)
@@ -177,8 +176,10 @@ def main() -> None:
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
         validation_prediction = predict(model, features, args.patch_size, device)
-        heldout_prediction = np.where(heldout_labels > 0, validation_prediction, 0)
-        score = distance_tversky(heldout_prediction, heldout_labels)
+        # Score the complete prediction against the spatial holdout mask. Do
+        # not mask predictions by the labels: that would leak the answer into
+        # the metric and make the proxy look artificially strong.
+        score = distance_tversky(validation_prediction, heldout_labels)
         print(json.dumps({"epoch": epoch + 1, "epochs": args.epochs, "proxy_dti": score, "device": str(device)}), flush=True)
         if score > best_score:
             best_score = score
