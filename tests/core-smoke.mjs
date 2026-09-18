@@ -33,7 +33,7 @@ import { formatResearchStarterBriefs, RESEARCH_STARTER_BRIEFS } from "../dist/co
 import { classifyResearchSetupInput } from "../dist/core/research-setup.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
-import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageForPhase, researchStageProgress } from "../dist/core/phase-goals.js";
+import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatResearchStagePlan, mergePhaseGoalAudits, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageForPhase, researchStageProgress, RESEARCH_STAGE_PLAN } from "../dist/core/phase-goals.js";
 import { assertSubtaskContract, auditSubtask, projectVerifiedSubtaskState, subtaskAuditFingerprint, subtaskStateFromAudit, validateSubtaskContract } from "../dist/core/subtask-state.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "../dist/core/decision-auditor.js";
 import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, submitApprovedBundle } from "../dist/core/submission-adapters.js";
@@ -2728,6 +2728,16 @@ test("three-stage research progress is derived from detailed durable goals", () 
   const advanced = goals.map((goal, index) => index < 3 ? { ...goal, status: "met" } : index === 3 ? { ...goal, status: "active" } : goal);
   assert.equal(researchStageProgress(advanced)[0].status, "met");
   assert.equal(researchStageProgress(advanced)[1].status, "active");
+});
+
+test("three-stage research plan is a shared, answerable contract", () => {
+  assert.equal(RESEARCH_STAGE_PLAN.length, 3);
+  const plan = formatResearchStagePlan();
+  assert.match(plan, /01 · Orient/);
+  assert.match(plan, /02 · Discover/);
+  assert.match(plan, /03 · Validate/);
+  assert.equal((plan.match(/Question:/g) ?? []).length, 3);
+  assert.equal((plan.match(/Answer:/g) ?? []).length, 3);
 });
 
 test("research starter briefs are shared across interactive and headless entrypoints", () => {

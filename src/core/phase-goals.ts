@@ -3,6 +3,32 @@ import { auditSubtask, type SubtaskAudit, type SubtaskContract, type SubtaskObse
 
 export type ResearchStage = "orient" | "discover" | "validate";
 
+/** The stable, user-facing contract for the three-stage autonomous loop. */
+export const RESEARCH_STAGE_PLAN: readonly { stage: ResearchStage; title: string; question: string; answer: string }[] = [
+  {
+    stage: "orient",
+    title: "Orient",
+    question: "What is changing, what evidence is available, and what can be measured safely?",
+    answer: "Inspect the workspace, data contract, constraints, evaluator, and execution environment; record a reproducible baseline and audit leakage risks.",
+  },
+  {
+    stage: "discover",
+    title: "Discover",
+    question: "Which competing explanations or interventions are worth testing next?",
+    answer: "Retrieve and ground relevant evidence, form falsifiable hypotheses, compare expected information gain and cost, then select an isolated experiment.",
+  },
+  {
+    stage: "validate",
+    title: "Validate",
+    question: "What result would survive scrutiny rather than merely look promising?",
+    answer: "Run controlled evaluations, inspect errors and secondary objectives, replicate promising signals independently, and stop only when the declared condition is evidenced.",
+  },
+];
+
+export function formatResearchStagePlan(): string {
+  return RESEARCH_STAGE_PLAN.map((step, index) => `${String(index + 1).padStart(2, "0")} · ${step.title}\n   Question: ${step.question}\n   Answer: ${step.answer}`).join("\n\n");
+}
+
 const STAGE_PHASES: Record<ResearchStage, readonly ResearchPhase[]> = {
   orient: ["orientation", "baseline", "data_audit"],
   discover: ["validation", "hypothesis", "implementation"],

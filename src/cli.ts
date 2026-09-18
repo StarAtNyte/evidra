@@ -7,7 +7,7 @@ import { ResearchStore } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
 import { formatResearchStarterBriefs } from "./core/research-starters.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "./core/experiment-manifest.js";
-import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageProgress } from "./core/phase-goals.js";
+import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatResearchStagePlan, mergePhaseGoalAudits, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageProgress } from "./core/phase-goals.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema, type ExperimentExecutorKind } from "./core/types.js";
 import { loadCompetitionAdapter } from "./competitions/adapters.js";
 import { auditData, dataAuditFingerprint } from "./core/data-audit.js";
@@ -2052,6 +2052,18 @@ research.command("examples")
   .description("Show contemporary starter research briefs with metrics and stop rules")
   .action(() => {
     console.log(`Research starter briefs\n\n${formatResearchStarterBriefs()}\n\nAdapt a brief into: evidra research --goal \"...\"`);
+  });
+research.command("plan")
+  .description("Show the three user-facing research stages and their internal contract")
+  .action(() => {
+    const store = new ResearchStore(statePath);
+    const campaign = store.campaign() as { goal?: string; runtime?: { mode?: unknown } } | undefined;
+    const mode = resolveCampaignMode(campaign?.runtime?.mode, store.schedulerState().mode);
+    const goals = phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode);
+    const stages = researchStageProgress(goals);
+    store.close();
+    const progress = stages.map((stage) => `   State: ${stage.completed}/${stage.total} internal phases · ${stage.status}`).join("\n");
+    console.log(`Research plan\n\n${formatResearchStagePlan()}\n\nInternal phase progress\n${progress}${campaign?.goal ? `\n\nActive goal\n   ${campaign.goal}` : ""}`);
   });
 research.command("status")
   .description("Show durable research campaign and three-stage progress")

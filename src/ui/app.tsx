@@ -33,7 +33,7 @@ import { createValidationPolicy, writeValidationPolicy } from "../core/validatio
 import { canonicalSourceUrl, retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
 import { competitionResearchClaimType, competitionResearchSources } from "../core/competition-sources.js";
 import { extractCompetitionInsights } from "../core/competition-insights.js";
-import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageProgress } from "../core/phase-goals.js";
+import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatResearchStagePlan, mergePhaseGoalAudits, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageProgress } from "../core/phase-goals.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
@@ -180,7 +180,7 @@ const UI = {
   amber: "#ffc857",
   red: "#ff6b6b",
 } as const;
-const RESEARCH_PLAN = "01 · Orient      define the question, workspace, data, and validation contract\n02 · Discover   gather evidence and form falsifiable hypotheses\n03 · Validate   run controlled experiments, replicate, and decide";
+const RESEARCH_PLAN = formatResearchStagePlan();
 const RESEARCH_SETUP_STEPS = `01 · Orient\n   Question: What should change, and why does it matter?\n   Answer: State the target, scope, available assets, and measurable outcome.\n\n02 · Discover\n   Question: What evidence and competing explanations should be tested?\n   Answer: Evidra retrieves sources, inspects the workspace, creates falsifiable hypotheses, and allocates research lanes.\n\n03 · Validate\n   Question: What would count as a trustworthy result?\n   Answer: Define the baseline, held-out evaluation, replication rule, budget, and stopping condition.`;
 
 function researchStarterText(): string {
