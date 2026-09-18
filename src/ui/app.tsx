@@ -2428,16 +2428,47 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (!saved) { append("assistant", "No saved session found. Use /sessions to list resumable sessions."); return; }
       const payload = saved.payload as { config?: Partial<SessionConfig>; messages?: Message[] };
       const resumedMessages = Array.isArray(payload.messages) ? payload.messages : [];
-      const resumedConfig = { ...config, ...(payload.config ?? {}), autonomy: config.autonomy } as SessionConfig;
-      activeCodexThread.current = resumedConfig.provider === "codex" ? resumedConfig.codexThreadId : undefined;
+      const storedConfig = payload.config ?? {};
+      const resumedConfig = normalizeSessionConfig({ ...config, ...storedConfig, autonomy: config.autonomy });
+      // Explicit resume may restore the conversation thread, but never the
+      // old terminal's permissions. The normalizer also pauses a running
+      // campaign so restart is an explicit, provider-gated action below.
+      resumedConfig.autonomy = config.autonomy;
+      resumedConfig.codexThreadId = typeof storedConfig.codexThreadId === "string" ? storedConfig.codexThreadId : undefined;
       setMessages([...resumedMessages, { role: "system", text: `Resumed ${saved.id} · permissions remain ${config.autonomy.toUpperCase()} for this terminal.` }]);
       setConfig(resumedConfig);
       const campaign = resumedConfig.campaign;
-      if (campaign) {
-        const activeCampaign = { ...campaign, status: "running" } as ResearchCampaign;
-        persistCampaign(activeCampaign);
-        setConfig((current) => ({ ...current, campaign: activeCampaign }));
-        setTimeout(() => { void runAutonomousCycle(activeCampaign, true); }, 0);
+      providerCheckId.current += 1;
+      setOnboardingComplete(false);
+      setBusy(true); setProgress(`Restoring ${resumedConfig.provider} provider...`);
+      try {
+        const ready = resumedConfig.provider === "codex"
+          ? await codexIsLoggedInAsync()
+          : (await listLocalModels()).length > 0;
+        if (!ready) {
+          setPicker("provider"); setPickerIndex(resumedConfig.provider === "codex" ? 0 : 1);
+          append("assistant", resumedConfig.provider === "codex"
+            ? "Saved session restored, but Codex is not authenticated. Run /login codex before resuming the campaign."
+            : "Saved session restored, but Ollama is unavailable. Start Ollama or select Codex before resuming the campaign.");
+          return;
+        }
+        setOnboardingComplete(true);
+        activeCodexThread.current = resumedConfig.provider === "codex" ? resumedConfig.codexThreadId : undefined;
+        if (campaign && campaign.status !== "completed") {
+          const activeCampaign = resumeCampaign(campaign) as ResearchCampaign;
+          persistCampaign(activeCampaign);
+          setConfig((current) => ({ ...current, campaign: activeCampaign }));
+          setTimeout(() => { void runAutonomousCycle(activeCampaign, true); }, 0);
+        } else if (campaign?.status === "completed") {
+          append("assistant", "Saved campaign restored as completed. No workers were restarted; use /research start for a new campaign.");
+        }
+      } catch {
+        setPicker("provider"); setPickerIndex(resumedConfig.provider === "codex" ? 0 : 1);
+        append("assistant", resumedConfig.provider === "codex"
+          ? "Saved session restored, but Codex could not be reached. Run /login codex and try /resume again."
+          : "Saved session restored, but Ollama could not be reached. Start Ollama and try /resume again.");
+      } finally {
+        setBusy(false); setProgress("");
       }
       return;
     }
