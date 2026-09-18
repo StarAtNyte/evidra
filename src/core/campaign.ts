@@ -58,6 +58,12 @@ export interface CampaignRuntimeConfig {
 
 export type DurableCampaignRuntime = CampaignRuntimeConfig & { fingerprint: string };
 
+/** Resolve the durable campaign mode, falling back to legacy scheduler state. */
+export function resolveCampaignMode(campaignMode: unknown, schedulerMode: unknown): "research" | "challenge" {
+  if (campaignMode === "research" || campaignMode === "challenge") return campaignMode;
+  return schedulerMode === "challenge" ? "challenge" : "research";
+}
+
 /** Stable integrity binding for the safety-relevant campaign route. */
 export function campaignRuntimeFingerprint(runtime: CampaignRuntimeConfig): string {
   const canonical = JSON.stringify({

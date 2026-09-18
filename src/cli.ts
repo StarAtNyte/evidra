@@ -27,7 +27,7 @@ import { assessStopPolicy } from "./core/stop-policy.js";
 import { classifyVerifier } from "./core/formal-verification.js";
 import { detectRouteDrift } from "./core/drift-detection.js";
 import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
-import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readDurableCampaignRuntime, researchTurnTimeoutMs, resumeCampaign, withCampaignCheckpoint, type CampaignCheckpointStep, type CampaignRuntimeConfig } from "./core/campaign.js";
+import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readDurableCampaignRuntime, researchTurnTimeoutMs, resolveCampaignMode, resumeCampaign, withCampaignCheckpoint, type CampaignCheckpointStep, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "./core/validation.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "./core/decision-auditor.js";
@@ -528,7 +528,7 @@ program.command("status").action(() => {
     console.log(`Integrity     ${integrity.status.toUpperCase()}${integrity.legacy ? ` (${integrity.legacy} legacy)` : ""}`);
     const campaign = store.campaign() as { runtime?: { mode?: unknown } } | undefined;
     const scheduler = store.schedulerState();
-    const mode = campaign?.runtime?.mode === "challenge" || scheduler.mode === "challenge" ? "challenge" : "research";
+    const mode = resolveCampaignMode(campaign?.runtime?.mode, scheduler.mode);
     const goals = phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode);
     if (goals.length) {
       console.log(`Mode          ${mode}`);
@@ -1929,7 +1929,7 @@ research.command("status")
     const store = new ResearchStore(statePath);
     const campaign = store.campaign() as { goal?: string; status?: string; budgetMinutes?: number; stopCondition?: string; currentCycle?: number; currentStep?: string; checkpointedAt?: string; runtime?: { mode?: unknown; provider?: unknown; model?: unknown; thinking?: unknown; executor?: unknown } } | undefined;
     const scheduler = store.schedulerState();
-    const mode = campaign?.runtime?.mode === "challenge" || scheduler.mode === "challenge" ? "challenge" : "research";
+    const mode = resolveCampaignMode(campaign?.runtime?.mode, scheduler.mode);
     const goals = phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode);
     const active = activePhaseGoal(goals);
     const stages = researchStageProgress(goals);

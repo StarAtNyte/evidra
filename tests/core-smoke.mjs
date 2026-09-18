@@ -60,7 +60,7 @@ import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js"
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { materializeResearchDecision } from "../dist/core/research-graph.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
-import { bindCampaignRuntime, campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readDurableCampaignRuntime, researchTurnTimeoutMs, resumeCampaign, withCampaignCheckpoint } from "../dist/core/campaign.js";
+import { bindCampaignRuntime, campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readDurableCampaignRuntime, researchTurnTimeoutMs, resolveCampaignMode, resumeCampaign, withCampaignCheckpoint } from "../dist/core/campaign.js";
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
@@ -1107,6 +1107,13 @@ test("durable campaign runtime settings are validated before resume", () => {
   delete legacyEnvelope.runtime.fingerprint;
   assert.equal(readDurableCampaignRuntime(legacyEnvelope)?.provider, runtime.provider);
   assert.equal(readDurableCampaignRuntime({ runtime: { ...runtime, fingerprint: "old" } }), undefined);
+});
+
+test("durable campaign mode wins over stale scheduler mode", () => {
+  assert.equal(resolveCampaignMode("research", "challenge"), "research");
+  assert.equal(resolveCampaignMode("challenge", "research"), "challenge");
+  assert.equal(resolveCampaignMode(undefined, "challenge"), "challenge");
+  assert.equal(resolveCampaignMode(undefined, "research"), "research");
 });
 
 test("controller leases prevent duplicate workers and trajectories expose capability gaps", () => {
