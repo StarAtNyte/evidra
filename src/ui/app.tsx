@@ -2600,16 +2600,20 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (request === "/resume") resumeActiveProcesses();
       if (request === "/pause" && loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      store.setSchedulerState({ status: request === "/pause" ? "paused" : "running", mode: config.mode, currentStep: null });
-      store.close();
-      if (config.campaign) {
-        const campaign = { ...config.campaign, status: request === "/pause" ? "paused" : "running" } as ResearchCampaign;
-        persistCampaign(campaign);
+      const savedCampaign = store.campaign() as ResearchCampaign | undefined;
+      const controlMode = resolveCampaignMode(savedCampaign?.runtime?.mode, store.schedulerState().mode);
+      store.setSchedulerState({ status: request === "/pause" ? "paused" : "running", mode: controlMode, currentStep: null });
+      const campaign = savedCampaign
+        ? request === "/pause" ? pauseCampaign(savedCampaign) : resumeCampaign(savedCampaign)
+        : undefined;
+      if (campaign) {
+        store.saveCampaign(campaign);
         setConfig((current) => ({ ...current, campaign }));
         if (request === "/resume" && !loopTimer.current) {
           void runAutonomousCycle(campaign, true);
         }
       }
+      store.close();
       append("assistant", request === "/pause" ? "Scheduling paused. Running jobs are unchanged." : "Scheduling resumed.");
       return;
     }
@@ -2645,9 +2649,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (["stop", "pause"].includes(action)) {
         const status = action === "stop" ? "idle" : "paused";
         if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
-        store.setSchedulerState({ status, mode: config.mode, currentStep: null });
-        if (config.campaign) {
-          const campaign = pauseCampaign(config.campaign);
+        const savedCampaign = store.campaign() as ResearchCampaign | undefined;
+        const loopMode = resolveCampaignMode(savedCampaign?.runtime?.mode, store.schedulerState().mode);
+        store.setSchedulerState({ status, mode: loopMode, currentStep: null });
+        if (savedCampaign) {
+          const campaign = pauseCampaign(savedCampaign);
           store.saveCampaign(campaign);
           setConfig((current) => ({ ...current, campaign }));
         }
@@ -2660,8 +2666,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", "Use /loop status, /loop once, /loop start, /loop pause, or /loop stop.");
         return;
       }
+      const savedCampaign = store.campaign() as ResearchCampaign | undefined;
       store.close();
-      await runAutonomousCycle();
+      await runAutonomousCycle(savedCampaign);
       if (action === "start" && !loopTimer.current) {
         loopTimer.current = setInterval(() => { void runAutonomousCycle(); }, 60_000);
         append("assistant", "Autonomous loop started. It will evaluate the next decision every 60 seconds. Use /loop pause or /loop stop to halt it.");
