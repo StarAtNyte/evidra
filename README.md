@@ -51,6 +51,16 @@ For the Codex-specific runtime contract, session lifecycle, interruption and
 steering semantics, permission boundaries, provider exhaustion, and unattended
 campaign checklist, see [`docs/codex-operations.md`](docs/codex-operations.md).
 
+### See the workflow
+
+The silent product demo shows Evidra taking a contemporary computer-vision question
+from an empty workspace through three research steps: orient the evaluation
+contract, discover methods and evidence, then run controlled experiments and
+replication.
+
+- [Download the complete demo video](assets/demo/evidra-complete-product-demo.mp4)
+- [Read the exact three-step screenplay](docs/demo-research-script.md)
+
 ## Why Evidra
 
 Most coding agents optimize for one conversation and one code change. Evidra is designed for research programs that continue after the first answer:

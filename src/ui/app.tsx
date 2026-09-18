@@ -379,7 +379,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const submitRef = useRef<(value: string, fromQueue?: boolean) => Promise<void>>(async () => undefined);
   const pendingRequests = useRef<QueuedRequest[]>([]);
   const [queuedRequests, setQueuedRequests] = useState<QueuedRequest[]>([]);
-  const suppressNextSubmit = useRef(false);
   const loopTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const loopBusy = useRef(false);
   const activeProcess = useRef<ProcessControl | null>(null);
@@ -2182,10 +2181,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
     };
 
   const submit = async (value: string, fromQueue = false): Promise<void> => {
-    if (suppressNextSubmit.current) {
-      suppressNextSubmit.current = false;
-      return;
-    }
     const request = value.trim();
     setInput("");
     if (!request) return;
