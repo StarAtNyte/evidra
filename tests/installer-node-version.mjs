@@ -29,3 +29,11 @@ test('installer signal traps exit without advancing and clean the workspace', ()
     assert.match(result.stderr, /Installation (interrupted|terminated)/);
   }
 });
+
+test('installer gives actionable guidance when the global bin is hidden by PATH or shell caching', () => {
+  const installer = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
+  assert.match(installer, /stale command cache/);
+  assert.match(installer, /hash -r .*rehash/);
+  assert.match(installer, /export PATH=/);
+  assert.match(installer, /Verifying installation/);
+});
