@@ -563,13 +563,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const saved = store.campaign();
     if (saved && typeof saved === "object" && "goal" in saved && "budgetMinutes" in saved) {
       const campaign = saved as ResearchCampaign;
+      const durableMode = resolveCampaignMode(campaign.runtime?.mode, store.schedulerState().mode);
       // Only recover a running campaign when its controller lease is absent or stale.
       // A fresh process must never overwrite a live controller's state.
       const liveController = store.liveControllerLease();
       const recovered = campaign.status === "running" && !liveController ? pauseCampaign(campaign) : campaign;
       if (campaign.status === "running" && !liveController) {
         store.saveCampaign(recovered);
-        store.setSchedulerState({ status: "paused", mode: "research", currentStep: "recovered-after-process-exit" });
+        store.setSchedulerState({ status: "paused", mode: durableMode, currentStep: "recovered-after-process-exit" });
       }
       store.close();
       setConfig((current) => ({ ...current, campaign: recovered }));
@@ -2872,7 +2873,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request === "/usage") {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      const counts = store.counts(); const events = store.eventCount(); const state = store.schedulerState(); const campaign = config.campaign; const usage = summarizeUsage(store.runs(), store.experiments()); const gpuUsed = observedGpuHours(store.runAttempts(), store.experiments(), store.hypotheses()); const gpuReserved = store.reservedComputeGpuHours();
+      const counts = store.counts(); const events = store.eventCount(); const state = store.schedulerState(); const campaign = store.campaign() as ResearchCampaign | undefined; const usage = summarizeUsage(store.runs(), store.experiments()); const gpuUsed = observedGpuHours(store.runAttempts(), store.experiments(), store.hypotheses()); const gpuReserved = store.reservedComputeGpuHours();
       const agentUsage = summarizeAgentUsage(store.eventsByType("research.agent.usage"));
       store.close();
       const elapsed = campaign ? campaignElapsedMinutes(campaign) : 0;
@@ -3308,7 +3309,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", `Experiment execution target selected: ${selectedExecutor}${selectedExecutor === "modal" ? " (Modal credentials are checked when a Modal experiment starts)." : selectedExecutor === "container" ? " (Docker/Podman runtime and image are checked when an experiment starts)." : " (runs stay on this computer)."}`);
         return;
       }
-      const campaign = config.campaign;
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const campaign = store.campaign() as ResearchCampaign | undefined;
+      const computeMode = resolveCampaignMode(campaign?.runtime?.mode, store.schedulerState().mode);
       const containerRuntimes = await Promise.all(["docker", "podman"].map(async (runtime) => {
         try {
           const result = await runProcess(["which", runtime], root, 5_000);
@@ -3316,7 +3319,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         } catch { return undefined; }
       }));
       const availableContainers = containerRuntimes.filter(Boolean).join(", ") || "none found";
-      append("assistant", `Executor policy\n  mode: ${config.mode}\n  autonomy: ${config.autonomy}\n  selected: ${config.experimentExecutor}\n  local: available through process workers\n  container: ${availableContainers}\n  modal: ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}\n  fallback: local model on Codex usage limits${campaign ? `\n\nCampaign budget\n  elapsed: ${campaignElapsedMinutes(campaign).toFixed(1)} / ${campaign.budgetMinutes} minutes\n  status: ${campaign.status}` : ""}`);
+      append("assistant", `Executor policy\n  mode: ${computeMode}\n  autonomy: ${config.autonomy}\n  selected: ${config.experimentExecutor}\n  local: available through process workers\n  container: ${availableContainers}\n  modal: ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}\n  fallback: local model on Codex usage limits${campaign ? `\n\nCampaign budget\n  elapsed: ${campaignElapsedMinutes(campaign).toFixed(1)} / ${campaign.budgetMinutes} minutes\n  status: ${campaign.status}` : ""}`);
+      store.close();
       return;
     }
     if (request === "/doctor") {
