@@ -1052,8 +1052,22 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const experienceMix = selectCurriculum(experienceRecords);
     const curriculumGuidance = experienceMix.map((stage) => `stage ${stage.stage}: ${stage.trajectoryIds.join(", ") || "none"} (${stage.rationale})`).join("; ");
     const researchSources = latestSourceEntries(store.sources(), 12, objective, store).map((entry) => {
-      const payload = entry.payload as { title?: string; url?: string; excerpt?: string; claims?: string[]; qualityScore?: number; evidenceClass?: string };
-      return { id: entry.id, title: payload.title, url: payload.url, excerpt: payload.excerpt, claims: payload.claims?.slice(0, 8), qualityScore: payload.qualityScore, evidenceClass: payload.evidenceClass };
+      const payload = entry.payload as { title?: string; url?: string; excerpt?: string; claims?: string[]; qualityScore?: number; evidenceClass?: string; insights?: { kind?: string; leaderboard?: unknown[]; discussions?: unknown[]; signals?: string[] } };
+      return {
+        id: entry.id,
+        title: payload.title,
+        url: payload.url,
+        excerpt: payload.excerpt,
+        claims: payload.claims?.slice(0, 8),
+        qualityScore: payload.qualityScore,
+        evidenceClass: payload.evidenceClass,
+        insights: payload.insights ? {
+          kind: payload.insights.kind,
+          leaderboard: payload.insights.leaderboard?.slice(0, 20),
+          discussions: payload.insights.discussions?.slice(0, 20),
+          signals: payload.insights.signals?.slice(0, 12),
+        } : undefined,
+      };
     });
     const readVerifiedState = (): ReturnType<typeof projectVerifiedSubtaskState> => {
       if (!phaseGoal) return projectVerifiedSubtaskState(undefined);
