@@ -30,7 +30,7 @@ import { auditData, dataAuditFingerprint } from "../core/data-audit.js";
 import { executeResearchTool } from "../core/tools.js";
 import { projectVerifiedSubtaskState } from "../core/subtask-state.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
-import { retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
+import { canonicalSourceUrl, retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
 import { competitionResearchClaimType, competitionResearchSources } from "../core/competition-sources.js";
 import { extractCompetitionInsights } from "../core/competition-insights.js";
 import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageProgress } from "../core/phase-goals.js";
@@ -809,12 +809,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const known = new Map<string, { payload: unknown; createdAt: string }>();
     for (const entry of store.sources()) {
       const url = (entry.payload as { url?: string }).url;
-      if (url && !known.has(url)) known.set(url, entry);
+      if (url && !known.has(canonicalSourceUrl(url))) known.set(canonicalSourceUrl(url), entry);
     }
     const ingested: string[] = [];
     for (const configured of configuredSources) {
       const { url } = configured;
-      const prior = known.get(url);
+      const prior = known.get(canonicalSourceUrl(url));
       const refreshMs = configured.refreshMinutes ? configured.refreshMinutes * 60_000 : undefined;
       if (prior && sourceIsFresh(prior, refreshMs)) continue;
       setProgress(`Challenge research · retrieving ${new URL(url).hostname}...`);

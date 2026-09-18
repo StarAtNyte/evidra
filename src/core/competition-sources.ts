@@ -1,4 +1,5 @@
 import type { CompetitionConfig } from "./types.js";
+import { canonicalSourceUrl } from "./sources.js";
 
 export type CompetitionResearchChannelKind = NonNullable<CompetitionConfig["researchChannels"]>[number]["kind"] | "general";
 
@@ -19,9 +20,10 @@ export function competitionResearchSources(config: CompetitionConfig): Competiti
   for (const channel of config.researchChannels ?? []) sources.push(channel);
   const unique = new Map<string, CompetitionResearchSource>();
   for (const source of sources) {
-    const existing = unique.get(source.url);
+    const key = canonicalSourceUrl(source.url);
+    const existing = unique.get(key);
     // A typed channel is more informative than a legacy anonymous URL.
-    if (!existing || existing.kind === "general") unique.set(source.url, source);
+    if (!existing || existing.kind === "general") unique.set(key, source);
   }
   return [...unique.values()];
 }

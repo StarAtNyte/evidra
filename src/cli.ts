@@ -13,7 +13,7 @@ import { auditData, dataAuditFingerprint } from "./core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "./core/validation-policy.js";
 import { distributionObservationsFromSubmissions, estimateDistributionBeliefs, type ExternalValidationObservation } from "./core/distribution-beliefs.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "./core/execution-stages.js";
-import { retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceFrontier, sourceSearchText, sourceIsFresh } from "./core/sources.js";
+import { canonicalSourceUrl, retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceFrontier, sourceSearchText, sourceIsFresh } from "./core/sources.js";
 import { competitionResearchClaimType, competitionResearchSources } from "./core/competition-sources.js";
 import { extractCompetitionInsights } from "./core/competition-insights.js";
 import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "./core/literature-bench.js";
@@ -468,11 +468,11 @@ async function ingestCompetitionSources(adapter: ReturnType<typeof activeCompeti
   const known = new Map<string, { payload: unknown; createdAt: string }>();
   for (const entry of store.sources()) {
     const url = (entry.payload as { url?: string }).url;
-    if (url && !known.has(url)) known.set(url, entry);
+    if (url && !known.has(canonicalSourceUrl(url))) known.set(canonicalSourceUrl(url), entry);
   }
   for (const configured of configuredSources) {
     const { url } = configured;
-    const prior = known.get(url);
+    const prior = known.get(canonicalSourceUrl(url));
     const refreshMs = configured.refreshMinutes ? configured.refreshMinutes * 60_000 : undefined;
     if (prior && sourceIsFresh(prior, refreshMs)) continue;
     try {

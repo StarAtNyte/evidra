@@ -6229,6 +6229,16 @@ test("competition research channels are typed, deduplicated, and preserve refres
   assert.equal(competitionResearchClaimType("discussion"), "external_source");
 });
 
+test("competition source configuration deduplicates canonical URL variants", () => {
+  const config = CompetitionConfigSchema.parse({
+    id: "canonical-channels", name: "Canonical channels", taskType: "generic", datasetRevision: "v1",
+    metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "estimator.py" },
+    researchSources: ["https://Example.com/forum/#latest", "https://example.com/forum/"],
+    researchChannels: [{ kind: "discussion", url: "https://example.com/forum", refreshMinutes: 15 }],
+  });
+  assert.deepEqual(competitionResearchSources(config), [{ kind: "discussion", url: "https://example.com/forum", refreshMinutes: 15 }]);
+});
+
 test("competition channel insights parse bounded leaderboard and discussion observations", () => {
   const leaderboard = extractCompetitionInsights("1 | alice | score: 0.812\n2 | bob | score: 0.799\nfooter", "leaderboard");
   assert.equal(leaderboard.leaderboard.length, 2);
