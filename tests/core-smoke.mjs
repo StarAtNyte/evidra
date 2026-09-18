@@ -2733,9 +2733,10 @@ test("three-stage research progress is derived from detailed durable goals", () 
 test("research starter briefs are shared across interactive and headless entrypoints", () => {
   assert.equal(RESEARCH_STARTER_BRIEFS.length, 3);
   const formatted = formatResearchStarterBriefs();
-  assert.match(formatted, /Robust video understanding/);
-  assert.match(formatted, /Open-vocabulary segmentation/);
-  assert.match(formatted, /Efficient multimodal reasoning/);
+  assert.match(formatted, /Memory under video shift/);
+  assert.match(formatted, /Open-world 3D perception/);
+  assert.match(formatted, /Budgeted multimodal agents/);
+  assert.equal((formatted.match(/Question:/g) ?? []).length, 3);
   assert.match(formatted, /Answer:/);
 });
 
