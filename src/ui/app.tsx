@@ -573,7 +573,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
         store.setSchedulerState({ status: "paused", mode: durableMode, currentStep: "recovered-after-process-exit" });
       }
       store.close();
-      setConfig((current) => ({ ...current, campaign: recovered }));
+      const runtime = campaign.runtime;
+      setConfig((current) => ({
+        ...current,
+        campaign: recovered,
+        mode: runtime?.mode ?? durableMode,
+        provider: runtime?.provider ?? current.provider,
+        model: runtime?.model ?? current.model,
+        reasoningEffort: runtime?.thinking ?? current.reasoningEffort,
+        limitPolicy: runtime?.limitPolicy ?? current.limitPolicy,
+        experimentExecutor: runtime?.executor ?? current.experimentExecutor,
+      }));
     } else {
       store.close();
     }
@@ -829,15 +839,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
   };
 
   const persistCampaign = (campaign: ResearchCampaign): void => {
+    const savedRuntime = campaign.runtime;
     const runtime: CampaignRuntimeConfig = {
-      mode: configRef.current.mode,
-      provider: configRef.current.provider,
-      model: configRef.current.model,
-      thinking: configRef.current.reasoningEffort,
-      lanes: configRef.current.autonomy === "safe" ? 1 : configRef.current.autonomy === "fast" ? 2 : 4,
+      mode: savedRuntime?.mode ?? configRef.current.mode,
+      provider: savedRuntime?.provider ?? configRef.current.provider,
+      model: savedRuntime?.model ?? configRef.current.model,
+      thinking: savedRuntime?.thinking ?? configRef.current.reasoningEffort,
+      lanes: savedRuntime?.lanes ?? (configRef.current.autonomy === "safe" ? 1 : configRef.current.autonomy === "fast" ? 2 : 4),
       autonomy: configRef.current.autonomy,
-      limitPolicy: configRef.current.limitPolicy,
-      executor: configRef.current.experimentExecutor,
+      limitPolicy: savedRuntime?.limitPolicy ?? configRef.current.limitPolicy,
+      executor: savedRuntime?.executor ?? configRef.current.experimentExecutor,
     };
     const durable = bindCampaignRuntime(campaign, runtime) as ResearchCampaign;
     Object.assign(campaign, durable);
