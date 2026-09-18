@@ -74,6 +74,11 @@ The input bar accepts pasted multiline text, `/` commands, and `!` shell
 commands. Command suggestions filter as each character is typed; Tab accepts a
 suggestion and moves the cursor to the end of the completed command.
 
+If Codex reaches its usage limit, choose the local Ollama route interactively
+with `/fallback`, or pin one for a headless campaign with
+`--fallback-model qwen3.6:27b`. The selected fallback is stored with the
+campaign and restored on resume.
+
 While work is active, Evidra displays concise progress for reasoning summaries,
 plans, source searches, MCP tools, file changes, commands, tool failures, and
 experiments. Raw provider event IDs and credential-bearing arguments are never

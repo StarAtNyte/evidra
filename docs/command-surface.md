@@ -269,6 +269,7 @@ Roles are director, domain researcher, method researcher, data detective, valida
 /provider                     Show provider health and fallback policy
 /provider codex               Use authenticated Codex
 /provider local               Use Ollama/local model
+/fallback [model]             Choose the installed local fallback model
 /model                        Open the live model picker
 /thinking                     Open the model-specific thinking picker
 /login codex                  Authenticate Codex by device code
