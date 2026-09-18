@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { ExperimentExecutorKind } from "./types.js";
 
 export interface CampaignTimeState {
   startedAt: string;
@@ -53,7 +54,7 @@ export interface CampaignRuntimeConfig {
   lanes: number;
   autonomy: "safe" | "fast" | "yolo";
   limitPolicy: "auto" | "wait" | "fallback" | "stop";
-  executor: "local" | "container" | "modal";
+  executor: ExperimentExecutorKind;
 }
 
 export type DurableCampaignRuntime = CampaignRuntimeConfig & { fingerprint: string };
@@ -91,7 +92,7 @@ export function readCampaignRuntime(value: unknown): CampaignRuntimeConfig | und
   if (typeof candidate.lanes !== "number" || !Number.isInteger(candidate.lanes) || candidate.lanes < 1 || candidate.lanes > 6) return undefined;
   if (!( ["safe", "fast", "yolo"] as const).includes(candidate.autonomy as "safe" | "fast" | "yolo")) return undefined;
   if (!( ["auto", "wait", "fallback", "stop"] as const).includes(candidate.limitPolicy as "auto" | "wait" | "fallback" | "stop")) return undefined;
-  if (!( ["local", "container", "modal"] as const).includes(candidate.executor as "local" | "container" | "modal")) return undefined;
+  if (!( ["local", "container", "modal", "slurm"] as const).includes(candidate.executor as ExperimentExecutorKind)) return undefined;
   return {
     mode: candidate.mode as CampaignRuntimeConfig["mode"],
     provider: candidate.provider as CampaignRuntimeConfig["provider"],

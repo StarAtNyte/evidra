@@ -24,7 +24,7 @@ import { QueueWorker } from "../dist/core/queue-worker.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, selectResearchTools, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { normalizeResearchDecisionPayload, runResearchDirector } from "../dist/agents/research-director.js";
 import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
-import { LocalExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
+import { LocalExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, slurmCommand, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
 import { experienceReplayWorld } from "../dist/core/experience.js";
@@ -4298,6 +4298,19 @@ test("container executor command mounts only the isolated worktree", () => {
   assert.equal(command[imageIndex + 1], "python");
   assert.deepEqual(command.slice(-2), ["python", "run.py"]);
   assert.throws(() => containerCommand("docker", "--privileged", "/tmp/evidra-worktree", ["sh"]), /plain image reference/);
+});
+
+test("Slurm executor command preserves argv boundaries and declared resources", () => {
+  const command = slurmCommand("exp with spaces", "/tmp/evidra-worktree", ["python", "train.py", "--name", "O'Reilly"], "/tmp/out.log", "/tmp/err.log", 12.4, "A100:1");
+  assert.equal(command[0], "sbatch");
+  assert(command.includes("--parsable"));
+  assert(command.includes("--chdir"));
+  assert(command.includes("/tmp/evidra-worktree"));
+  assert(command.includes("--gres"));
+  assert(command.includes("gpu:A100:1"));
+  assert.equal(command.at(-1), "exec 'python' 'train.py' '--name' 'O'\\''Reilly'");
+  assert(command.includes("--time"));
+  assert(command.includes("13"));
 });
 
 test("paired statistics and recovery are deterministic", () => {

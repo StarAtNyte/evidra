@@ -153,13 +153,14 @@ The TypeScript controller invokes Python through a stable worker protocol rather
 
 ## Isolation
 
-Support three executors:
+Support four executors:
 
 1. Local process
 2. Docker/Podman container
 3. Modal job
+4. Slurm job on shared cluster storage
 
-Later add Kubernetes, RunPod, Vast.ai and Slurm adapters.
+Later add Kubernetes, RunPod, and Vast.ai adapters.
 
 ---
 
@@ -1512,4 +1513,3 @@ when the subscription/limit hits, we can use local qwen model , also the tool sh
 
 
 should be able to run fully yolo too 
-

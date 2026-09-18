@@ -1,4 +1,4 @@
-import { ExperimentManifestSchema, type CompetitionConfig, type ExperimentManifest } from "./types.js";
+import { ExperimentManifestSchema, type CompetitionConfig, type ExperimentExecutorKind, type ExperimentManifest } from "./types.js";
 
 export interface ManifestInput {
   id: string;
@@ -8,7 +8,7 @@ export interface ManifestInput {
   datasetVersion: string;
   splitVersion?: string;
   configPatch?: Record<string, unknown>;
-  executor?: "local" | "container" | "modal";
+  executor?: ExperimentExecutorKind;
   image?: string;
   gpu?: string;
   earlyStopping?: { enabled: boolean; metric: string; direction: "maximize" | "minimize"; warmupSteps: number; patience: number; minimumImprovement: number; reference: Array<{ step: number; metric: number }> };

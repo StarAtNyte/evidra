@@ -1,12 +1,12 @@
 import { runProcess, type ProcessControl } from "./process.js";
 import { parseLearningCurve } from "./early-stopping.js";
 import { redactStructured } from "./redaction.js";
-import { existsSync, lstatSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import type { ExperimentManifest, ProcessResult, RunResult } from "./types.js";
+import type { ExperimentExecutorKind, ExperimentManifest, ProcessResult, RunResult } from "./types.js";
 
 export interface ExperimentExecutor {
-  readonly kind: "local" | "container" | "modal";
+  readonly kind: ExperimentExecutorKind;
   run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName?: string, environment?: NodeJS.ProcessEnv): Promise<RunResult>;
 }
 
@@ -98,7 +98,7 @@ export function classifyProcessFailure(result: ProcessResult, remote = false): R
   if (/rate limit|429|usage limit/.test(text)) return "rate_limit";
   if (/auth|unauthorized|forbidden/.test(text)) return "auth";
   if (/bwrap|loopback|network namespace|sandbox.*(?:denied|failed)|(?:network|namespace).*(?:operation not permitted|permission denied)/.test(text)) return "sandbox";
-  if (remote && /modal|connection reset|connection refused|failed to connect|temporarily unavailable|gateway timeout|\b502\b|\b503\b|container.*(failed|crashed)|worker.*(failed|crashed)/.test(text)) return "transient_cloud";
+  if (remote && /modal|slurm|sbatch|squeue|sacct|connection reset|connection refused|failed to connect|temporarily unavailable|gateway timeout|\b502\b|\b503\b|container.*(failed|crashed)|worker.*(failed|crashed)|compute node.*(failed|down)/.test(text)) return "transient_cloud";
   return "unknown";
 }
 
@@ -441,6 +441,95 @@ export class ContainerExecutor implements ExperimentExecutor {
   }
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/** Build a safe Slurm submission argv for a shared-filesystem worktree. */
+export function slurmCommand(jobName: string, cwd: string, command: string[], stdoutPath: string, stderrPath: string, timeoutMinutes: number, gpu?: string): string[] {
+  if (!command.length || command.some((part) => typeof part !== "string")) throw new Error("Slurm commands must contain a non-empty argv array.");
+  const safeJobName = jobName.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 80);
+  const args = ["sbatch", "--parsable", "--job-name", safeJobName || "evidra", "--chdir", resolve(cwd), "--output", resolve(stdoutPath), "--error", resolve(stderrPath), "--time", String(Math.max(1, Math.ceil(timeoutMinutes)))];
+  if (gpu) args.push("--gres", `gpu:${gpu}`);
+  args.push("--wrap", `exec ${command.map(shellQuote).join(" ")}`);
+  return args;
+}
+
+function boundedFile(path: string): string {
+  try {
+    const value = readFileSync(path, "utf8");
+    if (Buffer.byteLength(value, "utf8") <= 16 * 1024 * 1024) return value;
+    return `${value.slice(0, 8 * 1024 * 1024)}\n...[output truncated by Evidra]...\n${value.slice(-8 * 1024 * 1024)}`;
+  } catch { return ""; }
+}
+
+function slurmExitCode(value: string): number {
+  const normalized = value.trim().toUpperCase();
+  if (normalized.startsWith("COMPLETED")) return 0;
+  if (normalized.startsWith("CANCELLED") || normalized.startsWith("TIMEOUT")) return 130;
+  return 1;
+}
+
+export class SlurmExecutor implements ExperimentExecutor {
+  readonly kind = "slurm" as const;
+
+  constructor(private readonly workspaceRoot?: string) {}
+
+  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
+    const launchRoot = resolve(this.workspaceRoot ?? cwd);
+    const available = await runProcess(["which", "sbatch"], launchRoot, 5_000);
+    if (available.exitCode !== 0) return toRunResult(manifest, { command, cwd, exitCode: 127, durationMs: 0, stdout: "", stderr: "No Slurm sbatch runtime was found. Install Slurm client tools or select another executor." }, metricName, true);
+    const experimentEnvironment = prepareExperimentEnvironment(manifest, cwd, environment);
+    const logRoot = join(resolve(cwd), ".sota", "slurm");
+    mkdirSync(logRoot, { recursive: true, mode: 0o700 });
+    const suffix = `${manifest.id.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 48)}-${Date.now()}`;
+    const stdoutPath = join(logRoot, `${suffix}.out`);
+    const stderrPath = join(logRoot, `${suffix}.err`);
+    const submit = slurmCommand(manifest.id, cwd, command, stdoutPath, stderrPath, manifest.resources.timeoutMinutes, manifest.resources.gpu);
+    const started = Date.now();
+    let submission: ProcessResult;
+    try {
+      submission = await runProcess(submit, launchRoot, 30_000, undefined, onProcess, experimentEnvironment, manifest.resources.earlyStopping);
+    } catch (error) {
+      return toRunResult(manifest, { command, cwd: launchRoot, exitCode: 127, durationMs: Date.now() - started, stdout: "", stderr: error instanceof Error ? error.message : String(error) }, metricName, true);
+    }
+    if (submission.exitCode !== 0) return toRunResult(manifest, { ...submission, command, cwd }, metricName, true);
+    const jobId = submission.stdout.trim().split(/[;\s]/)[0];
+    if (!/^\d+$/.test(jobId)) return toRunResult(manifest, { command, cwd, exitCode: 65, durationMs: Date.now() - started, stdout: submission.stdout, stderr: "Slurm returned no numeric job id." }, metricName, true);
+
+    let cancelled = false;
+    let activeControl: ProcessControl | undefined;
+    const cancel = async (): Promise<void> => {
+      if (cancelled) return;
+      cancelled = true;
+      await runProcess(["scancel", jobId], launchRoot, 10_000).catch(() => undefined);
+    };
+    onProcess?.({
+      pause: () => activeControl?.pause(),
+      resume: () => activeControl?.resume(),
+      terminate: () => { void cancel(); activeControl?.terminate(); },
+      get paused() { return activeControl?.paused ?? false; },
+    });
+
+    const deadline = started + manifest.resources.timeoutMinutes * 60_000;
+    let interrupted = false;
+    while (!cancelled && Date.now() < deadline) {
+      const status = await runProcess(["squeue", "--noheader", "--jobs", jobId, "--format=%T"], launchRoot, 10_000, undefined, (control) => { activeControl = control; });
+      if (status.exitCode === 130) { interrupted = true; await cancel(); break; }
+      if (!status.stdout.trim()) break;
+      await new Promise((resolveSleep) => setTimeout(resolveSleep, 2_000));
+    }
+    if (!cancelled && Date.now() >= deadline) { await cancel(); }
+    if (cancelled) interrupted = true;
+    const accounting = await runProcess(["sacct", "--noheader", "--parsable2", "--jobs", jobId, "--format=State,ExitCode"], launchRoot, 15_000);
+    const state = accounting.stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? (interrupted ? "CANCELLED" : "UNKNOWN");
+    const output = boundedFile(stdoutPath);
+    const error = boundedFile(stderrPath);
+    const exitCode = interrupted ? 130 : slurmExitCode(state);
+    return toRunResult(manifest, { command, cwd, exitCode, durationMs: Date.now() - started, stdout: output || submission.stdout, stderr: error || submission.stderr }, metricName, true);
+  }
+}
+
 export class ModalExecutor implements ExperimentExecutor {
   readonly kind = "modal" as const;
 
@@ -490,5 +579,6 @@ export class ModalExecutor implements ExperimentExecutor {
 export function executorFor(kind: ExperimentManifest["resources"]["executor"], workspaceRoot?: string): ExperimentExecutor {
   if (kind === "modal") return new ModalExecutor(workspaceRoot);
   if (kind === "container") return new ContainerExecutor(workspaceRoot);
+  if (kind === "slurm") return new SlurmExecutor(workspaceRoot);
   return new LocalExecutor();
 }

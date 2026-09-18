@@ -311,6 +311,7 @@ Choose where the worker runs:
 /compute local       Local process
 /compute container   Isolated Docker/Podman worker
 /compute modal       Modal worker for heavy CPU/GPU work
+/compute slurm       Slurm worker on shared cluster storage
 /compute status       Provider and executor health
 /usage               Model, wall-time, GPU, and campaign usage
 ```

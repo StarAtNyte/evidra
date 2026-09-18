@@ -396,6 +396,11 @@ external evaluator.
 - The TUI now matches the CLI's bounded peer-review protocol: fast/YOLO
   campaigns can send a fresh lane set over contested findings before director
   synthesis, while safe mode remains a single-pass inspection path.
+- Slurm is now a first-class optional experiment executor: manifests, durable
+  campaign runtime fingerprints, CLI/TUI selection, shared-filesystem `sbatch`
+  submission, `squeue` polling, `sacct` terminal state, cancellation, bounded
+  logs, and failure classification are covered by the same evidence path as
+  local, container, and Modal workers.
 - TUI research rubrics now use the same source-quality, claim-coverage, and
   evidence-diversity signals as CLI campaigns, preventing interface-dependent
   evidence grading.

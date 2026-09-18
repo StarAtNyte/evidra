@@ -249,6 +249,9 @@ export const ExperimentSchema = z.object({
 
 export type Experiment = z.infer<typeof ExperimentSchema>;
 
+export const ExperimentExecutorKindSchema = z.enum(["local", "container", "modal", "slurm"]);
+export type ExperimentExecutorKind = z.infer<typeof ExperimentExecutorKindSchema>;
+
 export const ExperimentManifestSchema = z.object({
   schemaVersion: z.number().int().positive().default(1),
   id: z.string().min(1),
@@ -260,7 +263,7 @@ export const ExperimentManifestSchema = z.object({
   datasetVersion: z.string().min(1),
   splitVersion: z.string().min(1),
   change: z.object({ configPatch: z.record(z.string(), z.unknown()) }),
-  resources: z.object({ executor: z.enum(["local", "container", "modal"]), image: z.string().min(1).optional(), gpu: z.string().optional(), timeoutMinutes: z.number().positive(), earlyStopping: z.object({ enabled: z.boolean(), metric: z.string().min(1), direction: z.enum(["maximize", "minimize"]), warmupSteps: z.number().int().nonnegative(), patience: z.number().int().positive(), minimumImprovement: z.number().nonnegative(), reference: z.array(z.object({ step: z.number().finite(), metric: z.number().finite() })).default([]) }).optional() }),
+  resources: z.object({ executor: ExperimentExecutorKindSchema, image: z.string().min(1).optional(), gpu: z.string().optional(), timeoutMinutes: z.number().positive(), earlyStopping: z.object({ enabled: z.boolean(), metric: z.string().min(1), direction: z.enum(["maximize", "minimize"]), warmupSteps: z.number().int().nonnegative(), patience: z.number().int().positive(), minimumImprovement: z.number().nonnegative(), reference: z.array(z.object({ step: z.number().finite(), metric: z.number().finite() })).default([]) }).optional() }),
   evaluation: z.object({ folds: z.array(z.number().int().nonnegative()), seeds: z.array(z.number().int()), requiredArtifacts: z.array(z.string()), matrixRequired: z.boolean().default(false), metrics: z.array(z.object({ name: z.string().min(1), direction: z.enum(["minimize", "maximize"]), minimumDelta: z.number().nonnegative().default(0), maximumRegression: z.number().nonnegative().default(0) })).default([]), verificationCommand: z.array(z.string()).min(1).optional(), verificationCommands: z.array(z.array(z.string()).min(1)).min(1).optional() }).superRefine((evaluation, context) => {
     const metricNames = new Set<string>();
     for (const [index, metric] of evaluation.metrics.entries()) {

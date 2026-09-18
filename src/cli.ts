@@ -7,7 +7,7 @@ import { materializeResearchDecision } from "./core/research-graph.js";
 import { formatResearchStarterBriefs } from "./core/research-starters.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "./core/experiment-manifest.js";
 import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, mergePhaseGoalAudits, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageProgress } from "./core/phase-goals.js";
-import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "./core/types.js";
+import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema, type ExperimentExecutorKind } from "./core/types.js";
 import { loadCompetitionAdapter } from "./competitions/adapters.js";
 import { auditData, dataAuditFingerprint } from "./core/data-audit.js";
 import { createValidationPolicy, writeValidationPolicy } from "./core/validation-policy.js";
@@ -169,7 +169,7 @@ function auditCurrentClaims(store: ResearchStore): ClaimAuditReport {
 function automaticEarlyStoppingPolicy(
   store: ResearchStore,
   datasetRevision: string,
-  executor: "local" | "container" | "modal",
+  executor: ExperimentExecutorKind,
   metric: string,
   direction: "maximize" | "minimize",
 ): { enabled: boolean; metric: string; direction: "maximize" | "minimize"; warmupSteps: number; patience: number; minimumImprovement: number; reference: LearningPoint[] } | undefined {
@@ -1960,7 +1960,7 @@ challenge.command("start")
   .option("--lanes <count>", "maximum concurrent research lanes (non-safe teams may use bounded waves)", "3")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: auto, wait, fallback, or stop", "auto")
-  .option("--executor <executor>", "experiment execution target: local, container, or modal", "local")
+  .option("--executor <executor>", "experiment execution target: local, container, modal, or slurm", "local")
   .option("--resume", "resume the saved challenge campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
   .action(async (options: { goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
@@ -2057,7 +2057,7 @@ research
   .option("--lanes <count>", "maximum concurrent research lanes (non-safe teams may use bounded waves)", "3")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: auto, wait, fallback, or stop", "auto")
-  .option("--executor <executor>", "experiment execution target: local, container, or modal", "local")
+  .option("--executor <executor>", "experiment execution target: local, container, modal, or slurm", "local")
   .option("--resume", "resume the latest durable non-completed research campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
   .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; thinking: string; lanes: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
@@ -2091,7 +2091,7 @@ research
     if (!["auto", "wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'auto', 'wait', 'fallback', or 'stop'.");
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Mode must be 'research' or 'challenge'.");
     if (!["safe", "fast", "yolo"].includes(options.autonomy)) throw new Error("Autonomy must be 'safe', 'fast', or 'yolo'.");
-    if (!["local", "container", "modal"].includes(options.executor)) throw new Error("Executor must be 'local', 'container', or 'modal'.");
+    if (!["local", "container", "modal", "slurm"].includes(options.executor)) throw new Error("Executor must be 'local', 'container', 'modal', or 'slurm'.");
     const mode = options.mode as "research" | "challenge";
     const autonomy = options.autonomy as AutonomyLevel;
     const adapter = activeCompetition();
@@ -2398,7 +2398,7 @@ research
       // Agent lanes and compute lanes are different resources. Keep local
       // and container execution conservative by default; Modal is the
       // explicit scale-out backend for independent experiment workers.
-      const executorParallelCeiling = options.executor === "modal" ? 3 : 1;
+      const executorParallelCeiling = options.executor === "modal" || options.executor === "slurm" ? 3 : 1;
       const experimentParallelism = Math.max(1, Math.min(effectiveLaneLimit, executorParallelCeiling));
       store.appendEvent("research.capability_route", { route, predictedTier: route.tier, servedProvider: options.provider, servedModel: selectedModel, recentQuality });
       const evidenceConflicts = {
@@ -3132,9 +3132,9 @@ research
               outcomeType: selectedHypothesis.outcomeType,
               gitCommit: commit.stdout.trim(),
               datasetVersion: adapter.config.datasetRevision,
-              executor: options.executor as "local" | "container" | "modal",
+              executor: options.executor as ExperimentExecutorKind,
               searchOperator: decision.searchOperator,
-              earlyStopping: automaticEarlyStoppingPolicy(decisionStore, adapter.config.datasetRevision, options.executor as "local" | "container" | "modal", adapter.config.metric.name, adapter.config.metric.direction),
+              earlyStopping: automaticEarlyStoppingPolicy(decisionStore, adapter.config.datasetRevision, options.executor as ExperimentExecutorKind, adapter.config.metric.name, adapter.config.metric.direction),
               configPatch: { estimatorPath: candidateEstimatorPath(selectedHypothesis) ?? adapter.config.evaluator.estimatorPath },
             }, adapter.config);
             decisionStore.saveExperiment({ id: proposalId, payload: { ...proposal, status: "proposed", runtimeContext: { provider: options.provider, model: selectedModel, phase: phaseGoal?.phase ?? "unknown" }, executionPlan: createExecutionPlan(proposal) } });
@@ -3389,10 +3389,10 @@ research
               outcomeType: selectedHypothesis.outcomeType,
               gitCommit: commit.stdout.trim(),
               datasetVersion: adapter.config.datasetRevision,
-              executor: options.executor as "local" | "container" | "modal",
+              executor: options.executor as ExperimentExecutorKind,
               timeoutMinutes,
               searchOperator: decision.searchOperator,
-              earlyStopping: automaticEarlyStoppingPolicy(decisionStore, adapter.config.datasetRevision, options.executor as "local" | "container" | "modal", adapter.config.metric.name, adapter.config.metric.direction),
+              earlyStopping: automaticEarlyStoppingPolicy(decisionStore, adapter.config.datasetRevision, options.executor as ExperimentExecutorKind, adapter.config.metric.name, adapter.config.metric.direction),
               configPatch: { estimatorPath: candidateEstimatorPath(selectedHypothesis) ?? adapter.config.evaluator.estimatorPath },
             }, adapter.config);
             decisionStore.saveExperiment({ id: experimentId, payload: { ...manifest, status: "proposed", runtimeContext: { provider: options.provider, model: selectedModel, phase: phaseGoal?.phase ?? "unknown" }, runtimeEstimate, executionPlan: createExecutionPlan(manifest) } });
@@ -3780,9 +3780,9 @@ program.addCommand(validation);
 const experiment = new Command("experiment").description("Manage research experiments");
 experiment.command("propose")
   .argument("[hypothesis]", "hypothesis identifier; defaults to the newest hypothesis")
-  .option("--executor <executor>", "experiment executor: local, container, or modal", "local")
+  .option("--executor <executor>", "experiment executor: local, container, modal, or slurm", "local")
   .action(async (hypothesisId: string | undefined, options: { executor: string }) => {
-    if (!["local", "container", "modal"].includes(options.executor)) throw new Error("Executor must be 'local', 'container', or 'modal'.");
+    if (!["local", "container", "modal", "slurm"].includes(options.executor)) throw new Error("Executor must be 'local', 'container', 'modal', or 'slurm'.");
     const store = new ResearchStore(statePath);
     const hypothesis = hypothesisId ?? store.hypotheses()[0]?.id;
     if (!hypothesis) {
@@ -3797,7 +3797,7 @@ experiment.command("propose")
     const id = `exp_${Date.now()}_${hypothesis.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
     const adapter = activeCompetition();
     const hypothesisPayload = store.hypotheses().find((entry) => entry.id === hypothesis)?.payload as { outcomeType?: "metric" | "artifact" | "proof" | "behavior" | "system" | "other" } | undefined;
-    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis, outcomeType: hypothesisPayload?.outcomeType, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: options.executor as "local" | "container" | "modal", earlyStopping: automaticEarlyStoppingPolicy(store, adapter.config.datasetRevision, options.executor as "local" | "container" | "modal", adapter.config.metric.name, adapter.config.metric.direction), configPatch: { estimatorPath: candidateEstimatorPath(hypothesisPayload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
+    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis, outcomeType: hypothesisPayload?.outcomeType, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: options.executor as ExperimentExecutorKind, earlyStopping: automaticEarlyStoppingPolicy(store, adapter.config.datasetRevision, options.executor as ExperimentExecutorKind, adapter.config.metric.name, adapter.config.metric.direction), configPatch: { estimatorPath: candidateEstimatorPath(hypothesisPayload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
     store.saveExperiment({ id, payload: { ...manifest, status: "proposed", executionPlan: createExecutionPlan(manifest) } });
     store.close();
     console.log(`Immutable experiment manifest created\n${manifestSummary(manifest)}`);

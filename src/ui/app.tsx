@@ -40,7 +40,7 @@ import { loadCompetitionAdapter } from "../competitions/adapters.js";
 import { codexIsLoggedInAsync, codexLoginStatus, codexResearchModelPool, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, logoutCodex, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveStartupProvider, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { boundedPeerBoard, runResearchCritic, runResearchLanes, runResearchSemanticAuditor, type ResearchLaneReport, type ResearchReview, type ResearchSemanticAudit } from "../agents/research-lanes.js";
-import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema } from "../core/types.js";
+import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema, type ExperimentExecutorKind } from "../core/types.js";
 import { createToolTraceRecorder, evaluateTrajectory, providerActivityFailureClass, researchToolFailureClass, type TrajectoryEvent } from "../core/trajectories.js";
 import { recoverUncommittedTraceFiles } from "../core/trajectory-recovery.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../core/capability-router.js";
@@ -86,7 +86,6 @@ type WorkbenchMode = "research" | "challenge";
 type AutonomyLevel = "safe" | "fast" | "yolo";
 type ResearchCampaign = { goal: string; budgetMinutes: number; gpuBudgetHours?: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean; currentCycle?: number; currentStep?: string; checkpointedAt?: string; runtime?: CampaignRuntimeConfig & { fingerprint: string }; runtimeFingerprint?: string };
 type LimitPolicy = "auto" | "wait" | "fallback" | "stop";
-type ExperimentExecutorKind = "local" | "container" | "modal";
 type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; limitPolicy: LimitPolicy; fallbackModel: string; experimentExecutor: ExperimentExecutorKind; campaign?: ResearchCampaign; codexThreadId?: string };
 
 function candidateEstimatorPath(payload: unknown): string | undefined {
@@ -224,7 +223,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
   "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"]],
   "/limits": [["/limits auto", "Use local fallback, then wait"], ["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Require local fallback"], ["/limits stop", "Stop when Codex is limited"]],
-  "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute budget", "Show campaign usage"]],
+  "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
@@ -249,7 +248,7 @@ export function normalizeSessionConfig(raw: Partial<SessionConfig>): SessionConf
     if (config.provider === "local" && /^(gpt|codex)/i.test(config.model)) config.model = "unconfigured";
     if (!["auto", "wait", "fallback", "stop"].includes(config.limitPolicy)) config.limitPolicy = defaultConfig.limitPolicy;
     if (!config.fallbackModel) config.fallbackModel = defaultConfig.fallbackModel;
-    if (!["local", "container", "modal"].includes(config.experimentExecutor)) config.experimentExecutor = defaultConfig.experimentExecutor;
+    if (!["local", "container", "modal", "slurm"].includes(config.experimentExecutor)) config.experimentExecutor = defaultConfig.experimentExecutor;
     if (config.campaign?.status === "running") config.campaign = pauseCampaign(config.campaign);
     if (config.mode !== "research" && config.mode !== "challenge") config.mode = defaultConfig.mode;
     if (!["safe", "fast", "yolo"].includes(config.autonomy)) config.autonomy = defaultConfig.autonomy;
@@ -297,7 +296,7 @@ function help(): string {
     "/validation [inspect|generate] Show validation policy",
     "/agents                     Show research-agent health",
     "/limits [auto|wait|fallback|stop] Choose provider-limit behavior",
-    "/compute [local|container|modal|status] Select the experiment execution target",
+    "/compute [local|container|modal|slurm|status] Select the experiment execution target",
     "/doctor                     Diagnose local dependencies",
     "!<shell command>            Run a shell command in the project workspace",
     "/submission [prepare|validate|approve|submit|poll|record] Manage safe bundles and external scores",
@@ -3364,11 +3363,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Research agents\n  codex: ${codex || "not authenticated"}\n  local: ${local}\n  concurrency: 1 active director lane\n\n${lanes.length ? lanes.map((lane) => `  ${lane.status === "running" ? "●" : lane.status === "failed" ? "✗" : lane.status === "blocked" ? "!" : "○"} ${lane.role} · ${lane.status} · ${lane.provider}/${lane.model}${lane.task ? `\n    ${lane.task.slice(0, 120)}` : ""}`).join("\n") : "  No lanes initialized; start /research to initialize the project."}`);
       return;
     }
-    if (request === "/compute" || request === "/compute status" || request === "/compute budget" || request === "/compute local" || request === "/compute container" || request === "/compute modal") {
+    if (request === "/compute" || request === "/compute status" || request === "/compute budget" || request === "/compute local" || request === "/compute container" || request === "/compute modal" || request === "/compute slurm") {
       const selectedExecutor = request.split(/\s+/)[1];
-      if (selectedExecutor === "local" || selectedExecutor === "container" || selectedExecutor === "modal") {
+      if (selectedExecutor === "local" || selectedExecutor === "container" || selectedExecutor === "modal" || selectedExecutor === "slurm") {
         setConfig((current) => ({ ...current, experimentExecutor: selectedExecutor }));
-        append("assistant", `Experiment execution target selected: ${selectedExecutor}${selectedExecutor === "modal" ? " (Modal credentials are checked when a Modal experiment starts)." : selectedExecutor === "container" ? " (Docker/Podman runtime and image are checked when an experiment starts)." : " (runs stay on this computer)."}`);
+        append("assistant", `Experiment execution target selected: ${selectedExecutor}${selectedExecutor === "modal" ? " (Modal credentials are checked when a Modal experiment starts)." : selectedExecutor === "container" ? " (Docker/Podman runtime and image are checked when an experiment starts)." : selectedExecutor === "slurm" ? " (sbatch/squeue/sacct are checked when an experiment starts; the worktree must be on shared storage)." : " (runs stay on this computer)."}`);
         return;
       }
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -3381,7 +3380,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         } catch { return undefined; }
       }));
       const availableContainers = containerRuntimes.filter(Boolean).join(", ") || "none found";
-      append("assistant", `Executor policy\n  mode: ${computeMode}\n  autonomy: ${config.autonomy}\n  selected: ${config.experimentExecutor}\n  local: available through process workers\n  container: ${availableContainers}\n  modal: ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}\n  fallback: local model on Codex usage limits${campaign ? `\n\nCampaign budget\n  elapsed: ${campaignElapsedMinutes(campaign).toFixed(1)} / ${campaign.budgetMinutes} minutes\n  status: ${campaign.status}` : ""}`);
+      const slurm = await runProcess(["which", "sbatch"], root, 5_000).then((result) => result.exitCode === 0 ? "available" : "not found").catch(() => "not found");
+      append("assistant", `Executor policy\n  mode: ${computeMode}\n  autonomy: ${config.autonomy}\n  selected: ${config.experimentExecutor}\n  local: available through process workers\n  container: ${availableContainers}\n  modal: ${process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET ? "configured" : "not configured"}\n  slurm: ${slurm} (shared filesystem required)\n  fallback: local model on Codex usage limits${campaign ? `\n\nCampaign budget\n  elapsed: ${campaignElapsedMinutes(campaign).toFixed(1)} / ${campaign.budgetMinutes} minutes\n  status: ${campaign.status}` : ""}`);
       store.close();
       return;
     }

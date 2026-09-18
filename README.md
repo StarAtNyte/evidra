@@ -130,7 +130,7 @@ local TUI/controller ──► local experiment worker
                      └─► Modal GPU experiment worker
 ```
 
-Use `/compute local`, `/compute container`, or `/compute modal` before proposing an experiment, or use `evidra experiment propose --executor container`. Container workers use Docker or Podman (auto-detected, or selected with `EVIDRA_CONTAINER_RUNTIME`), mount only the isolated experiment worktree, disable network access by default, and use `EVIDRA_CONTAINER_IMAGE` or the manifest image (default `python:3.11-slim`). Modal workers receive the workspace and declared command, stream prefixed `[evidra-worker:stdout]`/`[evidra-worker:stderr]` progress while running, and return bounded logs plus declared artifacts. The controller evaluates the result through the same local evidence gates.
+Use `/compute local`, `/compute container`, `/compute modal`, or `/compute slurm` before proposing an experiment, or use `evidra experiment propose --executor container`. Container workers use Docker or Podman (auto-detected, or selected with `EVIDRA_CONTAINER_RUNTIME`), mount only the isolated experiment worktree, disable network access by default, and use `EVIDRA_CONTAINER_IMAGE` or the manifest image (default `python:3.11-slim`). Modal workers receive the workspace and declared command, stream prefixed `[evidra-worker:stdout]`/`[evidra-worker:stderr]` progress while running, and return bounded logs plus declared artifacts. Slurm workers submit through `sbatch`, poll `squeue`, collect terminal state through `sacct`, and retain bounded scheduler logs under `.sota/slurm`; the experiment worktree must be visible on shared storage to the compute nodes. The controller evaluates every route through the same local evidence gates.
 
 For unattended operation, `modal_controller.py` runs the Node controller headlessly in Modal and stores durable `.sota` state in a Modal Volume:
 
@@ -304,7 +304,7 @@ Implemented today:
 - multi-split validation acceptance, durable leakage/reviewer gates, and conservative external-score split-belief modeling;
 - automatic baseline-to-candidate comparison events after successful challenge evaluations;
 - replication scheduling gated on an observed improvement rather than mere process completion;
-- headless research and challenge campaigns that execute selected hypotheses through the same isolated runner as the TUI, with optional `--executor local|container|modal` routing;
+- headless research and challenge campaigns that execute selected hypotheses through the same isolated runner as the TUI, with optional `--executor local|container|modal|slurm` routing;
 - Codex-backed experiment-engineer implementation in the isolated worktree before evaluation, with failed hypotheses retained as evidence instead of being blindly retried;
 - durable headless research trajectories with structural, goal, evidence, recovery, and termination quality signals feeding future allocation;
 - unattended experiment runs also record the same quality-scored process/evaluator/recovery trajectory used by the interactive workbench;
@@ -861,7 +861,7 @@ OOF/prediction analysis with ensemble candidates. The remaining research-lab lay
    extracts bounded leaderboard rows, discussion topics, and metric/leakage/
    split/seed/replication signals from untrusted channel text; inspect them in
    the TUI with `/sources channels`;
-2. Slurm and additional remote executor backends;
+2. additional remote executor backends such as Kubernetes, RunPod, and Vast.ai (Slurm is now supported);
 3. a local browser dashboard on top of the same event/state model.
 
 These are separate from the core TUI so Evidra remains useful for non-Kaggle research and can be operated entirely from a terminal.
