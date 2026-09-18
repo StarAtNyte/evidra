@@ -12,7 +12,7 @@ test('unfinished provider setup blocks chat, research, and queued execution', ()
 });
 
 test('failed login leaves recovery and exit controls available', () => {
-  for (const request of ['/login codex', '/login status', '/logout', '/provider local', '/help', '/exit', '/doctor']) {
+  for (const request of ['/login codex', '/login status', '/logout', '/provider local', '/fallback', '/limits', '/help', '/exit', '/doctor']) {
     assert.equal(requiresProviderSetup(false, request), false, request);
   }
   assert.equal(requiresProviderSetup(false, '/login-malformed'), true);
