@@ -6585,8 +6585,12 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.equal(snapshot.counts.events, undefined);
     const serialized = JSON.stringify(snapshot);
     assert.doesNotMatch(serialized, /sk-test-dashboard-secret-value|secret-value/);
+    assert.equal(Array.isArray(snapshot.stages), true);
+    assert.equal(snapshot.stages.length, 3);
     assert.match(dashboardHtml(), /EVIDRA<\/span> \/ DASHBOARD/);
     assert.match(dashboardHtml(), /\/api\/status/);
+    assert.match(dashboardHtml(), /id="stages"/);
+    assert.match(dashboardHtml(), /replace\(\/\[/);
     assert.match(dashboardHtml(), /Read-only local view/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
