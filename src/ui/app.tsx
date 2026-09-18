@@ -2042,13 +2042,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const runAutonomousCycle = async (campaignOverride?: ResearchCampaign, autoContinue = false): Promise<void> => {
     if (loopBusy.current || busy) return;
     let pendingCampaign = campaignOverride;
+    let durableSchedulerMode: WorkbenchMode | undefined;
     if (!pendingCampaign) {
       const snapshotStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
       pendingCampaign = snapshotStore.campaign() as ResearchCampaign | undefined;
+      const savedSchedulerMode = snapshotStore.schedulerState().mode;
+      durableSchedulerMode = savedSchedulerMode === "research" || savedSchedulerMode === "challenge" ? savedSchedulerMode : undefined;
       snapshotStore.close();
       pendingCampaign ??= configRef.current.campaign;
     }
-    const mode = pendingCampaign?.runtime?.mode ?? configRef.current.mode;
+    const mode = pendingCampaign?.runtime?.mode ?? durableSchedulerMode ?? configRef.current.mode;
     const campaignProvider = pendingCampaign?.runtime?.provider ?? configRef.current.provider;
     const campaignLimitPolicy = pendingCampaign?.runtime?.limitPolicy ?? configRef.current.limitPolicy;
     if (pendingCampaign?.nextAttemptAt && Date.parse(pendingCampaign.nextAttemptAt) > Date.now()) return;
