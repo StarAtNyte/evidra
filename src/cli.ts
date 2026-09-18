@@ -1974,7 +1974,12 @@ research
     const mode = options.mode as "research" | "challenge";
     const autonomy = options.autonomy as AutonomyLevel;
     const adapter = activeCompetition();
-    requireCompetitionContract(adapter);
+    const contract = validateCompetitionContract(adapter.config, adapter.workspacePath(root));
+    if (mode === "challenge") {
+      if (!contract.valid) requireCompetitionContract(adapter);
+    } else if (!contract.valid) {
+      console.log("Research workspace has no complete competition contract; continuing with general research evidence and declared outcomes.");
+    }
     await ingestCompetitionSources(adapter);
     const budget = durationMinutes(options.budget);
     const parsedGpuBudget = Number(options.gpuBudget);
