@@ -1921,6 +1921,24 @@ research.command("examples")
   .action(() => {
     console.log(`Research starter briefs\n\n${formatResearchStarterBriefs()}\n\nAdapt a brief into: evidra research --goal \"...\"`);
   });
+research.command("status")
+  .description("Show durable research campaign and three-stage progress")
+  .action(() => {
+    const store = new ResearchStore(statePath);
+    const campaign = store.campaign() as { goal?: string; status?: string; budgetMinutes?: number; stopCondition?: string; currentCycle?: number; currentStep?: string; checkpointedAt?: string; runtime?: { mode?: unknown; provider?: unknown; model?: unknown; thinking?: unknown; executor?: unknown } } | undefined;
+    const scheduler = store.schedulerState();
+    const mode = campaign?.runtime?.mode === "challenge" || scheduler.mode === "challenge" ? "challenge" : "research";
+    const goals = phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode);
+    const active = activePhaseGoal(goals);
+    const stages = researchStageProgress(goals);
+    const checkpoint = readCampaignCheckpoint(campaign);
+    store.close();
+    if (!campaign) {
+      console.log("No research campaign configured. Start with: evidra research --goal \"...\"");
+      return;
+    }
+    console.log(`Research campaign\nStatus        ${campaign.status ?? "unknown"}\nMode          ${mode}\nGoal          ${campaign.goal ?? "(none)"}\nBudget        ${campaign.budgetMinutes ?? "?"} minutes\nScheduler     ${scheduler.status} · ${scheduler.currentStep ?? "idle"}\nActive phase  ${active?.phase ?? "none"}${active?.title ? ` · ${active.title}` : ""}\nStages        ${stages.map((stage) => `${stage.stage} ${stage.completed}/${stage.total} ${stage.status}`).join(" · ")}\nCheckpoint    ${checkpoint ? `cycle ${checkpoint.currentCycle} · ${checkpoint.currentStep} · ${checkpoint.checkpointedAt}` : "unavailable or legacy state"}\nRoute         ${campaign.runtime ? `${String(campaign.runtime.provider)}/${String(campaign.runtime.model)} · thinking ${String(campaign.runtime.thinking)} · executor ${String(campaign.runtime.executor)}` : "legacy route unavailable"}\nStop          ${campaign.stopCondition ?? "(none)"}`);
+  });
 research.command("steer <message>")
   .description("Deliver guidance to the active campaign at its next safe cycle boundary")
   .action((message: string) => {
