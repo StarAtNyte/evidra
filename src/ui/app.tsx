@@ -3705,7 +3705,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const text = channels.length ? channels.map((source) => {
           const payload = source.payload as { title?: string; url?: string; channelKind?: string; insights?: { leaderboard?: unknown[]; discussions?: unknown[]; signals?: string[] } };
           const insights = payload.insights;
-          return `${String(payload.channelKind).toUpperCase()} · ${payload.title ?? source.id}\n  ${payload.url ?? ""}\n  leaderboard rows: ${insights?.leaderboard?.length ?? 0} · discussion topics: ${insights?.discussions?.length ?? 0}\n  signals: ${insights?.signals?.join(" · ") || "none recorded"}`;
+          const leaderboard = (insights?.leaderboard ?? []) as Array<{ rank?: number; participant?: string; score?: number; raw?: string }>;
+          const discussions = (insights?.discussions ?? []) as Array<{ title?: string; raw?: string }>;
+          return `${String(payload.channelKind).toUpperCase()} · ${payload.title ?? source.id}\n  ${payload.url ?? ""}\n  ${leaderboard.length ? `leaderboard observations (untrusted):\n${leaderboard.slice(0, 10).map((row) => `    ${row.rank !== undefined ? `#${row.rank} ` : ""}${row.participant ?? "unknown participant"}${row.score !== undefined ? ` · ${row.score}` : ""}`).join("\n")}` : ""}${discussions.length ? `${leaderboard.length ? "\n" : ""}discussion topics (untrusted):\n${discussions.slice(0, 10).map((discussion) => `    · ${discussion.title ?? discussion.raw ?? "untitled"}`).join("\n")}` : ""}\n  signals: ${insights?.signals?.join(" · ") || "none recorded"}`;
         }).join("\n\n") : "No typed competition channels cached yet. Start a Challenge or use competition.observe.";
         store.close();
         append("assistant", `Competition channels\n\n${text}`);

@@ -6529,6 +6529,25 @@ test("compiled CLI boots and exposes scientific benchmark command", async () => 
   assert.match(result.stdout, /scientific/);
 });
 
+test("headless channel inspection has a stable JSON contract before ingestion", async () => {
+  const { spawn } = await import("node:child_process");
+  const root = mkdtempSync(join(tmpdir(), "evidra-cli-channels-"));
+  try {
+    const result = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "sources", "channels", "--json"], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.on("close", (code) => resolve({ code, stdout, stderr }));
+    });
+    assert.equal(result.code, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.evidenceClass, "untrusted_channel_discovery");
+    assert.deepEqual(parsed.channels, []);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("benchmark protocol rejects mismatched reasoning effort", () => {
   const base = { task: "task", arm: "default", seed: 1, model: "gpt-5.6-luna", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, validRun: true, durationSeconds: 1, recovered: false, reproducible: true };
   const report = validateBenchmarkProtocol([

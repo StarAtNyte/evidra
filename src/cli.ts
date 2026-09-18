@@ -1348,28 +1348,58 @@ sources.command("list").action(() => {
 });
 sources.command("channels")
   .argument("[kind]", "optional channel kind: discussion, leaderboard, rules, or other")
+  .option("--json", "emit bounded channel observations as JSON")
+  .option("--limit <count>", "maximum rows or topics per channel", "10")
   .description("Show typed discussion and leaderboard insights")
-  .action((kind?: string) => {
+  .action((kind: string | undefined, options: { json?: boolean; limit?: string }) => {
     const store = new ResearchStore(statePath);
     const allowed = new Set(["rules", "discussion", "leaderboard", "documentation", "repository", "other"]);
     if (kind && !allowed.has(kind)) { store.close(); throw new Error(`Unsupported channel kind '${kind}'.`); }
+    const limit = Math.max(1, Math.min(50, Number.parseInt(options.limit ?? "10", 10) || 10));
     const entries = store.sources().filter((entry) => {
       const payload = entry.payload as { channelKind?: unknown };
       return allowed.has(String(payload.channelKind)) && (!kind || payload.channelKind === kind);
     });
     if (!entries.length) {
       store.close();
-      console.log("No typed competition channels cached yet. Start a Challenge or observe a configured channel.");
+      console.log(options.json
+        ? JSON.stringify({ evidenceClass: "untrusted_channel_discovery", channels: [] }, null, 2)
+        : "No typed competition channels cached yet. Start a Challenge or observe a configured channel.");
+      return;
+    }
+    const channels = entries.map((entry) => {
+      const payload = entry.payload as { title?: string; url?: string; channelKind?: string; insights?: { leaderboard?: Array<{ rank?: number; participant?: string; score?: number; raw?: string }>; discussions?: Array<{ title?: string; raw?: string }>; signals?: string[] } };
+      const insights = payload.insights;
+      return {
+        id: entry.id,
+        kind: payload.channelKind,
+        title: payload.title ?? entry.id,
+        url: payload.url ?? "",
+        insights: {
+          leaderboard: (insights?.leaderboard ?? []).slice(0, limit),
+          discussions: (insights?.discussions ?? []).slice(0, limit),
+          signals: (insights?.signals ?? []).slice(0, limit),
+        },
+      };
+    });
+    if (options.json) {
+      store.close();
+      console.log(JSON.stringify({ evidenceClass: "untrusted_channel_discovery", channels }, null, 2));
       return;
     }
     console.log("Competition channels");
-    for (const entry of entries) {
-      const payload = entry.payload as { title?: string; url?: string; channelKind?: string; insights?: { leaderboard?: unknown[]; discussions?: unknown[]; signals?: string[] } };
-      const insights = payload.insights;
-      console.log(`\n${String(payload.channelKind).toUpperCase()} · ${payload.title ?? entry.id}`);
-      console.log(`  ${payload.url ?? ""}`);
-      console.log(`  leaderboard rows: ${insights?.leaderboard?.length ?? 0} · discussion topics: ${insights?.discussions?.length ?? 0}`);
-      console.log(`  signals: ${insights?.signals?.join(" · ") || "none recorded"}`);
+    for (const channel of channels) {
+      console.log(`\n${String(channel.kind).toUpperCase()} · ${channel.title}`);
+      console.log(`  ${channel.url}`);
+      if (channel.insights.leaderboard.length) {
+        console.log("  leaderboard observations (untrusted):");
+        for (const row of channel.insights.leaderboard) console.log(`    ${row.rank !== undefined ? `#${row.rank} ` : ""}${row.participant ?? "unknown participant"}${row.score !== undefined ? ` · ${row.score}` : ""}`);
+      }
+      if (channel.insights.discussions.length) {
+        console.log("  discussion topics (untrusted):");
+        for (const discussion of channel.insights.discussions) console.log(`    · ${discussion.title ?? discussion.raw ?? "untitled"}`);
+      }
+      console.log(`  signals: ${channel.insights.signals.join(" · ") || "none recorded"}`);
     }
     store.close();
   });
