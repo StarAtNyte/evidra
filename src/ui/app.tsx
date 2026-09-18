@@ -2081,6 +2081,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Controller request applied: ${requestedAction}.`);
       return;
     }
+    const controllerSteers = store.consumeControllerSteers();
+    const steeringContext = controllerSteers.length
+      ? `\n\nOperator steering received at this safe boundary:\n${controllerSteers.map((item) => `- ${item.message}`).join("\n")}\nApply these instructions to this cycle where they remain compatible with the evidence, safety policy, and phase gate.`
+      : "";
     const staleExperiment = store.experiments().find((entry) => {
       const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { status?: unknown; stale?: unknown; recoveryAttempted?: unknown } : {};
       return payload.status === "failed" && payload.stale === true && payload.recoveryAttempted !== true;
@@ -2141,8 +2145,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         }
       }
       const objective = campaign
-        ? `Work autonomously toward this ultimate research goal: ${campaign.goal}. Stop when this condition is met: ${campaign.stopCondition}. Continue through the active internal phase goal, gathering evidence and running safe local checks as needed.`
-        : "Run the next zero-to-hero research cycle: inspect current state, identify the highest-information bottleneck, and propose one falsifiable experiment with explicit validation and replication criteria.";
+        ? `Work autonomously toward this ultimate research goal: ${campaign.goal}. Stop when this condition is met: ${campaign.stopCondition}. Continue through the active internal phase goal, gathering evidence and running safe local checks as needed.${steeringContext}`
+        : `Run the next zero-to-hero research cycle: inspect current state, identify the highest-information bottleneck, and propose one falsifiable experiment with explicit validation and replication criteria.${steeringContext}`;
       queueTaskId = `task_research_${Date.now()}`;
       const queueStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
       queueStore.enqueueTask({ id: queueTaskId, kind: "research.cycle", priority: campaign ? 10 : 5, payload: { objective, campaign: campaign ?? null } });
