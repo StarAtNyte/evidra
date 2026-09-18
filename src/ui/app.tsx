@@ -194,7 +194,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
   "/logout": [["/logout", "Sign out of the Codex account"]],
-  "/research": [["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research steer ", "Guide the active campaign at the next safe boundary"], ["/research resume", "Resume the saved campaign"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
+  "/research": [["/research plan", "Show the three high-level research steps"], ["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research steer ", "Guide the active campaign at the next safe boundary"], ["/research resume", "Resume the saved campaign"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
   "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge steer ", "Guide the active campaign at the next safe boundary"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
   "/sources": [["/sources list", "List retrieved sources"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources discover", "Search scholarly literature"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
@@ -266,7 +266,7 @@ function help(): string {
   return [
     "/help                         Show commands",
     "/mode [research|challenge]   Show or switch active mode",
-    "/research [next|question]    Configure autonomous research or run one cycle",
+    "/research [plan|next|question] Configure autonomous research or run one cycle",
     "/challenge [start|status]    Start or inspect the active challenge",
     "/experiment [propose|run]    Create or run a reproducible experiment",
     "/loop [once|start|pause]     Run the autonomous research loop",
@@ -3581,6 +3581,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request === "/research" || request.startsWith("/research ")) {
       const objective = request.slice("/research".length).trim();
+      if (objective === "plan") {
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        const campaign = store.campaign() as ResearchCampaign | undefined;
+        const goals = phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), "research");
+        store.close();
+        const detailed = goals.length
+          ? `\n\nDetailed phase goals\n${goals.map((goal, index) => `  ${String(index + 1).padStart(2, "0")} · ${goal.title} · ${goal.status}`).join("\n")}`
+          : "\n\nDetailed phase goals\n  Not initialized yet — start a campaign to create them.";
+        append("assistant", `Research plan\n${RESEARCH_PLAN}${campaign ? `\n\nCampaign goal\n  ${campaign.goal}\n  status: ${campaign.status}` : ""}${detailed}`);
+        return;
+      }
       if (!objective || objective === "start") {
         if (config.campaign?.status === "running") { append("assistant", "An autonomous research campaign is already running. Use /status or /usage to inspect it."); return; }
         setSetupDraft({}); setSetupStep("goal");
