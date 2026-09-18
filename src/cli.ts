@@ -1346,6 +1346,33 @@ sources.command("list").action(() => {
   console.log(entries.length ? entries.map((entry) => `${entry.id} · ${String((entry.payload as { title?: string }).title ?? "Untitled")} · ${String((entry.payload as { url?: string }).url ?? "")}`).join("\n") : "No research sources cached.");
   store.close();
 });
+sources.command("channels")
+  .argument("[kind]", "optional channel kind: discussion, leaderboard, rules, or other")
+  .description("Show typed discussion and leaderboard insights")
+  .action((kind?: string) => {
+    const store = new ResearchStore(statePath);
+    const allowed = new Set(["rules", "discussion", "leaderboard", "documentation", "repository", "other"]);
+    if (kind && !allowed.has(kind)) { store.close(); throw new Error(`Unsupported channel kind '${kind}'.`); }
+    const entries = store.sources().filter((entry) => {
+      const payload = entry.payload as { channelKind?: unknown };
+      return allowed.has(String(payload.channelKind)) && (!kind || payload.channelKind === kind);
+    });
+    if (!entries.length) {
+      store.close();
+      console.log("No typed competition channels cached yet. Start a Challenge or observe a configured channel.");
+      return;
+    }
+    console.log("Competition channels");
+    for (const entry of entries) {
+      const payload = entry.payload as { title?: string; url?: string; channelKind?: string; insights?: { leaderboard?: unknown[]; discussions?: unknown[]; signals?: string[] } };
+      const insights = payload.insights;
+      console.log(`\n${String(payload.channelKind).toUpperCase()} · ${payload.title ?? entry.id}`);
+      console.log(`  ${payload.url ?? ""}`);
+      console.log(`  leaderboard rows: ${insights?.leaderboard?.length ?? 0} · discussion topics: ${insights?.discussions?.length ?? 0}`);
+      console.log(`  signals: ${insights?.signals?.join(" · ") || "none recorded"}`);
+    }
+    store.close();
+  });
 sources.command("search").argument("<query>").action((query: string) => {
   const store = new ResearchStore(statePath);
   const entries = store.sources().filter((entry) => sourceSearchText(entry).includes(query.toLowerCase()));
