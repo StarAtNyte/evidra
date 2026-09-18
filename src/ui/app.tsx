@@ -2629,7 +2629,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (request === "/research" || request === "/research start") {
-      if (config.campaign?.status === "running") { append("assistant", "An autonomous research campaign is already running. Use /research status or /research pause."); return; }
+      const campaignStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const durableCampaign = campaignStore.campaign() as ResearchCampaign | undefined;
+      const liveController = campaignStore.liveControllerLease();
+      campaignStore.close();
+      if (durableCampaign?.status === "running" && liveController) { append("assistant", `An autonomous ${resolveCampaignMode(durableCampaign.runtime?.mode, liveController.mode)} campaign is already running (pid ${liveController.pid}). Use /${resolveCampaignMode(durableCampaign.runtime?.mode, liveController.mode)} status or pause it first.`); return; }
       const nextConfig = { ...configRef.current, mode: "research" as const };
       configRef.current = nextConfig;
       setConfig(nextConfig);
