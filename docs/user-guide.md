@@ -65,6 +65,10 @@ The full-screen interface uses a compact Codex-style transcript:
 •  Autonomous research setup · Step 1/3
 ```
 
+Step 1 shows three contemporary AI/CV starter briefs. Enter `1`, `2`, or `3`
+to select one and carry its question, goal, metrics, and replication rule into
+the campaign; enter a sentence instead to define a completely custom goal.
+
 Normal conversation does not inspect the repository or launch an experiment.
 The input bar accepts pasted multiline text, `/` commands, and `!` shell
 commands. Command suggestions filter as each character is typed; Tab accepts a

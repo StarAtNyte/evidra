@@ -20,7 +20,7 @@ import { observedGpuHours } from "../core/compute-budget.js";
 import { distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../core/distribution-beliefs.js";
 import { bindCampaignRuntime, campaignElapsedMinutes, pauseCampaign, readCampaignCheckpoint, resolveCampaignMode, resumeCampaign, withCampaignCheckpoint, type CampaignRuntimeConfig } from "../core/campaign.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../core/submissions.js";
-import { formatResearchStarterBriefs } from "../core/research-starters.js";
+import { formatResearchStarterBriefs, selectResearchStarter } from "../core/research-starters.js";
 import { classifyResearchSetupInput } from "../core/research-setup.js";
 import { pollSubmissionScore, submitApprovedBundle } from "../core/submission-adapters.js";
 import { evaluateSubmissionPolicy } from "../core/submission-policy.js";
@@ -2376,8 +2376,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
       if (setupStep === "goal") {
-        setSetupDraft({ goal: request }); setSetupStep("budget");
-        append("assistant", researchSetupPrompt("budget")); return;
+        const starter = selectResearchStarter(request);
+        if (/^\d+$/.test(request) && !starter) {
+          append("assistant", "Choose starter 1, 2, or 3, or type a custom research goal.");
+          return;
+        }
+        const goal = starter ? `${starter.question} Goal: ${starter.goal}` : request;
+        setSetupDraft({ goal }); setSetupStep("budget");
+        append("assistant", starter
+          ? `Selected starter: ${starter.title}\n${starter.answer}\n\n${researchSetupPrompt("budget")}`
+          : researchSetupPrompt("budget"));
+        return;
       }
       if (setupStep === "budget") {
         const budgetMinutes = parseBudgetMinutes(request);

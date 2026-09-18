@@ -29,7 +29,7 @@ import { LocalExecutor, classifyProcessFailure, containerCommand, mergeEvaluator
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
 import { experienceReplayWorld } from "../dist/core/experience.js";
-import { formatResearchStarterBriefs, RESEARCH_STARTER_BRIEFS } from "../dist/core/research-starters.js";
+import { formatResearchStarterBriefs, RESEARCH_STARTER_BRIEFS, selectResearchStarter } from "../dist/core/research-starters.js";
 import { classifyResearchSetupInput } from "../dist/core/research-setup.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
@@ -2748,6 +2748,10 @@ test("research starter briefs are shared across interactive and headless entrypo
   assert.match(formatted, /Budgeted multimodal agents/);
   assert.equal((formatted.match(/Question:/g) ?? []).length, 3);
   assert.match(formatted, /Answer:/);
+  assert.equal(selectResearchStarter("1")?.title, "Memory under video shift");
+  assert.equal(selectResearchStarter("03")?.title, "Budgeted multimodal agents");
+  assert.equal(selectResearchStarter("4"), undefined);
+  assert.equal(selectResearchStarter("custom"), undefined);
 });
 
 test("guided research setup does not consume slash commands as answers", () => {

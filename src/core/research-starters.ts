@@ -30,3 +30,11 @@ export const RESEARCH_STARTER_BRIEFS: readonly ResearchStarterBrief[] = [
 export function formatResearchStarterBriefs(): string {
   return RESEARCH_STARTER_BRIEFS.map((brief, index) => `${String(index + 1).padStart(2, "0")} · ${brief.title}\n   Question: ${brief.question}\n   Goal: ${brief.goal}\n   Answer: ${brief.answer}`).join("\n\n");
 }
+
+/** Resolve the compact numeric choice shown during first-run research setup. */
+export function selectResearchStarter(input: string): ResearchStarterBrief | undefined {
+  const index = Number.parseInt(input.trim(), 10);
+  return /^\d+$/.test(input.trim()) && index >= 1 && index <= RESEARCH_STARTER_BRIEFS.length
+    ? RESEARCH_STARTER_BRIEFS[index - 1]
+    : undefined;
+}
