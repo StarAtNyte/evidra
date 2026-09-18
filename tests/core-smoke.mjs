@@ -4703,6 +4703,17 @@ test("source retrieval bounds responses without trusting content-length", async 
   }
 });
 
+test("HTML source retrieval preserves channel rows and headings for typed insights", async () => {
+  const previousFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response("<html><title>Forum</title><body><h2>Baseline replication</h2><table><tr><td>1</td><td>alice</td><td>score: 0.812</td></tr><tr><td>2</td><td>bob</td><td>score: 0.799</td></tr></table></body></html>", { status: 200, headers: { "content-type": "text/html" } });
+    const retrieved = await retrieveSource("http://93.184.216.34/channel");
+    assert.match(retrieved.text, /Baseline replication[\s\S]*1 alice score: 0\.812/);
+    assert.equal(extractCompetitionInsights(retrieved.text, "discussion").discussions[0]?.title, "Baseline replication");
+    assert.equal(extractCompetitionInsights(retrieved.text, "leaderboard").leaderboard[0]?.participant, "alice");
+  } finally { globalThis.fetch = previousFetch; }
+});
+
 test("PDF source extraction reads common text operators without binary garbage", () => {
   const pdf = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Length 62 >>\nstream\nBT\n(An experimental method improves accuracy.) Tj\nET\nendstream\nendobj\n%%EOF\n', "latin1");
   const text = extractPdfText(pdf);

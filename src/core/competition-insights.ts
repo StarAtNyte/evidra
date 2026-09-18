@@ -33,7 +33,7 @@ function parseLeaderboard(lines: string[]): LeaderboardObservation[] {
   for (const original of lines) {
     const raw = original.trim().replace(/\s+/g, " ");
     if (!raw || raw.length > 500) continue;
-    const rankMatch = raw.match(/^#?\s*(\d{1,6})\s*[.)|,:\-\t]+\s*(.*)$/);
+    const rankMatch = raw.match(/^#?\s*(\d{1,6})\s*(?:[.)|,:\-]\s*|\s+)(.*)$/);
     const scoreMatch = raw.match(new RegExp(`\\b(?:score|metric|value)\\s*[:=]\\s*(${NUMBER})`, "i"));
     const trailingScore = scoreMatch ? undefined : raw.match(new RegExp(`(?:^|[|,\\t ])(${NUMBER})\\s*$`));
     const rank = rankMatch ? Number(rankMatch[1]) : undefined;

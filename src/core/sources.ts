@@ -477,12 +477,18 @@ function stripMarkup(input: string): string {
   return input
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    // Preserve document structure for channel parsers and human inspection.
+    .replace(/<h[1-6][^>]*>/gi, "\n# ")
+    .replace(/<\/(?:br|p|div|li|tr|h[1-6]|section|article|pre|blockquote|dt|dd)>/gi, "\n")
+    .replace(/<br\s*\/?\s*>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&#x27;|&#39;|&apos;/gi, "'")
     .replace(/&quot;/gi, '"')
-    .replace(/\s+/g, " ")
+    .replace(/[ \t\f\v]+/g, " ")
+    .replace(/\n[ ]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
@@ -558,7 +564,7 @@ export async function retrieveSource(url: string, signal?: AbortSignal): Promise
   const isPdf = contentType.toLowerCase().includes("pdf") || raw.startsWith("%PDF-");
   const text = isPdf
     ? (extractPdfText(bytes) || "[PDF text extraction unavailable; inspect the original source manually]")
-    : contentType.includes("html") ? stripMarkup(raw) : raw.replace(/\s+/g, " ").trim();
+    : contentType.includes("html") ? stripMarkup(raw) : raw.replace(/[ \t\f\v]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
   const titleMatch = raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   const title = stripMarkup(titleMatch?.[1] ?? parsed.hostname ?? url).slice(0, 300) || url;
   const evidenceClass = sourceEvidenceClass(response.url || url);
