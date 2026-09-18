@@ -2256,7 +2256,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setConfig((current) => ({ ...current, campaign: { ...campaign, status: "completed" } }));
         if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
         const stopped = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        stopped.setSchedulerState({ status: "idle", mode: config.mode, currentStep: "campaign-complete" });
+        stopped.setSchedulerState({ status: "idle", mode, currentStep: "campaign-complete" });
         stopped.close();
         append("assistant", "Autonomous research stopping condition accepted by the research director.");
       } else if (campaign && stopPolicyAction === "pause") {
@@ -2273,7 +2273,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setConfig((current) => ({ ...current, campaign: pauseCampaign(campaign) }));
         if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
         const blocked = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        blocked.setSchedulerState({ status: "paused", mode: config.mode, currentStep: "blocked" });
+        blocked.setSchedulerState({ status: "paused", mode, currentStep: "blocked" });
         blocked.close();
         append("assistant", "Autonomous research paused because the current phase is blocked. Resolve the bottleneck, then use /resume.");
       }
@@ -2290,7 +2290,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         persistCampaign(waiting);
         setConfig((current) => ({ ...current, campaign: waiting }));
         const waitingStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        waitingStore.setSchedulerState({ status: "paused", mode: config.mode, currentStep: `provider-limit-until-${nextAttemptAt}` });
+        waitingStore.setSchedulerState({ status: "paused", mode, currentStep: `provider-limit-until-${nextAttemptAt}` });
         waitingStore.appendEvent("research.provider_limit.waiting", { retryAt: nextAttemptAt, retryAfterMs, provider: config.provider });
         waitingStore.close();
         if (!loopTimer.current) loopTimer.current = setInterval(() => { void runAutonomousCycle(); }, 60_000);
@@ -2299,7 +2299,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
       if (queueTaskId) { const queueStore = new ResearchStore(join(root, ".sota", "database.sqlite")); queueStore.updateTask(queueTaskId, "failed", { error: error instanceof Error ? error.message : String(error) }); queueStore.close(); }
       const update = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      update.setSchedulerState({ status: "paused", mode: config.mode, currentStep: "blocked" });
+      update.setSchedulerState({ status: "paused", mode, currentStep: "blocked" });
       update.close();
       append("assistant", error instanceof Error ? error.message : String(error));
       if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
@@ -2630,11 +2630,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const [command, action = "status"] = request.split(/\s+/);
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       if (command === "/scheduler") {
+        const schedulerCampaign = store.campaign() as ResearchCampaign | undefined;
+        const schedulerMode = resolveCampaignMode(schedulerCampaign?.runtime?.mode, store.schedulerState().mode);
         if (!["start", "pause", "drain"].includes(action)) {
           append("assistant", `Scheduler: ${store.schedulerState().status}\nUse /scheduler start, /scheduler pause, or /scheduler drain.`);
         } else {
           const status = action === "start" ? "running" : action === "pause" ? "paused" : "draining";
-          store.setSchedulerState({ status, mode: config.mode, currentStep: null });
+          store.setSchedulerState({ status, mode: schedulerMode, currentStep: null });
           append("assistant", `Scheduler ${status}.`);
         }
         store.close();
