@@ -580,10 +580,13 @@ program.command("doctor")
   checks.push(`codex        ${codexBinary} (${codexPath})`);
   diagnostics.push({ name: "codex", status: codexResult.exitCode === 0 ? "ok" : "missing", detail: `${codexBinary} (${codexPath})` });
   const codexAuth = codexLoginStatus() || "not authenticated";
+  const codexReady = codexResult.exitCode === 0 && !/not authenticated|not logged/i.test(codexAuth);
   checks.push(`codex auth    ${codexAuth}`);
-  diagnostics.push({ name: "codex-auth", status: /not authenticated|not logged/i.test(codexAuth) ? "unavailable" : "ok", detail: redactSecrets(codexAuth) });
+  diagnostics.push({ name: "codex-auth", status: codexReady ? "ok" : "unavailable", detail: redactSecrets(codexAuth) });
+  let localModelsReady = false;
   try {
     const models = await listLocalModels();
+    localModelsReady = models.length > 0;
     const detail = models.length ? models.map((model) => model.id).join(", ") : "none installed";
     checks.push(`ollama models ${detail}`);
     diagnostics.push({ name: "ollama-models", status: models.length ? "ok" : "unavailable", detail });
@@ -598,7 +601,13 @@ program.command("doctor")
   checks.push(`modal auth    ${modalAuth}`);
   diagnostics.push({ name: "modal-auth", status: modalAuth === "not configured" ? "unavailable" : "ok", detail: modalAuth });
   if (options.json) {
-    console.log(JSON.stringify({ workspace: root, node: process.versions.node, checks: diagnostics }, null, 2));
+    console.log(JSON.stringify({
+      workspace: root,
+      node: process.versions.node,
+      ready: codexReady || localModelsReady,
+      providers: { codex: codexReady, local: localModelsReady, fallback: localModelsReady },
+      checks: diagnostics,
+    }, null, 2));
   } else {
     console.log(checks.join("\n"));
   }

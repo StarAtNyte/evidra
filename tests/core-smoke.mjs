@@ -6595,6 +6595,9 @@ test("doctor exposes a bounded machine-readable diagnostics contract", () => {
   const report = JSON.parse(output);
   assert.equal(typeof report.workspace, "string");
   assert.equal(typeof report.node, "string");
+  assert.equal(typeof report.ready, "boolean");
+  assert.equal(typeof report.providers?.codex, "boolean");
+  assert.equal(typeof report.providers?.local, "boolean");
   assert.ok(Array.isArray(report.checks));
   assert.ok(report.checks.some((check) => check.name === "codex-auth"));
   assert.doesNotMatch(output, /sk-[A-Za-z0-9]{12,}|Bearer\s+[A-Za-z0-9._-]+/i);
