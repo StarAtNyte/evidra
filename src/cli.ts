@@ -588,27 +588,58 @@ program.command("dashboard")
   .action(async (options: { port: string }) => {
     const port = Number.parseInt(options.port, 10);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Dashboard port must be an integer between 1 and 65535.");
+    const baseHeaders = {
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+    };
+    const jsonHeaders = {
+      ...baseHeaders,
+      "content-type": "application/json; charset=utf-8",
+    };
     const server = createServer((request, response) => {
-      if (request.method !== "GET") { response.writeHead(405, { allow: "GET" }); response.end("Method Not Allowed"); return; }
+      if (request.method !== "GET") { response.writeHead(405, { ...baseHeaders, allow: "GET" }); response.end("Method Not Allowed"); return; }
       if (request.url === "/" || request.url === "/index.html") {
-        response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+        response.writeHead(200, {
+          ...baseHeaders,
+          "content-type": "text/html; charset=utf-8",
+          "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'",
+        });
         response.end(dashboardHtml());
         return;
       }
-      if (request.url === "/api/status") {
+      if (request.url === "/api/health") {
+        let store: ResearchStore | undefined;
         try {
-          const store = new ResearchStore(statePath);
-          const snapshot = dashboardSnapshot(store);
-          store.close();
-          response.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-          response.end(JSON.stringify(snapshot));
+          store = new ResearchStore(statePath);
+          const integrity = store.verifyEventChain();
+          response.writeHead(integrity.status === "invalid" ? 503 : 200, jsonHeaders);
+          response.end(JSON.stringify({ status: integrity.status === "invalid" ? "degraded" : "ok", integrity: integrity.status, generatedAt: new Date().toISOString() }));
         } catch (error) {
-          response.writeHead(500, { "content-type": "application/json; charset=utf-8" });
-          response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+          response.writeHead(503, jsonHeaders);
+          response.end(JSON.stringify({ status: "error", error: error instanceof Error ? error.message : String(error) }));
+        } finally {
+          store?.close();
         }
         return;
       }
-      response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      if (request.url === "/api/status") {
+        let store: ResearchStore | undefined;
+        try {
+          store = new ResearchStore(statePath);
+          const snapshot = dashboardSnapshot(store);
+          response.writeHead(200, jsonHeaders);
+          response.end(JSON.stringify(snapshot));
+        } catch (error) {
+          response.writeHead(500, jsonHeaders);
+          response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+        } finally {
+          store?.close();
+        }
+        return;
+      }
+      response.writeHead(404, { ...baseHeaders, "content-type": "text/plain; charset=utf-8" });
       response.end("Not Found");
     });
     await new Promise<void>((resolveServer, rejectServer) => {

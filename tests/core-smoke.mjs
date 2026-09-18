@@ -6576,7 +6576,38 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.doesNotMatch(serialized, /sk-test-dashboard-secret-value|secret-value/);
     assert.match(dashboardHtml(), /EVIDRA<\/span> \/ DASHBOARD/);
     assert.match(dashboardHtml(), /\/api\/status/);
+    assert.match(dashboardHtml(), /Read-only local view/);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("dashboard CLI exposes a healthy, security-headered read-only endpoint", async () => {
+  const { spawn } = await import("node:child_process");
+  const root = mkdtempSync(join(tmpdir(), "evidra-dashboard-cli-"));
+  const port = 45000 + Math.floor(Math.random() * 1000);
+  let child;
+  try {
+    child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "dashboard", "--port", String(port)], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+    await new Promise((resolve, reject) => {
+      let output = "";
+      const timer = setTimeout(() => reject(new Error(`dashboard did not start: ${output}`)), 5000);
+      child.stdout.on("data", (chunk) => {
+        output += chunk;
+        if (output.includes(`http://127.0.0.1:${port}`)) { clearTimeout(timer); resolve(); }
+      });
+      child.once("error", (error) => { clearTimeout(timer); reject(error); });
+    });
+    const health = await fetch(`http://127.0.0.1:${port}/api/health`);
+    assert.equal(health.status, 200);
+    assert.equal((await health.json()).status, "ok");
+    assert.equal(health.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(health.headers.get("x-frame-options"), "DENY");
+    const page = await fetch(`http://127.0.0.1:${port}/`);
+    assert.match(page.headers.get("content-security-policy") ?? "", /default-src 'none'/);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/missing`)).status, 404);
+  } finally {
+    if (child && child.exitCode === null) child.kill("SIGINT");
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("headless channel inspection has a stable JSON contract before ingestion", async () => {
