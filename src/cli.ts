@@ -1939,6 +1939,39 @@ research.command("status")
     }
     console.log(`Research campaign\nStatus        ${campaign.status ?? "unknown"}\nMode          ${mode}\nGoal          ${campaign.goal ?? "(none)"}\nBudget        ${campaign.budgetMinutes ?? "?"} minutes\nScheduler     ${scheduler.status} · ${scheduler.currentStep ?? "idle"}\nActive phase  ${active?.phase ?? "none"}${active?.title ? ` · ${active.title}` : ""}\nStages        ${stages.map((stage) => `${stage.stage} ${stage.completed}/${stage.total} ${stage.status}`).join(" · ")}\nCheckpoint    ${checkpoint ? `cycle ${checkpoint.currentCycle} · ${checkpoint.currentStep} · ${checkpoint.checkpointedAt}` : "unavailable or legacy state"}\nRoute         ${campaign.runtime ? `${String(campaign.runtime.provider)}/${String(campaign.runtime.model)} · thinking ${String(campaign.runtime.thinking)} · executor ${String(campaign.runtime.executor)}` : "legacy route unavailable"}\nStop          ${campaign.stopCondition ?? "(none)"}`);
   });
+for (const action of ["pause", "resume", "stop"] as const) {
+  research.command(action)
+    .description(`${action[0].toUpperCase()}${action.slice(1)} the durable research campaign`)
+    .action(async () => {
+      const store = new ResearchStore(statePath);
+      const campaign = store.campaign() as Record<string, unknown> | undefined;
+      if (!campaign) { store.close(); throw new Error("No research campaign exists. Start one with evidra research --goal \"...\"."); }
+      const runtime = campaign.runtime && typeof campaign.runtime === "object" ? campaign.runtime as { mode?: unknown } : undefined;
+      if (runtime?.mode === "challenge") { store.close(); throw new Error("The active campaign is a challenge. Use evidra challenge ${action}."); }
+      if (action === "resume" && campaign.status === "completed") { store.close(); throw new Error("The research campaign is completed/stopped. Start a new campaign with evidra research --goal \"...\"."); }
+      const lease = store.liveControllerLease();
+      if (lease) {
+        store.requestControllerAction(action);
+        store.setSchedulerState({ status: action === "resume" ? "running" : "draining", mode: "research", currentStep: `requested-${action}` });
+        store.close();
+        console.log(`Research ${action} requested; active controller pid ${lease.pid} will apply it at the next safe boundary.`);
+        return;
+      }
+      const status = action === "resume" ? "running" : action === "pause" ? "paused" : "completed";
+      store.saveCampaign({ ...campaign, status });
+      store.setSchedulerState({ status: action === "stop" ? "idle" : action === "resume" ? "running" : "paused", mode: "research", currentStep: action });
+      store.close();
+      console.log(`Research campaign ${action === "stop" ? "stopped" : `${action}d`}.`);
+      if (action === "resume") {
+        const script = process.argv[1];
+        if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
+        const result = await runProcess([process.execPath, script, "research", "--resume"], root, 7 * 24 * 60 * 60_000, (stream, chunk) => {
+          (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
+        });
+        if (result.exitCode !== 0) process.exitCode = result.exitCode;
+      }
+    });
+}
 research.command("steer <message>")
   .description("Deliver guidance to the active campaign at its next safe cycle boundary")
   .action((message: string) => {
