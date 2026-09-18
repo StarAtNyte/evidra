@@ -11,3 +11,4 @@ reference/environment*.yml
 reference/pyproject.toml
 reference/uv.lock
 reference/unet-mc-cv-reference-solution.ipynb
+reference/.git-upstream/
