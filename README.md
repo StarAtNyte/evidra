@@ -482,6 +482,14 @@ Run evidra with no arguments. The interface is designed for long-running termina
 - Ctrl+C clears non-empty input and exits only when input is empty;
 - Tab, arrows, and Enter operate command/model/provider selectors.
 
+Autonomous research is presented as a three-stage loop:
+
+1. **Orient** — inspect the workspace, question, data contract, and validation surface.
+2. **Discover** — retrieve evidence, form competing hypotheses, and choose the highest-information next action.
+3. **Validate** — run controlled checks, audit evidence, replicate promising signals, and decide whether the stopping rule is met.
+
+The controller may use more detailed internal phase goals underneath those three stages, but live progress always reports `1/3`, `2/3`, and `3/3`. Run `/research examples` for contemporary AI/CV starter briefs, or `/research plan` to inspect the active detailed phase graph.
+
 Useful commands:
 
     /help                 Show commands and shortcuts
@@ -492,6 +500,8 @@ Useful commands:
     /usage                Show durable activity, experiment time, and agent tokens
     /research             Start or run an evidence-gathering cycle
     /research start       Start a fully autonomous research campaign
+    /research examples    Show contemporary starter briefs with metrics and stop rules
+    /research plan        Show the three high-level steps and internal phase goals
     /research pause       Pause workers and preserve the campaign
     /research resume      Resume the saved research campaign
     /research stop        Stop the campaign without deleting evidence
