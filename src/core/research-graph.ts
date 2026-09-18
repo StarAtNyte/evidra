@@ -34,6 +34,37 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
   const aliases = new Map<string, string>();
   if (typeof latestBaseline?.runId === "string") aliases.set("baseline.completed", latestBaseline.runId);
   if (typeof latestObservation?.sourceId === "string") aliases.set("research.observation", latestObservation.sourceId);
+  // Older controllers exposed baseline event timestamps and experiment IDs to
+  // the director before materializing them as durable sources. Backfill those
+  // execution records on reopen so a resumed campaign cannot crash merely
+  // because its context was produced by an older runtime.
+  const durableSourcesBeforeExecutionBackfill = store.sources();
+  const durableSourceIdsBeforeExecutionBackfill = new Set(durableSourcesBeforeExecutionBackfill.map((source) => source.id));
+  for (const event of store.eventsByType("baseline.completed")) {
+    const payload = event.payload as { runId?: unknown; metric?: unknown };
+    if (typeof payload.runId === "string" && typeof event.createdAt === "string") aliases.set(`baseline-${event.createdAt}`, payload.runId);
+  }
+  for (const experiment of store.experiments()) {
+    if (durableSourceIdsBeforeExecutionBackfill.has(experiment.id)) continue;
+    const payload = experiment.payload as { status?: unknown; runId?: unknown; metric?: unknown; title?: unknown };
+    const run = typeof payload.runId === "string" ? store.runs().find((entry) => entry.id === payload.runId) : undefined;
+    if (payload.status !== "completed" && !run) continue;
+    const metric = run && typeof (run.payload as { metrics?: Record<string, unknown> }).metrics?.metric === "number"
+      ? (run.payload as { metrics: { metric: number } }).metrics.metric
+      : typeof payload.metric === "number" ? payload.metric : null;
+    store.saveSource({
+      id: experiment.id,
+      payload: {
+        id: experiment.id,
+        title: typeof payload.title === "string" ? payload.title : `Evidra experiment ${experiment.id}`,
+        url: `https://evidra.local/experiment/${experiment.id}`,
+        retrievedAt: new Date().toISOString(),
+        contentHash: experiment.id,
+        evidenceClass: "implementation",
+        claims: [metric === null ? "Experiment execution record recovered from durable state." : `Experiment metric: ${metric}`],
+      },
+    });
+  }
   const decision = ResearchDecisionSchema.parse({
     ...parsedDecision,
     hypotheses: parsedDecision.hypotheses.map((hypothesis) => ({
