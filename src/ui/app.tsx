@@ -218,9 +218,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/timeline": [["/timeline", "Show recent autonomous progress"]],
 };
 
-function loadConfig(path: string): SessionConfig {
-  try {
-    const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<SessionConfig>;
+export function normalizeSessionConfig(raw: Partial<SessionConfig>): SessionConfig {
     const config = { ...defaultConfig, ...raw } as SessionConfig;
     // A fresh terminal always starts a fresh Evidra session. The provider
     // thread is restored only by an explicit /resume action below.
@@ -238,6 +236,12 @@ function loadConfig(path: string): SessionConfig {
     if (config.mode !== "research" && config.mode !== "challenge") config.mode = defaultConfig.mode;
     if (!["safe", "fast", "yolo"].includes(config.autonomy)) config.autonomy = defaultConfig.autonomy;
     return config;
+}
+
+function loadConfig(path: string): SessionConfig {
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<SessionConfig>;
+    return normalizeSessionConfig(raw);
   }
   catch { return defaultConfig; }
 }
