@@ -56,7 +56,7 @@ def patch_grid(height: int, width: int, size: int) -> list[tuple[int, int]]:
     return sorted(set((r, c) for r in rows for c in cols))
 
 
-def make_patches(features: np.ndarray, labels: np.ndarray, size: int, validation: bool) -> tuple[np.ndarray, np.ndarray, list[tuple[int, int]]]:
+def make_patches(features: np.ndarray, labels: np.ndarray, size: int, validation: bool | None) -> tuple[np.ndarray, np.ndarray, list[tuple[int, int]]]:
     height, width = labels.shape
     coords = patch_grid(height, width, size)
     selected: list[tuple[int, int]] = []
@@ -64,7 +64,7 @@ def make_patches(features: np.ndarray, labels: np.ndarray, size: int, validation
         # Spatially separated checkerboard holdout avoids pixel leakage while
         # retaining both positive and negative geology in each split.
         is_validation = ((row // size) + (col // size)) % 5 == 0
-        if is_validation == validation:
+        if validation is None or is_validation == validation:
             selected.append((row, col))
     xs = np.stack([features[row:row + size, col:col + size].transpose(2, 0, 1) for row, col in selected])
     ys = np.stack([labels[row:row + size, col:col + size] for row, col in selected])
@@ -139,6 +139,8 @@ def main() -> None:
     parser.add_argument("--patch-size", type=int, default=128)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--seed", type=int, default=17)
+    parser.add_argument("--fit-all", action="store_true", help="fine-tune the selected model on all known labels before writing the submission")
+    parser.add_argument("--finetune-epochs", type=int, default=3)
     parser.add_argument("--output", type=Path, default=Path("artifacts/submission.tif"))
     args = parser.parse_args()
     torch.manual_seed(args.seed)
@@ -186,6 +188,25 @@ def main() -> None:
             best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
     if best_state is not None:
         model.load_state_dict(best_state)
+    if args.fit_all and args.finetune_epochs > 0:
+        # Validation selects the training duration; the final artifact then
+        # uses every public label available to the competition. This avoids
+        # wasting 20% of the known training signal in the submitted model.
+        all_x, all_y, _ = make_patches(features, labels, args.patch_size, None)
+        all_loader = DataLoader(TensorDataset(torch.from_numpy(all_x), torch.from_numpy(all_y[:, None])), batch_size=args.batch_size, shuffle=True, num_workers=0)
+        model.train()
+        for _ in range(args.finetune_epochs):
+            for batch_x, batch_y in all_loader:
+                batch_x, batch_y = batch_x.to(device), batch_y.to(device)
+                probabilities = torch.sigmoid(model(batch_x))
+                intersection = (probabilities * batch_y).sum((1, 2, 3))
+                fp = (probabilities * (1 - batch_y)).sum((1, 2, 3))
+                fn = ((1 - probabilities) * batch_y).sum((1, 2, 3))
+                loss = (1 - (intersection + 1e-5) / (intersection + 0.2 * fp + 0.8 * fn + 1e-5)).mean()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
     prediction = predict(model, features, args.patch_size, device)
     save_geotiff(args.output, prediction, profile)
     print(json.dumps({"metric": best_score, "local_dti": best_score, "artifact": str(args.output), "device": str(device)}))
