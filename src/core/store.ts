@@ -93,6 +93,7 @@ export interface QueueCompletionContract {
   requiredPayloadKeys?: string[];
   requiredEvidenceRefs?: string[];
   requiredActivityKinds?: QueueActivityKind[];
+  requireChildCompletion?: boolean;
 }
 
 /** Effective scheduler priority, including the same bounded waiting boost used by claimNextTask. */
@@ -163,6 +164,9 @@ function validateQueueCompletionContract(payload: unknown): void {
   }
   if (value.requiredActivityKinds !== undefined && (!Array.isArray(value.requiredActivityKinds) || value.requiredActivityKinds.length > 16 || value.requiredActivityKinds.some((entry) => !QUEUE_ACTIVITY_KINDS.includes(entry as QueueActivityKind)))) {
     throw new Error("Queue completionContract.requiredActivityKinds contains an unsupported activity kind.");
+  }
+  if (value.requireChildCompletion !== undefined && typeof value.requireChildCompletion !== "boolean") {
+    throw new Error("Queue completionContract.requireChildCompletion must be a boolean.");
   }
 }
 
@@ -2209,7 +2213,8 @@ export class ResearchStore {
     const requiredActivityKinds = Array.isArray(value.requiredActivityKinds)
       ? value.requiredActivityKinds.filter((kind): kind is QueueActivityKind => typeof kind === "string" && QUEUE_ACTIVITY_KINDS.includes(kind as QueueActivityKind)).slice(0, 16)
       : [];
-    const contract: QueueCompletionContract = { requiredPayloadKeys, requiredEvidenceRefs, requiredActivityKinds };
+    const requireChildCompletion = value.requireChildCompletion === true;
+    const contract: QueueCompletionContract = { requiredPayloadKeys, requiredEvidenceRefs, requiredActivityKinds, ...(requireChildCompletion ? { requireChildCompletion: true } : {}) };
     const payloadObject = completionPayload && typeof completionPayload === "object" && !Array.isArray(completionPayload)
       ? completionPayload as Record<string, unknown>
       : {};
@@ -2223,6 +2228,11 @@ export class ResearchStore {
     const activities = this.queueActivities(id, 128);
     for (const kind of requiredActivityKinds) {
       if (!activities.some((activity) => activity.kind === kind)) missing.push(`activity:${kind}`);
+    }
+    if (requireChildCompletion) {
+      const children = this.queueTasks().filter((entry) => entry.parentTaskId === id);
+      if (!children.length) missing.push("children:at-least-one");
+      for (const child of children) if (child.status !== "completed") missing.push(`child:${child.id}:${child.status}`);
     }
     return { valid: missing.length === 0, missing, contract };
   }

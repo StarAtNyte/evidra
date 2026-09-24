@@ -83,6 +83,15 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     const accepted = store.completeClaimedTask("proof-contract", "worker-a", "completed", { summary: "verified" });
     check("completion-watchdog", "A task cannot complete until its declared proof contract is satisfied.", proofClaim?.id === "proof-contract" && rejected && accepted && store.queueTasks().find((task) => task.id === "proof-contract")?.status === "completed", { rejected, accepted, status: store.queueTasks().find((task) => task.id === "proof-contract")?.status });
 
+    store.enqueueTask({ id: "parent-contract", kind: "delegated-parent", priority: 1, payload: { completionContract: { requireChildCompletion: true } } });
+    store.enqueueTask({ id: "child-contract", kind: "delegated-child", priority: 1, parentTaskId: "parent-contract", payload: {} });
+    const parentClaim = store.claimTask("parent-contract", ["delegated-parent"], "worker-parent");
+    const childBlocked = !store.completeClaimedTask("parent-contract", "worker-parent", "completed", { summary: "premature" });
+    const childClaim = store.claimTask("child-contract", ["delegated-child"], "worker-child");
+    const childCompleted = childClaim ? store.completeClaimedTask("child-contract", "worker-child", "completed", { result: "done" }) : false;
+    const parentCompleted = store.completeClaimedTask("parent-contract", "worker-parent", "completed", { summary: "children complete" });
+    check("delegated-child-completion", "A coordinator cannot complete before every delegated child has completed.", parentClaim?.id === "parent-contract" && childBlocked && childCompleted && parentCompleted, { childBlocked, childCompleted, parentCompleted });
+
     store.enqueueTask({ id: "approval-gate", kind: "governed", priority: 1, requiresApproval: true, approvalReason: "benchmark operator review", payload: {} });
     const approvalBlocked = store.claimTask("approval-gate", ["governed"], "worker-a");
     const approvalSet = store.setTaskApproval("approval-gate", "approved", "benchmark approved");

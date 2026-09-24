@@ -3321,9 +3321,10 @@ test("orchestration benchmark covers worker ownership and recovery", () => {
   const report = runOrchestrationBenchmark();
   assert.equal(report.failed, 0);
   assert.equal(report.score, 1);
-  assert.equal(report.probes.length, 16);
+  assert.equal(report.probes.length, 17);
   assert.equal(report.probes.some((probe) => probe.id === "queue-starvation-prevention"), true);
   assert.equal(report.probes.some((probe) => probe.id === "completion-watchdog"), true);
+  assert.equal(report.probes.some((probe) => probe.id === "delegated-child-completion"), true);
   assert.equal(report.probes.some((probe) => probe.id === "approval-gate"), true);
   assert.equal(report.probes.some((probe) => probe.id === "queue-pause-governance"), true);
   assert.equal(report.probes.some((probe) => probe.id === "task-pause-resume"), true);
@@ -3349,6 +3350,25 @@ test("queue completion contracts reject unsupported claims and accept durable pr
     assert.equal(completed?.payload.completionContract.requiredEvidenceRefs[0], "artifact:missing");
     assert.equal(completed?.payload._task.completionContract.requiredPayloadKeys[0], "summary");
     assert.deepEqual(completed?.payload.completion, { summary: "verified" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("queue completion contracts can require every delegated child to finish", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-child-completion-contract-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.enqueueTask({ id: "parent-contract", kind: "research.lane", priority: 1, payload: { completionContract: { requireChildCompletion: true } } });
+    store.enqueueTask({ id: "child-contract", kind: "research.lane", priority: 1, parentTaskId: "parent-contract", payload: {} });
+    assert.equal(store.claimTask("parent-contract", ["research.lane"], "worker-parent")?.id, "parent-contract");
+    assert.equal(store.completeClaimedTask("parent-contract", "worker-parent", "completed", { summary: "premature" }), false);
+    assert.match(String(store.eventsByType("queue.completion.rejected").at(-1)?.payload?.missing), /child-contract:queued/);
+    assert.equal(store.claimTask("child-contract", ["research.lane"], "worker-child")?.id, "child-contract");
+    assert.equal(store.completeClaimedTask("child-contract", "worker-child", "completed", { result: "replicated" }), true);
+    assert.equal(store.completeClaimedTask("parent-contract", "worker-parent", "completed", { summary: "all children complete" }), true);
+    assert.equal(store.queueTasks().find((task) => task.id === "parent-contract")?.status, "completed");
+    assert.throws(() => store.enqueueTask({ id: "invalid-child-contract", kind: "research.lane", priority: 1, payload: { completionContract: { requireChildCompletion: "yes" } } }), /requireChildCompletion/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
