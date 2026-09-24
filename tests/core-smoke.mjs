@@ -1381,10 +1381,14 @@ test("campaign checkpoints accept known phases and reject corrupted metadata", (
   assert.equal(readCampaignCheckpoint({ ...checkpoint, currentCycle: -1 }), undefined);
   assert.equal(readCampaignCheckpoint({ ...checkpoint, currentStep: "invented-phase" }), undefined);
   assert.equal(readCampaignCheckpoint({ ...checkpoint, checkpointedAt: "not-a-date" }), undefined);
+  const withWork = { ...checkpoint, activeTaskIds: ["task-a", "task-b"] };
+  assert.deepEqual(readCampaignCheckpoint(withWork), withWork);
+  assert.equal(readCampaignCheckpoint({ ...checkpoint, activeTaskIds: Array.from({ length: 65 }, (_, index) => `task-${index}`) }), undefined);
   assert.equal(nextCampaignCycle(checkpoint), 3);
   assert.equal(nextCampaignCycle({ ...checkpoint, currentStep: "cycle-complete" }), 4);
   assert.equal(nextCampaignCycle(), 0);
   assert.deepEqual(withCampaignCheckpoint({ status: "running" }, "research-lanes", 2, checkpoint.checkpointedAt), { status: "running", ...checkpoint, currentCycle: 2, currentStep: "research-lanes" });
+  assert.deepEqual(withCampaignCheckpoint({ status: "running" }, "research-lanes", 2, checkpoint.checkpointedAt, ["task-a", "task-a", "task-b"]), { status: "running", ...checkpoint, currentCycle: 2, currentStep: "research-lanes", activeTaskIds: ["task-a", "task-b"] });
   assert.throws(() => withCampaignCheckpoint({}, "cycle-start", -1), /non-negative integer/);
 });
 

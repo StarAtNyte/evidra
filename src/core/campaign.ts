@@ -15,6 +15,8 @@ export interface CampaignCheckpoint {
   currentCycle: number;
   currentStep: CampaignCheckpointStep;
   checkpointedAt: string;
+  /** Queue tickets visible at the boundary; optional for legacy checkpoints. */
+  activeTaskIds?: string[];
 }
 
 /** Validate optional checkpoint metadata without rejecting legacy campaigns. */
@@ -24,7 +26,8 @@ export function readCampaignCheckpoint(value: unknown): CampaignCheckpoint | und
   if (typeof candidate.currentCycle !== "number" || !Number.isInteger(candidate.currentCycle) || candidate.currentCycle < 0) return undefined;
   if (!CAMPAIGN_CHECKPOINT_STEPS.includes(candidate.currentStep as CampaignCheckpointStep)) return undefined;
   if (typeof candidate.checkpointedAt !== "string" || !Number.isFinite(Date.parse(candidate.checkpointedAt))) return undefined;
-  return { currentCycle: candidate.currentCycle, currentStep: candidate.currentStep as CampaignCheckpointStep, checkpointedAt: candidate.checkpointedAt };
+  if (candidate.activeTaskIds !== undefined && (!Array.isArray(candidate.activeTaskIds) || candidate.activeTaskIds.length > 64 || candidate.activeTaskIds.some((id) => typeof id !== "string" || !id.trim() || id.length > 240))) return undefined;
+  return { currentCycle: candidate.currentCycle, currentStep: candidate.currentStep as CampaignCheckpointStep, checkpointedAt: candidate.checkpointedAt, ...(Array.isArray(candidate.activeTaskIds) && candidate.activeTaskIds.length ? { activeTaskIds: candidate.activeTaskIds.slice(0, 64) as string[] } : {}) };
 }
 
 /** Resume the interrupted cycle; only a fully completed cycle advances the counter. */
@@ -34,10 +37,11 @@ export function nextCampaignCycle(checkpoint?: CampaignCheckpoint): number {
 }
 
 /** Attach a validated checkpoint to any campaign-shaped payload. */
-export function withCampaignCheckpoint<T extends object>(campaign: T, step: CampaignCheckpointStep, cycle: number, checkpointedAt = new Date().toISOString()): T & CampaignCheckpoint {
+export function withCampaignCheckpoint<T extends object>(campaign: T, step: CampaignCheckpointStep, cycle: number, checkpointedAt = new Date().toISOString(), activeTaskIds?: string[]): T & CampaignCheckpoint {
   if (!Number.isInteger(cycle) || cycle < 0) throw new Error("Campaign checkpoint cycle must be a non-negative integer.");
   if (!Number.isFinite(Date.parse(checkpointedAt))) throw new Error("Campaign checkpoint timestamp must be a valid date.");
-  return { ...campaign, currentCycle: cycle, currentStep: step, checkpointedAt };
+  const boundedTaskIds = [...new Set((activeTaskIds ?? []).filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim().slice(0, 240)))].slice(0, 64);
+  return { ...campaign, currentCycle: cycle, currentStep: step, checkpointedAt, ...(boundedTaskIds.length ? { activeTaskIds: boundedTaskIds } : {}) };
 }
 
 /**

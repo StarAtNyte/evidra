@@ -489,7 +489,8 @@ function recordCampaignCheckpoint<T extends { status: string }>(campaign: T, mod
   const store = new ResearchStore(statePath);
   const lease = store.controllerLease();
   if (lease?.status === "running" && lease.pid === process.pid && lease.controllerId) store.heartbeatControllerLease(lease.controllerId, mode, step);
-  store.saveCampaign(withCampaignCheckpoint(campaign, step, cycle));
+  const activeTaskIds = store.queueTasks().filter((task) => ["queued", "running", "paused"].includes(task.status)).map((task) => task.id).slice(0, 64);
+  store.saveCampaign(withCampaignCheckpoint(campaign, step, cycle, new Date().toISOString(), activeTaskIds));
   store.setSchedulerState({ status: campaign.status === "completed" ? "idle" : campaign.status === "paused" ? "paused" : "running", mode, currentStep: step });
   store.appendEvent("research.campaign.checkpoint", { cycle, step, mode });
   store.close();
@@ -3123,7 +3124,7 @@ challenge.command("status").action(() => {
   const gpuReserved = store.reservedComputeGpuHours();
   const autonomous = campaign?.autoExecuteExperiments === true || campaign?.runtime?.autonomy === "fast" || campaign?.runtime?.autonomy === "yolo";
   const lease = store.liveControllerLease();
-  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}${campaign ? `\nCampaign: ${campaign.status ?? "unknown"}\nGoal: ${campaign.goal ?? "(none)"}\nBudget: ${campaign.budgetMinutes ?? "?"}\nCheckpoint: ${checkpoint ? `cycle ${checkpoint.currentCycle} · ${checkpoint.currentStep} · ${checkpoint.checkpointedAt}` : "unavailable or legacy state"}\nGPU usage: ${gpuUsed.toFixed(3)} observed + ${gpuReserved.toFixed(3)} reserved / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed - gpuReserved).toFixed(3)} available)` : ""}\nAutonomous experiments: ${autonomous ? "enabled" : "approval-gated"}` : "\nCampaign: none"}${lease ? `\nController: running (pid ${lease.pid}, step ${lease.currentStep ?? "unknown"})` : "\nController: idle"}`);
+  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}${campaign ? `\nCampaign: ${campaign.status ?? "unknown"}\nGoal: ${campaign.goal ?? "(none)"}\nBudget: ${campaign.budgetMinutes ?? "?"}\nCheckpoint: ${checkpoint ? `cycle ${checkpoint.currentCycle} · ${checkpoint.currentStep} · ${checkpoint.checkpointedAt}${checkpoint.activeTaskIds?.length ? `\nActive work: ${checkpoint.activeTaskIds.join(", ")}` : ""}` : "unavailable or legacy state"}\nGPU usage: ${gpuUsed.toFixed(3)} observed + ${gpuReserved.toFixed(3)} reserved / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed - gpuReserved).toFixed(3)} available)` : ""}\nAutonomous experiments: ${autonomous ? "enabled" : "approval-gated"}` : "\nCampaign: none"}${lease ? `\nController: running (pid ${lease.pid}, step ${lease.currentStep ?? "unknown"})` : "\nController: idle"}`);
   store.close();
 });
 for (const action of ["pause", "resume", "stop"] as const) {
@@ -3268,7 +3269,7 @@ research.command("status")
       console.log("No research campaign configured. Start with: evidra research --goal \"...\"");
       return;
     }
-    console.log(`Research campaign\nStatus        ${campaign.status ?? "unknown"}\nMode          ${mode}\nGoal          ${campaign.goal ?? "(none)"}\nBudget        ${campaign.budgetMinutes ?? "?"} minutes\nScheduler     ${scheduler.status} · ${scheduler.currentStep ?? "idle"}\nActive phase  ${active?.phase ?? "none"}${active?.title ? ` · ${active.title}` : ""}\nStages        ${stages.map((stage) => `${stage.stage} ${stage.completed}/${stage.total} ${stage.status}`).join(" · ")}\nCheckpoint    ${checkpoint ? `cycle ${checkpoint.currentCycle} · ${checkpoint.currentStep} · ${checkpoint.checkpointedAt}` : "unavailable or legacy state"}\nRoute         ${campaign.runtime ? `${String(campaign.runtime.provider)}/${String(campaign.runtime.model)} · thinking ${String(campaign.runtime.thinking)} · executor ${String(campaign.runtime.executor)}` : "legacy route unavailable"}\nStop          ${campaign.stopCondition ?? "(none)"}`);
+    console.log(`Research campaign\nStatus        ${campaign.status ?? "unknown"}\nMode          ${mode}\nGoal          ${campaign.goal ?? "(none)"}\nBudget        ${campaign.budgetMinutes ?? "?"} minutes\nScheduler     ${scheduler.status} · ${scheduler.currentStep ?? "idle"}\nActive phase  ${active?.phase ?? "none"}${active?.title ? ` · ${active.title}` : ""}\nStages        ${stages.map((stage) => `${stage.stage} ${stage.completed}/${stage.total} ${stage.status}`).join(" · ")}\nCheckpoint    ${checkpoint ? `cycle ${checkpoint.currentCycle} · ${checkpoint.currentStep} · ${checkpoint.checkpointedAt}${checkpoint.activeTaskIds?.length ? `\nActive work  ${checkpoint.activeTaskIds.join(", ")}` : ""}` : "unavailable or legacy state"}\nRoute         ${campaign.runtime ? `${String(campaign.runtime.provider)}/${String(campaign.runtime.model)} · thinking ${String(campaign.runtime.thinking)} · executor ${String(campaign.runtime.executor)}` : "legacy route unavailable"}\nStop          ${campaign.stopCondition ?? "(none)"}`);
   });
 for (const action of ["pause", "resume", "stop"] as const) {
   research.command(action)
