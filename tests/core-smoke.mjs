@@ -7898,7 +7898,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.enqueueTask({ id: "bridge-task", kind: "research.lane", priority: 4, payload: { objective: "external worker smoke" } });
     store.close();
-    child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "event", "serve", "--port", String(port), "--token", token, "--worker-tokens", "worker-a=worker-secret,worker-b=worker-b-secret", "--worker-scopes", "worker-a=research.lane,worker-b=research.review"], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+    child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "event", "serve", "--port", String(port), "--token", token, "--worker-tokens", "worker-a=worker-secret,worker-b=worker-b-secret", "--worker-scopes", "worker-a=research.lane,worker-b=research.review", "--worker-capabilities", "worker-a=python|gpu.cuda,worker-b=python"], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
     await new Promise((resolve, reject) => {
       let output = "";
       const timer = setTimeout(() => reject(new Error(`event server did not start: ${output}`)), 5000);
@@ -7946,6 +7946,8 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const unqualifiedClaim = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"], capabilities: ["python"] }, token, "worker-a", "worker-secret");
     assert.equal(unqualifiedClaim.status, 200);
     assert.equal((await unqualifiedClaim.json()).task, null);
+    const disallowedCapabilityClaim = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"], capabilities: ["modal"] }, token, "worker-a", "worker-secret");
+    assert.equal(disallowedCapabilityClaim.status, 403);
     const qualifiedClaim = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"], capabilities: ["python", "gpu.cuda"] }, token, "worker-a", "worker-secret");
     assert.equal(qualifiedClaim.status, 200);
     const qualifiedTask = (await qualifiedClaim.json()).task;

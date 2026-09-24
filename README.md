@@ -332,6 +332,7 @@ Implemented today:
 - stale assignment recovery: when a leased task times out, Evidra preserves its assignment and places an explicit reassignment item in `/approvals`, preventing a dead worker from silently losing or transferring work;
 - scoped worker identity: `--worker-tokens worker-id=secret,...` (or `EVIDRA_WORKER_TOKENS`) gives each external worker its own credential and requires its authenticated header identity to match the claimed task, instead of trusting a shared body-level worker ID;
 - per-worker task scopes: `--worker-scopes worker-id=kind|kind,...` (or `EVIDRA_WORKER_SCOPES`) restricts each authenticated worker to its assigned queue families; workers cannot claim, heartbeat, or complete tasks outside that scope. If omitted, the bridge retains its global `--task-kinds` behavior;
+- per-worker capability allowlists: `--worker-capabilities worker-id=capability|capability,...` (or `EVIDRA_WORKER_CAPABILITIES`) constrain what a worker may advertise or claim; heartbeat capabilities must be a subset of the operator-configured allowlist;
 
 External worker loop. For least privilege, start the bridge with
 `--task-kinds research.lane` (or another explicit queue family) when the

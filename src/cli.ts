@@ -2375,6 +2375,18 @@ function parseWorkerScopeMap(raw: string | undefined): Map<string, string[]> {
   }
   return scopes;
 }
+function parseWorkerCapabilityMap(raw: string | undefined): Map<string, string[]> {
+  const capabilities = new Map<string, string[]>();
+  for (const entry of (raw ?? "").split(",").map((value) => value.trim()).filter(Boolean)) {
+    const separator = entry.indexOf("=");
+    const workerId = separator >= 0 ? entry.slice(0, separator).trim() : "";
+    const values = separator >= 0 ? entry.slice(separator + 1).split("|").map((value) => value.trim().toLowerCase()).filter(Boolean) : [];
+    if (!workerId || workerId.length > 200 || !values.length || values.length > 32 || values.some((value) => value.length > 120 || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value))) throw new Error("Worker capabilities must use worker-id=capability|capability entries with bounded names.");
+    if (capabilities.has(workerId)) throw new Error(`Duplicate worker capability entry for '${workerId}'.`);
+    capabilities.set(workerId, [...new Set(values)]);
+  }
+  return capabilities;
+}
 function secretMatches(expected: string | undefined, actual: string): boolean {
   if (expected === undefined) return false;
   const expectedBytes = Buffer.from(expected, "utf8");
@@ -2416,8 +2428,9 @@ event.command("serve")
   .option("--task-kinds <kinds>", "comma-separated queue kinds allowed to external workers; unset means all kinds")
   .option("--worker-tokens <mapping>", "scoped worker credentials as worker-id=secret,...", process.env.EVIDRA_WORKER_TOKENS)
   .option("--worker-scopes <mapping>", "per-worker task scopes as worker-id=kind|kind,...", process.env.EVIDRA_WORKER_SCOPES)
+  .option("--worker-capabilities <mapping>", "per-worker capability allowlists as worker-id=capability|capability,...", process.env.EVIDRA_WORKER_CAPABILITIES)
   .description("Run an authenticated local webhook listener for external events")
-  .action(async (options: { port: string; host: string; token?: string; taskKinds?: string; workerTokens?: string; workerScopes?: string }) => {
+  .action(async (options: { port: string; host: string; token?: string; taskKinds?: string; workerTokens?: string; workerScopes?: string; workerCapabilities?: string }) => {
     const port = Number.parseInt(options.port, 10);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Event server port must be an integer between 1 and 65535.");
     const loopback = options.host === "127.0.0.1" || options.host === "localhost" || options.host === "::1";
@@ -2427,6 +2440,7 @@ event.command("serve")
     if (allowedTaskKinds?.some((kind) => kind.length > 120)) throw new Error("External worker task kinds must be at most 120 characters each.");
     const workerTokens = parseWorkerTokenMap(options.workerTokens);
     const workerScopes = parseWorkerScopeMap(options.workerScopes);
+    const workerCapabilities = parseWorkerCapabilityMap(options.workerCapabilities);
     const server = createServer((request, response) => {
       const headers = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" };
       const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release"].includes(request.url ?? "") ? request.url : undefined;
@@ -2469,7 +2483,13 @@ event.command("serve")
               response.end(JSON.stringify({ error: "worker has no assigned task scope" }));
               return;
             }
+            if (workerCapabilities.size && !workerCapabilities.has(workerId)) {
+              response.writeHead(403, headers);
+              response.end(JSON.stringify({ error: "worker has no configured capability allowlist" }));
+              return;
+            }
             const workerAllowedKinds = workerScopes.get(workerId);
+            const workerAllowedCapabilities = workerCapabilities.get(workerId);
             const permitsKind = (kind: string): boolean => !workerAllowedKinds || workerAllowedKinds.includes(kind);
             const store = new ResearchStore(statePath);
             if (taskPath === "/tasks/claim") {
@@ -2481,7 +2501,14 @@ event.command("serve")
               if (kinds?.some((kind) => !permitsKind(kind))) { store.close(); throw new Error("Requested task kind is outside this worker's assigned scope."); }
               const scopedKinds = workerAllowedKinds ? (allowedTaskKinds ? workerAllowedKinds.filter((kind) => allowedTaskKinds.includes(kind)) : workerAllowedKinds) : allowedTaskKinds;
               const advertisedCapabilities = capabilities ?? store.externalWorkerCapabilities(workerId);
-              const task = store.claimNextTask(kinds ?? scopedKinds, workerId, advertisedCapabilities);
+              const effectiveCapabilities = advertisedCapabilities ?? workerAllowedCapabilities;
+              if (workerAllowedCapabilities && effectiveCapabilities?.some((capability) => !workerAllowedCapabilities.includes(capability))) {
+                store.close();
+                response.writeHead(403, headers);
+                response.end(JSON.stringify({ error: "worker requested a capability outside its configured allowlist" }));
+                return;
+              }
+              const task = store.claimNextTask(kinds ?? scopedKinds, workerId, effectiveCapabilities);
               store.close();
               response.writeHead(200, headers);
               response.end(JSON.stringify({ ok: true, task: task ?? null }));

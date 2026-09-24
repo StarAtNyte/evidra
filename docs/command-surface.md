@@ -188,6 +188,13 @@ least-privilege per worker. The mapping format is
 behavior. A scoped worker cannot claim, heartbeat, or complete a task outside
 its assigned kinds.
 
+Use `--worker-capabilities` (or `EVIDRA_WORKER_CAPABILITIES`) to configure an
+operator-owned capability ceiling, for example
+`gpu-worker=gpu.cuda|python,review-worker=python`. If configured, every worker
+must have an allowlist entry and heartbeat/claim capabilities outside that
+allowlist are rejected. This prevents a remote worker from self-declaring
+access to resources it was never granted.
+
 Workers may also include `capabilities` in external agent heartbeats. Evidra
 stores the latest bounded capability and liveness snapshot for each lease and
 shows it in the dashboard. This is operational health, not research evidence;
