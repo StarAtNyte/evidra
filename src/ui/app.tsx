@@ -3594,8 +3594,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
       let local = "unavailable";
       try { const models = await listLocalModels(); local = models.length ? `${models.length} model(s): ${models.map((model) => model.id).join(", ")}` : "connected, no models"; } catch (error) { local = error instanceof Error ? error.message : String(error); }
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      const lanes = store.agentLanes(); store.close();
+      const lanes = store.agentLanes();
+      const campaign = store.campaign() as ResearchCampaign | undefined;
+      const roleReviews = evaluateAgentRoles(store.trajectories(128));
+      const attributedTokens = campaign ? campaignAgentTokens(store.eventsByType("research.agent.usage"), campaign.startedAt) : 0;
+      store.close();
       append("assistant", `Research agents\n  codex: ${codex || "not authenticated"}\n  local: ${local}\n  concurrency: 1 active director lane\n\n${lanes.length ? lanes.map((lane) => `  ${lane.status === "running" ? "●" : lane.status === "failed" ? "✗" : lane.status === "blocked" ? "!" : "○"} ${lane.role} · ${lane.status} · ${lane.provider}/${lane.model}${lane.task ? `\n    ${lane.task.slice(0, 120)}` : ""}`).join("\n") : "  No lanes initialized; start /research to initialize the project."}`);
+      if (roleReviews.length) append("assistant", `Role reviews\n${roleReviews.slice(0, 12).map((review) => `  ${review.role} · ${review.recommendation} · score ${(review.score * 100).toFixed(0)}% · ${review.assignments} assignment(s)`).join("\n")}`);
+      if (campaign?.runtime?.agentTokenBudget) append("assistant", `Campaign agent budget\n  attributed: ${attributedTokens}\n  ceiling: ${campaign.runtime.agentTokenBudget}\n  remaining: ${Math.max(0, campaign.runtime.agentTokenBudget - attributedTokens)}`);
       return;
     }
     if (request === "/compute" || request === "/compute status" || request === "/compute budget" || request === "/compute local" || request === "/compute container" || request === "/compute modal" || request === "/compute slurm") {
