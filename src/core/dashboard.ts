@@ -6,7 +6,7 @@ import { goalAlignment } from "./goal-alignment.js";
 import { agentOrganization } from "./agent-organization.js";
 import { evaluateAgentRoles } from "./agent-evals.js";
 import { agentBudgetLedger, summarizeAgentUsageBy, summarizeAgentUsageByScope } from "./usage.js";
-import type { ResearchStore } from "./store.js";
+import { queueEffectivePriority, type ResearchStore } from "./store.js";
 import { externalToolStatus, loadExternalResearchTools } from "./external-tools.js";
 
 /** Build a bounded, secret-redacted read model for the local dashboard. */
@@ -60,7 +60,7 @@ export function dashboardSnapshot(store: ResearchStore, root?: string): Record<s
     approvals: approvalInbox(store, root).slice(0, 48),
     tools: root ? loadExternalResearchTools(root).tools.map((tool) => ({ name: tool.name, description: tool.description, readOnly: tool.readOnly, cacheable: tool.cacheable, status: externalToolStatus(root, tool.name).status, reason: externalToolStatus(root, tool.name).reason ?? null })) : [],
     alignment: goalAlignment(store),
-    queue: store.queueTasks().slice(0, 40).map((task) => ({ id: task.id, kind: task.kind, priority: task.priority, status: task.status, attempts: task.attempts, claimedAt: task.claimedAt, ownerId: task.ownerId ? `${task.ownerId.slice(0, 12)}…` : null, goalId: task.goalId, parentTaskId: task.parentTaskId, lineage: store.taskLineage(task.id), dependsOn: task.dependsOn, readiness: store.taskReadiness(task.id), updatedAt: task.updatedAt })),
+  queue: store.queueTasks().slice(0, 40).map((task) => ({ id: task.id, kind: task.kind, priority: task.priority, effectivePriority: queueEffectivePriority(task), status: task.status, attempts: task.attempts, claimedAt: task.claimedAt, ownerId: task.ownerId ? `${task.ownerId.slice(0, 12)}…` : null, goalId: task.goalId, parentTaskId: task.parentTaskId, lineage: store.taskLineage(task.id), dependsOn: task.dependsOn, readiness: store.taskReadiness(task.id), updatedAt: task.updatedAt })),
     queueRecovery: store.eventsByType("queue.recovery_required", 24).map((event) => {
       const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
       return { taskId: typeof payload.taskId === "string" ? payload.taskId : null, failureClass: payload.failureClass ?? "unknown", route: payload.route ?? "change_route", action: payload.action ?? "inspect failure", createdAt: event.createdAt };

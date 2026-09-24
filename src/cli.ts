@@ -4,7 +4,7 @@ import { appendFileSync, cpSync, mkdirSync, writeFileSync, existsSync, readFileS
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { dirname, join, relative, resolve } from "node:path";
-import { ResearchStore } from "./core/store.js";
+import { ResearchStore, queueEffectivePriority } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
 import { formatResearchStarterBriefs, RESEARCH_STARTER_BRIEFS } from "./core/research-starters.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "./core/experiment-manifest.js";
@@ -2225,7 +2225,7 @@ const queue = new Command("queue").description("Inspect the durable research wor
 queue.command("status").option("--json", "emit machine-readable queue state").action((options: { json?: boolean }) => {
   const store = new ResearchStore(statePath);
   const tasks = store.queueTasks();
-  const rows = tasks.map((task) => ({ ...task, readiness: store.taskReadiness(task.id) }));
+  const rows = tasks.map((task) => ({ ...task, effectivePriority: queueEffectivePriority(task), readiness: store.taskReadiness(task.id) }));
   const recoveries = store.eventsByType("queue.recovery_required", 24).map((event) => event.payload);
   if (options.json) {
     console.log(JSON.stringify({ tasks: rows, recoveries }, null, 2));
@@ -2241,7 +2241,8 @@ queue.command("status").option("--json", "emit machine-readable queue state").ac
     ].join(",")}` : "";
     const lineage = store.taskLineage(task.id);
     const brokenLineage = lineage && (lineage.cycle || lineage.truncated || lineage.missingParentIds.length) ? ` · broken-lineage${lineage.missingParentIds.length ? ` missing:${lineage.missingParentIds.join(",")}` : ""}` : "";
-    return `${task.status} ${task.id} · ${task.kind} · priority ${task.priority} · attempts ${task.attempts}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${brokenLineage}${blocked}`;
+    const aging = task.effectivePriority > task.priority ? ` (aged ${task.effectivePriority})` : "";
+    return `${task.status} ${task.id} · ${task.kind} · priority ${task.priority}${aging} · attempts ${task.attempts}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${brokenLineage}${blocked}`;
   }).join("\n") : "Research queue is empty.");
   if (recoveries.length) console.log(`\nRecovery actions\n${recoveries.slice().reverse().slice(0, 8).map((entry) => { const value = entry && typeof entry === "object" ? entry as Record<string, unknown> : {}; return `  ${String(value.taskId ?? "task")} · ${String(value.failureClass ?? "unknown")} · ${String(value.route ?? "change_route")} · ${String(value.action ?? "inspect failure")}`; }).join("\n")}`);
   store.close();

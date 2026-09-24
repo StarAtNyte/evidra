@@ -66,6 +66,13 @@ export interface QueuedTask {
   updatedAt: string;
 }
 
+/** Effective scheduler priority, including the same bounded waiting boost used by claimNextTask. */
+export function queueEffectivePriority(task: Pick<QueuedTask, "priority" | "availableAt">, now = Date.now()): number {
+  const availableAt = Date.parse(task.availableAt);
+  const ageHours = Number.isFinite(availableAt) ? Math.max(0, (now - availableAt) / 3_600_000) : 0;
+  return Math.round((task.priority + Math.min(3, ageHours)) * 1000) / 1000;
+}
+
 export interface QueuedTaskLineage {
   taskIds: string[];
   goalIds: string[];

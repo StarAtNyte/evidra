@@ -9,7 +9,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../dist/core/statistics.js";
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
-import { ResearchStore } from "../dist/core/store.js";
+import { ResearchStore, queueEffectivePriority } from "../dist/core/store.js";
 import { approvalInbox } from "../dist/core/approvals.js";
 import { goalAlignment, pauseForGoalAlignment } from "../dist/core/goal-alignment.js";
 import { agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
@@ -3566,6 +3566,7 @@ test("queue priority aging prevents long-waiting work from starving", () => {
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     store.enqueueTask({ id: "fresh-priority", kind: "research.lane", priority: 2, payload: {} });
     store.enqueueTask({ id: "waiting-background", kind: "research.lane", priority: 1, payload: {}, availableAt: twoHoursAgo });
+    assert.equal(queueEffectivePriority({ priority: 1, availableAt: twoHoursAgo }, Date.parse(twoHoursAgo) + 2 * 60 * 60 * 1000), 3);
     assert.equal(store.claimNextTask(["research.lane"])?.id, "waiting-background");
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
