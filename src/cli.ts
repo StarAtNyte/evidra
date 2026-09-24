@@ -2254,6 +2254,13 @@ queue.command("assign <id> [workerId]").description("Assign queued work to one w
   if (!assigned) throw new Error(`Task '${id}' is missing or not queued/failed; only recoverable work can be assigned.`);
   console.log(workerId ? `Assigned ${id} to ${workerId}.` : `Cleared assignment for ${id}.`);
 });
+queue.command("activity <id>").option("--limit <count>", "number of task updates", "32").action((id: string, options: { limit: string }) => {
+  const store = new ResearchStore(statePath);
+  const limit = Math.max(1, Math.min(128, Number.parseInt(options.limit, 10) || 32));
+  const activity = store.queueActivities(id, limit);
+  store.close();
+  console.log(activity.length ? activity.map((entry) => `${entry.createdAt}  ${entry.kind.padEnd(9)} ${entry.actorId}\n  ${entry.message}`).join("\n") : `No activity recorded for ${id}.`);
+});
 queue.command("recover [id]").option("--route <route>", "materially changed execution route").option("--note <note>", "why this route is different").action((id: string | undefined, options: { route?: string; note?: string }) => {
   const store = new ResearchStore(statePath);
   if (id) {
@@ -2358,7 +2365,7 @@ event.command("serve")
     const workerScopes = parseWorkerScopeMap(options.workerScopes);
     const server = createServer((request, response) => {
       const headers = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" };
-      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/complete"].includes(request.url ?? "") ? request.url : undefined;
+      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/activity", "/tasks/complete"].includes(request.url ?? "") ? request.url : undefined;
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
       const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
@@ -2372,7 +2379,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: integrity.status !== "invalid", integrity }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/complete, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/activity, /tasks/complete, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
@@ -2384,7 +2391,7 @@ event.command("serve")
       request.on("end", () => {
         if (rejected) return;
         try {
-          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown; idempotencyKey?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; status?: unknown };
+          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown; idempotencyKey?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown };
           if (taskPath) {
             const workerId = typeof parsed.workerId === "string" ? parsed.workerId.trim() : "";
             if (!workerId || workerId.length > 200) throw new Error("Task requests require a workerId of 1–200 characters.");
@@ -2427,6 +2434,29 @@ event.command("serve")
               store.close();
               response.writeHead(accepted ? 200 : 409, headers);
               response.end(JSON.stringify({ ok: accepted, taskId }));
+              return;
+            }
+            if (taskPath === "/tasks/activity") {
+              const currentTask = store.queueTasks().find((task) => task.id === taskId);
+              if (!currentTask || !permitsKind(currentTask.kind)) {
+                store.close();
+                response.writeHead(403, headers);
+                response.end(JSON.stringify({ error: "task is outside this worker's assigned scope" }));
+                return;
+              }
+              if (currentTask.status !== "running" || currentTask.ownerId !== workerId) {
+                store.close();
+                response.writeHead(409, headers);
+                response.end(JSON.stringify({ error: "worker does not own a live claim for this task" }));
+                return;
+              }
+              const activityKind = parsed.kind;
+              const message = typeof parsed.message === "string" ? parsed.message : "";
+              if (!(typeof activityKind === "string" && ["started", "progress", "blocked", "handoff", "completed", "failed"].includes(activityKind)) || !message.trim()) throw new Error("Task activity requires a valid kind and non-empty message.");
+              const recorded = store.recordQueueActivity({ taskId, actorId: workerId, kind: activityKind as import("./core/store.js").QueueActivityKind, message, metadata: parsed.metadata === undefined ? undefined : parseExternalEventPayload(JSON.stringify(parsed.metadata)) });
+              store.close();
+              response.writeHead(recorded ? 200 : 409, headers);
+              response.end(JSON.stringify({ ok: recorded, taskId }));
               return;
             }
             if (!(typeof parsed.status === "string" && ["completed", "failed", "cancelled"].includes(parsed.status))) throw new Error("Task completion status must be completed, failed, or cancelled.");

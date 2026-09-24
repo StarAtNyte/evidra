@@ -81,6 +81,15 @@ export interface QueuedTaskLineage {
   cycle: boolean;
   truncated: boolean;
 }
+export type QueueActivityKind = "started" | "progress" | "blocked" | "handoff" | "completed" | "failed";
+export interface QueueActivity {
+  taskId: string;
+  actorId: string;
+  kind: QueueActivityKind;
+  message: string;
+  metadata: unknown;
+  createdAt: string;
+}
 
 export type RoutineStatus = "active" | "paused" | "running" | "failed";
 export interface ResearchRoutine {
@@ -1743,6 +1752,31 @@ export class ResearchStore {
     if (result.changes !== 1) return false;
     this.appendEvent("queue.assigned", { id, assigneeId: normalized });
     return true;
+  }
+
+  /** Record bounded, redacted progress that travels with a queue ticket. */
+  recordQueueActivity(input: { taskId: string; actorId: string; kind: QueueActivityKind; message: string; metadata?: unknown }): boolean {
+    const taskId = input.taskId.trim().slice(0, 200);
+    const actorId = input.actorId.trim().slice(0, 200);
+    const message = redactStructured(input.message.trim().slice(0, 2_000));
+    if (!taskId || !actorId || !message || !["started", "progress", "blocked", "handoff", "completed", "failed"].includes(input.kind)) return false;
+    const task = this.db.prepare("SELECT id FROM work_queue WHERE id = ?").get(taskId) as { id: string } | undefined;
+    if (!task) return false;
+    this.appendEvent("queue.activity", { taskId, actorId, kind: input.kind, message, ...(input.metadata === undefined ? {} : { metadata: input.metadata }) });
+    return true;
+  }
+
+  queueActivities(taskId?: string, limit = 32): QueueActivity[] {
+    const events = this.eventsByType("queue.activity", Math.max(1, Math.min(128, Math.floor(limit))));
+    return events.flatMap((event) => {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+      const id = typeof payload.taskId === "string" ? payload.taskId : "";
+      const actorId = typeof payload.actorId === "string" ? payload.actorId : "";
+      const kind = payload.kind;
+      const message = typeof payload.message === "string" ? payload.message : "";
+      if (!id || !actorId || !message || !["started", "progress", "blocked", "handoff", "completed", "failed"].includes(String(kind)) || (taskId && id !== taskId)) return [];
+      return [{ taskId: id, actorId, kind: kind as QueueActivityKind, message, metadata: payload.metadata ?? null, createdAt: event.createdAt }];
+    });
   }
 
   /** Refresh a live claim so stale-task recovery cannot duplicate a healthy worker. */

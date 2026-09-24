@@ -163,6 +163,7 @@ Authenticated external workers may also participate in the durable queue:
 ```text
 POST /tasks/claim     {"workerId":"agent-17","kinds":["research.lane"]}
 POST /tasks/heartbeat {"workerId":"agent-17","taskId":"task-123"}
+POST /tasks/activity  {"workerId":"agent-17","taskId":"task-123","kind":"progress","message":"..."}
 POST /tasks/complete  {"workerId":"agent-17","taskId":"task-123","status":"completed","payload":{"summary":"..."}}
 ```
 
@@ -175,6 +176,9 @@ crashed assigned worker can be recovered and explicitly reassigned without
 silently handing the task to a different worker. Operators can use
 `evidra queue assign <task-id> <worker-id>` or omit the worker ID to clear the
 assignment; live claims cannot be changed underneath a running worker.
+Workers can append bounded handoff/progress notes through `/tasks/activity`
+while they own a live claim. Inspect them with `evidra queue activity <task-id>`;
+the notes are redacted, hash-chained, and included in the dashboard read model.
 For scoped identity, configure `--worker-tokens 'agent-17=secret'` (or
 `EVIDRA_WORKER_TOKENS`). Task calls must include `X-Evidra-Worker-Id`,
 `X-Evidra-Worker-Token`, and the same `workerId` in the JSON body.
