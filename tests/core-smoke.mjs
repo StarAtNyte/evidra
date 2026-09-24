@@ -7279,6 +7279,43 @@ test("dashboard CLI exposes a healthy, security-headered read-only endpoint", as
   }
 });
 
+test("authenticated external queue worker endpoints enforce ownership end to end", async () => {
+  const { spawn } = await import("node:child_process");
+  const root = mkdtempSync(join(tmpdir(), "evidra-event-worker-")
+  );
+  const port = 46000 + Math.floor(Math.random() * 1000);
+  const token = "bridge-test-token";
+  let child;
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "bridge-task", kind: "research.lane", priority: 4, payload: { objective: "external worker smoke" } });
+    store.close();
+    child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "event", "serve", "--port", String(port), "--token", token], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+    await new Promise((resolve, reject) => {
+      let output = "";
+      const timer = setTimeout(() => reject(new Error(`event server did not start: ${output}`)), 5000);
+      child.stdout.on("data", (chunk) => { output += chunk; if (output.includes(`/events`)) { clearTimeout(timer); resolve(); } });
+      child.once("error", (error) => { clearTimeout(timer); reject(error); });
+    });
+    const post = (path, body, auth = token) => fetch(`http://127.0.0.1:${port}${path}`, { method: "POST", headers: { "content-type": "application/json", ...(auth ? { authorization: `Bearer ${auth}` } : {}) }, body: JSON.stringify(body) });
+    assert.equal((await post("/tasks/claim", { workerId: "worker-a" }, "wrong-token")).status, 401);
+    const claimed = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"] });
+    assert.equal(claimed.status, 200);
+    const task = (await claimed.json()).task;
+    assert.equal(task.id, "bridge-task");
+    assert.equal((await post("/tasks/heartbeat", { workerId: "worker-b", taskId: task.id })).status, 409);
+    assert.equal((await post("/tasks/complete", { workerId: "worker-b", taskId: task.id, status: "completed", payload: { result: "spoofed" } })).status, 409);
+    assert.equal((await post("/tasks/heartbeat", { workerId: "worker-a", taskId: task.id })).status, 200);
+    assert.equal((await post("/tasks/complete", { workerId: "worker-a", taskId: task.id, status: "completed", payload: { result: "verified" } })).status, 200);
+    const reopened = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    assert.equal(reopened.queueTasks().find((entry) => entry.id === task.id)?.status, "completed");
+    reopened.close();
+  } finally {
+    if (child && child.exitCode === null) child.kill("SIGINT");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("headless channel inspection has a stable JSON contract before ingestion", async () => {
   const { spawn } = await import("node:child_process");
   const root = mkdtempSync(join(tmpdir(), "evidra-cli-channels-"));
