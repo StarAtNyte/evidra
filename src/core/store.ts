@@ -1886,6 +1886,8 @@ export class ResearchStore {
     this.expireDeadlineTasks();
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
+      const control = this.db.prepare("SELECT paused FROM queue_control WHERE id = 1").get() as { paused: number } | undefined;
+      if (control?.paused === 1) return undefined;
       // Preserve explicit priority while giving long-waiting work a bounded
       // boost. One point per hour, capped at three, prevents a steady stream
       // of newer high-priority tickets from starving durable background work.
@@ -1917,6 +1919,8 @@ export class ResearchStore {
     this.expireDeadlineTasks();
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
+      const control = this.db.prepare("SELECT paused FROM queue_control WHERE id = 1").get() as { paused: number } | undefined;
+      if (control?.paused === 1) return undefined;
       const kindClause = kinds?.length ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
       const assignmentClause = ownerId ? " AND (assignee_id IS NULL OR assignee_id = ?)" : " AND assignee_id IS NULL";
       if (this.queueUsageState(id)?.exhausted === true) return undefined;

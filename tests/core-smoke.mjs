@@ -7875,6 +7875,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.equal(Array.isArray(snapshot.stages), true);
     assert.equal(snapshot.stages.length, 3);
     assert.equal(Array.isArray(snapshot.organization), true);
+    assert.equal(snapshot.queueControl?.paused, false);
     assert.equal(snapshot.agentReviewHistory.length, 1);
     assert.equal(snapshot.agentReviewHistory[0].interventions[0].action, "coach");
     assert.equal(snapshot.agentActivity[0].message, "inspecting evidence");
