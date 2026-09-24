@@ -11,7 +11,7 @@ import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../di
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore, queueEffectivePriority } from "../dist/core/store.js";
 import { approvalInbox } from "../dist/core/approvals.js";
-import { operatorAttention } from "../dist/core/attention.js";
+import { controlPlaneHealth, operatorAttention } from "../dist/core/attention.js";
 import { goalAlignment, pauseForGoalAlignment } from "../dist/core/goal-alignment.js";
 import { agentLaneHealth, agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "../dist/core/agent-evals.js";
@@ -672,6 +672,8 @@ test("operator attention consolidates durable intervention signals", () => {
     assert.ok(attention.items.some((item) => item.kind === "queue-blocked" && item.id === "queue-blocked:waiting-task"));
     assert.ok(attention.items.some((item) => item.kind === "agent" && item.id === "agent:critic"));
     assert.ok(attention.items.some((item) => item.kind === "queue-control"));
+    assert.equal(attention.health.status, "degraded");
+    assert.equal(attention.health.runningAgents, 0);
     assert.ok(attention.items.length <= 64);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -701,6 +703,20 @@ test("goal alignment traces live work to a durable campaign phase", () => {
     store.savePhaseGoal({ id: "phase-1", phase: "validation", status: "pending", payload: { id: "phase-1", phase: "validation" } });
     store.savePhaseGoal({ id: "foreign-active", phase: "hypothesis", status: "active", payload: { id: "foreign-active", phase: "hypothesis", goalSetId: "old-campaign" } });
     assert.equal(goalAlignment(store).checks.find((check) => check.id === "active-phase-goal")?.status, "blocked");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("control-plane health blocks orphaned running campaigns", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-control-health-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.saveCampaign({ goal: "keep the campaign alive", status: "running" });
+    store.savePhaseGoal({ id: "health-phase", phase: "orientation", status: "active", payload: { id: "health-phase", phase: "orientation" } });
+    const health = controlPlaneHealth(store);
+    assert.equal(health.status, "blocked");
+    assert.equal(health.controller, "idle");
+    assert.match(health.reason, /no live controller/i);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

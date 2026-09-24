@@ -18,6 +18,17 @@ export type OperatorAttention = {
   warning: number;
   info: number;
   items: OperatorAttentionItem[];
+  health: ControlPlaneHealth;
+};
+
+export type ControlPlaneHealth = {
+  status: "idle" | "healthy" | "degraded" | "blocked";
+  controller: "idle" | "running" | "stale";
+  campaign: "idle" | "running" | "paused" | "completed";
+  activeTasks: number;
+  runningAgents: number;
+  staleAgents: number;
+  reason: string;
 };
 
 const severityRank: Record<AttentionSeverity, number> = { critical: 0, warning: 1, info: 2 };
@@ -26,6 +37,45 @@ function approvalSeverity(item: ApprovalInboxItem): AttentionSeverity {
   if (item.kind === "phase-goal" || item.kind === "queue-recovery") return "critical";
   if (item.kind === "external-action" || item.status === "rejected" || item.status === "unknown") return "warning";
   return "info";
+}
+
+/** One bounded campaign-health projection shared by every operator surface. */
+export function controlPlaneHealth(store: ResearchStore): ControlPlaneHealth {
+  const campaignValue = store.campaign();
+  const campaignStatus = campaignValue && typeof campaignValue === "object" && typeof (campaignValue as { status?: unknown }).status === "string"
+    ? (campaignValue as { status: string }).status
+    : "idle";
+  const campaign: ControlPlaneHealth["campaign"] = campaignStatus === "running" || campaignStatus === "paused" || campaignStatus === "completed" ? campaignStatus : "idle";
+  const rawLease = store.controllerLease();
+  const controller: ControlPlaneHealth["controller"] = store.liveControllerLease() ? "running" : rawLease?.status === "running" ? "stale" : "idle";
+  const tasks = store.queueTasks();
+  const activeTasks = tasks.filter((task) => ["queued", "running", "paused"].includes(task.status)).length;
+  const lanes = store.agentLanes();
+  const runningAgents = lanes.filter((lane) => lane.status === "running").length;
+  const staleAgents = lanes.filter((lane) => {
+    if (lane.status !== "running") return false;
+    const heartbeat = lane.heartbeatAt ? Date.parse(lane.heartbeatAt) : Number.NaN;
+    return !Number.isFinite(heartbeat) || Date.now() - heartbeat > 120_000;
+  }).length;
+  const alignment = goalAlignment(store);
+  const failedTasks = tasks.filter((task) => task.status === "failed").length;
+  const blockedAgents = lanes.filter((lane) => lane.status === "blocked" || lane.status === "failed").length;
+  let status: ControlPlaneHealth["status"] = "healthy";
+  let reason = "Campaign control plane is healthy.";
+  if (campaign === "idle" && activeTasks === 0 && runningAgents === 0) {
+    status = "idle";
+    reason = "No campaign or active work is running.";
+  } else if (alignment.status === "blocked") {
+    status = "blocked";
+    reason = "Goal alignment is blocked; autonomous allocation must stop.";
+  } else if (staleAgents > 0 || (campaign === "running" && controller !== "running")) {
+    status = "blocked";
+    reason = staleAgents > 0 ? `${staleAgents} running agent(s) have stale heartbeats.` : "A running campaign has no live controller lease.";
+  } else if (controller === "stale" || failedTasks > 0 || blockedAgents > 0 || store.queueControl().paused) {
+    status = "degraded";
+    reason = controller === "stale" ? "The previous controller lease is stale." : failedTasks > 0 ? `${failedTasks} queue task(s) failed and need inspection.` : blockedAgents > 0 ? `${blockedAgents} agent lane(s) are blocked or failed.` : "Queue dispatch is paused by policy.";
+  }
+  return { status, controller, campaign, activeTasks, runningAgents, staleAgents, reason };
 }
 
 /**
@@ -77,5 +127,6 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
     warning: bounded.filter((item) => item.severity === "warning").length,
     info: bounded.filter((item) => item.severity === "info").length,
     items: bounded,
+    health: controlPlaneHealth(store),
   };
 }

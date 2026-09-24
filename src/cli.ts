@@ -576,6 +576,7 @@ program.command("status").action(() => {
     const running = store.experiments().filter((entry) => (entry.payload as { status?: unknown }).status === "running");
     if (!lease && running.length) console.log(`Stale experiments ${running.length} (no live controller; run research/challenge to recover safely)`);
     const attention = operatorAttention(store, root);
+    console.log(`Health        ${attention.health.status.toUpperCase()} · controller ${attention.health.controller} · campaign ${attention.health.campaign} · ${attention.health.reason}`);
     console.log(`Attention     ${attention.total} total · ${attention.critical} critical · ${attention.warning} warning${attention.total ? `\n              ${attention.items.slice(0, 6).map((item) => `${item.severity} ${item.summary} → ${item.next}`).join("\n              ")}` : ""}`);
   }
   store.close();

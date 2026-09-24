@@ -312,6 +312,7 @@ Implemented today:
 - durable queue approval gates: enqueue work with `requiresApproval`, then release it with `evidra queue approve <id>` (or `/queue approve`); rejected/pending tasks remain visible but cannot be claimed until explicitly approved;
 - unified approval inbox: pending/rejected queue tasks appear alongside experiment, submission, recovery, and external-action approvals in `/approvals` and the dashboard;
 - operator attention inbox: `/status`, the TUI status view, and the dashboard consolidate blocked goals, stale workers, failed or dependency-blocked tasks, paused dispatch, and approvals into one bounded, read-only intervention list;
+- unified control-plane health: the same read model reports idle/healthy/degraded/blocked campaign state, controller liveness, active work, running/stale agents, and the reason autonomy should continue or stop across CLI, TUI, and dashboard;
 - remote claim diagnostics: external workers receive bounded approval blockers when no eligible task can be claimed, making operator-gated queues explainable without exposing unrelated task payloads;
 - typed exhausted-queue recovery: authentication, dependency, sandbox, data, resource, timeout, and route failures produce auditable next actions instead of dead-end errors;
 - ownership-aware queue checkout: each worker gets a durable identity, only the claimant can heartbeat a task, and stale claims are safely reclaimable;
