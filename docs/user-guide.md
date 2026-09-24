@@ -80,6 +80,11 @@ requires an explicit role grant for specialist agents. This keeps domain
 tooling portable while preserving the same permission, provenance, and
 recovery boundary as built-in tools.
 
+Each tool completion or failure also records a secret-safe SHA-256 hash of its
+redacted output. The event stores only a bounded preview, while the hash lets
+repeated observations be compared without treating raw adapter output as
+trusted evidence.
+
 Inspect and control the lifecycle without editing the manifest:
 
 ```bash

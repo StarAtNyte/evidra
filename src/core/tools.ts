@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, mkdirSync, realpathSync, lstatSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { auditData } from "./data-audit.js";
 import { guardAutonomousCommand, guardReadOnlyInspection, guardWorkspaceCommand, type AutonomyLevel } from "./permissions.js";
@@ -118,7 +119,9 @@ export function untrustedContentWarnings(value: unknown): string[] {
 function recordToolEvent(context: ResearchToolContext, result: ResearchToolResult): void {
   try {
     const store = new ResearchStore(context.storePath);
-    const output = result.output === undefined ? undefined : redactSecrets(JSON.stringify(result.output).slice(0, 8_000));
+    const serializedOutput = result.output === undefined ? undefined : redactSecrets(JSON.stringify(result.output));
+    const output = serializedOutput === undefined ? undefined : serializedOutput.slice(0, 8_000);
+    const outputHash = serializedOutput === undefined ? undefined : `sha256:${createHash("sha256").update(serializedOutput).digest("hex")}`;
     store.appendEvent(result.ok ? "research.tool.completed" : "research.tool.failed", {
       name: result.name,
       actor: context.role ?? "controller",
@@ -128,6 +131,7 @@ function recordToolEvent(context: ResearchToolContext, result: ResearchToolResul
       securityWarnings: result.securityWarnings,
       error: result.error,
       output,
+      outputHash,
     });
     store.close();
   } catch {

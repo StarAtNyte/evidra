@@ -3804,6 +3804,7 @@ test("research tool registry exposes safe workspace tools", async () => {
     const auditStore = new ResearchStore(db);
     assert.equal(auditStore.eventsByType("research.tool.completed").at(-1)?.payload.actor, "domain researcher");
     assert.equal(auditStore.eventsByType("research.tool.completed").at(-1)?.payload.autonomy, "fast");
+    assert.match(auditStore.eventsByType("research.tool.completed").at(-1)?.payload.outputHash, /^sha256:[a-f0-9]{64}$/);
     auditStore.close();
     const specialistDenied = await executeResearchTool({ name: "report.generate", arguments: { kind: "research" } }, { root, storePath: db, autonomy: "fast", role: "domain researcher" });
     assert.equal(specialistDenied.ok, false);
