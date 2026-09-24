@@ -56,7 +56,7 @@ import { observedGpuHours } from "./core/compute-budget.js";
 import { enforceClaimTermination, enforceGoalTermination } from "./core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds, type ClaimAuditReport } from "./core/claim-audit.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "./core/error-analysis.js";
-import { agentBudgetLedger, campaignAgentTokens, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "./core/usage.js";
+import { agentBudgetLedger, campaignAgentTokens, roleBudgetLedger, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "./core/usage.js";
 import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "./core/ensemble.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
@@ -147,7 +147,7 @@ const program = new Command();
 const activeCompetition = () => {
   const store = new ResearchStore(statePath);
   const project = store.project();
-  const campaign = store.campaign() as { startedAt?: unknown; runtime?: { agentTokenBudget?: unknown } } | undefined;
+  const campaign = store.campaign() as { startedAt?: unknown; runtime?: { agentTokenBudget?: unknown; roleTokenBudgets?: Record<string, number> } } | undefined;
   store.close();
   return loadCompetitionAdapter(root, project?.competitionId ?? "local-research");
 };
@@ -893,7 +893,7 @@ program.command("usage").description("Show research, experiment, and campaign us
   const store = new ResearchStore(statePath);
   const counts = store.counts();
   const project = store.project();
-  const campaign = store.campaign() as { startedAt?: unknown; runtime?: { agentTokenBudget?: unknown } } | undefined;
+  const campaign = store.campaign() as { startedAt?: unknown; runtime?: { agentTokenBudget?: unknown; roleTokenBudgets?: Record<string, number> } } | undefined;
   const usage = summarizeUsage(store.runs(), store.experiments());
   const agentEvents = store.eventsByType("research.agent.usage");
   const agentUsage = summarizeAgentUsage(agentEvents);
@@ -901,6 +901,7 @@ program.command("usage").description("Show research, experiment, and campaign us
   const agentBudget = campaign?.startedAt && typeof campaign.runtime?.agentTokenBudget === "number"
     ? agentBudgetLedger(agentEvents, String(campaign.startedAt), campaign.runtime.agentTokenBudget)
     : agentBudgetLedger([], "", null);
+  const roleBudgets = campaign?.startedAt ? roleBudgetLedger(agentEvents, String(campaign.startedAt), campaign.runtime?.roleTokenBudgets) : [];
   console.log(`Project       ${project?.name ?? "not initialized"}`);
   console.log(`Events        ${store.eventCount()}`);
   console.log(`Hypotheses    ${counts.hypotheses}`);
@@ -917,6 +918,7 @@ program.command("usage").description("Show research, experiment, and campaign us
   console.log(`Agent cache   ${agentUsage.cachedInputTokens} cached input · ${agentUsage.cacheWriteInputTokens} cache written · ${agentUsage.reasoningOutputTokens} reasoning output`);
   if (agentBudget.budgetTokens !== null) console.log(`Agent budget  ${agentBudget.usedTokens}/${agentBudget.budgetTokens} tokens · ${agentBudget.status} (${Math.round((agentBudget.utilization ?? 0) * 100)}%)`);
   else console.log("Agent budget  unlimited");
+  if (roleBudgets.length) console.log(`Role budgets\n${roleBudgets.map((entry) => `  ${entry.role} · ${entry.usedTokens}/${entry.budgetTokens} tokens · ${entry.status}`).join("\n")}`);
   if (agentRoutes.length) console.log(`Agent routes\n${agentRoutes.map((bucket) => `  ${bucket.role} · ${bucket.provider}/${bucket.model} · ${bucket.calls} calls · ${bucket.inputTokens + bucket.outputTokens} tokens`).join("\n")}`);
   console.log(`GPU-tagged    ${usage.gpuWallHours.toFixed(3)} hours`);
   console.log(`GPU reserved  ${store.reservedComputeGpuHours().toFixed(3)} hours`);

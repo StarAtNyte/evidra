@@ -9,6 +9,7 @@ import { approvalInbox } from "../core/approvals.js";
 import { loadProjectGuidance } from "../core/project-guidance.js";
 import { externalEventPayload, parseExternalEventPayload, validateExternalEventType } from "../core/external-events.js";
 import { createPortableBundle, validatePortableBundle } from "../core/portable-bundle.js";
+import { roleBudgetLedger } from "../core/usage.js";
 import { formatGoalAlignment, goalAlignment, pauseForGoalAlignment } from "../core/goal-alignment.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "../core/agent-evals.js";
 import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
@@ -2754,13 +2755,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (tokenBudgetMatch) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const campaign = store.campaign() as ResearchCampaign | undefined;
-      const usedTokens = campaign ? campaignAgentTokens(store.eventsByType("research.agent.usage"), campaign.startedAt) : 0;
+      const usageEvents = store.eventsByType("research.agent.usage");
+      const usedTokens = campaign ? campaignAgentTokens(usageEvents, campaign.startedAt) : 0;
+      const roleUsage = campaign?.startedAt ? roleBudgetLedger(usageEvents, campaign.startedAt, campaign.runtime?.roleTokenBudgets) : [];
       store.close();
       if (!campaign) { append("assistant", "No campaign exists. Start /research or /challenge first."); return; }
       const raw = tokenBudgetMatch[1];
       if (!raw) {
         const roleBudgets = Object.entries(campaign.runtime?.roleTokenBudgets ?? {}).map(([role, budget]) => `  ${role}: ${budget} tokens`).join("\n");
-        append("assistant", `Agent token budget\n  ceiling: ${campaign.runtime?.agentTokenBudget ? `${campaign.runtime.agentTokenBudget} tokens` : "unlimited"}\n  attributed usage: ${usedTokens} tokens${roleBudgets ? `\n  role ceilings:\n${roleBudgets}` : ""}`);
+        const roleUsageText = roleUsage.length ? `\n  role usage:\n${roleUsage.map((entry) => `  ${entry.role}: ${entry.usedTokens}/${entry.budgetTokens} · ${entry.status}`).join("\n")}` : "";
+        append("assistant", `Agent token budget\n  ceiling: ${campaign.runtime?.agentTokenBudget ? `${campaign.runtime.agentTokenBudget} tokens` : "unlimited"}\n  attributed usage: ${usedTokens} tokens${roleBudgets ? `\n  role ceilings:\n${roleBudgets}` : ""}${roleUsageText}`);
         return;
       }
       const parsed = /^(?:0|unlimited)$/i.test(raw) ? 0 : Number(raw);

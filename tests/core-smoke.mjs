@@ -79,7 +79,7 @@ import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperi
 import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, createLaneToolExecutor, laneHandoffBoard, lanePrompt, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneTeamSize, researchLiteratureQueries, roleMemoryFromTrajectories, runResearchLanes, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
-import { agentBudgetLedger, campaignAgentTokens, campaignRoleAgentTokens, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "../dist/core/usage.js";
+import { agentBudgetLedger, campaignAgentTokens, campaignRoleAgentTokens, roleBudgetLedger, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { assessForecast, summarizeForecastAssessments } from "../dist/core/forecast-calibration.js";
@@ -1336,6 +1336,10 @@ test("role token budgets parse, serialize, and isolate durable usage", () => {
   ];
   assert.equal(campaignRoleAgentTokens(events, "campaign-a", "validation scientist"), 17);
   assert.equal(campaignRoleAgentTokens(events, "campaign-a", "model researcher"), 30);
+  assert.deepEqual(roleBudgetLedger(events, "campaign-a", budgets).map(({ role, usedTokens, remainingTokens, status }) => ({ role, usedTokens, remainingTokens, status })), [
+    { role: "model researcher", usedTokens: 30, remainingTokens: 29_970, status: "healthy" },
+    { role: "validation scientist", usedTokens: 17, remainingTokens: 19_983, status: "healthy" },
+  ]);
 });
 
 test("durable campaign mode wins over stale scheduler mode", () => {
