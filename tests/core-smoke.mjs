@@ -7931,6 +7931,18 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal((await post("/tasks/heartbeat", { workerId: "worker-b", taskId: task.id, claimToken: task.claimToken }, token, "worker-b", "worker-b-secret")).status, 403);
     assert.equal((await post("/tasks/complete", { workerId: "worker-b", taskId: task.id, claimToken: task.claimToken, status: "completed", payload: { result: "spoofed" } }, token, "worker-b", "worker-b-secret")).status, 403);
     assert.equal((await post("/tasks/complete", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, status: "completed", payload: { result: "verified" } }, token, "worker-a", "worker-secret")).status, 200);
+    const capabilityStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    capabilityStore.enqueueTask({ id: "bridge-gpu", kind: "research.lane", priority: 99, payload: {}, requiredCapabilities: ["gpu.cuda"] });
+    capabilityStore.close();
+    const unqualifiedClaim = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"], capabilities: ["python"] }, token, "worker-a", "worker-secret");
+    assert.equal(unqualifiedClaim.status, 200);
+    assert.equal((await unqualifiedClaim.json()).task, null);
+    const qualifiedClaim = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"], capabilities: ["python", "gpu.cuda"] }, token, "worker-a", "worker-secret");
+    assert.equal(qualifiedClaim.status, 200);
+    const qualifiedTask = (await qualifiedClaim.json()).task;
+    assert.equal(qualifiedTask.id, "bridge-gpu");
+    assert.deepEqual(qualifiedTask.requiredCapabilities, ["gpu.cuda"]);
+    assert.equal((await post("/tasks/complete", { workerId: "worker-a", taskId: qualifiedTask.id, claimToken: qualifiedTask.claimToken, status: "completed", payload: { result: "gpu verified" } }, token, "worker-a", "worker-secret")).status, 200);
     const releaseStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     releaseStore.enqueueTask({ id: "bridge-release", kind: "research.lane", priority: 3, payload: {} });
     releaseStore.close();
