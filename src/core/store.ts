@@ -1426,7 +1426,7 @@ export class ResearchStore {
       lastError: null,
       runCount: 0,
       triggerEvent: input.triggerEvent ?? null,
-      lastTriggerAt: null,
+      lastTriggerAt: input.triggerEvent ? now : null,
       leaseId: null,
       leaseExpiresAt: null,
       createdAt: now,

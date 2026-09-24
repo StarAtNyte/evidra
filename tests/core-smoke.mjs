@@ -3459,6 +3459,7 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
   const root = mkdtempSync(join(tmpdir(), "evidra-routine-"));
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.appendEvent("research.test", { historical: true });
     assert.throws(() => store.createRoutine({
       id: "invalid", name: "", mode: "research", goal: "goal", budgetMinutes: 1, intervalSeconds: 30,
       stopCondition: "stop", provider: "codex", model: "model", thinking: "medium", autonomy: "safe", limitPolicy: "auto", executor: "local", lanes: 1,
@@ -3470,6 +3471,7 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     });
     assert.equal(routine.status, "active");
     assert.equal(routine.triggerEvent, "research.test");
+    assert.deepEqual(store.triggerRoutines("research.test", "2020-01-01T00:00:00.000Z"), []);
     const triggerAt = new Date(Date.now() + 1_000).toISOString();
     assert.deepEqual(store.triggerRoutines("research.test", triggerAt), [routine.id]);
     assert.deepEqual(store.triggerRoutines("research.test", triggerAt), []);
