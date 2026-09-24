@@ -687,6 +687,10 @@ test("agent organization gives every lane a responsibility and reporting line", 
     assert.equal(store.pendingAgentDirectives("validation scientist", "phase-beta").length, 0);
     assert.equal(store.consumeAgentDirectives("validation scientist", 4, "phase-beta").length, 0);
     assert.equal(store.consumeAgentDirectives("validation scientist", 4, "phase-alpha")[0].message, "only apply to phase alpha");
+    const firstCoaching = store.enqueueAgentDirectiveOnce("validation scientist", "change the route", "phase-beta");
+    const duplicateCoaching = store.enqueueAgentDirectiveOnce("validation scientist", "change the route", "phase-beta");
+    assert.equal(duplicateCoaching.id, firstCoaching.id);
+    assert.equal(store.pendingAgentDirectives("validation scientist", "phase-beta").length, 1);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -91,3 +91,8 @@ export function agentRoleInterventions(reviews: readonly AgentRoleReview[]): Age
       ? { role: review.role, action: "coach", priority: "high", reason: `${review.playbookBlocks} blocked playbook step(s), ${review.processFailures} process failure(s), and score ${(review.score * 100).toFixed(0)}% require a changed route` }
       : { role: review.role, action: "observe", priority: "normal", reason: "not enough durable assignments to change role allocation" });
 }
+
+/** Convert a coaching finding into a bounded, role-scoped instruction. */
+export function agentCoachingDirective(intervention: AgentRoleIntervention): string {
+  return `Coaching intervention: ${intervention.reason}. Change the route, ground material findings in durable observations, and state a falsification test.`;
+}

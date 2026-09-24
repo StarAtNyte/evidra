@@ -1125,6 +1125,15 @@ export class ResearchStore {
     return directive;
   }
 
+  /** Queue a directive only when the same role-scoped handoff is not already pending. */
+  enqueueAgentDirectiveOnce(role: string, message: string, scopeKey: string | null = null): AgentDirective {
+    const normalizedRole = role.trim();
+    const normalizedMessage = message.trim().slice(0, 4_000);
+    const normalizedScope = scopeKey?.trim() || null;
+    const existing = this.pendingAgentDirectives(normalizedRole).find((directive) => directive.scopeKey === normalizedScope && directive.message === normalizedMessage);
+    return existing ?? this.enqueueAgentDirective(normalizedRole, normalizedMessage, normalizedScope);
+  }
+
   consumeAgentDirectives(role: string, limit = 4, scopeKey: string | null = null): AgentDirective[] {
     const now = new Date().toISOString();
     const normalizedScope = scopeKey?.trim() || null;

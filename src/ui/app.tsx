@@ -11,7 +11,7 @@ import { externalEventPayload, parseExternalEventPayload, validateExternalEventT
 import { createPortableBundle, validatePortableBundle } from "../core/portable-bundle.js";
 import { roleBudgetLedger } from "../core/usage.js";
 import { formatGoalAlignment, goalAlignment, pauseForGoalAlignment } from "../core/goal-alignment.js";
-import { agentRoleInterventions, evaluateAgentRoles } from "../core/agent-evals.js";
+import { agentCoachingDirective, agentRoleInterventions, evaluateAgentRoles } from "../core/agent-evals.js";
 import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
@@ -3779,7 +3779,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const reviews = evaluateAgentRoles(store.trajectories(128));
       const interventions = agentRoleInterventions(reviews);
       const applied = request === "/agents evaluate apply"
-        ? interventions.filter((intervention) => intervention.action === "coach").map((intervention) => store.enqueueAgentDirective(intervention.role, `Coaching intervention: ${intervention.reason}. Change the route, ground material findings in durable observations, and state a falsification test.`).id)
+        ? interventions.filter((intervention) => intervention.action === "coach").map((intervention) => store.enqueueAgentDirectiveOnce(intervention.role, agentCoachingDirective(intervention)).id)
         : [];
       store.appendEvent("research.agent.reviewed", { reviews, interventions, source: "operator-tui" });
       if (applied.length) store.appendEvent("research.agent.coaching.applied", { directiveIds: applied, roles: interventions.filter((intervention) => intervention.action === "coach").map((intervention) => intervention.role), source: "operator-tui" });

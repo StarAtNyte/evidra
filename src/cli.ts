@@ -113,7 +113,7 @@ import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.j
 import { approvalInbox } from "./core/approvals.js";
 import { loadProjectGuidance } from "./core/project-guidance.js";
 import { formatGoalAlignment, goalAlignment } from "./core/goal-alignment.js";
-import { agentRoleInterventions, evaluateAgentRoles } from "./core/agent-evals.js";
+import { agentCoachingDirective, agentRoleInterventions, evaluateAgentRoles } from "./core/agent-evals.js";
 import { agentOrganization } from "./core/agent-organization.js";
 import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "./core/external-events.js";
 import { createPortableBundle, validatePortableBundle } from "./core/portable-bundle.js";
@@ -843,7 +843,7 @@ agents.command("evaluate").description("Evaluate specialist roles and persist bo
   const store = new ResearchStore(statePath);
   const reviews = evaluateAgentRoles(store.trajectoryHistory());
   const interventions = agentRoleInterventions(reviews);
-  const applied = options.apply ? interventions.filter((intervention) => intervention.action === "coach").map((intervention) => store.enqueueAgentDirective(intervention.role, `Coaching intervention: ${intervention.reason}. Change the route, ground material findings in durable observations, and state a falsification test.`).id) : [];
+  const applied = options.apply ? interventions.filter((intervention) => intervention.action === "coach").map((intervention) => store.enqueueAgentDirectiveOnce(intervention.role, agentCoachingDirective(intervention)).id) : [];
   store.appendEvent("research.agent.reviewed", { reviews, interventions, source: "operator-cli" });
   if (applied.length) store.appendEvent("research.agent.coaching.applied", { directiveIds: applied, roles: interventions.filter((intervention) => intervention.action === "coach").map((intervention) => intervention.role), source: "operator-cli" });
   store.close();
