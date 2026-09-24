@@ -10,6 +10,7 @@ import Database from "better-sqlite3";
 import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../dist/core/statistics.js";
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
+import { approvalInbox } from "../dist/core/approvals.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaimRecords, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
@@ -549,6 +550,24 @@ test("external action intents prevent restart-time replay and support explicit r
     assert.equal(reopened.beginExternalAction({ id: "submission:one", kind: "competition_submission", fingerprint: "fp-1" }).status, "completed");
     assert.throws(() => reopened.beginExternalAction({ id: "submission:one", kind: "competition_submission", fingerprint: "different" }), /different fingerprint/i);
     reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("approval inbox unifies pending work without mutating any gate", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-approval-inbox-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.saveExperiment({ id: "proposal-1", payload: { status: "proposed", hypothesisId: "hyp-1" } });
+    store.saveSubmission({ id: "bundle-1", experimentId: "exp-1", path: join(root, "bundle"), status: "prepared" });
+    store.beginExternalAction({ id: "submission:bundle-1", kind: "competition_submission", fingerprint: "fp", payload: { bundle: "bundle-1" } });
+    const items = approvalInbox(store);
+    assert.deepEqual(items.map((item) => [item.kind, item.id, item.status]), [
+      ["experiment", "proposal-1", "pending"],
+      ["submission", "bundle-1", "pending"],
+      ["external-action", "submission:bundle-1", "in_flight"],
+    ]);
+    assert.equal(store.externalAction("submission:bundle-1")?.status, "in_flight");
+    store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

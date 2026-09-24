@@ -5,6 +5,7 @@ import MultilineInput from "./multiline-input.js";
 import { dirname, join, relative, resolve } from "node:path";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
+import { approvalInbox } from "../core/approvals.js";
 import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
@@ -3571,19 +3572,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request === "/approvals" || request === "/approvals status") {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      const items: string[] = [];
-      for (const experiment of store.experiments()) {
-        const payload = experiment.payload as { status?: unknown; hypothesisId?: unknown };
-        if (payload.status === "proposed") items.push(`pending experiment ${experiment.id}\n  next: /experiment run ${experiment.id}`);
-      }
-      for (const submission of store.submissions()) {
-        if (submission.status === "prepared") items.push(`pending submission ${submission.id} · experiment ${submission.experimentId}\n  next: /submission approve ${submission.id}`);
-      }
-      for (const intent of store.externalActions()) {
-        if (intent.status === "unknown" || intent.status === "in_flight") items.push(`${intent.status} external action ${intent.id} · ${intent.kind}\n  reconcile before retrying`);
-      }
+      const items = approvalInbox(store);
       store.close();
-      append("assistant", items.length ? `Approval inbox\n${items.map((item) => `• ${item}`).join("\n")}` : "Approval inbox is clear.");
+      append("assistant", items.length ? `Approval inbox\n${items.map((item) => `• ${item.status} ${item.kind} ${item.id} · ${item.detail}\n  next: ${item.next}`).join("\n")}` : "Approval inbox is clear.");
       return;
     }
     if (request === "/submission" || request === "/submission status" || request === "/submission distribution" || request.startsWith("/submission prepare") || request.startsWith("/submission validate") || request.startsWith("/submission approve") || request.startsWith("/submission submit") || request.startsWith("/submission poll") || request.startsWith("/submission record")) {

@@ -108,6 +108,7 @@ import { runSafetyBenchmark } from "./core/safety-bench.js";
 import { runOrchestrationBenchmark } from "./core/orchestration-bench.js";
 import { selectRatchetReference } from "./core/ratchet.js";
 import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.js";
+import { approvalInbox } from "./core/approvals.js";
 
 const PHASE_GATE_EVENT_TYPES = [
   "research.observation", "project.created", "baseline.completed", "data.audit.completed", "data.audit.accepted",
@@ -1943,21 +1944,6 @@ queue.command("recover").action(() => {
 });
 program.addCommand(queue);
 
-type ApprovalInboxItem = { kind: "experiment" | "submission" | "external-action"; id: string; status: string; next: string; detail: string };
-function approvalInbox(store: ResearchStore): ApprovalInboxItem[] {
-  const items: ApprovalInboxItem[] = [];
-  for (const experiment of store.experiments()) {
-    const payload = experiment.payload as { status?: unknown; hypothesisId?: unknown };
-    if (payload.status === "proposed") items.push({ kind: "experiment", id: experiment.id, status: "pending", next: `/experiment run ${experiment.id}`, detail: `proposal${typeof payload.hypothesisId === "string" ? ` · hypothesis ${payload.hypothesisId}` : ""}` });
-  }
-  for (const submission of store.submissions()) {
-    if (submission.status === "prepared") items.push({ kind: "submission", id: submission.id, status: "pending", next: `/submission approve ${submission.id}`, detail: `experiment ${submission.experimentId}` });
-  }
-  for (const intent of store.externalActions()) {
-    if (intent.status === "unknown" || intent.status === "in_flight") items.push({ kind: "external-action", id: intent.id, status: intent.status, next: intent.kind === "competition_submission" ? `/submission reconcile ${String((intent.payload as { bundle?: unknown }).bundle ?? intent.id)} --status submitted|not-submitted` : "reconcile the recorded external action", detail: intent.kind });
-  }
-  return items;
-}
 const approvals = new Command("approvals").description("Show the auditable operator approval inbox");
 const showApprovals = (options: { json?: boolean }): void => {
   const store = new ResearchStore(statePath);
