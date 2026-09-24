@@ -804,7 +804,7 @@ program.command("dashboard")
         let store: ResearchStore | undefined;
         try {
           store = new ResearchStore(statePath);
-          const snapshot = dashboardSnapshot(store);
+          const snapshot = dashboardSnapshot(store, root);
           response.writeHead(200, jsonHeaders);
           response.end(JSON.stringify(snapshot));
         } catch (error) {

@@ -7369,6 +7369,9 @@ test("doctor exposes a bounded machine-readable diagnostics contract", () => {
 test("dashboard read model is bounded and secret-redacted", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-dashboard-"));
   try {
+    mkdirSync(join(root, ".evidra"), { recursive: true });
+    writeFileSync(join(root, ".evidra", "tools.json"), JSON.stringify({ tools: [{ name: "external.dashboard_probe", description: "Dashboard adapter", command: [process.execPath, "probe.mjs"], readOnly: true }] }));
+    setExternalToolStatus(root, "external.dashboard_probe", "disabled", "maintenance");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.appendEvent("test.dashboard", { token: "sk-test-dashboard-secret-value", command: ["tool", "--token", "secret-value"] });
     store.appendEvent("research.agent.reviewed", { objective: "dashboard review objective", source: "test", reviews: [], interventions: [{ role: "model researcher", action: "coach", priority: "high", reason: "blocked playbook step" }] });
@@ -7376,7 +7379,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     store.saveAgentSession({ role: "model researcher", scopeKey: "goal-dashboard", provider: "codex", model: "gpt", threadId: "thread-dashboard", taskId: "dashboard-task" });
     store.enqueueTask({ id: "dashboard-parent", kind: "research.cycle", priority: 10, payload: {} });
     store.enqueueTask({ id: "dashboard-child", kind: "research.review", priority: 8, payload: {}, parentTaskId: "dashboard-parent", dependsOn: ["dashboard-parent"] });
-    const snapshot = dashboardSnapshot(store);
+    const snapshot = dashboardSnapshot(store, root);
     store.close();
     assert.equal(snapshot.counts.events, undefined);
     const serialized = JSON.stringify(snapshot);
@@ -7391,6 +7394,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.ok(snapshot.organization.some((entry) => entry.role === "research director"));
     assert.deepEqual(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.dependsOn, ["dashboard-parent"]);
     assert.equal(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.parentTaskId, "dashboard-parent");
+    assert.equal(snapshot.tools[0].status, "disabled");
     assert.match(dashboardHtml(), /EVIDRA<\/span> \/ DASHBOARD/);
     assert.match(dashboardHtml(), /\/api\/status/);
     assert.match(dashboardHtml(), /id="stages"/);
