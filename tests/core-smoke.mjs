@@ -3567,6 +3567,7 @@ test("queue priority aging prevents long-waiting work from starving", () => {
     store.enqueueTask({ id: "fresh-priority", kind: "research.lane", priority: 2, payload: {} });
     store.enqueueTask({ id: "waiting-background", kind: "research.lane", priority: 1, payload: {}, availableAt: twoHoursAgo });
     assert.equal(queueEffectivePriority({ priority: 1, availableAt: twoHoursAgo }, Date.parse(twoHoursAgo) + 2 * 60 * 60 * 1000), 3);
+    assert.equal(store.queueTasks("queued")[0]?.id, "waiting-background");
     assert.equal(store.claimNextTask(["research.lane"])?.id, "waiting-background");
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
