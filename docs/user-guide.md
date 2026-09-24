@@ -513,6 +513,16 @@ role playbook steps. These are self-reported process telemetry: they feed role
 reviews and coaching, but never count as scientific evidence without an
 independent durable observation.
 
+Approved custom contracts can also become autonomous research lanes. Define a
+role with `evidra agents contract`, approve it with `evidra agents approve`, and
+the next non-safe research allocation discovers it automatically. The role is
+still bounded by the campaign's team size, concurrency, token budget, lease,
+heartbeat, cancellation, and evidence gates. A custom role with
+`authority: investigate` receives observation tools only; `execute` and
+`repair` authority is required before the corresponding execution tools become
+available. Imported contracts always return to review, so portability cannot
+silently grant a new worker execution authority.
+
 Role memory is recency-aware: the next lane prompt receives the newest bounded
 historical observations first, while still labeling them as context rather
 than evidence. This prevents obsolete failures or methods from dominating a

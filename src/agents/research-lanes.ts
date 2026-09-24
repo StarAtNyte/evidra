@@ -10,7 +10,7 @@ import type { AutonomyLevel } from "../core/permissions.js";
 import { availableResearchTools, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
 import { boundResearchContext } from "../core/context-budget.js";
 import type { LaneFinding } from "../core/cross-pollination.js";
-import { agentRoleContract, type AgentRoleContract } from "../core/agent-organization.js";
+import { agentRoleContract, isBuiltInAgentRole, type AgentRoleContract } from "../core/agent-organization.js";
 import type { AgentRoleReview } from "../core/agent-evals.js";
 import { campaignRoleAgentTokens, roleBudgetLedger, type AgentUsageAttribution } from "../core/usage.js";
 import { loadProjectGuidance, type ProjectGuidance } from "../core/project-guidance.js";
@@ -31,7 +31,8 @@ export const GENERAL_RESEARCH_LANE_ROLES = [
   "reproducibility engineer",
 ] as const;
 
-export type ResearchLaneRole = typeof RESEARCH_LANE_ROLES[number] | typeof GENERAL_RESEARCH_LANE_ROLES[number];
+/** Built-ins plus explicitly admitted, durable custom organization roles. */
+export type ResearchLaneRole = typeof RESEARCH_LANE_ROLES[number] | typeof GENERAL_RESEARCH_LANE_ROLES[number] | (string & {});
 
 export const ResearchLaneReportSchema = z.object({
   role: z.string().min(1),
@@ -202,6 +203,8 @@ export interface ResearchLanesOptions {
   maxParallel?: number;
   /** Total specialists in the wave-based team; defaults to the available role pool outside safe mode. */
   laneTeamSize?: number;
+  /** Optional custom roles to add to the built-in portfolio. When omitted, approved durable contracts are discovered automatically. */
+  customRoles?: string[];
   /** Optional hard wall-clock budget for one specialist lease. */
   laneBudgetMs?: number;
   /** Durable phase goal carried by the specialist ticket. */
@@ -330,11 +333,16 @@ export interface ResearchLaneSelectionOptions {
   rotation?: number;
   /** Prior durable reviews can schedule a bounded coaching attempt. */
   roleReviews?: ReadonlyArray<Pick<AgentRoleReview, "role" | "recommendation" | "assignments" | "score" | "processFailures" | "evidenceAnchors" | "playbookBlocks">>;
+  /** Approved custom roles explicitly admitted into this lane portfolio. */
+  customRoles?: readonly string[];
 }
 
 export function selectResearchLaneRoles(objective: string, requested: number, options: ResearchLaneSelectionOptions = {}): ResearchLaneRole[] {
   const mlOrCompetition = /\b(dataset|training|train|model|estimator|competition|leaderboard|metric|fold|gpu|prediction|baseline)\b/i.test(objective);
-  const pool = mlOrCompetition ? RESEARCH_LANE_ROLES : GENERAL_RESEARCH_LANE_ROLES;
+  const builtInPool = mlOrCompetition ? RESEARCH_LANE_ROLES : GENERAL_RESEARCH_LANE_ROLES;
+  const customRoles = [...new Set((options.customRoles ?? []).map((role) => role.trim()).filter(Boolean))]
+    .filter((role) => !builtInPool.includes(role as never));
+  const pool: ResearchLaneRole[] = [...builtInPool, ...customRoles];
   const count = Math.max(1, Math.min(requested, pool.length));
   const focus = options.focus?.toLowerCase() ?? "";
   const focusRole = focus.includes("data")
@@ -409,10 +417,12 @@ export function researchLaneSessionScope(goalId?: string | null, parentTaskId?: 
 export function researchLaneTeamSize(
   objective: string,
   concurrency: number,
-  options: Pick<ResearchLanesOptions, "autonomy" | "laneTeamSize"> = {},
+  options: Pick<ResearchLanesOptions, "autonomy" | "laneTeamSize" | "customRoles"> = {},
 ): number {
   const mlOrCompetition = /\b(dataset|training|train|model|estimator|competition|leaderboard|metric|fold|gpu|prediction|baseline)\b/i.test(objective);
-  const availableRoles = mlOrCompetition ? RESEARCH_LANE_ROLES.length : GENERAL_RESEARCH_LANE_ROLES.length;
+  const builtInRoles = mlOrCompetition ? RESEARCH_LANE_ROLES.length : GENERAL_RESEARCH_LANE_ROLES.length;
+  const customRoleCount = new Set((options.customRoles ?? []).map((role) => role.trim()).filter(Boolean)).size;
+  const availableRoles = builtInRoles + customRoleCount;
   const defaultTeamSize = (options.autonomy ?? "safe") === "safe" ? concurrency : availableRoles;
   const requestedTeamSize = typeof options.laneTeamSize === "number" && Number.isFinite(options.laneTeamSize)
     ? Math.floor(options.laneTeamSize)
@@ -1127,10 +1137,18 @@ export async function runResearchLanes(objective: string, context: Record<string
   // otherwise several lanes can switch to one Ollama process at once.
   const mayUseLocalFallback = options.provider === "local"
     || Boolean(options.fallbackLocalModel && (options.limitPolicy === "auto" || options.limitPolicy === "fallback"));
-  const concurrency = researchLaneConcurrency({ autonomy: options.autonomy, provider: mayUseLocalFallback ? "local" : options.provider, requested: options.maxParallel });
-  const teamSize = researchLaneTeamSize(objective, concurrency, options);
-  const candidateRoles = selectResearchLaneRoles(objective, teamSize, { focus: options.laneFocus, rotation: options.laneRotation, roleReviews: options.roleReviews });
   const memoryStore = new ResearchStore(options.storePath);
+  const persistedCustomRoles = memoryStore.agentRoleContracts()
+    .filter((contract) => !isBuiltInAgentRole(contract.role) && memoryStore.agentRoleAdmitted(contract.role))
+    .map((contract) => contract.role);
+  const requestedCustomRoles = options.customRoles ?? persistedCustomRoles;
+  const rejectedCustomRoles = [...new Set((options.customRoles ?? []).map((role) => role.trim()).filter(Boolean))]
+    .filter((role) => !isBuiltInAgentRole(role) && !memoryStore.agentRoleAdmitted(role));
+  const customRoles = [...new Set(requestedCustomRoles.map((role) => role.trim()).filter(Boolean))]
+    .filter((role) => !isBuiltInAgentRole(role) && memoryStore.agentRoleAdmitted(role));
+  const concurrency = researchLaneConcurrency({ autonomy: options.autonomy, provider: mayUseLocalFallback ? "local" : options.provider, requested: options.maxParallel });
+  const teamSize = researchLaneTeamSize(objective, concurrency, { ...options, customRoles });
+  const candidateRoles = selectResearchLaneRoles(objective, teamSize, { focus: options.laneFocus, rotation: options.laneRotation, roleReviews: options.roleReviews, customRoles });
   const controls = memoryStore.agentPauses();
   const pausedRoles = new Set(controls.filter((control) => control.paused).map((control) => control.role));
   const terminatedRoles = new Set(controls.filter((control) => control.terminated).map((control) => control.role));
@@ -1142,9 +1160,9 @@ export async function runResearchLanes(objective: string, context: Record<string
       : false;
   }));
   const roles = candidateRoles.filter((role) => !pausedRoles.has(role) && !terminatedRoles.has(role) && !exhaustedRoles.has(role));
-  if (pausedRoles.size) options.onProgress?.(`Research lanes · skipped operator-paused roles: ${[...pausedRoles].join(", ")}`);
   if (terminatedRoles.size) options.onProgress?.(`Research lanes · skipped terminated roles: ${[...terminatedRoles].join(", ")}`);
   if (exhaustedRoles.size) options.onProgress?.(`Research lanes · skipped role-token-budget roles: ${[...exhaustedRoles].join(", ")}`);
+  if (rejectedCustomRoles.length) options.onProgress?.(`Research lanes · skipped unadmitted custom roles: ${rejectedCustomRoles.join(", ")}`);
   const dispatchStore = new ResearchStore(options.storePath);
   const roleBudgets = options.campaignStartedAt
     ? roleBudgetLedger(roleUsageEvents, options.campaignStartedAt, options.roleTokenBudgets)
@@ -1153,6 +1171,8 @@ export async function runResearchLanes(objective: string, context: Record<string
     objective: objective.slice(0, 1_000),
     candidates: candidateRoles,
     dispatched: roles,
+    customRoles,
+    skippedCustomRoles: rejectedCustomRoles,
     paused: [...pausedRoles],
     terminated: [...terminatedRoles],
     roleTokenBudgetExhausted: [...exhaustedRoles],

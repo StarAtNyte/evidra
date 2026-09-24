@@ -2682,6 +2682,14 @@ test("research lane pools expose ensemble and reproducibility specialties when c
     "reproducibility engineer",
     "validation scientist",
   ]);
+  assert.deepEqual(selectResearchLaneRoles("prove a new theorem", 5, { customRoles: ["formal methods specialist"] }), [
+    "domain researcher",
+    "validation scientist",
+    "method researcher",
+    "reproducibility engineer",
+    "formal methods specialist",
+  ]);
+  assert.equal(researchLaneTeamSize("prove a new theorem", 2, { autonomy: "fast", customRoles: ["formal methods specialist"] }), 5);
 });
 
 test("peer research board is bounded and keeps provenance-shaped evidence", () => {
