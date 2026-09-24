@@ -131,6 +131,15 @@ export interface AgentActivity {
   metadata: unknown;
   createdAt: string;
 }
+export interface AgentSession {
+  role: string;
+  scopeKey: string;
+  provider: string;
+  model: string;
+  threadId: string;
+  taskId: string | null;
+  updatedAt: string;
+}
 export interface ControllerLease {
   controllerId: string;
   pid: number;
@@ -381,6 +390,16 @@ export class ResearchStore {
         reason TEXT,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS agent_sessions (
+        role TEXT NOT NULL,
+        scope_key TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        task_id TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (role, scope_key)
+      );
       CREATE TABLE IF NOT EXISTS submissions (
         id TEXT PRIMARY KEY,
         experiment_id TEXT NOT NULL,
@@ -630,6 +649,37 @@ export class ResearchStore {
       if (options.taskId && taskId !== options.taskId) return [];
       return [{ role, taskId, kind: kind as AgentActivityKind, message, metadata: payload.metadata ?? null, createdAt: event.createdAt }];
     });
+  }
+
+  /** Return a provider thread only when it belongs to the exact role/scope/route. */
+  agentSession(role: string, scopeKey: string, provider: string, model: string): AgentSession | undefined {
+    const row = this.db.prepare("SELECT role, scope_key, provider, model, thread_id, task_id, updated_at FROM agent_sessions WHERE role = ? AND scope_key = ? AND provider = ? AND model = ?").get(role, scopeKey, provider, model) as { role: string; scope_key: string; provider: string; model: string; thread_id: string; task_id: string | null; updated_at: string } | undefined;
+    return row ? { role: row.role, scopeKey: row.scope_key, provider: row.provider, model: row.model, threadId: row.thread_id, taskId: row.task_id, updatedAt: row.updated_at } : undefined;
+  }
+
+  /** Persist a resumable provider thread without allowing it to cross campaign scopes. */
+  saveAgentSession(input: { role: string; scopeKey: string; provider: string; model: string; threadId: string; taskId?: string | null }): void {
+    const role = input.role.trim().slice(0, 160);
+    const scopeKey = input.scopeKey.trim().slice(0, 240);
+    const provider = input.provider.trim().slice(0, 80);
+    const model = input.model.trim().slice(0, 160);
+    const threadId = input.threadId.trim().slice(0, 240);
+    if (!role || !scopeKey || !provider || !model || !threadId) return;
+    const now = new Date().toISOString();
+    this.db.prepare("INSERT INTO agent_sessions (role, scope_key, provider, model, thread_id, task_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(role, scope_key) DO UPDATE SET provider = excluded.provider, model = excluded.model, thread_id = excluded.thread_id, task_id = excluded.task_id, updated_at = excluded.updated_at").run(role, scopeKey, provider, model, threadId, input.taskId?.trim().slice(0, 200) || null, now);
+    this.appendEvent("agent.session.saved", { role, scopeKey, provider, model, taskId: input.taskId ?? null });
+  }
+
+  /** Invalidate a provider thread after an explicit route/session failure. */
+  clearAgentSession(role: string, scopeKey: string, reason = "session invalidated"): boolean {
+    const result = this.db.prepare("DELETE FROM agent_sessions WHERE role = ? AND scope_key = ?").run(role, scopeKey);
+    if (result.changes) this.appendEvent("agent.session.cleared", { role, scopeKey, reason });
+    return result.changes === 1;
+  }
+
+  agentSessions(limit = 32): AgentSession[] {
+    const rows = this.db.prepare("SELECT role, scope_key, provider, model, thread_id, task_id, updated_at FROM agent_sessions ORDER BY updated_at DESC LIMIT ?").all(Math.max(1, Math.min(128, Math.floor(limit)))) as Array<{ role: string; scope_key: string; provider: string; model: string; thread_id: string; task_id: string | null; updated_at: string }>;
+    return rows.map((row) => ({ role: row.role, scopeKey: row.scope_key, provider: row.provider, model: row.model, threadId: row.thread_id, taskId: row.task_id, updatedAt: row.updated_at }));
   }
 
   /** Read structured subtask audits from the complete event history. */

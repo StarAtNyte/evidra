@@ -740,10 +740,12 @@ const agents = program.command("agents")
       control: pauseByRole.get(agent.role) ?? null,
       pendingDirectives: store.pendingAgentDirectives(agent.role).length,
     }));
+    const sessions = store.agentSessions();
     const output = {
       campaign: campaign ?? null,
       organization,
       routes: summarizeAgentUsageBy(store.eventsByType("research.agent.usage")),
+      sessions,
       budget: campaign?.startedAt && typeof campaign.runtime?.agentTokenBudget === "number"
         ? agentBudgetLedger(store.eventsByType("research.agent.usage"), String(campaign.startedAt), campaign.runtime.agentTokenBudget)
         : agentBudgetLedger([], "", null),
@@ -752,6 +754,7 @@ const agents = program.command("agents")
       console.log(JSON.stringify(output, null, 2));
     } else {
       console.log(organization.map((agent) => `${agent.control?.paused ? "paused" : agent.status.padEnd(8)} ${agent.role} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.pendingDirectives ? ` · ${agent.pendingDirectives} directive(s)` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`).join("\n") || "No agent roles recorded.");
+      console.log(`\nResumable sessions  ${sessions.length}`);
       if (output.routes.length) console.log(`\nRoutes\n${output.routes.map((route) => `  ${route.role} · ${route.provider}/${route.model} · ${route.calls} calls · ${route.inputTokens + route.outputTokens} tokens`).join("\n")}`);
     }
     store.close();
@@ -800,6 +803,13 @@ agents.command("activity [role]").description("Show recent durable specialist wo
   const activity = store.agentActivities({ role: role?.trim() || undefined, limit: 32 }).slice().reverse();
   if (!activity.length) console.log(role ? `No activity recorded for ${role}.` : "No specialist activity recorded.");
   else console.log(activity.map((entry) => `${entry.createdAt}  ${entry.kind.padEnd(9)} ${entry.role}${entry.taskId ? `  ${entry.taskId}` : ""}\n  ${entry.message}`).join("\n"));
+  store.close();
+});
+agents.command("sessions").description("Show resumable provider sessions by role and campaign scope").action(() => {
+  const store = new ResearchStore(statePath);
+  const sessions = store.agentSessions();
+  if (!sessions.length) console.log("No resumable agent sessions recorded.");
+  else console.log(sessions.map((session) => `${session.updatedAt}  ${session.role} · ${session.provider}/${session.model} · scope ${session.scopeKey} · thread ${session.threadId.slice(0, 12)}…${session.taskId ? ` · task ${session.taskId}` : ""}`).join("\n"));
   store.close();
 });
 

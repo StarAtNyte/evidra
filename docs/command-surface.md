@@ -232,6 +232,7 @@ Source retrieval records URL, retrieval time, content hash, license, claims, and
 /agents directives [role]     Inspect specialist handoffs and whether they were applied
 /agents reviews              Show durable role review and intervention history
 /agents activity [role]      Show recent durable specialist work activity
+/agents sessions             Show resumable provider sessions by role and scope
 /agents cancel <run>         Cancel a running agent task
 ```
 

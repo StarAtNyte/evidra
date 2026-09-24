@@ -850,6 +850,14 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
       store.close();
     } catch { /* activity telemetry must not invalidate the lane */ }
   };
+  const sessionScope = options.goalId ?? "global";
+  let resumableThreadId: string | undefined;
+  if (laneRoute.provider === "codex") {
+    const sessionStore = new ResearchStore(options.storePath);
+    resumableThreadId = sessionStore.agentSession(role, sessionScope, laneRoute.provider, laneRoute.model)?.threadId;
+    sessionStore.close();
+    if (resumableThreadId) recordActivity("progress", "Resuming the durable provider session", { sessionScope });
+  }
   recordActivity("started", `Started research lane for ${objective.slice(0, 240)}`, { provider: laneRoute.provider, model: laneRoute.model, goalId: options.goalId ?? null });
   const heartbeat = setInterval(() => {
     try {
@@ -961,6 +969,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective, review, directives.slice(-4)), context: { ...bounded.context, ...(directives.length ? { agentDirectives: directives.slice(-4) } : {}) }, outputSchema: RESEARCH_LANE_OUTPUT_SCHEMA }, {
           provider,
           model,
+          ...(provider === "codex" && model === laneRoute.model && resumableThreadId ? { threadId: resumableThreadId } : {}),
           limitPolicy: options.limitPolicy,
           reasoningEffort: options.reasoningEffort,
           networkAccessEnabled: options.networkAccessEnabled ?? true,
@@ -972,6 +981,12 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
           onAssistant: options.onAssistant,
         }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
         options.onUsage?.(result.usage, result.provider, result.model ?? model, role);
+        if (result.provider === "codex" && result.threadId) {
+          const sessionStore = new ResearchStore(options.storePath);
+          sessionStore.saveAgentSession({ role, scopeKey: sessionScope, provider: result.provider, model: result.model ?? model, threadId: result.threadId, taskId: laneTaskId });
+          sessionStore.close();
+          resumableThreadId = result.threadId;
+        }
         parsed = { ...ResearchLaneReportSchema.parse(parseJson(result.output)), provider: result.provider, model: result.model ?? model };
       } catch (error) {
         lastError = error;
@@ -980,12 +995,14 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         if (attempt === 1 && provider === "codex" && options.fallbackLocalModel && (options.limitPolicy === "fallback" || options.limitPolicy === "auto") && isProviderUsageLimit(error)) {
           model = await resolveLocalFallbackModel(options.fallbackLocalModel);
           provider = "local";
+          resumableThreadId = undefined;
           options.onProgress?.(`Research lane · ${role} · changing route to local/${model}...`);
         } else {
           const alternate = alternateResearchLaneRoute({ provider, model }, options.modelPool, attemptedRoutes);
           if (alternate) {
             provider = alternate.provider;
             model = alternate.model;
+            resumableThreadId = undefined;
             options.onProgress?.(`Research lane · ${role} · changing route to ${provider}/${model}...`);
             continue;
           }

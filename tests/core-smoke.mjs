@@ -689,6 +689,24 @@ test("agent activity journal survives reopen and filters by specialist task", ()
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("agent provider sessions are durable and isolated by role, scope, and route", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-agent-sessions-"));
+  const path = join(root, "state.sqlite");
+  try {
+    const first = new ResearchStore(path);
+    first.saveAgentSession({ role: "model researcher", scopeKey: "goal-a", provider: "codex", model: "gpt", threadId: "thread-a", taskId: "task-a" });
+    first.close();
+    const reopened = new ResearchStore(path);
+    assert.equal(reopened.agentSession("model researcher", "goal-a", "codex", "gpt")?.threadId, "thread-a");
+    assert.equal(reopened.agentSession("model researcher", "goal-b", "codex", "gpt"), undefined);
+    assert.equal(reopened.agentSession("model researcher", "goal-a", "local", "gpt"), undefined);
+    assert.equal(reopened.agentSessions()[0].scopeKey, "goal-a");
+    assert.equal(reopened.clearAgentSession("model researcher", "goal-a"), true);
+    assert.equal(reopened.agentSessions().length, 0);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("Codex sandbox preserves read-only role boundaries", () => {
   const previous = process.env.EVIDRA_CODEX_SANDBOX;
   delete process.env.EVIDRA_CODEX_SANDBOX;
@@ -6953,6 +6971,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     store.appendEvent("test.dashboard", { token: "sk-test-dashboard-secret-value", command: ["tool", "--token", "secret-value"] });
     store.appendEvent("research.agent.reviewed", { objective: "dashboard review objective", source: "test", reviews: [], interventions: [{ role: "model researcher", action: "coach", priority: "high", reason: "blocked playbook step" }] });
     store.recordAgentActivity({ role: "model researcher", taskId: "dashboard-task", kind: "progress", message: "inspecting evidence" });
+    store.saveAgentSession({ role: "model researcher", scopeKey: "goal-dashboard", provider: "codex", model: "gpt", threadId: "thread-dashboard", taskId: "dashboard-task" });
     store.enqueueTask({ id: "dashboard-parent", kind: "research.cycle", priority: 10, payload: {} });
     store.enqueueTask({ id: "dashboard-child", kind: "research.review", priority: 8, payload: {}, parentTaskId: "dashboard-parent", dependsOn: ["dashboard-parent"] });
     const snapshot = dashboardSnapshot(store);
@@ -6966,6 +6985,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.equal(snapshot.agentReviewHistory.length, 1);
     assert.equal(snapshot.agentReviewHistory[0].interventions[0].action, "coach");
     assert.equal(snapshot.agentActivity[0].message, "inspecting evidence");
+    assert.equal(snapshot.agentSessions[0].threadId, "thread-dashb…");
     assert.ok(snapshot.organization.some((entry) => entry.role === "research director"));
     assert.deepEqual(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.dependsOn, ["dashboard-parent"]);
     assert.equal(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.parentTaskId, "dashboard-parent");
