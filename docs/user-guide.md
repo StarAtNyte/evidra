@@ -101,6 +101,11 @@ copy adapter source code, datasets, credentials, or worker output. A receiving
 workspace must validate the bundle and deliberately re-enable quarantined
 adapters before they can be selected.
 
+If an adapter emits a bounded instruction-injection or credential-exfiltration
+signal, Evidra automatically quarantines it, records the warning and lifecycle
+event, and returns a failed observation so the agent must choose another route.
+Re-enable it only after inspecting the adapter and its output.
+
 ## 2. The Codex-first TUI
 
 The full-screen interface uses a compact Codex-style transcript:

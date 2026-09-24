@@ -18,7 +18,7 @@ import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } fro
 import { diversityReport, loadPredictionVector, safePredictionPath } from "./ensemble.js";
 import { extractCompetitionInsights } from "./competition-insights.js";
 import { agentToolPermission } from "./agent-organization.js";
-import { activeExternalResearchTools, externalToolStatus, loadExternalResearchTools, type ExternalResearchTool } from "./external-tools.js";
+import { activeExternalResearchTools, externalToolStatus, loadExternalResearchTools, setExternalToolStatus, type ExternalResearchTool } from "./external-tools.js";
 
 const SOURCE_FRONTIER_EVENT_TYPES = [
   "research.source.search.completed",
@@ -602,6 +602,12 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
     }
     const trust = toolTrust(call.name);
     const securityWarnings = trust === "untrusted_content" ? untrustedContentWarnings(output) : [];
+    if (external && securityWarnings.length) {
+      const quarantineReason = `automatic quarantine after untrusted adapter output: ${securityWarnings.join(", ")}`;
+      try { setExternalToolStatus(context.root, external.name, "quarantined", quarantineReason); } catch { /* preserve the detected warning even if state persistence is unavailable */ }
+      toolOk = false;
+      toolError = quarantineReason;
+    }
     const result = { name: call.name, ok: toolOk, output, trust, ...(toolError ? { error: toolError } : {}), ...(securityWarnings.length ? { securityWarnings } : {}) };
     recordToolEvent(context, result);
     return result;
