@@ -3911,6 +3911,14 @@ test("queue checkpoints persist resumable state and fence stale workers", () => 
     assert.equal(store.checkpointClaimedTask("checkpointed", "worker-b", { stage: "spoofed" }, claimed.claimToken), false);
     assert.equal(store.checkpointClaimedTask("checkpointed", "worker-a", { stage: "retrieval", artifact: "partial.json" }, claimed.claimToken), true);
     assert.deepEqual(store.queueTasks().find((task) => task.id === "checkpointed")?.payload?.checkpoint, { stage: "retrieval", artifact: "partial.json" });
+    assert.deepEqual(store.queueCheckpoint("checkpointed"), {
+      present: true,
+      bytes: JSON.stringify({ stage: "retrieval", artifact: "partial.json" }).length,
+      hash: store.queueHistory("checkpointed").findLast((entry) => entry.type === "queue.checkpoint")?.payload?.checkpointHash,
+      updatedAt: store.queueHistory("checkpointed").findLast((entry) => entry.type === "queue.checkpoint")?.createdAt,
+      keys: ["stage", "artifact"],
+      stage: "retrieval",
+    });
     assert.equal(store.eventsByType("queue.checkpoint").length, 1);
     store.close();
     const reopened = new ResearchStore(path);

@@ -2376,6 +2376,14 @@ queue.command("history <id>").option("--limit <count>", "number of lifecycle eve
   if (options.json) console.log(JSON.stringify(history, null, 2));
   else console.log(history.length ? history.map((entry) => `${entry.createdAt}  ${entry.type}`).join("\n") : `No lifecycle history recorded for ${id}.`);
 });
+queue.command("checkpoint <id>").option("--json", "emit machine-readable checkpoint metadata").description("Inspect redacted resumable state for one queue task").action((id: string, options: { json?: boolean }) => {
+  const store = new ResearchStore(statePath);
+  const checkpoint = store.queueCheckpoint(id);
+  store.close();
+  if (!checkpoint) throw new Error(`Task '${id}' was not found.`);
+  if (options.json) { console.log(JSON.stringify({ taskId: id, ...checkpoint }, null, 2)); return; }
+  console.log(`Task ${id}\nCheckpoint ${checkpoint.present ? "available" : "none"}${checkpoint.present ? `\nStage      ${checkpoint.stage ?? "unknown"}\nBytes      ${checkpoint.bytes}\nHash       ${checkpoint.hash}\nKeys       ${checkpoint.keys.join(", ") || "none"}\nUpdated    ${checkpoint.updatedAt}` : ""}`);
+});
 queue.command("activity <id>").option("--limit <count>", "number of task updates", "32").action((id: string, options: { limit: string }) => {
   const store = new ResearchStore(statePath);
   const limit = Math.max(1, Math.min(128, Number.parseInt(options.limit, 10) || 32));

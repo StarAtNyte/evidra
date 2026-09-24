@@ -179,6 +179,14 @@ export interface QueueHistoryEntry {
   payload: unknown;
   createdAt: string;
 }
+export interface QueueCheckpointSummary {
+  present: boolean;
+  bytes: number;
+  hash: string | null;
+  updatedAt: string | null;
+  keys: string[];
+  stage: string | null;
+}
 export interface QueueUsage {
   taskId: string;
   actorId: string;
@@ -2150,6 +2158,34 @@ export class ResearchStore {
       if (matching.length >= boundedLimit) break;
     }
     return matching.reverse();
+  }
+
+  /** Return redacted checkpoint metadata without exposing resumable contents. */
+  queueCheckpoint(id: string): QueueCheckpointSummary | undefined {
+    const task = this.queueTasks().find((entry) => entry.id === id);
+    if (!task) return undefined;
+    const payload = task.payload && typeof task.payload === "object" && !Array.isArray(task.payload)
+      ? task.payload as Record<string, unknown>
+      : {};
+    const checkpoint = payload.checkpoint;
+    if (checkpoint === undefined) return { present: false, bytes: 0, hash: null, updatedAt: null, keys: [], stage: null };
+    const encoded = JSON.stringify(checkpoint) ?? "";
+    const checkpointEvent = this.queueHistory(id, 128).filter((entry) => entry.type === "queue.checkpoint").at(-1);
+    const eventPayload = checkpointEvent?.payload && typeof checkpointEvent.payload === "object" ? checkpointEvent.payload as Record<string, unknown> : {};
+    const keys = checkpoint && typeof checkpoint === "object" && !Array.isArray(checkpoint)
+      ? Object.keys(checkpoint as Record<string, unknown>).slice(0, 32)
+      : [];
+    const stage = checkpoint && typeof checkpoint === "object" && !Array.isArray(checkpoint) && typeof (checkpoint as Record<string, unknown>).stage === "string"
+      ? String((checkpoint as Record<string, unknown>).stage).slice(0, 160)
+      : null;
+    return {
+      present: true,
+      bytes: typeof eventPayload.bytes === "number" ? eventPayload.bytes : Buffer.byteLength(encoded, "utf8"),
+      hash: typeof eventPayload.checkpointHash === "string" ? eventPayload.checkpointHash : createHash("sha256").update(encoded).digest("hex").slice(0, 20),
+      updatedAt: checkpointEvent?.createdAt ?? task.updatedAt,
+      keys,
+      stage,
+    };
   }
 
   /**
