@@ -4136,7 +4136,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const readiness = store.taskReadiness(task.id);
           const blocked = readiness && !readiness.ready ? ` · blocked ${[...readiness.missing.map((id) => `missing:${id}`), ...readiness.pending.map((id) => `waiting:${id}`), ...readiness.failed.map((id) => `failed:${id}`)].join(",")}` : "";
           const taskRole = task.payload && typeof task.payload === "object" && !Array.isArray(task.payload) && typeof (task.payload as { role?: unknown }).role === "string" ? (task.payload as { role: string }).role : "";
-          const lineage = [taskRole ? `role ${taskRole}` : "", task.parentTaskId ? `parent ${task.parentTaskId}` : "", task.goalId ? `goal ${task.goalId}` : "", task.dependsOn.length ? `depends ${task.dependsOn.join(",")}` : "", task.ownerId ? `owner ${task.ownerId}` : ""].filter(Boolean).join(" · ");
+          const latestActivity = store.queueActivities(task.id, 1).at(-1);
+          const lineage = [taskRole ? `role ${taskRole}` : "", task.parentTaskId ? `parent ${task.parentTaskId}` : "", task.goalId ? `goal ${task.goalId}` : "", task.dependsOn.length ? `depends ${task.dependsOn.join(",")}` : "", task.assigneeId ? `assigned ${task.assigneeId}` : "", task.ownerId ? `owner ${task.ownerId}` : "", latestActivity ? `last ${latestActivity.kind}: ${latestActivity.message.slice(0, 120)}` : ""].filter(Boolean).join(" · ");
           const aging = queueEffectivePriority(task) > task.priority ? ` (aged ${queueEffectivePriority(task)})` : "";
           return `${task.status === "running" ? "●" : task.status === "queued" ? "○" : task.status === "completed" ? "✓" : "✗"} ${task.id} · ${task.kind} · priority ${task.priority}${aging} · attempts ${task.attempts}${lineage ? `\n  ${lineage}` : ""}${blocked}`;
         }).join("\n")}` : "Research queue is empty.";
