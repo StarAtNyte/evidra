@@ -2658,6 +2658,33 @@ event.command("serve")
               const labels = child.labels === undefined ? [] : child.labels;
               if (!Array.isArray(labels) || labels.length > 24 || labels.some((entry) => typeof entry !== "string" || !/^[a-zA-Z0-9_.:-]{1,64}$/.test(entry.trim()))) throw new Error("Delegated task labels must contain at most 24 simple names.");
               const payload = child.payload === undefined ? {} : parseExternalEventPayload(JSON.stringify(child.payload));
+              const normalizedCapabilities = [...new Set((capabilities as string[]).map((entry) => entry.trim().toLowerCase()))].sort();
+              const normalizedLabels = [...new Set((labels as string[]).map((entry) => entry.trim().toLowerCase()))].sort();
+              const childTokenBudget = typeof child.tokenBudget === "number" ? child.tokenBudget : null;
+              const childCostBudget = typeof child.costBudgetUsd === "number" ? child.costBudgetUsd : null;
+              const childRequiresApproval = child.requiresApproval === true;
+              const childApprovalReason = childRequiresApproval && typeof child.approvalReason === "string" ? child.approvalReason.trim().slice(0, 500) || "operator approval required" : null;
+              const childDeadline = typeof child.deadlineAt === "string" ? child.deadlineAt : null;
+              const existing = store.queueTasks().find((task) => task.id === childId);
+              if (existing) {
+                const sameDelegation = existing.parentTaskId === parent.id
+                  && existing.kind === childKind
+                  && existing.priority === priority
+                  && JSON.stringify(existing.payload) === JSON.stringify(payload)
+                  && JSON.stringify(existing.requiredCapabilities) === JSON.stringify(normalizedCapabilities)
+                  && JSON.stringify(existing.labels) === JSON.stringify(normalizedLabels)
+                  && existing.tokenBudget === childTokenBudget
+                  && existing.costBudgetUsd === childCostBudget
+                  && existing.approvalStatus === (childRequiresApproval ? "pending" : "none")
+                  && existing.approvalReason === childApprovalReason
+                  && existing.deadlineAt === childDeadline;
+                store.close();
+                response.writeHead(sameDelegation ? 200 : 409, headers);
+                response.end(JSON.stringify(sameDelegation
+                  ? { ok: true, idempotent: true, task: existing }
+                  : { error: "delegated task id already exists with different work", taskId: childId }));
+                return;
+              }
               const created = store.enqueueTask({
                 id: childId,
                 kind: childKind,
@@ -2666,13 +2693,13 @@ event.command("serve")
                 parentTaskId: parent.id,
                 goalId: parent.goalId,
                 dependsOn: dependsOn as string[],
-                requiredCapabilities: capabilities as string[],
-                labels: labels as string[],
-                tokenBudget: typeof child.tokenBudget === "number" ? child.tokenBudget : null,
-                costBudgetUsd: typeof child.costBudgetUsd === "number" ? child.costBudgetUsd : null,
-                requiresApproval: child.requiresApproval === true,
-                approvalReason: typeof child.approvalReason === "string" ? child.approvalReason : null,
-                deadlineAt: typeof child.deadlineAt === "string" ? child.deadlineAt : null,
+                requiredCapabilities: normalizedCapabilities,
+                labels: normalizedLabels,
+                tokenBudget: childTokenBudget,
+                costBudgetUsd: childCostBudget,
+                requiresApproval: childRequiresApproval,
+                approvalReason: childApprovalReason,
+                deadlineAt: childDeadline,
               });
               if (!created) {
                 store.close();
