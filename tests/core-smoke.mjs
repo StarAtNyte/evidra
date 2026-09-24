@@ -30,7 +30,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { queueRecoveryAction } from "../dist/core/queue-recovery.js";
 import { executeResearchTool, normalizeResearchToolResult, availableResearchTools, RESEARCH_TOOLS, selectResearchTools, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
-import { loadExternalResearchTools } from "../dist/core/external-tools.js";
+import { externalToolStatus, loadExternalResearchTools, setExternalToolStatus } from "../dist/core/external-tools.js";
 import { normalizeResearchDecisionPayload, runResearchDirector } from "../dist/agents/research-director.js";
 import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, slurmCommand, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
@@ -3834,6 +3834,13 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.equal(adapterDenied.ok, false);
     assert.equal(adapterDenied.trust, "permission_boundary");
     assert.match(adapterDenied.error, /no grant/);
+    const quarantined = setExternalToolStatus(root, "external.echo", "quarantined", "adapter returned unsafe output");
+    assert.equal(quarantined.status, "quarantined");
+    assert.equal(externalToolStatus(root, "external.echo").reason, "adapter returned unsafe output");
+    const quarantinedResult = await executeResearchTool({ name: "external.echo", arguments: { value: "blocked" } }, { root, storePath: db, autonomy: "safe", role: "domain researcher" });
+    assert.equal(quarantinedResult.ok, false);
+    assert.match(quarantinedResult.error, /quarantined/);
+    setExternalToolStatus(root, "external.echo", "enabled");
     assert.equal(existsSync(join(root, "reports")), false);
     const predictionA = join(root, "pred-a.json");
     const predictionB = join(root, "pred-b.json");

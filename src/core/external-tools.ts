@@ -1,10 +1,12 @@
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const MANIFEST_PATH = ".evidra/tools.json";
 const MAX_MANIFEST_BYTES = 128_000;
 const MAX_TOOLS = 32;
 const MAX_COMMAND_PARTS = 32;
+const TOOL_STATE_PATH = ".sota/tool-state.json";
+const MAX_STATE_BYTES = 64_000;
 
 export type ExternalResearchTool = {
   name: string;
@@ -18,6 +20,9 @@ export type ExternalResearchTool = {
 };
 
 export type ExternalToolLoadResult = { tools: ExternalResearchTool[]; warnings: string[]; path: string | null };
+export type ExternalToolStatus = "enabled" | "disabled" | "quarantined";
+export type ExternalToolState = { status: ExternalToolStatus; reason?: string; changedAt: string };
+export type ExternalToolStateMap = Record<string, ExternalToolState>;
 
 function boundedString(value: unknown, max: number): string | undefined {
   return typeof value === "string" && value.trim() && value.length <= max ? value.trim() : undefined;
@@ -65,4 +70,46 @@ export function loadExternalResearchTools(root: string): ExternalToolLoadResult 
     tools.push({ name, description, input, readOnly: value.readOnly === true, cacheable: value.cacheable !== false && value.readOnly === true, command, roles, timeoutMs });
   }
   return { tools, warnings, path: MANIFEST_PATH };
+}
+
+/** Load operator-owned lifecycle state separately from the project manifest. */
+export function loadExternalToolState(root: string): ExternalToolStateMap {
+  const path = resolve(root, TOOL_STATE_PATH);
+  if (!existsSync(path) || !lstatSync(path).isFile()) return {};
+  try {
+    const text = readFileSync(path, "utf8");
+    if (Buffer.byteLength(text, "utf8") > MAX_STATE_BYTES) return {};
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const state: ExternalToolStateMap = {};
+    for (const [name, entry] of Object.entries(parsed as Record<string, unknown>).slice(0, MAX_TOOLS)) {
+      if (!/^external\.[a-z0-9][a-z0-9._-]{1,78}$/.test(name) || !entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const value = entry as Record<string, unknown>;
+      const status = value.status;
+      if (status !== "enabled" && status !== "disabled" && status !== "quarantined") continue;
+      state[name] = { status, ...(typeof value.reason === "string" && value.reason.trim() ? { reason: value.reason.slice(0, 500) } : {}), changedAt: typeof value.changedAt === "string" ? value.changedAt : new Date(0).toISOString() };
+    }
+    return state;
+  } catch { return {}; }
+}
+
+export function externalToolStatus(root: string, name: string): ExternalToolState {
+  return loadExternalToolState(root)[name] ?? { status: "enabled", changedAt: new Date(0).toISOString() };
+}
+
+export function activeExternalResearchTools(root: string): ExternalResearchTool[] {
+  const state = loadExternalToolState(root);
+  return loadExternalResearchTools(root).tools.filter((tool) => (state[tool.name]?.status ?? "enabled") === "enabled");
+}
+
+export function setExternalToolStatus(root: string, name: string, status: ExternalToolStatus, reason?: string): ExternalToolState {
+  const manifest = loadExternalResearchTools(root).tools;
+  if (!manifest.some((tool) => tool.name === name)) throw new Error(`Unknown external tool '${name}'.`);
+  const state = loadExternalToolState(root);
+  const next = { status, ...(reason?.trim() ? { reason: reason.trim().slice(0, 500) } : {}), changedAt: new Date().toISOString() } satisfies ExternalToolState;
+  state[name] = next;
+  const path = resolve(root, TOOL_STATE_PATH);
+  mkdirSync(resolve(root, ".sota"), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  return next;
 }

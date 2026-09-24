@@ -35,7 +35,7 @@ import { createBlendCandidate, diversityReport, loadPredictionVector, safePredic
 import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
 import { auditData, dataAuditFingerprint } from "../core/data-audit.js";
 import { availableResearchTools, executeResearchTool } from "../core/tools.js";
-import { loadExternalResearchTools } from "../core/external-tools.js";
+import { externalToolStatus, loadExternalResearchTools, setExternalToolStatus } from "../core/external-tools.js";
 import { projectVerifiedSubtaskState } from "../core/subtask-state.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { canonicalSourceUrl, retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
@@ -243,7 +243,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/evidence": [["/evidence audit", "Audit claim provenance and completion blockers"], ["/evidence analyze", "Analyze prediction errors and worst groups"]],
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/guidance": [["/guidance", "Inspect project runtime guidance and hash"]],
-  "/tools": [["/tools", "Show built-in and project research adapters"]],
+  "/tools": [["/tools", "Show built-in and project research adapters"], ["/tools enable ", "Enable a project adapter"], ["/tools disable ", "Disable a project adapter"], ["/tools quarantine ", "Quarantine a project adapter"]],
   "/goals": [["/goals", "Show goal criteria, evidence, and stage progress"]],
   "/bundle": [["/bundle validate ", "Validate a portable bundle"]],
   "/event": [["/event emit ", "Emit an external wake-up event"]],
@@ -2942,8 +2942,19 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request === "/tools") {
       const manifest = loadExternalResearchTools(root);
-      const tools = availableResearchTools(root);
-      append("assistant", `Research tools\n  manifest: ${manifest.path ?? "none"}${manifest.warnings.length ? `\n  warnings: ${manifest.warnings.length}` : ""}\n\n${tools.map((tool) => `  ${tool.name} · ${tool.readOnly ? "read-only" : "mutating"}${tool.cacheable === false ? " · live" : " · cacheable"}\n    ${tool.description}`).join("\n")}`);
+      const active = availableResearchTools(root);
+      const activeNames = new Set(active.map((tool) => tool.name));
+      const tools = [...active, ...manifest.tools.filter((tool) => !activeNames.has(tool.name))];
+      append("assistant", `Research tools\n  manifest: ${manifest.path ?? "none"}${manifest.warnings.length ? `\n  warnings: ${manifest.warnings.length}` : ""}\n\n${tools.map((tool) => `  ${tool.name} · ${externalToolStatus(root, tool.name).status} · ${tool.readOnly ? "read-only" : "mutating"}${tool.cacheable === false ? " · live" : " · cacheable"}\n    ${tool.description}`).join("\n")}`);
+      return;
+    }
+    const toolLifecycle = request.match(/^\/tools\s+(enable|disable|quarantine)\s+(external\.[a-z0-9][a-z0-9._-]{1,78})(?:\s+([\s\S]+))?$/i);
+    if (toolLifecycle) {
+      try {
+        const action = toolLifecycle[1].toLowerCase() as "enable" | "disable" | "quarantine";
+        const state = setExternalToolStatus(root, toolLifecycle[2], action === "enable" ? "enabled" : action === "disable" ? "disabled" : "quarantined", toolLifecycle[3]);
+        append("assistant", `${action === "enable" ? "Enabled" : action === "disable" ? "Disabled" : "Quarantined"} ${toolLifecycle[2]}${state.reason ? `\n  reason: ${state.reason}` : ""}`);
+      } catch (error) { appendError(error); }
       return;
     }
     if (request === "/goals") {

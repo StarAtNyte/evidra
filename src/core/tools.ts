@@ -18,7 +18,7 @@ import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } fro
 import { diversityReport, loadPredictionVector, safePredictionPath } from "./ensemble.js";
 import { extractCompetitionInsights } from "./competition-insights.js";
 import { agentToolPermission } from "./agent-organization.js";
-import { loadExternalResearchTools, type ExternalResearchTool } from "./external-tools.js";
+import { activeExternalResearchTools, externalToolStatus, loadExternalResearchTools, type ExternalResearchTool } from "./external-tools.js";
 
 const SOURCE_FRONTIER_EVENT_TYPES = [
   "research.source.search.completed",
@@ -71,7 +71,7 @@ function publicExternalSpec(tool: ExternalResearchTool): ResearchToolSpec {
 }
 
 export function availableResearchTools(root?: string): ResearchToolSpec[] {
-  return [...RESEARCH_TOOLS, ...(root ? loadExternalResearchTools(root).tools.map(publicExternalSpec) : [])];
+  return [...RESEARCH_TOOLS, ...(root ? activeExternalResearchTools(root).map(publicExternalSpec) : [])];
 }
 
 /** Apply the safest default when a provider or test double omits provenance metadata. */
@@ -281,6 +281,10 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
     const external = loadExternalResearchTools(context.root).tools.find((tool) => tool.name === call.name);
     const spec = RESEARCH_TOOLS.find((tool) => tool.name === call.name) ?? (external ? publicExternalSpec(external) : undefined);
     if (!spec) throw new Error(`Unknown research tool: ${call.name}`);
+    if (external) {
+      const lifecycle = externalToolStatus(context.root, external.name);
+      if (lifecycle.status !== "enabled") throw new Error(`External tool '${external.name}' is ${lifecycle.status}${lifecycle.reason ? `: ${lifecycle.reason}` : "."}`);
+    }
     if (context.role) {
       if (external) {
         if (!external.roles.includes(context.role)) throw new Error(`Permission boundary: external tool '${call.name}' has no grant for role '${context.role}'.`);

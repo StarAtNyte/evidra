@@ -40,7 +40,7 @@ import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateVali
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { processFailureResult, runProcess } from "./core/process.js";
 import { availableResearchTools, executeResearchTool } from "./core/tools.js";
-import { loadExternalResearchTools } from "./core/external-tools.js";
+import { externalToolStatus, loadExternalResearchTools, setExternalToolStatus } from "./core/external-tools.js";
 import { projectVerifiedSubtaskState } from "./core/subtask-state.js";
 import { classifyProcessFailure, executorFor, mergeEvaluatorResult, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "./core/executors.js";
 import { sha256File } from "./core/evidence.js";
@@ -617,19 +617,45 @@ program.command("guidance")
     else console.log(guidance ? `Project guidance\nFiles       ${guidance.paths.join(", ")}\nHash        ${guidance.contentHash}\nTruncated   ${guidance.truncated ? "yes" : "no"}\n\n${guidance.text}` : "No project guidance found. Add EVIDRA.md or .evidra/instructions.md.");
   });
 
-program.command("tools")
+const tools = program.command("tools")
   .option("--json", "emit the project tool registry as JSON")
   .description("Inspect built-in and explicitly granted project research tools")
   .action((options: { json?: boolean }) => {
     const manifest = loadExternalResearchTools(root);
-    const tools = availableResearchTools(root).map((tool) => ({ name: tool.name, description: tool.description, readOnly: tool.readOnly, cacheable: tool.cacheable !== false, input: tool.input }));
-    if (options.json) console.log(JSON.stringify({ tools, manifest: manifest.path, warnings: manifest.warnings }, null, 2));
+    const active = availableResearchTools(root);
+    const activeNames = new Set(active.map((tool) => tool.name));
+    const registry = [...active, ...manifest.tools.filter((tool) => !activeNames.has(tool.name))].map((tool) => ({ name: tool.name, description: tool.description, readOnly: tool.readOnly, cacheable: tool.cacheable !== false, input: tool.input, status: externalToolStatus(root, tool.name).status }));
+    if (options.json) console.log(JSON.stringify({ tools: registry, manifest: manifest.path, warnings: manifest.warnings }, null, 2));
     else {
       console.log(`Research tools\nManifest    ${manifest.path ?? "none"}`);
       if (manifest.warnings.length) console.log(`Warnings\n${manifest.warnings.map((warning) => `  ! ${warning}`).join("\n")}`);
-      console.log(`\n${tools.map((tool) => `  ${tool.name.padEnd(28)} ${tool.readOnly ? "read-only" : "mutating"}${tool.cacheable ? " · cacheable" : ""}\n    ${tool.description}`).join("\n")}`);
+      console.log(`\n${registry.map((tool) => `  ${tool.name.padEnd(28)} ${tool.status} · ${tool.readOnly ? "read-only" : "mutating"}${tool.cacheable ? " · cacheable" : ""}\n    ${tool.description}`).join("\n")}`);
     }
   });
+
+tools.command("enable <name>").description("Enable a project research adapter").action((name: string) => {
+  const state = setExternalToolStatus(root, name, "enabled");
+  console.log(`Enabled ${name} (${state.changedAt}).`);
+});
+for (const action of ["disable", "quarantine"] as const) {
+  tools.command(`${action} <name> [reason]`).description(`${action === "disable" ? "Disable" : "Quarantine"} a project research adapter`).action((name: string, reason?: string) => {
+    const status = action === "disable" ? "disabled" : "quarantined";
+    const state = setExternalToolStatus(root, name, status, reason);
+    console.log(`${action[0].toUpperCase()}${action.slice(1)}d ${name}${state.reason ? `: ${state.reason}` : "."}`);
+  });
+}
+tools.command("health [name]").description("Run bounded zero-argument health probes for active adapters").action(async (name?: string) => {
+  const manifest = loadExternalResearchTools(root);
+  const candidates = manifest.tools.filter((tool) => (!name || tool.name === name) && tool.input && Object.keys(tool.input).length === 0 && externalToolStatus(root, tool.name).status === "enabled");
+  if (!candidates.length) {
+    console.log(name ? `No enabled zero-argument adapter found for ${name}.` : "No enabled zero-argument adapters to probe.");
+    return;
+  }
+  for (const tool of candidates) {
+    const result = await executeResearchTool({ name: tool.name, arguments: {} }, { root, storePath: statePath, autonomy: "safe" });
+    console.log(`${result.ok ? "OK" : "FAIL"} ${tool.name}${result.error ? ` · ${result.error}` : ""}`);
+  }
+});
 
 program.command("export")
   .option("-o, --output <path>", "workspace-relative JSON bundle path", ".sota/exports/evidra-bundle.json")

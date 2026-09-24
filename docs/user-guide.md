@@ -80,6 +80,22 @@ requires an explicit role grant for specialist agents. This keeps domain
 tooling portable while preserving the same permission, provenance, and
 recovery boundary as built-in tools.
 
+Inspect and control the lifecycle without editing the manifest:
+
+```bash
+evidra tools
+evidra tools --json
+evidra tools disable external.domain_audit "dataset contract changed"
+evidra tools quarantine external.domain_audit "unsafe output detected"
+evidra tools enable external.domain_audit
+```
+
+Lifecycle state is stored under `.sota/tool-state.json`, separate from the
+versioned manifest. Disabled and quarantined adapters are removed from agent
+tool selection and rejected at execution time; quarantining records why the
+adapter was withheld so a later campaign can repair or re-enable it
+deliberately.
+
 ## 2. The Codex-first TUI
 
 The full-screen interface uses a compact Codex-style transcript:
