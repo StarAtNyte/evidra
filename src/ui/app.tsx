@@ -136,6 +136,7 @@ const COMMANDS = [
   ["/routine", "Create and run recurring autonomous campaigns"],
   ["/steer", "Guide the active campaign at its next safe boundary"],
   ["/status", "Show complete workbench state"],
+  ["/goals", "Show the durable goal tree and phase progress"],
   ["/experience", "Show reusable trajectory experience and curriculum"],
   ["/usage", "Show budget, activity, and campaign usage"],
   ["/budget", "Set the campaign agent-token ceiling"],
@@ -236,6 +237,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/evidence": [["/evidence audit", "Audit claim provenance and completion blockers"], ["/evidence analyze", "Analyze prediction errors and worst groups"]],
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/guidance": [["/guidance", "Inspect project runtime guidance and hash"]],
+  "/goals": [["/goals", "Show goal criteria, evidence, and stage progress"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
   "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
@@ -2883,6 +2885,21 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (request === "/guidance") {
       const guidance = loadProjectGuidance(root);
       append("assistant", guidance ? `Project guidance\n  files: ${guidance.paths.join(", ")}\n  hash: ${guidance.contentHash}\n  truncated: ${guidance.truncated ? "yes" : "no"}\n\n${guidance.text}` : "No project guidance found. Add EVIDRA.md or .evidra/instructions.md.");
+      return;
+    }
+    if (request === "/goals") {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const campaign = store.campaign() as ResearchCampaign | undefined;
+      const campaignMode = campaign?.runtime?.mode === "challenge" || campaign?.runtime?.mode === "research" ? campaign.runtime.mode : undefined;
+      const goalMode: "research" | "challenge" = campaignMode ?? (store.schedulerState().mode === "challenge" ? "challenge" : "research");
+      const goals = store.phaseGoals().flatMap((entry) => {
+        const parsed = PhaseGoalSchema.safeParse(entry.payload);
+        return parsed.success ? [parsed.data] : [];
+      });
+      const scoped = phaseGoalsForMode(goals, goalMode);
+      const stages = researchStageProgress(scoped);
+      store.close();
+      append("assistant", `Goals · ${goalMode}${campaign?.goal ? `\nObjective: ${campaign.goal}` : ""}\n\nStages\n${stages.map((stage) => `  ${stage.status.padEnd(7)} ${stage.stage.padEnd(8)} ${stage.completed}/${stage.total} · ${stage.activePhase ?? "ready"}`).join("\n") || "  No stages initialized."}\n\nGoal tree\n${scoped.map((goal) => `${goal.status === "met" ? "✓" : goal.status === "blocked" ? "!" : goal.status === "active" ? "●" : "○"} ${goal.phase} · ${goal.title} · ${goal.status}\n    ${goal.objective}\n    criteria ${goal.completionCriteria.map((criterion, index) => `${index + 1}. ${criterion}`).join(" | ")}\n    evidence ${goal.evidenceIds.length} · attempts ${goal.attempts}`).join("\n") || "  No goals initialized. Start /research or /challenge."}`);
       return;
     }
     if (request === "/routine" || request.startsWith("/routine ")) {

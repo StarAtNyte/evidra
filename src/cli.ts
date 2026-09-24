@@ -574,6 +574,37 @@ program.command("status").action(() => {
   store.close();
 });
 
+program.command("goals")
+  .option("--mode <mode>", "filter by research or challenge mode")
+  .option("--json", "emit machine-readable goal state")
+  .description("Inspect the durable goal tree, criteria, evidence, and stage progress")
+  .action((options: { mode?: string; json?: boolean }) => {
+    if (options.mode !== undefined && options.mode !== "research" && options.mode !== "challenge") throw new Error("Goal mode must be research or challenge.");
+    const store = new ResearchStore(statePath);
+    const campaign = store.campaign() as { goal?: unknown; runtime?: { mode?: unknown } } | undefined;
+    const campaignMode = campaign?.runtime?.mode === "challenge" || campaign?.runtime?.mode === "research" ? campaign.runtime.mode : undefined;
+    const mode: "research" | "challenge" = options.mode === "challenge" || options.mode === "research" ? options.mode : campaignMode ?? (store.schedulerState().mode === "challenge" ? "challenge" : "research");
+    const goals = store.phaseGoals().flatMap((entry) => {
+      const parsed = PhaseGoalSchema.safeParse(entry.payload);
+      return parsed.success ? [parsed.data] : [];
+    });
+    const scoped = phaseGoalsForMode(goals, mode);
+    const stages = researchStageProgress(scoped);
+    const output = {
+      mode,
+      objective: typeof campaign?.goal === "string" ? campaign.goal : null,
+      stages,
+      goals: scoped.map((goal) => ({ id: goal.id, goalSetId: goal.goalSetId ?? null, phase: goal.phase, title: goal.title, objective: goal.objective, status: goal.status, criteria: goal.completionCriteria, evidenceIds: goal.evidenceIds, attempts: goal.attempts, createdAt: goal.createdAt, updatedAt: goal.updatedAt })),
+    };
+    if (options.json) console.log(JSON.stringify(output, null, 2));
+    else {
+      console.log(`Goals · ${mode}${output.objective ? `\nObjective: ${output.objective}` : ""}`);
+      console.log(`\nStages\n${stages.map((stage) => `  ${stage.status.padEnd(7)} ${stage.stage.padEnd(8)} ${stage.completed}/${stage.total} · ${stage.activePhase ?? "ready"}`).join("\n") || "  No stages initialized."}`);
+      console.log(`\nGoal tree\n${scoped.map((goal) => `${goal.status === "met" ? "✓" : goal.status === "blocked" ? "!" : goal.status === "active" ? "●" : "○"} ${goal.phase} · ${goal.title} · ${goal.status}\n    ${goal.objective}\n    criteria ${goal.completionCriteria.map((criterion, index) => `${index + 1}. ${criterion}`).join(" | ")}\n    evidence ${goal.evidenceIds.length} · attempts ${goal.attempts}`).join("\n") || "  No goals initialized. Start a research or challenge campaign."}`);
+    }
+    store.close();
+  });
+
 program.command("guidance")
   .option("--json", "emit machine-readable guidance metadata")
   .description("Inspect bounded project runtime guidance loaded by research agents")

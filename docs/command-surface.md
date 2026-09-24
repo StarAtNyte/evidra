@@ -30,6 +30,7 @@ The TUI is the primary interface. Every command is available after typing `/`; c
 /hero status                  Show zero-to-hero progress
 /hero start                   Initialize, reproduce baseline, and generate first decision
 /hero stop                    Stop the zero-to-hero loop without deleting artifacts
+/goals                        Show the durable goal tree and phase progress
 /exit                         Exit the TUI
 ```
 
