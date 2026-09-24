@@ -129,6 +129,7 @@ const COMMANDS = [
   ["/challenge", "Run the active challenge workflow"],
   ["/experiment", "Create or run a reproducible experiment"],
   ["/loop", "Run the autonomous research loop"],
+  ["/routine", "Create and run recurring autonomous campaigns"],
   ["/steer", "Guide the active campaign at its next safe boundary"],
   ["/status", "Show complete workbench state"],
   ["/experience", "Show reusable trajectory experience and curriculum"],
@@ -197,6 +198,12 @@ function researchSetupPrompt(step: "goal" | "budget" | "stop"): string {
   }
   return "Autonomous research setup · Step 3/3\nWhen should Evidra stop?\n\nAnswer with a measurable stopping condition. Example: ‘stop after a replicated +3% mAP improvement with no subgroup falling by more than 1%, or when the budget is exhausted.’ You can also say: when the current research goal is met.";
 }
+function routineSetupPrompt(step: "name" | "goal" | "interval" | "budget"): string {
+  if (step === "name") return "Recurring routine setup · Step 1/4\nWhat should this routine be called?\n\nUse a short name such as nightly-literature, weekly-replication, or challenge-watch. Type /cancel to stop setup.";
+  if (step === "goal") return "Recurring routine setup · Step 2/4\nWhat should the routine research or improve?\n\nState the durable goal in one sentence. Each run will create a fresh campaign with its own phase goals and evidence.";
+  if (step === "interval") return "Recurring routine setup · Step 3/4\nHow often should it run?\n\nExamples: 6h, 1d, or 7d. The native routine daemon will execute due runs.";
+  return "Recurring routine setup · Step 4/4\nWhat is the campaign budget per run?\n\nExamples: 90m, 4h, or 2d. This bounds each run independently.";
+}
 const REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
 const AGENT_ROLES = ["research director", "domain researcher", "method researcher", "data detective", "validation scientist", "model researcher", "ensemble scientist", "reproducibility engineer", "experiment engineer", "critic", "repair agent"] as const;
 const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
@@ -208,7 +215,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/loop": [["/loop status", "Show loop state"], ["/loop once", "Run one research cycle"], ["/loop start", "Start autonomous loop"], ["/loop pause", "Pause loop"], ["/loop stop", "Stop loop"]],
   "/steer": [["/steer ", "Guide the active campaign at the next safe boundary"]],
   "/scheduler": [["/scheduler start", "Start scheduling"], ["/scheduler pause", "Pause scheduling"], ["/scheduler drain", "Finish active work only"]],
-  "/routine": [["/routine list", "Show recurring research routines"], ["/routine daemon", "Run due routines continuously"], ["/routine recover", "Recover stale routine leases"], ["/routine history ", "Show routine run history"], ["/routine run ", "Run a due routine"], ["/routine pause ", "Pause a routine"], ["/routine resume ", "Resume a routine"]],
+  "/routine": [["/routine create", "Create a recurring routine"], ["/routine list", "Show recurring research routines"], ["/routine daemon", "Run due routines continuously"], ["/routine recover", "Recover stale routine leases"], ["/routine history ", "Show routine run history"], ["/routine run ", "Run a due routine"], ["/routine pause ", "Pause a routine"], ["/routine resume ", "Resume a routine"]],
   "/thinking": REASONING_LEVELS.map((level) => [`/thinking ${level}`, `Thinking effort: ${level}`] as const),
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
@@ -398,6 +405,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [setupStep, setSetupStep] = useState<"goal" | "budget" | "stop" | null>(null);
   const [setupDraft, setSetupDraft] = useState<{ goal?: string; budgetMinutes?: number }>({});
+  const [routineSetupStep, setRoutineSetupStep] = useState<"name" | "goal" | "interval" | "budget" | null>(null);
+  const [routineSetupDraft, setRoutineSetupDraft] = useState<{ name?: string; goal?: string; intervalSeconds?: number }>({});
   const [inputMount, setInputMount] = useState(0);
   const sessionId = useRef(`session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
   const messagesRef = useRef<Message[]>(messages);
@@ -2379,6 +2388,37 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     interruptedProcess.current = false;
     if (!fromQueue) append("user", request);
+    if (routineSetupStep) {
+      if (request === "/cancel") {
+        setRoutineSetupStep(null); setRoutineSetupDraft({}); append("assistant", "Routine setup cancelled."); return;
+      }
+      if (request.startsWith("/")) { append("assistant", routineSetupPrompt(routineSetupStep)); return; }
+      if (routineSetupStep === "name") {
+        setRoutineSetupDraft({ name: request }); setRoutineSetupStep("goal"); append("assistant", routineSetupPrompt("goal")); return;
+      }
+      if (routineSetupStep === "goal") {
+        setRoutineSetupDraft((current) => ({ ...current, goal: request })); setRoutineSetupStep("interval"); append("assistant", routineSetupPrompt("interval")); return;
+      }
+      if (routineSetupStep === "interval") {
+        const intervalMinutes = parseBudgetMinutes(request);
+        if (!intervalMinutes) { append("assistant", "Please enter an interval such as 6h, 1d, or 7d."); return; }
+        setRoutineSetupDraft((current) => ({ ...current, intervalSeconds: intervalMinutes * 60 })); setRoutineSetupStep("budget"); append("assistant", routineSetupPrompt("budget")); return;
+      }
+      const budgetMinutes = parseBudgetMinutes(request);
+      if (!budgetMinutes) { append("assistant", "Please enter a positive per-run budget such as 90m, 4h, or 2d."); return; }
+      const draft = routineSetupDraft;
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const entry = store.createRoutine({
+        name: draft.name ?? "evidra-routine", mode: configRef.current.mode, goal: draft.goal ?? "Advance the research project",
+        budgetMinutes, intervalSeconds: draft.intervalSeconds ?? 86_400, stopCondition: "stop when the stated goal has sufficient reproducible evidence",
+        provider: configRef.current.provider, model: configRef.current.model, thinking: configRef.current.reasoningEffort,
+        autonomy: configRef.current.autonomy, limitPolicy: configRef.current.limitPolicy, executor: configRef.current.experimentExecutor, lanes: 3,
+      });
+      store.close();
+      setRoutineSetupStep(null); setRoutineSetupDraft({});
+      append("assistant", `Routine created\n  name: ${entry.name}\n  id: ${entry.id}\n  mode: ${entry.mode}\n  next run: ${entry.nextRunAt}\n  interval: ${entry.intervalSeconds / 3600}h\n  budget: ${entry.budgetMinutes} minutes\n\nUse /routine daemon to run due routines continuously, or /routine run ${entry.id} to run it now.`);
+      return;
+    }
     if (setupStep) {
       const setupInput = classifyResearchSetupInput(setupStep, request);
       if (setupInput === "cancel") {
@@ -2688,6 +2728,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       setSetupDraft({}); setSetupStep("goal");
       append("assistant", researchSetupPrompt("goal"));
       return;
+    }
+    if (request === "/routine create") {
+      setRoutineSetupDraft({}); setRoutineSetupStep("name"); append("assistant", routineSetupPrompt("name")); return;
     }
     if (request === "/loop" || request.startsWith("/loop ") || request === "/scheduler" || request.startsWith("/scheduler ")) {
       const [command, action = "status"] = request.split(/\s+/);
