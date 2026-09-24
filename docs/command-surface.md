@@ -192,6 +192,9 @@ Workers may also include `capabilities` in external agent heartbeats. Evidra
 stores the latest bounded capability and liveness snapshot for each lease and
 shows it in the dashboard. This is operational health, not research evidence;
 stale worker capability reports must never satisfy an experiment gate.
+When `/tasks/claim` omits `capabilities`, a fresh non-failed heartbeat for that
+worker is used automatically; stale or failed worker health falls back to no
+capabilities and cannot claim capability-gated work.
 
 Tasks can also declare provider-neutral `requiredCapabilities` such as
 `gpu.cuda`, `python`, `modal`, or `geospatial`. A worker includes a

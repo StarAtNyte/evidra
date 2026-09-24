@@ -2477,7 +2477,8 @@ event.command("serve")
               if (allowedTaskKinds && kinds?.some((kind) => !allowedTaskKinds.includes(kind))) throw new Error("Requested task kind is outside this worker bridge's allowed scope.");
               if (kinds?.some((kind) => !permitsKind(kind))) { store.close(); throw new Error("Requested task kind is outside this worker's assigned scope."); }
               const scopedKinds = workerAllowedKinds ? (allowedTaskKinds ? workerAllowedKinds.filter((kind) => allowedTaskKinds.includes(kind)) : workerAllowedKinds) : allowedTaskKinds;
-              const task = store.claimNextTask(kinds ?? scopedKinds, workerId, capabilities);
+              const advertisedCapabilities = capabilities ?? store.externalWorkerCapabilities(workerId);
+              const task = store.claimNextTask(kinds ?? scopedKinds, workerId, advertisedCapabilities);
               store.close();
               response.writeHead(200, headers);
               response.end(JSON.stringify({ ok: true, task: task ?? null }));

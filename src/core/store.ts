@@ -1378,6 +1378,13 @@ export class ResearchStore {
     return rows.map((row) => ({ workerId: row.worker_id, role: row.role, provider: row.provider, model: row.model, status: row.status as ExternalWorkerHealth["status"], capabilities: JSON.parse(row.capabilities_json || "[]") as string[], task: row.task, lastHeartbeatAt: row.last_heartbeat_at, updatedAt: row.updated_at }));
   }
 
+  /** Use only a fresh heartbeat when a remote worker omits capabilities at claim time. */
+  externalWorkerCapabilities(workerId: string, maxAgeMs = 120_000): string[] | undefined {
+    const row = this.db.prepare("SELECT capabilities_json, last_heartbeat_at, status FROM external_workers WHERE worker_id = ?").get(workerId) as { capabilities_json: string; last_heartbeat_at: string; status: string } | undefined;
+    if (!row || row.status === "failed" || !Number.isFinite(Date.parse(row.last_heartbeat_at)) || Date.now() - Date.parse(row.last_heartbeat_at) > Math.max(1_000, maxAgeMs)) return undefined;
+    return JSON.parse(row.capabilities_json || "[]") as string[];
+  }
+
   agentPause(role: string): { role: string; paused: boolean; terminated: boolean; reason: string | null; updatedAt: string } | undefined {
     const row = this.db.prepare("SELECT role, paused, terminated, reason, updated_at FROM agent_controls WHERE role = ?").get(role) as { role: string; paused: number; terminated: number; reason: string | null; updated_at: string } | undefined;
     return row ? { role: row.role, paused: row.paused === 1, terminated: row.terminated === 1, reason: row.reason, updatedAt: row.updated_at } : undefined;
