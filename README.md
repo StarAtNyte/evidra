@@ -416,6 +416,7 @@ Implemented today:
 - shell and autonomy safety guards.
 - a deterministic six-lifecycle safety boundary benchmark (`evidra benchmark safety`) covering configuration, capability extension, runtime, persistence, action control, and recovery;
 - a deterministic orchestration benchmark (`evidra benchmark orchestration`) covering duplicate lane prevention, lease ownership, queue ownership, dependency ordering, stale recovery, and per-lane budget accounting;
+- a deterministic agent-governance benchmark (`evidra benchmark governance`) covering role-contract completeness, tool authority boundaries, pause/resume controls, scoped handoff isolation, and durable handoff auditability;
 - durable external-action intents that reserve submissions before invocation, refuse restart-time replay, and require explicit `evidra submission reconcile <bundle> --status submitted|not-submitted` after an ambiguous crash;
 - integrity-bound campaign runtime policy: resume verifies provider, model, thinking effort, lanes, autonomy, usage-limit policy, and executor before continuing;
 - deterministic injection-signal warnings on untrusted workspace, web, repository, and source observations, retained in director context and trajectory traces without rewriting evidence;

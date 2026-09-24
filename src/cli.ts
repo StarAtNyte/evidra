@@ -107,6 +107,7 @@ import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema }
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "./core/scientific-suite.js";
 import { runSafetyBenchmark } from "./core/safety-bench.js";
 import { runOrchestrationBenchmark } from "./core/orchestration-bench.js";
+import { runGovernanceBenchmark } from "./core/governance-bench.js";
 import { selectRatchetReference } from "./core/ratchet.js";
 import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.js";
 import { approvalInbox } from "./core/approvals.js";
@@ -1243,6 +1244,24 @@ benchmark.command("orchestration")
       return;
     }
     console.log(`Orchestration benchmark · ${report.passed}/${report.probes.length} probes passed`);
+    console.log(`Score               ${(report.score * 100).toFixed(1)}%`);
+    for (const item of report.probes) console.log(`${item.passed ? "✓" : "✗"} ${item.id}`);
+    if (report.failed > 0) process.exitCode = 2;
+  });
+benchmark.command("governance")
+  .option("--json", "emit machine-readable agent-governance report")
+  .description("Run deterministic role, pause-control, tool-boundary, and scoped-handoff probes")
+  .action((options: { json?: boolean }) => {
+    const report = runGovernanceBenchmark();
+    const store = new ResearchStore(statePath);
+    store.appendEvent("harness.governance.benchmark.completed", { report });
+    store.close();
+    if (options.json) {
+      console.log(JSON.stringify(report, null, 2));
+      if (report.failed > 0) process.exitCode = 2;
+      return;
+    }
+    console.log(`Governance benchmark · ${report.passed}/${report.probes.length} probes passed`);
     console.log(`Score               ${(report.score * 100).toFixed(1)}%`);
     for (const item of report.probes) console.log(`${item.passed ? "✓" : "✗"} ${item.id}`);
     if (report.failed > 0) process.exitCode = 2;

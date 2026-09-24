@@ -84,6 +84,7 @@ import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, estimat
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, ScientificTaskSchema } from "../dist/core/scientific-tasks.js";
 import { runSafetyBenchmark } from "../dist/core/safety-bench.js";
 import { runOrchestrationBenchmark } from "../dist/core/orchestration-bench.js";
+import { runGovernanceBenchmark } from "../dist/core/governance-bench.js";
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "../dist/core/scientific-suite.js";
 import { evaluateGpuBudget, observedGpuHours } from "../dist/core/compute-budget.js";
 import { collaborationUtility } from "../dist/core/adaptive-harness.js";
@@ -3149,6 +3150,13 @@ test("orchestration benchmark covers worker ownership and recovery", () => {
   assert.equal(report.failed, 0);
   assert.equal(report.score, 1);
   assert.equal(report.probes.length, 6);
+});
+
+test("governance benchmark covers role boundaries and scoped handoffs", () => {
+  const report = runGovernanceBenchmark();
+  assert.equal(report.failed, 0);
+  assert.equal(report.score, 1);
+  assert.equal(report.probes.length, 5);
 });
 
 test("review tickets recover through the same heartbeat boundary as lane tickets", () => {
