@@ -3601,6 +3601,20 @@ test("task token budgets stop exhausted queue work from being claimed", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("task token budgets use the complete usage ledger beyond display history limits", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-token-ledger-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "long-running", kind: "research.lane", priority: 1, tokenBudget: 1_000, payload: {} });
+    for (let index = 0; index < 600; index += 1) store.recordQueueUsage({ taskId: "long-running", actorId: "worker-a", inputTokens: 1, outputTokens: 1 });
+    assert.equal(store.queueUsage("long-running", 512).length, 512);
+    assert.deepEqual(store.queueUsageTotals("long-running"), { inputTokens: 600, outputTokens: 600, costUsd: 0 });
+    assert.deepEqual(store.queueUsageState("long-running"), { usedTokens: 1_200, budgetTokens: 1_000, remainingTokens: 0, exhausted: true });
+    assert.equal(store.claimNextTask(undefined, "worker-a"), undefined);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue dependencies prevent work from running before prerequisites", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-dependencies-"));
   try {

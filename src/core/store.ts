@@ -1851,10 +1851,38 @@ export class ResearchStore {
     });
   }
 
+  /** Aggregate the complete immutable usage ledger; display history remains bounded separately. */
+  queueUsageTotals(taskId: string): { inputTokens: number; outputTokens: number; costUsd: number } | undefined {
+    const normalizedTaskId = taskId.trim().slice(0, 200);
+    if (!normalizedTaskId) return undefined;
+    try {
+      const row = this.db.prepare(`
+        SELECT
+          COALESCE(SUM(CAST(json_extract(payload_json, '$.inputTokens') AS INTEGER)), 0) AS input_tokens,
+          COALESCE(SUM(CAST(json_extract(payload_json, '$.outputTokens') AS INTEGER)), 0) AS output_tokens,
+          COALESCE(SUM(CAST(json_extract(payload_json, '$.costUsd') AS REAL)), 0) AS cost_usd
+        FROM events
+        WHERE type = 'queue.usage' AND json_extract(payload_json, '$.taskId') = ?
+      `).get(normalizedTaskId) as { input_tokens: number; output_tokens: number; cost_usd: number };
+      return { inputTokens: Math.max(0, Number(row.input_tokens) || 0), outputTokens: Math.max(0, Number(row.output_tokens) || 0), costUsd: Math.max(0, Number(row.cost_usd) || 0) };
+    } catch {
+      const totals = this.eventsByType("queue.usage").reduce((current, event) => {
+        const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+        if (payload.taskId !== normalizedTaskId) return current;
+        const inputTokens = Number.isInteger(payload.inputTokens) && Number(payload.inputTokens) >= 0 ? Number(payload.inputTokens) : 0;
+        const outputTokens = Number.isInteger(payload.outputTokens) && Number(payload.outputTokens) >= 0 ? Number(payload.outputTokens) : 0;
+        const costUsd = typeof payload.costUsd === "number" && Number.isFinite(payload.costUsd) && payload.costUsd >= 0 ? payload.costUsd : 0;
+        return { inputTokens: current.inputTokens + inputTokens, outputTokens: current.outputTokens + outputTokens, costUsd: current.costUsd + costUsd };
+      }, { inputTokens: 0, outputTokens: 0, costUsd: 0 });
+      return totals;
+    }
+  }
+
   queueUsageState(taskId: string): { usedTokens: number; budgetTokens: number | null; remainingTokens: number | null; exhausted: boolean } | undefined {
     const task = this.queueTasks().find((entry) => entry.id === taskId);
     if (!task) return undefined;
-    const usedTokens = this.queueUsage(taskId, 512).reduce((sum, entry) => sum + entry.inputTokens + entry.outputTokens, 0);
+    const totals = this.queueUsageTotals(taskId);
+    const usedTokens = (totals?.inputTokens ?? 0) + (totals?.outputTokens ?? 0);
     const budgetTokens = task.tokenBudget;
     return { usedTokens, budgetTokens, remainingTokens: budgetTokens === null ? null : Math.max(0, budgetTokens - usedTokens), exhausted: budgetTokens !== null && usedTokens >= budgetTokens };
   }
