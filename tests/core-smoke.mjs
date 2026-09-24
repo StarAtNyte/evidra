@@ -4353,6 +4353,7 @@ test("portable bundles are redacted metadata snapshots with artifact references"
     setExternalToolStatus(root, "external.bundle_probe", "quarantined", "awaiting review");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.appendEvent("test.credentials", { token: "sk-super-secret-value-1234567890", note: "keep this" });
+    store.enqueueAgentDirective("validation scientist", "replay the saved evidence", "bundle-phase", "research director");
     const bundle = createPortableBundle(store, root);
     assert.equal(bundle.type, PORTABLE_BUNDLE_TYPE);
     assert.equal(bundle.schemaVersion, 1);
@@ -4363,6 +4364,7 @@ test("portable bundles are redacted metadata snapshots with artifact references"
     assert.ok(Array.isArray(bundle.agentControls));
     assert.ok(Array.isArray(bundle.agentSessions));
     assert.ok(Array.isArray(bundle.agentDirectives));
+    assert.equal(bundle.agentDirectives[0].sourceRole, "research director");
     assert.equal(bundle.externalTools[0].name, "external.bundle_probe");
     assert.match(bundle.externalToolManifestHash, /^sha256:[a-f0-9]{64}$/);
     assert.equal(bundle.externalToolState["external.bundle_probe"].status, "quarantined");

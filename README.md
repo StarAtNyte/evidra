@@ -318,6 +318,7 @@ Implemented today:
 - goal-aligned queue ancestry: tasks can carry a phase-goal ID and parent-task ID, making autonomous decomposition traceable from mission to work item;
 - durable lane tickets: every leased research specialist also owns a `research.lane` queue task with phase lineage, heartbeat, retry ownership, and terminal evidence, so lane work remains visible and recoverable across controller restarts;
 - attributable specialist handoffs: durable directives preserve the sender role, recipient role, scope, delivery state, and cancellation state across restarts, so cross-agent coordination is auditable rather than anonymous prompt text;
+- portable handoff state: sender attribution is included in secret-redacted exports and dashboard metadata, allowing a resumed workspace to preserve the collaboration chain without copying credentials or raw datasets;
 - stale-ticket recovery: when a specialist heartbeat expires, Evidra closes its queue ticket with the failure and lease metadata instead of leaving phantom running work;
 - watchdog approvals: stale specialist and review tickets appear in the operator approval inbox with an explicit changed recovery route, so orphaned work cannot disappear silently;
 - dependency safety: prerequisite graphs block out-of-order execution, reject cycles before they can deadlock an autonomous campaign, and expose missing/waiting/failed readiness reasons through the CLI and dashboard;

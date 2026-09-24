@@ -3753,7 +3753,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const campaign = store.campaign() as ResearchCampaign | undefined;
       const goalSet = campaign?.goal ? phaseGoalSetId(campaign.goal, configRef.current.mode) : undefined;
       const phaseGoal = goalSet ? activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), configRef.current.mode, goalSet)) : undefined;
-      const directive = store.enqueueAgentDirective(messageAgentMatch[1], messageAgentMatch[2], phaseGoal?.id ?? null);
+      const directive = store.enqueueAgentDirective(messageAgentMatch[1], messageAgentMatch[2], phaseGoal?.id ?? null, "operator");
       append("assistant", `Directive queued for ${directive.role} · delivered at its next safe boundary${directive.scopeKey ? ` · scope ${directive.scopeKey}` : " · global scope"}.`);
       store.close();
       return;
@@ -3856,7 +3856,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const reviews = evaluateAgentRoles(store.trajectories(128));
       const interventions = agentRoleInterventions(reviews);
       const applied = request === "/agents evaluate apply"
-        ? interventions.filter((intervention) => intervention.action === "coach").map((intervention) => store.enqueueAgentDirectiveOnce(intervention.role, agentCoachingDirective(intervention)).id)
+        ? interventions.filter((intervention) => intervention.action === "coach").map((intervention) => store.enqueueAgentDirectiveOnce(intervention.role, agentCoachingDirective(intervention), null, "agent evaluator").id)
         : [];
       store.appendEvent("research.agent.reviewed", { reviews, interventions, source: "operator-tui" });
       if (applied.length) store.appendEvent("research.agent.coaching.applied", { directiveIds: applied, roles: interventions.filter((intervention) => intervention.action === "coach").map((intervention) => intervention.role), source: "operator-tui" });

@@ -890,7 +890,7 @@ agents.command("evaluate").description("Evaluate specialist roles and persist bo
   const store = new ResearchStore(statePath);
   const reviews = evaluateAgentRoles(store.trajectoryHistory());
   const interventions = agentRoleInterventions(reviews);
-  const applied = options.apply ? interventions.filter((intervention) => intervention.action === "coach").map((intervention) => store.enqueueAgentDirectiveOnce(intervention.role, agentCoachingDirective(intervention)).id) : [];
+  const applied = options.apply ? interventions.filter((intervention) => intervention.action === "coach").map((intervention) => store.enqueueAgentDirectiveOnce(intervention.role, agentCoachingDirective(intervention), null, "agent evaluator").id) : [];
   store.appendEvent("research.agent.reviewed", { reviews, interventions, source: "operator-cli" });
   if (applied.length) store.appendEvent("research.agent.coaching.applied", { directiveIds: applied, roles: interventions.filter((intervention) => intervention.action === "coach").map((intervention) => intervention.role), source: "operator-cli" });
   store.close();
@@ -934,7 +934,7 @@ agents.command("restart <role>").description("Reset a failed, blocked, or idle r
 });
 agents.command("message <role> <message>").description("Queue a durable directive for one specialist role").action((role: string, message: string) => {
   const store = new ResearchStore(statePath);
-  const directive = store.enqueueAgentDirective(role, message);
+  const directive = store.enqueueAgentDirective(role, message, null, "operator");
   console.log(`Directive ${directive.id} queued for ${directive.role}; it will apply at the next safe boundary.`);
   store.close();
 });
