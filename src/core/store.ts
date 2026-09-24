@@ -7,6 +7,7 @@ import { compareClaims } from "./claim-consistency.js";
 import { redactCommand, redactStructured } from "./redaction.js";
 import { canonicalSourceUrl } from "./sources.js";
 import { subtaskAuditFingerprint } from "./subtask-state.js";
+import { queueRecoveryAction } from "./queue-recovery.js";
 
 function safeJson(value: unknown): string {
   return JSON.stringify(redactStructured(value));
@@ -1584,22 +1585,26 @@ export class ResearchStore {
     const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
     const limit = Math.max(1, Math.floor(maxAttempts));
     const now = new Date().toISOString();
+    const exhaustedRecovery: Array<{ taskId: string; kind: string; attempts: number; recovery: ReturnType<typeof queueRecoveryAction> }> = [];
     const result = this.db.transaction(() => {
       const requeued = this.db.prepare("UPDATE work_queue SET status = 'queued', claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE status = 'running' AND updated_at < ? AND attempts < ?").run(now, cutoff, limit).changes;
-      const exhaustedRows = this.db.prepare("SELECT id, payload_json, attempts FROM work_queue WHERE status = 'running' AND updated_at < ? AND attempts >= ?").all(cutoff, limit) as Array<{ id: string; payload_json: string; attempts: number }>;
+      const exhaustedRows = this.db.prepare("SELECT id, kind, payload_json, attempts FROM work_queue WHERE status = 'running' AND updated_at < ? AND attempts >= ?").all(cutoff, limit) as Array<{ id: string; kind: string; payload_json: string; attempts: number }>;
       for (const row of exhaustedRows) {
         let payload: Record<string, unknown> = {};
         try {
           const parsed = JSON.parse(row.payload_json);
           if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) payload = parsed as Record<string, unknown>;
         } catch { /* Preserve the queue record even if an older payload was malformed. */ }
-        this.db.prepare("UPDATE work_queue SET status = 'failed', payload_json = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ?").run(safeJson({ ...payload, error: "stale task exceeded bounded attempts", attempts: row.attempts, failedAt: now }), now, row.id);
+        const recovery = queueRecoveryAction(new Error("stale task timeout exceeded bounded attempts"));
+        exhaustedRecovery.push({ taskId: row.id, kind: row.kind, attempts: row.attempts, recovery });
+        this.db.prepare("UPDATE work_queue SET status = 'failed', payload_json = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ?").run(safeJson({ ...payload, error: "stale task exceeded bounded attempts", attempts: row.attempts, failedAt: now, recovery }), now, row.id);
       }
       const exhausted = exhaustedRows.length;
       return { requeued, exhausted };
     })();
     if (result.requeued) this.appendEvent("queue.stale_requeued", { count: result.requeued, cutoff, maxAttempts: limit });
     if (result.exhausted) this.appendEvent("queue.stale_failed", { count: result.exhausted, cutoff, maxAttempts: limit, reason: "stale task exceeded bounded attempts" });
+    for (const entry of exhaustedRecovery) this.appendEvent("queue.recovery_required", { taskId: entry.taskId, kind: entry.kind, attempts: entry.attempts, error: "stale task exceeded bounded attempts", ...entry.recovery });
     return result.requeued;
   }
 

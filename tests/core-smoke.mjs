@@ -3479,7 +3479,9 @@ test("stale queue recovery stops retrying a task after its attempt budget", () =
     const exhausted = reopened.queueTasks().find((task) => task.id === "exhausted");
     assert.equal(exhausted?.status, "failed");
     assert.equal(exhausted?.payload.error, "stale task exceeded bounded attempts");
+    assert.equal(exhausted?.payload.recovery.route, "reduce_resources");
     assert.equal(reopened.recentEvents(10).some((event) => event.type === "queue.stale_failed"), true);
+    assert.equal(reopened.eventsByType("queue.recovery_required")[0]?.payload.route, "reduce_resources");
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
