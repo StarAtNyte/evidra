@@ -235,7 +235,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
-  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"]],
+  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
   "/limits": [["/limits auto", "Use local fallback, then wait"], ["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Require local fallback"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
@@ -3590,6 +3590,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const runs = store.runs();
       store.close();
       append("assistant", runs.length ? runs.slice(0, 20).map((run) => `${run.id} · ${run.status} · experiment ${run.experimentId}`).join("\n") : "No runs recorded.");
+      return;
+    }
+    const messageAgentMatch = request.match(/^\/agents\s+message\s+(.+?)\s+--\s+(.+)$/i);
+    if (messageAgentMatch) {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const directive = store.enqueueAgentDirective(messageAgentMatch[1], messageAgentMatch[2]);
+      append("assistant", `Directive queued for ${directive.role} · delivered at its next safe boundary.`);
+      store.close();
       return;
     }
     const pauseAgentMatch = request.match(/^\/agents\s+(pause|resume)\s+(.+)$/i);

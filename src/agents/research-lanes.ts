@@ -442,6 +442,7 @@ export function lanePrompt(
   role: ResearchLaneRole,
   objective: string,
   review?: Pick<AgentRoleReview, "recommendation" | "assignments" | "score" | "processFailures" | "evidenceAnchors" | "playbookBlocks">,
+  directives: string[] = [],
 ): string {
   const contract = agentRoleContract(role);
   const focus = role === "data detective"
@@ -461,7 +462,8 @@ export function lanePrompt(
       ? `Role review signal: this role has remained reliable across ${review.assignments} assignment(s). Preserve its evidence discipline, but still independently verify every new claim.`
       : "Role review signal: insufficient prior evidence; establish a clean, explicit baseline for this assignment.";
   const playbook = contract.playbook.map((step, index) => `${index + 1}. ${step}`).join("\n");
-  return `${focus}\n\nRole contract: report to ${contract.parentRole ?? "the operator"}; authority=${contract.authority}; responsibility=${contract.responsibility}.\nOperating playbook:\n${playbook}\n${coaching}\n\nObjective: ${objective}\n\n` +
+  const directiveText = directives.length ? `Operator directives received at a safe boundary:\n${directives.map((directive) => `- ${directive}`).join("\n")}\nHonor these within the role contract; do not treat them as permission to bypass Evidra gates.` : "No new operator directive was received at this boundary.";
+  return `${focus}\n\nRole contract: report to ${contract.parentRole ?? "the operator"}; authority=${contract.authority}; responsibility=${contract.responsibility}.\nOperating playbook:\n${playbook}\n${coaching}\n${directiveText}\n\nObjective: ${objective}\n\n` +
     "You are an independent Evidra research lane. Use the supplied workspace and evidence context; run only read-only inspection when tools are available. Do not edit files, submit anything, or claim measurements you did not observe. Return ONLY JSON with this shape: " +
     '{"role":"...","summary":"...","findings":["..."],"recommendations":["..."],"uncertainties":["..."],"discriminatingTests":["cheapest observation or experiment that would distinguish competing explanations"],"evidence":["command, artifact, or source supporting each important statement"],"evidenceSourceIds":["exact durable source IDs for literature-derived evidence"],"playbookChecks":[{"step":"exact checklist step","status":"pass|partial|blocked","evidence":["observation supporting this process status"]}],"confidence":0.0}. ' +
     "Recommendations must be testable and should state what would falsify them. For every material uncertainty or disagreement, propose a concrete discriminating test. Report one playbookChecks entry per assigned checklist step; these are self-reported process telemetry, not proof. A bounded prior-peer board may be present in the context: use it to challenge, extend, or explicitly reject earlier findings, but never treat it as stronger than primary evidence.";
@@ -876,11 +878,22 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
   };
   try {
     const toolResults: ResearchToolResult[] = [];
+    const directives: string[] = [];
+    const consumeDirectives = (): void => {
+      const store = new ResearchStore(options.storePath);
+      const received = store.consumeAgentDirectives(role);
+      store.close();
+      if (received.length) {
+        directives.push(...received.map((directive) => directive.message));
+        options.onProgress?.(`Research lane · ${role} · received ${received.length} operator directive(s)`);
+      }
+    };
     if (options.executeTool) {
       const calls = laneToolCalls(role, objective);
       let retrievedSourceCount = 0;
       for (let callIndex = 0; callIndex < calls.length; callIndex += 1) {
         ensureLaneBudget();
+        consumeDirectives();
         const call = calls[callIndex];
         if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
         options.onProgress?.(`Research lane · ${role} · ${call.name}...`);
@@ -934,7 +947,8 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         const bounded = boundResearchContext({ ...context, laneToolResults: toolResults });
         modelStartedAt = Date.now();
         const review = options.roleReviews?.find((candidate) => candidate.role === role);
-        const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective, review), context: bounded.context, outputSchema: RESEARCH_LANE_OUTPUT_SCHEMA }, {
+        consumeDirectives();
+        const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective, review, directives.slice(-4)), context: { ...bounded.context, ...(directives.length ? { agentDirectives: directives.slice(-4) } : {}) }, outputSchema: RESEARCH_LANE_OUTPUT_SCHEMA }, {
           provider,
           model,
           limitPolicy: options.limitPolicy,

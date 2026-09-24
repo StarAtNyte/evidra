@@ -760,6 +760,12 @@ for (const action of ["pause", "resume"] as const) {
     store.close();
   });
 }
+agents.command("message <role> <message>").description("Queue a durable directive for one specialist role").action((role: string, message: string) => {
+  const store = new ResearchStore(statePath);
+  const directive = store.enqueueAgentDirective(role, message);
+  console.log(`Directive ${directive.id} queued for ${directive.role}; it will apply at the next safe boundary.`);
+  store.close();
+});
 
 program.command("usage").description("Show research, experiment, and campaign usage").action(() => {
   const store = new ResearchStore(statePath);

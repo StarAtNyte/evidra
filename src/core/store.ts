@@ -113,6 +113,13 @@ export interface ControllerSteer {
   createdAt: string;
   appliedAt: string | null;
 }
+export interface AgentDirective {
+  id: number;
+  role: string;
+  message: string;
+  createdAt: string;
+  appliedAt: string | null;
+}
 export interface ControllerLease {
   controllerId: string;
   pid: number;
@@ -409,6 +416,13 @@ export class ResearchStore {
       );
       CREATE TABLE IF NOT EXISTS controller_steers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        applied_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS agent_directives (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        role TEXT NOT NULL,
         message TEXT NOT NULL,
         created_at TEXT NOT NULL,
         applied_at TEXT
@@ -955,6 +969,28 @@ export class ResearchStore {
     const consumed = transaction() as ControllerSteer[];
     if (consumed.length) this.appendEvent("controller.steer.applied", { ids: consumed.map((item) => item.id), messages: consumed.map((item) => item.message) });
     return consumed;
+  }
+
+  enqueueAgentDirective(role: string, message: string): AgentDirective {
+    const normalizedRole = role.trim();
+    const normalizedMessage = message.trim();
+    if (!normalizedRole || !normalizedMessage) throw new Error("Agent role and directive message are required.");
+    const createdAt = new Date().toISOString();
+    const result = this.db.prepare("INSERT INTO agent_directives (role, message, created_at, applied_at) VALUES (?, ?, ?, NULL)").run(normalizedRole, normalizedMessage.slice(0, 4_000), createdAt);
+    const directive = { id: Number(result.lastInsertRowid), role: normalizedRole, message: normalizedMessage.slice(0, 4_000), createdAt, appliedAt: null } satisfies AgentDirective;
+    this.appendEvent("agent.directive.queued", directive);
+    return directive;
+  }
+
+  consumeAgentDirectives(role: string, limit = 4): AgentDirective[] {
+    const now = new Date().toISOString();
+    const transaction = this.db.transaction(() => {
+      const rows = this.db.prepare("SELECT id, role, message, created_at, applied_at FROM agent_directives WHERE role = ? AND applied_at IS NULL ORDER BY id ASC LIMIT ?").all(role, Math.max(1, Math.min(16, limit))) as Array<{ id: number; role: string; message: string; created_at: string; applied_at: string | null }>;
+      const mark = this.db.prepare("UPDATE agent_directives SET applied_at = ? WHERE id = ? AND applied_at IS NULL");
+      return rows.flatMap((row) => mark.run(now, row.id).changes === 1 ? [{ id: row.id, role: row.role, message: row.message, createdAt: row.created_at, appliedAt: now }] : []);
+    })() as AgentDirective[];
+    if (transaction.length) this.appendEvent("agent.directive.applied", { role, ids: transaction.map((item) => item.id) });
+    return transaction;
   }
 
   releaseControllerLease(controllerId: string, status: "released" | "stale" = "released"): boolean {
