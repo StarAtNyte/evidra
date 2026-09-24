@@ -3551,6 +3551,21 @@ test("queue cancellation aborts a cooperative local worker and preserves cancell
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue worker enforces an expired task deadline", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-worker-deadline-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "deadline-running", kind: "research.lane", priority: 1, deadlineAt: new Date(Date.now() + 120).toISOString(), payload: {} });
+    const worker = new QueueWorker(store, async (_task, signal) => await new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("deadline abort")), { once: true })), { heartbeatMs: 250, pollIntervalMs: 50, staleAfterMs: 2_000 });
+    await worker.runOnce();
+    const task = store.queueTasks().find((entry) => entry.id === "deadline-running");
+    assert.equal(task?.status, "cancelled");
+    assert.equal(task?.payload.cancellation.reason, "task wall-clock deadline exceeded");
+    await worker.stop();
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("assigned queue work is claimable only by its designated worker", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-assignment-"));
   try {
@@ -3653,6 +3668,21 @@ test("queued task token budgets can be revised without changing a live claim", (
     assert.equal(store.claimNextTask(undefined, "worker-a")?.id, "budget-update");
     assert.equal(store.setTaskTokenBudget("budget-update", 40), false);
     assert.equal(store.eventsByType("queue.budget.updated").length, 1);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("task deadlines prevent expired claims and can be cleared before checkout", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-deadline-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "deadline-task", kind: "research.lane", priority: 1, deadlineAt: new Date(Date.now() - 1_000).toISOString(), payload: {} });
+    assert.equal(store.claimNextTask(undefined, "worker-a"), undefined);
+    assert.equal(store.setTaskDeadline("deadline-task", new Date(Date.now() + 60_000).toISOString()), true);
+    assert.equal(store.claimNextTask(undefined, "worker-a")?.id, "deadline-task");
+    assert.equal(store.setTaskDeadline("deadline-task", null), false);
+    assert.throws(() => store.enqueueTask({ id: "bad-deadline", kind: "research.lane", priority: 1, deadlineAt: "not-a-date", payload: {} }), /deadline/);
+    assert.equal(store.eventsByType("queue.deadline.updated").length, 1);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -62,6 +62,7 @@ export interface QueuedTask {
   ownerId: string | null;
   assigneeId: string | null;
   tokenBudget: number | null;
+  deadlineAt: string | null;
   goalId: string | null;
   parentTaskId: string | null;
   dependsOn: string[];
@@ -80,6 +81,13 @@ function normalizeQueueTokenBudget(value: number | null | undefined): number | n
   const normalized = Math.floor(value);
   if (!Number.isFinite(normalized) || normalized <= 0 || normalized > 100_000_000_000) throw new Error("Queue task tokenBudget must be a positive bounded integer.");
   return normalized;
+}
+
+function normalizeQueueDeadline(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) throw new Error("Queue task deadline must be a valid ISO timestamp.");
+  return new Date(timestamp).toISOString();
 }
 
 export interface QueuedTaskLineage {
@@ -490,6 +498,7 @@ export class ResearchStore {
         parent_task_id TEXT,
         assignee_id TEXT,
         token_budget REAL,
+        deadline_at TEXT,
         depends_on_json TEXT NOT NULL DEFAULT '[]',
         updated_at TEXT NOT NULL
       );
@@ -578,6 +587,7 @@ export class ResearchStore {
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN parent_task_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN assignee_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN token_budget REAL"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE work_queue ADD COLUMN deadline_at TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN started_at TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN budget_seconds REAL"); } catch { /* already migrated */ }
@@ -1491,16 +1501,17 @@ export class ResearchStore {
     return visit(taskId, []);
   }
 
-  enqueueTask(task: { id: string; kind: string; priority: number; payload: unknown; availableAt?: string; assigneeId?: string | null; tokenBudget?: number | null; goalId?: string | null; parentTaskId?: string | null; dependsOn?: string[] }): void {
+  enqueueTask(task: { id: string; kind: string; priority: number; payload: unknown; availableAt?: string; assigneeId?: string | null; tokenBudget?: number | null; deadlineAt?: string | null; goalId?: string | null; parentTaskId?: string | null; dependsOn?: string[] }): void {
     const now = new Date().toISOString();
     const dependsOn = [...new Set((task.dependsOn ?? []).filter((id) => id.trim()))];
     const tokenBudget = normalizeQueueTokenBudget(task.tokenBudget);
+    const deadlineAt = normalizeQueueDeadline(task.deadlineAt);
     const cycle = this.dependencyCycle(task.id, dependsOn);
     if (cycle) throw new Error(`Queue task '${task.id}' creates a dependency cycle: ${cycle.join(" -> ")}`);
     this.db.prepare(`
-      INSERT OR IGNORE INTO work_queue (id, kind, priority, status, payload_json, attempts, available_at, claimed_at, owner_id, assignee_id, token_budget, goal_id, parent_task_id, depends_on_json, updated_at)
-      VALUES (?, ?, ?, 'queued', ?, 0, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)
-    `).run(task.id, task.kind, task.priority, safeJson(task.payload), task.availableAt ?? now, task.assigneeId ?? null, tokenBudget, task.goalId ?? null, task.parentTaskId ?? null, safeJson(dependsOn), now);
+      INSERT OR IGNORE INTO work_queue (id, kind, priority, status, payload_json, attempts, available_at, claimed_at, owner_id, assignee_id, token_budget, deadline_at, goal_id, parent_task_id, depends_on_json, updated_at)
+      VALUES (?, ?, ?, 'queued', ?, 0, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
+    `).run(task.id, task.kind, task.priority, safeJson(task.payload), task.availableAt ?? now, task.assigneeId ?? null, tokenBudget, deadlineAt, task.goalId ?? null, task.parentTaskId ?? null, safeJson(dependsOn), now);
     this.appendEvent("queue.enqueued", task);
   }
 
@@ -1665,8 +1676,8 @@ export class ResearchStore {
       ? this.db.prepare("SELECT * FROM work_queue WHERE status = ? ORDER BY (priority + MIN(3.0, MAX(0.0, (julianday(?) - julianday(available_at)) * 24.0))) DESC, available_at ASC").all(status, now)
       : status
       ? this.db.prepare("SELECT * FROM work_queue WHERE status = ? ORDER BY priority DESC, available_at ASC").all(status)
-      : this.db.prepare("SELECT * FROM work_queue ORDER BY updated_at DESC").all()) as Array<{ id: string; kind: string; priority: number; status: string; payload_json: string; attempts: number; available_at: string; claimed_at: string | null; owner_id: string | null; assignee_id: string | null; token_budget: number | null; goal_id: string | null; parent_task_id: string | null; depends_on_json: string; updated_at: string }>;
-    return rows.map((row) => ({ id: row.id, kind: row.kind, priority: row.priority, status: row.status, payload: JSON.parse(row.payload_json), attempts: row.attempts, availableAt: row.available_at, claimedAt: row.claimed_at, ownerId: row.owner_id, assigneeId: row.assignee_id, tokenBudget: row.token_budget === null ? null : Math.max(0, Number(row.token_budget)), goalId: row.goal_id, parentTaskId: row.parent_task_id, dependsOn: JSON.parse(row.depends_on_json || "[]") as string[], updatedAt: row.updated_at }));
+      : this.db.prepare("SELECT * FROM work_queue ORDER BY updated_at DESC").all()) as Array<{ id: string; kind: string; priority: number; status: string; payload_json: string; attempts: number; available_at: string; claimed_at: string | null; owner_id: string | null; assignee_id: string | null; token_budget: number | null; deadline_at: string | null; goal_id: string | null; parent_task_id: string | null; depends_on_json: string; updated_at: string }>;
+    return rows.map((row) => ({ id: row.id, kind: row.kind, priority: row.priority, status: row.status, payload: JSON.parse(row.payload_json), attempts: row.attempts, availableAt: row.available_at, claimedAt: row.claimed_at, ownerId: row.owner_id, assigneeId: row.assignee_id, tokenBudget: row.token_budget === null ? null : Math.max(0, Number(row.token_budget)), deadlineAt: row.deadline_at, goalId: row.goal_id, parentTaskId: row.parent_task_id, dependsOn: JSON.parse(row.depends_on_json || "[]") as string[], updatedAt: row.updated_at }));
   }
 
   /** Resolve a bounded parent-task chain for audit, display, and recovery. */
@@ -1697,6 +1708,13 @@ export class ResearchStore {
 
   private taskDependenciesReady(id: string): boolean {
     return this.taskReadiness(id)?.ready === true;
+  }
+
+  private taskDeadlineReady(id: string, now = Date.now()): boolean {
+    const row = this.db.prepare("SELECT deadline_at FROM work_queue WHERE id = ?").get(id) as { deadline_at: string | null } | undefined;
+    if (!row?.deadline_at) return Boolean(row);
+    const deadline = Date.parse(row.deadline_at);
+    return Number.isFinite(deadline) && deadline > now;
   }
 
   /** Explain why a queued task can or cannot be checked out. */
@@ -1732,7 +1750,7 @@ export class ResearchStore {
         : `SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ?${assignment} ORDER BY ${order} LIMIT 1`;
       const params = ownerId ? (kinds?.length ? [now, ownerId, ...kinds, now] : [now, ownerId, now]) : (kinds?.length ? [now, ...kinds, now] : [now, now]);
       const rows = this.db.prepare(query.replace("LIMIT 1", "")).all(...params) as Array<{ id: string }>;
-      const row = rows.find((candidate) => this.taskDependenciesReady(candidate.id) && this.queueUsageState(candidate.id)?.exhausted !== true);
+      const row = rows.find((candidate) => this.taskDependenciesReady(candidate.id) && this.taskDeadlineReady(candidate.id, Date.parse(now)) && this.queueUsageState(candidate.id)?.exhausted !== true);
       if (!row) return undefined;
       this.db.prepare("UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, owner_id = ?, updated_at = ? WHERE id = ? AND status = 'queued'").run(now, ownerId ?? null, now, row.id);
       return this.queueTasks().find((task) => task.id === row.id);
@@ -1749,6 +1767,7 @@ export class ResearchStore {
       const kindClause = kinds?.length ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
       const assignmentClause = ownerId ? " AND (assignee_id IS NULL OR assignee_id = ?)" : " AND assignee_id IS NULL";
       if (this.queueUsageState(id)?.exhausted === true) return undefined;
+      if (!this.taskDeadlineReady(id, Date.parse(now))) return undefined;
       if (!this.taskDependenciesReady(id)) return undefined;
       const result = this.db.prepare(`UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, owner_id = ?, updated_at = ? WHERE id = ? AND status = 'queued' AND available_at <= ?${assignmentClause}${kindClause}`)
         .run(now, ownerId ?? null, now, id, now, ...(ownerId ? [ownerId] : []), ...(kinds ?? []));
@@ -1785,6 +1804,18 @@ export class ResearchStore {
     const result = this.db.prepare("UPDATE work_queue SET token_budget = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'failed')").run(normalizedBudget, now, id);
     if (result.changes !== 1) return false;
     this.appendEvent("queue.budget.updated", { id, priorBudget: current.token_budget, tokenBudget: normalizedBudget, status: current.status });
+    return true;
+  }
+
+  /** Set or clear a wall-clock deadline without mutating a live claim. */
+  setTaskDeadline(id: string, deadlineAt: string | null): boolean {
+    const normalizedDeadline = normalizeQueueDeadline(deadlineAt);
+    const current = this.db.prepare("SELECT status, deadline_at FROM work_queue WHERE id = ?").get(id) as { status: QueueTaskStatus; deadline_at: string | null } | undefined;
+    if (!current || !["queued", "failed"].includes(current.status)) return false;
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE work_queue SET deadline_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'failed')").run(normalizedDeadline, now, id);
+    if (result.changes !== 1) return false;
+    this.appendEvent("queue.deadline.updated", { id, priorDeadlineAt: current.deadline_at, deadlineAt: normalizedDeadline, status: current.status });
     return true;
   }
 
@@ -1967,7 +1998,7 @@ export class ResearchStore {
   }
 
   /** Cancel queued or running work durably; late worker completion cannot overwrite it. */
-  cancelTask(id: string, reason = "operator cancelled task"): boolean {
+  cancelTask(id: string, reason = "operator cancelled task", source = "operator"): boolean {
     const normalizedReason = reason.trim().slice(0, 400) || "operator cancelled task";
     const now = new Date().toISOString();
     const current = this.db.prepare("SELECT status, kind, owner_id, payload_json FROM work_queue WHERE id = ?").get(id) as { status: QueueTaskStatus; kind: string; owner_id: string | null; payload_json: string } | undefined;
@@ -1980,7 +2011,7 @@ export class ResearchStore {
     const cancellation = { reason: normalizedReason, cancelledAt: now };
     const result = this.db.prepare("UPDATE work_queue SET status = 'cancelled', payload_json = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')").run(safeJson({ ...payload, cancellation }), now, id);
     if (result.changes !== 1) return false;
-    this.appendEvent("queue.cancelled", { id, kind: current.kind, priorStatus: current.status, priorOwnerId: current.owner_id, reason: normalizedReason, cancelledAt: now, source: "operator" });
+    this.appendEvent("queue.cancelled", { id, kind: current.kind, priorStatus: current.status, priorOwnerId: current.owner_id, reason: normalizedReason, cancelledAt: now, source: source.trim().slice(0, 80) || "operator" });
     return true;
   }
 

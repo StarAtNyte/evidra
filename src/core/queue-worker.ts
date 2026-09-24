@@ -79,6 +79,7 @@ export class QueueWorker {
     const heartbeat = setInterval(() => { this.store.heartbeatTask(task.id, this.workerId); }, this.heartbeatMs);
     const cancellationPoll = setInterval(() => {
       const current = this.store.queueTasks().find((entry) => entry.id === task.id);
+      if (current?.deadlineAt && Date.parse(current.deadlineAt) <= Date.now()) this.store.cancelTask(task.id, "task wall-clock deadline exceeded", "deadline");
       if (!current || current.status === "cancelled" || current.status !== "running" || current.ownerId !== this.workerId) taskAbortController.abort();
     }, this.heartbeatMs);
     this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "started", message: `Started ${task.kind} attempt ${task.attempts}` });

@@ -70,6 +70,8 @@ evidra queue cancel <id> --reason "operator decision"
                                 Cancel queued or running work durably
 evidra queue budget <id> <tokens|0>
                                 Set a queued/failed task ceiling; 0 clears it
+evidra queue deadline <id> <timestamp|none>
+                                Set a queued/failed wall-clock deadline
 evidra queue recover <id> --route <route>
                                 Resume one failed task after declaring a changed route
 ```
