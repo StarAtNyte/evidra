@@ -1918,7 +1918,7 @@ const queue = new Command("queue").description("Inspect the durable research wor
 queue.command("status").action(() => {
   const store = new ResearchStore(statePath);
   const tasks = store.queueTasks();
-  console.log(tasks.length ? tasks.map((task) => `${task.status} ${task.id} · ${task.kind} · priority ${task.priority} · attempts ${task.attempts}`).join("\n") : "Research queue is empty.");
+  console.log(tasks.length ? tasks.map((task) => `${task.status} ${task.id} · ${task.kind} · priority ${task.priority} · attempts ${task.attempts}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}`).join("\n") : "Research queue is empty.");
   store.close();
 });
 queue.command("recover").action(() => {
