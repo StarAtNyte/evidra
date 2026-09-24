@@ -243,7 +243,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/evidence": [["/evidence audit", "Audit claim provenance and completion blockers"], ["/evidence analyze", "Analyze prediction errors and worst groups"]],
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/guidance": [["/guidance", "Inspect project runtime guidance and hash"]],
-  "/tools": [["/tools", "Show built-in and project research adapters"], ["/tools enable ", "Enable a project adapter"], ["/tools disable ", "Disable a project adapter"], ["/tools quarantine ", "Quarantine a project adapter"]],
+  "/tools": [["/tools", "Show built-in and project research adapters"], ["/tools health", "Probe zero-argument adapters"], ["/tools enable ", "Enable a project adapter"], ["/tools disable ", "Disable a project adapter"], ["/tools quarantine ", "Quarantine a project adapter"]],
   "/goals": [["/goals", "Show goal criteria, evidence, and stage progress"]],
   "/bundle": [["/bundle validate ", "Validate a portable bundle"]],
   "/event": [["/event emit ", "Emit an external wake-up event"]],
@@ -324,7 +324,7 @@ function help(): string {
     "/memory [recent|search]      Search durable evidence memory",
     "/data audit                 Audit challenge files and duplicates",
     "/validation [inspect|generate] Show validation policy",
-    "/tools                      Show built-in and project research adapters",
+    "/tools [health]              Show or probe project research adapters",
     "/agents                     Show research-agent health",
     "/limits [auto|wait|fallback|stop] Choose provider-limit behavior",
     "/compute [local|container|modal|slurm|status] Select the experiment execution target",
@@ -2946,6 +2946,19 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const activeNames = new Set(active.map((tool) => tool.name));
       const tools = [...active, ...manifest.tools.filter((tool) => !activeNames.has(tool.name))];
       append("assistant", `Research tools\n  manifest: ${manifest.path ?? "none"}${manifest.warnings.length ? `\n  warnings: ${manifest.warnings.length}` : ""}\n\n${tools.map((tool) => `  ${tool.name} · ${externalToolStatus(root, tool.name).status} · ${tool.readOnly ? "read-only" : "mutating"}${tool.cacheable === false ? " · live" : " · cacheable"}\n    ${tool.description}`).join("\n")}`);
+      return;
+    }
+    const toolHealth = request.match(/^\/tools\s+health(?:\s+(external\.[a-z0-9][a-z0-9._-]{1,78}))?$/i);
+    if (toolHealth) {
+      const manifest = loadExternalResearchTools(root);
+      const candidates = manifest.tools.filter((tool) => (!toolHealth[1] || tool.name === toolHealth[1]) && Object.keys(tool.input).length === 0 && externalToolStatus(root, tool.name).status === "enabled");
+      if (!candidates.length) { append("assistant", toolHealth[1] ? `No enabled zero-argument adapter found for ${toolHealth[1]}.` : "No enabled zero-argument adapters to probe."); return; }
+      const results = [];
+      for (const tool of candidates) {
+        const result = await executeResearchTool({ name: tool.name, arguments: {} }, { root, storePath: join(root, ".sota", "database.sqlite"), autonomy: "safe" });
+        results.push(`${result.ok ? "OK" : "FAIL"} ${tool.name}${result.error ? ` · ${result.error}` : ""}`);
+      }
+      append("assistant", `Adapter health\n${results.join("\n")}`);
       return;
     }
     const toolLifecycle = request.match(/^\/tools\s+(enable|disable|quarantine)\s+(external\.[a-z0-9][a-z0-9._-]{1,78})(?:\s+([\s\S]+))?$/i);
