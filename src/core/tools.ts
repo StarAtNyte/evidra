@@ -282,8 +282,8 @@ function validateToolArguments(name: string, value: unknown): Record<string, unk
 }
 
 export async function executeResearchTool(call: ResearchToolCall, context: ResearchToolContext): Promise<ResearchToolResult> {
+  const externalManifest = loadExternalResearchTools(context.root);
   try {
-    const externalManifest = loadExternalResearchTools(context.root);
     const external = externalManifest.tools.find((tool) => tool.name === call.name);
     const spec = RESEARCH_TOOLS.find((tool) => tool.name === call.name) ?? (external ? publicExternalSpec(external) : undefined);
     if (!spec) throw new Error(`Unknown research tool: ${call.name}`);
@@ -620,7 +620,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const result = { name: call.name, ok: false, error: errorMessage, trust: toolFailureTrust(errorMessage) };
-    recordToolEvent(context, result);
+    recordToolEvent(context, result, call.name.startsWith("external.") ? { manifestHash: externalManifest.contentHash } : {});
     return result;
   }
 }
