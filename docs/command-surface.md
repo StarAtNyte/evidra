@@ -214,6 +214,11 @@ The initial adapter is `whestbench`. Future adapters include Kaggle, AIcrowd, ma
 /approvals                    Show the operator approval inbox
 ```
 
+Project-local operator guidance can be placed in `EVIDRA.md` or
+`.evidra/instructions.md`. Evidra bounds and hashes these files before adding
+them to director and lane context. They are guidance, not evidence, and cannot
+override permissions, validation, provenance, or approval gates.
+
 Source retrieval records URL, retrieval time, content hash, license, claims, and the difference between the source setting and the current challenge.
 
 ## Hypotheses and research graph

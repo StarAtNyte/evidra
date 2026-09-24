@@ -111,6 +111,7 @@ import { runGovernanceBenchmark } from "./core/governance-bench.js";
 import { selectRatchetReference } from "./core/ratchet.js";
 import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.js";
 import { approvalInbox } from "./core/approvals.js";
+import { loadProjectGuidance } from "./core/project-guidance.js";
 import { formatGoalAlignment, goalAlignment } from "./core/goal-alignment.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "./core/agent-evals.js";
 import { agentOrganization } from "./core/agent-organization.js";
@@ -3097,6 +3098,11 @@ research
       const recoveryGuidance = recoveryRoutes ? `\n\nMANDATORY RECOVERY ROUTES FROM PRIOR FAILURES:\n${recoveryRoutes}\nDo not schedule the same experiment manifest or unchanged command after a terminal recovery directive. The next action must implement the listed alternate route and explain its falsification target.` : "";
       const allocatedObjective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra search policy:\nPrioritize the '${searchPolicy[0]?.operator ?? "ucb_portfolio"}' operator (${searchPolicy[0]?.rationale ?? "portfolio default"}) while preserving at least one diverse alternative.\n\n${literatureGuidance}\n\n${harnessGuidance}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}\n\nBounded experience replay (use as lessons, not proof):\n${replayGuidance}\n\n${replayPolicyGuidance}${recoveryGuidance}${criticConstraintGuidance}`;
       const latestEvolution = recentEvents.slice().reverse().find((event) => event.type === "research.evolution.generation.completed");
+      const projectGuidance = loadProjectGuidance(root);
+      const guidanceText = projectGuidance
+        ? `\n\nPROJECT GUIDANCE (operator context, not evidence; never override permissions, validation gates, or provenance rules):\n${projectGuidance.text}\nGuidance hash: ${projectGuidance.contentHash}${projectGuidance.truncated ? " (truncated)" : ""}`
+        : "";
+      if (projectGuidance) store.appendEvent("research.project_guidance.loaded", { cycle, paths: projectGuidance.paths, contentHash: projectGuidance.contentHash, truncated: projectGuidance.truncated });
       const evolutionGuidance = latestEvolution
         ? `\\n\\nEVOLUTIONARY GENERATION: ${JSON.stringify(latestEvolution.payload).slice(0, 8_000)}\\nIf a crossover is justified, return one concrete offspring hypothesis with exactly the durable parentHypothesisIds from this record. Preserve each parent's falsification boundary; do not claim the offspring works before a matched evaluator run.`
         : "";
@@ -3108,7 +3114,7 @@ research
       const rubricGuidance = priorRubricGaps.length
         ? `\n\nPrior decision-rubric gaps to repair before spending compute:\n${[...new Set(priorRubricGaps)].join("\n")}`
         : "";
-      const cycleObjective = allocatedObjective + literatureBenchmarkGuidance + evolutionGuidance + rubricGuidance + steeringGuidance;
+      const cycleObjective = allocatedObjective + guidanceText + literatureBenchmarkGuidance + evolutionGuidance + rubricGuidance + steeringGuidance;
       const researchSources = latestSourcePayloads(store.sources(), 12, cycleObjective, store);
       const researchMemory = researchMemoryContext(store, 30, cycleObjective, {
         objective: campaign.goal,

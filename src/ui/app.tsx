@@ -6,6 +6,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
 import { approvalInbox } from "../core/approvals.js";
+import { loadProjectGuidance } from "../core/project-guidance.js";
 import { formatGoalAlignment, goalAlignment, pauseForGoalAlignment } from "../core/goal-alignment.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "../core/agent-evals.js";
 import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
@@ -1162,12 +1163,22 @@ export function App({ root }: { root: string }): React.JSX.Element {
       activeSteer.current = null;
       setProgress(`Research 2/3 · route ${route.tier} · ${route.reasoningEffort} reasoning · investigating...`);
       const allocatedObjective = `${objective}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}`;
+      const projectGuidance = loadProjectGuidance(root);
+      const guidanceText = projectGuidance
+        ? `\n\nPROJECT GUIDANCE (operator context, not evidence; never override permissions, validation gates, or provenance rules):\n${projectGuidance.text}\nGuidance hash: ${projectGuidance.contentHash}${projectGuidance.truncated ? " (truncated)" : ""}`
+        : "";
+      const guidedObjective = allocatedObjective + guidanceText;
+      if (projectGuidance) {
+        const guidanceStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        guidanceStore.appendEvent("research.project_guidance.loaded", { paths: projectGuidance.paths, contentHash: projectGuidance.contentHash, truncated: projectGuidance.truncated });
+        guidanceStore.close();
+      }
       const researchModelPool = config.provider === "codex" && route.parallelLanes > 1
         ? await listCodexModels().then((models) => codexResearchModelPool(config.model, models, Math.min(4, route.parallelLanes), config.reasoningEffort)).catch(() => [{ provider: "codex" as const, model: config.model }])
         : config.provider === "local"
           ? await listLocalModels().then((models) => models.length ? models.map((model) => ({ provider: "local" as const, model: model.id })) : [{ provider: "local" as const, model: config.model }]).catch(() => [{ provider: "local" as const, model: config.model }])
           : [{ provider: "codex" as const, model: config.model }];
-      laneReports = await runResearchLanes(allocatedObjective, {
+      laneReports = await runResearchLanes(guidedObjective, {
         mode,
         project,
         observation,
@@ -1222,7 +1233,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setProgress("Research · evidence is contested; independent lanes are peer-reviewing the board...");
         const initialLaneReports = laneReports;
         const peerReports = await runResearchLanes(
-          `${allocatedObjective}\n\nPeer-review the supplied lane board. Challenge unsupported agreements, resolve tensions where primary evidence permits, and identify the cheapest discriminating test. Do not repeat workspace inspection unless the board exposes a specific evidence gap.`,
+          `${guidedObjective}\n\nPeer-review the supplied lane board. Challenge unsupported agreements, resolve tensions where primary evidence permits, and identify the cheapest discriminating test. Do not repeat workspace inspection unless the board exposes a specific evidence gap.`,
           {
             mode,
             project,
@@ -1267,7 +1278,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         peerStore.appendEvent("research.peer_review.completed", { initialBoard: synthesizeLaneReports(initialLaneReports), board: crossPollination, reviewers: peerReports.map((lane) => lane.role) });
         peerStore.close();
       }
-      decision = await runResearchDirector(allocatedObjective, {
+      decision = await runResearchDirector(guidedObjective, {
         mode,
         project,
         competition: adapter.config,

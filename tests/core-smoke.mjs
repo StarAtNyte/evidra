@@ -43,6 +43,7 @@ import { assertSubtaskContract, auditSubtask, projectVerifiedSubtaskState, subta
 import { auditResearchDecision, downgradeUnauditedDecision } from "../dist/core/decision-auditor.js";
 import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
+import { loadProjectGuidance } from "../dist/core/project-guidance.js";
 import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../dist/core/experiment-manifest.js";
 import { distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.js";
@@ -223,6 +224,21 @@ test("research context retains newest tool feedback when history is oversized", 
     phaseGoal: { phase: "execution", objective: "use the latest result" },
   }, 4_000);
   assert.equal(packed.context.toolResults.at(-1).name, "latest");
+});
+
+test("project runtime guidance is bounded, hashed, and separated from evidence", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-project-guidance-"));
+  try {
+    mkdirSync(join(root, ".evidra"), { recursive: true });
+    writeFileSync(join(root, "EVIDRA.md"), "Prefer grouped validation.\nNever bypass the evaluator.\n");
+    writeFileSync(join(root, ".evidra", "instructions.md"), "nested guidance");
+    const guidance = loadProjectGuidance(root);
+    assert.deepEqual(guidance?.paths, ["EVIDRA.md", ".evidra/instructions.md"]);
+    assert.match(guidance?.text ?? "", /Prefer grouped validation/);
+    assert.match(guidance?.text ?? "", /nested guidance/);
+    assert.equal(guidance?.contentHash.length, 64);
+    assert.equal(guidance?.truncated, false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("strict Codex research output normalizes nullable optional fields", () => {
