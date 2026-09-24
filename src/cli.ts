@@ -2531,7 +2531,7 @@ event.command("serve")
     const workerCapabilities = parseWorkerCapabilityMap(options.workerCapabilities);
     const server = createServer((request, response) => {
       const headers = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" };
-      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release"].includes(request.url ?? "") ? request.url : undefined;
+      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/delegate", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release"].includes(request.url ?? "") ? request.url : undefined;
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
       const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
@@ -2545,7 +2545,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: integrity.status !== "invalid", integrity }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
@@ -2557,7 +2557,7 @@ event.command("serve")
       request.on("end", () => {
         if (rejected) return;
         try {
-          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; checkpoint?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
+          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; checkpoint?: unknown; child?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
           if (taskPath) {
             const workerId = typeof parsed.workerId === "string" ? parsed.workerId.trim() : "";
             if (!workerId || workerId.length > 200) throw new Error("Task requests require a workerId of 1–200 characters.");
@@ -2617,6 +2617,76 @@ event.command("serve")
             const taskId = typeof parsed.taskId === "string" ? parsed.taskId.trim() : "";
             if (!taskId || taskId.length > 200) throw new Error("Task requests require a taskId of 1–200 characters.");
             const claimToken = typeof parsed.claimToken === "string" ? parsed.claimToken.trim().slice(0, 200) : "";
+            if (taskPath === "/tasks/delegate") {
+              const parent = store.queueTasks().find((task) => task.id === taskId);
+              if (!parent || !permitsKind(parent.kind)) {
+                store.close();
+                response.writeHead(403, headers);
+                response.end(JSON.stringify({ error: "parent task is outside this worker's assigned scope" }));
+                return;
+              }
+              if (parent.status !== "running" || parent.ownerId !== workerId) {
+                store.close();
+                response.writeHead(409, headers);
+                response.end(JSON.stringify({ error: "worker does not own a live parent claim" }));
+                return;
+              }
+              if (parent.claimToken && !claimToken) throw new Error("claimToken is required for delegated work");
+              if (parent.claimToken && claimToken !== parent.claimToken) {
+                store.close();
+                response.writeHead(409, headers);
+                response.end(JSON.stringify({ error: "claimToken does not match the live parent claim" }));
+                return;
+              }
+              if (!parsed.child || typeof parsed.child !== "object" || Array.isArray(parsed.child)) throw new Error("Delegation requires a child task object.");
+              const child = parsed.child as Record<string, unknown>;
+              const childId = typeof child.id === "string" ? child.id.trim() : "";
+              const childKind = typeof child.kind === "string" ? child.kind.trim() : "";
+              const priority = typeof child.priority === "number" ? child.priority : Number(child.priority);
+              if (!childId || childId.length > 200 || childId === parent.id) throw new Error("Delegated task id must be unique, 1–200 characters, and differ from its parent.");
+              if (!childKind || childKind.length > 120 || !permitsKind(childKind)) {
+                store.close();
+                response.writeHead(403, headers);
+                response.end(JSON.stringify({ error: "delegated task kind is outside this worker's assigned scope" }));
+                return;
+              }
+              if (!Number.isFinite(priority) || priority < -1_000_000 || priority > 1_000_000) throw new Error("Delegated task priority must be a finite number between -1000000 and 1000000.");
+              const dependsOn = child.dependsOn === undefined ? [] : child.dependsOn;
+              if (!Array.isArray(dependsOn) || dependsOn.length > 32 || dependsOn.some((entry) => typeof entry !== "string" || entry.trim().length === 0 || entry.length > 200)) throw new Error("Delegated task dependsOn must contain at most 32 task IDs.");
+              const capabilities = child.requiredCapabilities === undefined ? [] : child.requiredCapabilities;
+              if (!Array.isArray(capabilities) || capabilities.length > 32 || capabilities.some((entry) => typeof entry !== "string" || !/^[a-zA-Z0-9_.:-]{1,120}$/.test(entry.trim()))) throw new Error("Delegated task requiredCapabilities must contain at most 32 simple names.");
+              const labels = child.labels === undefined ? [] : child.labels;
+              if (!Array.isArray(labels) || labels.length > 24 || labels.some((entry) => typeof entry !== "string" || !/^[a-zA-Z0-9_.:-]{1,64}$/.test(entry.trim()))) throw new Error("Delegated task labels must contain at most 24 simple names.");
+              const payload = child.payload === undefined ? {} : parseExternalEventPayload(JSON.stringify(child.payload));
+              const created = store.enqueueTask({
+                id: childId,
+                kind: childKind,
+                priority,
+                payload,
+                parentTaskId: parent.id,
+                goalId: parent.goalId,
+                dependsOn: dependsOn as string[],
+                requiredCapabilities: capabilities as string[],
+                labels: labels as string[],
+                tokenBudget: typeof child.tokenBudget === "number" ? child.tokenBudget : null,
+                costBudgetUsd: typeof child.costBudgetUsd === "number" ? child.costBudgetUsd : null,
+                requiresApproval: child.requiresApproval === true,
+                approvalReason: typeof child.approvalReason === "string" ? child.approvalReason : null,
+                deadlineAt: typeof child.deadlineAt === "string" ? child.deadlineAt : null,
+              });
+              if (!created) {
+                store.close();
+                response.writeHead(409, headers);
+                response.end(JSON.stringify({ error: "delegated task id already exists", taskId: childId }));
+                return;
+              }
+              store.appendEvent("queue.delegated", { taskId: childId, parentTaskId: parent.id, parentOwnerId: workerId, kind: childKind });
+              const delegated = store.queueTasks().find((task) => task.id === childId);
+              store.close();
+              response.writeHead(201, headers);
+              response.end(JSON.stringify({ ok: true, task: delegated ?? null }));
+              return;
+            }
             if (taskPath === "/tasks/release") {
               const currentTask = store.queueTasks().find((task) => task.id === taskId);
               if (!currentTask || !permitsKind(currentTask.kind)) {

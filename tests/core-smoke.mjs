@@ -8093,6 +8093,14 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.deepEqual(checkpointStore.queueTasks().find((entry) => entry.id === task.id)?.payload?.checkpoint, { stage: "remote-retrieval", artifact: "partial.json" });
     checkpointStore.close();
     assert.equal((await post("/tasks/checkpoint", { workerId: "worker-a", taskId: task.id, claimToken: "stale-token", checkpoint: { stage: "stale" } }, token, "worker-a", "worker-secret")).status, 409);
+    const delegated = await post("/tasks/delegate", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, child: { id: "bridge-child", kind: "research.lane", priority: 2, payload: { objective: "independent follow-up" }, dependsOn: [], requiredCapabilities: ["delegated.research"], labels: ["delegated"] } }, token, "worker-a", "worker-secret");
+    assert.equal(delegated.status, 201);
+    const delegatedBody = await delegated.json();
+    assert.equal(delegatedBody.task.parentTaskId, task.id);
+    assert.equal(delegatedBody.task.goalId, null);
+    assert.deepEqual(delegatedBody.task.labels, ["delegated"]);
+    assert.equal((await post("/tasks/delegate", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, child: { id: "bridge-child", kind: "research.lane", priority: 2, payload: {} } }, token, "worker-a", "worker-secret")).status, 409);
+    assert.equal((await post("/tasks/delegate", { workerId: "worker-b", taskId: task.id, claimToken: task.claimToken, child: { id: "bridge-child-b", kind: "research.review", priority: 2, payload: {} } }, token, "worker-b", "worker-b-secret")).status, 403);
     assert.equal((await post("/tasks/activity", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, kind: "progress", message: "inspected evidence" }, token, "worker-a", "worker-secret")).status, 200);
     assert.equal((await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, inputTokens: 12, outputTokens: 4, costUsd: 0.01, provider: "codex", model: "gpt-test", idempotencyKey: "turn-1" }, token, "worker-a", "worker-secret")).status, 200);
     assert.equal((await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, inputTokens: 12, outputTokens: 4, costUsd: 0.01, provider: "codex", model: "gpt-test", idempotencyKey: "turn-1" }, token, "worker-a", "worker-secret")).status, 200);
