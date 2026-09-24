@@ -862,6 +862,7 @@ const agents = program.command("agents")
     const output = {
       campaign: campaign ?? null,
       organization,
+      externalWorkers: store.externalWorkers(),
       routes: summarizeAgentUsageBy(usageEvents),
       sessions,
       budget: campaign?.startedAt && typeof campaign.runtime?.agentTokenBudget === "number"
@@ -872,7 +873,9 @@ const agents = program.command("agents")
     if (options.json) {
       console.log(JSON.stringify(output, null, 2));
     } else {
-      console.log(organization.map((agent) => `${agent.control?.terminated ? "terminated" : agent.control?.paused ? "paused" : agent.status.padEnd(8)} ${agent.role} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.pendingDirectives ? ` · ${agent.pendingDirectives} directive(s)` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`).join("\n") || "No agent roles recorded.");
+      const roleLines = organization.map((agent) => `${agent.control?.terminated ? "terminated" : agent.control?.paused ? "paused" : agent.status.padEnd(8)} ${agent.role} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.pendingDirectives ? ` · ${agent.pendingDirectives} directive(s)` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`);
+      const workerLines = output.externalWorkers.map((worker) => `external ${worker.status.padEnd(7)} ${worker.workerId} · ${worker.provider}/${worker.model}${worker.capabilities.length ? ` · ${worker.capabilities.join(",")}` : ""}`);
+      console.log([...roleLines, ...(workerLines.length ? ["External workers", ...workerLines] : [])].join("\n") || "No agent roles recorded.");
       console.log(`\nResumable sessions  ${sessions.length}`);
       if (output.roleBudgets.length) console.log(`\nRole budgets\n${output.roleBudgets.map((entry) => `  ${entry.role} · ${entry.usedTokens}/${entry.budgetTokens} tokens · ${entry.status}`).join("\n")}`);
       if (output.routes.length) console.log(`\nRoutes\n${output.routes.map((route) => `  ${route.role} · ${route.provider}/${route.model} · ${route.calls} calls · ${route.inputTokens + route.outputTokens} tokens`).join("\n")}`);
