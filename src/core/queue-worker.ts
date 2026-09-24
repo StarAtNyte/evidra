@@ -73,16 +73,26 @@ export class QueueWorker {
   }
 
   private async execute(task: QueuedTask): Promise<void> {
+    const taskAbortController = new AbortController();
+    const abortFromWorker = (): void => taskAbortController.abort();
+    this.abortController.signal.addEventListener("abort", abortFromWorker, { once: true });
     const heartbeat = setInterval(() => { this.store.heartbeatTask(task.id, this.workerId); }, this.heartbeatMs);
+    const cancellationPoll = setInterval(() => {
+      const current = this.store.queueTasks().find((entry) => entry.id === task.id);
+      if (!current || current.status === "cancelled" || current.status !== "running" || current.ownerId !== this.workerId) taskAbortController.abort();
+    }, this.heartbeatMs);
     this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "started", message: `Started ${task.kind} attempt ${task.attempts}` });
     try {
-      const result = await this.handler(task, this.abortController.signal);
+      const result = await this.handler(task, taskAbortController.signal);
       if (this.store.completeClaimedTask(task.id, this.workerId, "completed", { result })) {
         this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "completed", message: "Task completed" });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (this.stopping || this.abortController.signal.aborted) {
+      const current = this.store.queueTasks().find((entry) => entry.id === task.id);
+      if (current?.status === "cancelled") {
+        this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "blocked", message: `Cancellation observed: ${message}` });
+      } else if (this.stopping || this.abortController.signal.aborted) {
         if (this.store.completeClaimedTask(task.id, this.workerId, "cancelled", { error: error instanceof Error ? error.message : String(error) })) {
           this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "blocked", message: `Task cancelled: ${message}` });
         }
@@ -100,6 +110,8 @@ export class QueueWorker {
       }
     } finally {
       clearInterval(heartbeat);
+      clearInterval(cancellationPoll);
+      this.abortController.signal.removeEventListener("abort", abortFromWorker);
     }
   }
 }

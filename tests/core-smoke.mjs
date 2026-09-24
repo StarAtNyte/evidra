@@ -3527,6 +3527,30 @@ test("queue heartbeats are owned by the claiming worker", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue cancellation aborts a cooperative local worker and preserves cancelled state", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-worker-cancel-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "cooperative-cancel", kind: "research.lane", priority: 1, payload: {} });
+    let observedAbort = false;
+    const worker = new QueueWorker(store, async (_task, signal) => {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, 5_000);
+        signal.addEventListener("abort", () => { clearTimeout(timer); observedAbort = true; reject(new Error("worker aborted")); }, { once: true });
+      });
+    }, { heartbeatMs: 250, pollIntervalMs: 50, staleAfterMs: 2_000 });
+    const running = worker.runOnce();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(store.cancelTask("cooperative-cancel", "operator stop"), true);
+    await running;
+    assert.equal(observedAbort, true);
+    assert.equal(store.queueTasks().find((task) => task.id === "cooperative-cancel")?.status, "cancelled");
+    assert.equal(store.queueActivities("cooperative-cancel").some((entry) => entry.message.includes("Cancellation observed")), true);
+    await worker.stop();
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("assigned queue work is claimable only by its designated worker", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-assignment-"));
   try {

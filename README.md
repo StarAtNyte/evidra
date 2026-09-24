@@ -317,6 +317,7 @@ Implemented today:
 - external usage attribution: BYOA workers can report bounded input/output tokens, provider, model, and optional cost through `/tasks/usage`; `evidra queue usage` aggregates provider-neutral consumption without pretending reported billing is independently verified;
 - task token ceilings: queue tasks may declare `tokenBudget`; reported usage is exposed as remaining/exhausted state and exhausted tasks are prevented from being claimed again. Existing tasks without a ceiling remain unlimited;
 - durable task cancellation: `evidra queue cancel <id>` (or `/queue cancel`) atomically cancels queued/running work, records the reason, and prevents a late local or external worker completion from resurrecting the ticket;
+- cooperative local cancellation: queue workers poll the durable ticket and propagate cancellation through the handler `AbortSignal`, allowing process-aware handlers to stop without waiting for the full task timeout;
 - cooperative remote cancellation: the next authenticated worker heartbeat returns a structured `409` cancellation response, allowing external runtimes to stop promptly instead of discovering cancellation only at completion;
 - idempotent external usage: `/tasks/usage` accepts a stable per-turn `idempotencyKey`, so transport retries do not duplicate token or cost accounting;
 - conflicting usage-key reuse is rejected and journaled instead of silently accepting a different token/cost payload;

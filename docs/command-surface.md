@@ -78,6 +78,8 @@ When a task exhausts its bounded retries, the queue records a typed recovery
 action instead of only a terminal error. Actions include reauthentication,
 repair, refreshing data, reducing resources, using an alternate executor, or
 changing route. `queue status --json` returns these actions under `recoveries`.
+Local queue handlers receive an `AbortSignal` when their ticket is cancelled;
+handlers that honor it can stop before the normal stale-worker timeout.
 An operator can act on a terminal task explicitly with `queue recover`; this
 resets only that task's bounded attempt counter and preserves the prior route
 and reason in its payload and event history.
