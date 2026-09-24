@@ -672,6 +672,20 @@ test("custom agent roles enter the approval inbox before execution", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("agent admission commands accept human-readable roles with spaces", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const root = mkdtempSync(join(tmpdir(), "evidra-role-cli-"));
+  try {
+    const init = spawnSync(process.execPath, [join(process.cwd(), "dist", "cli.js"), "init", "local-research"], { cwd: root, encoding: "utf8" });
+    assert.equal(init.status, 0, init.stderr);
+    const approve = spawnSync(process.execPath, [join(process.cwd(), "dist", "cli.js"), "agents", "approve", "external", "geologist"], { cwd: root, encoding: "utf8" });
+    assert.equal(approve.status, 0, approve.stderr);
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    assert.equal(store.agentRoleAdmitted("external geologist"), true);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("operator attention consolidates durable intervention signals", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-operator-attention-"));
   try {

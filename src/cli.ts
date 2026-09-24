@@ -955,7 +955,8 @@ agents.command("recover").description("Reclaim internal agent leases and special
   console.log(`Recovered ${roles.length} stale agent lease(s), ${tickets.length} stale specialist ticket(s), and ${directives.length} stale directive(s).${roles.length || tickets.length || directives.length ? `\nRoles      ${roles.join(", ") || "none"}\nTickets    ${tickets.join(", ") || "none"}\nDirectives ${directives.join(", ") || "none"}` : ""}`);
 });
 for (const action of ["approve", "revoke"] as const) {
-  agents.command(`${action} <role>`).description(`${action === "approve" ? "Approve" : "Revoke"} external execution for a custom role`).action((role: string) => {
+  agents.command(`${action} <role...>`).description(`${action === "approve" ? "Approve" : "Revoke"} external execution for a custom role`).action((roleParts: string[]) => {
+    const role = roleParts.join(" ").trim();
     const store = new ResearchStore(statePath);
     store.setAgentRoleAdmission(role, action === "approve", `operator CLI ${action} request`);
     store.close();
