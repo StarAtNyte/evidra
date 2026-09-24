@@ -1,8 +1,8 @@
-"""Your estimator. Edit `predict()`. Run `python estimator.py` to iterate.
+"""WhestBench candidate: full covariance propagation.
 
-Stage 1 of the WhestBench ladder: only `flopscope` and the local engine. No CLI
-knowledge required. Once `predict()` returns something interesting, move on to
-Stage 2: `whest validate --estimator estimator.py`.
+The starter estimator was a zero predictor. This candidate promotes the
+starter kit's covariance method into the submission entry point, preserving a
+single auditable implementation while keeping the experiment change small.
 """
 
 from __future__ import annotations
@@ -16,11 +16,19 @@ import flopscope.numpy as fnp
 from whestbench import MLP, BaseEstimator
 
 
-class Estimator(BaseEstimator):
-    def predict(self, mlp: MLP, budget: int) -> fnp.ndarray:
-        # TODO: replace this all-zeros baseline with your idea.
-        _ = budget
-        return fnp.zeros((mlp.depth, mlp.width))
+_COVARIANCE_PATH = Path(__file__).resolve().parent / "examples" / "03_covariance_propagation.py"
+_SPEC = importlib.util.spec_from_file_location("whest_covariance_candidate", _COVARIANCE_PATH)
+if _SPEC is None or _SPEC.loader is None:
+    raise RuntimeError(f"Could not load covariance candidate: {_COVARIANCE_PATH}")
+_MODULE = importlib.util.module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = _MODULE
+_SPEC.loader.exec_module(_MODULE)
+
+
+class Estimator(_MODULE.Estimator):
+    """Submission entry point for the covariance-propagation candidate."""
+
+    pass
 
 
 def _load_baseline(name: str) -> type[BaseEstimator]:
