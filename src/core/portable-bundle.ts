@@ -3,6 +3,7 @@ import { relative, resolve } from "node:path";
 import { isSensitiveWorkspacePath, redactStructured, redactSecrets } from "./redaction.js";
 import { PhaseGoalSchema } from "./types.js";
 import type { ResearchStore } from "./store.js";
+import { loadExternalResearchTools, loadExternalToolState } from "./external-tools.js";
 
 export const PORTABLE_BUNDLE_TYPE = "evidra.research.bundle";
 export const PORTABLE_BUNDLE_SCHEMA_VERSION = 1;
@@ -47,6 +48,8 @@ export function createPortableBundle(store: ResearchStore, root: string): Record
     agentControls: store.agentPauses(),
     agentSessions: store.agentSessions(),
     agentDirectives: store.agentDirectives(),
+    externalTools: loadExternalResearchTools(root).tools,
+    externalToolState: loadExternalToolState(root),
     events: store.recentEvents(512),
     limitations: [
       "This bundle contains metadata, evidence references, and recent events; it does not copy datasets, source files, model weights, or artifact contents.",
@@ -70,6 +73,8 @@ export function validatePortableBundle(value: unknown, root: string): PortableBu
   for (const field of ["agentControls", "agentSessions", "agentDirectives"] as const) {
     if (object[field] !== undefined && !Array.isArray(object[field])) errors.push(`${field} must be an array when present`);
   }
+  if (object.externalTools !== undefined && !Array.isArray(object.externalTools)) errors.push("externalTools must be an array when present");
+  if (object.externalToolState !== undefined && (!object.externalToolState || typeof object.externalToolState !== "object" || Array.isArray(object.externalToolState))) errors.push("externalToolState must be an object when present");
   const artifacts = Array.isArray(object.artifacts) ? object.artifacts : [];
   for (const entry of artifacts) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) { errors.push("artifact entry must be an object"); continue; }

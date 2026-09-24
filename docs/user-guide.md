@@ -96,6 +96,11 @@ tool selection and rejected at execution time; quarantining records why the
 adapter was withheld so a later campaign can repair or re-enable it
 deliberately.
 
+Portable exports include adapter declarations and lifecycle state, but never
+copy adapter source code, datasets, credentials, or worker output. A receiving
+workspace must validate the bundle and deliberately re-enable quarantined
+adapters before they can be selected.
+
 ## 2. The Codex-first TUI
 
 The full-screen interface uses a compact Codex-style transcript:

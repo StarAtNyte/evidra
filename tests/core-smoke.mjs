@@ -3682,6 +3682,9 @@ test("authenticated external agent heartbeats preserve lease ownership", () => {
 test("portable bundles are redacted metadata snapshots with artifact references", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-bundle-"));
   try {
+    mkdirSync(join(root, ".evidra"), { recursive: true });
+    writeFileSync(join(root, ".evidra", "tools.json"), JSON.stringify({ tools: [{ name: "external.bundle_probe", description: "Portable probe", command: [process.execPath, "probe.mjs"], readOnly: true }] }));
+    setExternalToolStatus(root, "external.bundle_probe", "quarantined", "awaiting review");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.appendEvent("test.credentials", { token: "sk-super-secret-value-1234567890", note: "keep this" });
     const bundle = createPortableBundle(store, root);
@@ -3694,6 +3697,8 @@ test("portable bundles are redacted metadata snapshots with artifact references"
     assert.ok(Array.isArray(bundle.agentControls));
     assert.ok(Array.isArray(bundle.agentSessions));
     assert.ok(Array.isArray(bundle.agentDirectives));
+    assert.equal(bundle.externalTools[0].name, "external.bundle_probe");
+    assert.equal(bundle.externalToolState["external.bundle_probe"].status, "quarantined");
     assert.ok(Array.isArray(bundle.limitations));
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
