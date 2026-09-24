@@ -597,6 +597,9 @@ test("goal alignment traces live work to a durable campaign phase", () => {
     store.savePhaseGoal({ id: "foreign-phase", phase: "validation", status: "pending", payload: { id: "foreign-phase", phase: "validation", goalSetId: "old-campaign" } });
     store.enqueueTask({ id: "foreign", kind: "research.cycle", priority: 1, payload: {}, goalId: "foreign-phase" });
     assert.equal(goalAlignment(store).status, "blocked");
+    store.savePhaseGoal({ id: "phase-1", phase: "validation", status: "pending", payload: { id: "phase-1", phase: "validation" } });
+    store.savePhaseGoal({ id: "foreign-active", phase: "hypothesis", status: "active", payload: { id: "foreign-active", phase: "hypothesis", goalSetId: "old-campaign" } });
+    assert.equal(goalAlignment(store).checks.find((check) => check.id === "active-phase-goal")?.status, "blocked");
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

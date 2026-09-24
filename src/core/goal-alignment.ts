@@ -31,8 +31,13 @@ function campaignGoal(store: ResearchStore): { goal: string | null; running: boo
 export function goalAlignment(store: ResearchStore): GoalAlignmentReport {
   const campaign = campaignGoal(store);
   const phases = store.phaseGoals();
-  const active = phases.find((phase) => phase.status === "active") ?? null;
   const activeGoalSetId = campaign.goal ? phaseGoalSetId(campaign.goal, campaign.mode) : null;
+  const belongsToActiveCampaign = (phase: { payload: unknown }): boolean => {
+    if (activeGoalSetId === null) return true;
+    const payload = phase.payload && typeof phase.payload === "object" ? phase.payload as { goalSetId?: unknown } : {};
+    return typeof payload.goalSetId !== "string" || payload.goalSetId === activeGoalSetId;
+  };
+  const active = phases.find((phase) => phase.status === "active" && belongsToActiveCampaign(phase)) ?? null;
   const tasks = store.queueTasks();
   const liveTasks = tasks.filter((task) => task.status === "queued" || task.status === "running");
   const phaseById = new Map(phases.map((phase) => [phase.id, phase]));
