@@ -923,6 +923,7 @@ test("campaign organization maps goals, reporting lines, and aligned queue work"
     store.updateAgentLane({ role: "validation scientist", status: "running", provider: "local", model: "bench", task: "verify the candidate" });
     store.enqueueTask({ id: "validation-task", kind: "research.cycle", priority: 1, payload: { role: "validation scientist" }, goalId: "phase-validation" });
     store.enqueueTask({ id: "orphan-task", kind: "research.cycle", priority: 1, payload: {}, goalId: "foreign-phase" });
+    store.enqueueTask({ id: "unscoped-task", kind: "research.cycle", priority: 1, payload: {} });
     assert.ok(store.claimTask("validation-task", undefined, "worker-validation-1"));
     const map = campaignOrganization(store);
     assert.equal(map.goal, "improve the measured outcome");
@@ -937,11 +938,12 @@ test("campaign organization maps goals, reporting lines, and aligned queue work"
     assert.equal(map.totals.queuedQueue, 0);
     assert.equal(map.totals.completedQueue, 0);
     assert.equal(map.totals.queue, 1);
+    assert.equal(map.totals.unscopedQueue, 1);
     assert.equal(map.roles.find((role) => role.role === "validation scientist")?.activeQueue, 1);
     assert.deepEqual(map.accountability.unassignedRunning, []);
-    assert.deepEqual(map.accountability.unscopedLive, []);
+    assert.deepEqual(map.accountability.unscopedLive, ["unscoped-task"]);
     assert.deepEqual(map.accountability.misalignedLive, ["orphan-task"]);
-    assert.deepEqual(map.accountability.unbudgetedLive.sort(), ["orphan-task", "validation-task"]);
+    assert.deepEqual(map.accountability.unbudgetedLive.sort(), ["orphan-task", "unscoped-task", "validation-task"]);
     assert.match(formatCampaignOrganization(map), /Phase ownership/);
     assert.match(formatCampaignOrganization(map), /progress: 0\/1 phases/);
     assert.match(formatCampaignOrganization(map), /validation scientist/);

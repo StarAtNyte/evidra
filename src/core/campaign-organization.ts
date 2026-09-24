@@ -39,6 +39,7 @@ export type CampaignOrganization = {
     phases: number;
     roles: number;
     queue: number;
+    unscopedQueue: number;
     queuedQueue: number;
     activeQueue: number;
     blockedQueue: number;
@@ -129,7 +130,7 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
   });
   // Keep the phase lookup live in this projection so malformed/foreign goal IDs
   // remain visible as unassigned work instead of being silently presented as aligned.
-  const alignedTasks = tasks.filter((task) => !task.goalId || phaseById.has(task.goalId));
+  const alignedTasks = tasks.filter((task) => Boolean(task.goalId) && phaseById.has(task.goalId!));
   const liveTasks = tasks.filter((task) => task.status === "queued" || task.status === "running");
   const activeQueue = alignedTasks.filter((task) => task.status === "running" || task.status === "assigned").length;
   const queuedQueue = alignedTasks.filter((task) => task.status === "queued").length;
@@ -151,7 +152,7 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
     },
     phases: phaseRows,
     roles: organization,
-    totals: { phases: phaseRows.length, roles: organization.length, queue: alignedTasks.length, queuedQueue, activeQueue, blockedQueue, completedQueue, failedQueue },
+    totals: { phases: phaseRows.length, roles: organization.length, queue: alignedTasks.length, unscopedQueue: tasks.filter((task) => !task.goalId).length, queuedQueue, activeQueue, blockedQueue, completedQueue, failedQueue },
     accountability: {
       unassignedRunning: liveTasks.filter((task) => task.status === "running" && !task.assigneeId && !task.ownerId && !taskRole(task)).map((task) => task.id).slice(0, 64),
       unscopedLive: liveTasks.filter((task) => !task.goalId).map((task) => task.id).slice(0, 64),
@@ -171,7 +172,7 @@ export function formatCampaignOrganization(map: CampaignOrganization): string {
     `  mission: ${map.goal ?? "not initialized"}`,
     `  mode: ${map.mode} · status: ${map.status}`,
     `  progress: ${map.progress.completedPhases}/${map.progress.totalPhases} phases · ${(map.progress.ratio * 100).toFixed(0)}% · ${map.progress.status}${map.progress.activePhase ? ` · active ${map.progress.activePhase}` : ""}`,
-    `  work: ${map.totals.activeQueue} active · ${map.totals.queuedQueue} queued · ${map.totals.completedQueue} done · ${map.totals.queue} aligned${map.totals.blockedQueue ? ` · ${map.totals.blockedQueue} blocked` : ""}${map.totals.failedQueue ? ` · ${map.totals.failedQueue} failed` : ""}`,
+    `  work: ${map.totals.activeQueue} active · ${map.totals.queuedQueue} queued · ${map.totals.completedQueue} done · ${map.totals.queue} aligned${map.totals.unscopedQueue ? ` · ${map.totals.unscopedQueue} unscoped` : ""}${map.totals.blockedQueue ? ` · ${map.totals.blockedQueue} blocked` : ""}${map.totals.failedQueue ? ` · ${map.totals.failedQueue} failed` : ""}`,
     `  accountability: ${map.accountability.unassignedRunning.length} ownerless running · ${map.accountability.unscopedLive.length} unscoped · ${map.accountability.misalignedLive.length} mis-scoped · ${map.accountability.unbudgetedLive.length} unbudgeted`,
     "",
     "Phase ownership",
