@@ -57,6 +57,11 @@ export function runGovernanceBenchmark(): GovernanceBenchmarkReport {
     const approvedExecution = store.acquireAgentLane({ role: "external domain specialist", leaseId: "custom-worker", provider: "remote", model: "bench" });
     check("role-admission-boundary", "Custom roles require explicit operator admission before they can acquire execution leases.", !unapprovedExecution.acquired && approvedExecution.acquired && customRole?.admission === "review", { unapprovedExecution, approvedExecution, admissionAfterApproval: store.agentRoleAdmitted("external domain specialist") });
     store.releaseAgentLane("external domain specialist", "custom-worker");
+    store.rejectAgentRoleAdmission("external domain specialist", "governance benchmark rejection");
+    const rejectedExecution = store.acquireAgentLane({ role: "external domain specialist", leaseId: "rejected-worker", provider: "remote", model: "bench" });
+    const rejectedVisible = agentOrganization(store).find((role) => role.role === "external domain specialist")?.admission === "rejected";
+    const rejectedPending = approvalInbox(store).some((item) => item.kind === "agent-role" && item.id === "external domain specialist");
+    check("role-rejection-boundary", "Explicitly rejected custom roles stay visible as rejected, remain blocked, and leave the pending approval inbox.", !rejectedExecution.acquired && rejectedVisible && !rejectedPending, { rejectedExecution, rejectedVisible, rejectedPending });
 
     const directorShell = agentToolPermission("research director", "shell.exec");
     const engineerShell = agentToolPermission("experiment engineer", "shell.exec");

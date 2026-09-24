@@ -3610,7 +3610,7 @@ test("governance benchmark covers role boundaries and scoped handoffs", () => {
   const report = runGovernanceBenchmark();
   assert.equal(report.failed, 0);
   assert.equal(report.score, 1);
-  assert.equal(report.probes.length, 10);
+  assert.equal(report.probes.length, 11);
   assert.equal(report.probes.some((probe) => probe.id === "adapter-lifecycle-boundary"), true);
   assert.equal(report.probes.some((probe) => probe.id === "custom-agent-visibility"), true);
 });
