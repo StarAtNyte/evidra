@@ -234,12 +234,17 @@ test("project runtime guidance is bounded, hashed, and separated from evidence",
     mkdirSync(join(root, ".evidra"), { recursive: true });
     writeFileSync(join(root, "EVIDRA.md"), "Prefer grouped validation.\nNever bypass the evaluator.\n");
     writeFileSync(join(root, ".evidra", "instructions.md"), "nested guidance");
+    mkdirSync(join(root, ".evidra", "roles"), { recursive: true });
+    writeFileSync(join(root, ".evidra", "roles", "validation-scientist.md"), "Require a held-out split before promotion.");
     const guidance = loadProjectGuidance(root);
     assert.deepEqual(guidance?.paths, ["EVIDRA.md", ".evidra/instructions.md"]);
     assert.match(guidance?.text ?? "", /Prefer grouped validation/);
     assert.match(guidance?.text ?? "", /nested guidance/);
     assert.equal(guidance?.contentHash.length, 64);
     assert.equal(guidance?.truncated, false);
+    const roleGuidance = loadProjectGuidance(root, "validation scientist");
+    assert.deepEqual(roleGuidance?.paths, ["EVIDRA.md", ".evidra/instructions.md", ".evidra/roles/validation-scientist.md"]);
+    assert.match(roleGuidance?.text ?? "", /held-out split/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -3970,6 +3975,9 @@ test("role reviews become bounded specialist coaching instructions", () => {
   assert.match(trusted, /Preserve its evidence discipline/);
   const newRole = lanePrompt("method researcher", "find a method");
   assert.match(newRole, /insufficient prior evidence/);
+  const guided = lanePrompt("validation scientist", "check the metric", undefined, [], { text: "Require paired replication.", contentHash: "hash", truncated: false });
+  assert.match(guided, /Require paired replication/);
+  assert.match(guided, /context only/);
 });
 
 test("lane reports expose bounded self-reported playbook checks without making them evidence", () => {

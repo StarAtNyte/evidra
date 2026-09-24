@@ -13,12 +13,14 @@ const GUIDANCE_FILES = ["EVIDRA.md", ".evidra/instructions.md"] as const;
 const MAX_GUIDANCE_BYTES = 16_000;
 
 /** Load explicit operator guidance without confusing it with observed evidence. */
-export function loadProjectGuidance(root: string): ProjectGuidance | undefined {
+export function loadProjectGuidance(root: string, role?: string): ProjectGuidance | undefined {
   const workspace = resolve(root);
   const parts: string[] = [];
   const paths: string[] = [];
   let truncated = false;
-  for (const relativePath of GUIDANCE_FILES) {
+  const roleSlug = role?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const guidanceFiles = roleSlug ? [...GUIDANCE_FILES, `.evidra/roles/${roleSlug}.md`] : GUIDANCE_FILES;
+  for (const relativePath of guidanceFiles) {
     const path = join(workspace, relativePath);
     if (!existsSync(path) || !lstatSync(path).isFile()) continue;
     const content = readFileSync(path, "utf8");
