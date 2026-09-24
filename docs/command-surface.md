@@ -102,6 +102,9 @@ live lease. Failed and cancelled transitions remain available for recovery.
 Queued work reports `missing`, `waiting`, or `failed` prerequisites. This makes
 the scheduler explainable to an operator and gives recovery controllers a
 stable reason instead of treating every unclaimed task as ready.
+Queue insertion is idempotent by task ID: a duplicate request preserves the
+original ticket and records `queue.enqueue.duplicate` rather than creating a
+misleading second enqueue event.
 
 When a task exhausts its bounded retries, the queue records a typed recovery
 action instead of only a terminal error. Actions include reauthentication,

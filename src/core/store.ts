@@ -1527,7 +1527,7 @@ export class ResearchStore {
     return visit(taskId, []);
   }
 
-  enqueueTask(task: { id: string; kind: string; priority: number; payload: unknown; availableAt?: string; assigneeId?: string | null; tokenBudget?: number | null; deadlineAt?: string | null; goalId?: string | null; parentTaskId?: string | null; dependsOn?: string[] }): void {
+  enqueueTask(task: { id: string; kind: string; priority: number; payload: unknown; availableAt?: string; assigneeId?: string | null; tokenBudget?: number | null; deadlineAt?: string | null; goalId?: string | null; parentTaskId?: string | null; dependsOn?: string[] }): boolean {
     const now = new Date().toISOString();
     validateQueueCompletionContract(task.payload);
     const dependsOn = [...new Set((task.dependsOn ?? []).filter((id) => id.trim()))];
@@ -1535,11 +1535,16 @@ export class ResearchStore {
     const deadlineAt = normalizeQueueDeadline(task.deadlineAt);
     const cycle = this.dependencyCycle(task.id, dependsOn);
     if (cycle) throw new Error(`Queue task '${task.id}' creates a dependency cycle: ${cycle.join(" -> ")}`);
-    this.db.prepare(`
+    const result = this.db.prepare(`
       INSERT OR IGNORE INTO work_queue (id, kind, priority, status, payload_json, attempts, available_at, claimed_at, owner_id, assignee_id, token_budget, deadline_at, goal_id, parent_task_id, depends_on_json, updated_at)
       VALUES (?, ?, ?, 'queued', ?, 0, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
     `).run(task.id, task.kind, task.priority, safeJson(task.payload), task.availableAt ?? now, task.assigneeId ?? null, tokenBudget, deadlineAt, task.goalId ?? null, task.parentTaskId ?? null, safeJson(dependsOn), now);
+    if (result.changes !== 1) {
+      this.appendEvent("queue.enqueue.duplicate", { id: task.id, kind: task.kind, ignored: true });
+      return false;
+    }
     this.appendEvent("queue.enqueued", task);
+    return true;
   }
 
   private routineFromRow(row: { id: string; payload_json: string; status: string; next_run_at: string; lease_id: string | null; lease_expires_at: string | null; created_at: string; updated_at: string }): ResearchRoutine {

@@ -3385,6 +3385,21 @@ test("operators can revise completion contracts only before a task is claimed", 
   }
 });
 
+test("queue insertion is idempotent and makes duplicate scheduling observable", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-idempotency-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    assert.equal(store.enqueueTask({ id: "same-task", kind: "research.lane", priority: 1, payload: { route: "first" } }), true);
+    assert.equal(store.enqueueTask({ id: "same-task", kind: "research.lane", priority: 99, payload: { route: "second" } }), false);
+    assert.equal(store.queueTasks().filter((task) => task.id === "same-task").length, 1);
+    assert.equal(store.queueTasks().find((task) => task.id === "same-task")?.priority, 1);
+    assert.equal(store.eventsByType("queue.enqueued").length, 1);
+    assert.equal(store.eventsByType("queue.enqueue.duplicate").length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("governance benchmark covers role boundaries and scoped handoffs", () => {
   const report = runGovernanceBenchmark();
   assert.equal(report.failed, 0);
