@@ -3321,9 +3321,12 @@ test("orchestration benchmark covers worker ownership and recovery", () => {
   const report = runOrchestrationBenchmark();
   assert.equal(report.failed, 0);
   assert.equal(report.score, 1);
-  assert.equal(report.probes.length, 10);
+  assert.equal(report.probes.length, 13);
   assert.equal(report.probes.some((probe) => probe.id === "queue-starvation-prevention"), true);
   assert.equal(report.probes.some((probe) => probe.id === "completion-watchdog"), true);
+  assert.equal(report.probes.some((probe) => probe.id === "approval-gate"), true);
+  assert.equal(report.probes.some((probe) => probe.id === "queue-pause-governance"), true);
+  assert.equal(report.probes.some((probe) => probe.id === "live-budget-stop"), true);
 });
 
 test("queue completion contracts reject unsupported claims and accept durable proof", () => {

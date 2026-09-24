@@ -83,6 +83,27 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     const accepted = store.completeClaimedTask("proof-contract", "worker-a", "completed", { summary: "verified" });
     check("completion-watchdog", "A task cannot complete until its declared proof contract is satisfied.", proofClaim?.id === "proof-contract" && rejected && accepted && store.queueTasks().find((task) => task.id === "proof-contract")?.status === "completed", { rejected, accepted, status: store.queueTasks().find((task) => task.id === "proof-contract")?.status });
 
+    store.enqueueTask({ id: "approval-gate", kind: "governed", priority: 1, requiresApproval: true, approvalReason: "benchmark operator review", payload: {} });
+    const approvalBlocked = store.claimTask("approval-gate", ["governed"], "worker-a");
+    const approvalSet = store.setTaskApproval("approval-gate", "approved", "benchmark approved");
+    const approvalClaim = store.claimTask("approval-gate", ["governed"], "worker-a");
+    check("approval-gate", "Approval-required work remains unclaimable until an explicit approval is recorded.", !approvalBlocked && approvalSet && approvalClaim?.id === "approval-gate", { approvalBlocked: approvalBlocked?.id, approvalSet, approvalClaim: approvalClaim?.id });
+    if (approvalClaim) store.updateTask("approval-gate", "completed");
+
+    store.enqueueTask({ id: "paused-dispatch", kind: "governed", priority: 1, payload: {} });
+    const paused = store.setQueuePaused(true, "benchmark maintenance");
+    const pausedClaim = store.claimTask("paused-dispatch", ["governed"], "worker-a");
+    store.setQueuePaused(false);
+    const resumedClaim = store.claimTask("paused-dispatch", ["governed"], "worker-a");
+    check("queue-pause-governance", "A durable queue pause blocks new claims and resume reopens dispatch.", paused.paused && !pausedClaim && resumedClaim?.id === "paused-dispatch", { paused: paused.paused, pausedClaim: pausedClaim?.id, resumedClaim: resumedClaim?.id });
+    if (resumedClaim) store.updateTask("paused-dispatch", "completed");
+
+    store.enqueueTask({ id: "budget-stop", kind: "governed", priority: 1, tokenBudget: 2, payload: {} });
+    const budgetClaim = store.claimTask("budget-stop", ["governed"], "worker-a");
+    const budgetRecorded = budgetClaim ? store.recordQueueUsage({ taskId: "budget-stop", actorId: "worker-a", inputTokens: 1, outputTokens: 1, claimToken: budgetClaim.claimToken ?? undefined }) : false;
+    const budgetTask = store.queueTasks().find((task) => task.id === "budget-stop");
+    check("live-budget-stop", "Crossing a live token ceiling cancels the claim before another worker turn.", Boolean(budgetRecorded && budgetTask?.status === "cancelled" && budgetTask.payload && typeof budgetTask.payload === "object" && (budgetTask.payload as Record<string, unknown>).cancellation !== undefined), { budgetRecorded, status: budgetTask?.status, cancellation: budgetTask?.payload && typeof budgetTask.payload === "object" ? (budgetTask.payload as Record<string, unknown>).cancellation : undefined });
+
     store.releaseAgentLane("model researcher", "worker-a");
     const stale = store.acquireAgentLane({ role: "validation scientist", leaseId: "worker-stale", provider: "local", model: "bench" });
     store.enqueueTask({ id: "stale-lane-ticket", kind: "research.lane", priority: 1, payload: { role: "validation scientist", leaseId: "worker-stale" } });
