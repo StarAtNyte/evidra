@@ -743,6 +743,14 @@ test("agent reviews learn from durable lane evidence without claiming metric att
   assert.equal(reviews.find((review) => review.role === "unsupported")?.recommendation, "needs-review");
 });
 
+test("agent review scores favor the newest observed role behavior", () => {
+  const failure = { payload: { laneReports: [{ role: "adaptive", status: "failed", confidence: 0, evidence: [] }] }, quality: { overall: "FAIL" } };
+  const success = { payload: { laneReports: [{ role: "adaptive", status: "completed", confidence: 1, evidence: ["verified-run"] }] }, quality: { overall: "PASS" } };
+  const failureLast = evaluateAgentRoles([success, failure, failure, failure, failure, failure]);
+  const successLast = evaluateAgentRoles([failure, failure, failure, failure, failure, success]);
+  assert.ok(successLast.find((review) => review.role === "adaptive").score > failureLast.find((review) => review.role === "adaptive").score);
+});
+
 test("agent activity journal survives reopen and filters by specialist task", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-agent-activity-"));
   const path = join(root, "state.sqlite");

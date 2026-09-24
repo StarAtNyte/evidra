@@ -24,6 +24,28 @@ export type AgentRoleIntervention = {
 };
 
 type Trajectory = { payload: unknown; quality: unknown };
+type ReviewBucket = {
+  assignments: number;
+  completed: number;
+  failed: number;
+  confidence: number;
+  evidenceAnchors: number;
+  processPasses: number;
+  processWarnings: number;
+  processFailures: number;
+  playbookPasses: number;
+  playbookPartials: number;
+  playbookBlocks: number;
+  weightedAssignments: number;
+  weightedCompleted: number;
+  weightedConfidence: number;
+  weightedEvidenceAnchors: number;
+  weightedProcessPasses: number;
+  weightedProcessWarnings: number;
+  weightedPlaybookPasses: number;
+  weightedPlaybookPartials: number;
+  weightedPlaybookBlocks: number;
+};
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -35,8 +57,13 @@ function object(value: unknown): Record<string, unknown> {
  * conservative and only uses durable lane evidence and trajectory quality.
  */
 export function evaluateAgentRoles(trajectories: Trajectory[]): AgentRoleReview[] {
-  const buckets = new Map<string, { assignments: number; completed: number; failed: number; confidence: number; evidenceAnchors: number; processPasses: number; processWarnings: number; processFailures: number; playbookPasses: number; playbookPartials: number; playbookBlocks: number }>();
-  for (const trajectory of trajectories.slice(-128)) {
+  const selected = trajectories.slice(-128);
+  const buckets = new Map<string, ReviewBucket>();
+  for (const [index, trajectory] of selected.entries()) {
+    // Durable history is chronological. A bounded exponential decay makes
+    // current behavior matter more without erasing historical counts or the
+    // hard evidence gate below.
+    const recencyWeight = Math.pow(0.96, selected.length - 1 - index);
     const payload = object(trajectory.payload);
     const quality = object(trajectory.quality);
     const overall = typeof quality.overall === "string" ? quality.overall : "NOT_EVALUATED";
@@ -44,7 +71,7 @@ export function evaluateAgentRoles(trajectories: Trajectory[]): AgentRoleReview[
     for (const raw of reports) {
       const report = object(raw);
       const role = typeof report.role === "string" && report.role.trim() ? report.role.trim() : "unknown";
-      const bucket = buckets.get(role) ?? { assignments: 0, completed: 0, failed: 0, confidence: 0, evidenceAnchors: 0, processPasses: 0, processWarnings: 0, processFailures: 0, playbookPasses: 0, playbookPartials: 0, playbookBlocks: 0 };
+      const bucket = buckets.get(role) ?? { assignments: 0, completed: 0, failed: 0, confidence: 0, evidenceAnchors: 0, processPasses: 0, processWarnings: 0, processFailures: 0, playbookPasses: 0, playbookPartials: 0, playbookBlocks: 0, weightedAssignments: 0, weightedCompleted: 0, weightedConfidence: 0, weightedEvidenceAnchors: 0, weightedProcessPasses: 0, weightedProcessWarnings: 0, weightedPlaybookPasses: 0, weightedPlaybookPartials: 0, weightedPlaybookBlocks: 0 };
       bucket.assignments += 1;
       if (report.status === "failed") bucket.failed += 1;
       else bucket.completed += 1;
@@ -61,20 +88,42 @@ export function evaluateAgentRoles(trajectories: Trajectory[]): AgentRoleReview[
       if (overall === "PASS") bucket.processPasses += 1;
       else if (overall === "FAIL") bucket.processFailures += 1;
       else if (overall === "WARN") bucket.processWarnings += 1;
+      bucket.weightedAssignments += recencyWeight;
+      bucket.weightedCompleted += report.status === "failed" ? 0 : recencyWeight;
+      bucket.weightedConfidence += (typeof report.confidence === "number" && Number.isFinite(report.confidence) ? Math.max(0, Math.min(1, report.confidence)) : 0) * recencyWeight;
+      bucket.weightedEvidenceAnchors += evidence.filter((item) => typeof item === "string" && item.trim()).length * recencyWeight;
+      bucket.weightedProcessPasses += overall === "PASS" ? recencyWeight : 0;
+      bucket.weightedProcessWarnings += overall === "WARN" ? recencyWeight : 0;
+      for (const check of checks) {
+        const status = object(check).status;
+        if (status === "pass") bucket.weightedPlaybookPasses += recencyWeight;
+        else if (status === "partial") bucket.weightedPlaybookPartials += recencyWeight;
+        else if (status === "blocked") bucket.weightedPlaybookBlocks += recencyWeight;
+      }
       buckets.set(role, bucket);
     }
   }
   return [...buckets.entries()].map(([role, bucket]) => {
-    const completionRate = bucket.assignments ? bucket.completed / bucket.assignments : 0;
-    const confidence = bucket.assignments ? bucket.confidence / bucket.assignments : 0;
-    const evidenceRate = bucket.assignments ? Math.min(1, bucket.evidenceAnchors / (bucket.assignments * 2)) : 0;
-    const processRate = bucket.assignments ? (bucket.processPasses + bucket.processWarnings * 0.5) / bucket.assignments : 0;
+    const completionRate = bucket.weightedAssignments ? bucket.weightedCompleted / bucket.weightedAssignments : 0;
+    const confidence = bucket.weightedAssignments ? bucket.weightedConfidence / bucket.weightedAssignments : 0;
+    const evidenceRate = bucket.weightedAssignments ? Math.min(1, bucket.weightedEvidenceAnchors / (bucket.weightedAssignments * 2)) : 0;
+    const processRate = bucket.weightedAssignments ? (bucket.weightedProcessPasses + bucket.weightedProcessWarnings * 0.5) / bucket.weightedAssignments : 0;
     const playbookChecks = bucket.playbookPasses + bucket.playbookPartials + bucket.playbookBlocks;
-    const playbookRate = playbookChecks ? (bucket.playbookPasses + bucket.playbookPartials * 0.5) / playbookChecks : 1;
+    const weightedPlaybookChecks = bucket.weightedPlaybookPasses + bucket.weightedPlaybookPartials + bucket.weightedPlaybookBlocks;
+    const playbookRate = playbookChecks && weightedPlaybookChecks ? (bucket.weightedPlaybookPasses + bucket.weightedPlaybookPartials * 0.5) / weightedPlaybookChecks : 1;
     const score = Math.round((completionRate * 0.25 + confidence * 0.15 + evidenceRate * 0.2 + processRate * 0.25 + playbookRate * 0.15) * 1000) / 1000;
     return {
       role,
-      ...bucket,
+      assignments: bucket.assignments,
+      completed: bucket.completed,
+      failed: bucket.failed,
+      evidenceAnchors: bucket.evidenceAnchors,
+      processPasses: bucket.processPasses,
+      processWarnings: bucket.processWarnings,
+      processFailures: bucket.processFailures,
+      playbookPasses: bucket.playbookPasses,
+      playbookPartials: bucket.playbookPartials,
+      playbookBlocks: bucket.playbookBlocks,
       confidence: Math.round(confidence * 1000) / 1000,
       playbookRate: Math.round(playbookRate * 1000) / 1000,
       score,

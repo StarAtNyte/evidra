@@ -505,7 +505,9 @@ independent durable observation.
 Role memory is recency-aware: the next lane prompt receives the newest bounded
 historical observations first, while still labeling them as context rather
 than evidence. This prevents obsolete failures or methods from dominating a
-long-running campaign.
+long-running campaign. Role-review scores use the same bounded recency signal;
+raw assignment and failure counts remain visible, and historical failures
+still prevent an ungrounded role from being promoted silently.
 
 `/queue status` includes the durable `research.lane` tickets while specialists
 run. If a worker stops heartbeating, the next controller marks its ticket
