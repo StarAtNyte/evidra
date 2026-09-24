@@ -104,6 +104,10 @@ provides the native heartbeat loop; it polls due routines sequentially and
 recovers expired runner leases. Expired leases are recoverable, so a machine
 restart does not strand a routine.
 
+If a matching event arrives while a routine is already running, Evidra records
+one coalesced pending trigger and schedules the follow-up immediately after the
+current run. It never starts concurrent runs for the same routine.
+
 External integrations can wake a routine without writing directly to Evidra's
 database. Only the `external.<source>.<event>` namespace is accepted, and the
 payload is stored as a redacted wake-up signal rather than research evidence:

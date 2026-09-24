@@ -3489,7 +3489,12 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     const forced = store.claimRoutine("routine-demo", "runner-force", 60_000, new Date(), true);
     assert.equal(forced?.status, "running");
     assert.equal(store.recentEvents(4).some((event) => event.type === "routine.claimed" && event.payload?.forced === true), true);
-    store.finishRoutine("routine-demo", "runner-force", "completed");
+    assert.deepEqual(store.triggerRoutines("research.test", new Date(Date.now() + 2_000).toISOString()), [routine.id]);
+    assert.equal(store.routine("routine-demo")?.pendingTriggers, 1);
+    const forcedFinished = store.finishRoutine("routine-demo", "runner-force", "completed");
+    assert.equal(forcedFinished.pendingTriggers, 0);
+    assert.ok(Date.parse(forcedFinished.nextRunAt) <= Date.now() + 1_000);
+    assert.equal(store.recentEvents(8).some((event) => event.type === "routine.trigger_queued"), true);
     const stale = store.createRoutine({ ...routine, id: "routine-stale" });
     assert.equal(store.claimRoutine(stale.id, "runner-stale", -1)?.status, "running");
     assert.deepEqual(store.recoverStaleRoutines(), [stale.id]);
