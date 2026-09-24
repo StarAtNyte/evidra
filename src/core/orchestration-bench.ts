@@ -57,6 +57,12 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     store.updateTask("prerequisite", "completed");
     const dependent = store.claimNextTask(undefined, "worker-a");
     check("dependency-ordering", "A queued task waits for every prerequisite to complete.", !blockedBeforeParent && prerequisite?.id === "prerequisite" && dependent?.id === "dependent", { blockedBeforeParent: blockedBeforeParent?.id, prerequisite: prerequisite?.id, dependent: dependent?.id });
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    store.enqueueTask({ id: "aging-fresh", kind: "aging", priority: 2, payload: {} });
+    store.enqueueTask({ id: "aging-waiting", kind: "aging", priority: 1, payload: {}, availableAt: twoHoursAgo });
+    const aged = store.claimNextTask(["aging"], "worker-a");
+    check("queue-starvation-prevention", "Bounded priority aging gives long-waiting background work a turn without removing explicit priority.", aged?.id === "aging-waiting", { selected: aged?.id });
+    if (aged) store.updateTask(aged.id, "completed");
 
     store.releaseAgentLane("model researcher", "worker-a");
     const stale = store.acquireAgentLane({ role: "validation scientist", leaseId: "worker-stale", provider: "local", model: "bench" });

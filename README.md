@@ -462,7 +462,7 @@ curl -fsS -H "$AUTH" "${WORKER_HEADERS[@]}" -H 'content-type: application/json' 
 - Codex-backed experiment engineers honor the configured entitlement policy: they switch to an installed local fallback in `auto`/`fallback` mode, or wait durably when `wait` is selected, instead of silently abandoning an authorized campaign;
 - shell and autonomy safety guards.
 - a deterministic six-lifecycle safety boundary benchmark (`evidra benchmark safety`) covering configuration, capability extension, runtime, persistence, action control, and recovery;
-- a deterministic orchestration benchmark (`evidra benchmark orchestration`) covering duplicate lane prevention, lease ownership, queue ownership, dependency ordering, stale recovery, and per-lane budget accounting;
+- a deterministic orchestration benchmark (`evidra benchmark orchestration`) covering duplicate lane prevention, lease ownership, queue ownership, dependency ordering, starvation prevention, stale recovery, and per-lane budget accounting;
 - a deterministic agent-governance benchmark (`evidra benchmark governance`) covering role-contract completeness, tool authority boundaries, pause/resume controls, scoped handoff isolation, durable handoff auditability, and recovery approval boundaries;
 - durable external-action intents that reserve submissions before invocation, refuse restart-time replay, and require explicit `evidra submission reconcile <bundle> --status submitted|not-submitted` after an ambiguous crash;
 - integrity-bound campaign runtime policy: resume verifies provider, model, thinking effort, lanes, autonomy, usage-limit policy, and executor before continuing;
