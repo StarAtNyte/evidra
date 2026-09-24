@@ -435,6 +435,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     activeProcesses.current.add(control);
     activeProcess.current = control;
   };
+  const clearActiveProcess = (): void => {
+    if (activeProcess.current) activeProcesses.current.delete(activeProcess.current);
+    activeProcess.current = null;
+  };
   const persistAgentUsage = (usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningOutputTokens?: number } | undefined, provider: string, model: string, role: string): void => {
     const usageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     usageStore.appendEvent("research.agent.usage", { role, provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, cacheWriteInputTokens: usage?.cacheWriteInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens, sessionId: sessionId.current });
@@ -443,7 +447,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const terminateActiveProcesses = (): void => {
     for (const control of activeProcesses.current) control.terminate();
     activeProcess.current?.terminate();
-    activeProcess.current = null;
+    clearActiveProcess();
   };
   const pauseActiveProcesses = (): void => {
     for (const control of activeProcesses.current) control.pause();
@@ -923,7 +927,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           },
           registerProcess,
         );
-        activeProcess.current = null;
+        clearActiveProcess();
         const baselineStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
         const parsed = parseMetricOutput(baseline.stdout, adapter.config.metric.name);
         const metric = parsed.metrics[adapter.config.metric.name] ?? null;
@@ -1333,7 +1337,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         auditStore.appendEvent("research.semantic_audit.gated", { verdict: semanticAudit.verdict, findings: semanticAudit.findings, requiredChecks: semanticAudit.requiredChecks });
         auditStore.close();
       }
-      activeProcess.current = null;
+      clearActiveProcess();
       activeSteer.current = null;
       const completedLane = new ResearchStore(join(root, ".sota", "database.sqlite"));
       completedLane.updateAgentLane({ role: "research director", status: "idle", provider: config.provider, model: config.model, task: null });
@@ -1751,7 +1755,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         () => runReducedValidation(executor, manifest, experimentCwd, smokeCommand, primaryMetricName, registerProcess),
         { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, stage: "smoke", executor: manifest.resources.executor },
       );
-      activeProcess.current = null;
+      clearActiveProcess();
       executionPlan = advanceExecutionStage(executionPlan, "smoke", smoke.status === "completed" ? "completed" : "failed");
       const smokeStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
       smokeStore.appendEvent(smoke.status === "completed" ? "experiment.stage.smoke.completed" : "experiment.stage.smoke.failed", { experimentId: id, runId: smoke.runId, metric: smoke.metrics[primaryMetricName] ?? null, exitCode: smoke.exitCode, command: smokeCommand });
@@ -1776,7 +1780,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         () => runReducedValidation(executor, manifest, experimentCwd, reducedCommand, primaryMetricName, registerProcess),
         { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, stage: "reduced_validation", executor: manifest.resources.executor },
       );
-      activeProcess.current = null;
+      clearActiveProcess();
       executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", reduced.status === "completed" ? "completed" : "failed");
       const reducedStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
       reducedStore.appendEvent(reduced.status === "completed" ? "experiment.stage.reduced_validation.completed" : "experiment.stage.reduced_validation.failed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[primaryMetricName] ?? null, exitCode: reduced.exitCode, command: reducedCommand });
@@ -1846,7 +1850,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       routeStore.appendEvent("experiment.recovery.route_changed", { experimentId: id, runId: result.runId, attempts: attempt, ...route });
       routeStore.close();
     }
-    activeProcess.current = null;
+    clearActiveProcess();
     const evaluatorCommand = isCandidateEvaluation ? command : adapter.config.evaluator.command;
     const sameCommand = evaluatorCommand.length === command.length && evaluatorCommand.every((part, index) => part === command[index]);
     if (result.status === "completed" && !sameCommand) {
@@ -1877,7 +1881,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         await new Promise<void>((resolve) => setTimeout(resolve, delay * 1000));
         evaluatorAttempt += 1;
       }
-      activeProcess.current = null;
+      clearActiveProcess();
       evaluatorOutput = { stdout: evaluated.stdout, stderr: evaluated.stderr, exitCode: evaluated.exitCode };
       const metrics = parseMetricOutput(evaluated.stdout, primaryMetricName);
       result = {
@@ -1922,7 +1926,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           await new Promise<void>((resolve) => setTimeout(resolve, delay * 1000));
           verifierAttempt += 1;
         }
-        activeProcess.current = null;
+        clearActiveProcess();
         verificationOutputs.push({ command: verificationCommand, stdout: checked.stdout, stderr: checked.stderr, exitCode: checked.exitCode });
         const verificationStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
         verificationStore.appendEvent(checked.exitCode === 0 ? "experiment.verification.completed" : "experiment.verification.failed", { experimentId: id, runId: result.runId, verifierIndex: verificationOutputs.length, command: verificationCommand, exitCode: checked.exitCode, stdout: redactSecrets(checked.stdout.slice(-4000)), stderr: redactSecrets(checked.stderr.slice(-4000)) });
@@ -2063,7 +2067,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const metricName = primaryMetricName;
     return `\n\nExperiment ${id} ${recordedResult.status}\nRun: ${recordedResult.runId}\nExit code: ${recordedResult.exitCode}\nDuration: ${recordedResult.durationSeconds.toFixed(1)}s\nMetric (${metricName}): ${recordedResult.metrics[metricName] ?? "not parsed"}\nArtifacts: ${Object.keys(recordedResult.artifacts).join(", ")}\nFailure: ${recordedResult.failureClass ?? "none"}`;
     } catch (error) {
-      activeProcess.current = null;
+      clearActiveProcess();
       activeSteer.current = null;
       const message = error instanceof Error ? error.message : String(error);
       const failedStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -2830,7 +2834,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           }, registerProcess);
           appendTool(`Routine ${id} finished with exit code ${result.exitCode}.\n${result.stdout.trim().slice(-3000) || result.stderr.trim().slice(-3000) || "(no output)"}`);
         } catch (error) { appendError(error); }
-        finally { activeProcess.current = null; setBusy(false); setProgress(""); }
+        finally { clearActiveProcess(); setBusy(false); setProgress(""); }
         return;
       }
       if (action === "daemon") {
@@ -2845,7 +2849,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           }, registerProcess);
           appendTool(`Routine daemon stopped with exit code ${result.exitCode}.\n${result.stdout.trim().slice(-3000) || result.stderr.trim().slice(-3000) || "(no output)"}`);
         } catch (error) { appendError(error); }
-        finally { activeProcess.current = null; setBusy(false); setProgress(""); }
+        finally { clearActiveProcess(); setBusy(false); setProgress(""); }
         return;
       }
       store.close();
@@ -3051,7 +3055,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const output = [result.stdout.trim(), result.stderr.trim() ? `stderr:\n${result.stderr.trim()}` : ""].filter(Boolean).join("\n");
         appendTool(`Command exited ${result.exitCode} in ${(result.durationMs / 1000).toFixed(1)}s\n$ ${rawCommand}\n${output || "(no output)"}`);
       } catch (error) { appendError(error); }
-      finally { activeProcess.current = null; setBusy(false); setProgress(""); }
+      finally { clearActiveProcess(); setBusy(false); setProgress(""); }
       return;
     }
     if (request === "/project" || request === "/project status" || request === "/project inspect") {
@@ -3673,7 +3677,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           store.appendEvent("submission.external.submitted", { id: bundleId, platform: attempt.receipt.platform, predictionFile: attempt.receipt.predictionFile, submittedAt: attempt.receipt.submittedAt });
           append("assistant", `Submission ${bundleId} submitted via ${attempt.receipt.platform}\n${attempt.receipt.stdout.trim()}`);
         } catch (error) { appendError(error); }
-        finally { activeProcess.current = null; store.close(); setBusy(false); setProgress(""); }
+        finally { clearActiveProcess(); store.close(); setBusy(false); setProgress(""); }
         return;
       }
       if (action === "poll") {
@@ -3698,7 +3702,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           }
           append("assistant", `Polled ${observation.platform} score ${observation.score} for ${bundleId}.`);
         } catch (error) { appendError(error); }
-        finally { activeProcess.current = null; store.close(); setBusy(false); setProgress(""); }
+        finally { clearActiveProcess(); store.close(); setBusy(false); setProgress(""); }
         return;
       }
       if (action === "record") {
@@ -3976,7 +3980,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const output = [result.stdout.trim(), result.stderr.trim() ? `stderr:\n${result.stderr.trim()}` : ""].filter(Boolean).join("\n");
         appendTool(`Command exited ${result.exitCode} in ${(result.durationMs / 1000).toFixed(1)}s\n$ ${command.join(" ")}\n${output || "(no output)"}`);
       } catch (error) { appendError(error); }
-      finally { activeProcess.current = null; setBusy(false); setProgress(""); }
+      finally { clearActiveProcess(); setBusy(false); setProgress(""); }
       return;
     }
     if (["/research status", "/research start", "/research pause", "/research stop"].includes(request)) {
