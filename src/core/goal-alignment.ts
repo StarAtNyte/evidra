@@ -1,4 +1,5 @@
 import type { ResearchStore } from "./store.js";
+import { phaseGoalSetId } from "./phase-goals.js";
 
 export type GoalAlignmentCheck = {
   id: string;
@@ -15,13 +16,14 @@ export type GoalAlignmentReport = {
   checks: GoalAlignmentCheck[];
 };
 
-function campaignGoal(store: ResearchStore): { goal: string | null; running: boolean } {
+function campaignGoal(store: ResearchStore): { goal: string | null; running: boolean; mode: "research" | "challenge" } {
   const campaign = store.campaign();
-  if (!campaign || typeof campaign !== "object") return { goal: null, running: false };
-  const value = campaign as { goal?: unknown; status?: unknown };
+  if (!campaign || typeof campaign !== "object") return { goal: null, running: false, mode: "research" };
+  const value = campaign as { goal?: unknown; status?: unknown; runtime?: { mode?: unknown } };
   return {
     goal: typeof value.goal === "string" && value.goal.trim() ? value.goal.trim() : null,
     running: value.status === "running",
+    mode: value.runtime?.mode === "challenge" ? "challenge" : "research",
   };
 }
 
@@ -30,10 +32,17 @@ export function goalAlignment(store: ResearchStore): GoalAlignmentReport {
   const campaign = campaignGoal(store);
   const phases = store.phaseGoals();
   const active = phases.find((phase) => phase.status === "active") ?? null;
-  const phaseIds = new Set(phases.map((phase) => phase.id));
+  const activeGoalSetId = campaign.goal ? phaseGoalSetId(campaign.goal, campaign.mode) : null;
   const tasks = store.queueTasks();
   const liveTasks = tasks.filter((task) => task.status === "queued" || task.status === "running");
-  const orphanedTasks = liveTasks.filter((task) => task.goalId !== null && !phaseIds.has(task.goalId));
+  const phaseById = new Map(phases.map((phase) => [phase.id, phase]));
+  const orphanedTasks = liveTasks.filter((task) => {
+    if (task.goalId === null) return false;
+    const phase = phaseById.get(task.goalId);
+    if (!phase) return true;
+    const payload = phase.payload && typeof phase.payload === "object" ? phase.payload as { goalSetId?: unknown } : {};
+    return activeGoalSetId !== null && typeof payload.goalSetId === "string" && payload.goalSetId !== activeGoalSetId;
+  });
   const runningWithoutTask = store.agentLanes().filter((lane) => lane.status === "running" && !lane.task?.trim());
   const checks: GoalAlignmentCheck[] = [
     {
@@ -51,7 +60,7 @@ export function goalAlignment(store: ResearchStore): GoalAlignmentReport {
     {
       id: "queue-lineage",
       status: orphanedTasks.length ? "blocked" : "pass",
-      detail: orphanedTasks.length ? `${orphanedTasks.length} live queue task(s) reference a missing phase goal.` : "Every goal-linked live queue task resolves to a phase goal.",
+      detail: orphanedTasks.length ? `${orphanedTasks.length} live queue task(s) reference a missing or foreign campaign phase goal.` : "Every goal-linked live queue task resolves to the active campaign phase set.",
       count: orphanedTasks.length,
     },
     {

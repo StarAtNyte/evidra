@@ -395,6 +395,11 @@ phase goals, and whether running agent lanes have assigned work. A blocked
 alignment check is a control-plane issue to resolve before trusting autonomous
 progress; the read-only dashboard shows the same report.
 
+Queue lineage is checked against the active campaign's deterministic objective
+and mode identity as well as the phase ID. A task from an older or different
+campaign is therefore reported as foreign work instead of being treated as
+valid merely because its phase record still exists.
+
 The dashboard also presents Evidra's agent organization. The research director
 coordinates specialist lanes; validation and critic roles protect evidence;
 execution roles are responsible for isolated runs; and repair roles change the

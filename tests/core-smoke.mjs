@@ -594,6 +594,9 @@ test("goal alignment traces live work to a durable campaign phase", () => {
     assert.equal(drifted.checks.find((check) => check.id === "queue-lineage")?.count, 1);
     store.updateTask("orphan", "completed");
     assert.notEqual(goalAlignment(store).status, "blocked");
+    store.savePhaseGoal({ id: "foreign-phase", phase: "validation", status: "pending", payload: { id: "foreign-phase", phase: "validation", goalSetId: "old-campaign" } });
+    store.enqueueTask({ id: "foreign", kind: "research.cycle", priority: 1, payload: {}, goalId: "foreign-phase" });
+    assert.equal(goalAlignment(store).status, "blocked");
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

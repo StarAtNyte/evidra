@@ -308,6 +308,7 @@ Implemented today:
 - TUI-first routine authoring: `/routine create` guides the operator through a reusable goal, cadence, and per-run budget while inheriting the selected provider policy;
 - unified approval inbox: `/approvals` and the dashboard collect pending experiment approvals, prepared submissions, and unresolved external actions without bypassing any existing gate;
 - goal-alignment audit: `/status` and the dashboard verify that running campaigns have an objective and active phase, that live queue work resolves to phase goals, and that leased lanes have assigned work;
+- campaign lineage isolation: goal alignment also rejects live work from a different deterministic objective/mode goal set, preventing resumed or concurrent research campaigns from silently sharing queue ownership;
 - atomic research-lane leases with heartbeats, duplicate-specialist protection, and restart-time stale-lane recovery;
 - explicit agent organization: director, specialist, validation, execution, critic, auditor, and repair roles have durable reporting lines, authority boundaries, and responsibility contracts visible in the dashboard and injected into lane prompts;
 - role performance reviews: durable lane reports are scored for completion, evidence density, confidence, and process quality; the review is fed into the next research context and never pretends to attribute the final task metric to one agent;
