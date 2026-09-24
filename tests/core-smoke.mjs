@@ -691,6 +691,10 @@ test("agent organization gives every lane a responsibility and reporting line", 
     const duplicateCoaching = store.enqueueAgentDirectiveOnce("validation scientist", "change the route", "phase-beta");
     assert.equal(duplicateCoaching.id, firstCoaching.id);
     assert.equal(store.pendingAgentDirectives("validation scientist", "phase-beta").length, 1);
+    assert.equal(store.cancelAgentDirective(firstCoaching.id, "superseded by a newer review"), true);
+    assert.equal(store.pendingAgentDirectives("validation scientist", "phase-beta").length, 0);
+    assert.match(store.agentDirectives("validation scientist").find((entry) => entry.id === firstCoaching.id)?.cancelledAt ?? "", /T/);
+    assert.equal(store.cancelAgentDirective(firstCoaching.id), false);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

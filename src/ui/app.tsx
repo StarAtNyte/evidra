@@ -246,7 +246,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/event": [["/event emit ", "Emit an external wake-up event"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
-  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents dispatch", "Show the latest lane dispatch plan"], ["/agents evaluate", "Evaluate roles and generate coaching"], ["/agents evaluate apply", "Apply coaching as durable role directives"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents restart ", "Reset a failed or blocked specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
+  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents dispatch", "Show the latest lane dispatch plan"], ["/agents evaluate", "Evaluate roles and generate coaching"], ["/agents evaluate apply", "Apply coaching as durable role directives"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents cancel ", "Cancel a pending specialist directive"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents restart ", "Reset a failed or blocked specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
   "/limits": [["/limits auto", "Use local fallback, then wait"], ["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Require local fallback"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
@@ -3732,8 +3732,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const directives = store.agentDirectives(directivesAgentMatch[1]?.trim());
       store.close();
       append("assistant", directives.length
-        ? `Agent directives${directivesAgentMatch[1] ? ` · ${directivesAgentMatch[1].trim()}` : ""}\n${directives.map((directive) => `  ${directive.appliedAt ? "✓" : "○"} #${directive.id} · ${directive.role} · ${directive.createdAt} · ${directive.scopeKey ? `scope ${directive.scopeKey}` : "global"}\n    ${directive.message}${directive.appliedAt ? `\n    applied: ${directive.appliedAt}` : ""}`).join("\n")}`
+        ? `Agent directives${directivesAgentMatch[1] ? ` · ${directivesAgentMatch[1].trim()}` : ""}\n${directives.map((directive) => `  ${directive.cancelledAt ? "×" : directive.appliedAt ? "✓" : "○"} #${directive.id} · ${directive.role} · ${directive.createdAt} · ${directive.scopeKey ? `scope ${directive.scopeKey}` : "global"}\n    ${directive.message}${directive.appliedAt ? `\n    applied: ${directive.appliedAt}` : ""}${directive.cancelledAt ? `\n    cancelled: ${directive.cancelledAt}` : ""}`).join("\n")}`
         : `No directives recorded${directivesAgentMatch[1] ? ` for ${directivesAgentMatch[1].trim()}` : ""}.`);
+      return;
+    }
+    const cancelDirectiveMatch = request.match(/^\/agents\s+cancel\s+(\d+)$/i);
+    if (cancelDirectiveMatch) {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const id = Number.parseInt(cancelDirectiveMatch[1], 10);
+      const cancelled = store.cancelAgentDirective(id);
+      store.close();
+      append("assistant", cancelled ? `Directive #${id} cancelled before delivery.` : `Directive #${id} is missing, already applied, or already cancelled.`);
       return;
     }
     if (request === "/agents reviews") {

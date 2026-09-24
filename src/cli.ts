@@ -884,8 +884,17 @@ agents.command("directives [role]").description("Show durable specialist handoff
   const store = new ResearchStore(statePath);
   const directives = store.agentDirectives(role);
   if (!directives.length) console.log(role ? `No directives recorded for ${role}.` : "No specialist directives recorded.");
-  else console.log(directives.map((directive) => `${directive.appliedAt ? "applied" : "pending"}  #${directive.id}  ${directive.role}  ${directive.createdAt}${directive.scopeKey ? `  scope:${directive.scopeKey}` : "  global"}\n  ${directive.message}${directive.appliedAt ? `\n  applied: ${directive.appliedAt}` : ""}`).join("\n"));
+  else console.log(directives.map((directive) => `${directive.cancelledAt ? "cancelled" : directive.appliedAt ? "applied" : "pending"}  #${directive.id}  ${directive.role}  ${directive.createdAt}${directive.scopeKey ? `  scope:${directive.scopeKey}` : "  global"}\n  ${directive.message}${directive.appliedAt ? `\n  applied: ${directive.appliedAt}` : ""}${directive.cancelledAt ? `\n  cancelled: ${directive.cancelledAt}` : ""}`).join("\n"));
   store.close();
+});
+agents.command("cancel <directiveId>").description("Cancel one pending specialist directive before delivery").action((directiveId: string) => {
+  const id = Number.parseInt(directiveId, 10);
+  if (!Number.isInteger(id) || id < 1) throw new Error("Directive ID must be a positive integer.");
+  const store = new ResearchStore(statePath);
+  const cancelled = store.cancelAgentDirective(id);
+  store.close();
+  if (!cancelled) throw new Error(`Directive #${id} is missing, already applied, or already cancelled.`);
+  console.log(`Directive #${id} cancelled.`);
 });
 agents.command("dispatch").description("Show the latest durable research-lane dispatch plan").option("--json", "emit the dispatch plan as JSON").action((options: { json?: boolean }) => {
   const store = new ResearchStore(statePath);
