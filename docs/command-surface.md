@@ -216,10 +216,10 @@ Authenticated external workers may also participate in the durable queue:
 
 ```text
 POST /tasks/claim     {"workerId":"agent-17","kinds":["research.lane"]}
-POST /tasks/heartbeat {"workerId":"agent-17","taskId":"task-123"}
-POST /tasks/activity  {"workerId":"agent-17","taskId":"task-123","kind":"progress","message":"..."}
-POST /tasks/usage     {"workerId":"agent-17","taskId":"task-123","inputTokens":1200,"outputTokens":300,"costUsd":0.02,"provider":"codex","model":"gpt-5","idempotencyKey":"turn-42"}
-POST /tasks/complete  {"workerId":"agent-17","taskId":"task-123","status":"completed","payload":{"summary":"..."}}
+POST /tasks/heartbeat {"workerId":"agent-17","taskId":"task-123","claimToken":"<token from claim>"}
+POST /tasks/activity  {"workerId":"agent-17","taskId":"task-123","claimToken":"<token>","kind":"progress","message":"..."}
+POST /tasks/usage     {"workerId":"agent-17","taskId":"task-123","claimToken":"<token>","inputTokens":1200,"outputTokens":300,"costUsd":0.02,"provider":"codex","model":"gpt-5","idempotencyKey":"turn-42"}
+POST /tasks/complete  {"workerId":"agent-17","taskId":"task-123","claimToken":"<token>","status":"completed","payload":{"summary":"..."}}
 ```
 
 Claim, heartbeat, and completion all enforce the queue owner. A stale or foreign

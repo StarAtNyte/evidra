@@ -342,11 +342,12 @@ TASK_RESPONSE=$(curl -fsS -H "$AUTH" -H 'content-type: application/json' \
   "${WORKER_HEADERS[@]}" \
   -d '{"workerId":"agent-17","kinds":["research.lane"]}' "$BASE/tasks/claim")
 TASK_ID=$(printf '%s' "$TASK_RESPONSE" | jq -r '.task.id')
-# Send heartbeats while work runs, then complete only with the same worker ID.
+CLAIM_TOKEN=$(printf '%s' "$TASK_RESPONSE" | jq -r '.task.claimToken')
+# Send heartbeats while work runs, then complete with the same worker ID and claim token.
 curl -fsS -H "$AUTH" "${WORKER_HEADERS[@]}" -H 'content-type: application/json' \
-  -d "{\"workerId\":\"$WORKER_ID\",\"taskId\":\"$TASK_ID\"}" "$BASE/tasks/heartbeat"
+  -d "{\"workerId\":\"$WORKER_ID\",\"taskId\":\"$TASK_ID\",\"claimToken\":\"$CLAIM_TOKEN\"}" "$BASE/tasks/heartbeat"
 curl -fsS -H "$AUTH" "${WORKER_HEADERS[@]}" -H 'content-type: application/json' \
-  -d "{\"workerId\":\"$WORKER_ID\",\"taskId\":\"$TASK_ID\",\"status\":\"completed\",\"payload\":{\"summary\":\"done\"}}" "$BASE/tasks/complete"
+  -d "{\"workerId\":\"$WORKER_ID\",\"taskId\":\"$TASK_ID\",\"claimToken\":\"$CLAIM_TOKEN\",\"status\":\"completed\",\"payload\":{\"summary\":\"done\"}}" "$BASE/tasks/complete"
 ```
 
 For multiple workers, add independent credentials and scopes. A worker with no
