@@ -1204,6 +1204,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
             researchMemory,
             peerLaneBoard: crossPollination,
             priorLaneReports: initialLaneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
+            agentRoleReviews,
           },
           {
             provider: config.provider,
@@ -1247,6 +1248,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         researchMemory,
         laneReports,
         crossPollination,
+        agentRoleReviews,
         adaptiveHarnessPolicy: adaptiveHarness,
         harnessChangeHistory,
         constraints: { no_submission: true, no_file_edits: true },
