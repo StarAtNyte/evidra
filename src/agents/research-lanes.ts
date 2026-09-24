@@ -337,6 +337,13 @@ export interface ResearchLaneSelectionOptions {
   customRoles?: readonly string[];
 }
 
+/** Return only durable custom contracts that have passed operator admission. */
+export function admittedCustomResearchRoles(store: Pick<ResearchStore, "agentRoleContracts" | "agentRoleAdmitted">): string[] {
+  return store.agentRoleContracts()
+    .filter((contract) => !isBuiltInAgentRole(contract.role) && store.agentRoleAdmitted(contract.role))
+    .map((contract) => contract.role);
+}
+
 export function selectResearchLaneRoles(objective: string, requested: number, options: ResearchLaneSelectionOptions = {}): ResearchLaneRole[] {
   const mlOrCompetition = /\b(dataset|training|train|model|estimator|competition|leaderboard|metric|fold|gpu|prediction|baseline)\b/i.test(objective);
   const builtInPool = mlOrCompetition ? RESEARCH_LANE_ROLES : GENERAL_RESEARCH_LANE_ROLES;
@@ -1138,9 +1145,7 @@ export async function runResearchLanes(objective: string, context: Record<string
   const mayUseLocalFallback = options.provider === "local"
     || Boolean(options.fallbackLocalModel && (options.limitPolicy === "auto" || options.limitPolicy === "fallback"));
   const memoryStore = new ResearchStore(options.storePath);
-  const persistedCustomRoles = memoryStore.agentRoleContracts()
-    .filter((contract) => !isBuiltInAgentRole(contract.role) && memoryStore.agentRoleAdmitted(contract.role))
-    .map((contract) => contract.role);
+  const persistedCustomRoles = admittedCustomResearchRoles(memoryStore);
   const requestedCustomRoles = options.customRoles ?? persistedCustomRoles;
   const rejectedCustomRoles = [...new Set((options.customRoles ?? []).map((role) => role.trim()).filter(Boolean))]
     .filter((role) => !isBuiltInAgentRole(role) && !memoryStore.agentRoleAdmitted(role));

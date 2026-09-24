@@ -5,6 +5,7 @@ import { agentOrganization, agentToolPermission, AGENT_ROLE_CONTRACTS } from "./
 import { ResearchStore } from "./store.js";
 import { approvalInbox } from "./approvals.js";
 import { activeExternalResearchTools, setExternalToolStatus } from "./external-tools.js";
+import { admittedCustomResearchRoles, selectResearchLaneRoles } from "../agents/research-lanes.js";
 
 export interface GovernanceProbe {
   id: string;
@@ -62,6 +63,21 @@ export function runGovernanceBenchmark(): GovernanceBenchmarkReport {
     const rejectedVisible = agentOrganization(store).find((role) => role.role === "external domain specialist")?.admission === "rejected";
     const rejectedPending = approvalInbox(store).some((item) => item.kind === "agent-role" && item.id === "external domain specialist");
     check("role-rejection-boundary", "Explicitly rejected custom roles stay visible as rejected, remain blocked, and leave the pending approval inbox.", !rejectedExecution.acquired && rejectedVisible && !rejectedPending, { rejectedExecution, rejectedVisible, rejectedPending });
+
+    store.setAgentRoleContract({
+      role: "geospatial specialist",
+      parentRole: "validation scientist",
+      responsibility: "audit spatial coverage and propose leakage-safe geographic tests",
+      authority: "validate",
+      reviewRequired: true,
+      playbook: ["inspect coordinate provenance", "test spatial split stability"],
+    }, "governance benchmark contract");
+    const beforeAdmission = admittedCustomResearchRoles(store);
+    store.setAgentRoleAdmission("geospatial specialist", true, "governance benchmark approval");
+    const afterAdmission = admittedCustomResearchRoles(store);
+    const selectedCustomRole = selectResearchLaneRoles("research a spatial dataset", 6, { customRoles: afterAdmission }).includes("geospatial specialist");
+    const customValidateShell = agentToolPermission("geospatial specialist", "shell.exec", true, store.agentRoleContract("geospatial specialist"));
+    check("approved-custom-lane-dispatch", "An admitted durable contract enters lane selection, while an unadmitted contract does not.", !beforeAdmission.includes("geospatial specialist") && afterAdmission.includes("geospatial specialist") && selectedCustomRole && !customValidateShell.allowed, { beforeAdmission, afterAdmission, selectedCustomRole, customValidateShell });
 
     const directorShell = agentToolPermission("research director", "shell.exec");
     const engineerShell = agentToolPermission("experiment engineer", "shell.exec");
