@@ -993,6 +993,13 @@ export class ResearchStore {
     return transaction;
   }
 
+  pendingAgentDirectives(role?: string): AgentDirective[] {
+    const rows = (role
+      ? this.db.prepare("SELECT id, role, message, created_at, applied_at FROM agent_directives WHERE role = ? AND applied_at IS NULL ORDER BY id ASC").all(role)
+      : this.db.prepare("SELECT id, role, message, created_at, applied_at FROM agent_directives WHERE applied_at IS NULL ORDER BY id ASC").all()) as Array<{ id: number; role: string; message: string; created_at: string; applied_at: string | null }>;
+    return rows.map((row) => ({ id: row.id, role: row.role, message: row.message, createdAt: row.created_at, appliedAt: row.applied_at }));
+  }
+
   releaseControllerLease(controllerId: string, status: "released" | "stale" = "released"): boolean {
     const now = new Date().toISOString();
     const result = this.db.prepare("UPDATE controller_leases SET status = ?, requested_action = NULL, updated_at = ? WHERE id = 1 AND controller_id = ? AND status = 'running'").run(status, now, controllerId);

@@ -737,6 +737,7 @@ const agents = program.command("agents")
       ...agent,
       review: reviewByRole.get(agent.role) ?? null,
       control: pauseByRole.get(agent.role) ?? null,
+      pendingDirectives: store.pendingAgentDirectives(agent.role).length,
     }));
     const output = {
       campaign: campaign ?? null,
@@ -746,7 +747,7 @@ const agents = program.command("agents")
     if (options.json) {
       console.log(JSON.stringify(output, null, 2));
     } else {
-      console.log(organization.map((agent) => `${agent.control?.paused ? "paused" : agent.status.padEnd(8)} ${agent.role} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`).join("\n") || "No agent roles recorded.");
+      console.log(organization.map((agent) => `${agent.control?.paused ? "paused" : agent.status.padEnd(8)} ${agent.role} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.pendingDirectives ? ` · ${agent.pendingDirectives} directive(s)` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`).join("\n") || "No agent roles recorded.");
       if (output.routes.length) console.log(`\nRoutes\n${output.routes.map((route) => `  ${route.role} · ${route.provider}/${route.model} · ${route.calls} calls · ${route.inputTokens + route.outputTokens} tokens`).join("\n")}`);
     }
     store.close();

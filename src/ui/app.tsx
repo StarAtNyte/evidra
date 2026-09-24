@@ -3616,11 +3616,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const lanes = store.agentLanes();
       const pauses = new Map(store.agentPauses().map((control) => [control.role, control]));
+      const pendingDirectives = new Map<string, number>(AGENT_ROLES.map((role) => [role, store.pendingAgentDirectives(role).length]));
       const campaign = store.campaign() as ResearchCampaign | undefined;
       const roleReviews = evaluateAgentRoles(store.trajectories(128));
       const attributedTokens = campaign ? campaignAgentTokens(store.eventsByType("research.agent.usage"), campaign.startedAt) : 0;
       store.close();
-      append("assistant", `Research agents\n  codex: ${codex || "not authenticated"}\n  local: ${local}\n  concurrency: 1 active director lane\n\n${lanes.length ? lanes.map((lane) => { const pause = pauses.get(lane.role); return `  ${pause?.paused ? "Ⅱ" : lane.status === "running" ? "●" : lane.status === "failed" ? "✗" : lane.status === "blocked" ? "!" : "○"} ${lane.role} · ${pause?.paused ? "paused" : lane.status} · ${lane.provider}/${lane.model}${pause?.reason ? ` · ${pause.reason}` : ""}${lane.task ? `\n    ${lane.task.slice(0, 120)}` : ""}`; }).join("\n") : "  No lanes initialized; start /research to initialize the project."}`);
+      append("assistant", `Research agents\n  codex: ${codex || "not authenticated"}\n  local: ${local}\n  concurrency: 1 active director lane\n\n${lanes.length ? lanes.map((lane) => { const pause = pauses.get(lane.role); const directives = pendingDirectives.get(lane.role) ?? 0; return `  ${pause?.paused ? "Ⅱ" : lane.status === "running" ? "●" : lane.status === "failed" ? "✗" : lane.status === "blocked" ? "!" : "○"} ${lane.role} · ${pause?.paused ? "paused" : lane.status} · ${lane.provider}/${lane.model}${directives ? ` · ${directives} directive(s)` : ""}${pause?.reason ? ` · ${pause.reason}` : ""}${lane.task ? `\n    ${lane.task.slice(0, 120)}` : ""}`; }).join("\n") : "  No lanes initialized; start /research to initialize the project."}`);
       if (roleReviews.length) append("assistant", `Role reviews\n${roleReviews.slice(0, 12).map((review) => `  ${review.role} · ${review.recommendation} · score ${(review.score * 100).toFixed(0)}% · ${review.assignments} assignment(s) · checks ${review.playbookPasses} pass/${review.playbookPartials} partial/${review.playbookBlocks} blocked`).join("\n")}`);
       if (campaign?.runtime?.agentTokenBudget) append("assistant", `Campaign agent budget\n  attributed: ${attributedTokens}\n  ceiling: ${campaign.runtime.agentTokenBudget}\n  remaining: ${Math.max(0, campaign.runtime.agentTokenBudget - attributedTokens)}`);
       return;

@@ -640,6 +640,7 @@ test("agent organization gives every lane a responsibility and reporting line", 
     assert.equal(store.acquireAgentLane({ role: "validation scientist", leaseId: "resumed-worker", provider: "local", model: "bench", task: "can start" }).acquired, true);
     store.releaseAgentLane("validation scientist", "resumed-worker");
     const directive = store.enqueueAgentDirective("validation scientist", "recheck the locked split before recommending promotion");
+    assert.equal(store.pendingAgentDirectives("validation scientist").length, 1);
     assert.equal(store.consumeAgentDirectives("model researcher").length, 0);
     assert.equal(store.consumeAgentDirectives("validation scientist")[0].message, directive.message);
     assert.equal(store.consumeAgentDirectives("validation scientist").length, 0);
