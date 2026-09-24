@@ -522,6 +522,8 @@ Useful commands:
     /integrity            Verify the durable event history for tampering/corruption
     /backup [path]        Create a consistent durable state backup
     /usage                Show durable activity, experiment time, and agent tokens
+    evidra agents         Inspect agent organization and role-health reviews
+    evidra agents --json  Export machine-readable agent health for automation
     /budget tokens <n>    Set the campaign agent-token ceiling (`0` = unlimited)
     /research             Start or run an evidence-gathering cycle
     /research start       Start a fully autonomous research campaign

@@ -112,6 +112,7 @@ import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.j
 import { approvalInbox } from "./core/approvals.js";
 import { formatGoalAlignment, goalAlignment } from "./core/goal-alignment.js";
 import { evaluateAgentRoles } from "./core/agent-evals.js";
+import { agentOrganization } from "./core/agent-organization.js";
 
 const PHASE_GATE_EVENT_TYPES = [
   "research.observation", "project.created", "baseline.completed", "data.audit.completed", "data.audit.accepted",
@@ -721,6 +722,32 @@ for (const action of ["status", "pause", "resume", "stop"] as const) {
   controller.command(action).description(`${action[0].toUpperCase()}${action.slice(1)} the Modal controller`).action(() => invokeModalController(action));
 }
 program.addCommand(controller);
+
+program.command("agents")
+  .description("Show durable agent organization, leases, and role health")
+  .option("--json", "emit machine-readable agent health")
+  .action((options: { json?: boolean }) => {
+    const store = new ResearchStore(statePath);
+    const campaign = store.campaign() as { runtime?: { agentTokenBudget?: unknown }; startedAt?: unknown } | undefined;
+    const reviews = evaluateAgentRoles(store.trajectoryHistory());
+    const reviewByRole = new Map(reviews.map((review) => [review.role, review]));
+    const organization = agentOrganization(store).map((agent) => ({
+      ...agent,
+      review: reviewByRole.get(agent.role) ?? null,
+    }));
+    const output = {
+      campaign: campaign ?? null,
+      organization,
+      routes: summarizeAgentUsageBy(store.eventsByType("research.agent.usage")),
+    };
+    if (options.json) {
+      console.log(JSON.stringify(output, null, 2));
+    } else {
+      console.log(organization.map((agent) => `${agent.status.padEnd(8)} ${agent.role} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`).join("\n") || "No agent roles recorded.");
+      if (output.routes.length) console.log(`\nRoutes\n${output.routes.map((route) => `  ${route.role} · ${route.provider}/${route.model} · ${route.calls} calls · ${route.inputTokens + route.outputTokens} tokens`).join("\n")}`);
+    }
+    store.close();
+  });
 
 program.command("usage").description("Show research, experiment, and campaign usage").action(() => {
   const store = new ResearchStore(statePath);
