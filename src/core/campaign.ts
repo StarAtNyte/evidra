@@ -58,12 +58,37 @@ export interface CampaignRuntimeConfig {
   laneBudgetMinutes?: number;
   /** Optional aggregate model-token ceiling for one durable campaign; zero/unset means unlimited. */
   agentTokenBudget?: number;
+  /** Optional per-specialist token ceilings; role names are durable allocation keys. */
+  roleTokenBudgets?: Record<string, number>;
   autonomy: "safe" | "fast" | "yolo";
   limitPolicy: "auto" | "wait" | "fallback" | "stop";
   executor: ExperimentExecutorKind;
 }
 
 export type DurableCampaignRuntime = CampaignRuntimeConfig & { fingerprint: string };
+
+/** Parse durable per-role token ceilings from the CLI/TUI compact form. */
+export function parseRoleTokenBudgets(spec: string | undefined): Record<string, number> {
+  if (!spec?.trim()) return {};
+  const result: Record<string, number> = {};
+  for (const rawEntry of spec.split(",")) {
+    const entry = rawEntry.trim();
+    const separator = entry.lastIndexOf("=");
+    if (separator <= 0) throw new Error(`Invalid role token budget '${entry}'. Use role=tokens.`);
+    const role = entry.slice(0, separator).trim();
+    const budget = Number(entry.slice(separator + 1).trim());
+    if (!role || role.length > 120 || !Number.isInteger(budget) || budget <= 0) {
+      throw new Error(`Invalid role token budget '${entry}'. Use a role name and a positive integer.`);
+    }
+    result[role] = budget;
+  }
+  if (Object.keys(result).length > 32) throw new Error("At most 32 role token budgets may be configured.");
+  return result;
+}
+
+export function serializeRoleTokenBudgets(budgets?: Readonly<Record<string, number>>): string {
+  return Object.entries(budgets ?? {}).sort(([left], [right]) => left.localeCompare(right)).map(([role, budget]) => `${role}=${budget}`).join(",");
+}
 
 /** Resolve the durable campaign mode, falling back to legacy scheduler state. */
 export function resolveCampaignMode(campaignMode: unknown, schedulerMode: unknown): "research" | "challenge" {
@@ -82,6 +107,7 @@ export function campaignRuntimeFingerprint(runtime: CampaignRuntimeConfig): stri
     lanes: runtime.lanes,
     ...(runtime.laneBudgetMinutes !== undefined ? { laneBudgetMinutes: runtime.laneBudgetMinutes } : {}),
     ...(runtime.agentTokenBudget !== undefined ? { agentTokenBudget: runtime.agentTokenBudget } : {}),
+    ...(runtime.roleTokenBudgets ? { roleTokenBudgets: Object.fromEntries(Object.entries(runtime.roleTokenBudgets).sort(([left], [right]) => left.localeCompare(right))) } : {}),
     autonomy: runtime.autonomy,
     limitPolicy: runtime.limitPolicy,
     executor: runtime.executor,
@@ -101,6 +127,11 @@ export function readCampaignRuntime(value: unknown): CampaignRuntimeConfig | und
   if (typeof candidate.lanes !== "number" || !Number.isInteger(candidate.lanes) || candidate.lanes < 1 || candidate.lanes > 6) return undefined;
   if (candidate.laneBudgetMinutes !== undefined && (typeof candidate.laneBudgetMinutes !== "number" || !Number.isFinite(candidate.laneBudgetMinutes) || candidate.laneBudgetMinutes <= 0)) return undefined;
   if (candidate.agentTokenBudget !== undefined && (typeof candidate.agentTokenBudget !== "number" || !Number.isFinite(candidate.agentTokenBudget) || candidate.agentTokenBudget <= 0)) return undefined;
+  if (candidate.roleTokenBudgets !== undefined) {
+    if (!candidate.roleTokenBudgets || typeof candidate.roleTokenBudgets !== "object" || Array.isArray(candidate.roleTokenBudgets)) return undefined;
+    const entries = Object.entries(candidate.roleTokenBudgets as Record<string, unknown>);
+    if (entries.length > 32 || entries.some(([role, budget]) => !role.trim() || role.length > 120 || typeof budget !== "number" || !Number.isInteger(budget) || budget <= 0)) return undefined;
+  }
   if (!( ["safe", "fast", "yolo"] as const).includes(candidate.autonomy as "safe" | "fast" | "yolo")) return undefined;
   if (!( ["auto", "wait", "fallback", "stop"] as const).includes(candidate.limitPolicy as "auto" | "wait" | "fallback" | "stop")) return undefined;
   if (!( ["local", "container", "modal", "slurm"] as const).includes(candidate.executor as ExperimentExecutorKind)) return undefined;
@@ -113,6 +144,7 @@ export function readCampaignRuntime(value: unknown): CampaignRuntimeConfig | und
     lanes: candidate.lanes,
     ...(candidate.laneBudgetMinutes !== undefined ? { laneBudgetMinutes: candidate.laneBudgetMinutes } : {}),
     ...(candidate.agentTokenBudget !== undefined ? { agentTokenBudget: candidate.agentTokenBudget } : {}),
+    ...(candidate.roleTokenBudgets ? { roleTokenBudgets: Object.fromEntries(Object.entries(candidate.roleTokenBudgets as Record<string, number>).map(([role, budget]) => [role, budget])) } : {}),
     autonomy: candidate.autonomy as CampaignRuntimeConfig["autonomy"],
     limitPolicy: candidate.limitPolicy as CampaignRuntimeConfig["limitPolicy"],
     executor: candidate.executor as CampaignRuntimeConfig["executor"],

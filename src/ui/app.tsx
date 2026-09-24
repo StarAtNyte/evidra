@@ -24,7 +24,7 @@ import { compareRuns } from "../core/statistics.js";
 import { recoveryDelay, recoveryPlan, recoveryRouteDirective } from "../core/recovery.js";
 import { observedGpuHours } from "../core/compute-budget.js";
 import { distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../core/distribution-beliefs.js";
-import { bindCampaignRuntime, campaignElapsedMinutes, pauseCampaign, readCampaignCheckpoint, resolveCampaignMode, resumeCampaign, withCampaignCheckpoint, type CampaignRuntimeConfig } from "../core/campaign.js";
+import { bindCampaignRuntime, campaignElapsedMinutes, parseRoleTokenBudgets, pauseCampaign, readCampaignCheckpoint, resolveCampaignMode, resumeCampaign, serializeRoleTokenBudgets, withCampaignCheckpoint, type CampaignRuntimeConfig } from "../core/campaign.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../core/submissions.js";
 import { formatResearchStarterBriefs, selectResearchStarter } from "../core/research-starters.js";
 import { classifyResearchSetupInput } from "../core/research-setup.js";
@@ -218,6 +218,7 @@ const REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max", "ultra"] as c
 const AGENT_ROLES = ["research director", "domain researcher", "method researcher", "data detective", "validation scientist", "model researcher", "ensemble scientist", "reproducibility engineer", "experiment engineer", "critic", "repair agent"] as const;
 const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/workbench": [["/workbench research", "Enter Research mode"], ["/workbench challenge", "Enter Challenge mode"]],
+  "/budget": [["/budget", "Show campaign and role token budgets"], ["/budget tokens ", "Set the aggregate token ceiling"], ["/budget role ", "Set a per-role token ceiling"]],
   "/mode": [["/mode research", "Enter Research mode"], ["/mode challenge", "Enter Challenge mode"]],
   "/experience": [["/experience", "Show capability profile and curriculum"], ["/experience export", "Export admissible experiences as JSONL"]],
   "/autonomy": [["/autonomy safe", "Approval-gated"], ["/autonomy fast", "Run local work automatically"], ["/autonomy yolo", "Run routine work automatically"]],
@@ -889,6 +890,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       thinking: savedRuntime?.thinking ?? configRef.current.reasoningEffort,
       lanes: savedRuntime?.lanes ?? (configRef.current.autonomy === "safe" ? 1 : configRef.current.autonomy === "fast" ? 2 : 4),
       ...(savedRuntime?.agentTokenBudget !== undefined ? { agentTokenBudget: savedRuntime.agentTokenBudget } : {}),
+      ...(savedRuntime?.roleTokenBudgets ? { roleTokenBudgets: savedRuntime.roleTokenBudgets } : {}),
       autonomy: configRef.current.autonomy,
       limitPolicy: savedRuntime?.limitPolicy ?? configRef.current.limitPolicy,
       executor: savedRuntime?.executor ?? configRef.current.experimentExecutor,
@@ -1210,6 +1212,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         cwd: root,
         storePath: join(root, ".sota", "database.sqlite"),
         maxParallel: route.parallelLanes,
+        campaignStartedAt: campaign?.startedAt,
+        roleTokenBudgets: campaign?.runtime?.roleTokenBudgets,
         autonomy: config.autonomy,
         onProgress: setProgress,
         onProcess: registerProcess,
@@ -1269,6 +1273,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
             cwd: root,
             storePath: join(root, ".sota", "database.sqlite"),
             maxParallel: route.parallelLanes,
+            campaignStartedAt: campaign?.startedAt,
+            roleTokenBudgets: campaign?.runtime?.roleTokenBudgets,
             autonomy: config.autonomy,
             laneFocus: "evidence-validation",
             laneRotation: (campaign?.currentCycle ?? 0) + 1,
@@ -2721,6 +2727,29 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", queued ? `Steering instruction queued · will be applied at the next safe cycle boundary (id ${queued.id}).` : "No live campaign controller is running. Start or resume a campaign before steering it.");
       return;
     }
+    const roleTokenBudgetMatch = request.match(/^\/budget\s+role\s+(.+)\s+(\d+|unlimited|0)$/i);
+    if (roleTokenBudgetMatch) {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const campaign = store.campaign() as ResearchCampaign | undefined;
+      store.close();
+      if (!campaign) { append("assistant", "No campaign exists. Start /research or /challenge first."); return; }
+      if (!campaign.runtime) { append("assistant", "This legacy campaign has no durable runtime route. Start a new campaign before setting a role budget."); return; }
+      const role = roleTokenBudgetMatch[1].trim();
+      const rawBudget = roleTokenBudgetMatch[2];
+      if (!role || role.length > 120) { append("assistant", "Role names must be 1–120 characters."); return; }
+      const parsedBudget = /^(?:0|unlimited)$/i.test(rawBudget) ? 0 : Number(rawBudget);
+      if (!Number.isInteger(parsedBudget) || parsedBudget < 0) { append("assistant", "Use a positive integer token count, or 0/unlimited to remove the role ceiling."); return; }
+      const roleTokenBudgets = { ...(campaign.runtime.roleTokenBudgets ?? {}) };
+      if (parsedBudget > 0) roleTokenBudgets[role] = parsedBudget;
+      else delete roleTokenBudgets[role];
+      if (Object.keys(roleTokenBudgets).length > 32) { append("assistant", "At most 32 role token budgets may be configured."); return; }
+      const { fingerprint: _fingerprint, roleTokenBudgets: _oldRoleBudgets, ...runtimeWithoutRoleBudgets } = campaign.runtime;
+      const nextCampaign = { ...campaign, runtime: { ...runtimeWithoutRoleBudgets, ...(Object.keys(roleTokenBudgets).length ? { roleTokenBudgets } : {}) } } as ResearchCampaign;
+      persistCampaign(nextCampaign);
+      setConfig((current) => ({ ...current, campaign: nextCampaign }));
+      append("assistant", `Role token ceiling for ${role} ${parsedBudget > 0 ? `set to ${parsedBudget} tokens` : "removed (unlimited)"}.`);
+      return;
+    }
     const tokenBudgetMatch = request.match(/^\/budget(?:\s+tokens(?:\s+(\S+))?)?$/i);
     if (tokenBudgetMatch) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -2730,7 +2759,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (!campaign) { append("assistant", "No campaign exists. Start /research or /challenge first."); return; }
       const raw = tokenBudgetMatch[1];
       if (!raw) {
-        append("assistant", `Agent token budget\n  ceiling: ${campaign.runtime?.agentTokenBudget ? `${campaign.runtime.agentTokenBudget} tokens` : "unlimited"}\n  attributed usage: ${usedTokens} tokens`);
+        const roleBudgets = Object.entries(campaign.runtime?.roleTokenBudgets ?? {}).map(([role, budget]) => `  ${role}: ${budget} tokens`).join("\n");
+        append("assistant", `Agent token budget\n  ceiling: ${campaign.runtime?.agentTokenBudget ? `${campaign.runtime.agentTokenBudget} tokens` : "unlimited"}\n  attributed usage: ${usedTokens} tokens${roleBudgets ? `\n  role ceilings:\n${roleBudgets}` : ""}`);
         return;
       }
       const parsed = /^(?:0|unlimited)$/i.test(raw) ? 0 : Number(raw);

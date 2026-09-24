@@ -53,6 +53,14 @@ export function campaignAgentTokens(events: Array<{ payload: unknown }>, campaig
   return usage.inputTokens + usage.outputTokens + usage.reasoningOutputTokens;
 }
 
+/** Count model tokens attributed to one role within one durable campaign. */
+export function campaignRoleAgentTokens(events: Array<{ payload: unknown }>, campaignStartedAt: string, role: string): number {
+  return summarizeAgentUsageBy(events.filter((event) => {
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    return payload.campaignStartedAt === campaignStartedAt && payload.role === role;
+  })).reduce((total, bucket) => total + bucket.inputTokens + bucket.outputTokens + bucket.reasoningOutputTokens, 0);
+}
+
 /** Build one consistent campaign budget ledger for CLI, TUI, and dashboard. */
 export function agentBudgetLedger(events: Array<{ payload: unknown }>, campaignStartedAt: string, budgetTokens: number | null | undefined, warningThreshold = 0.8): AgentBudgetLedger {
   const scoped = events.filter((event) => {

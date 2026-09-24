@@ -32,7 +32,7 @@ import { assessStopPolicy } from "./core/stop-policy.js";
 import { classifyVerifier } from "./core/formal-verification.js";
 import { detectRouteDrift } from "./core/drift-detection.js";
 import { experimentReplayDecision, recoveryDelay, recoveryPlan, recoveryRouteDirective } from "./core/recovery.js";
-import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readDurableCampaignRuntime, researchTurnTimeoutMs, resolveCampaignMode, resumeCampaign, withCampaignCheckpoint, type CampaignCheckpointStep, type CampaignRuntimeConfig } from "./core/campaign.js";
+import { campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, parseRoleTokenBudgets, pauseCampaign, readCampaignCheckpoint, readDurableCampaignRuntime, researchTurnTimeoutMs, resolveCampaignMode, resumeCampaign, serializeRoleTokenBudgets, withCampaignCheckpoint, type CampaignCheckpointStep, type CampaignRuntimeConfig } from "./core/campaign.js";
 import { runReducedValidation } from "./core/stage-executor.js";
 import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "./core/validation.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "./core/decision-auditor.js";
@@ -2527,15 +2527,16 @@ challenge.command("start")
   .option("--lanes <count>", "maximum concurrent research lanes (non-safe teams may use bounded waves)", "3")
   .option("--lane-budget <duration>", "optional hard budget per specialist lane, e.g. 20m or 1h")
   .option("--agent-token-budget <tokens>", "aggregate model-token ceiling for this campaign; 0 means unlimited", "0")
+  .option("--role-token-budgets <spec>", "per-role token ceilings, e.g. validation scientist=20000,model researcher=30000")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: auto, wait, fallback, or stop", "auto")
   .option("--executor <executor>", "experiment execution target: local, container, modal, or slurm", "local")
   .option("--resume", "resume the saved challenge campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; agentTokenBudget: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
+  .action(async (options: { goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; agentTokenBudget: string; roleTokenBudgets?: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
     const script = process.argv[1];
     if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
-    const args = ["research", "--mode", "challenge", "--goal", options.goal, "--budget", options.budget, "--gpu-budget", options.gpuBudget, "--agent-token-budget", options.agentTokenBudget, "--stop", options.stop, "--provider", options.provider, "--model", options.model, "--fallback-model", options.fallbackModel, "--thinking", options.thinking, "--lanes", options.lanes, ...(options.laneBudget ? ["--lane-budget", options.laneBudget] : []), "--autonomy", options.autonomy, "--limit-policy", options.limitPolicy, "--executor", options.executor];
+    const args = ["research", "--mode", "challenge", "--goal", options.goal, "--budget", options.budget, "--gpu-budget", options.gpuBudget, "--agent-token-budget", options.agentTokenBudget, ...(options.roleTokenBudgets ? ["--role-token-budgets", options.roleTokenBudgets] : []), "--stop", options.stop, "--provider", options.provider, "--model", options.model, "--fallback-model", options.fallbackModel, "--thinking", options.thinking, "--lanes", options.lanes, ...(options.laneBudget ? ["--lane-budget", options.laneBudget] : []), "--autonomy", options.autonomy, "--limit-policy", options.limitPolicy, "--executor", options.executor];
     if (options.resume) args.push("--resume");
     if (options.skipBaseline) args.push("--skip-baseline");
     const result = await runProcess([process.execPath, script, ...args], root, 7 * 24 * 60 * 60_000, (stream, chunk) => {
@@ -2652,12 +2653,13 @@ research
   .option("--lanes <count>", "maximum concurrent research lanes (non-safe teams may use bounded waves)", "3")
   .option("--lane-budget <duration>", "optional hard budget per specialist lane, e.g. 20m or 1h")
   .option("--agent-token-budget <tokens>", "aggregate model-token ceiling for this campaign; 0 means unlimited", "0")
+  .option("--role-token-budgets <spec>", "per-role token ceilings, e.g. validation scientist=20000,model researcher=30000")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: auto, wait, fallback, or stop", "auto")
   .option("--executor <executor>", "experiment execution target: local, container, modal, or slurm", "local")
   .option("--resume", "resume the latest durable non-completed research campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; agentTokenBudget: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
+  .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; agentTokenBudget: string; roleTokenBudgets?: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
     const savedStore = new ResearchStore(statePath);
     const savedCampaign = savedStore.campaign() as { goal?: string; budgetMinutes?: number; gpuBudgetHours?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime?: unknown; runtimeFingerprint?: string; autoExecuteExperiments?: boolean } | undefined;
     const savedCheckpoint = options.resume ? readCampaignCheckpoint(savedCampaign) : undefined;
@@ -2679,6 +2681,7 @@ research
       options.lanes = String(savedRuntime.lanes);
       options.laneBudget = savedRuntime.laneBudgetMinutes === undefined ? undefined : `${savedRuntime.laneBudgetMinutes}m`;
       options.agentTokenBudget = savedRuntime.agentTokenBudget === undefined ? "0" : String(savedRuntime.agentTokenBudget);
+      options.roleTokenBudgets = serializeRoleTokenBudgets(savedRuntime.roleTokenBudgets);
       options.autonomy = savedRuntime.autonomy;
       options.limitPolicy = savedRuntime.limitPolicy;
       options.executor = savedRuntime.executor;
@@ -2706,6 +2709,7 @@ research
     const laneBudgetMinutes = options.laneBudget ? durationMinutes(options.laneBudget) : undefined;
     const parsedAgentTokenBudget = Number(options.agentTokenBudget);
     if (!Number.isFinite(parsedAgentTokenBudget) || parsedAgentTokenBudget < 0 || !Number.isInteger(parsedAgentTokenBudget)) throw new Error("Agent token budget must be a non-negative integer; use 0 for unlimited.");
+    const roleTokenBudgets = parseRoleTokenBudgets(options.roleTokenBudgets);
     const parsedGpuBudget = Number(options.gpuBudget);
     if (!Number.isFinite(parsedGpuBudget) || parsedGpuBudget < 0) throw new Error("GPU budget must be a non-negative number of hours; use 0 for unlimited.");
     const gpuBudgetHours = options.resume && savedCampaign?.gpuBudgetHours !== undefined ? savedCampaign.gpuBudgetHours : parsedGpuBudget;
@@ -2749,7 +2753,7 @@ research
       }
     }
     const started = Date.now();
-    const runtime: CampaignRuntimeConfig = { mode, provider: options.provider as CampaignRuntimeConfig["provider"], model: selectedModel, fallbackModel: options.fallbackModel, thinking: options.thinking, lanes: laneLimit, ...(laneBudgetMinutes === undefined ? {} : { laneBudgetMinutes }), ...(parsedAgentTokenBudget > 0 ? { agentTokenBudget: parsedAgentTokenBudget } : {}), autonomy, limitPolicy: options.limitPolicy as CampaignRuntimeConfig["limitPolicy"], executor: options.executor as CampaignRuntimeConfig["executor"] };
+    const runtime: CampaignRuntimeConfig = { mode, provider: options.provider as CampaignRuntimeConfig["provider"], model: selectedModel, fallbackModel: options.fallbackModel, thinking: options.thinking, lanes: laneLimit, ...(laneBudgetMinutes === undefined ? {} : { laneBudgetMinutes }), ...(parsedAgentTokenBudget > 0 ? { agentTokenBudget: parsedAgentTokenBudget } : {}), ...(Object.keys(roleTokenBudgets).length ? { roleTokenBudgets } : {}), autonomy, limitPolicy: options.limitPolicy as CampaignRuntimeConfig["limitPolicy"], executor: options.executor as CampaignRuntimeConfig["executor"] };
     if (options.resume && savedRuntime && savedCampaign?.runtimeFingerprint && savedCampaign.runtimeFingerprint !== campaignRuntimeFingerprint(savedRuntime)) {
       throw new Error("Saved campaign runtime integrity check failed; its provider, model, effort, autonomy, lane, limit, or executor policy was modified. Start a new campaign or restore the original campaign state.");
     }
@@ -3404,6 +3408,8 @@ research
             storePath: statePath,
             maxParallel: researchLaneLimit,
             parentTaskId: cycleTaskId,
+            campaignStartedAt: campaign.startedAt,
+            roleTokenBudgets: campaign.runtime.roleTokenBudgets,
             laneBudgetMs: campaign.runtime.laneBudgetMinutes ? campaign.runtime.laneBudgetMinutes * 60_000 : undefined,
             autonomy,
             laneFocus: `${allocation.focus} ${allocation.strategy}`,
@@ -3456,6 +3462,8 @@ research
                 storePath: statePath,
                 maxParallel: researchLaneLimit,
                 parentTaskId: cycleTaskId,
+                campaignStartedAt: campaign.startedAt,
+                roleTokenBudgets: campaign.runtime.roleTokenBudgets,
                 laneBudgetMs: campaign.runtime.laneBudgetMinutes ? campaign.runtime.laneBudgetMinutes * 60_000 : undefined,
                 autonomy,
                 laneFocus: "evidence-validation",

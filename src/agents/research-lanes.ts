@@ -12,6 +12,7 @@ import { boundResearchContext } from "../core/context-budget.js";
 import type { LaneFinding } from "../core/cross-pollination.js";
 import { agentRoleContract } from "../core/agent-organization.js";
 import type { AgentRoleReview } from "../core/agent-evals.js";
+import { campaignRoleAgentTokens } from "../core/usage.js";
 
 export const RESEARCH_LANE_ROLES = [
   "data detective",
@@ -205,6 +206,9 @@ export interface ResearchLanesOptions {
   goalId?: string | null;
   /** Durable parent cycle ticket for hierarchical campaign tracing. */
   parentTaskId?: string | null;
+  /** Campaign boundary and optional per-role model-token ceilings. */
+  campaignStartedAt?: string;
+  roleTokenBudgets?: Readonly<Record<string, number>>;
   /** Collaboration scheduler. Non-safe teams default to asynchronous completion-driven hand-offs. */
   executionMode?: "waves" | "asynchronous";
   autonomy?: AutonomyLevel;
@@ -1062,8 +1066,16 @@ export async function runResearchLanes(objective: string, context: Record<string
   const candidateRoles = selectResearchLaneRoles(objective, teamSize, { focus: options.laneFocus, rotation: options.laneRotation, roleReviews: options.roleReviews });
   const memoryStore = new ResearchStore(options.storePath);
   const pausedRoles = new Set(memoryStore.agentPauses().filter((control) => control.paused).map((control) => control.role));
-  const roles = candidateRoles.filter((role) => !pausedRoles.has(role));
+  const roleUsageEvents = options.campaignStartedAt ? memoryStore.eventsByType("research.agent.usage") : [];
+  const exhaustedRoles = new Set(candidateRoles.filter((role) => {
+    const budget = options.roleTokenBudgets?.[role];
+    return typeof budget === "number" && budget > 0 && options.campaignStartedAt
+      ? campaignRoleAgentTokens(roleUsageEvents, options.campaignStartedAt, role) >= budget
+      : false;
+  }));
+  const roles = candidateRoles.filter((role) => !pausedRoles.has(role) && !exhaustedRoles.has(role));
   if (pausedRoles.size) options.onProgress?.(`Research lanes · skipped operator-paused roles: ${[...pausedRoles].join(", ")}`);
+  if (exhaustedRoles.size) options.onProgress?.(`Research lanes · skipped role-token-budget roles: ${[...exhaustedRoles].join(", ")}`);
   const historicalTrajectories = memoryStore.trajectories(128);
   memoryStore.close();
   const routes = assignResearchLaneRoutes(roles, options);

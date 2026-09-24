@@ -71,7 +71,7 @@ import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js"
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { materializeResearchDecision } from "../dist/core/research-graph.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
-import { bindCampaignRuntime, campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, pauseCampaign, readCampaignCheckpoint, readDurableCampaignRuntime, researchTurnTimeoutMs, resolveCampaignMode, resumeCampaign, withCampaignCheckpoint } from "../dist/core/campaign.js";
+import { bindCampaignRuntime, campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, parseRoleTokenBudgets, pauseCampaign, readCampaignCheckpoint, readDurableCampaignRuntime, researchTurnTimeoutMs, resolveCampaignMode, resumeCampaign, serializeRoleTokenBudgets, withCampaignCheckpoint } from "../dist/core/campaign.js";
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
@@ -79,7 +79,7 @@ import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperi
 import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, createLaneToolExecutor, laneHandoffBoard, lanePrompt, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneTeamSize, researchLiteratureQueries, roleMemoryFromTrajectories, runResearchLanes, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
-import { agentBudgetLedger, campaignAgentTokens, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "../dist/core/usage.js";
+import { agentBudgetLedger, campaignAgentTokens, campaignRoleAgentTokens, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { assessForecast, summarizeForecastAssessments } from "../dist/core/forecast-calibration.js";
@@ -1300,6 +1300,7 @@ test("durable campaign runtime settings are validated before resume", () => {
     autonomy: "fast",
     limitPolicy: "auto",
     executor: "modal",
+    roleTokenBudgets: { "model researcher": 30_000, "validation scientist": 20_000 },
   };
   assert.deepEqual(readCampaignRuntime({ runtime: { ...runtime } }), runtime);
   assert.equal(readCampaignRuntime({ runtime: { ...runtime, lanes: 0 } }), undefined);
@@ -1320,6 +1321,21 @@ test("durable campaign runtime settings are validated before resume", () => {
   delete legacyEnvelope.runtime.fingerprint;
   assert.equal(readDurableCampaignRuntime(legacyEnvelope)?.provider, runtime.provider);
   assert.equal(readDurableCampaignRuntime({ runtime: { ...runtime, fingerprint: "old" } }), undefined);
+});
+
+test("role token budgets parse, serialize, and isolate durable usage", () => {
+  const budgets = parseRoleTokenBudgets("validation scientist=20000, model researcher=30000");
+  assert.deepEqual(budgets, { "validation scientist": 20_000, "model researcher": 30_000 });
+  assert.equal(serializeRoleTokenBudgets(budgets), "model researcher=30000,validation scientist=20000");
+  assert.throws(() => parseRoleTokenBudgets("critic=0"), /positive integer/);
+  assert.throws(() => parseRoleTokenBudgets("malformed"), /role=tokens/);
+  const events = [
+    { payload: { campaignStartedAt: "campaign-a", role: "validation scientist", inputTokens: 10, outputTokens: 5, reasoningOutputTokens: 2 } },
+    { payload: { campaignStartedAt: "campaign-a", role: "model researcher", inputTokens: 20, outputTokens: 10 } },
+    { payload: { campaignStartedAt: "campaign-b", role: "validation scientist", inputTokens: 999, outputTokens: 999 } },
+  ];
+  assert.equal(campaignRoleAgentTokens(events, "campaign-a", "validation scientist"), 17);
+  assert.equal(campaignRoleAgentTokens(events, "campaign-a", "model researcher"), 30);
 });
 
 test("durable campaign mode wins over stale scheduler mode", () => {
