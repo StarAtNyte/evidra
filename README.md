@@ -337,6 +337,7 @@ Implemented today:
 - machine-readable usage: `evidra queue usage --json` reports exact queue-wide totals, while the task form includes budget state and bounded recent records;
 - durable task cancellation: `evidra queue cancel <id>` (or `/queue cancel`) atomically cancels queued/running work, records the reason, and prevents a late local or external worker completion from resurrecting the ticket;
 - hierarchical cancellation: cancelling a coordinator also stops unfinished queued/running descendants, records `cascadedFrom` audit events, and leaves already-completed child evidence intact so delegated work cannot continue after its parent goal is stopped;
+- hierarchy-aware queue visibility: CLI, TUI, and dashboard queue views show direct-child totals and completed/unfinished counts, making delegated progress and stuck branches visible without opening every ticket;
 - cooperative local cancellation: queue workers poll the durable ticket and propagate cancellation through the handler `AbortSignal`, allowing process-aware handlers to stop without waiting for the full task timeout;
 - cooperative remote cancellation: the next authenticated worker heartbeat returns a structured `409` cancellation response, allowing external runtimes to stop promptly instead of discovering cancellation only at completion;
 - idempotent external usage: `/tasks/usage` accepts a stable per-turn `idempotencyKey`, so transport retries do not duplicate token or cost accounting;

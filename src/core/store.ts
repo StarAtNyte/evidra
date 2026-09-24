@@ -147,6 +147,16 @@ export interface QueuedTaskLineage {
   cycle: boolean;
   truncated: boolean;
 }
+export interface QueueChildSummary {
+  total: number;
+  unfinished: number;
+  queued: number;
+  running: number;
+  paused: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+}
 export type QueueActivityKind = "started" | "progress" | "blocked" | "handoff" | "completed" | "failed";
 const QUEUE_ACTIVITY_KINDS: QueueActivityKind[] = ["started", "progress", "blocked", "handoff", "completed", "failed"];
 
@@ -1951,6 +1961,20 @@ export class ResearchStore {
       pending.push(...(children.get(child) ?? []));
     }
     return descendants;
+  }
+
+  /** Return a bounded status roll-up for direct delegated children. */
+  queueChildSummary(id: string): QueueChildSummary | undefined {
+    const tasks = this.queueTasks();
+    if (!tasks.some((task) => task.id === id)) return undefined;
+    const summary: QueueChildSummary = { total: 0, unfinished: 0, queued: 0, running: 0, paused: 0, completed: 0, failed: 0, cancelled: 0 };
+    for (const task of tasks) {
+      if (task.parentTaskId !== id) continue;
+      summary.total += 1;
+      if (task.status in summary && typeof summary[task.status as keyof QueueChildSummary] === "number") summary[task.status as keyof QueueChildSummary] += 1;
+    }
+    summary.unfinished = summary.total - summary.completed - summary.failed - summary.cancelled;
+    return summary;
   }
 
   private taskDependenciesReady(id: string): boolean {

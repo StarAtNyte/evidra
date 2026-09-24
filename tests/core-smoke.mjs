@@ -4090,10 +4090,12 @@ test("pause and resume cascade only through the coordinator's pause boundary", (
     assert.equal(store.pauseTask("pause-root", "operator inspection"), true);
     assert.equal(store.queueTasks().find((task) => task.id === "pause-root")?.status, "paused");
     assert.equal(store.queueTasks().find((task) => task.id === "pause-child")?.status, "paused");
+    assert.deepEqual(store.queueChildSummary("pause-root"), { total: 1, unfinished: 1, queued: 0, running: 0, paused: 1, completed: 0, failed: 0, cancelled: 0 });
     assert.equal(store.queueTasks().find((task) => task.id === "pause-independent")?.status, "queued");
     assert.equal(store.resumeTask("pause-root"), true);
     assert.equal(store.queueTasks().find((task) => task.id === "pause-root")?.status, "queued");
     assert.equal(store.queueTasks().find((task) => task.id === "pause-child")?.status, "queued");
+    assert.deepEqual(store.queueChildSummary("pause-root"), { total: 1, unfinished: 1, queued: 1, running: 0, paused: 0, completed: 0, failed: 0, cancelled: 0 });
     assert.equal(store.queueTasks().find((task) => task.id === "pause-independent")?.status, "queued");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
