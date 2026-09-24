@@ -695,6 +695,9 @@ test("agent organization gives every lane a responsibility and reporting line", 
     assert.equal(store.pendingAgentDirectives("validation scientist", "phase-beta").length, 0);
     assert.match(store.agentDirectives("validation scientist").find((entry) => entry.id === firstCoaching.id)?.cancelledAt ?? "", /T/);
     assert.equal(store.cancelAgentDirective(firstCoaching.id), false);
+    const longLived = store.enqueueAgentDirectiveOnce("validation scientist", "retain this pending handoff", "phase-delta");
+    for (let index = 0; index < 40; index += 1) store.enqueueAgentDirective("validation scientist", `filler directive ${index}`, "phase-gamma");
+    assert.equal(store.enqueueAgentDirectiveOnce("validation scientist", "retain this pending handoff", "phase-delta").id, longLived.id);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

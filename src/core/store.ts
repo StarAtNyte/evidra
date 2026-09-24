@@ -1133,8 +1133,10 @@ export class ResearchStore {
     const normalizedRole = role.trim();
     const normalizedMessage = message.trim().slice(0, 4_000);
     const normalizedScope = scopeKey?.trim() || null;
-    const existing = this.pendingAgentDirectives(normalizedRole).find((directive) => directive.scopeKey === normalizedScope && directive.message === normalizedMessage);
-    return existing ?? this.enqueueAgentDirective(normalizedRole, normalizedMessage, normalizedScope);
+    const existing = this.db.prepare("SELECT id, role, message, scope_key, created_at, applied_at, cancelled_at FROM agent_directives WHERE role = ? AND message = ? AND scope_key IS ? AND applied_at IS NULL AND cancelled_at IS NULL ORDER BY id ASC LIMIT 1").get(normalizedRole, normalizedMessage, normalizedScope) as { id: number; role: string; message: string; scope_key: string | null; created_at: string; applied_at: string | null; cancelled_at: string | null } | undefined;
+    return existing
+      ? { id: existing.id, role: existing.role, message: existing.message, scopeKey: existing.scope_key, createdAt: existing.created_at, appliedAt: existing.applied_at, cancelledAt: existing.cancelled_at }
+      : this.enqueueAgentDirective(normalizedRole, normalizedMessage, normalizedScope);
   }
 
   consumeAgentDirectives(role: string, limit = 4, scopeKey: string | null = null): AgentDirective[] {
