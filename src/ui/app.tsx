@@ -257,7 +257,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/limits": [["/limits auto", "Use local fallback, then wait"], ["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Require local fallback"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
-  "/approvals": [["/approvals", "Show pending operator approvals"]],
+  "/approvals": [["/approvals", "Show pending operator approvals"], ["/approvals approve agent-role ", "Approve a custom role from the inbox"]],
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue status ", "Filter queue by label"], ["/queue priority ", "Reprioritize queued work"], ["/queue labels ", "Classify queued work"], ["/queue pause-task ", "Suspend one queue task"], ["/queue resume-task ", "Resume one paused queue task"], ["/queue pause", "Stop new queue claims"], ["/queue resume", "Resume new queue claims"], ["/queue approve ", "Approve a pending queue task"], ["/queue reject ", "Reject a queue task"], ["/queue history ", "Inspect the full task lifecycle"], ["/queue checkpoint ", "Inspect redacted resumable state"], ["/queue activity ", "Inspect task handoff notes"], ["/queue usage", "Show external worker usage"], ["/queue usage ", "Show one task's usage"], ["/queue assign ", "Assign or clear a task worker"], ["/queue budget ", "Set or clear a task token ceiling"], ["/queue cost-budget ", "Set or clear a task USD ceiling"], ["/queue deadline ", "Set or clear a task wall-clock deadline"], ["/queue contract ", "Set or clear task proof requirements"], ["/queue cancel ", "Cancel queued or running work"], ["/queue note ", "Add an operator handoff note"], ["/queue recover", "Requeue stale tasks"], ["/queue recover ", "Resume a failed task with a changed route"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/clear": [["/clear", "Clear the current conversation"]],
@@ -3958,6 +3958,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const adapter = activeAdapter();
       const report = validateCompetitionContract(adapter.config, adapter.workspacePath(root));
       append("assistant", `Contract · ${adapter.config.name}\n${report.checks.map((check) => `  ${check.passed ? "✓" : "✗"} ${check.name}: ${check.detail}`).join("\n")}`);
+      return;
+    }
+    const approveInboxMatch = request.match(/^\/approvals\s+approve\s+agent-role\s+(.+)$/i);
+    if (approveInboxMatch) {
+      const role = approveInboxMatch[1].trim();
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      store.setAgentRoleAdmission(role, true, "operator TUI approval inbox");
+      store.close();
+      append("assistant", `Approved agent role ${role}.`);
       return;
     }
     if (request === "/approvals" || request === "/approvals status") {

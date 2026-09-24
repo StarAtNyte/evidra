@@ -680,8 +680,11 @@ test("agent admission commands accept human-readable roles with spaces", async (
     assert.equal(init.status, 0, init.stderr);
     const approve = spawnSync(process.execPath, [join(process.cwd(), "dist", "cli.js"), "agents", "approve", "external", "geologist"], { cwd: root, encoding: "utf8" });
     assert.equal(approve.status, 0, approve.stderr);
+    const inboxApprove = spawnSync(process.execPath, [join(process.cwd(), "dist", "cli.js"), "approvals", "approve", "agent-role", "another", "specialist"], { cwd: root, encoding: "utf8" });
+    assert.equal(inboxApprove.status, 0, inboxApprove.stderr);
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     assert.equal(store.agentRoleAdmitted("external geologist"), true);
+    assert.equal(store.agentRoleAdmitted("another specialist"), true);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

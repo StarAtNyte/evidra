@@ -2468,6 +2468,14 @@ const showApprovals = (options: { json?: boolean }): void => {
 };
 approvals.option("--json", "emit machine-readable approval items").action(showApprovals);
 approvals.command("status").option("--json", "emit machine-readable approval items").action(showApprovals);
+approvals.command("approve <kind> <id...>").description("Approve a supported item directly from the operator inbox").action((kind: string, idParts: string[]) => {
+  const id = idParts.join(" ").trim();
+  const store = new ResearchStore(statePath);
+  if (kind !== "agent-role") { store.close(); throw new Error(`Inbox item '${kind}' must be approved with its dedicated command.`); }
+  store.setAgentRoleAdmission(id, true, "operator approval inbox");
+  store.close();
+  console.log(`Approved agent role ${id}.`);
+});
 program.addCommand(approvals);
 
 const event = new Command("event").description("Emit safe external wake-up events for integrations");
