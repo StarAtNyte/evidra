@@ -778,6 +778,9 @@ test("agent organization gives every lane a responsibility and reporting line", 
     assert.equal(store.consumeAgentDirectives("validation scientist").length, 0);
     assert.equal(store.agentDirectives("validation scientist")[0].appliedAt !== null, true);
     assert.equal(store.agentDirectives("validation scientist")[0].sourceRole, "research director");
+    store.recordAgentDirectiveOutcome(directive.id, "validation scientist", "completed", "split rechecked; no leakage found");
+    assert.equal(store.agentDirectiveOutcomes()[0]?.directiveId, directive.id);
+    assert.equal(store.agentDirectiveOutcomes()[0]?.status, "completed");
     const scoped = store.enqueueAgentDirective("validation scientist", "only apply to phase alpha", "phase-alpha");
     assert.equal(scoped.scopeKey, "phase-alpha");
     assert.equal(store.pendingAgentDirectives("validation scientist", "phase-beta").length, 0);
@@ -4871,6 +4874,9 @@ test("research lane teams share only cacheable observations within one invocatio
   const address = server.address();
   process.env.OLLAMA_HOST = `http://127.0.0.1:${address.port}`;
   try {
+    const directiveStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const directive = directiveStore.enqueueAgentDirective("domain researcher", "Report the strongest competing explanation", null, "research director");
+    directiveStore.close();
     const reports = await runResearchLanes("prove a theorem", {}, {
       provider: "local", model: "test", autonomy: "fast", maxParallel: 1, laneTeamSize: 2,
       cwd: root, storePath: join(root, ".sota", "database.sqlite"), timeoutMs: 5_000,
@@ -4889,6 +4895,7 @@ test("research lane teams share only cacheable observations within one invocatio
     const dispatch = usageStore.eventsByType("research.lane.dispatch_planned").at(-1)?.payload;
     assert.deepEqual(dispatch.dispatched, ["domain researcher", "validation scientist"]);
     assert.equal(dispatch.roleTokenBudgetExhausted.length, 0);
+    assert.equal(usageStore.agentDirectiveOutcomes().find((outcome) => outcome.directiveId === directive.id)?.status, "completed");
     usageStore.close();
   } finally {
     if (previousHost === undefined) delete process.env.OLLAMA_HOST;

@@ -951,8 +951,9 @@ agents.command("message <role> <message>").description("Queue a durable directiv
 agents.command("directives [role]").description("Show durable specialist handoffs and delivery status").action((role?: string) => {
   const store = new ResearchStore(statePath);
   const directives = store.agentDirectives(role);
+  const outcomes = new Map(store.agentDirectiveOutcomes(128).map((outcome) => [outcome.directiveId, outcome]));
   if (!directives.length) console.log(role ? `No directives recorded for ${role}.` : "No specialist directives recorded.");
-  else console.log(directives.map((directive) => `${directive.cancelledAt ? "cancelled" : directive.appliedAt ? "applied" : "pending"}  #${directive.id}  ${directive.sourceRole ?? "operator"} → ${directive.role}  ${directive.createdAt}${directive.scopeKey ? `  scope:${directive.scopeKey}` : "  global"}\n  ${directive.message}${directive.appliedAt ? `\n  applied: ${directive.appliedAt}` : ""}${directive.cancelledAt ? `\n  cancelled: ${directive.cancelledAt}` : ""}`).join("\n"));
+  else console.log(directives.map((directive) => { const outcome = outcomes.get(directive.id); return `${directive.cancelledAt ? "cancelled" : directive.appliedAt ? "applied" : "pending"}  #${directive.id}  ${directive.sourceRole ?? "operator"} → ${directive.role}  ${directive.createdAt}${directive.scopeKey ? `  scope:${directive.scopeKey}` : "  global"}\n  ${directive.message}${directive.appliedAt ? `\n  applied: ${directive.appliedAt}` : ""}${directive.cancelledAt ? `\n  cancelled: ${directive.cancelledAt}` : ""}${outcome ? `\n  outcome: ${outcome.status} · ${outcome.message} · ${outcome.createdAt}` : ""}`; }).join("\n"));
   store.close();
 });
 agents.command("cancel <directiveId>").description("Cancel one pending specialist directive before delivery").action((directiveId: string) => {

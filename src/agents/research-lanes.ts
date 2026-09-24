@@ -946,6 +946,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     store.recordAgentLaneUsage(role, leaseId, (Date.now() - startedAt) / 1_000);
     store.close();
   };
+  const receivedDirectiveIds: number[] = [];
   try {
     const toolResults: ResearchToolResult[] = [];
     const directives: string[] = [];
@@ -954,6 +955,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
       const received = store.consumeAgentDirectives(role, 4, options.goalId ?? null);
       store.close();
       if (received.length) {
+        receivedDirectiveIds.push(...received.map((directive) => directive.id));
         directives.push(...received.map((directive) => directive.message));
         recordActivity("handoff", `Applied ${received.length} operator directive(s) at a safe boundary`, { count: received.length });
         options.onProgress?.(`Research lane · ${role} · received ${received.length} operator directive(s)`);
@@ -1084,6 +1086,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     completed.releaseAgentLane(role, leaseId, "idle");
     completed.updateTask(laneTaskId, "completed", { role, status: "completed", evidenceIds: verifiedEvidenceIds });
     completed.recordAgentActivity({ role, taskId: laneTaskId, kind: "completed", message: "Lane completed with a validated report", metadata: { evidenceIds: verifiedEvidenceIds, confidence: report.confidence } });
+    for (const directiveId of receivedDirectiveIds) completed.recordAgentDirectiveOutcome(directiveId, role, "completed", report.summary);
     completed.close();
     return { ...report, verifiedEvidenceIds };
   } catch (error) {
@@ -1094,6 +1097,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     failed.releaseAgentLane(role, leaseId, "failed", message);
     failed.updateTask(laneTaskId, "failed", { role, status: "failed", error: message });
     failed.recordAgentActivity({ role, taskId: laneTaskId, kind: "failed", message: `Lane failed: ${message}` });
+    for (const directiveId of receivedDirectiveIds) failed.recordAgentDirectiveOutcome(directiveId, role, "failed", message);
     failed.close();
     return report;
   } finally {

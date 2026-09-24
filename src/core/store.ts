@@ -299,6 +299,14 @@ export interface AgentDirective {
   appliedAt: string | null;
   cancelledAt: string | null;
 }
+export type AgentDirectiveOutcomeStatus = "completed" | "failed" | "rejected";
+export interface AgentDirectiveOutcome {
+  directiveId: number;
+  role: string;
+  status: AgentDirectiveOutcomeStatus;
+  message: string;
+  createdAt: string;
+}
 export type AgentActivityKind = "started" | "progress" | "blocked" | "handoff" | "completed" | "failed";
 export interface AgentActivity {
   role: string;
@@ -1360,6 +1368,26 @@ export class ResearchStore {
     })() as AgentDirective[];
     if (transaction.length) this.appendEvent("agent.directive.applied", { role, scopeKey: normalizedScope, ids: transaction.map((item) => item.id) });
     return transaction;
+  }
+
+  /** Record what the receiving role did with an applied handoff. */
+  recordAgentDirectiveOutcome(directiveId: number, role: string, status: AgentDirectiveOutcomeStatus, message: string): void {
+    if (!Number.isInteger(directiveId) || directiveId <= 0) throw new Error("Directive id must be a positive integer.");
+    const normalizedRole = role.trim().slice(0, 120);
+    const normalizedMessage = message.trim().slice(0, 1_000);
+    if (!normalizedRole || !normalizedMessage) throw new Error("Directive outcome requires a role and message.");
+    if (!this.db.prepare("SELECT id FROM agent_directives WHERE id = ?").get(directiveId)) throw new Error(`Directive #${directiveId} does not exist.`);
+    this.appendEvent("agent.directive.outcome", { directiveId, role: normalizedRole, status, message: normalizedMessage });
+  }
+
+  agentDirectiveOutcomes(limit = 64): AgentDirectiveOutcome[] {
+    const latest = new Map<number, AgentDirectiveOutcome>();
+    for (const event of this.eventsByType("agent.directive.outcome", Math.max(1, Math.min(256, limit * 2)))) {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+      if (!Number.isInteger(payload.directiveId) || typeof payload.role !== "string" || typeof payload.status !== "string" || !["completed", "failed", "rejected"].includes(payload.status) || typeof payload.message !== "string") continue;
+      latest.set(payload.directiveId as number, { directiveId: payload.directiveId as number, role: payload.role, status: payload.status as AgentDirectiveOutcomeStatus, message: payload.message, createdAt: event.createdAt });
+    }
+    return [...latest.values()].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)).slice(0, Math.max(1, Math.min(256, limit)));
   }
 
   pendingAgentDirectives(role?: string, scopeKey?: string | null): AgentDirective[] {

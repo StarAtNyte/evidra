@@ -3807,9 +3807,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (directivesAgentMatch) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const directives = store.agentDirectives(directivesAgentMatch[1]?.trim());
+      const outcomes = new Map(store.agentDirectiveOutcomes(128).map((outcome) => [outcome.directiveId, outcome]));
       store.close();
       append("assistant", directives.length
-        ? `Agent directives${directivesAgentMatch[1] ? ` · ${directivesAgentMatch[1].trim()}` : ""}\n${directives.map((directive) => `  ${directive.cancelledAt ? "×" : directive.appliedAt ? "✓" : "○"} #${directive.id} · ${directive.sourceRole ?? "operator"} → ${directive.role} · ${directive.createdAt} · ${directive.scopeKey ? `scope ${directive.scopeKey}` : "global"}\n    ${directive.message}${directive.appliedAt ? `\n    applied: ${directive.appliedAt}` : ""}${directive.cancelledAt ? `\n    cancelled: ${directive.cancelledAt}` : ""}`).join("\n")}`
+        ? `Agent directives${directivesAgentMatch[1] ? ` · ${directivesAgentMatch[1].trim()}` : ""}\n${directives.map((directive) => { const outcome = outcomes.get(directive.id); return `  ${directive.cancelledAt ? "×" : directive.appliedAt ? "✓" : "○"} #${directive.id} · ${directive.sourceRole ?? "operator"} → ${directive.role} · ${directive.createdAt} · ${directive.scopeKey ? `scope ${directive.scopeKey}` : "global"}\n    ${directive.message}${directive.appliedAt ? `\n    applied: ${directive.appliedAt}` : ""}${directive.cancelledAt ? `\n    cancelled: ${directive.cancelledAt}` : ""}${outcome ? `\n    outcome: ${outcome.status} · ${outcome.message} · ${outcome.createdAt}` : ""}`; }).join("\n")}`
         : `No directives recorded${directivesAgentMatch[1] ? ` for ${directivesAgentMatch[1].trim()}` : ""}.`);
       return;
     }
