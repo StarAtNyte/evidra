@@ -2426,7 +2426,7 @@ event.command("serve")
     const workerScopes = parseWorkerScopeMap(options.workerScopes);
     const server = createServer((request, response) => {
       const headers = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" };
-      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/activity", "/tasks/usage", "/tasks/complete"].includes(request.url ?? "") ? request.url : undefined;
+      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release"].includes(request.url ?? "") ? request.url : undefined;
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
       const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
@@ -2440,7 +2440,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: integrity.status !== "invalid", integrity }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/activity, /tasks/usage, /tasks/complete, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
@@ -2452,7 +2452,7 @@ event.command("serve")
       request.on("end", () => {
         if (rejected) return;
         try {
-          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
+          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
           if (taskPath) {
             const workerId = typeof parsed.workerId === "string" ? parsed.workerId.trim() : "";
             if (!workerId || workerId.length > 200) throw new Error("Task requests require a workerId of 1–200 characters.");
@@ -2484,6 +2484,23 @@ event.command("serve")
             const taskId = typeof parsed.taskId === "string" ? parsed.taskId.trim() : "";
             if (!taskId || taskId.length > 200) throw new Error("Task requests require a taskId of 1–200 characters.");
             const claimToken = typeof parsed.claimToken === "string" ? parsed.claimToken.trim().slice(0, 200) : "";
+            if (taskPath === "/tasks/release") {
+              const currentTask = store.queueTasks().find((task) => task.id === taskId);
+              if (!currentTask || !permitsKind(currentTask.kind)) {
+                store.close();
+                response.writeHead(403, headers);
+                response.end(JSON.stringify({ error: "task is outside this worker's assigned scope" }));
+                return;
+              }
+              if (currentTask.claimToken && !claimToken) throw new Error("claimToken is required for this task lease.");
+              const availableAt = typeof parsed.availableAt === "string" ? parsed.availableAt : new Date().toISOString();
+              const released = store.releaseClaimedTask(taskId, workerId, availableAt, claimToken || undefined, typeof parsed.reason === "string" ? parsed.reason : undefined);
+              const currentStatus = store.queueTasks().find((task) => task.id === taskId)?.status ?? null;
+              store.close();
+              response.writeHead(released ? 200 : 409, headers);
+              response.end(JSON.stringify({ ok: released, taskId, currentStatus }));
+              return;
+            }
             if (taskPath === "/tasks/heartbeat") {
               const currentTask = store.queueTasks().find((task) => task.id === taskId);
               if (!currentTask || !permitsKind(currentTask.kind)) {

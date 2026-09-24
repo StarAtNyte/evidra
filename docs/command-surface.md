@@ -220,10 +220,14 @@ POST /tasks/heartbeat {"workerId":"agent-17","taskId":"task-123","claimToken":"<
 POST /tasks/activity  {"workerId":"agent-17","taskId":"task-123","claimToken":"<token>","kind":"progress","message":"..."}
 POST /tasks/usage     {"workerId":"agent-17","taskId":"task-123","claimToken":"<token>","inputTokens":1200,"outputTokens":300,"costUsd":0.02,"provider":"codex","model":"gpt-5","idempotencyKey":"turn-42"}
 POST /tasks/complete  {"workerId":"agent-17","taskId":"task-123","claimToken":"<token>","status":"completed","payload":{"summary":"..."}}
+POST /tasks/release   {"workerId":"agent-17","taskId":"task-123","claimToken":"<token>","reason":"yielding capacity"}
 ```
 
 Claim, heartbeat, and completion all enforce the queue owner. A stale or foreign
 worker receives a conflict response and cannot overwrite another worker’s task.
+Workers can use `/tasks/release` to yield a live lease without counting a
+failure; the task is requeued, receives a new claim token, and the handoff is
+recorded as `queue.released`.
 If an operator cancels a live task, the next heartbeat returns `409` with
 `status: "cancelled"` and the durable cancellation reason; workers should stop
 their local work instead of retrying or completing that ticket.

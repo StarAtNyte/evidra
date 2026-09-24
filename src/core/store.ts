@@ -2144,6 +2144,19 @@ export class ResearchStore {
     return true;
   }
 
+  /** Voluntarily yield a live claim without counting it as a failed attempt. */
+  releaseClaimedTask(id: string, ownerId: string, availableAt = new Date().toISOString(), claimToken?: string, reason = "worker released task"): boolean {
+    const timestamp = new Date(Date.parse(availableAt));
+    if (!Number.isFinite(timestamp.getTime())) throw new Error("Released task availability must be a valid ISO timestamp.");
+    const now = new Date().toISOString();
+    const result = claimToken
+      ? this.db.prepare("UPDATE work_queue SET status = 'queued', available_at = ?, claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ? AND claim_token = ?").run(timestamp.toISOString(), now, id, ownerId, claimToken)
+      : this.db.prepare("UPDATE work_queue SET status = 'queued', available_at = ?, claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ?").run(timestamp.toISOString(), now, id, ownerId);
+    if (result.changes !== 1) return false;
+    this.appendEvent("queue.released", { id, ownerId, availableAt: timestamp.toISOString(), reason: reason.trim().slice(0, 400) || "worker released task" });
+    return true;
+  }
+
   /** Backward-compatible controller retry for callers that already own queue state. */
   retryTask(id: string, payload: unknown, availableAt: string): void {
     const now = new Date().toISOString();

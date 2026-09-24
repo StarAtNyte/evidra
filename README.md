@@ -497,6 +497,7 @@ evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" \
 - authenticated external workers receive structured missing-proof details on rejected `/tasks/complete` calls, making remote contract repair actionable instead of opaque;
 - external completion responses include authoritative `currentStatus`, allowing workers to reconcile a lost response without duplicating terminal work;
 - external completion requests accept an optional `idempotencyKey`; safe retries of an acknowledged terminal transition return success without creating a second transition;
+- external workers can voluntarily yield a live lease through `/tasks/release`; the task is requeued without a failure penalty and receives a fresh fencing token;
 - queue claims carry unique fencing tokens; remote workers must present the token for heartbeat/completion, preventing a stale process with a reused worker ID from mutating a reclaimed task, while operator projections keep tokens secret;
 - the same fencing token protects remote activity and usage reports, preventing stale workers from adding misleading progress or charging recovered work;
 - a deterministic agent-governance benchmark (`evidra benchmark governance`) covering role-contract completeness, tool authority boundaries, pause/resume controls, scoped handoff isolation, durable handoff auditability, and recovery approval boundaries;
