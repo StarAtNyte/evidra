@@ -246,7 +246,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/event": [["/event emit ", "Emit an external wake-up event"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
-  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents dispatch", "Show the latest lane dispatch plan"], ["/agents evaluate", "Evaluate roles and generate coaching"], ["/agents evaluate apply", "Apply coaching as durable role directives"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents cancel ", "Cancel a pending specialist directive"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents restart ", "Reset a failed or blocked specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
+  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents dispatch", "Show the latest lane dispatch plan"], ["/agents evaluate", "Evaluate roles and generate coaching"], ["/agents evaluate apply", "Apply coaching as durable role directives"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents cancel ", "Cancel a pending specialist directive"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents terminate ", "Terminate a specialist until revived"], ["/agents revive ", "Revive a terminated specialist"], ["/agents restart ", "Reset a failed or blocked specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
   "/limits": [["/limits auto", "Use local fallback, then wait"], ["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Require local fallback"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
@@ -3726,9 +3726,21 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (pauseAgentMatch) {
       const role = pauseAgentMatch[2].trim();
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      if (pauseAgentMatch[1].toLowerCase() === "resume" && store.agentPause(role)?.terminated) { store.close(); append("assistant", `Role ${role} is terminated. Use /agents revive ${role} first.`); return; }
       store.setAgentPause(role, pauseAgentMatch[1].toLowerCase() === "pause", "operator TUI request");
       append("assistant", `${pauseAgentMatch[1].toLowerCase() === "pause" ? "Pause requested" : "Pause cleared"} for ${role}. ${pauseAgentMatch[1].toLowerCase() === "pause" ? "A running lane will stop at its next safe boundary; future allocations remain blocked until resumed." : "Future allocations may use this role again."}`);
       store.close();
+      return;
+    }
+    const terminationAgentMatch = request.match(/^\/agents\s+(terminate|revive)\s+(.+)$/i);
+    if (terminationAgentMatch) {
+      const role = terminationAgentMatch[2].trim();
+      const action = terminationAgentMatch[1].toLowerCase();
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      store.setAgentTermination(role, action === "terminate", `operator TUI ${action} request`);
+      if (action === "revive") store.setAgentPause(role, false, "operator revive request");
+      store.close();
+      append("assistant", action === "terminate" ? `Termination requested for ${role}. The current worker will stop at its next safe boundary; future allocations are blocked.` : `Role ${role} revived. Future allocations are enabled.`);
       return;
     }
     const restartAgentMatch = request.match(/^\/agents\s+restart\s+(.+)$/i);
@@ -3739,6 +3751,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (!lane) { store.close(); append("assistant", `Unknown agent role '${role}'.`); return; }
       if (lane.status === "running") { store.close(); append("assistant", `Role '${role}' is still running. Interrupt or pause the campaign before restarting it.`); return; }
       store.setAgentPause(role, false, "operator TUI restart request");
+      store.setAgentTermination(role, false, "operator TUI restart request");
       store.updateAgentLane({ role, status: "idle", provider: lane.provider, model: lane.model, task: null, error: null, leaseId: null });
       store.appendEvent("research.agent.restarted", { role, previousStatus: lane.status, reason: "operator TUI request" });
       store.close();
@@ -3829,7 +3842,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const roleReviews = evaluateAgentRoles(store.trajectories(128));
       const agentBudget = campaign?.runtime?.agentTokenBudget ? agentBudgetLedger(store.eventsByType("research.agent.usage"), campaign.startedAt, campaign.runtime.agentTokenBudget) : agentBudgetLedger([], "", null);
       store.close();
-      append("assistant", `Research agents\n  codex: ${codex || "not authenticated"}\n  local: ${local}\n  concurrency: 1 active director lane\n\n${lanes.length ? lanes.map((lane) => { const pause = pauses.get(lane.role); const directives = pendingDirectives.get(lane.role) ?? 0; return `  ${pause?.paused ? "Ⅱ" : lane.status === "running" ? "●" : lane.status === "failed" ? "✗" : lane.status === "blocked" ? "!" : "○"} ${lane.role} · ${pause?.paused ? "paused" : lane.status} · ${lane.provider}/${lane.model}${directives ? ` · ${directives} directive(s)` : ""}${pause?.reason ? ` · ${pause.reason}` : ""}${lane.task ? `\n    ${lane.task.slice(0, 120)}` : ""}`; }).join("\n") : "  No lanes initialized; start /research to initialize the project."}`);
+      append("assistant", `Research agents\n  codex: ${codex || "not authenticated"}\n  local: ${local}\n  concurrency: 1 active director lane\n\n${lanes.length ? lanes.map((lane) => { const pause = pauses.get(lane.role); const directives = pendingDirectives.get(lane.role) ?? 0; return `  ${pause?.terminated ? "×" : pause?.paused ? "Ⅱ" : lane.status === "running" ? "●" : lane.status === "failed" ? "✗" : lane.status === "blocked" ? "!" : "○"} ${lane.role} · ${pause?.terminated ? "terminated" : pause?.paused ? "paused" : lane.status} · ${lane.provider}/${lane.model}${directives ? ` · ${directives} directive(s)` : ""}${pause?.reason ? ` · ${pause.reason}` : ""}${lane.task ? `\n    ${lane.task.slice(0, 120)}` : ""}`; }).join("\n") : "  No lanes initialized; start /research to initialize the project."}`);
       if (roleReviews.length) append("assistant", `Role reviews\n${roleReviews.slice(0, 12).map((review) => `  ${review.role} · ${review.recommendation} · score ${(review.score * 100).toFixed(0)}% · ${review.assignments} assignment(s) · checks ${review.playbookPasses} pass/${review.playbookPartials} partial/${review.playbookBlocks} blocked`).join("\n")}`);
       append("assistant", `Campaign agent budget\n  status: ${agentBudget.status}\n  attributed: ${agentBudget.usedTokens}\n  ceiling: ${agentBudget.budgetTokens ?? "unlimited"}\n  remaining: ${agentBudget.remainingTokens ?? "unlimited"}`);
       return;

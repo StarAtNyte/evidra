@@ -674,6 +674,13 @@ test("agent organization gives every lane a responsibility and reporting line", 
     store.setAgentPause("validation scientist", false);
     assert.equal(store.acquireAgentLane({ role: "validation scientist", leaseId: "resumed-worker", provider: "local", model: "bench", task: "can start" }).acquired, true);
     store.releaseAgentLane("validation scientist", "resumed-worker");
+    store.setAgentTermination("validation scientist", true, "operator test termination");
+    assert.equal(store.agentPause("validation scientist")?.terminated, true);
+    assert.equal(store.acquireAgentLane({ role: "validation scientist", leaseId: "terminated-worker", provider: "local", model: "bench", task: "must not start" }).acquired, false);
+    store.setAgentTermination("validation scientist", false, "operator test revive");
+    assert.equal(store.agentPause("validation scientist")?.terminated, false);
+    assert.equal(store.acquireAgentLane({ role: "validation scientist", leaseId: "revived-worker", provider: "local", model: "bench", task: "can start again" }).acquired, true);
+    store.releaseAgentLane("validation scientist", "revived-worker");
     const directive = store.enqueueAgentDirective("validation scientist", "recheck the locked split before recommending promotion");
     assert.equal(store.pendingAgentDirectives("validation scientist").length, 1);
     assert.equal(store.agentDirectives("validation scientist").length, 1);

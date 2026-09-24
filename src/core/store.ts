@@ -418,6 +418,7 @@ export class ResearchStore {
       CREATE TABLE IF NOT EXISTS agent_controls (
         role TEXT PRIMARY KEY,
         paused INTEGER NOT NULL DEFAULT 0,
+        terminated INTEGER NOT NULL DEFAULT 0,
         reason TEXT,
         updated_at TEXT NOT NULL
       );
@@ -545,6 +546,7 @@ export class ResearchStore {
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN usage_calls INTEGER NOT NULL DEFAULT 0"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_directives ADD COLUMN scope_key TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_directives ADD COLUMN cancelled_at TEXT"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE agent_controls ADD COLUMN terminated INTEGER NOT NULL DEFAULT 0"); } catch { /* already migrated */ }
     this.db.prepare(`
       INSERT OR IGNORE INTO event_chain_state (id, head_hash, event_count)
       VALUES (1, (SELECT event_hash FROM events ORDER BY id DESC LIMIT 1), (SELECT COUNT(*) FROM events))
@@ -1206,6 +1208,15 @@ export class ResearchStore {
     this.appendEvent(paused ? "agent.pause.requested" : "agent.pause.cleared", { role: normalized, reason: paused ? reason.slice(0, 500) : undefined });
   }
 
+  /** Permanently block a role until an explicit revive/restart action. */
+  setAgentTermination(role: string, terminated: boolean, reason = "operator request"): void {
+    const normalized = role.trim();
+    if (!normalized) throw new Error("Agent role is required.");
+    const now = new Date().toISOString();
+    this.db.prepare(`INSERT INTO agent_controls (role, paused, terminated, reason, updated_at) VALUES (?, 0, ?, ?, ?) ON CONFLICT(role) DO UPDATE SET terminated = excluded.terminated, paused = CASE WHEN excluded.terminated = 1 THEN 0 ELSE agent_controls.paused END, reason = excluded.reason, updated_at = excluded.updated_at`).run(normalized, terminated ? 1 : 0, terminated ? reason.slice(0, 500) : null, now);
+    this.appendEvent(terminated ? "agent.termination.requested" : "agent.termination.cleared", { role: normalized, reason: terminated ? reason.slice(0, 500) : undefined });
+  }
+
   /** Accept a heartbeat from an authenticated external worker without allowing lease takeover. */
   recordExternalAgentHeartbeat(input: { role: string; leaseId: string; provider: string; model: string; status: "running" | "idle" | "blocked" | "failed"; task?: string | null; budgetSeconds?: number | null }): { accepted: boolean; reason?: string } {
     const existing = this.db.prepare("SELECT status, lease_id, heartbeat_at FROM agent_lanes WHERE role = ?").get(input.role) as { status: string; lease_id: string | null; heartbeat_at: string | null } | undefined;
@@ -1228,14 +1239,14 @@ export class ResearchStore {
     return { accepted: true };
   }
 
-  agentPause(role: string): { role: string; paused: boolean; reason: string | null; updatedAt: string } | undefined {
-    const row = this.db.prepare("SELECT role, paused, reason, updated_at FROM agent_controls WHERE role = ?").get(role) as { role: string; paused: number; reason: string | null; updated_at: string } | undefined;
-    return row ? { role: row.role, paused: row.paused === 1, reason: row.reason, updatedAt: row.updated_at } : undefined;
+  agentPause(role: string): { role: string; paused: boolean; terminated: boolean; reason: string | null; updatedAt: string } | undefined {
+    const row = this.db.prepare("SELECT role, paused, terminated, reason, updated_at FROM agent_controls WHERE role = ?").get(role) as { role: string; paused: number; terminated: number; reason: string | null; updated_at: string } | undefined;
+    return row ? { role: row.role, paused: row.paused === 1, terminated: row.terminated === 1, reason: row.reason, updatedAt: row.updated_at } : undefined;
   }
 
-  agentPauses(): Array<{ role: string; paused: boolean; reason: string | null; updatedAt: string }> {
-    const rows = this.db.prepare("SELECT role, paused, reason, updated_at FROM agent_controls ORDER BY role ASC").all() as Array<{ role: string; paused: number; reason: string | null; updated_at: string }>;
-    return rows.map((row) => ({ role: row.role, paused: row.paused === 1, reason: row.reason, updatedAt: row.updated_at }));
+  agentPauses(): Array<{ role: string; paused: boolean; terminated: boolean; reason: string | null; updatedAt: string }> {
+    const rows = this.db.prepare("SELECT role, paused, terminated, reason, updated_at FROM agent_controls ORDER BY role ASC").all() as Array<{ role: string; paused: number; terminated: number; reason: string | null; updated_at: string }>;
+    return rows.map((row) => ({ role: row.role, paused: row.paused === 1, terminated: row.terminated === 1, reason: row.reason, updatedAt: row.updated_at }));
   }
 
   /** Atomically assign a lane to one worker. A live lease prevents duplicate specialist work. */
@@ -1244,7 +1255,8 @@ export class ResearchStore {
     const staleAfterMs = Math.max(1_000, input.staleAfterMs ?? 60_000);
     const result = this.db.transaction(() => {
       const existing = this.db.prepare("SELECT status, lease_id, heartbeat_at FROM agent_lanes WHERE role = ?").get(input.role) as { status: string; lease_id: string | null; heartbeat_at: string | null } | undefined;
-      const control = this.db.prepare("SELECT paused, reason FROM agent_controls WHERE role = ?").get(input.role) as { paused: number; reason: string | null } | undefined;
+      const control = this.db.prepare("SELECT paused, terminated, reason FROM agent_controls WHERE role = ?").get(input.role) as { paused: number; terminated: number; reason: string | null } | undefined;
+      if (control?.terminated === 1) return { acquired: false, reason: `lane is terminated by operator${control.reason ? `: ${control.reason}` : ""}` };
       if (control?.paused === 1) return { acquired: false, reason: `lane is paused by operator${control.reason ? `: ${control.reason}` : ""}` };
       if (existing?.status === "running" && existing.lease_id && existing.lease_id !== input.leaseId && existing.heartbeat_at && Date.now() - Date.parse(existing.heartbeat_at) <= staleAfterMs) {
         return { acquired: false, reason: `lane is leased by ${existing.lease_id}` };
@@ -1262,7 +1274,7 @@ export class ResearchStore {
   /** Refresh only the holder's lease; stale workers cannot resurrect a replaced lane. */
   heartbeatAgentLane(role: string, leaseId: string): boolean {
     const now = new Date().toISOString();
-    const result = this.db.prepare("UPDATE agent_lanes SET heartbeat_at = ?, updated_at = ? WHERE role = ? AND status = 'running' AND lease_id = ?").run(now, now, role, leaseId);
+    const result = this.db.prepare("UPDATE agent_lanes SET heartbeat_at = ?, updated_at = ? WHERE role = ? AND status = 'running' AND lease_id = ? AND NOT EXISTS (SELECT 1 FROM agent_controls WHERE role = ? AND terminated = 1)").run(now, now, role, leaseId, role);
     return result.changes === 1;
   }
 

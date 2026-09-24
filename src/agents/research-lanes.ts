@@ -909,6 +909,10 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
   const ensureLaneBudget = (): void => {
     const store = new ResearchStore(options.storePath);
     const control = store.agentPause(role);
+    if (control?.terminated) {
+      store.close();
+      throw new Error(`Agent lane terminated by operator${control.reason ? `: ${control.reason}` : ""}.`);
+    }
     if (control?.paused) {
       store.close();
       throw new Error(`Agent lane paused by operator${control.reason ? `: ${control.reason}` : ""}.`);
@@ -1104,7 +1108,9 @@ export async function runResearchLanes(objective: string, context: Record<string
   const teamSize = researchLaneTeamSize(objective, concurrency, options);
   const candidateRoles = selectResearchLaneRoles(objective, teamSize, { focus: options.laneFocus, rotation: options.laneRotation, roleReviews: options.roleReviews });
   const memoryStore = new ResearchStore(options.storePath);
-  const pausedRoles = new Set(memoryStore.agentPauses().filter((control) => control.paused).map((control) => control.role));
+  const controls = memoryStore.agentPauses();
+  const pausedRoles = new Set(controls.filter((control) => control.paused).map((control) => control.role));
+  const terminatedRoles = new Set(controls.filter((control) => control.terminated).map((control) => control.role));
   const roleUsageEvents = options.campaignStartedAt ? memoryStore.eventsByType("research.agent.usage") : [];
   const exhaustedRoles = new Set(candidateRoles.filter((role) => {
     const budget = options.roleTokenBudgets?.[role];
@@ -1112,8 +1118,9 @@ export async function runResearchLanes(objective: string, context: Record<string
       ? campaignRoleAgentTokens(roleUsageEvents, options.campaignStartedAt, role) >= budget
       : false;
   }));
-  const roles = candidateRoles.filter((role) => !pausedRoles.has(role) && !exhaustedRoles.has(role));
+  const roles = candidateRoles.filter((role) => !pausedRoles.has(role) && !terminatedRoles.has(role) && !exhaustedRoles.has(role));
   if (pausedRoles.size) options.onProgress?.(`Research lanes · skipped operator-paused roles: ${[...pausedRoles].join(", ")}`);
+  if (terminatedRoles.size) options.onProgress?.(`Research lanes · skipped terminated roles: ${[...terminatedRoles].join(", ")}`);
   if (exhaustedRoles.size) options.onProgress?.(`Research lanes · skipped role-token-budget roles: ${[...exhaustedRoles].join(", ")}`);
   const dispatchStore = new ResearchStore(options.storePath);
   const roleBudgets = options.campaignStartedAt
@@ -1124,6 +1131,7 @@ export async function runResearchLanes(objective: string, context: Record<string
     candidates: candidateRoles,
     dispatched: roles,
     paused: [...pausedRoles],
+    terminated: [...terminatedRoles],
     roleTokenBudgetExhausted: [...exhaustedRoles],
     roleBudgets,
     concurrency,

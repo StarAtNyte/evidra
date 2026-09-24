@@ -831,7 +831,7 @@ const agents = program.command("agents")
     if (options.json) {
       console.log(JSON.stringify(output, null, 2));
     } else {
-      console.log(organization.map((agent) => `${agent.control?.paused ? "paused" : agent.status.padEnd(8)} ${agent.role} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.pendingDirectives ? ` · ${agent.pendingDirectives} directive(s)` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`).join("\n") || "No agent roles recorded.");
+      console.log(organization.map((agent) => `${agent.control?.terminated ? "terminated" : agent.control?.paused ? "paused" : agent.status.padEnd(8)} ${agent.role} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.pendingDirectives ? ` · ${agent.pendingDirectives} directive(s)` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`).join("\n") || "No agent roles recorded.");
       console.log(`\nResumable sessions  ${sessions.length}`);
       if (output.roleBudgets.length) console.log(`\nRole budgets\n${output.roleBudgets.map((entry) => `  ${entry.role} · ${entry.usedTokens}/${entry.budgetTokens} tokens · ${entry.status}`).join("\n")}`);
       if (output.routes.length) console.log(`\nRoutes\n${output.routes.map((route) => `  ${route.role} · ${route.provider}/${route.model} · ${route.calls} calls · ${route.inputTokens + route.outputTokens} tokens`).join("\n")}`);
@@ -858,8 +858,18 @@ agents.command("evaluate").description("Evaluate specialist roles and persist bo
 for (const action of ["pause", "resume"] as const) {
   agents.command(`${action} <role>`).description(`${action === "pause" ? "Pause" : "Resume"} one specialist role at a safe boundary`).action((role: string) => {
     const store = new ResearchStore(statePath);
+    if (action === "resume" && store.agentPause(role)?.terminated) { store.close(); throw new Error(`Role '${role}' is terminated; use evidra agents revive ${role} first.`); }
     store.setAgentPause(role, action === "pause", `operator CLI request`);
     console.log(`${action === "pause" ? "Pause requested" : "Pause cleared"} for ${role}.`);
+    store.close();
+  });
+}
+for (const action of ["terminate", "revive"] as const) {
+  agents.command(`${action} <role>`).description(`${action === "terminate" ? "Terminate" : "Revive"} one specialist role`).action((role: string) => {
+    const store = new ResearchStore(statePath);
+    store.setAgentTermination(role, action === "terminate", `operator CLI ${action} request`);
+    if (action === "revive") store.setAgentPause(role, false, "operator revive request");
+    console.log(`${action === "terminate" ? "Termination requested" : "Role revived"} for ${role}; ${action === "terminate" ? "the current worker will stop at its next safe boundary" : "future allocations are enabled"}.`);
     store.close();
   });
 }
@@ -869,6 +879,7 @@ agents.command("restart <role>").description("Reset a failed, blocked, or idle r
   if (!lane) { store.close(); throw new Error(`Unknown agent role '${role}'.`); }
   if (lane.status === "running") { store.close(); throw new Error(`Role '${role}' is still running. Interrupt or pause the campaign before restarting it.`); }
   store.setAgentPause(role, false, "operator restart request");
+  store.setAgentTermination(role, false, "operator restart request");
   store.updateAgentLane({ role, status: "idle", provider: lane.provider, model: lane.model, task: null, error: null, leaseId: null });
   store.appendEvent("research.agent.restarted", { role, previousStatus: lane.status, reason: "operator CLI request" });
   store.close();
