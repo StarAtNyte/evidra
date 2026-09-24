@@ -685,6 +685,8 @@ test("agent organization gives every lane a responsibility and reporting line", 
     assert.equal(org.find((entry) => entry.role === "validation scientist")?.status, "running");
     assert.equal(org.find((entry) => entry.role === "external geologist")?.parentRole, "research director");
     assert.equal(org.find((entry) => entry.role === "external geologist")?.status, "idle");
+    assert.equal(org.find((entry) => entry.role === "validation scientist")?.reviewRequired, false);
+    assert.equal(org.find((entry) => entry.role === "external geologist")?.reviewRequired, true);
     assert.ok(org.every((entry) => entry.responsibility.length > 0));
     assert.ok(org.every((entry) => entry.playbook.length >= 3));
     store.setAgentPause("validation scientist", true, "operator test");

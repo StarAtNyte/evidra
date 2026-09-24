@@ -51,7 +51,7 @@ export function runGovernanceBenchmark(): GovernanceBenchmarkReport {
       missingPlaybooks: builtInOrganization.filter((role) => role.playbook.length < 2).map((role) => role.role),
     });
     const customRole = organization.find((role) => role.role === "external domain specialist");
-    check("custom-agent-visibility", "External workers with custom roles are visible with a conservative reporting contract.", customRole?.status === "idle" && customRole.parentRole === "research director" && customRole.authority === "investigate", { customRole });
+    check("custom-agent-visibility", "External workers with custom roles are visible with a conservative reporting contract.", customRole?.status === "idle" && customRole.parentRole === "research director" && customRole.authority === "investigate" && customRole.reviewRequired === true, { customRole });
 
     const directorShell = agentToolPermission("research director", "shell.exec");
     const engineerShell = agentToolPermission("experiment engineer", "shell.exec");

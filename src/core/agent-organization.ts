@@ -5,6 +5,8 @@ export type AgentRoleContract = {
   parentRole: string | null;
   responsibility: string;
   authority: "coordinate" | "investigate" | "validate" | "execute" | "repair";
+  /** Dynamic external roles must pass review before they are treated as trusted. */
+  reviewRequired?: boolean;
   /** Reusable operating checklist injected into the agent's bounded context. */
   playbook: readonly string[];
 };
@@ -31,6 +33,7 @@ export function agentRoleContract(role: string): AgentRoleContract {
     parentRole: "research director",
     responsibility: "unclassified work; requires explicit operator review before expansion",
     authority: "investigate",
+    reviewRequired: true,
     playbook: ["clarify the assigned scope", "inspect current evidence", "state uncertainty", "propose a falsifiable next check"],
   };
 }
@@ -53,7 +56,7 @@ export function agentOrganization(store: ResearchStore): Array<AgentRoleContract
   const lanes = new Map(store.agentLanes().map((lane) => [lane.role, lane]));
   const builtIn = AGENT_ROLE_CONTRACTS.map((contract) => {
     const lane = lanes.get(contract.role);
-    return { ...contract, status: lane?.status ?? "unstarted", task: lane?.task ?? null, budgetSeconds: lane?.budgetSeconds ?? null, usedSeconds: lane?.usedSeconds ?? 0, leaseId: lane?.leaseId ?? null };
+    return { ...contract, reviewRequired: contract.reviewRequired === true, status: lane?.status ?? "unstarted", task: lane?.task ?? null, budgetSeconds: lane?.budgetSeconds ?? null, usedSeconds: lane?.usedSeconds ?? 0, leaseId: lane?.leaseId ?? null };
   });
   const known = new Set(AGENT_ROLE_CONTRACTS.map((contract) => contract.role));
   const customRoles = [...lanes.keys()].filter((role) => !known.has(role)).sort((left, right) => left.localeCompare(right));

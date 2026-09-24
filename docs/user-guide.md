@@ -484,7 +484,8 @@ cannot silently redefine the campaign objective.
 Authenticated external workers may report custom roles. Those roles appear in
 the same organization and health views with a default review-required contract,
 so “bring your own agent” workers remain visible and governed instead of
-disappearing into raw heartbeat telemetry.
+disappearing into raw heartbeat telemetry. The projection marks them with
+`reviewRequired: true`; built-in roles remain explicitly false.
 
 The dashboard also shows role reviews learned from completed trajectories. They
 combine completion, evidence anchors, confidence, and process quality into a
