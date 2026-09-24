@@ -3321,9 +3321,10 @@ test("orchestration benchmark covers worker ownership and recovery", () => {
   const report = runOrchestrationBenchmark();
   assert.equal(report.failed, 0);
   assert.equal(report.score, 1);
-  assert.equal(report.probes.length, 17);
+  assert.equal(report.probes.length, 18);
   assert.equal(report.probes.some((probe) => probe.id === "queue-starvation-prevention"), true);
   assert.equal(report.probes.some((probe) => probe.id === "completion-watchdog"), true);
+  assert.equal(report.probes.some((probe) => probe.id === "hierarchical-cancellation"), true);
   assert.equal(report.probes.some((probe) => probe.id === "delegated-child-completion"), true);
   assert.equal(report.probes.some((probe) => probe.id === "approval-gate"), true);
   assert.equal(report.probes.some((probe) => probe.id === "queue-pause-governance"), true);
@@ -4041,6 +4042,29 @@ test("operator cancellation wins races with late worker completion and retry", (
     assert.equal(task?.payload.cancellation.reason, "operator changed direction");
     assert.equal(store.cancelTask("cancel-running"), false);
     store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("cancelling a coordinator cascades to unfinished delegated descendants", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-cancel-tree-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.enqueueTask({ id: "cancel-root", kind: "research.cycle", priority: 1, payload: {} });
+    store.enqueueTask({ id: "cancel-child", kind: "research.lane", priority: 1, parentTaskId: "cancel-root", payload: {} });
+    store.enqueueTask({ id: "cancel-grandchild", kind: "research.review", priority: 1, parentTaskId: "cancel-child", payload: {} });
+    store.enqueueTask({ id: "cancel-running-child", kind: "research.lane", priority: 1, parentTaskId: "cancel-root", payload: {} });
+    store.enqueueTask({ id: "cancel-completed-child", kind: "research.lane", priority: 1, parentTaskId: "cancel-root", payload: {} });
+    assert.equal(store.claimTask("cancel-running-child", undefined, "worker-child")?.id, "cancel-running-child");
+    assert.equal(store.claimTask("cancel-completed-child", undefined, "worker-done")?.id, "cancel-completed-child");
+    assert.equal(store.completeClaimedTask("cancel-completed-child", "worker-done", "completed", { result: "already done" }), true);
+    assert.equal(store.cancelTask("cancel-root", "operator stopped the research tree"), true);
+    for (const id of ["cancel-root", "cancel-child", "cancel-grandchild", "cancel-running-child"]) {
+      const task = store.queueTasks().find((entry) => entry.id === id);
+      assert.equal(task?.status, "cancelled");
+      if (id !== "cancel-root") assert.equal(task?.payload.cancellation.parentCancellation, "cancel-root");
+    }
+    assert.equal(store.queueTasks().find((entry) => entry.id === "cancel-completed-child")?.status, "completed");
+    assert.equal(store.eventsByType("queue.cancelled").filter((event) => event.payload && typeof event.payload === "object" && event.payload.cascadedFrom === "cancel-root").length, 3);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

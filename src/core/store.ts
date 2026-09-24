@@ -1900,6 +1900,28 @@ export class ResearchStore {
     return { taskIds, goalIds, missingParentIds, cycle, truncated };
   }
 
+  /** Return bounded descendants for hierarchical cancellation and supervision. */
+  private taskDescendantIds(id: string, maxNodes = 4096): string[] {
+    const children = new Map<string, string[]>();
+    for (const task of this.queueTasks()) {
+      if (!task.parentTaskId) continue;
+      const siblings = children.get(task.parentTaskId) ?? [];
+      siblings.push(task.id);
+      children.set(task.parentTaskId, siblings);
+    }
+    const descendants: string[] = [];
+    const pending = [...(children.get(id) ?? [])];
+    const visited = new Set<string>([id]);
+    while (pending.length && descendants.length < Math.max(1, Math.floor(maxNodes))) {
+      const child = pending.shift() as string;
+      if (visited.has(child)) continue;
+      visited.add(child);
+      descendants.push(child);
+      pending.push(...(children.get(child) ?? []));
+    }
+    return descendants;
+  }
+
   private taskDependenciesReady(id: string): boolean {
     return this.taskReadiness(id)?.ready === true;
   }
@@ -2469,17 +2491,27 @@ export class ResearchStore {
   cancelTask(id: string, reason = "operator cancelled task", source = "operator"): boolean {
     const normalizedReason = reason.trim().slice(0, 400) || "operator cancelled task";
     const now = new Date().toISOString();
-    const current = this.db.prepare("SELECT status, kind, owner_id, payload_json FROM work_queue WHERE id = ?").get(id) as { status: QueueTaskStatus; kind: string; owner_id: string | null; payload_json: string } | undefined;
-    if (!current || !["queued", "running"].includes(current.status)) return false;
-    let payload: Record<string, unknown> = {};
+    const candidateIds = [id, ...this.taskDescendantIds(id)];
+    const cancelled: Array<{ id: string; kind: string; status: QueueTaskStatus; ownerId: string | null; parentTaskId: string | null }> = [];
+    const parentCancelled = this.db.transaction(() => {
+      for (const candidateId of candidateIds) {
+        const current = this.db.prepare("SELECT status, kind, owner_id, parent_task_id, payload_json FROM work_queue WHERE id = ?").get(candidateId) as { status: QueueTaskStatus; kind: string; owner_id: string | null; parent_task_id: string | null; payload_json: string } | undefined;
+        if (!current || !["queued", "running"].includes(current.status)) continue;
+        let payload: Record<string, unknown> = {};
     try {
       const parsed = JSON.parse(current.payload_json);
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) payload = parsed as Record<string, unknown>;
     } catch { /* preserve cancellation even when an old payload is malformed */ }
-    const cancellation = { reason: normalizedReason, cancelledAt: now };
-    const result = this.db.prepare("UPDATE work_queue SET status = 'cancelled', payload_json = ?, claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')").run(safeJson({ ...payload, cancellation }), now, id);
-    if (result.changes !== 1) return false;
-    this.appendEvent("queue.cancelled", { id, kind: current.kind, priorStatus: current.status, priorOwnerId: current.owner_id, reason: normalizedReason, cancelledAt: now, source: source.trim().slice(0, 80) || "operator" });
+        const cancellation = { reason: normalizedReason, cancelledAt: now, ...(candidateId === id ? {} : { parentCancellation: id }) };
+        const result = this.db.prepare("UPDATE work_queue SET status = 'cancelled', payload_json = ?, claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')").run(safeJson({ ...payload, cancellation }), now, candidateId);
+        if (result.changes === 1) cancelled.push({ id: candidateId, kind: current.kind, status: current.status, ownerId: current.owner_id, parentTaskId: current.parent_task_id });
+      }
+      return cancelled.some((entry) => entry.id === id);
+    })();
+    if (!parentCancelled) return false;
+    for (const entry of cancelled) {
+      this.appendEvent("queue.cancelled", { id: entry.id, kind: entry.kind, priorStatus: entry.status, priorOwnerId: entry.ownerId, parentTaskId: entry.parentTaskId, reason: normalizedReason, cancelledAt: now, source: source.trim().slice(0, 80) || "operator", ...(entry.id === id ? {} : { cascadedFrom: id }) });
+    }
     return true;
   }
 

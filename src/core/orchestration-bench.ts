@@ -75,6 +75,11 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     const lateCompletion = store.completeClaimedTask("cancel-race", "worker-a", "completed");
     check("cancellation-race", "Operator cancellation wins over a late worker completion.", cancelClaim?.id === "cancel-race" && cancelled && !lateCompletion && store.queueTasks().find((task) => task.id === "cancel-race")?.status === "cancelled", { claimed: cancelClaim?.id, cancelled, lateCompletion, status: store.queueTasks().find((task) => task.id === "cancel-race")?.status });
 
+    store.enqueueTask({ id: "cancel-tree", kind: "coordinator", priority: 1, payload: {} });
+    store.enqueueTask({ id: "cancel-tree-child", kind: "worker", priority: 1, parentTaskId: "cancel-tree", payload: {} });
+    const treeCancelled = store.cancelTask("cancel-tree", "benchmark parent stop");
+    check("hierarchical-cancellation", "Stopping a coordinator cancels unfinished descendants without rewriting completed evidence.", treeCancelled && store.queueTasks().find((task) => task.id === "cancel-tree")?.status === "cancelled" && store.queueTasks().find((task) => task.id === "cancel-tree-child")?.status === "cancelled", { treeCancelled, root: store.queueTasks().find((task) => task.id === "cancel-tree")?.status, child: store.queueTasks().find((task) => task.id === "cancel-tree-child")?.status });
+
     store.enqueueTask({ id: "proof-contract", kind: "validated-work", priority: 1, payload: { completionContract: { requiredPayloadKeys: ["summary"], requiredEvidenceRefs: ["benchmark-proof"], requiredActivityKinds: ["progress"] } } });
     const proofClaim = store.claimTask("proof-contract", ["validated-work"], "worker-a");
     const rejected = !store.completeClaimedTask("proof-contract", "worker-a", "completed", {});
