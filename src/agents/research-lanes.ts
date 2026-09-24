@@ -11,6 +11,7 @@ import { normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, type Res
 import { boundResearchContext } from "../core/context-budget.js";
 import type { LaneFinding } from "../core/cross-pollination.js";
 import { agentRoleContract } from "../core/agent-organization.js";
+import type { AgentRoleReview } from "../core/agent-evals.js";
 
 export const RESEARCH_LANE_ROLES = [
   "data detective",
@@ -203,6 +204,8 @@ export interface ResearchLanesOptions {
   autonomy?: AutonomyLevel;
   laneFocus?: string;
   laneRotation?: number;
+  /** Durable role reviews used to schedule a bounded coaching attempt. */
+  roleReviews?: ReadonlyArray<Pick<AgentRoleReview, "role" | "recommendation" | "assignments">>;
   onProgress?: (message: string) => void;
   onProcess?: (control: ProcessControl) => void;
   isCancelled?: () => boolean;
@@ -302,6 +305,8 @@ export interface ResearchLaneSelectionOptions {
   focus?: string;
   /** Rotate otherwise equivalent specialists across autonomous cycles. */
   rotation?: number;
+  /** Prior durable reviews can schedule a bounded coaching attempt. */
+  roleReviews?: ReadonlyArray<Pick<AgentRoleReview, "role" | "recommendation" | "assignments">>;
 }
 
 export function selectResearchLaneRoles(objective: string, requested: number, options: ResearchLaneSelectionOptions = {}): ResearchLaneRole[] {
@@ -323,12 +328,20 @@ export function selectResearchLaneRoles(objective: string, requested: number, op
   const prioritized = focusRole && pool.some((role) => role === focusRole)
     ? [focusRole as ResearchLaneRole, ...pool.filter((role) => role !== focusRole)]
     : [...pool];
+  const reviews = new Map((options.roleReviews ?? []).map((review) => [review.role, review]));
   // Rotation is applied only to the non-specialist portfolio. A measured
   // failure must keep its repair lane first, while the remaining seats rotate
   // to prevent a low-concurrency campaign from seeing one fixed slice of the
   // research team forever.
   const head = prioritized[0] === focusRole ? [prioritized[0]] : [];
-  const tail = prioritized.slice(head.length);
+  const tail = prioritized.slice(head.length).sort((left, right) => {
+    const priority = (role: ResearchLaneRole): number => {
+      const review = reviews.get(role);
+      if (!review || review.assignments < 2) return 1;
+      return review.recommendation === "needs-review" ? 0 : 1;
+    };
+    return priority(left) - priority(right) || prioritized.indexOf(left) - prioritized.indexOf(right);
+  });
   const offset = tail.length ? Math.abs(Math.trunc(options.rotation ?? 0)) % tail.length : 0;
   const rotated = [...tail.slice(offset), ...tail.slice(0, offset)];
   return [...head, ...rotated].slice(0, count);
@@ -857,7 +870,7 @@ export async function runResearchLanes(objective: string, context: Record<string
     || Boolean(options.fallbackLocalModel && (options.limitPolicy === "auto" || options.limitPolicy === "fallback"));
   const concurrency = researchLaneConcurrency({ autonomy: options.autonomy, provider: mayUseLocalFallback ? "local" : options.provider, requested: options.maxParallel });
   const teamSize = researchLaneTeamSize(objective, concurrency, options);
-  const roles = selectResearchLaneRoles(objective, teamSize, { focus: options.laneFocus, rotation: options.laneRotation });
+  const roles = selectResearchLaneRoles(objective, teamSize, { focus: options.laneFocus, rotation: options.laneRotation, roleReviews: options.roleReviews });
   const routes = assignResearchLaneRoutes(roles, options);
   // Share only immutable read-only observations within this invocation. The
   // promise map also collapses simultaneous identical calls from parallel

@@ -3631,6 +3631,17 @@ test("research lane teams share only cacheable observations within one invocatio
   }
 });
 
+test("lane selection schedules bounded coaching for reviewed roles", () => {
+  const objective = "improve model validation metric";
+  const reviewed = selectResearchLaneRoles(objective, 2, {
+    roleReviews: [
+      { role: "ensemble scientist", recommendation: "needs-review", assignments: 4 },
+      { role: "data detective", recommendation: "trusted", assignments: 4 },
+    ],
+  });
+  assert.equal(reviewed[0], "ensemble scientist");
+});
+
 test("lane observation cache never reuses a failed in-flight result", async () => {
   let release;
   const gate = new Promise((resolve) => { release = resolve; });

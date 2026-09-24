@@ -408,6 +408,11 @@ bounded `trusted`, `needs-review`, or `insufficient-data` signal. This is used
 as context for later lane decisions, while final task metrics remain attributed
 to the complete validated campaign.
 
+When a role has at least two observations and is marked `needs-review`, lane
+selection gives it a bounded coaching seat on the next team. This is not an
+unlimited retry: the normal concurrency, time budget, route-change, evidence,
+and termination gates still apply.
+
 For a browser view of the active workspace, run `evidra dashboard --port 4310`
 and open `http://127.0.0.1:4310`. It is read-only, localhost-bound, and polls
 the same durable state used by the TUI.
