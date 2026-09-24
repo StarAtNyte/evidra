@@ -152,3 +152,14 @@ export function agentRoleInterventions(reviews: readonly AgentRoleReview[]): Age
 export function agentCoachingDirective(intervention: AgentRoleIntervention): string {
   return `Coaching intervention: ${intervention.reason}. Change the route, ground material findings in durable observations, and state a falsification test.`;
 }
+
+/** Materialize one bounded coaching directive per role after new evidence. */
+export function applyAgentCoaching(store: ResearchStore, reviews: readonly AgentRoleReview[], latestTrajectoryAt?: string): number[] {
+  const interventions = agentRoleInterventions(reviews).filter((intervention) => intervention.action === "coach");
+  const lastApplied = store.eventsByType("research.agent.coaching.applied", 1).at(-1);
+  const hasNewEvidence = !latestTrajectoryAt || !lastApplied || lastApplied.createdAt < latestTrajectoryAt;
+  if (!hasNewEvidence) return [];
+  return interventions
+    .map((intervention) => store.enqueueAgentDirectiveOnce(intervention.role, agentCoachingDirective(intervention), null, "agent evaluator").id);
+}
+import type { ResearchStore } from "./store.js";

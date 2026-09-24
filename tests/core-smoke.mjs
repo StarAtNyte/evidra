@@ -15,7 +15,7 @@ import { controlPlaneHealth, operatorAttention } from "../dist/core/attention.js
 import { goalAlignment, pauseForGoalAlignment } from "../dist/core/goal-alignment.js";
 import { agentLaneHealth, agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
 import { campaignOrganization, formatCampaignOrganization } from "../dist/core/campaign-organization.js";
-import { agentRoleInterventions, evaluateAgentRoles } from "../dist/core/agent-evals.js";
+import { agentRoleInterventions, applyAgentCoaching, evaluateAgentRoles } from "../dist/core/agent-evals.js";
 import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "../dist/core/external-events.js";
 import { createPortableBundle, PORTABLE_BUNDLE_TYPE, validatePortableBundle } from "../dist/core/portable-bundle.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../dist/core/submissions.js";
@@ -889,6 +889,23 @@ test("agent reviews learn from durable lane evidence without claiming metric att
   assert.equal(reviews.find((review) => review.role === "validation scientist")?.playbookRate, 0.5);
   assert.equal(agentRoleInterventions(reviews).find((intervention) => intervention.role === "validation scientist")?.action, "coach");
   assert.equal(reviews.find((review) => review.role === "unsupported")?.recommendation, "needs-review");
+});
+
+test("autonomous role coaching is durable and does not duplicate within one evidence window", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-agent-coaching-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    const reviews = evaluateAgentRoles([
+      { payload: { laneReports: [{ role: "validation scientist", status: "completed", confidence: 0.2, verifiedEvidenceIds: [] }] }, quality: { overall: "FAIL" } },
+      { payload: { laneReports: [{ role: "validation scientist", status: "completed", confidence: 0.2, verifiedEvidenceIds: [] }] }, quality: { overall: "FAIL" } },
+    ]);
+    const first = applyAgentCoaching(store, reviews, "2026-09-25T00:00:00.000Z");
+    assert.equal(first.length, 1);
+    store.appendEvent("research.agent.coaching.applied", { directiveIds: first, roles: ["validation scientist"], source: "test" });
+    assert.deepEqual(applyAgentCoaching(store, reviews, "2026-09-25T00:00:00.000Z"), first);
+    assert.equal(store.pendingAgentDirectives("validation scientist").length, 1);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("agent review scores favor the newest observed role behavior", () => {

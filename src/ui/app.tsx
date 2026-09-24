@@ -13,7 +13,7 @@ import { campaignOrganization, formatCampaignOrganization } from "../core/campai
 import { roleBudgetLedger } from "../core/usage.js";
 import { formatGoalAlignment, goalAlignment, pauseForGoalAlignment } from "../core/goal-alignment.js";
 import { operatorAttention } from "../core/attention.js";
-import { agentCoachingDirective, agentRoleInterventions, evaluateAgentRoles } from "../core/agent-evals.js";
+import { agentCoachingDirective, agentRoleInterventions, applyAgentCoaching, evaluateAgentRoles } from "../core/agent-evals.js";
 import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
@@ -1075,8 +1075,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const peerLaneBoard = boundedPeerBoard(recentEvents);
     const recentTrajectories = store.trajectories(50);
     const agentRoleReviews = evaluateAgentRoles(recentTrajectories);
-    store.appendEvent("research.agent.reviewed", { objective, reviews: agentRoleReviews, interventions: agentRoleInterventions(agentRoleReviews), source: "tui" });
     const latestTrajectoryAt = recentTrajectories[0]?.createdAt;
+    const agentInterventions = agentRoleInterventions(agentRoleReviews);
+    const coachingDirectiveIds = applyAgentCoaching(store, agentRoleReviews, latestTrajectoryAt);
+    store.appendEvent("research.agent.reviewed", { objective, reviews: agentRoleReviews, interventions: agentInterventions, coachingDirectiveIds, source: "tui" });
+    if (coachingDirectiveIds.length) store.appendEvent("research.agent.coaching.applied", { directiveIds: coachingDirectiveIds, roles: agentInterventions.filter((intervention) => intervention.action === "coach").map((intervention) => intervention.role), source: "autonomous-controller" });
     const unreconciledTraceRecovery = store.eventsByType("research.trace.recovered", 20).some((event) => !latestTrajectoryAt || event.createdAt > latestTrajectoryAt);
     const recentFailureCount = recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
     const recentQuality = recentTrajectories.slice(0, 20).map((entry) => qualityFeedback(entry.quality));
