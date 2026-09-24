@@ -4583,6 +4583,7 @@ test("portable bundles are redacted metadata snapshots with artifact references"
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.appendEvent("test.credentials", { token: "sk-super-secret-value-1234567890", note: "keep this" });
     store.setAgentRoleAdmission("external bundle role", true, "bundle test approval");
+    store.setAgentRoleContract({ role: "external bundle role", parentRole: "research director", responsibility: "validate portable bundle metadata", authority: "validate", reviewRequired: true, playbook: ["inspect bundle schema", "check secret redaction"] }, "bundle contract");
     store.rejectAgentRoleAdmission("external rejected role", "bundle test rejection");
     store.enqueueAgentDirective("validation scientist", "replay the saved evidence", "bundle-phase", "research director");
     const bundle = createPortableBundle(store, root);
@@ -4595,6 +4596,7 @@ test("portable bundles are redacted metadata snapshots with artifact references"
     assert.ok(Array.isArray(bundle.agentControls));
     assert.equal(bundle.agentControls[0].admitted, true);
     assert.equal(bundle.agentControls.find((control) => control.role === "external rejected role")?.admissionStatus, "rejected");
+    assert.equal(bundle.agentContracts.find((contract) => contract.role === "external bundle role")?.responsibility, "validate portable bundle metadata");
     assert.ok(Array.isArray(bundle.agentSessions));
     assert.ok(Array.isArray(bundle.agentDirectives));
     assert.equal(bundle.agentDirectives[0].sourceRole, "research director");
@@ -4611,7 +4613,9 @@ test("portable bundle validation rejects unsafe paths and unredacted credentials
   try {
     const base = { type: PORTABLE_BUNDLE_TYPE, schemaVersion: 1, exportedAt: new Date().toISOString(), artifacts: [], phaseGoals: [], hypotheses: [], decisions: [], claims: [], sources: [], experiments: [], runs: [], queue: [], routines: [], agentLanes: [], events: [] };
     assert.equal(validatePortableBundle(base, root).valid, true);
-    assert.equal(validatePortableBundle({ ...base, agentControls: [], agentSessions: [], agentDirectives: [] }, root).valid, true);
+    assert.equal(validatePortableBundle({ ...base, agentControls: [], agentContracts: [], agentSessions: [], agentDirectives: [] }, root).valid, true);
+    assert.equal(validatePortableBundle({ ...base, agentContracts: [{ role: "reviewer", parentRole: "research director", responsibility: "check evidence", authority: "validate", playbook: ["inspect"] }] }, root).valid, true);
+    assert.equal(validatePortableBundle({ ...base, agentContracts: [{ role: "reviewer", parentRole: "research director", responsibility: "", authority: "validate", playbook: [] }] }, root).valid, false);
     const unsafe = validatePortableBundle({ ...base, artifacts: [{ path: "../outside.bin" }] }, root);
     assert.equal(unsafe.valid, false);
     assert.match(unsafe.errors.join("\n"), /escapes workspace/);

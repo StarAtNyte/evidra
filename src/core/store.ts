@@ -1600,6 +1600,14 @@ export class ResearchStore {
     }
   }
 
+  agentRoleContracts(limit = 128): PersistedAgentRoleContract[] {
+    const rows = this.db.prepare("SELECT role FROM agent_controls WHERE contract_json IS NOT NULL ORDER BY role ASC LIMIT ?").all(Math.max(1, Math.min(256, Math.floor(limit)))) as Array<{ role: string }>;
+    return rows.flatMap((row) => {
+      const contract = this.agentRoleContract(row.role);
+      return contract ? [contract] : [];
+    });
+  }
+
   /** Persist the operating contract for a custom role; built-ins remain code-defined. */
   setAgentRoleContract(input: Omit<PersistedAgentRoleContract, "updatedAt">, reason = "operator contract update"): PersistedAgentRoleContract {
     const role = input.role.trim().slice(0, 160);

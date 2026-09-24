@@ -47,6 +47,7 @@ export function createPortableBundle(store: ResearchStore, root: string): Record
     routines: store.routines(),
     agentLanes: store.agentLanes(),
     agentControls: store.agentPauses(),
+    agentContracts: store.agentRoleContracts(),
     agentSessions: store.agentSessions(),
     agentDirectives: store.agentDirectives(),
     externalTools: externalManifest.tools,
@@ -72,8 +73,19 @@ export function validatePortableBundle(value: unknown, root: string): PortableBu
   for (const field of ["phaseGoals", "hypotheses", "decisions", "claims", "sources", "experiments", "runs", "artifacts", "queue", "routines", "agentLanes", "events"]) {
     if (!Array.isArray(object[field])) errors.push(`${field} must be an array`);
   }
-  for (const field of ["agentControls", "agentSessions", "agentDirectives"] as const) {
+  for (const field of ["agentControls", "agentContracts", "agentSessions", "agentDirectives"] as const) {
     if (object[field] !== undefined && !Array.isArray(object[field])) errors.push(`${field} must be an array when present`);
+  }
+  if (Array.isArray(object.agentContracts)) {
+    for (const entry of object.agentContracts) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) { errors.push("agent contract entry must be an object"); continue; }
+      const contract = entry as Record<string, unknown>;
+      if (typeof contract.role !== "string" || !contract.role.trim()) errors.push("agent contract role is required");
+      if (contract.parentRole !== null && contract.parentRole !== undefined && typeof contract.parentRole !== "string") errors.push(`agent contract ${String(contract.role ?? "unknown")} has an invalid parentRole`);
+      if (typeof contract.responsibility !== "string" || !contract.responsibility.trim()) errors.push(`agent contract ${String(contract.role ?? "unknown")} is missing responsibility`);
+      if (!["coordinate", "investigate", "validate", "execute", "repair"].includes(String(contract.authority))) errors.push(`agent contract ${String(contract.role ?? "unknown")} has an invalid authority`);
+      if (!Array.isArray(contract.playbook) || contract.playbook.length === 0 || contract.playbook.some((step) => typeof step !== "string" || !step.trim())) errors.push(`agent contract ${String(contract.role ?? "unknown")} has an invalid playbook`);
+    }
   }
   if (object.externalTools !== undefined && !Array.isArray(object.externalTools)) errors.push("externalTools must be an array when present");
   if (object.externalToolState !== undefined && (!object.externalToolState || typeof object.externalToolState !== "object" || Array.isArray(object.externalToolState))) errors.push("externalToolState must be an object when present");
