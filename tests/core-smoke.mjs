@@ -632,6 +632,7 @@ test("agent organization gives every lane a responsibility and reporting line", 
     const org = agentOrganization(store);
     assert.equal(org.find((entry) => entry.role === "validation scientist")?.status, "running");
     assert.ok(org.every((entry) => entry.responsibility.length > 0));
+    assert.ok(org.every((entry) => entry.playbook.length >= 3));
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -3695,6 +3696,8 @@ test("lane selection schedules bounded coaching for reviewed roles", () => {
 
 test("role reviews become bounded specialist coaching instructions", () => {
   const needsReview = lanePrompt("data detective", "audit the dataset", { recommendation: "needs-review", assignments: 4, score: 0.42, processFailures: 1, evidenceAnchors: 2 });
+  assert.match(needsReview, /Operating playbook/);
+  assert.match(needsReview, /leakage/);
   assert.match(needsReview, /Change the route from prior work/);
   assert.match(needsReview, /durable observation/);
   const trusted = lanePrompt("validation scientist", "check the metric", { recommendation: "trusted", assignments: 5, score: 0.91, processFailures: 0, evidenceAnchors: 12 });

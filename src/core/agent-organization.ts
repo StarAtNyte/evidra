@@ -5,22 +5,24 @@ export type AgentRoleContract = {
   parentRole: string | null;
   responsibility: string;
   authority: "coordinate" | "investigate" | "validate" | "execute" | "repair";
+  /** Reusable operating checklist injected into the agent's bounded context. */
+  playbook: readonly string[];
 };
 
 /** A small, domain-neutral org chart for research and challenge campaigns. */
 export const AGENT_ROLE_CONTRACTS: readonly AgentRoleContract[] = [
-  { role: "research director", parentRole: null, responsibility: "maintain the ultimate objective, allocate work, and decide the next evidence-backed action", authority: "coordinate" },
-  { role: "domain researcher", parentRole: "research director", responsibility: "map the domain, terminology, prior work, and competing explanations", authority: "investigate" },
-  { role: "method researcher", parentRole: "research director", responsibility: "propose falsifiable mechanisms and discriminating tests", authority: "investigate" },
-  { role: "data detective", parentRole: "research director", responsibility: "audit data provenance, leakage, shift, duplicates, and hidden structure", authority: "investigate" },
-  { role: "model researcher", parentRole: "method researcher", responsibility: "design and compare candidate implementations without claiming unmeasured gains", authority: "investigate" },
-  { role: "ensemble scientist", parentRole: "model researcher", responsibility: "test diversity, combination, and robustness of candidate solutions", authority: "investigate" },
-  { role: "validation scientist", parentRole: "research director", responsibility: "protect evaluation design, metrics, uncertainty, and replication gates", authority: "validate" },
-  { role: "reproducibility engineer", parentRole: "validation scientist", responsibility: "capture environments, seeds, artifacts, and independent rerun paths", authority: "validate" },
-  { role: "experiment engineer", parentRole: "model researcher", responsibility: "implement isolated, declared, reproducible experiments", authority: "execute" },
-  { role: "critic", parentRole: "research director", responsibility: "challenge decisions, expose unsupported assumptions, and require missing checks", authority: "validate" },
-  { role: "repair agent", parentRole: "research director", responsibility: "recover failed routes by changing the cause, route, or decomposition", authority: "repair" },
-  { role: "semantic auditor", parentRole: "critic", responsibility: "independently assess whether conclusions follow from durable evidence", authority: "validate" },
+  { role: "research director", parentRole: null, responsibility: "maintain the ultimate objective, allocate work, and decide the next evidence-backed action", authority: "coordinate", playbook: ["state the active goal and phase", "allocate independent work with a reason", "choose only evidence-backed next actions", "stop or pause when a durable gate requires it"] },
+  { role: "domain researcher", parentRole: "research director", responsibility: "map the domain, terminology, prior work, and competing explanations", authority: "investigate", playbook: ["define terms and scope", "retrieve primary sources", "separate established evidence from open claims", "identify competing explanations"] },
+  { role: "method researcher", parentRole: "research director", responsibility: "propose falsifiable mechanisms and discriminating tests", authority: "investigate", playbook: ["formulate competing mechanisms", "find implementation and ablation evidence", "state predictions and failure conditions", "propose the cheapest discriminating test"] },
+  { role: "data detective", parentRole: "research director", responsibility: "audit data provenance, leakage, shift, duplicates, and hidden structure", authority: "investigate", playbook: ["inventory data and provenance", "check leakage, duplicates, and target contamination", "inspect distribution and split shift", "record unresolved data risks"] },
+  { role: "model researcher", parentRole: "method researcher", responsibility: "design and compare candidate implementations without claiming unmeasured gains", authority: "investigate", playbook: ["inspect the baseline and constraints", "propose mechanism-level alternatives", "tie each change to a falsifiable prediction", "avoid claiming gains without evaluator evidence"] },
+  { role: "ensemble scientist", parentRole: "model researcher", responsibility: "test diversity, combination, and robustness of candidate solutions", authority: "investigate", playbook: ["measure candidate diversity", "locate complementary error slices", "compare a simple combination against its members", "check robustness before recommending promotion"] },
+  { role: "validation scientist", parentRole: "research director", responsibility: "protect evaluation design, metrics, uncertainty, and replication gates", authority: "validate", playbook: ["verify metric and split contracts", "look for leakage and invalid comparisons", "quantify uncertainty or repeatability", "require independent replication for material claims"] },
+  { role: "reproducibility engineer", parentRole: "validation scientist", responsibility: "capture environments, seeds, artifacts, and independent rerun paths", authority: "validate", playbook: ["capture environment and dependency state", "pin seeds and inputs", "verify artifact completeness and checksums", "rerun through an independent path"] },
+  { role: "experiment engineer", parentRole: "model researcher", responsibility: "implement isolated, declared, reproducible experiments", authority: "execute", playbook: ["use a declared immutable experiment contract", "change one meaningful mechanism at a time", "run the evaluator without modifying its contract", "record outputs, failures, and resource use"] },
+  { role: "critic", parentRole: "research director", responsibility: "challenge decisions, expose unsupported assumptions, and require missing checks", authority: "validate", playbook: ["search for unsupported claims", "challenge controls and comparisons", "separate uncertainty from failure", "withhold approval while required checks remain"] },
+  { role: "repair agent", parentRole: "research director", responsibility: "recover failed routes by changing the cause, route, or decomposition", authority: "repair", playbook: ["classify the failure cause", "change route or decomposition rather than blindly retrying", "preserve the failed attempt as evidence", "verify the recovery independently"] },
+  { role: "semantic auditor", parentRole: "critic", responsibility: "independently assess whether conclusions follow from durable evidence", authority: "validate", playbook: ["reinspect current workspace evidence", "trace each conclusion to an exact anchor", "check every acceptance criterion", "reject conclusions with unresolved required checks"] },
 ] as const;
 
 export function agentRoleContract(role: string): AgentRoleContract {
@@ -29,6 +31,7 @@ export function agentRoleContract(role: string): AgentRoleContract {
     parentRole: "research director",
     responsibility: "unclassified work; requires explicit operator review before expansion",
     authority: "investigate",
+    playbook: ["clarify the assigned scope", "inspect current evidence", "state uncertainty", "propose a falsifiable next check"],
   };
 }
 

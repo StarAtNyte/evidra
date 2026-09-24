@@ -458,7 +458,8 @@ export function lanePrompt(
     : review?.recommendation === "trusted"
       ? `Role review signal: this role has remained reliable across ${review.assignments} assignment(s). Preserve its evidence discipline, but still independently verify every new claim.`
       : "Role review signal: insufficient prior evidence; establish a clean, explicit baseline for this assignment.";
-  return `${focus}\n\nRole contract: report to ${contract.parentRole ?? "the operator"}; authority=${contract.authority}; responsibility=${contract.responsibility}.\n${coaching}\n\nObjective: ${objective}\n\n` +
+  const playbook = contract.playbook.map((step, index) => `${index + 1}. ${step}`).join("\n");
+  return `${focus}\n\nRole contract: report to ${contract.parentRole ?? "the operator"}; authority=${contract.authority}; responsibility=${contract.responsibility}.\nOperating playbook:\n${playbook}\n${coaching}\n\nObjective: ${objective}\n\n` +
     "You are an independent Evidra research lane. Use the supplied workspace and evidence context; run only read-only inspection when tools are available. Do not edit files, submit anything, or claim measurements you did not observe. Return ONLY JSON with this shape: " +
     '{"role":"...","summary":"...","findings":["..."],"recommendations":["..."],"uncertainties":["..."],"discriminatingTests":["cheapest observation or experiment that would distinguish competing explanations"],"evidence":["command, artifact, or source supporting each important statement"],"evidenceSourceIds":["exact durable source IDs for literature-derived evidence"],"confidence":0.0}. ' +
     "Recommendations must be testable and should state what would falsify them. For every material uncertainty or disagreement, propose a concrete discriminating test. A bounded prior-peer board may be present in the context: use it to challenge, extend, or explicitly reject earlier findings, but never treat it as stronger than primary evidence.";
