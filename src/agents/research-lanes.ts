@@ -398,6 +398,13 @@ export function researchLaneConcurrency(options: { autonomy?: AutonomyLevel; pro
   return Math.max(1, Math.min(options.requested ?? moodCeiling, hostCeiling, localCeiling, moodCeiling));
 }
 
+/** Keep provider transcripts reusable within a goal but isolated across delegated task trees. */
+export function researchLaneSessionScope(goalId?: string | null, parentTaskId?: string | null): string {
+  return parentTaskId?.trim()
+    ? `${goalId?.trim() || "global"}:task:${parentTaskId.trim()}`
+    : goalId?.trim() || "global";
+}
+
 /** Select total team size separately from concurrency so later waves can peer-review earlier ones. */
 export function researchLaneTeamSize(
   objective: string,
@@ -890,7 +897,10 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
       store.close();
     } catch { /* activity telemetry must not invalidate the lane */ }
   };
-  const sessionScope = options.goalId ?? "global";
+  // Reuse context across ordinary cycles in the same goal, but isolate
+  // delegated children by lineage so a sibling's provider transcript cannot
+  // silently become part of this task's evidence.
+  const sessionScope = researchLaneSessionScope(options.goalId, options.parentTaskId);
   let resumableThreadId: string | undefined;
   if (laneRoute.provider === "codex") {
     const sessionStore = new ResearchStore(options.storePath);

@@ -317,6 +317,7 @@ Implemented today:
 - ownership-aware queue checkout: each worker gets a durable identity, only the claimant can heartbeat a task, and stale claims are safely reclaimable;
 - goal-aligned queue ancestry: tasks can carry a phase-goal ID and parent-task ID, making autonomous decomposition traceable from mission to work item;
 - durable lane tickets: every leased research specialist also owns a `research.lane` queue task with phase lineage, heartbeat, retry ownership, and terminal evidence, so lane work remains visible and recoverable across controller restarts;
+- lineage-scoped provider sessions: ordinary cycles reuse a role’s durable context within a goal, while delegated child tasks receive isolated session scopes so sibling transcripts cannot leak into one another’s evidence;
 - attributable specialist handoffs: durable directives preserve the sender role, recipient role, scope, delivery state, and cancellation state across restarts, so cross-agent coordination is auditable rather than anonymous prompt text;
 - portable handoff state: sender attribution is included in secret-redacted exports and dashboard metadata, allowing a resumed workspace to preserve the collaboration chain without copying credentials or raw datasets;
 - campaign recovery checkpoints: each autonomous boundary records a bounded list of queued, running, or paused task IDs alongside cycle and phase, so restart/resume status identifies the durable work it is recovering;

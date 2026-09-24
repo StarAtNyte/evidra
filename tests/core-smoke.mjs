@@ -78,7 +78,7 @@ import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
-import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, createLaneToolExecutor, laneHandoffBoard, lanePrompt, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneTeamSize, researchLiteratureQueries, roleMemoryFromTrajectories, runResearchLanes, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
+import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, createLaneToolExecutor, laneHandoffBoard, lanePrompt, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneSessionScope, researchLaneTeamSize, researchLiteratureQueries, roleMemoryFromTrajectories, runResearchLanes, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
 import { agentBudgetLedger, campaignAgentTokens, campaignRoleAgentTokens, roleBudgetLedger, summarizeAgentUsage, summarizeAgentUsageBy, summarizeAgentUsageByScope, summarizeUsage } from "../dist/core/usage.js";
@@ -2404,6 +2404,13 @@ test("research lane concurrency respects permission mode and local inference lim
   process.env.OLLAMA_NUM_PARALLEL = "1";
   try { assert.equal(researchLaneConcurrency({ autonomy: "yolo", provider: "local", requested: 6 }), 1); }
   finally { if (previous === undefined) delete process.env.OLLAMA_NUM_PARALLEL; else process.env.OLLAMA_NUM_PARALLEL = previous; }
+});
+
+test("research lane provider sessions isolate delegated task lineage", () => {
+  assert.equal(researchLaneSessionScope("phase-1"), "phase-1");
+  assert.equal(researchLaneSessionScope(undefined, undefined), "global");
+  assert.equal(researchLaneSessionScope("phase-1", "parent-a"), "phase-1:task:parent-a");
+  assert.notEqual(researchLaneSessionScope("phase-1", "parent-a"), researchLaneSessionScope("phase-1", "parent-b"));
 });
 
 test("research lanes assign a bounded heterogeneous model pool deterministically", () => {
