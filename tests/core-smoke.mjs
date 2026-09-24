@@ -3368,6 +3368,9 @@ test("queue completion contracts can require every delegated child to finish", (
     assert.equal(store.completeClaimedTask("child-contract", "worker-child", "completed", { result: "replicated" }), true);
     assert.equal(store.completeClaimedTask("parent-contract", "worker-parent", "completed", { summary: "all children complete" }), true);
     assert.equal(store.queueTasks().find((task) => task.id === "parent-contract")?.status, "completed");
+    store.enqueueTask({ id: "direct-contract", kind: "research.lane", priority: 1, payload: { completionContract: { requiredPayloadKeys: ["summary"] } } });
+    assert.throws(() => store.updateTask("direct-contract", "completed", {}), /Queue completion proof rejected/);
+    assert.equal(store.queueTasks().find((task) => task.id === "direct-contract")?.status, "queued");
     assert.throws(() => store.enqueueTask({ id: "invalid-child-contract", kind: "research.lane", priority: 1, payload: { completionContract: { requireChildCompletion: "yes" } } }), /requireChildCompletion/);
   } finally {
     rmSync(root, { recursive: true, force: true });

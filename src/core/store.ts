@@ -1998,8 +1998,16 @@ export class ResearchStore {
   }
 
   updateTask(id: string, status: QueueTaskStatus, payload?: unknown): void {
+    if (status === "completed") {
+      const audit = this.taskCompletionAudit(id, payload);
+      if (!audit.valid) {
+        this.appendEvent("queue.completion.rejected", { id, missing: audit.missing, source: "updateTask" });
+        throw new Error(`Queue completion proof rejected for '${id}': ${audit.missing.join(", ")}`);
+      }
+    }
+    const current = this.queueTasks().find((task) => task.id === id);
     const now = new Date().toISOString();
-    this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), owner_id = CASE WHEN ? IN ('completed', 'failed', 'cancelled') THEN NULL ELSE owner_id END, claim_token = CASE WHEN ? IN ('completed', 'failed', 'cancelled') THEN NULL ELSE claim_token END, updated_at = ? WHERE id = ?").run(status, payload === undefined ? null : safeJson(payload), status, status, now, id);
+    this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), owner_id = CASE WHEN ? IN ('completed', 'failed', 'cancelled') THEN NULL ELSE owner_id END, claim_token = CASE WHEN ? IN ('completed', 'failed', 'cancelled') THEN NULL ELSE claim_token END, updated_at = ? WHERE id = ?").run(status, payload === undefined ? null : safeJson(status === "completed" ? preserveQueuePayload(current?.payload, payload) : payload), status, status, now, id);
     this.appendEvent(`queue.${status}`, { id, payload });
   }
 
