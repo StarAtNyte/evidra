@@ -3937,6 +3937,9 @@ test("research lane teams share only cacheable observations within one invocatio
     assert.equal(laneUsage.length, 2);
     assert.ok(laneUsage.every((lane) => lane.usageCalls >= 1));
     assert.equal(usageStore.queueTasks("completed").filter((task) => task.kind === "research.lane").length, 2);
+    const dispatch = usageStore.eventsByType("research.lane.dispatch_planned").at(-1)?.payload;
+    assert.deepEqual(dispatch.dispatched, ["domain researcher", "validation scientist"]);
+    assert.equal(dispatch.roleTokenBudgetExhausted.length, 0);
     usageStore.close();
   } finally {
     if (previousHost === undefined) delete process.env.OLLAMA_HOST;

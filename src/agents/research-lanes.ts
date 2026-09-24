@@ -1103,6 +1103,20 @@ export async function runResearchLanes(objective: string, context: Record<string
   const roles = candidateRoles.filter((role) => !pausedRoles.has(role) && !exhaustedRoles.has(role));
   if (pausedRoles.size) options.onProgress?.(`Research lanes · skipped operator-paused roles: ${[...pausedRoles].join(", ")}`);
   if (exhaustedRoles.size) options.onProgress?.(`Research lanes · skipped role-token-budget roles: ${[...exhaustedRoles].join(", ")}`);
+  const dispatchStore = new ResearchStore(options.storePath);
+  dispatchStore.appendEvent("research.lane.dispatch_planned", {
+    objective: objective.slice(0, 1_000),
+    candidates: candidateRoles,
+    dispatched: roles,
+    paused: [...pausedRoles],
+    roleTokenBudgetExhausted: [...exhaustedRoles],
+    concurrency,
+    executionMode: options.executionMode ?? (options.autonomy === "safe" ? "waves" : "asynchronous"),
+    campaignStartedAt: options.campaignStartedAt ?? null,
+    goalId: options.goalId ?? null,
+    parentTaskId: options.parentTaskId ?? null,
+  });
+  dispatchStore.close();
   const historicalTrajectories = memoryStore.trajectories(128);
   memoryStore.close();
   const routes = assignResearchLaneRoutes(roles, options);
