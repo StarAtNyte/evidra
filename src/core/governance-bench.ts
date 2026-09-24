@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { agentOrganization, agentToolPermission, AGENT_ROLE_CONTRACTS } from "./agent-organization.js";
 import { ResearchStore } from "./store.js";
+import { approvalInbox } from "./approvals.js";
 
 export interface GovernanceProbe {
   id: string;
@@ -60,6 +61,16 @@ export function runGovernanceBenchmark(): GovernanceBenchmarkReport {
 
     const applied = store.agentDirectives("validation scientist");
     check("handoff-audit-trail", "Queued and applied handoffs remain queryable after delivery.", applied.length === 2 && applied.every((directive) => directive.appliedAt !== null), { directives: applied.map((directive) => ({ id: directive.id, scopeKey: directive.scopeKey, applied: directive.appliedAt !== null })) });
+
+    store.enqueueTask({ id: "governance-recovery", kind: "research.lane", priority: 1, payload: {} });
+    store.updateTask("governance-recovery", "failed", { error: "sandbox failed", recovery: { failureClass: "sandbox", route: "alternate_executor", action: "use a verified executor" } });
+    store.appendEvent("queue.recovery_required", { taskId: "governance-recovery", failureClass: "sandbox", route: "alternate_executor", action: "use a verified executor" });
+    const pendingRecovery = approvalInbox(store).find((item) => item.kind === "queue-recovery" && item.id === "governance-recovery");
+    let sameRouteRejected = false;
+    try { store.recoverFailedTask("governance-recovery", "alternate_executor"); } catch { sameRouteRejected = true; }
+    const recovered = store.recoverFailedTask("governance-recovery", "local_repair", "repair the sandbox first");
+    const resolvedRecovery = !approvalInbox(store).some((item) => item.kind === "queue-recovery" && item.id === "governance-recovery");
+    check("recovery-approval-boundary", "Terminal work produces an approval item and cannot resume without a changed route.", Boolean(pendingRecovery) && sameRouteRejected && recovered.status === "queued" && resolvedRecovery, { pendingRecovery, sameRouteRejected, recovered: recovered.status, resolvedRecovery });
     store.close();
   } finally {
     rmSync(root, { recursive: true, force: true });
