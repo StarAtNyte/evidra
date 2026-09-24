@@ -44,6 +44,9 @@ export function createPortableBundle(store: ResearchStore, root: string): Record
     queue: store.queueTasks(),
     routines: store.routines(),
     agentLanes: store.agentLanes(),
+    agentControls: store.agentPauses(),
+    agentSessions: store.agentSessions(),
+    agentDirectives: store.agentDirectives(),
     events: store.recentEvents(512),
     limitations: [
       "This bundle contains metadata, evidence references, and recent events; it does not copy datasets, source files, model weights, or artifact contents.",
@@ -63,6 +66,9 @@ export function validatePortableBundle(value: unknown, root: string): PortableBu
   if (!object.exportedAt || typeof object.exportedAt !== "string" || !Number.isFinite(Date.parse(object.exportedAt))) errors.push("exportedAt must be an ISO timestamp");
   for (const field of ["phaseGoals", "hypotheses", "decisions", "claims", "sources", "experiments", "runs", "artifacts", "queue", "routines", "agentLanes", "events"]) {
     if (!Array.isArray(object[field])) errors.push(`${field} must be an array`);
+  }
+  for (const field of ["agentControls", "agentSessions", "agentDirectives"] as const) {
+    if (object[field] !== undefined && !Array.isArray(object[field])) errors.push(`${field} must be an array when present`);
   }
   const artifacts = Array.isArray(object.artifacts) ? object.artifacts : [];
   for (const entry of artifacts) {

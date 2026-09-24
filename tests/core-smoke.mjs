@@ -3613,6 +3613,9 @@ test("portable bundles are redacted metadata snapshots with artifact references"
     assert.match(JSON.stringify(bundle), /REDACTED/);
     assert.doesNotMatch(JSON.stringify(bundle), /super-secret-value/);
     assert.ok(Array.isArray(bundle.events));
+    assert.ok(Array.isArray(bundle.agentControls));
+    assert.ok(Array.isArray(bundle.agentSessions));
+    assert.ok(Array.isArray(bundle.agentDirectives));
     assert.ok(Array.isArray(bundle.limitations));
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -3623,6 +3626,7 @@ test("portable bundle validation rejects unsafe paths and unredacted credentials
   try {
     const base = { type: PORTABLE_BUNDLE_TYPE, schemaVersion: 1, exportedAt: new Date().toISOString(), artifacts: [], phaseGoals: [], hypotheses: [], decisions: [], claims: [], sources: [], experiments: [], runs: [], queue: [], routines: [], agentLanes: [], events: [] };
     assert.equal(validatePortableBundle(base, root).valid, true);
+    assert.equal(validatePortableBundle({ ...base, agentControls: [], agentSessions: [], agentDirectives: [] }, root).valid, true);
     const unsafe = validatePortableBundle({ ...base, artifacts: [{ path: "../outside.bin" }] }, root);
     assert.equal(unsafe.valid, false);
     assert.match(unsafe.errors.join("\n"), /escapes workspace/);
