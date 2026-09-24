@@ -2614,10 +2614,11 @@ event.command("serve")
               }
               const recorded = store.recordQueueUsage({ taskId, actorId: workerId, claimToken: claimToken || undefined, inputTokens: typeof parsed.inputTokens === "number" ? parsed.inputTokens : 0, outputTokens: typeof parsed.outputTokens === "number" ? parsed.outputTokens : 0, costUsd: parsed.costUsd === null ? null : typeof parsed.costUsd === "number" ? parsed.costUsd : undefined, provider: typeof parsed.provider === "string" ? parsed.provider : undefined, model: typeof parsed.model === "string" ? parsed.model : undefined, idempotencyKey: typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : undefined });
               const usage = recorded ? store.queueUsageState(taskId) : undefined;
+              const budgetExhausted = Boolean(recorded && usage?.exhausted && store.queueTasks().find((task) => task.id === taskId)?.status === "cancelled");
               store.close();
               if (!recorded) throw new Error("Task usage requires non-negative bounded token counts and an optional non-negative cost.");
-              response.writeHead(200, headers);
-              response.end(JSON.stringify({ ok: true, taskId, usage }));
+              response.writeHead(budgetExhausted ? 409 : 200, headers);
+              response.end(JSON.stringify({ ok: !budgetExhausted, taskId, usage, ...(budgetExhausted ? { error: "task token budget exhausted", status: "cancelled" } : {}) }));
               return;
             }
             if (!(typeof parsed.status === "string" && ["completed", "failed", "cancelled"].includes(parsed.status))) throw new Error("Task completion status must be completed, failed, or cancelled.");

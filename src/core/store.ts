@@ -2082,6 +2082,15 @@ export class ResearchStore {
       }
     }
     this.appendEvent("queue.usage", { taskId, actorId, inputTokens, outputTokens, ...(costUsd === null ? {} : { costUsd }), ...(provider === null ? {} : { provider }), ...(model === null ? {} : { model }), ...(idempotencyKey === null ? {} : { idempotencyKey }) });
+    // A task budget is a live safety boundary, not merely a claim-time hint.
+    // Cancel an active lease as soon as the immutable usage ledger crosses it;
+    // the worker's next heartbeat/usage request then receives the durable
+    // cancellation and can stop before doing another model turn.
+    const usageState = this.queueUsageState(taskId);
+    const currentStatus = this.db.prepare("SELECT status FROM work_queue WHERE id = ?").get(taskId) as { status: string } | undefined;
+    if (usageState?.exhausted && currentStatus?.status === "running") {
+      this.cancelTask(taskId, "task token budget exhausted", "budget");
+    }
     return true;
   }
 

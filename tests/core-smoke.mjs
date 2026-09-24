@@ -7958,6 +7958,17 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(qualifiedTask.id, "bridge-gpu");
     assert.deepEqual(qualifiedTask.requiredCapabilities, ["gpu.cuda"]);
     assert.equal((await post("/tasks/complete", { workerId: "worker-a", taskId: qualifiedTask.id, claimToken: qualifiedTask.claimToken, status: "completed", payload: { result: "gpu verified" } }, token, "worker-a", "worker-secret")).status, 200);
+    const budgetStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    budgetStore.enqueueTask({ id: "bridge-budget", kind: "research.lane", priority: 3, tokenBudget: 10, payload: {} });
+    budgetStore.close();
+    const budgetClaimResponse = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"] }, token, "worker-a", "worker-secret");
+    const budgetTask = (await budgetClaimResponse.json()).task;
+    const budgetUsageResponse = await post("/tasks/usage", { workerId: "worker-a", taskId: budgetTask.id, claimToken: budgetTask.claimToken, inputTokens: 6, outputTokens: 4, provider: "codex", model: "gpt-test", idempotencyKey: "budget-turn-1" }, token, "worker-a", "worker-secret");
+    assert.equal(budgetUsageResponse.status, 409);
+    assert.equal((await budgetUsageResponse.json()).error, "task token budget exhausted");
+    const budgetHeartbeatResponse = await post("/tasks/heartbeat", { workerId: "worker-a", taskId: budgetTask.id, claimToken: budgetTask.claimToken }, token, "worker-a", "worker-secret");
+    assert.equal(budgetHeartbeatResponse.status, 409);
+    assert.equal((await budgetHeartbeatResponse.json()).cancellation.reason, "task token budget exhausted");
     const releaseStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     releaseStore.enqueueTask({ id: "bridge-release", kind: "research.lane", priority: 3, payload: {} });
     releaseStore.close();
