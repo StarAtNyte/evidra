@@ -90,6 +90,14 @@ export interface QueueActivity {
   metadata: unknown;
   createdAt: string;
 }
+export interface QueueUsage {
+  taskId: string;
+  actorId: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number | null;
+  createdAt: string;
+}
 
 export type RoutineStatus = "active" | "paused" | "running" | "failed";
 export interface ResearchRoutine {
@@ -1790,6 +1798,34 @@ export class ResearchStore {
       if (!id || !actorId || !message || !["started", "progress", "blocked", "handoff", "completed", "failed"].includes(String(kind)) || (taskId && id !== taskId)) return [];
       return [{ taskId: id, actorId, kind: kind as QueueActivityKind, message, metadata: payload.metadata ?? null, createdAt: row.created_at }];
     });
+  }
+
+  /** Record bounded provider-neutral usage reported by a queue worker. */
+  recordQueueUsage(input: { taskId: string; actorId: string; inputTokens?: number; outputTokens?: number; costUsd?: number | null }): boolean {
+    const taskId = input.taskId.trim().slice(0, 200);
+    const actorId = input.actorId.trim().slice(0, 200);
+    const inputTokens = Number.isFinite(input.inputTokens) ? Math.floor(input.inputTokens ?? 0) : -1;
+    const outputTokens = Number.isFinite(input.outputTokens) ? Math.floor(input.outputTokens ?? 0) : -1;
+    const costUsd = input.costUsd === null || input.costUsd === undefined ? null : Number(input.costUsd);
+    if (!taskId || !actorId || inputTokens < 0 || outputTokens < 0 || inputTokens > 100_000_000 || outputTokens > 100_000_000 || (costUsd !== null && (!Number.isFinite(costUsd) || costUsd < 0 || costUsd > 1_000_000))) return false;
+    const task = this.db.prepare("SELECT id FROM work_queue WHERE id = ?").get(taskId) as { id: string } | undefined;
+    if (!task) return false;
+    this.appendEvent("queue.usage", { taskId, actorId, inputTokens, outputTokens, ...(costUsd === null ? {} : { costUsd }) });
+    return true;
+  }
+
+  queueUsage(taskId?: string, limit = 128): QueueUsage[] {
+    const events = this.eventsByType("queue.usage");
+    return events.flatMap((event) => {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+      const id = typeof payload.taskId === "string" ? payload.taskId : "";
+      const actorId = typeof payload.actorId === "string" ? payload.actorId : "";
+      const inputTokens = Number(payload.inputTokens);
+      const outputTokens = Number(payload.outputTokens);
+      const costUsd = payload.costUsd === undefined ? null : Number(payload.costUsd);
+      if (!id || !actorId || !Number.isInteger(inputTokens) || inputTokens < 0 || !Number.isInteger(outputTokens) || outputTokens < 0 || (costUsd !== null && !Number.isFinite(costUsd)) || (taskId && taskId !== id)) return [];
+      return [{ taskId: id, actorId, inputTokens, outputTokens, costUsd, createdAt: event.createdAt }];
+    }).slice(-Math.max(1, Math.min(512, Math.floor(limit))));
   }
 
   /** Refresh a live claim so stale-task recovery cannot duplicate a healthy worker. */

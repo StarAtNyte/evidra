@@ -369,6 +369,9 @@ test("durable research state and queue survive store reopen", () => {
     assert.equal(first.recordQueueActivity({ taskId: "task-external", actorId: "external-worker", kind: "handoff", message: "verified handoff", metadata: { token: "should redact" } }), true);
     assert.equal(first.queueActivities("task-external")[0]?.message, "verified handoff");
     assert.equal(first.queueActivities("task-external")[0]?.metadata?.token, "[REDACTED]");
+    assert.equal(first.recordQueueUsage({ taskId: "task-external", actorId: "external-worker", inputTokens: 120, outputTokens: 30, costUsd: 0.02 }), true);
+    assert.deepEqual(first.queueUsage("task-external")[0], { taskId: "task-external", actorId: "external-worker", inputTokens: 120, outputTokens: 30, costUsd: 0.02, createdAt: first.queueUsage("task-external")[0].createdAt });
+    assert.equal(first.recordQueueUsage({ taskId: "task-external", actorId: "external-worker", inputTokens: -1, outputTokens: 0 }), false);
     assert.equal(first.completeClaimedTask("task-external", "wrong-worker", "completed", { result: "spoofed" }), false);
     assert.equal(first.heartbeatTask("task-external", "external-worker"), true);
     assert.equal(first.completeClaimedTask("task-external", "external-worker", "completed", { result: "verified" }), true);
@@ -7599,6 +7602,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const task = (await claimed.json()).task;
     assert.equal(task.id, "bridge-task");
     assert.equal((await post("/tasks/activity", { workerId: "worker-a", taskId: task.id, kind: "progress", message: "inspected evidence" }, token, "worker-a", "worker-secret")).status, 200);
+    assert.equal((await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, inputTokens: 12, outputTokens: 4, costUsd: 0.01 }, token, "worker-a", "worker-secret")).status, 200);
     assert.equal((await post("/tasks/activity", { workerId: "worker-b", taskId: task.id, kind: "progress", message: "spoofed" }, token, "worker-b", "worker-b-secret")).status, 403);
     assert.equal((await post("/tasks/heartbeat", { workerId: "worker-b", taskId: task.id }, token, "worker-a", "worker-secret")).status, 401);
     assert.equal((await post("/tasks/heartbeat", { workerId: "worker-a", taskId: task.id }, token, "worker-a", "wrong-secret")).status, 401);

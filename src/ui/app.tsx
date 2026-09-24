@@ -254,7 +254,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
   "/approvals": [["/approvals", "Show pending operator approvals"]],
-  "/queue": [["/queue status", "Show queued and running tasks"], ["/queue activity ", "Inspect task handoff notes"], ["/queue assign ", "Assign or clear a task worker"], ["/queue note ", "Add an operator handoff note"], ["/queue recover", "Requeue stale tasks"], ["/queue recover ", "Resume a failed task with a changed route"]],
+  "/queue": [["/queue status", "Show queued and running tasks"], ["/queue activity ", "Inspect task handoff notes"], ["/queue usage", "Show external worker usage"], ["/queue usage ", "Show one task's usage"], ["/queue assign ", "Assign or clear a task worker"], ["/queue note ", "Add an operator handoff note"], ["/queue recover", "Requeue stale tasks"], ["/queue recover ", "Resume a failed task with a changed route"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/clear": [["/clear", "Clear the current conversation"]],
   "/new": [["/new", "Start a fresh terminal session"]],
@@ -4100,15 +4100,22 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
     }
-    if (request === "/queue" || request === "/queue status" || request === "/queue recover" || request.startsWith("/queue recover ") || request.startsWith("/queue activity ") || request.startsWith("/queue assign ") || request.startsWith("/queue note ")) {
+    if (request === "/queue" || request === "/queue status" || request === "/queue usage" || request.startsWith("/queue usage ") || request === "/queue recover" || request.startsWith("/queue recover ") || request.startsWith("/queue activity ") || request.startsWith("/queue assign ") || request.startsWith("/queue note ")) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const recoveryMatch = request.match(/^\/queue recover\s+(\S+)\s+--route\s+(\S+)(?:\s+--note\s+(.+))?$/);
       const activityMatch = request.match(/^\/queue activity\s+(\S+)$/);
+      const usageMatch = request.match(/^\/queue usage(?:\s+(\S+))?$/);
       const assignMatch = request.match(/^\/queue assign\s+(\S+)(?:\s+(\S+))?$/);
       const noteMatch = request.match(/^\/queue note\s+(\S+)\s+(.+)$/);
       if (activityMatch) {
         const activity = store.queueActivities(activityMatch[1], 32);
         append("assistant", activity.length ? activity.map((entry) => `${entry.createdAt}  ${entry.kind.padEnd(9)} ${entry.actorId}\n  ${entry.message}`).join("\n") : `No activity recorded for ${activityMatch[1]}.`);
+      } else if (usageMatch) {
+        const usage = store.queueUsage(usageMatch[1], 128);
+        const inputTokens = usage.reduce((sum, entry) => sum + entry.inputTokens, 0);
+        const outputTokens = usage.reduce((sum, entry) => sum + entry.outputTokens, 0);
+        const costUsd = usage.reduce((sum, entry) => sum + (entry.costUsd ?? 0), 0);
+        append("assistant", `${usageMatch[1] ? `Task ${usageMatch[1]}` : "Queue usage"}\nRecords ${usage.length} · input ${inputTokens} · output ${outputTokens} · cost $${costUsd.toFixed(6)}`);
       } else if (assignMatch) {
         try {
           if (!store.assignTask(assignMatch[1], assignMatch[2] ?? null)) throw new Error("task is missing or not queued/failed");
