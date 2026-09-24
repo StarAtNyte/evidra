@@ -42,12 +42,16 @@ export function runGovernanceBenchmark(): GovernanceBenchmarkReport {
     setExternalToolStatus(root, "external.governance_probe", "enabled");
     const reenabled = activeExternalResearchTools(root).some((tool) => tool.name === "external.governance_probe");
     check("adapter-lifecycle-boundary", "Quarantined adapters disappear from selection, enter the approval inbox, and require deliberate re-enablement.", quarantinedHidden && quarantinedApproval !== undefined && reenabled, { quarantinedHidden, quarantinedApproval, reenabled });
+    store.updateAgentLane({ role: "external domain specialist", status: "idle", provider: "remote", model: "bench", task: "governance probe" });
     const organization = agentOrganization(store);
-    check("role-contract-completeness", "Every declared specialist has a responsibility, authority, parent, and playbook.", organization.length === AGENT_ROLE_CONTRACTS.length && organization.every((role) => role.responsibility.length > 0 && role.authority.length > 0 && role.playbook.length >= 2), {
-      roles: organization.length,
+    const builtInOrganization = organization.filter((role) => AGENT_ROLE_CONTRACTS.some((contract) => contract.role === role.role));
+    check("role-contract-completeness", "Every declared specialist has a responsibility, authority, parent, and playbook.", builtInOrganization.length === AGENT_ROLE_CONTRACTS.length && builtInOrganization.every((role) => role.responsibility.length > 0 && role.authority.length > 0 && role.playbook.length >= 2), {
+      roles: builtInOrganization.length,
       contracts: AGENT_ROLE_CONTRACTS.length,
-      missingPlaybooks: organization.filter((role) => role.playbook.length < 2).map((role) => role.role),
+      missingPlaybooks: builtInOrganization.filter((role) => role.playbook.length < 2).map((role) => role.role),
     });
+    const customRole = organization.find((role) => role.role === "external domain specialist");
+    check("custom-agent-visibility", "External workers with custom roles are visible with a conservative reporting contract.", customRole?.status === "idle" && customRole.parentRole === "research director" && customRole.authority === "investigate", { customRole });
 
     const directorShell = agentToolPermission("research director", "shell.exec");
     const engineerShell = agentToolPermission("experiment engineer", "shell.exec");
