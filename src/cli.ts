@@ -2264,6 +2264,14 @@ queue.command("assign <id> [workerId]").description("Assign queued work to one w
   if (!assigned) throw new Error(`Task '${id}' is missing or not queued/failed; only recoverable work can be assigned.`);
   console.log(workerId ? `Assigned ${id} to ${workerId}.` : `Cleared assignment for ${id}.`);
 });
+queue.command("priority <id> <value>").description("Set priority for queued, paused, or failed work").action((id: string, value: string) => {
+  const priority = Number(value);
+  const store = new ResearchStore(statePath);
+  try {
+    if (!store.setTaskPriority(id, priority)) throw new Error("task is missing, running, or terminal");
+  } finally { store.close(); }
+  console.log(`Set priority for ${id} to ${priority}.`);
+});
 queue.command("cancel <id>").option("--reason <reason>", "why the work is being cancelled", "operator cancelled task").description("Cancel queued or running work durably").action((id: string, options: { reason: string }) => {
   const store = new ResearchStore(statePath);
   const cancelled = store.cancelTask(id, options.reason);

@@ -1984,6 +1984,19 @@ export class ResearchStore {
     return true;
   }
 
+  /** Change scheduling priority only for work that is not currently running. */
+  setTaskPriority(id: string, priority: number): boolean {
+    const normalized = Number(priority);
+    if (!Number.isFinite(normalized) || normalized < -1_000_000 || normalized > 1_000_000) throw new Error("Queue task priority must be a finite number between -1,000,000 and 1,000,000.");
+    const current = this.db.prepare("SELECT status, priority FROM work_queue WHERE id = ?").get(id) as { status: QueueTaskStatus; priority: number } | undefined;
+    if (!current || !["queued", "paused", "failed"].includes(current.status)) return false;
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE work_queue SET priority = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'paused', 'failed')").run(normalized, now, id);
+    if (result.changes !== 1) return false;
+    this.appendEvent("queue.priority.updated", { id, from: current.priority, priority: normalized, status: current.status });
+    return true;
+  }
+
   /** Set or clear a task token ceiling without mutating a live claim. */
   setTaskTokenBudget(id: string, tokenBudget: number | null): boolean {
     const normalizedBudget = normalizeQueueTokenBudget(tokenBudget);

@@ -106,6 +106,13 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     check("task-pause-resume", "A single ticket can be suspended and resumed without consuming a retry.", taskPaused && !taskPausedClaim && taskResumed && taskResumedClaim?.attempts === 1, { taskPaused, taskPausedClaim: taskPausedClaim?.id, taskResumed, attempts: taskResumedClaim?.attempts });
     if (taskResumedClaim) store.updateTask("task-pause", "completed");
 
+    store.enqueueTask({ id: "priority-control", kind: "governed", priority: 1, payload: {} });
+    const priorityUpdated = store.setTaskPriority("priority-control", 9);
+    const priorityClaim = store.claimTask("priority-control", ["governed"], "worker-a");
+    const livePriorityUpdate = store.setTaskPriority("priority-control", 2);
+    check("priority-control", "Operators can redirect queued work without mutating a live claim.", priorityUpdated && priorityClaim?.priority === 9 && !livePriorityUpdate, { priorityUpdated, claimedPriority: priorityClaim?.priority, livePriorityUpdate });
+    if (priorityClaim) store.updateTask("priority-control", "completed");
+
     store.enqueueTask({ id: "budget-stop", kind: "governed", priority: 1, tokenBudget: 2, payload: {} });
     const budgetClaim = store.claimTask("budget-stop", ["governed"], "worker-a");
     const budgetRecorded = budgetClaim ? store.recordQueueUsage({ taskId: "budget-stop", actorId: "worker-a", inputTokens: 1, outputTokens: 1, claimToken: budgetClaim.claimToken ?? undefined }) : false;

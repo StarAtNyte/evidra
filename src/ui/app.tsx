@@ -254,7 +254,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
   "/approvals": [["/approvals", "Show pending operator approvals"]],
-  "/queue": [["/queue status", "Show queued and running tasks"], ["/queue pause-task ", "Suspend one queue task"], ["/queue resume-task ", "Resume one paused queue task"], ["/queue pause", "Stop new queue claims"], ["/queue resume", "Resume new queue claims"], ["/queue approve ", "Approve a pending queue task"], ["/queue reject ", "Reject a queue task"], ["/queue activity ", "Inspect task handoff notes"], ["/queue usage", "Show external worker usage"], ["/queue usage ", "Show one task's usage"], ["/queue assign ", "Assign or clear a task worker"], ["/queue budget ", "Set or clear a task token ceiling"], ["/queue cost-budget ", "Set or clear a task USD ceiling"], ["/queue deadline ", "Set or clear a task wall-clock deadline"], ["/queue contract ", "Set or clear task proof requirements"], ["/queue cancel ", "Cancel queued or running work"], ["/queue note ", "Add an operator handoff note"], ["/queue recover", "Requeue stale tasks"], ["/queue recover ", "Resume a failed task with a changed route"]],
+  "/queue": [["/queue status", "Show queued and running tasks"], ["/queue priority ", "Reprioritize queued work"], ["/queue pause-task ", "Suspend one queue task"], ["/queue resume-task ", "Resume one paused queue task"], ["/queue pause", "Stop new queue claims"], ["/queue resume", "Resume new queue claims"], ["/queue approve ", "Approve a pending queue task"], ["/queue reject ", "Reject a queue task"], ["/queue activity ", "Inspect task handoff notes"], ["/queue usage", "Show external worker usage"], ["/queue usage ", "Show one task's usage"], ["/queue assign ", "Assign or clear a task worker"], ["/queue budget ", "Set or clear a task token ceiling"], ["/queue cost-budget ", "Set or clear a task USD ceiling"], ["/queue deadline ", "Set or clear a task wall-clock deadline"], ["/queue contract ", "Set or clear task proof requirements"], ["/queue cancel ", "Cancel queued or running work"], ["/queue note ", "Add an operator handoff note"], ["/queue recover", "Requeue stale tasks"], ["/queue recover ", "Resume a failed task with a changed route"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/clear": [["/clear", "Clear the current conversation"]],
   "/new": [["/new", "Start a fresh terminal session"]],
@@ -4100,7 +4100,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
     }
-    if (request === "/queue" || request === "/queue status" || request === "/queue pause" || request.startsWith("/queue pause ") || request === "/queue resume" || request.startsWith("/queue pause-task ") || request.startsWith("/queue resume-task ") || request.startsWith("/queue approve ") || request.startsWith("/queue reject ") || request === "/queue usage" || request.startsWith("/queue usage ") || request === "/queue recover" || request.startsWith("/queue recover ") || request.startsWith("/queue activity ") || request.startsWith("/queue assign ") || request.startsWith("/queue budget ") || request.startsWith("/queue cost-budget ") || request.startsWith("/queue deadline ") || request.startsWith("/queue contract ") || request.startsWith("/queue cancel ") || request.startsWith("/queue note ")) {
+    if (request === "/queue" || request === "/queue status" || request === "/queue pause" || request.startsWith("/queue pause ") || request === "/queue resume" || request.startsWith("/queue priority ") || request.startsWith("/queue pause-task ") || request.startsWith("/queue resume-task ") || request.startsWith("/queue approve ") || request.startsWith("/queue reject ") || request === "/queue usage" || request.startsWith("/queue usage ") || request === "/queue recover" || request.startsWith("/queue recover ") || request.startsWith("/queue activity ") || request.startsWith("/queue assign ") || request.startsWith("/queue budget ") || request.startsWith("/queue cost-budget ") || request.startsWith("/queue deadline ") || request.startsWith("/queue contract ") || request.startsWith("/queue cancel ") || request.startsWith("/queue note ")) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const recoveryMatch = request.match(/^\/queue recover\s+(\S+)\s+--route\s+(\S+)(?:\s+--note\s+(.+))?$/);
       const activityMatch = request.match(/^\/queue activity\s+(\S+)$/);
@@ -4117,7 +4117,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const approveMatch = request.match(/^\/queue approve\s+(\S+)(?:\s+--note\s+(.+))?$/);
       const rejectMatch = request.match(/^\/queue reject\s+(\S+)(?:\s+--reason\s+(.+))?$/);
       const noteMatch = request.match(/^\/queue note\s+(\S+)\s+(.+)$/);
-      if (pauseTaskMatch) {
+      const priorityMatch = request.match(/^\/queue priority\s+(\S+)\s+(-?\d+(?:\.\d+)?)$/);
+      if (priorityMatch) {
+        try {
+          if (!store.setTaskPriority(priorityMatch[1], Number(priorityMatch[2]))) throw new Error("task is missing, running, or terminal");
+          append("assistant", `Set priority for ${priorityMatch[1]} to ${priorityMatch[2]}.`);
+        } catch (error) { append("assistant", `Queue priority update failed: ${error instanceof Error ? error.message : String(error)}`); }
+      } else if (pauseTaskMatch) {
         try {
           if (!store.pauseTask(pauseTaskMatch[1], pauseTaskMatch[2] ?? "operator paused task")) throw new Error("task is missing or already terminal");
           append("assistant", `Paused queue task ${pauseTaskMatch[1]}.`);

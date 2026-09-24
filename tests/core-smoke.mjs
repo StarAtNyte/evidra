@@ -3321,12 +3321,13 @@ test("orchestration benchmark covers worker ownership and recovery", () => {
   const report = runOrchestrationBenchmark();
   assert.equal(report.failed, 0);
   assert.equal(report.score, 1);
-  assert.equal(report.probes.length, 14);
+  assert.equal(report.probes.length, 15);
   assert.equal(report.probes.some((probe) => probe.id === "queue-starvation-prevention"), true);
   assert.equal(report.probes.some((probe) => probe.id === "completion-watchdog"), true);
   assert.equal(report.probes.some((probe) => probe.id === "approval-gate"), true);
   assert.equal(report.probes.some((probe) => probe.id === "queue-pause-governance"), true);
   assert.equal(report.probes.some((probe) => probe.id === "task-pause-resume"), true);
+  assert.equal(report.probes.some((probe) => probe.id === "priority-control"), true);
   assert.equal(report.probes.some((probe) => probe.id === "live-budget-stop"), true);
 });
 
@@ -3864,6 +3865,21 @@ test("individual queue tasks can pause cooperatively and resume without retry pe
     assert.equal(claimed?.attempts, 1);
     assert.equal(store.eventsByType("queue.task.paused").length, 1);
     assert.equal(store.eventsByType("queue.task.resumed").length, 1);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("queue priority can be revised without mutating a live claim", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-task-priority-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "reprioritize", kind: "research.lane", priority: 1, payload: {} });
+    assert.equal(store.setTaskPriority("reprioritize", 9), true);
+    assert.equal(store.queueTasks().find((task) => task.id === "reprioritize")?.priority, 9);
+    const claimed = store.claimTask("reprioritize", undefined, "worker-a");
+    assert.equal(claimed?.priority, 9);
+    assert.equal(store.setTaskPriority("reprioritize", 2), false);
+    assert.equal(store.eventsByType("queue.priority.updated").length, 1);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
