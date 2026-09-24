@@ -566,12 +566,16 @@ test("approval inbox unifies pending work without mutating any gate", () => {
     store.savePhaseGoal({ id: "phase-1", phase: "validation", status: "blocked", payload: { title: "Validation blocked", objective: "resolve the evaluator issue" } });
     store.saveSubmission({ id: "bundle-1", experimentId: "exp-1", path: join(root, "bundle"), status: "prepared" });
     store.beginExternalAction({ id: "submission:bundle-1", kind: "competition_submission", fingerprint: "fp", payload: { bundle: "bundle-1" } });
+    store.enqueueTask({ id: "recover-1", kind: "research.lane", priority: 1, payload: {} });
+    store.updateTask("recover-1", "failed", { error: "sandbox failed", recovery: { failureClass: "sandbox", route: "alternate_executor", action: "use a verified executor" } });
+    store.appendEvent("queue.recovery_required", { taskId: "recover-1", failureClass: "sandbox", route: "alternate_executor", action: "use a verified executor" });
     const items = approvalInbox(store);
     assert.deepEqual(items.map((item) => [item.kind, item.id, item.status]), [
       ["phase-goal", "phase-1", "blocked"],
       ["experiment", "proposal-1", "pending"],
       ["submission", "bundle-1", "pending"],
       ["external-action", "submission:bundle-1", "in_flight"],
+      ["queue-recovery", "recover-1", "pending"],
     ]);
     assert.equal(store.externalAction("submission:bundle-1")?.status, "in_flight");
     store.close();

@@ -309,7 +309,7 @@ Implemented today:
 - dependency safety: prerequisite graphs block out-of-order execution, reject cycles before they can deadlock an autonomous campaign, and expose missing/waiting/failed readiness reasons through the CLI and dashboard;
 - durable routines: recurring research or challenge campaigns persist their goal, route, interval, budget, last result, run history, and runner lease; the native routine daemon polls and executes due work without duplicate controllers;
 - TUI-first routine authoring: `/routine create` guides the operator through a reusable goal, cadence, and per-run budget while inheriting the selected provider policy;
-- unified approval inbox: `/approvals` and the dashboard collect pending experiment approvals, prepared submissions, and unresolved external actions without bypassing any existing gate;
+- unified approval inbox: `/approvals` and the dashboard collect pending experiment approvals, prepared submissions, unresolved external actions, and terminal queue recoveries without bypassing any existing gate;
 - individual-agent governance: `/agents pause <role>` and `/agents resume <role>` persist a role-level control; active lanes stop at the next safe boundary while other specialists continue, and future allocation remains blocked until the role is resumed;
 - directed specialist collaboration: `/agents message <role> <message>` queues a durable, auditable operator directive for one role; it is delivered only at a safe tool/model boundary and cannot expand that role's authority;
 - specialist inbox inspection: `/agents directives [role]` shows durable handoff history, pending/applied state, timestamps, and exact messages so operator steering is observable rather than silently queued;

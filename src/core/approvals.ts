@@ -1,7 +1,7 @@
 import type { ResearchStore } from "./store.js";
 
 export type ApprovalInboxItem = {
-  kind: "experiment" | "submission" | "external-action" | "phase-goal";
+  kind: "experiment" | "submission" | "external-action" | "phase-goal" | "queue-recovery";
   id: string;
   status: string;
   next: string;
@@ -15,6 +15,12 @@ export type ApprovalInboxItem = {
  */
 export function approvalInbox(store: ResearchStore): ApprovalInboxItem[] {
   const items: ApprovalInboxItem[] = [];
+  const recoveryEvents = store.eventsByTypes(["queue.recovery_required", "queue.recovery_scheduled"]);
+  const latestRecovery = new Map<string, { type: string; payload: Record<string, unknown> }>();
+  for (const event of recoveryEvents) {
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    if (typeof payload.taskId === "string" && payload.taskId.trim()) latestRecovery.set(payload.taskId, { type: event.type, payload });
+  }
   for (const goal of store.phaseGoals()) {
     if (goal.status === "blocked") {
       const payload = goal.payload as { title?: unknown; objective?: unknown };
@@ -50,6 +56,12 @@ export function approvalInbox(store: ResearchStore): ApprovalInboxItem[] {
         detail: intent.kind,
       });
     }
+  }
+  for (const [taskId, entry] of latestRecovery) {
+    if (entry.type !== "queue.recovery_required") continue;
+    const route = typeof entry.payload.route === "string" ? entry.payload.route : "change_route";
+    const action = typeof entry.payload.action === "string" ? entry.payload.action : "inspect failure";
+    items.push({ kind: "queue-recovery", id: taskId, status: "pending", next: `/queue recover ${taskId} --route ${route}`, detail: `${typeof entry.payload.failureClass === "string" ? entry.payload.failureClass : "unknown"} · ${action}` });
   }
   return items;
 }
