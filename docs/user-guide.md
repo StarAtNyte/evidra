@@ -389,6 +389,12 @@ restarts. Inspect it through the TUI or CLI:
 /telemetry export        Secret-free MLflow-shaped run telemetry
 ```
 
+`/status` also runs the goal-alignment audit. It reports whether the durable
+campaign objective and active phase exist, whether live queue tasks resolve to
+phase goals, and whether running agent lanes have assigned work. A blocked
+alignment check is a control-plane issue to resolve before trusting autonomous
+progress; the read-only dashboard shows the same report.
+
 For a browser view of the active workspace, run `evidra dashboard --port 4310`
 and open `http://127.0.0.1:4310`. It is read-only, localhost-bound, and polls
 the same durable state used by the TUI.

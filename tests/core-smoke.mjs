@@ -11,6 +11,7 @@ import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../di
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { approvalInbox } from "../dist/core/approvals.js";
+import { goalAlignment } from "../dist/core/goal-alignment.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaimRecords, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
@@ -569,6 +570,26 @@ test("approval inbox unifies pending work without mutating any gate", () => {
       ["external-action", "submission:bundle-1", "in_flight"],
     ]);
     assert.equal(store.externalAction("submission:bundle-1")?.status, "in_flight");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("goal alignment traces live work to a durable campaign phase", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-alignment-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.saveCampaign({ goal: "improve the measured outcome", status: "running" });
+    store.savePhaseGoal({ id: "phase-1", phase: "validation", status: "active", payload: { id: "phase-1", phase: "validation" } });
+    store.enqueueTask({ id: "task-1", kind: "research.cycle", priority: 1, payload: {}, goalId: "phase-1" });
+    store.updateAgentLane({ role: "validation scientist", status: "running", provider: "local", model: "bench", task: "validate the current hypothesis" });
+    const aligned = goalAlignment(store);
+    assert.equal(aligned.status, "aligned");
+    assert.equal(aligned.checks.find((check) => check.id === "queue-lineage")?.status, "pass");
+    store.savePhaseGoal({ id: "phase-1", phase: "validation", status: "active", payload: { id: "phase-1", phase: "validation" } });
+    store.enqueueTask({ id: "orphan", kind: "research.cycle", priority: 1, payload: {}, goalId: "missing-phase" });
+    const drifted = goalAlignment(store);
+    assert.equal(drifted.status, "blocked");
+    assert.equal(drifted.checks.find((check) => check.id === "queue-lineage")?.count, 1);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

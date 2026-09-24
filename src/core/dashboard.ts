@@ -2,6 +2,7 @@ import { redactStructured } from "./redaction.js";
 import { phaseGoalsForMode, researchStageProgress } from "./phase-goals.js";
 import { PhaseGoalSchema } from "./types.js";
 import { approvalInbox } from "./approvals.js";
+import { goalAlignment } from "./goal-alignment.js";
 import type { ResearchStore } from "./store.js";
 
 /** Build a bounded, secret-redacted read model for the local dashboard. */
@@ -33,6 +34,7 @@ export function dashboardSnapshot(store: ResearchStore): Record<string, unknown>
     agents: store.agentLanes().slice(0, 24).map((agent) => ({ ...agent, leaseId: agent.leaseId ? `${agent.leaseId.slice(0, 12)}…` : null })),
     routines: store.routines().slice(0, 24).map((routine) => ({ id: routine.id, name: routine.name, mode: routine.mode, status: routine.status, nextRunAt: routine.nextRunAt, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult, lastError: routine.lastError, runCount: routine.runCount, leaseId: routine.leaseId ? `${routine.leaseId.slice(0, 12)}…` : null, recentRuns: store.routineRuns(routine.id).slice(0, 3).map((run) => ({ status: run.status, startedAt: run.startedAt, finishedAt: run.finishedAt, exitCode: run.exitCode, error: run.error })) })),
     approvals: approvalInbox(store).slice(0, 48),
+    alignment: goalAlignment(store),
     queue: store.queueTasks().slice(0, 40).map((task) => ({ id: task.id, kind: task.kind, priority: task.priority, status: task.status, attempts: task.attempts, claimedAt: task.claimedAt, ownerId: task.ownerId ? `${task.ownerId.slice(0, 12)}…` : null, goalId: task.goalId, parentTaskId: task.parentTaskId, readiness: store.taskReadiness(task.id), updatedAt: task.updatedAt })),
     experiments: experiments.slice(0, 40).map((entry) => {
       const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as Record<string, unknown> : {};
@@ -56,7 +58,7 @@ export function dashboardHtml(): string {
 </style></head><body><main><header><div><h1><span>EVIDRA</span> / DASHBOARD</h1><div class="sub">Read-only local view of durable research state</div></div><div class="refresh" id="updated">Connecting…</div></header><section class="grid" id="stats"></section><div class="layout"><div><section class="panel"><h2>Campaign</h2><div id="campaign"></div></section><section class="panel"><h2>Research stages</h2><div id="stages"></div></section><section class="panel"><h2>Research phases</h2><div id="phases"></div></section><section class="panel"><h2>Experiments & runs</h2><div id="work"></div></section></div><div><section class="panel"><h2>Research agents</h2><div id="agents"></div></section><section class="panel"><h2>Recurring routines</h2><div id="routines"></div></section><section class="panel"><h2>Approval inbox</h2><div id="approvals"></div></section><section class="panel"><h2>Work queue</h2><div id="queue"></div></section><section class="panel"><h2>Recent events</h2><pre id="events"></pre></section></div></div></main>
 <script>
 const esc=v=>String(v??"—").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const status=(v)=>{const s=String(v??"—");const cls=['running','paused','pending','failed','blocked','met','active'].includes(s.toLowerCase())?s.toLowerCase():'unknown';return '<span class="pill '+cls+'">'+esc(s)+'</span>'};
+const status=(v)=>{const s=String(v??"—");const cls=['running','paused','pending','failed','blocked','met','active','aligned','attention'].includes(s.toLowerCase())?s.toLowerCase():'unknown';return '<span class="pill '+cls+'">'+esc(s)+'</span>'};
 const row=(a,b)=>'<div class="row"><span>'+esc(a)+'</span><span>'+b+'</span></div>';
 const empty='<div class="empty">Nothing recorded yet.</div>';
 const age=v=>v?Math.max(0,Math.round((Date.now()-Date.parse(v))/1000))+'s ago':'—';
@@ -65,6 +67,7 @@ function render(d){
  document.getElementById('updated').textContent='Updated '+new Date(d.generatedAt).toLocaleTimeString();
  const c=d.counts||{}; document.getElementById('stats').innerHTML=[['Hypotheses',c.hypotheses],['Experiments',c.experiments],['Runs',c.runs],['Sources',c.sources],['Claims',c.claims],['Artifacts',c.artifacts],['Decisions',c.decisions],['Integrity',d.integrity?.status||'—']].map(x=>'<div class="card"><div class="label">'+x[0]+'</div><div class="value">'+esc(x[1])+'</div></div>').join('');
  const campaign=d.campaign; document.getElementById('campaign').innerHTML=campaign?row('Status',status(campaign.status))+row('Mode',esc(campaign.runtime?.mode||d.scheduler?.mode||'research'))+row('Goal',esc(campaign.goal))+row('Budget',esc(campaign.budgetMinutes)+' min'):empty;
+ const al=d.alignment||{}; document.getElementById('campaign').innerHTML+=(al.status?row('Alignment',status(al.status)+' · '+esc(Math.round((al.score||0)*100))+'%'):'')+(al.checks||[]).filter(x=>x.status!=='pass').map(x=>row(esc(x.id),status(x.status)+' · '+esc(x.detail))).join('');
  document.getElementById('stages').innerHTML=(d.stages||[]).map(s=>row(esc(s.stage)+' · '+esc(s.activePhase||'ready'),status(s.status)+' '+esc(s.completed)+'/'+esc(s.total))).join('')||empty;
  document.getElementById('phases').innerHTML=(d.phases||[]).map(p=>row(esc(p.name||p.id),status(p.status))).join('')||empty;
  document.getElementById('agents').innerHTML=(d.agents||[]).map(a=>row(esc(a.role),status(a.status)+(a.leaseId?' · '+esc(a.leaseId)+' · '+age(a.heartbeatAt):'')+(a.budgetSeconds!==null&&a.budgetSeconds!==undefined?' · '+Math.round(a.usedSeconds||0)+'/'+Math.round(a.budgetSeconds)+'s':''))).join('')||empty;

@@ -109,6 +109,7 @@ import { runOrchestrationBenchmark } from "./core/orchestration-bench.js";
 import { selectRatchetReference } from "./core/ratchet.js";
 import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.js";
 import { approvalInbox } from "./core/approvals.js";
+import { formatGoalAlignment, goalAlignment } from "./core/goal-alignment.js";
 
 const PHASE_GATE_EVENT_TYPES = [
   "research.observation", "project.created", "baseline.completed", "data.audit.completed", "data.audit.accepted",
@@ -550,6 +551,7 @@ program.command("status").action(() => {
     console.log(`Events        ${store.eventCount()}`);
     const integrity = store.verifyEventChain();
     console.log(`Integrity     ${integrity.status.toUpperCase()}${integrity.legacy ? ` (${integrity.legacy} legacy)` : ""}`);
+    console.log(formatGoalAlignment(goalAlignment(store)).replaceAll("\n", "\n              "));
     const campaign = store.campaign() as { runtime?: { mode?: unknown } } | undefined;
     const scheduler = store.schedulerState();
     const mode = resolveCampaignMode(campaign?.runtime?.mode, scheduler.mode);
