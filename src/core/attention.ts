@@ -1,5 +1,6 @@
 import { approvalInbox, type ApprovalInboxItem } from "./approvals.js";
 import { goalAlignment } from "./goal-alignment.js";
+import { campaignOrganization } from "./campaign-organization.js";
 import type { ResearchStore } from "./store.js";
 
 export type AttentionSeverity = "critical" | "warning" | "info";
@@ -115,6 +116,12 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
 
   const alignment = goalAlignment(store);
   if (alignment.status === "blocked") items.push({ id: "goal-alignment", severity: "critical", kind: "goal-alignment", summary: "Campaign alignment is blocked; new autonomous work must pause", next: "/status" });
+  const organization = campaignOrganization(store);
+  if (organization.status === "running") {
+    if (organization.accountability.unassignedRunning.length) items.push({ id: "accountability:ownerless", severity: "warning", kind: "accountability", summary: `${organization.accountability.unassignedRunning.length} running task(s) have no owner`, next: "/organization" });
+    if (organization.accountability.unscopedLive.length) items.push({ id: "accountability:scope", severity: "warning", kind: "accountability", summary: `${organization.accountability.unscopedLive.length} live task(s) have no phase goal`, next: "/organization" });
+    if (organization.accountability.unbudgetedLive.length) items.push({ id: "accountability:budget", severity: "warning", kind: "accountability", summary: `${organization.accountability.unbudgetedLive.length} live task(s) have no task-level budget`, next: "/organization" });
+  }
   const control = store.queueControl();
   if (control.paused) items.push({ id: "queue-control", severity: "info", kind: "queue-control", summary: `Queue dispatch paused${control.reason ? ` · ${control.reason}` : ""}`, next: "/queue resume" });
 
