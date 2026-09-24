@@ -245,6 +245,8 @@ test("project runtime guidance is bounded, hashed, and separated from evidence",
     assert.match(guidance?.text ?? "", /nested guidance/);
     assert.equal(guidance?.contentHash.length, 64);
     assert.equal(guidance?.truncated, false);
+    const scopedGuidance = loadProjectGuidance(root, "validation scientist", ["a-provenance.md"]);
+    assert.deepEqual(scopedGuidance?.paths, ["EVIDRA.md", ".evidra/instructions.md", ".evidra/roles/validation-scientist.md"]);
     const roleGuidance = loadProjectGuidance(root, "validation scientist");
     assert.deepEqual(roleGuidance?.paths, ["EVIDRA.md", ".evidra/instructions.md", ".evidra/roles/validation-scientist.md"]);
     assert.match(roleGuidance?.text ?? "", /held-out split/);
@@ -263,6 +265,9 @@ test("shared project skills are discovered deterministically and remain bounded 
     assert.ok((guidance?.text.indexOf("a-provenance") ?? -1) < (guidance?.text.indexOf("z-replication") ?? -1));
     assert.equal(guidance?.truncated, false);
     assert.equal(guidance?.contentHash.length, 64);
+    const scoped = loadProjectGuidance(root, "validation scientist", ["z-replication.md"]);
+    assert.deepEqual(scoped?.paths, [".evidra/skills/z-replication.md"]);
+    assert.doesNotMatch(scoped?.text ?? "", /a-provenance/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -875,6 +880,7 @@ test("custom role contracts persist, shape the organization, and survive reopen"
       authority: "validate",
       reviewRequired: true,
       toolAllowlist: ["workspace.files", "data.audit"],
+      skillAllowlist: ["geospatial.md", "provenance.md"],
       playbook: ["inspect coordinate provenance", "test spatial split stability", "report unresolved geographic confounds"],
     }, "test contract");
     const restoredOrganization = agentOrganization(store).find((entry) => entry.role === "geospatial specialist");
@@ -885,6 +891,7 @@ test("custom role contracts persist, shape the organization, and survive reopen"
     assert.equal(saved?.parentRole, "validation scientist");
     assert.equal(saved?.authority, "validate");
     assert.deepEqual(saved?.toolAllowlist, ["workspace.files", "data.audit"]);
+    assert.deepEqual(saved?.skillAllowlist, ["geospatial.md", "provenance.md"]);
     assert.equal(agentToolPermission("geospatial specialist", "workspace.files", true, saved).allowed, true);
     assert.equal(agentToolPermission("geospatial specialist", "source.search", true, saved).allowed, false);
     assert.deepEqual(saved?.playbook, ["inspect coordinate provenance", "test spatial split stability", "report unresolved geographic confounds"]);

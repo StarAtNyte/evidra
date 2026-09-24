@@ -309,6 +309,8 @@ export interface PersistedAgentRoleContract {
   playbook: string[];
   /** Optional least-privilege tool scope; omitted means authority defaults apply. */
   toolAllowlist?: string[];
+  /** Optional project-skill scope; omitted means all discovered shared skills apply. */
+  skillAllowlist?: string[];
   updatedAt: string;
 }
 export type AgentDirectiveOutcomeStatus = "acknowledged" | "completed" | "failed" | "rejected";
@@ -1611,6 +1613,7 @@ export class ResearchStore {
         reviewRequired: parsed.reviewRequired !== false,
         playbook: parsed.playbook.filter((step): step is string => typeof step === "string" && Boolean(step.trim())).map((step) => step.trim()).slice(0, 16),
         ...(Array.isArray(parsed.toolAllowlist) ? { toolAllowlist: [...new Set(parsed.toolAllowlist.filter((tool): tool is string => typeof tool === "string" && /^[a-zA-Z0-9_.:-]{1,120}$/.test(tool.trim())).map((tool) => tool.trim().toLowerCase()))].slice(0, 32) } : {}),
+        ...(Array.isArray(parsed.skillAllowlist) ? { skillAllowlist: [...new Set(parsed.skillAllowlist.filter((skill): skill is string => typeof skill === "string" && /^[a-zA-Z0-9_.-]{1,120}\.md$/i.test(skill.trim())).map((skill) => skill.trim()))].slice(0, 32) } : {}),
         updatedAt: row.updated_at,
       };
     } catch {
@@ -1643,6 +1646,7 @@ export class ResearchStore {
         reviewRequired: raw.reviewRequired !== false,
         playbook: raw.playbook.filter((step): step is string => typeof step === "string" && Boolean(step.trim())).map((step) => step.trim()).slice(0, 16),
         ...(Array.isArray(raw.toolAllowlist) ? { toolAllowlist: [...new Set(raw.toolAllowlist.filter((tool): tool is string => typeof tool === "string" && /^[a-zA-Z0-9_.:-]{1,120}$/.test(tool.trim())).map((tool) => tool.trim().toLowerCase()))].slice(0, 32) } : {}),
+        ...(Array.isArray(raw.skillAllowlist) ? { skillAllowlist: [...new Set(raw.skillAllowlist.filter((skill): skill is string => typeof skill === "string" && /^[a-zA-Z0-9_.-]{1,120}\.md$/i.test(skill.trim())).map((skill) => skill.trim()))].slice(0, 32) } : {}),
         updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : event.createdAt,
       };
       return [{ revision: 0, contract, createdAt: event.createdAt }];
@@ -1667,8 +1671,10 @@ export class ResearchStore {
     const authority = input.authority;
     const playbook = [...new Set(input.playbook.map((step) => step.trim().slice(0, 300)).filter(Boolean))].slice(0, 16);
     const toolAllowlist = input.toolAllowlist === undefined ? undefined : [...new Set(input.toolAllowlist.map((tool) => tool.trim().toLowerCase()).filter((tool) => /^[a-z0-9_.:-]{1,120}$/.test(tool)))].slice(0, 32);
+    const skillAllowlist = input.skillAllowlist === undefined ? undefined : [...new Set(input.skillAllowlist.map((skill) => skill.trim()).filter((skill) => /^[a-z0-9_.-]{1,120}\.md$/i.test(skill)))].slice(0, 32);
     if (!role || !responsibility || !["coordinate", "investigate", "validate", "execute", "repair"].includes(authority) || !playbook.length) throw new Error("Custom role contracts require a role, responsibility, supported authority, and at least one playbook step.");
     if (input.toolAllowlist !== undefined && (!toolAllowlist?.length || toolAllowlist.length !== input.toolAllowlist.length || input.toolAllowlist.length > 32)) throw new Error("Custom role tool allowlists must contain 1–32 unique simple tool names.");
+    if (input.skillAllowlist !== undefined && (!skillAllowlist?.length || skillAllowlist.length !== input.skillAllowlist.length || input.skillAllowlist.length > 32)) throw new Error("Custom role skill allowlists must contain 1–32 .md skill filenames.");
     if (isBuiltInAgentRole(role)) throw new Error(`Built-in role '${role}' is defined by the Evidra contract and cannot be overwritten.`);
     if (parentRole === role) throw new Error("A role cannot report to itself.");
     const visited = new Set<string>([role]);
@@ -1679,7 +1685,7 @@ export class ResearchStore {
       ancestor = this.agentRoleContract(ancestor)?.parentRole ?? null;
     }
     const updatedAt = new Date().toISOString();
-    const contract: PersistedAgentRoleContract = { role, parentRole, responsibility, authority, reviewRequired: input.reviewRequired !== false, playbook, ...(toolAllowlist ? { toolAllowlist } : {}), updatedAt };
+    const contract: PersistedAgentRoleContract = { role, parentRole, responsibility, authority, reviewRequired: input.reviewRequired !== false, playbook, ...(toolAllowlist ? { toolAllowlist } : {}), ...(skillAllowlist ? { skillAllowlist } : {}), updatedAt };
     this.db.prepare(`INSERT INTO agent_controls (role, paused, terminated, admitted, admission_status, contract_json, reason, updated_at) VALUES (?, 0, 0, 0, 'review', ?, ?, ?) ON CONFLICT(role) DO UPDATE SET contract_json = excluded.contract_json, reason = excluded.reason, updated_at = excluded.updated_at`).run(role, JSON.stringify(contract), reason.trim().slice(0, 500) || "operator contract update", updatedAt);
     this.appendEvent("agent.role.contract.updated", { role, contract, reason: reason.trim().slice(0, 500) || "operator contract update" });
     return contract;

@@ -11,6 +11,7 @@ export type AgentRoleContract = {
   playbook: readonly string[];
   /** Optional least-privilege tool scope for custom or external roles. */
   toolAllowlist?: readonly string[];
+  skillAllowlist?: readonly string[];
 };
 
 export type AgentLaneHealth = "healthy" | "stale" | "idle" | "unstarted";
@@ -52,6 +53,7 @@ export function agentRoleContract(role: string, persisted?: PersistedAgentRoleCo
     reviewRequired: persisted.reviewRequired,
     playbook: persisted.playbook,
     ...(persisted.toolAllowlist ? { toolAllowlist: persisted.toolAllowlist } : {}),
+    ...(persisted.skillAllowlist ? { skillAllowlist: persisted.skillAllowlist } : {}),
   } : {
     role,
     parentRole: "research director",

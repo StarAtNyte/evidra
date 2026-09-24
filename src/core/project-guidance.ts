@@ -12,12 +12,14 @@ export interface ProjectGuidance {
 const GUIDANCE_FILES = ["EVIDRA.md", ".evidra/instructions.md"] as const;
 const MAX_GUIDANCE_BYTES = 16_000;
 
-function sharedSkillFiles(workspace: string): string[] {
+function sharedSkillFiles(workspace: string, skillAllowlist?: readonly string[]): string[] {
   const directory = join(workspace, ".evidra", "skills");
   if (!existsSync(directory)) return [];
   try {
+    const allowed = skillAllowlist === undefined ? undefined : new Set(skillAllowlist.map((skill) => skill.toLowerCase()));
     return readdirSync(directory, { withFileTypes: true })
       .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".md"))
+      .filter((entry) => allowed === undefined || allowed.has(entry.name.toLowerCase()))
       .map((entry) => `.evidra/skills/${entry.name}`)
       .sort((left, right) => left.localeCompare(right));
   } catch {
@@ -26,13 +28,13 @@ function sharedSkillFiles(workspace: string): string[] {
 }
 
 /** Load explicit operator guidance without confusing it with observed evidence. */
-export function loadProjectGuidance(root: string, role?: string): ProjectGuidance | undefined {
+export function loadProjectGuidance(root: string, role?: string, skillAllowlist?: readonly string[]): ProjectGuidance | undefined {
   const workspace = resolve(root);
   const parts: string[] = [];
   const paths: string[] = [];
   let truncated = false;
   const roleSlug = role?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  const guidanceFiles = [...GUIDANCE_FILES, ...sharedSkillFiles(workspace), ...(roleSlug ? [`.evidra/roles/${roleSlug}.md`] : [])];
+  const guidanceFiles = [...GUIDANCE_FILES, ...sharedSkillFiles(workspace, skillAllowlist), ...(roleSlug ? [`.evidra/roles/${roleSlug}.md`] : [])];
   for (const relativePath of guidanceFiles) {
     const path = join(workspace, relativePath);
     if (!existsSync(path) || !lstatSync(path).isFile()) continue;

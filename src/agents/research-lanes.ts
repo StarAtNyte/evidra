@@ -1040,10 +1040,10 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         modelStartedAt = Date.now();
         const review = options.roleReviews?.find((candidate) => candidate.role === role);
         consumeDirectives();
-        const roleGuidance = loadProjectGuidance(options.cwd, role);
         const contractStore = new ResearchStore(options.storePath);
         const persistedContract = contractStore.agentRoleContract(role);
         contractStore.close();
+        const roleGuidance = loadProjectGuidance(options.cwd, role, persistedContract?.skillAllowlist);
         if (roleGuidance) {
           const guidanceStore = new ResearchStore(options.storePath);
           guidanceStore.appendEvent("research.role_guidance.loaded", { role, paths: roleGuidance.paths, contentHash: roleGuidance.contentHash, truncated: roleGuidance.truncated });
