@@ -877,8 +877,10 @@ export async function runResearchLanes(objective: string, context: Record<string
   // Recovery is conservative: only lanes whose heartbeat has expired are
   // released, while a live worker keeps its lease and remains untouched.
   const recoveryStore = new ResearchStore(options.storePath);
+  const staleTickets = recoveryStore.staleLaneTickets();
   const staleRoles = recoveryStore.staleAgentLanes();
   recoveryStore.close();
+  if (staleTickets.length) options.onProgress?.(`Research lanes · closed stale tickets: ${staleTickets.length}`);
   if (staleRoles.length) options.onProgress?.(`Research lanes · recovered stale leases: ${staleRoles.join(", ")}`);
   // A Codex pool may become local after entitlement exhaustion. Size the
   // initial pool for the most constrained route that can actually serve it,

@@ -60,15 +60,19 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
 
     store.releaseAgentLane("model researcher", "worker-a");
     const stale = store.acquireAgentLane({ role: "validation scientist", leaseId: "worker-stale", provider: "local", model: "bench" });
+    store.enqueueTask({ id: "stale-lane-ticket", kind: "research.lane", priority: 1, payload: { role: "validation scientist", leaseId: "worker-stale" } });
+    store.claimTask("stale-lane-ticket", ["research.lane"], "worker-stale");
     store.close();
     const raw = new Database(join(root, "state.sqlite"));
     raw.prepare("UPDATE agent_lanes SET heartbeat_at = ? WHERE role = ?").run(new Date(Date.now() - 10_000).toISOString(), "validation scientist");
+    raw.prepare("UPDATE work_queue SET claimed_at = ? WHERE id = ?").run(new Date(Date.now() - 10_000).toISOString(), "stale-lane-ticket");
     raw.close();
     // Re-open through the public store API so the benchmark also covers state
     // durability across controller instances.
     const reopened = new ResearchStore(join(root, "state.sqlite"));
+    const staleTickets = reopened.staleLaneTickets(1_000);
     const staleResult = reopened.staleAgentLanes(1_000);
-    check("stale-lease-recovery", "Expired leased lanes become recoverable after reopen.", stale.acquired && staleResult.includes("validation scientist"), { staleResult });
+    check("stale-lease-recovery", "Expired leased lanes and their tickets become recoverable after reopen.", stale.acquired && staleResult.includes("validation scientist") && staleTickets.includes("stale-lane-ticket") && reopened.queueTasks().find((task) => task.id === "stale-lane-ticket")?.status === "failed", { staleResult, staleTickets, ticketStatus: reopened.queueTasks().find((task) => task.id === "stale-lane-ticket")?.status });
     reopened.close();
   } finally {
     rmSync(root, { recursive: true, force: true });

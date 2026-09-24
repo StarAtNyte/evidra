@@ -377,7 +377,6 @@ restarts. Inspect it through the TUI or CLI:
 /approvals               Unified operator approval inbox
 /queue status            Queued, running, stale, and failed tasks with readiness reasons
 /queue status --json     Machine-readable queue ownership and dependency readiness
-/queue status             Also shows durable specialist lane tickets while they run
 /routine list             Show durable recurring campaigns
 /routine create           Create one interactively in the TUI
 /routine history <id>     Show completed, failed, and abandoned attempts
@@ -413,6 +412,10 @@ When a role has at least two observations and is marked `needs-review`, lane
 selection gives it a bounded coaching seat on the next team. This is not an
 unlimited retry: the normal concurrency, time budget, route-change, evidence,
 and termination gates still apply.
+
+`/queue status` includes the durable `research.lane` tickets while specialists
+run. If a worker stops heartbeating, the next controller marks its ticket
+failed with recovery metadata before launching replacement work.
 
 For a browser view of the active workspace, run `evidra dashboard --port 4310`
 and open `http://127.0.0.1:4310`. It is read-only, localhost-bound, and polls
