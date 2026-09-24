@@ -2273,11 +2273,12 @@ queue.command("usage [id]").option("--limit <count>", "number of usage records",
   const store = new ResearchStore(statePath);
   const limit = Math.max(1, Math.min(512, Number.parseInt(options.limit, 10) || 128));
   const usage = store.queueUsage(id, limit);
+  const totals = id ? store.queueUsageTotals(id) : undefined;
   store.close();
-  const inputTokens = usage.reduce((sum, entry) => sum + entry.inputTokens, 0);
-  const outputTokens = usage.reduce((sum, entry) => sum + entry.outputTokens, 0);
-  const costUsd = usage.reduce((sum, entry) => sum + (entry.costUsd ?? 0), 0);
-  console.log(`${id ? `Task ${id}` : "Queue usage"}\nRecords      ${usage.length}\nInput tokens ${inputTokens}\nOutput tokens ${outputTokens}\nCost         $${costUsd.toFixed(6)}${usage.length ? `\n\n${usage.map((entry) => `${entry.createdAt}  ${entry.actorId}${entry.provider ? ` · ${entry.provider}/${entry.model ?? "?"}` : ""} · ${entry.inputTokens}+${entry.outputTokens} tokens${entry.costUsd === null ? "" : ` · $${entry.costUsd.toFixed(6)}`}`).join("\n")}` : ""}`);
+  const inputTokens = totals?.inputTokens ?? usage.reduce((sum, entry) => sum + entry.inputTokens, 0);
+  const outputTokens = totals?.outputTokens ?? usage.reduce((sum, entry) => sum + entry.outputTokens, 0);
+  const costUsd = totals?.costUsd ?? usage.reduce((sum, entry) => sum + (entry.costUsd ?? 0), 0);
+  console.log(`${id ? `Task ${id}` : "Queue usage"}\nRecords shown ${usage.length}${totals ? " · totals include complete ledger" : ""}\nInput tokens ${inputTokens}\nOutput tokens ${outputTokens}\nCost         $${costUsd.toFixed(6)}${usage.length ? `\n\n${usage.map((entry) => `${entry.createdAt}  ${entry.actorId}${entry.provider ? ` · ${entry.provider}/${entry.model ?? "?"}` : ""} · ${entry.inputTokens}+${entry.outputTokens} tokens${entry.costUsd === null ? "" : ` · $${entry.costUsd.toFixed(6)}`}`).join("\n")}` : ""}`);
 });
 queue.command("recover [id]").option("--route <route>", "materially changed execution route").option("--note <note>", "why this route is different").action((id: string | undefined, options: { route?: string; note?: string }) => {
   const store = new ResearchStore(statePath);

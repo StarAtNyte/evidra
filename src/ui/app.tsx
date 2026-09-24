@@ -4113,10 +4113,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", activity.length ? activity.map((entry) => `${entry.createdAt}  ${entry.kind.padEnd(9)} ${entry.actorId}\n  ${entry.message}`).join("\n") : `No activity recorded for ${activityMatch[1]}.`);
       } else if (usageMatch) {
         const usage = store.queueUsage(usageMatch[1], 128);
-        const inputTokens = usage.reduce((sum, entry) => sum + entry.inputTokens, 0);
-        const outputTokens = usage.reduce((sum, entry) => sum + entry.outputTokens, 0);
-        const costUsd = usage.reduce((sum, entry) => sum + (entry.costUsd ?? 0), 0);
-        append("assistant", `${usageMatch[1] ? `Task ${usageMatch[1]}` : "Queue usage"}\nRecords ${usage.length} · input ${inputTokens} · output ${outputTokens} · cost $${costUsd.toFixed(6)}`);
+        const totals = usageMatch[1] ? store.queueUsageTotals(usageMatch[1]) : undefined;
+        const inputTokens = totals?.inputTokens ?? usage.reduce((sum, entry) => sum + entry.inputTokens, 0);
+        const outputTokens = totals?.outputTokens ?? usage.reduce((sum, entry) => sum + entry.outputTokens, 0);
+        const costUsd = totals?.costUsd ?? usage.reduce((sum, entry) => sum + (entry.costUsd ?? 0), 0);
+        append("assistant", `${usageMatch[1] ? `Task ${usageMatch[1]}` : "Queue usage"}\nRecords shown ${usage.length}${totals ? " · totals include complete ledger" : ""} · input ${inputTokens} · output ${outputTokens} · cost $${costUsd.toFixed(6)}`);
       } else if (assignMatch) {
         try {
           if (!store.assignTask(assignMatch[1], assignMatch[2] ?? null)) throw new Error("task is missing or not queued/failed");
@@ -4151,9 +4152,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const taskRole = task.payload && typeof task.payload === "object" && !Array.isArray(task.payload) && typeof (task.payload as { role?: unknown }).role === "string" ? (task.payload as { role: string }).role : "";
           const latestActivity = store.queueActivities(task.id, 1).at(-1);
           const usage = store.queueUsage(task.id, 128);
-          const inputTokens = usage.reduce((sum, entry) => sum + entry.inputTokens, 0);
-          const outputTokens = usage.reduce((sum, entry) => sum + entry.outputTokens, 0);
-          const costUsd = usage.reduce((sum, entry) => sum + (entry.costUsd ?? 0), 0);
+          const totals = store.queueUsageTotals(task.id);
+          const inputTokens = totals?.inputTokens ?? usage.reduce((sum, entry) => sum + entry.inputTokens, 0);
+          const outputTokens = totals?.outputTokens ?? usage.reduce((sum, entry) => sum + entry.outputTokens, 0);
+          const costUsd = totals?.costUsd ?? usage.reduce((sum, entry) => sum + (entry.costUsd ?? 0), 0);
           const usageSummary = inputTokens + outputTokens > 0 ? `usage ${inputTokens + outputTokens} tokens${costUsd > 0 ? ` · $${costUsd.toFixed(4)}` : ""}` : "";
           const budgetSummary = task.tokenBudget === null ? "" : `budget ${inputTokens + outputTokens}/${task.tokenBudget}${inputTokens + outputTokens >= task.tokenBudget ? " exhausted" : ""}`;
           const lineage = [taskRole ? `role ${taskRole}` : "", task.parentTaskId ? `parent ${task.parentTaskId}` : "", task.goalId ? `goal ${task.goalId}` : "", task.dependsOn.length ? `depends ${task.dependsOn.join(",")}` : "", task.assigneeId ? `assigned ${task.assigneeId}` : "", task.ownerId ? `owner ${task.ownerId}` : "", budgetSummary, usageSummary, latestActivity ? `last ${latestActivity.kind}: ${latestActivity.message.slice(0, 120)}` : ""].filter(Boolean).join(" · ");
