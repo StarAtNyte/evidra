@@ -76,6 +76,10 @@ export function goalAlignment(store: ResearchStore): GoalAlignmentReport {
     const payload = phase.payload && typeof phase.payload === "object" ? phase.payload as { goalSetId?: unknown } : {};
     return activeGoalSetId !== null && typeof payload.goalSetId === "string" && payload.goalSetId !== activeGoalSetId;
   });
+  const brokenTaskLineage = liveTasks.flatMap((task) => {
+    const lineage = store.taskLineage(task.id);
+    return lineage && (lineage.missingParentIds.length > 0 || lineage.cycle || lineage.truncated) ? [{ task, lineage }] : [];
+  });
   const runningWithoutTask = store.agentLanes().filter((lane) => lane.status === "running" && !lane.task?.trim());
   const checks: GoalAlignmentCheck[] = [
     {
@@ -95,6 +99,12 @@ export function goalAlignment(store: ResearchStore): GoalAlignmentReport {
       status: orphanedTasks.length ? "blocked" : "pass",
       detail: orphanedTasks.length ? `${orphanedTasks.length} live queue task(s) reference a missing or foreign campaign phase goal.` : "Every goal-linked live queue task resolves to the active campaign phase set.",
       count: orphanedTasks.length,
+    },
+    {
+      id: "task-lineage",
+      status: brokenTaskLineage.length ? "blocked" : "pass",
+      detail: brokenTaskLineage.length ? `${brokenTaskLineage.length} live queue task(s) have an orphaned, cyclic, or over-deep parent chain.` : "Every live queue task has a bounded, resolvable parent chain.",
+      count: brokenTaskLineage.length,
     },
     {
       id: "lane-ownership",

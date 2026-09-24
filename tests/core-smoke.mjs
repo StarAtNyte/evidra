@@ -3488,6 +3488,23 @@ test("queue dependencies prevent work from running before prerequisites", () => 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue lineage resolves parent goals and detects broken chains", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-lineage-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "campaign", kind: "campaign", priority: 1, payload: {}, goalId: "goal-orient" });
+    store.enqueueTask({ id: "cycle", kind: "cycle", priority: 1, payload: {}, goalId: "goal-hypothesis", parentTaskId: "campaign" });
+    store.enqueueTask({ id: "lane", kind: "lane", priority: 1, payload: {}, parentTaskId: "cycle" });
+    assert.deepEqual(store.taskLineage("lane"), { taskIds: ["lane", "cycle", "campaign"], goalIds: ["goal-hypothesis", "goal-orient"], missingParentIds: [], cycle: false, truncated: false });
+    store.enqueueTask({ id: "orphan", kind: "lane", priority: 1, payload: {}, parentTaskId: "missing" });
+    assert.deepEqual(store.taskLineage("orphan")?.missingParentIds, ["missing"]);
+    store.enqueueTask({ id: "cycle-a", kind: "lane", priority: 1, payload: {}, parentTaskId: "cycle-b" });
+    store.enqueueTask({ id: "cycle-b", kind: "lane", priority: 1, payload: {}, parentTaskId: "cycle-a" });
+    assert.equal(store.taskLineage("cycle-a")?.cycle, true);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue dependency cycles are rejected before they deadlock the scheduler", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-cycle-"));
   try {

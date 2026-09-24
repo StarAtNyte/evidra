@@ -2187,7 +2187,9 @@ queue.command("status").option("--json", "emit machine-readable queue state").ac
       ...readiness.pending.map((id) => `waiting:${id}`),
       ...readiness.failed.map((id) => `failed:${id}`),
     ].join(",")}` : "";
-    return `${task.status} ${task.id} · ${task.kind} · priority ${task.priority} · attempts ${task.attempts}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${blocked}`;
+    const lineage = store.taskLineage(task.id);
+    const brokenLineage = lineage && (lineage.cycle || lineage.truncated || lineage.missingParentIds.length) ? ` · broken-lineage${lineage.missingParentIds.length ? ` missing:${lineage.missingParentIds.join(",")}` : ""}` : "";
+    return `${task.status} ${task.id} · ${task.kind} · priority ${task.priority} · attempts ${task.attempts}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${brokenLineage}${blocked}`;
   }).join("\n") : "Research queue is empty.");
   if (recoveries.length) console.log(`\nRecovery actions\n${recoveries.slice().reverse().slice(0, 8).map((entry) => { const value = entry && typeof entry === "object" ? entry as Record<string, unknown> : {}; return `  ${String(value.taskId ?? "task")} · ${String(value.failureClass ?? "unknown")} · ${String(value.route ?? "change_route")} · ${String(value.action ?? "inspect failure")}`; }).join("\n")}`);
   store.close();

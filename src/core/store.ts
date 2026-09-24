@@ -66,6 +66,14 @@ export interface QueuedTask {
   updatedAt: string;
 }
 
+export interface QueuedTaskLineage {
+  taskIds: string[];
+  goalIds: string[];
+  missingParentIds: string[];
+  cycle: boolean;
+  truncated: boolean;
+}
+
 export type RoutineStatus = "active" | "paused" | "running" | "failed";
 export interface ResearchRoutine {
   id: string;
@@ -1604,6 +1612,32 @@ export class ResearchStore {
       ? this.db.prepare("SELECT * FROM work_queue WHERE status = ? ORDER BY priority DESC, available_at ASC").all(status)
       : this.db.prepare("SELECT * FROM work_queue ORDER BY updated_at DESC").all()) as Array<{ id: string; kind: string; priority: number; status: string; payload_json: string; attempts: number; available_at: string; claimed_at: string | null; owner_id: string | null; goal_id: string | null; parent_task_id: string | null; depends_on_json: string; updated_at: string }>;
     return rows.map((row) => ({ id: row.id, kind: row.kind, priority: row.priority, status: row.status, payload: JSON.parse(row.payload_json), attempts: row.attempts, availableAt: row.available_at, claimedAt: row.claimed_at, ownerId: row.owner_id, goalId: row.goal_id, parentTaskId: row.parent_task_id, dependsOn: JSON.parse(row.depends_on_json || "[]") as string[], updatedAt: row.updated_at }));
+  }
+
+  /** Resolve a bounded parent-task chain for audit, display, and recovery. */
+  taskLineage(id: string, maxDepth = 32): QueuedTaskLineage | undefined {
+    const tasks = new Map(this.queueTasks().map((task) => [task.id, task]));
+    if (!tasks.has(id)) return undefined;
+    const taskIds: string[] = [];
+    const goalIds: string[] = [];
+    const missingParentIds: string[] = [];
+    const visited = new Set<string>();
+    let currentId: string | null = id;
+    let cycle = false;
+    let truncated = false;
+    for (let depth = 0; currentId !== null; depth += 1) {
+      if (depth >= Math.max(1, Math.floor(maxDepth))) { truncated = true; break; }
+      if (visited.has(currentId)) { cycle = true; break; }
+      visited.add(currentId);
+      const task = tasks.get(currentId);
+      if (!task) { missingParentIds.push(currentId); break; }
+      taskIds.push(task.id);
+      if (task.goalId !== null && !goalIds.includes(task.goalId)) goalIds.push(task.goalId);
+      if (task.parentTaskId === null) break;
+      if (!tasks.has(task.parentTaskId)) { missingParentIds.push(task.parentTaskId); break; }
+      currentId = task.parentTaskId;
+    }
+    return { taskIds, goalIds, missingParentIds, cycle, truncated };
   }
 
   private taskDependenciesReady(id: string): boolean {
