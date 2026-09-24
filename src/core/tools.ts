@@ -143,7 +143,7 @@ function recordToolEvent(context: ResearchToolContext, result: ResearchToolResul
 function toolTrust(name: string): ResearchToolTrust {
   if (name.startsWith("external.")) return "untrusted_content";
   if (["workspace.read", "workspace.search", "git.diff", "shell.exec", "source.search", "source.retrieve", "competition.observe", "web.search", "repository.search"].includes(name)) return "untrusted_content";
-  if (["validation.generate", "report.generate"].includes(name)) return "permission_boundary";
+  if (["validation.generate", "report.generate", "agent.handoff"].includes(name)) return "permission_boundary";
   return "controller_observation";
 }
 
@@ -168,6 +168,7 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   { name: "artifact.audit", description: "Audit bounded research artifacts for safe containment, regular-file integrity, size, checksum, and optional JSON validity.", input: { paths: "relative artifact paths array", maxBytes: "optional per-file size limit" }, readOnly: true },
   { name: "prediction.analyze", description: "Analyze a bounded JSON/JSONL prediction artifact; optionally compare it with a baseline to identify fixed and regressed groups.", input: { path: "relative JSON or JSONL prediction artifact", baseline: "optional relative baseline artifact", maxRows: "optional row limit" }, readOnly: true },
   { name: "ensemble.analyze", description: "Inspect registered prediction/OOF artifacts and measure pairwise diversity without creating or promoting a blend.", input: {}, readOnly: true },
+  { name: "agent.handoff", description: "Send a bounded, durable message to another approved research role; delivery occurs at that role's next safe boundary and does not grant new authority.", input: { role: "recipient role", message: "bounded handoff message", scopeKey: "optional phase or task scope" }, readOnly: false },
   { name: "validation.generate", description: "Create a versioned validation policy for the active workspace.", input: {}, readOnly: false },
   { name: "report.generate", description: "Write a durable research, challenge, or final report.", input: { kind: "research|challenge|final" }, readOnly: false },
 ];
@@ -188,6 +189,7 @@ const TOOL_HINTS: Record<string, string> = {
   "artifact.audit": "artifact output checksum file result integrity validity",
   "prediction.analyze": "prediction error residual confusion regression slice baseline",
   "ensemble.analyze": "ensemble blend diversity oof prediction models",
+  "agent.handoff": "agent handoff delegate message coordinate peer specialist critic validation researcher",
   "validation.generate": "validation policy evaluator split leakage contract",
   "report.generate": "report summarize publish findings final",
 };
@@ -276,6 +278,7 @@ function validateToolArguments(name: string, value: unknown): Record<string, unk
       if (!Array.isArray(args.paths) || !args.paths.length || args.paths.length > 64 || !args.paths.every((path) => typeof path === "string" && path.trim())) throw new Error("Tool argument 'paths' must contain 1 to 64 non-empty strings.");
       optionalNumber("maxBytes"); break;
     case "prediction.analyze": requiredString("path"); optionalString("baseline"); optionalNumber("maxRows"); break;
+    case "agent.handoff": requiredString("role"); requiredString("message"); optionalString("scopeKey"); break;
     case "report.generate": if (args.kind !== "research" && args.kind !== "challenge" && args.kind !== "final") throw new Error("Tool argument 'kind' must be research, challenge, or final."); break;
   }
   return args;
@@ -579,6 +582,19 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         });
         store.close();
         output = { vectors: vectors.map((vector) => ({ id: vector.id, path: relative(context.root, vector.path), values: vector.values.length, checksum: vector.checksum })), diversity, eligible: vectors.length >= 2, ...(vectors.length < 2 ? { reason: "at least two valid prediction artifacts are required" } : {}) };
+        break;
+      }
+      case "agent.handoff": {
+        const recipient = stringArg(args, "role").trim().slice(0, 120);
+        const message = stringArg(args, "message").trim().slice(0, 4_000);
+        if (!recipient || !message) throw new Error("Agent handoff requires a recipient role and message.");
+        if (context.role && recipient === context.role) throw new Error("Agent handoff recipient must differ from the sender role.");
+        const scopeKey = typeof args.scopeKey === "string" ? args.scopeKey.trim().slice(0, 240) || null : null;
+        const store = new ResearchStore(context.storePath);
+        const directive = store.enqueueAgentDirectiveOnce(recipient, message, scopeKey, context.role ?? "controller");
+        store.appendEvent("agent.handoff.sent", { directiveId: directive.id, sourceRole: context.role ?? "controller", recipientRole: recipient, scopeKey });
+        store.close();
+        output = { directiveId: directive.id, sourceRole: context.role ?? "controller", recipientRole: recipient, scopeKey, delivery: "next_safe_boundary" };
         break;
       }
       case "validation.generate": {

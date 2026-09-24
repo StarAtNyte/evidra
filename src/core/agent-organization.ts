@@ -58,6 +58,7 @@ export function agentToolPermission(role: string, toolName: string): { allowed: 
   if (observationTools.has(toolName)) return { allowed: true };
   if (toolName === "shell.exec" && ["data detective", "model researcher", "ensemble scientist", "validation scientist", "reproducibility engineer", "experiment engineer", "repair agent"].includes(role)) return { allowed: true };
   if (toolName === "ensemble.analyze" && ["model researcher", "ensemble scientist", "validation scientist", "reproducibility engineer", "critic", "semantic auditor"].includes(role)) return { allowed: true };
+  if (toolName === "agent.handoff" && contract.reviewRequired !== true) return { allowed: true };
   return { allowed: false, reason: `Role '${role}' (${contract.authority}) is not authorized to use '${toolName}'; the research director must perform or explicitly route this action.` };
 }
 
