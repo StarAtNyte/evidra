@@ -6920,6 +6920,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.appendEvent("test.dashboard", { token: "sk-test-dashboard-secret-value", command: ["tool", "--token", "secret-value"] });
+    store.appendEvent("research.agent.reviewed", { objective: "dashboard review objective", source: "test", reviews: [], interventions: [{ role: "model researcher", action: "coach", priority: "high", reason: "blocked playbook step" }] });
     store.enqueueTask({ id: "dashboard-parent", kind: "research.cycle", priority: 10, payload: {} });
     store.enqueueTask({ id: "dashboard-child", kind: "research.review", priority: 8, payload: {}, parentTaskId: "dashboard-parent", dependsOn: ["dashboard-parent"] });
     const snapshot = dashboardSnapshot(store);
@@ -6930,6 +6931,8 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.equal(Array.isArray(snapshot.stages), true);
     assert.equal(snapshot.stages.length, 3);
     assert.equal(Array.isArray(snapshot.organization), true);
+    assert.equal(snapshot.agentReviewHistory.length, 1);
+    assert.equal(snapshot.agentReviewHistory[0].interventions[0].action, "coach");
     assert.ok(snapshot.organization.some((entry) => entry.role === "research director"));
     assert.deepEqual(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.dependsOn, ["dashboard-parent"]);
     assert.equal(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.parentTaskId, "dashboard-parent");

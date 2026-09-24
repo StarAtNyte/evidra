@@ -230,6 +230,7 @@ Source retrieval records URL, retrieval time, content hash, license, claims, and
 /agents resume <role>         Resume a paused role
 /agents message <role> -- <msg> Queue a directive for one role's next safe boundary
 /agents directives [role]     Inspect specialist handoffs and whether they were applied
+/agents reviews              Show durable role review and intervention history
 /agents cancel <run>         Cancel a running agent task
 ```
 

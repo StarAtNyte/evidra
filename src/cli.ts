@@ -775,6 +775,23 @@ agents.command("directives [role]").description("Show durable specialist handoff
   else console.log(directives.map((directive) => `${directive.appliedAt ? "applied" : "pending"}  #${directive.id}  ${directive.role}  ${directive.createdAt}${directive.scopeKey ? `  scope:${directive.scopeKey}` : "  global"}\n  ${directive.message}${directive.appliedAt ? `\n  applied: ${directive.appliedAt}` : ""}`).join("\n"));
   store.close();
 });
+agents.command("reviews").description("Show durable role review and intervention history").action(() => {
+  const store = new ResearchStore(statePath);
+  const history = store.eventsByType("research.agent.reviewed", 12).slice().reverse();
+  if (!history.length) {
+    console.log("No role reviews recorded.");
+  } else {
+    console.log(history.map((event) => {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+      const interventions = Array.isArray(payload.interventions) ? payload.interventions.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object")) : [];
+      const objective = typeof payload.objective === "string" ? ` · ${payload.objective.slice(0, 120)}` : "";
+      const source = typeof payload.source === "string" ? payload.source : "controller";
+      const actions = interventions.map((item) => `  ${typeof item.role === "string" ? item.role : "role"} → ${typeof item.action === "string" ? item.action : "observe"} · ${typeof item.priority === "string" ? item.priority : "normal"} · ${typeof item.reason === "string" ? item.reason : ""}`).join("\n");
+      return `${event.createdAt} · ${source}${objective}\n${actions || "  no interventions"}`;
+    }).join("\n"));
+  }
+  store.close();
+});
 
 program.command("usage").description("Show research, experiment, and campaign usage").action(() => {
   const store = new ResearchStore(statePath);
