@@ -416,6 +416,7 @@ evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" \
 - goal-alignment audit: `/status` and the dashboard verify that running campaigns have an objective and active phase, that live queue work resolves to phase goals, and that leased lanes have assigned work;
 - campaign lineage isolation: goal alignment also rejects live work from a different deterministic objective/mode goal set, preventing resumed or concurrent research campaigns from silently sharing queue ownership;
 - campaign organization map: mission, phase ownership, reporting lines, active work, specialist directives, and accountability warnings are exposed consistently through the dashboard, `evidra organization`, `/organization`, and machine-readable JSON;
+- durable goal rollups: the organization projection derives completed-phase count, progress ratio, blocked/active/met state, active phase, and three-stage progress from phase-goal records, keeping operational activity separate from scientific completion;
 - work accountability: live work is classified as ownerless, unscoped, mis-scoped, or unbudgeted; foreign-phase work is treated as critical operator attention without silently being counted as current-campaign progress;
 - atomic research-lane leases with heartbeats, duplicate-specialist protection, and restart-time stale-lane recovery;
 - in-wave lane watchdog: long provider turns are supervised continuously, so expired specialist leases, tickets, and delivered handoffs are fenced and surfaced before the next campaign allocation boundary;

@@ -906,6 +906,8 @@ test("campaign organization maps goals, reporting lines, and aligned queue work"
     const map = campaignOrganization(store);
     assert.equal(map.goal, "improve the measured outcome");
     assert.equal(map.mode, "challenge");
+    assert.deepEqual({ completed: map.progress.completedPhases, total: map.progress.totalPhases, status: map.progress.status, activePhase: map.progress.activePhase }, { completed: 0, total: 1, status: "active", activePhase: "validation" });
+    assert.equal(map.progress.stages.find((stage) => stage.stage === "discover")?.activePhase, "validation");
     assert.equal(map.phases[0]?.queue.active, 1);
     assert.equal(map.totals.activeQueue, 1);
     assert.equal(map.totals.queue, 1);
@@ -915,6 +917,7 @@ test("campaign organization maps goals, reporting lines, and aligned queue work"
     assert.deepEqual(map.accountability.misalignedLive, ["orphan-task"]);
     assert.deepEqual(map.accountability.unbudgetedLive.sort(), ["orphan-task", "validation-task"]);
     assert.match(formatCampaignOrganization(map), /Phase ownership/);
+    assert.match(formatCampaignOrganization(map), /progress: 0\/1 phases/);
     assert.match(formatCampaignOrganization(map), /validation scientist/);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }

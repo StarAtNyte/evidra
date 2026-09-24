@@ -1,5 +1,6 @@
 import { agentOrganization, type AgentRoleContract } from "./agent-organization.js";
-import { phaseGoalSetId } from "./phase-goals.js";
+import { phaseGoalSetId, researchStageProgress, type ResearchStageProgress } from "./phase-goals.js";
+import type { ResearchPhase } from "./types.js";
 import type { ResearchStore } from "./store.js";
 
 export type CampaignOrganizationPhase = {
@@ -23,6 +24,15 @@ export type CampaignOrganization = {
   goal: string | null;
   mode: "research" | "challenge";
   status: string;
+  progress: {
+    completedPhases: number;
+    totalPhases: number;
+    ratio: number;
+    status: "pending" | "active" | "blocked" | "met";
+    activeStage: ResearchStageProgress["stage"] | null;
+    activePhase: ResearchPhase | null;
+    stages: ResearchStageProgress[];
+  };
   phases: CampaignOrganizationPhase[];
   roles: CampaignOrganizationRole[];
   totals: {
@@ -88,6 +98,19 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
       },
     } satisfies CampaignOrganizationPhase;
   });
+  const stageProgress = researchStageProgress(campaignGoals.map((entry) => ({
+    phase: entry.phase as ResearchPhase,
+    status: ((entry.payload && typeof entry.payload === "object" ? text((entry.payload as Record<string, unknown>).status) : null) ?? entry.status) as "active" | "blocked" | "met" | "pending",
+  })));
+  const activeStage = stageProgress.find((stage) => stage.status === "active" || stage.status === "blocked");
+  const completedPhases = campaignGoals.filter((entry) => {
+    const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as Record<string, unknown> : {};
+    return (text(payload.status) ?? entry.status) === "met";
+  }).length;
+  const progressStatus: CampaignOrganization["progress"]["status"] = campaignGoals.some((entry) => {
+    const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as Record<string, unknown> : {};
+    return (text(payload.status) ?? entry.status) === "blocked";
+  }) ? "blocked" : campaignGoals.length > 0 && completedPhases === campaignGoals.length ? "met" : campaignGoals.length ? "active" : "pending";
   const organization = agentOrganization(store).slice(0, 32).map((role) => {
     const activeQueue = tasks.filter((task) => task.status === "running" || task.status === "assigned")
       .filter((task) => task.assigneeId === role.role || task.ownerId === role.role || taskRole(task) === role.role).length;
@@ -108,6 +131,15 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
     goal: text(campaign?.goal),
     mode,
     status: text(campaign?.status) ?? "idle",
+    progress: {
+      completedPhases,
+      totalPhases: campaignGoals.length,
+      ratio: campaignGoals.length ? completedPhases / campaignGoals.length : 0,
+      status: progressStatus,
+      activeStage: activeStage?.stage ?? null,
+      activePhase: activeStage?.activePhase ?? null,
+      stages: stageProgress,
+    },
     phases: phaseRows,
     roles: organization,
     totals: { phases: phaseRows.length, roles: organization.length, queue: alignedTasks.length, activeQueue, blockedQueue },
@@ -129,6 +161,7 @@ export function formatCampaignOrganization(map: CampaignOrganization): string {
     "Campaign organization",
     `  mission: ${map.goal ?? "not initialized"}`,
     `  mode: ${map.mode} · status: ${map.status}`,
+    `  progress: ${map.progress.completedPhases}/${map.progress.totalPhases} phases · ${(map.progress.ratio * 100).toFixed(0)}% · ${map.progress.status}${map.progress.activePhase ? ` · active ${map.progress.activePhase}` : ""}`,
     `  work: ${map.totals.activeQueue} active · ${map.totals.queue} aligned${map.totals.blockedQueue ? ` · ${map.totals.blockedQueue} blocked` : ""}`,
     `  accountability: ${map.accountability.unassignedRunning.length} ownerless running · ${map.accountability.unscopedLive.length} unscoped · ${map.accountability.misalignedLive.length} mis-scoped · ${map.accountability.unbudgetedLive.length} unbudgeted`,
     "",

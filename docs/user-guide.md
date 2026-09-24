@@ -479,6 +479,12 @@ and mode identity as well as the phase ID. A task from an older or different
 campaign is therefore reported as foreign work instead of being treated as
 valid merely because its phase record still exists.
 
+The organization view also exposes a goal rollup: completed phases over total
+phases, a bounded progress ratio, the active phase and stage, and whether the
+goal is pending, active, blocked, or met. This is derived from durable phase
+goal statuses and never inferred from running queue activity, agent prose, or
+claimed work alone.
+
 The dashboard also presents Evidra's agent organization. The research director
 coordinates specialist lanes; validation and critic roles protect evidence;
 execution roles are responsible for isolated runs; and repair roles change the
