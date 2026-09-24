@@ -2147,14 +2147,14 @@ routine.command("recover").description("Recover routines whose runner lease expi
   store.close();
   console.log(recovered.length ? `Recovered ${recovered.length} stale routine(s): ${recovered.join(", ")}` : "No stale routines found.");
 });
-routine.command("run <id>").description("Run one due routine and persist its next scheduled run").action(async (id: string) => {
+routine.command("run <id>").option("--force", "run immediately even when the interval is not due").description("Run one routine and persist its next scheduled run").action(async (id: string, options: { force?: boolean }) => {
   const script = process.argv[1];
   if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
   const store = new ResearchStore(statePath);
   store.recoverStaleRoutines();
   const ownerId = `routine-runner-${process.pid}-${randomUUID()}`;
-  const entry = store.claimRoutine(id, ownerId);
-  if (!entry) { store.close(); throw new Error(`Routine '${id}' is not due, paused, missing, or already owned.`); }
+  const entry = store.claimRoutine(id, ownerId, undefined, undefined, options.force === true);
+  if (!entry) { store.close(); throw new Error(`Routine '${id}' is paused, missing, or already owned.`); }
   store.close();
   const args = ["research", "--mode", entry.mode, "--goal", entry.goal, "--budget", `${entry.budgetMinutes}m`, "--stop", entry.stopCondition, "--provider", entry.provider, "--model", entry.model, "--thinking", entry.thinking, "--autonomy", entry.autonomy, "--limit-policy", entry.limitPolicy, "--executor", entry.executor, "--lanes", String(entry.lanes)];
   try {

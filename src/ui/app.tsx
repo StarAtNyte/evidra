@@ -2917,7 +2917,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (!script) { append("assistant", "Unable to locate the Evidra CLI entrypoint."); return; }
         setBusy(true); setProgress(`Routine ${id} · claiming scheduled campaign...`);
         try {
-          const result = await runProcess([process.execPath, script, "routine", "run", id], root, 7 * 24 * 60 * 60_000, (stream, chunk) => {
+          const result = await runProcess([process.execPath, script, "routine", "run", id, "--force"], root, 7 * 24 * 60 * 60_000, (stream, chunk) => {
             const line = chunk.replace(/\s+/g, " ").trim();
             if (line) setProgress(`Routine ${id} · ${stream}: ${line.slice(-140)}`);
           }, registerProcess);

@@ -1452,11 +1452,11 @@ export class ResearchStore {
     return triggered;
   }
 
-  claimRoutine(id: string, ownerId: string, leaseMs = 7 * 24 * 60 * 60_000, now = new Date()): ResearchRoutine | undefined {
+  claimRoutine(id: string, ownerId: string, leaseMs = 7 * 24 * 60 * 60_000, now = new Date(), force = false): ResearchRoutine | undefined {
     const claimed = this.db.transaction(() => {
       const row = this.db.prepare("SELECT * FROM research_routines WHERE id = ?").get(id) as { id: string; payload_json: string; status: string; next_run_at: string; lease_id: string | null; lease_expires_at: string | null; created_at: string; updated_at: string } | undefined;
       if (!row) return undefined;
-      const due = Date.parse(row.next_run_at) <= now.getTime();
+      const due = force || Date.parse(row.next_run_at) <= now.getTime();
       const leaseExpired = !row.lease_expires_at || Date.parse(row.lease_expires_at) <= now.getTime();
       if (!due || (row.status !== "active" && !(row.status === "running" && leaseExpired))) return undefined;
       const expires = new Date(now.getTime() + leaseMs).toISOString();
@@ -1464,7 +1464,7 @@ export class ResearchStore {
       this.db.prepare("INSERT INTO research_routine_runs (id, routine_id, owner_id, status, started_at, finished_at, exit_code, error) VALUES (?, ?, ?, 'running', ?, NULL, NULL, NULL)").run(randomUUID(), id, ownerId, now.toISOString());
       return this.routine(id);
     })();
-    if (claimed) this.appendEvent("routine.claimed", { id, ownerId, leaseExpiresAt: claimed.leaseExpiresAt });
+    if (claimed) this.appendEvent("routine.claimed", { id, ownerId, leaseExpiresAt: claimed.leaseExpiresAt, forced: force });
     return claimed;
   }
 

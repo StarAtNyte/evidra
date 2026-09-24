@@ -88,7 +88,7 @@ evidra routine create --name nightly-literature --goal "find and test robust imp
 evidra routine create --name recovery-review --goal "audit the latest recovery" --on-event research.agent_budget.exhausted
 evidra routine list --json
 evidra routine history <routine-id>
-evidra routine run <routine-id>
+evidra routine run <routine-id> [--force]
 evidra routine daemon           Poll and execute due routines continuously
 evidra routine pause <routine-id>
 evidra routine resume <routine-id>
@@ -96,7 +96,8 @@ evidra routine recover
 ```
 
 `routine run` executes the same research controller used by the TUI and
-advances the next run only after the child campaign exits. `routine daemon`
+advances the next run only after the child campaign exits. Manual runs use
+`--force` (the TUI does this automatically); `routine daemon`
 provides the native heartbeat loop; it polls due routines sequentially and
 recovers expired runner leases. Expired leases are recoverable, so a machine
 restart does not strand a routine.
