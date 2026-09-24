@@ -16,6 +16,34 @@ export type GoalAlignmentReport = {
   checks: GoalAlignmentCheck[];
 };
 
+/**
+ * Persist a safe pause when the control plane cannot prove that new work still
+ * belongs to the campaign's current objective. This is intentionally kept in
+ * the alignment module so every execution surface applies the same policy.
+ */
+export function pauseForGoalAlignment(store: ResearchStore, report: GoalAlignmentReport, source: string): void {
+  if (report.status !== "blocked") return;
+  const current = store.campaign();
+  if (!current || typeof current !== "object") return;
+  const campaign = current as Record<string, unknown>;
+  if (campaign.status !== "running") return;
+  const pausedAt = new Date().toISOString();
+  store.saveCampaign({
+    ...campaign,
+    status: "paused",
+    pausedAt,
+    currentStep: "goal-alignment-blocked",
+  });
+  const runtime = campaign.runtime && typeof campaign.runtime === "object" ? campaign.runtime as { mode?: unknown } : {};
+  const mode = runtime.mode === "challenge" ? "challenge" : "research";
+  store.setSchedulerState({ status: "paused", mode, currentStep: "goal-alignment-blocked" });
+  store.appendEvent("research.goal_alignment.blocked", {
+    source,
+    report,
+    action: "pause-before-agent-allocation",
+  });
+}
+
 function campaignGoal(store: ResearchStore): { goal: string | null; running: boolean; mode: "research" | "challenge" } {
   const campaign = store.campaign();
   if (!campaign || typeof campaign !== "object") return { goal: null, running: false, mode: "research" };

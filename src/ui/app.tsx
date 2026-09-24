@@ -6,7 +6,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
 import { approvalInbox } from "../core/approvals.js";
-import { formatGoalAlignment, goalAlignment } from "../core/goal-alignment.js";
+import { formatGoalAlignment, goalAlignment, pauseForGoalAlignment } from "../core/goal-alignment.js";
 import { evaluateAgentRoles } from "../core/agent-evals.js";
 import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
@@ -1005,6 +1005,18 @@ export function App({ root }: { root: string }): React.JSX.Element {
       for (const goal of definePhaseGoals(ultimateGoal, mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
     }
     const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, goalSet));
+    // Recover abandoned workers before judging lineage. A live task that has
+    // not heartbeated is recoverable; a fresh worker must never be allocated
+    // against a campaign whose objective/phase graph is still ambiguous.
+    store.staleLaneTickets();
+    store.staleAgentLanes();
+    const alignment = campaign ? goalAlignment(store) : undefined;
+    if (alignment?.status === "blocked") {
+      pauseForGoalAlignment(store, alignment, "tui-autonomous-cycle");
+      const message = formatGoalAlignment(alignment);
+      store.close();
+      throw new Error(`Autonomous campaign paused before agent allocation.\n${message}`);
+    }
     const recentEvents = store.recentEvents(20);
     const consistencyEvents = store.recentEvents(200);
     const evidenceConflicts = {

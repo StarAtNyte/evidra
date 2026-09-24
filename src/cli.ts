@@ -19,6 +19,7 @@ import { canonicalSourceUrl, retrieveSource, searchResearchSources, sourceClaimR
 import { competitionResearchClaimType, competitionResearchSources } from "./core/competition-sources.js";
 import { extractCompetitionInsights } from "./core/competition-insights.js";
 import { dashboardHtml, dashboardSnapshot } from "./core/dashboard.js";
+import { pauseForGoalAlignment } from "./core/goal-alignment.js";
 import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "./core/literature-bench.js";
 import { parseAutoResearchBenchEvaluation } from "./core/autoresearch-bench.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "./core/submissions.js";
@@ -2577,6 +2578,17 @@ research
         continue;
       }
       const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, campaignGoalSetId));
+      // Paperclip-style governance boundary: stale work is recoverable, but
+      // ambiguous campaign lineage is not. Pause before allocating any agent.
+      store.staleLaneTickets();
+      store.staleAgentLanes();
+      const alignment = campaign ? goalAlignment(store) : undefined;
+      if (alignment?.status === "blocked") {
+        pauseForGoalAlignment(store, alignment, "cli-autonomous-cycle");
+        const message = formatGoalAlignment(alignment);
+        store.close();
+        throw new Error(`Autonomous campaign paused before agent allocation.\n${message}`);
+      }
       const durableEvents = store.recentEvents(500);
       // Keep the prompt/event window bounded, but never truncate the reward
       // history used for convergence decisions in a long-running campaign.

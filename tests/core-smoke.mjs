@@ -11,7 +11,7 @@ import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../di
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore } from "../dist/core/store.js";
 import { approvalInbox } from "../dist/core/approvals.js";
-import { goalAlignment } from "../dist/core/goal-alignment.js";
+import { goalAlignment, pauseForGoalAlignment } from "../dist/core/goal-alignment.js";
 import { agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
 import { evaluateAgentRoles } from "../dist/core/agent-evals.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../dist/core/submissions.js";
@@ -600,6 +600,23 @@ test("goal alignment traces live work to a durable campaign phase", () => {
     store.savePhaseGoal({ id: "phase-1", phase: "validation", status: "pending", payload: { id: "phase-1", phase: "validation" } });
     store.savePhaseGoal({ id: "foreign-active", phase: "hypothesis", status: "active", payload: { id: "foreign-active", phase: "hypothesis", goalSetId: "old-campaign" } });
     assert.equal(goalAlignment(store).checks.find((check) => check.id === "active-phase-goal")?.status, "blocked");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("blocked goal alignment pauses the campaign before new agent allocation", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-alignment-pause-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.saveCampaign({ goal: "run a durable study", status: "running", runtime: { mode: "research" } });
+    store.savePhaseGoal({ id: "foreign-active", phase: "orientation", status: "active", payload: { id: "foreign-active", phase: "orientation", goalSetId: "foreign-campaign" } });
+    const report = goalAlignment(store);
+    assert.equal(report.status, "blocked");
+    pauseForGoalAlignment(store, report, "test");
+    assert.equal(store.campaign()?.status, "paused");
+    assert.equal(store.schedulerState().status, "paused");
+    assert.equal(store.schedulerState().currentStep, "goal-alignment-blocked");
+    assert.equal(store.eventsByType("research.goal_alignment.blocked").length, 1);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
