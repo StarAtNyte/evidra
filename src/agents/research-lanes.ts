@@ -812,6 +812,13 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
 
 /** Run independent research lanes with an explicit concurrency bound. */
 export async function runResearchLanes(objective: string, context: Record<string, unknown>, options: ResearchLanesOptions): Promise<ResearchLaneReport[]> {
+  // A restarted controller must not inherit a dead specialist's ownership.
+  // Recovery is conservative: only lanes whose heartbeat has expired are
+  // released, while a live worker keeps its lease and remains untouched.
+  const recoveryStore = new ResearchStore(options.storePath);
+  const staleRoles = recoveryStore.staleAgentLanes();
+  recoveryStore.close();
+  if (staleRoles.length) options.onProgress?.(`Research lanes · recovered stale leases: ${staleRoles.join(", ")}`);
   // A Codex pool may become local after entitlement exhaustion. Size the
   // initial pool for the most constrained route that can actually serve it,
   // otherwise several lanes can switch to one Ollama process at once.
