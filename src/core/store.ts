@@ -62,6 +62,7 @@ function phasePlanFingerprint(payload: unknown): string {
 }
 
 export type QueueTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type QueueApprovalStatus = "none" | "pending" | "approved" | "rejected";
 export interface QueuedTask {
   id: string;
   kind: string;
@@ -76,6 +77,8 @@ export interface QueuedTask {
   assigneeId: string | null;
   tokenBudget: number | null;
   costBudgetUsd: number | null;
+  approvalStatus: QueueApprovalStatus;
+  approvalReason: string | null;
   deadlineAt: string | null;
   goalId: string | null;
   parentTaskId: string | null;
@@ -587,6 +590,8 @@ export class ResearchStore {
         required_capabilities_json TEXT NOT NULL DEFAULT '[]',
         token_budget REAL,
         cost_budget_usd REAL,
+        approval_status TEXT NOT NULL DEFAULT 'none',
+        approval_reason TEXT,
         deadline_at TEXT,
         depends_on_json TEXT NOT NULL DEFAULT '[]',
         updated_at TEXT NOT NULL
@@ -678,6 +683,8 @@ export class ResearchStore {
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN assignee_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN token_budget REAL"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN cost_budget_usd REAL"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE work_queue ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'none'"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE work_queue ADD COLUMN approval_reason TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN deadline_at TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN required_capabilities_json TEXT NOT NULL DEFAULT '[]'"); } catch { /* already migrated */ }
@@ -1630,20 +1637,22 @@ export class ResearchStore {
     return visit(taskId, []);
   }
 
-  enqueueTask(task: { id: string; kind: string; priority: number; payload: unknown; availableAt?: string; assigneeId?: string | null; tokenBudget?: number | null; costBudgetUsd?: number | null; deadlineAt?: string | null; goalId?: string | null; parentTaskId?: string | null; dependsOn?: string[]; requiredCapabilities?: string[] | null }): boolean {
+  enqueueTask(task: { id: string; kind: string; priority: number; payload: unknown; availableAt?: string; assigneeId?: string | null; tokenBudget?: number | null; costBudgetUsd?: number | null; requiresApproval?: boolean; approvalReason?: string | null; deadlineAt?: string | null; goalId?: string | null; parentTaskId?: string | null; dependsOn?: string[]; requiredCapabilities?: string[] | null }): boolean {
     const now = new Date().toISOString();
     validateQueueCompletionContract(task.payload);
     const dependsOn = [...new Set((task.dependsOn ?? []).filter((id) => id.trim()))];
     const tokenBudget = normalizeQueueTokenBudget(task.tokenBudget);
     const costBudgetUsd = normalizeQueueCostBudget(task.costBudgetUsd);
+    const approvalStatus: QueueApprovalStatus = task.requiresApproval ? "pending" : "none";
+    const approvalReason = task.requiresApproval ? (task.approvalReason?.trim().slice(0, 500) || "operator approval required") : null;
     const deadlineAt = normalizeQueueDeadline(task.deadlineAt);
     const requiredCapabilities = normalizeQueueCapabilities(task.requiredCapabilities);
     const cycle = this.dependencyCycle(task.id, dependsOn);
     if (cycle) throw new Error(`Queue task '${task.id}' creates a dependency cycle: ${cycle.join(" -> ")}`);
     const result = this.db.prepare(`
-      INSERT OR IGNORE INTO work_queue (id, kind, priority, status, payload_json, attempts, available_at, claimed_at, owner_id, assignee_id, required_capabilities_json, token_budget, cost_budget_usd, deadline_at, goal_id, parent_task_id, depends_on_json, updated_at)
-      VALUES (?, ?, ?, 'queued', ?, 0, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(task.id, task.kind, task.priority, safeJson(task.payload), task.availableAt ?? now, task.assigneeId ?? null, safeJson(requiredCapabilities), tokenBudget, costBudgetUsd, deadlineAt, task.goalId ?? null, task.parentTaskId ?? null, safeJson(dependsOn), now);
+      INSERT OR IGNORE INTO work_queue (id, kind, priority, status, payload_json, attempts, available_at, claimed_at, owner_id, assignee_id, required_capabilities_json, token_budget, cost_budget_usd, approval_status, approval_reason, deadline_at, goal_id, parent_task_id, depends_on_json, updated_at)
+      VALUES (?, ?, ?, 'queued', ?, 0, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(task.id, task.kind, task.priority, safeJson(task.payload), task.availableAt ?? now, task.assigneeId ?? null, safeJson(requiredCapabilities), tokenBudget, costBudgetUsd, approvalStatus, approvalReason, deadlineAt, task.goalId ?? null, task.parentTaskId ?? null, safeJson(dependsOn), now);
     if (result.changes !== 1) {
       this.appendEvent("queue.enqueue.duplicate", { id: task.id, kind: task.kind, ignored: true });
       return false;
@@ -1813,8 +1822,8 @@ export class ResearchStore {
       ? this.db.prepare("SELECT * FROM work_queue WHERE status = ? ORDER BY (priority + MIN(3.0, MAX(0.0, (julianday(?) - julianday(available_at)) * 24.0))) DESC, available_at ASC").all(status, now)
       : status
       ? this.db.prepare("SELECT * FROM work_queue WHERE status = ? ORDER BY priority DESC, available_at ASC").all(status)
-      : this.db.prepare("SELECT * FROM work_queue ORDER BY updated_at DESC").all()) as Array<{ id: string; kind: string; priority: number; status: string; payload_json: string; attempts: number; available_at: string; claimed_at: string | null; claim_token: string | null; owner_id: string | null; assignee_id: string | null; required_capabilities_json: string; token_budget: number | null; cost_budget_usd: number | null; deadline_at: string | null; goal_id: string | null; parent_task_id: string | null; depends_on_json: string; updated_at: string }>;
-    return rows.map((row) => ({ id: row.id, kind: row.kind, priority: row.priority, status: row.status, payload: JSON.parse(row.payload_json), attempts: row.attempts, availableAt: row.available_at, claimedAt: row.claimed_at, claimToken: row.claim_token, ownerId: row.owner_id, assigneeId: row.assignee_id, requiredCapabilities: JSON.parse(row.required_capabilities_json || "[]") as string[], tokenBudget: row.token_budget === null ? null : Math.max(0, Number(row.token_budget)), costBudgetUsd: row.cost_budget_usd === null ? null : Math.max(0, Number(row.cost_budget_usd)), deadlineAt: row.deadline_at, goalId: row.goal_id, parentTaskId: row.parent_task_id, dependsOn: JSON.parse(row.depends_on_json || "[]") as string[], updatedAt: row.updated_at }));
+      : this.db.prepare("SELECT * FROM work_queue ORDER BY updated_at DESC").all()) as Array<{ id: string; kind: string; priority: number; status: string; payload_json: string; attempts: number; available_at: string; claimed_at: string | null; claim_token: string | null; owner_id: string | null; assignee_id: string | null; required_capabilities_json: string; token_budget: number | null; cost_budget_usd: number | null; approval_status: string; approval_reason: string | null; deadline_at: string | null; goal_id: string | null; parent_task_id: string | null; depends_on_json: string; updated_at: string }>;
+    return rows.map((row) => ({ id: row.id, kind: row.kind, priority: row.priority, status: row.status, payload: JSON.parse(row.payload_json), attempts: row.attempts, availableAt: row.available_at, claimedAt: row.claimed_at, claimToken: row.claim_token, ownerId: row.owner_id, assigneeId: row.assignee_id, requiredCapabilities: JSON.parse(row.required_capabilities_json || "[]") as string[], tokenBudget: row.token_budget === null ? null : Math.max(0, Number(row.token_budget)), costBudgetUsd: row.cost_budget_usd === null ? null : Math.max(0, Number(row.cost_budget_usd)), approvalStatus: ["none", "pending", "approved", "rejected"].includes(row.approval_status) ? row.approval_status as QueueApprovalStatus : "pending", approvalReason: row.approval_reason, deadlineAt: row.deadline_at, goalId: row.goal_id, parentTaskId: row.parent_task_id, dependsOn: JSON.parse(row.depends_on_json || "[]") as string[], updatedAt: row.updated_at }));
   }
 
   /** Resolve a bounded parent-task chain for audit, display, and recovery. */
@@ -1894,8 +1903,8 @@ export class ResearchStore {
       const order = "(priority + MIN(3.0, MAX(0.0, (julianday(?) - julianday(available_at)) * 24.0))) DESC, available_at ASC";
       const assignment = ownerId ? " AND (assignee_id IS NULL OR assignee_id = ?)" : " AND assignee_id IS NULL";
       const query = kinds?.length
-        ? `SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ?${assignment} AND kind IN (${kinds.map(() => "?").join(",")}) ORDER BY ${order} LIMIT 1`
-        : `SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ?${assignment} ORDER BY ${order} LIMIT 1`;
+        ? `SELECT id FROM work_queue WHERE status = 'queued' AND approval_status IN ('none', 'approved') AND available_at <= ?${assignment} AND kind IN (${kinds.map(() => "?").join(",")}) ORDER BY ${order} LIMIT 1`
+        : `SELECT id FROM work_queue WHERE status = 'queued' AND approval_status IN ('none', 'approved') AND available_at <= ?${assignment} ORDER BY ${order} LIMIT 1`;
       const params = ownerId ? (kinds?.length ? [now, ownerId, ...kinds, now] : [now, ownerId, now]) : (kinds?.length ? [now, ...kinds, now] : [now, now]);
       const rows = this.db.prepare(query.replace("LIMIT 1", "")).all(...params) as Array<{ id: string }>;
       const capabilities = new Set(normalizeQueueCapabilities(workerCapabilities));
@@ -1930,7 +1939,7 @@ export class ResearchStore {
       const capabilities = new Set(normalizeQueueCapabilities(workerCapabilities));
       if (!task || !task.requiredCapabilities.every((capability) => capabilities.has(capability))) return undefined;
       const claimToken = randomUUID();
-      const result = this.db.prepare(`UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, claim_token = ?, owner_id = ?, updated_at = ? WHERE id = ? AND status = 'queued' AND available_at <= ?${assignmentClause}${kindClause}`)
+      const result = this.db.prepare(`UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, claim_token = ?, owner_id = ?, updated_at = ? WHERE id = ? AND status = 'queued' AND approval_status IN ('none', 'approved') AND available_at <= ?${assignmentClause}${kindClause}`)
         .run(now, claimToken, ownerId ?? null, now, id, now, ...(ownerId ? [ownerId] : []), ...(kinds ?? []));
       if (result.changes !== 1) return undefined;
       return this.queueTasks().find((task) => task.id === id);
@@ -1977,6 +1986,19 @@ export class ResearchStore {
     const result = this.db.prepare("UPDATE work_queue SET cost_budget_usd = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'failed')").run(normalizedBudget, now, id);
     if (result.changes !== 1) return false;
     this.appendEvent("queue.cost_budget.updated", { id, priorBudgetUsd: current.cost_budget_usd, costBudgetUsd: normalizedBudget, status: current.status });
+    return true;
+  }
+
+  /** Approve, reject, or reset a queue task before checkout. */
+  setTaskApproval(id: string, status: QueueApprovalStatus, reason?: string | null, actorId = "operator"): boolean {
+    if (!["none", "pending", "approved", "rejected"].includes(status)) throw new Error("Queue approval status must be none, pending, approved, or rejected.");
+    const current = this.db.prepare("SELECT status, approval_status FROM work_queue WHERE id = ?").get(id) as { status: QueueTaskStatus; approval_status: string } | undefined;
+    if (!current || !["queued", "failed"].includes(current.status)) return false;
+    const normalizedReason = status === "none" ? null : reason?.trim().slice(0, 500) || (status === "approved" ? "approved by operator" : status === "rejected" ? "rejected by operator" : "operator approval required");
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE work_queue SET approval_status = ?, approval_reason = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'failed')").run(status, normalizedReason, now, id);
+    if (result.changes !== 1) return false;
+    this.appendEvent("queue.approval.updated", { id, from: current.approval_status, status, reason: normalizedReason, actorId: actorId.trim().slice(0, 200) || "operator" });
     return true;
   }
 

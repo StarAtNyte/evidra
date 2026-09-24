@@ -302,6 +302,7 @@ Implemented today:
 - workspace file/search/read, Git status, safe shell, data audit, artifact checksum/JSON audit, source retrieval, validation-policy, and report tools;
 - durable queue with retries, stale-task recovery, bounded concurrency, visible queued prompts, and capped priority aging so background work cannot starve indefinitely;
 - queue-wide governance pause: `evidra queue pause --reason ...` (or `/queue pause`) stops new local and remote claims without cancelling live work; `queue resume` reopens dispatch and the state survives controller restart;
+- durable queue approval gates: enqueue work with `requiresApproval`, then release it with `evidra queue approve <id>` (or `/queue approve`); rejected/pending tasks remain visible but cannot be claimed until explicitly approved;
 - typed exhausted-queue recovery: authentication, dependency, sandbox, data, resource, timeout, and route failures produce auditable next actions instead of dead-end errors;
 - ownership-aware queue checkout: each worker gets a durable identity, only the claimant can heartbeat a task, and stale claims are safely reclaimable;
 - goal-aligned queue ancestry: tasks can carry a phase-goal ID and parent-task ID, making autonomous decomposition traceable from mission to work item;

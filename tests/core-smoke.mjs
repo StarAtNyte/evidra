@@ -3844,6 +3844,27 @@ test("queue-wide pause blocks new claims and survives store reopen", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue approval gates persist and release work only after explicit approval", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-approval-"));
+  try {
+    const path = join(root, ".sota", "database.sqlite");
+    const store = new ResearchStore(path);
+    store.enqueueTask({ id: "approval-task", kind: "research.lane", priority: 1, requiresApproval: true, approvalReason: "review experiment plan", payload: {} });
+    assert.equal(store.queueTasks().find((task) => task.id === "approval-task")?.approvalStatus, "pending");
+    assert.equal(store.claimNextTask(undefined, "worker-a"), undefined);
+    assert.equal(store.setTaskApproval("approval-task", "rejected", "missing replication plan"), true);
+    assert.equal(store.claimNextTask(undefined, "worker-a"), undefined);
+    store.close();
+    const reopened = new ResearchStore(path);
+    assert.equal(reopened.queueTasks().find((task) => task.id === "approval-task")?.approvalReason, "missing replication plan");
+    assert.equal(reopened.setTaskApproval("approval-task", "approved", "replication plan reviewed"), true);
+    const claimed = reopened.claimNextTask(undefined, "worker-a");
+    assert.equal(claimed?.id, "approval-task");
+    assert.equal(reopened.setTaskApproval("approval-task", "rejected"), false);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue status JSON exposes exact budget and usage state", async () => {
   const { spawn } = await import("node:child_process");
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-status-json-"));

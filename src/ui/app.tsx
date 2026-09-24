@@ -254,7 +254,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
   "/approvals": [["/approvals", "Show pending operator approvals"]],
-  "/queue": [["/queue status", "Show queued and running tasks"], ["/queue pause", "Stop new queue claims"], ["/queue resume", "Resume new queue claims"], ["/queue activity ", "Inspect task handoff notes"], ["/queue usage", "Show external worker usage"], ["/queue usage ", "Show one task's usage"], ["/queue assign ", "Assign or clear a task worker"], ["/queue budget ", "Set or clear a task token ceiling"], ["/queue cost-budget ", "Set or clear a task USD ceiling"], ["/queue deadline ", "Set or clear a task wall-clock deadline"], ["/queue contract ", "Set or clear task proof requirements"], ["/queue cancel ", "Cancel queued or running work"], ["/queue note ", "Add an operator handoff note"], ["/queue recover", "Requeue stale tasks"], ["/queue recover ", "Resume a failed task with a changed route"]],
+  "/queue": [["/queue status", "Show queued and running tasks"], ["/queue pause", "Stop new queue claims"], ["/queue resume", "Resume new queue claims"], ["/queue approve ", "Approve a pending queue task"], ["/queue reject ", "Reject a queue task"], ["/queue activity ", "Inspect task handoff notes"], ["/queue usage", "Show external worker usage"], ["/queue usage ", "Show one task's usage"], ["/queue assign ", "Assign or clear a task worker"], ["/queue budget ", "Set or clear a task token ceiling"], ["/queue cost-budget ", "Set or clear a task USD ceiling"], ["/queue deadline ", "Set or clear a task wall-clock deadline"], ["/queue contract ", "Set or clear task proof requirements"], ["/queue cancel ", "Cancel queued or running work"], ["/queue note ", "Add an operator handoff note"], ["/queue recover", "Requeue stale tasks"], ["/queue recover ", "Resume a failed task with a changed route"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/clear": [["/clear", "Clear the current conversation"]],
   "/new": [["/new", "Start a fresh terminal session"]],
@@ -4100,7 +4100,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
     }
-    if (request === "/queue" || request === "/queue status" || request === "/queue pause" || request.startsWith("/queue pause ") || request === "/queue resume" || request === "/queue usage" || request.startsWith("/queue usage ") || request === "/queue recover" || request.startsWith("/queue recover ") || request.startsWith("/queue activity ") || request.startsWith("/queue assign ") || request.startsWith("/queue budget ") || request.startsWith("/queue cost-budget ") || request.startsWith("/queue deadline ") || request.startsWith("/queue contract ") || request.startsWith("/queue cancel ") || request.startsWith("/queue note ")) {
+    if (request === "/queue" || request === "/queue status" || request === "/queue pause" || request.startsWith("/queue pause ") || request === "/queue resume" || request.startsWith("/queue approve ") || request.startsWith("/queue reject ") || request === "/queue usage" || request.startsWith("/queue usage ") || request === "/queue recover" || request.startsWith("/queue recover ") || request.startsWith("/queue activity ") || request.startsWith("/queue assign ") || request.startsWith("/queue budget ") || request.startsWith("/queue cost-budget ") || request.startsWith("/queue deadline ") || request.startsWith("/queue contract ") || request.startsWith("/queue cancel ") || request.startsWith("/queue note ")) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const recoveryMatch = request.match(/^\/queue recover\s+(\S+)\s+--route\s+(\S+)(?:\s+--note\s+(.+))?$/);
       const activityMatch = request.match(/^\/queue activity\s+(\S+)$/);
@@ -4112,6 +4112,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const contractMatch = request.match(/^\/queue contract\s+(\S+)\s+(.+)$/);
       const cancelMatch = request.match(/^\/queue cancel\s+(\S+)(?:\s+--reason\s+(.+))?$/);
       const pauseMatch = request.match(/^\/queue pause(?:\s+--reason\s+(.+))?$/);
+      const approveMatch = request.match(/^\/queue approve\s+(\S+)(?:\s+--note\s+(.+))?$/);
+      const rejectMatch = request.match(/^\/queue reject\s+(\S+)(?:\s+--reason\s+(.+))?$/);
       const noteMatch = request.match(/^\/queue note\s+(\S+)\s+(.+)$/);
       if (request === "/queue pause" || pauseMatch) {
         const control = store.setQueuePaused(true, pauseMatch?.[1] ?? "operator paused queue");
@@ -4119,6 +4121,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
       } else if (request === "/queue resume") {
         store.setQueuePaused(false);
         append("assistant", "Queue resumed.");
+      } else if (approveMatch) {
+        try {
+          if (!store.setTaskApproval(approveMatch[1], "approved", approveMatch[2])) throw new Error("task is missing or not queued/failed");
+          append("assistant", `Approved queue task ${approveMatch[1]}.`);
+        } catch (error) { append("assistant", `Queue approval failed: ${error instanceof Error ? error.message : String(error)}`); }
+      } else if (rejectMatch) {
+        try {
+          if (!store.setTaskApproval(rejectMatch[1], "rejected", rejectMatch[2] ?? "operator rejected task")) throw new Error("task is missing or not queued/failed");
+          append("assistant", `Rejected queue task ${rejectMatch[1]}.`);
+        } catch (error) { append("assistant", `Queue rejection failed: ${error instanceof Error ? error.message : String(error)}`); }
       } else if (activityMatch) {
         const activity = store.queueActivities(activityMatch[1], 32);
         append("assistant", activity.length ? activity.map((entry) => `${entry.createdAt}  ${entry.kind.padEnd(9)} ${entry.actorId}\n  ${entry.message}`).join("\n") : `No activity recorded for ${activityMatch[1]}.`);
@@ -4207,7 +4219,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const usageSummary = inputTokens + outputTokens > 0 ? `usage ${inputTokens + outputTokens} tokens${costUsd > 0 ? ` · $${costUsd.toFixed(4)}` : ""}` : "";
           const budgetSummary = task.tokenBudget === null && task.costBudgetUsd === null ? "" : `budget ${[task.tokenBudget === null ? "" : `${inputTokens + outputTokens}/${task.tokenBudget} tokens`, task.costBudgetUsd === null ? "" : `$${costUsd.toFixed(4)}/$${task.costBudgetUsd.toFixed(4)}`].filter(Boolean).join(" · ")}${store.queueUsageState(task.id)?.exhausted ? " exhausted" : ""}`;
           const deadlineSummary = task.deadlineAt ? `deadline ${task.deadlineAt}${Date.parse(task.deadlineAt) <= Date.now() ? " expired" : ""}` : "";
-          const lineage = [taskRole ? `role ${taskRole}` : "", task.parentTaskId ? `parent ${task.parentTaskId}` : "", task.goalId ? `goal ${task.goalId}` : "", task.dependsOn.length ? `depends ${task.dependsOn.join(",")}` : "", task.assigneeId ? `assigned ${task.assigneeId}` : "", task.ownerId ? `owner ${task.ownerId}` : "", budgetSummary, deadlineSummary, usageSummary, latestActivity ? `last ${latestActivity.kind}: ${latestActivity.message.slice(0, 120)}` : ""].filter(Boolean).join(" · ");
+          const approvalSummary = task.approvalStatus === "none" || task.approvalStatus === "approved" ? "" : `approval ${task.approvalStatus}${task.approvalReason ? `: ${task.approvalReason}` : ""}`;
+          const lineage = [taskRole ? `role ${taskRole}` : "", task.parentTaskId ? `parent ${task.parentTaskId}` : "", task.goalId ? `goal ${task.goalId}` : "", task.dependsOn.length ? `depends ${task.dependsOn.join(",")}` : "", task.assigneeId ? `assigned ${task.assigneeId}` : "", task.ownerId ? `owner ${task.ownerId}` : "", approvalSummary, budgetSummary, deadlineSummary, usageSummary, latestActivity ? `last ${latestActivity.kind}: ${latestActivity.message.slice(0, 120)}` : ""].filter(Boolean).join(" · ");
           const aging = queueEffectivePriority(task) > task.priority ? ` (aged ${queueEffectivePriority(task)})` : "";
           return `${task.status === "running" ? "●" : task.status === "queued" ? "○" : task.status === "completed" ? "✓" : "✗"} ${task.id} · ${task.kind} · priority ${task.priority}${aging} · attempts ${task.attempts}${lineage ? `\n  ${lineage}` : ""}${blocked}`;
         }).join("\n")}` : "Research queue is empty.";

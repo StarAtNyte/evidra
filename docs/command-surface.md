@@ -72,6 +72,8 @@ evidra queue budget <id> <tokens|0>
 evidra queue cost-budget <id> <usd|0>
 evidra queue pause --reason "maintenance"
 evidra queue resume
+evidra queue approve <id> [--note "reviewed"]
+evidra queue reject <id> [--reason "needs more evidence"]
                                 Set a queued/failed task ceiling; 0 clears it
 evidra queue deadline <id> <duration|timestamp|none>
                                 Set a wall-clock deadline (`30m`, `4h`, `2d`)

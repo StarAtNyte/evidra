@@ -2249,9 +2249,10 @@ queue.command("status").option("--json", "emit machine-readable queue state").ac
     const lineage = store.taskLineage(task.id);
     const brokenLineage = lineage && (lineage.cycle || lineage.truncated || lineage.missingParentIds.length) ? ` · broken-lineage${lineage.missingParentIds.length ? ` missing:${lineage.missingParentIds.join(",")}` : ""}` : "";
     const aging = task.effectivePriority > task.priority ? ` (aged ${task.effectivePriority})` : "";
+    const approval = task.approvalStatus === "none" || task.approvalStatus === "approved" ? "" : ` · approval ${task.approvalStatus}${task.approvalReason ? `: ${task.approvalReason}` : ""}`;
     const budget = task.tokenBudget === null && task.costBudgetUsd === null ? "" : (() => { const usage = store.queueUsageState(task.id); const token = task.tokenBudget === null ? "" : `tokens ${usage?.usedTokens ?? 0}/${task.tokenBudget}`; const cost = task.costBudgetUsd === null ? "" : `cost $${(usage?.usedCostUsd ?? 0).toFixed(6)}/$${task.costBudgetUsd.toFixed(6)}`; return ` · budget ${[token, cost].filter(Boolean).join(" · ")}${usage?.exhausted ? " exhausted" : ""}`; })();
     const deadline = task.deadlineAt ? ` · deadline ${task.deadlineAt}${Date.parse(task.deadlineAt) <= Date.now() ? " expired" : ""}` : "";
-    return `${task.status} ${task.id} · ${task.kind} · priority ${task.priority}${aging} · attempts ${task.attempts}${task.assigneeId ? ` · assigned ${task.assigneeId}` : ""}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.requiredCapabilities.length ? ` · requires ${task.requiredCapabilities.join(",")}` : ""}${budget}${deadline}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${brokenLineage}${blocked}`;
+    return `${task.status} ${task.id} · ${task.kind} · priority ${task.priority}${aging} · attempts ${task.attempts}${task.assigneeId ? ` · assigned ${task.assigneeId}` : ""}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.requiredCapabilities.length ? ` · requires ${task.requiredCapabilities.join(",")}` : ""}${approval}${budget}${deadline}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${brokenLineage}${blocked}`;
   }).join("\n") : "Research queue is empty."}`);
   if (recoveries.length) console.log(`\nRecovery actions\n${recoveries.slice().reverse().slice(0, 8).map((entry) => { const value = entry && typeof entry === "object" ? entry as Record<string, unknown> : {}; return `  ${String(value.taskId ?? "task")} · ${String(value.failureClass ?? "unknown")} · ${String(value.route ?? "change_route")} · ${String(value.action ?? "inspect failure")}`; }).join("\n")}`);
   store.close();
@@ -2299,6 +2300,20 @@ queue.command("cost-budget <id> <usd>").description("Set a queued/failed task US
   store.close();
   if (!updated) throw new Error(`Task '${id}' is missing or not queued/failed; live work cannot be re-budgeted.`);
   console.log(value === null ? `Cleared cost budget for ${id}.` : `Set cost budget for ${id} to $${value.toFixed(6)}.`);
+});
+queue.command("approve <id>").option("--note <note>", "approval note").description("Approve a pending queue task for checkout").action((id: string, options: { note?: string }) => {
+  const store = new ResearchStore(statePath);
+  const updated = store.setTaskApproval(id, "approved", options.note);
+  store.close();
+  if (!updated) throw new Error(`Task '${id}' is missing or not queued/failed; live work cannot be approved.`);
+  console.log(`Approved queue task ${id}.`);
+});
+queue.command("reject <id>").option("--reason <reason>", "rejection reason", "operator rejected task").description("Reject a queue task and prevent checkout").action((id: string, options: { reason: string }) => {
+  const store = new ResearchStore(statePath);
+  const updated = store.setTaskApproval(id, "rejected", options.reason);
+  store.close();
+  if (!updated) throw new Error(`Task '${id}' is missing or not queued/failed; live work cannot be rejected.`);
+  console.log(`Rejected queue task ${id}.`);
 });
 queue.command("deadline <id> <timestamp>").description("Set a queued/failed task ISO deadline; use none to clear it").action((id: string, timestamp: string) => {
   const value = /^none$/i.test(timestamp) ? null : /^\d+(?:\.\d+)?\s*(?:m|min|minutes?|h|hours?|d|days?)?$/i.test(timestamp)
