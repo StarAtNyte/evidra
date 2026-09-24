@@ -115,6 +115,10 @@ signal, Evidra automatically quarantines it, records the warning and lifecycle
 event, and returns a failed observation so the agent must choose another route.
 Re-enable it only after inspecting the adapter and its output.
 
+Quarantined adapters also appear in `/approvals`, the dashboard approval
+inbox, and `evidra approvals --json`, with the explicit re-enable action shown
+as the next step.
+
 ## 2. The Codex-first TUI
 
 The full-screen interface uses a compact Codex-style transcript:

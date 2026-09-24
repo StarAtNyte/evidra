@@ -3860,6 +3860,9 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.equal(suspicious.ok, false);
     assert.deepEqual(suspicious.securityWarnings, ["instruction_override", "secret_exfiltration"]);
     assert.equal(externalToolStatus(root, "external.echo").status, "quarantined");
+    const toolApprovalStore = new ResearchStore(db);
+    assert.equal(approvalInbox(toolApprovalStore, root).some((item) => item.kind === "external-tool" && item.id === "external.echo"), true);
+    toolApprovalStore.close();
     setExternalToolStatus(root, "external.echo", "enabled");
     const lifecycleStore = new ResearchStore(db);
     assert.equal(lifecycleStore.eventsByType("research.external_tool.lifecycle_changed").length, 4);

@@ -57,7 +57,7 @@ export function dashboardSnapshot(store: ResearchStore, root?: string): Record<s
     agentUsageByScope: summarizeAgentUsageByScope(agentEvents).slice(0, 24),
     agentBudget,
     routines: store.routines().slice(0, 24).map((routine) => ({ id: routine.id, name: routine.name, mode: routine.mode, status: routine.status, nextRunAt: routine.nextRunAt, triggerEvent: routine.triggerEvent ?? null, lastTriggerAt: routine.lastTriggerAt ?? null, pendingTriggers: routine.pendingTriggers ?? 0, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult, lastError: routine.lastError, runCount: routine.runCount, leaseId: routine.leaseId ? `${routine.leaseId.slice(0, 12)}…` : null, recentRuns: store.routineRuns(routine.id).slice(0, 3).map((run) => ({ status: run.status, startedAt: run.startedAt, finishedAt: run.finishedAt, exitCode: run.exitCode, error: run.error })) })),
-    approvals: approvalInbox(store).slice(0, 48),
+    approvals: approvalInbox(store, root).slice(0, 48),
     tools: root ? loadExternalResearchTools(root).tools.map((tool) => ({ name: tool.name, description: tool.description, readOnly: tool.readOnly, cacheable: tool.cacheable, status: externalToolStatus(root, tool.name).status, reason: externalToolStatus(root, tool.name).reason ?? null })) : [],
     alignment: goalAlignment(store),
     queue: store.queueTasks().slice(0, 40).map((task) => ({ id: task.id, kind: task.kind, priority: task.priority, status: task.status, attempts: task.attempts, claimedAt: task.claimedAt, ownerId: task.ownerId ? `${task.ownerId.slice(0, 12)}…` : null, goalId: task.goalId, parentTaskId: task.parentTaskId, lineage: store.taskLineage(task.id), dependsOn: task.dependsOn, readiness: store.taskReadiness(task.id), updatedAt: task.updatedAt })),

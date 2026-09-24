@@ -1,7 +1,8 @@
 import type { ResearchStore } from "./store.js";
+import { externalToolStatus, loadExternalResearchTools } from "./external-tools.js";
 
 export type ApprovalInboxItem = {
-  kind: "experiment" | "submission" | "external-action" | "phase-goal" | "queue-recovery";
+  kind: "experiment" | "submission" | "external-action" | "external-tool" | "phase-goal" | "queue-recovery";
   id: string;
   status: string;
   next: string;
@@ -13,7 +14,7 @@ export type ApprovalInboxItem = {
  * one read-only operator inbox. This deliberately does not approve anything;
  * each `next` action remains behind its original validation boundary.
  */
-export function approvalInbox(store: ResearchStore): ApprovalInboxItem[] {
+export function approvalInbox(store: ResearchStore, root?: string): ApprovalInboxItem[] {
   const items: ApprovalInboxItem[] = [];
   const recoveryEvents = store.eventsByTypes(["queue.recovery_required", "queue.recovery_scheduled", "queue.lane.stale", "queue.review.stale"]);
   const latestRecovery = new Map<string, { type: string; payload: Record<string, unknown> }>();
@@ -56,6 +57,12 @@ export function approvalInbox(store: ResearchStore): ApprovalInboxItem[] {
           : "reconcile the recorded external action",
         detail: intent.kind,
       });
+    }
+  }
+  if (root) {
+    for (const tool of loadExternalResearchTools(root).tools) {
+      const state = externalToolStatus(root, tool.name);
+      if (state.status === "quarantined") items.push({ kind: "external-tool", id: tool.name, status: state.status, next: `/tools enable ${tool.name}`, detail: state.reason ?? "adapter requires operator review" });
     }
   }
   for (const [taskId, entry] of latestRecovery) {

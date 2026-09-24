@@ -3929,7 +3929,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request === "/approvals" || request === "/approvals status") {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      const items = approvalInbox(store);
+      const items = approvalInbox(store, root);
       store.close();
       append("assistant", items.length ? `Approval inbox\n${items.map((item) => `• ${item.status} ${item.kind} ${item.id} · ${item.detail}\n  next: ${item.next}`).join("\n")}` : "Approval inbox is clear.");
       return;

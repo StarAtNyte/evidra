@@ -2262,7 +2262,7 @@ program.addCommand(queue);
 const approvals = new Command("approvals").description("Show the auditable operator approval inbox");
 const showApprovals = (options: { json?: boolean }): void => {
   const store = new ResearchStore(statePath);
-  const items = approvalInbox(store);
+  const items = approvalInbox(store, root);
   if (options.json) console.log(JSON.stringify(items, null, 2));
   else console.log(items.length ? items.map((item) => `${item.status} ${item.kind} ${item.id} · ${item.detail}\n  next: ${item.next}`).join("\n") : "Approval inbox is clear.");
   store.close();
