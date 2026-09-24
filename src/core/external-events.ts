@@ -29,6 +29,7 @@ export function externalEventPayload(payload: Record<string, unknown>, source = 
 }
 
 export interface ExternalAgentHeartbeat {
+  workspaceId?: string;
   role: string;
   leaseId: string;
   provider: string;
@@ -41,6 +42,8 @@ export interface ExternalAgentHeartbeat {
 
 /** Validate the narrow external-agent health contract before touching leases. */
 export function parseExternalAgentHeartbeat(payload: Record<string, unknown>): ExternalAgentHeartbeat {
+  const workspaceId = payload.workspaceId === undefined ? undefined : typeof payload.workspaceId === "string" && /^ws_[0-9a-f-]{36}$/.test(payload.workspaceId.trim()) ? payload.workspaceId.trim() : "";
+  if (payload.workspaceId !== undefined && !workspaceId) throw new Error("External agent heartbeat workspaceId must be a valid Evidra workspace identity.");
   const role = typeof payload.role === "string" ? payload.role.trim() : "";
   const leaseId = typeof payload.leaseId === "string" ? payload.leaseId.trim() : "";
   const provider = typeof payload.provider === "string" ? payload.provider.trim() : "";
@@ -54,5 +57,5 @@ export function parseExternalAgentHeartbeat(payload: Record<string, unknown>): E
   if (payload.budgetSeconds !== undefined && payload.budgetSeconds !== null && (typeof payload.budgetSeconds !== "number" || !Number.isFinite(payload.budgetSeconds) || payload.budgetSeconds <= 0)) throw new Error("External agent heartbeat budgetSeconds must be positive.");
   const capabilities = payload.capabilities === undefined ? [] : Array.isArray(payload.capabilities) && payload.capabilities.length <= 32 && payload.capabilities.every((entry) => typeof entry === "string" && /^[a-zA-Z0-9_.:-]{1,120}$/.test(entry.trim())) ? [...new Set((payload.capabilities as string[]).map((entry) => entry.trim().toLowerCase()))].sort() : undefined;
   if (!capabilities) throw new Error("External agent heartbeat capabilities must be an array of at most 32 simple names.");
-  return { role, leaseId, provider, model, status: status as ExternalAgentHeartbeat["status"], task: typeof payload.task === "string" ? payload.task : null, budgetSeconds: typeof payload.budgetSeconds === "number" ? payload.budgetSeconds : null, capabilities };
+  return { ...(workspaceId ? { workspaceId } : {}), role, leaseId, provider, model, status: status as ExternalAgentHeartbeat["status"], task: typeof payload.task === "string" ? payload.task : null, budgetSeconds: typeof payload.budgetSeconds === "number" ? payload.budgetSeconds : null, capabilities };
 }

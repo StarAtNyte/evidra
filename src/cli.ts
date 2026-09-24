@@ -3018,6 +3018,15 @@ event.command("serve")
               response.end(JSON.stringify({ error: "heartbeat worker identity does not match authenticated scoped worker" }));
               return;
             }
+            const heartbeatWorkspaceId = typeof payload.workspaceId === "string" ? payload.workspaceId.trim() : "";
+            const identityStore = new ResearchStore(statePath);
+            const expectedWorkspaceId = identityStore.workspaceId();
+            identityStore.close();
+            if (heartbeatWorkspaceId !== expectedWorkspaceId) {
+              response.writeHead(403, headers);
+              response.end(JSON.stringify({ error: "heartbeat workspace identity does not match this Evidra control plane", workspaceId: expectedWorkspaceId }));
+              return;
+            }
           }
           const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : request.headers["idempotency-key"];
           const result = recordExternalEvent(parsed.type, payload, typeof parsed.source === "string" ? parsed.source : "http", typeof idempotencyKey === "string" ? idempotencyKey : undefined, workerCapabilities);

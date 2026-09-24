@@ -4597,12 +4597,13 @@ test("external event idempotency keys suppress webhook retries durably", () => {
 });
 
 test("authenticated external agent heartbeats preserve lease ownership", () => {
-  assert.deepEqual(parseExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "running", capabilities: ["python", "gpu.cuda"] }).capabilities, ["gpu.cuda", "python"]);
+    assert.deepEqual(parseExternalAgentHeartbeat({ workspaceId: "ws_00000000-0000-0000-0000-000000000000", role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "running", capabilities: ["python", "gpu.cuda"] }).capabilities, ["gpu.cuda", "python"]);
   assert.throws(() => parseExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "unknown" }), /status/);
   const root = mkdtempSync(join(tmpdir(), "evidra-external-heartbeat-"));
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    assert.equal(store.recordExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "running", task: "inspect methods", capabilities: ["python", "gpu.cuda"] }).accepted, true);
+    const workspaceId = store.workspaceId();
+    assert.equal(store.recordExternalAgentHeartbeat({ workspaceId, role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "running", task: "inspect methods", capabilities: ["python", "gpu.cuda"] }).accepted, true);
     assert.deepEqual(store.externalWorkers()[0]?.capabilities, ["gpu.cuda", "python"]);
     assert.equal(store.externalWorkers()[0]?.health, "healthy");
     assert.equal(store.externalWorkers()[0]?.admission, "approved");
@@ -8513,6 +8514,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
   let child;
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const workspaceId = store.workspaceId();
     store.setAgentRoleAdmission("remote lane", true, "test worker registration");
     store.enqueueTask({ id: "bridge-task", kind: "research.lane", priority: 4, payload: { objective: "external worker smoke" } });
     store.close();
@@ -8524,9 +8526,9 @@ test("authenticated external queue worker endpoints enforce ownership end to end
       child.once("error", (error) => { clearTimeout(timer); reject(error); });
     });
     const post = (path, body, auth = token, scopedWorkerId, scopedWorkerToken) => fetch(`http://127.0.0.1:${port}${path}`, { method: "POST", headers: { "content-type": "application/json", ...(auth ? { authorization: `Bearer ${auth}` } : {}), ...(scopedWorkerId ? { "x-evidra-worker-id": scopedWorkerId, "x-evidra-worker-token": scopedWorkerToken } : {}) }, body: JSON.stringify(body) });
-    const unauthorizedHeartbeat = await post("/events", { type: "external.agent.heartbeat", payload: { role: "remote lane", leaseId: "worker-a", provider: "codex", model: "gpt-test", status: "idle", capabilities: ["python", "gpu.cuda"] } }, token, "worker-b", "worker-b-secret");
+    const unauthorizedHeartbeat = await post("/events", { type: "external.agent.heartbeat", payload: { workspaceId, role: "remote lane", leaseId: "worker-a", provider: "codex", model: "gpt-test", status: "idle", capabilities: ["python", "gpu.cuda"] } }, token, "worker-b", "worker-b-secret");
     assert.equal(unauthorizedHeartbeat.status, 401);
-    const heartbeatResponse = await post("/events", { type: "external.agent.heartbeat", payload: { role: "remote lane", leaseId: "worker-a", provider: "codex", model: "gpt-test", status: "idle", capabilities: ["python", "gpu.cuda"] } }, token, "worker-a", "worker-secret");
+    const heartbeatResponse = await post("/events", { type: "external.agent.heartbeat", payload: { workspaceId, role: "remote lane", leaseId: "worker-a", provider: "codex", model: "gpt-test", status: "idle", capabilities: ["python", "gpu.cuda"] } }, token, "worker-a", "worker-secret");
     assert.equal(heartbeatResponse.status, 202);
     const pauseStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     pauseStore.setQueuePaused(true, "operator maintenance");

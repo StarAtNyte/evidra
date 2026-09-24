@@ -602,6 +602,7 @@ export class ResearchStore {
       );
       CREATE TABLE IF NOT EXISTS external_workers (
         worker_id TEXT PRIMARY KEY,
+        workspace_id TEXT,
         role TEXT NOT NULL,
         provider TEXT NOT NULL,
         model TEXT NOT NULL,
@@ -751,6 +752,7 @@ export class ResearchStore {
     try { this.db.exec("ALTER TABLE run_attempts ADD COLUMN metrics_json TEXT NOT NULL DEFAULT '{}'"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE run_attempts ADD COLUMN metric_conflicts_json TEXT NOT NULL DEFAULT '[]'"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN heartbeat_at TEXT"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE external_workers ADD COLUMN workspace_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN lease_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN owner_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN claim_token TEXT"); } catch { /* already migrated */ }
@@ -1702,7 +1704,12 @@ export class ResearchStore {
   }
 
   /** Accept a heartbeat from an authenticated external worker without allowing lease takeover. */
-  recordExternalAgentHeartbeat(input: { role: string; leaseId: string; provider: string; model: string; status: "running" | "idle" | "blocked" | "failed"; task?: string | null; budgetSeconds?: number | null; capabilities?: string[] }): { accepted: boolean; reason?: string } {
+  recordExternalAgentHeartbeat(input: { workspaceId?: string; role: string; leaseId: string; provider: string; model: string; status: "running" | "idle" | "blocked" | "failed"; task?: string | null; budgetSeconds?: number | null; capabilities?: string[] }): { accepted: boolean; reason?: string } {
+    if (input.workspaceId && input.workspaceId !== this.workspaceId()) {
+      const reason = "worker heartbeat belongs to a different Evidra workspace";
+      this.appendEvent("agent.external_heartbeat.rejected", { role: input.role, leaseId: input.leaseId, reason });
+      return { accepted: false, reason };
+    }
     if (input.status === "running" && !this.agentRoleAdmitted(input.role)) {
       const reason = `role '${input.role}' requires explicit operator admission before external execution`;
       this.appendEvent("agent.external_heartbeat.rejected", { role: input.role, leaseId: input.leaseId, reason });
@@ -1727,12 +1734,13 @@ export class ResearchStore {
     const now = new Date().toISOString();
     const capabilities = [...new Set((input.capabilities ?? []).map((capability) => capability.trim().toLowerCase()))].sort();
     this.db.prepare(`
-      INSERT INTO external_workers (worker_id, role, provider, model, status, capabilities_json, task, last_heartbeat_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO external_workers (worker_id, workspace_id, role, provider, model, status, capabilities_json, task, last_heartbeat_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(worker_id) DO UPDATE SET role = excluded.role, provider = excluded.provider, model = excluded.model,
+        workspace_id = excluded.workspace_id,
         status = excluded.status, capabilities_json = excluded.capabilities_json, task = excluded.task,
         last_heartbeat_at = excluded.last_heartbeat_at, updated_at = excluded.updated_at
-    `).run(input.leaseId, input.role, input.provider, input.model, input.status, safeJson(capabilities), input.task ?? null, now, now);
+    `).run(input.leaseId, input.workspaceId ?? this.workspaceId(), input.role, input.provider, input.model, input.status, safeJson(capabilities), input.task ?? null, now, now);
     this.appendEvent("agent.external_heartbeat.accepted", { role: input.role, leaseId: input.leaseId, provider: input.provider, model: input.model, status: input.status });
     return { accepted: true };
   }
