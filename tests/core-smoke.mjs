@@ -7664,7 +7664,11 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const task = (await claimed.json()).task;
     assert.equal(task.id, "bridge-task");
     assert.equal((await post("/tasks/activity", { workerId: "worker-a", taskId: task.id, kind: "progress", message: "inspected evidence" }, token, "worker-a", "worker-secret")).status, 200);
-    assert.equal((await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, inputTokens: 12, outputTokens: 4, costUsd: 0.01, provider: "codex", model: "gpt-test" }, token, "worker-a", "worker-secret")).status, 200);
+    assert.equal((await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, inputTokens: 12, outputTokens: 4, costUsd: 0.01, provider: "codex", model: "gpt-test", idempotencyKey: "turn-1" }, token, "worker-a", "worker-secret")).status, 200);
+    assert.equal((await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, inputTokens: 12, outputTokens: 4, costUsd: 0.01, provider: "codex", model: "gpt-test", idempotencyKey: "turn-1" }, token, "worker-a", "worker-secret")).status, 200);
+    const usageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    assert.deepEqual(usageStore.queueUsageTotals(task.id), { inputTokens: 12, outputTokens: 4, costUsd: 0.01 });
+    usageStore.close();
     const cancellationStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     cancellationStore.enqueueTask({ id: "bridge-cancel", kind: "research.lane", priority: 3, payload: {} });
     cancellationStore.close();

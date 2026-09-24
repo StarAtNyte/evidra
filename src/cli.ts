@@ -2496,7 +2496,7 @@ event.command("serve")
                 response.end(JSON.stringify({ error: "worker does not own a live claim for this task" }));
                 return;
               }
-              const recorded = store.recordQueueUsage({ taskId, actorId: workerId, inputTokens: typeof parsed.inputTokens === "number" ? parsed.inputTokens : 0, outputTokens: typeof parsed.outputTokens === "number" ? parsed.outputTokens : 0, costUsd: parsed.costUsd === null ? null : typeof parsed.costUsd === "number" ? parsed.costUsd : undefined, provider: typeof parsed.provider === "string" ? parsed.provider : undefined, model: typeof parsed.model === "string" ? parsed.model : undefined });
+              const recorded = store.recordQueueUsage({ taskId, actorId: workerId, inputTokens: typeof parsed.inputTokens === "number" ? parsed.inputTokens : 0, outputTokens: typeof parsed.outputTokens === "number" ? parsed.outputTokens : 0, costUsd: parsed.costUsd === null ? null : typeof parsed.costUsd === "number" ? parsed.costUsd : undefined, provider: typeof parsed.provider === "string" ? parsed.provider : undefined, model: typeof parsed.model === "string" ? parsed.model : undefined, idempotencyKey: typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : undefined });
               const usage = recorded ? store.queueUsageState(taskId) : undefined;
               store.close();
               if (!recorded) throw new Error("Task usage requires non-negative bounded token counts and an optional non-negative cost.");

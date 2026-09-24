@@ -166,7 +166,7 @@ Authenticated external workers may also participate in the durable queue:
 POST /tasks/claim     {"workerId":"agent-17","kinds":["research.lane"]}
 POST /tasks/heartbeat {"workerId":"agent-17","taskId":"task-123"}
 POST /tasks/activity  {"workerId":"agent-17","taskId":"task-123","kind":"progress","message":"..."}
-POST /tasks/usage     {"workerId":"agent-17","taskId":"task-123","inputTokens":1200,"outputTokens":300,"costUsd":0.02,"provider":"codex","model":"gpt-5"}
+POST /tasks/usage     {"workerId":"agent-17","taskId":"task-123","inputTokens":1200,"outputTokens":300,"costUsd":0.02,"provider":"codex","model":"gpt-5","idempotencyKey":"turn-42"}
 POST /tasks/complete  {"workerId":"agent-17","taskId":"task-123","status":"completed","payload":{"summary":"..."}}
 ```
 
@@ -186,6 +186,8 @@ Workers can append bounded handoff/progress notes through `/tasks/activity`
 while they own a live claim. Inspect them with `evidra queue activity <task-id>`;
 the notes are redacted, hash-chained, and included in the dashboard read model.
 Workers can also report bounded token, provider, model, and cost usage through `/tasks/usage`.
+Include a stable `idempotencyKey` for each provider turn; retrying the same key
+is accepted without duplicating the immutable usage event or inflating budgets.
 Inspect aggregate attribution with `evidra queue usage [task-id]`; usage is
 accounting telemetry, not a claim that a provider's billing was independently
 verified.

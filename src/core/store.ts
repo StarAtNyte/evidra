@@ -1809,7 +1809,7 @@ export class ResearchStore {
   }
 
   /** Record bounded provider-neutral usage reported by a queue worker. */
-  recordQueueUsage(input: { taskId: string; actorId: string; inputTokens?: number; outputTokens?: number; costUsd?: number | null; provider?: string | null; model?: string | null }): boolean {
+  recordQueueUsage(input: { taskId: string; actorId: string; inputTokens?: number; outputTokens?: number; costUsd?: number | null; provider?: string | null; model?: string | null; idempotencyKey?: string | null }): boolean {
     const taskId = input.taskId.trim().slice(0, 200);
     const actorId = input.actorId.trim().slice(0, 200);
     const inputTokens = Number.isFinite(input.inputTokens) ? Math.floor(input.inputTokens ?? 0) : -1;
@@ -1817,10 +1817,20 @@ export class ResearchStore {
     const costUsd = input.costUsd === null || input.costUsd === undefined ? null : Number(input.costUsd);
     const provider = input.provider?.trim().slice(0, 80) || null;
     const model = input.model?.trim().slice(0, 160) || null;
-    if (!taskId || !actorId || inputTokens < 0 || outputTokens < 0 || inputTokens > 100_000_000 || outputTokens > 100_000_000 || (costUsd !== null && (!Number.isFinite(costUsd) || costUsd < 0 || costUsd > 1_000_000))) return false;
+    const idempotencyKey = input.idempotencyKey?.trim().slice(0, 200) || null;
+    if (!taskId || !actorId || inputTokens < 0 || outputTokens < 0 || inputTokens > 100_000_000 || outputTokens > 100_000_000 || (costUsd !== null && (!Number.isFinite(costUsd) || costUsd < 0 || costUsd > 1_000_000)) || (input.idempotencyKey !== undefined && !idempotencyKey)) return false;
     const task = this.db.prepare("SELECT id FROM work_queue WHERE id = ?").get(taskId) as { id: string } | undefined;
     if (!task) return false;
-    this.appendEvent("queue.usage", { taskId, actorId, inputTokens, outputTokens, ...(costUsd === null ? {} : { costUsd }), ...(provider === null ? {} : { provider }), ...(model === null ? {} : { model }) });
+    if (idempotencyKey) {
+      try {
+        const existing = this.db.prepare("SELECT 1 AS present FROM events WHERE type = 'queue.usage' AND json_extract(payload_json, '$.taskId') = ? AND json_extract(payload_json, '$.idempotencyKey') = ? LIMIT 1").get(taskId, idempotencyKey) as { present: number } | undefined;
+        if (existing) return true;
+      } catch {
+        const existing = this.eventsByType("queue.usage").some((event) => event.payload && typeof event.payload === "object" && (event.payload as Record<string, unknown>).taskId === taskId && (event.payload as Record<string, unknown>).idempotencyKey === idempotencyKey);
+        if (existing) return true;
+      }
+    }
+    this.appendEvent("queue.usage", { taskId, actorId, inputTokens, outputTokens, ...(costUsd === null ? {} : { costUsd }), ...(provider === null ? {} : { provider }), ...(model === null ? {} : { model }), ...(idempotencyKey === null ? {} : { idempotencyKey }) });
     return true;
   }
 
