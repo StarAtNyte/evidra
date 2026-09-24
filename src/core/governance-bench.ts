@@ -38,9 +38,10 @@ export function runGovernanceBenchmark(): GovernanceBenchmarkReport {
     writeFileSync(join(root, ".evidra", "tools.json"), JSON.stringify({ tools: [{ name: "external.governance_probe", description: "Governance benchmark adapter", command: [process.execPath, "-e", "process.stdout.write('{}')"], readOnly: true }] }));
     setExternalToolStatus(root, "external.governance_probe", "quarantined", "benchmark quarantine");
     const quarantinedHidden = !activeExternalResearchTools(root).some((tool) => tool.name === "external.governance_probe");
+    const quarantinedApproval = approvalInbox(store, root).find((item) => item.kind === "external-tool" && item.id === "external.governance_probe");
     setExternalToolStatus(root, "external.governance_probe", "enabled");
     const reenabled = activeExternalResearchTools(root).some((tool) => tool.name === "external.governance_probe");
-    check("adapter-lifecycle-boundary", "Quarantined adapters disappear from selection and require deliberate re-enablement.", quarantinedHidden && reenabled, { quarantinedHidden, reenabled });
+    check("adapter-lifecycle-boundary", "Quarantined adapters disappear from selection, enter the approval inbox, and require deliberate re-enablement.", quarantinedHidden && quarantinedApproval !== undefined && reenabled, { quarantinedHidden, quarantinedApproval, reenabled });
     const organization = agentOrganization(store);
     check("role-contract-completeness", "Every declared specialist has a responsibility, authority, parent, and playbook.", organization.length === AGENT_ROLE_CONTRACTS.length && organization.every((role) => role.responsibility.length > 0 && role.authority.length > 0 && role.playbook.length >= 2), {
       roles: organization.length,
