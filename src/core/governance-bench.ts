@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { agentOrganization, agentToolPermission, AGENT_ROLE_CONTRACTS } from "./agent-organization.js";
 import { ResearchStore } from "./store.js";
 import { approvalInbox } from "./approvals.js";
+import { activeExternalResearchTools, setExternalToolStatus } from "./external-tools.js";
 
 export interface GovernanceProbe {
   id: string;
@@ -33,6 +34,13 @@ export function runGovernanceBenchmark(): GovernanceBenchmarkReport {
   const check = (id: string, description: string, passed: boolean, observed: unknown): void => { probes.push({ id, description, passed, observed }); };
   try {
     const store = new ResearchStore(join(root, "state.sqlite"));
+    mkdirSync(join(root, ".evidra"), { recursive: true });
+    writeFileSync(join(root, ".evidra", "tools.json"), JSON.stringify({ tools: [{ name: "external.governance_probe", description: "Governance benchmark adapter", command: [process.execPath, "-e", "process.stdout.write('{}')"], readOnly: true }] }));
+    setExternalToolStatus(root, "external.governance_probe", "quarantined", "benchmark quarantine");
+    const quarantinedHidden = !activeExternalResearchTools(root).some((tool) => tool.name === "external.governance_probe");
+    setExternalToolStatus(root, "external.governance_probe", "enabled");
+    const reenabled = activeExternalResearchTools(root).some((tool) => tool.name === "external.governance_probe");
+    check("adapter-lifecycle-boundary", "Quarantined adapters disappear from selection and require deliberate re-enablement.", quarantinedHidden && reenabled, { quarantinedHidden, reenabled });
     const organization = agentOrganization(store);
     check("role-contract-completeness", "Every declared specialist has a responsibility, authority, parent, and playbook.", organization.length === AGENT_ROLE_CONTRACTS.length && organization.every((role) => role.responsibility.length > 0 && role.authority.length > 0 && role.playbook.length >= 2), {
       roles: organization.length,
