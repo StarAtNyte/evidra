@@ -2983,7 +2983,7 @@ routine.command("run <id>").option("--force", "run immediately even when the int
   const entry = store.claimRoutine(id, ownerId, undefined, undefined, options.force === true);
   if (!entry) { store.close(); throw new Error(`Routine '${id}' is paused, missing, or already owned.`); }
   store.close();
-  const args = ["research", "--mode", entry.mode, "--goal", entry.goal, "--budget", `${entry.budgetMinutes}m`, "--stop", entry.stopCondition, "--provider", entry.provider, "--model", entry.model, "--thinking", entry.thinking, "--autonomy", entry.autonomy, "--limit-policy", entry.limitPolicy, "--executor", entry.executor, "--lanes", String(entry.lanes)];
+  const args = ["research", "--mode", entry.mode, "--goal", entry.goal, "--budget", `${entry.budgetMinutes}m`, "--stop", entry.stopCondition, "--provider", entry.provider, "--model", entry.model, "--thinking", entry.thinking, "--autonomy", entry.autonomy, "--limit-policy", entry.limitPolicy, "--executor", entry.executor, "--lanes", String(entry.lanes), ...(entry.pendingTriggerEvent ? ["--trigger-context", JSON.stringify(entry.pendingTriggerEvent)] : [])];
   try {
     const result = await runProcess([process.execPath, script, ...args], root, Math.max(7 * 24 * 60 * 60_000, entry.budgetMinutes * 60_000 + 10 * 60_000), streamProcessOutput);
     const finishStore = new ResearchStore(statePath);
@@ -3207,6 +3207,7 @@ challenge.command("start")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: auto, wait, fallback, or stop", "auto")
   .option("--executor <executor>", "experiment execution target: local, container, modal, or slurm", "local")
+  .option("--trigger-context <json>", "bounded structured event context that caused this campaign to start")
   .option("--resume", "resume the saved challenge campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
   .action(async (options: { goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; agentTokenBudget: string; roleTokenBudgets?: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
@@ -3257,7 +3258,7 @@ research.command("status")
   .description("Show durable research campaign and three-stage progress")
   .action(() => {
     const store = new ResearchStore(statePath);
-    const campaign = store.campaign() as { goal?: string; status?: string; budgetMinutes?: number; stopCondition?: string; currentCycle?: number; currentStep?: string; checkpointedAt?: string; runtime?: { mode?: unknown; provider?: unknown; model?: unknown; thinking?: unknown; executor?: unknown } } | undefined;
+    const campaign = store.campaign() as { goal?: string; status?: string; budgetMinutes?: number; stopCondition?: string; currentCycle?: number; currentStep?: string; checkpointedAt?: string; triggerContext?: { eventType?: string; eventCreatedAt?: string }; runtime?: { mode?: unknown; provider?: unknown; model?: unknown; thinking?: unknown; executor?: unknown } } | undefined;
     const scheduler = store.schedulerState();
     const mode = resolveCampaignMode(campaign?.runtime?.mode, scheduler.mode);
     const goals = phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode);
@@ -3269,7 +3270,7 @@ research.command("status")
       console.log("No research campaign configured. Start with: evidra research --goal \"...\"");
       return;
     }
-    console.log(`Research campaign\nStatus        ${campaign.status ?? "unknown"}\nMode          ${mode}\nGoal          ${campaign.goal ?? "(none)"}\nBudget        ${campaign.budgetMinutes ?? "?"} minutes\nScheduler     ${scheduler.status} · ${scheduler.currentStep ?? "idle"}\nActive phase  ${active?.phase ?? "none"}${active?.title ? ` · ${active.title}` : ""}\nStages        ${stages.map((stage) => `${stage.stage} ${stage.completed}/${stage.total} ${stage.status}`).join(" · ")}\nCheckpoint    ${checkpoint ? `cycle ${checkpoint.currentCycle} · ${checkpoint.currentStep} · ${checkpoint.checkpointedAt}${checkpoint.activeTaskIds?.length ? `\nActive work  ${checkpoint.activeTaskIds.join(", ")}` : ""}` : "unavailable or legacy state"}\nRoute         ${campaign.runtime ? `${String(campaign.runtime.provider)}/${String(campaign.runtime.model)} · thinking ${String(campaign.runtime.thinking)} · executor ${String(campaign.runtime.executor)}` : "legacy route unavailable"}\nStop          ${campaign.stopCondition ?? "(none)"}`);
+    console.log(`Research campaign\nStatus        ${campaign.status ?? "unknown"}\nMode          ${mode}\nGoal          ${campaign.goal ?? "(none)"}\nBudget        ${campaign.budgetMinutes ?? "?"} minutes\nScheduler     ${scheduler.status} · ${scheduler.currentStep ?? "idle"}\nActive phase  ${active?.phase ?? "none"}${active?.title ? ` · ${active.title}` : ""}\nStages        ${stages.map((stage) => `${stage.stage} ${stage.completed}/${stage.total} ${stage.status}`).join(" · ")}\nCheckpoint    ${checkpoint ? `cycle ${checkpoint.currentCycle} · ${checkpoint.currentStep} · ${checkpoint.checkpointedAt}${checkpoint.activeTaskIds?.length ? `\nActive work  ${checkpoint.activeTaskIds.join(", ")}` : ""}` : "unavailable or legacy state"}${campaign.triggerContext ? `\nTriggered by  ${campaign.triggerContext.eventType ?? "event"} @ ${campaign.triggerContext.eventCreatedAt ?? "unknown"}` : ""}\nRoute         ${campaign.runtime ? `${String(campaign.runtime.provider)}/${String(campaign.runtime.model)} · thinking ${String(campaign.runtime.thinking)} · executor ${String(campaign.runtime.executor)}` : "legacy route unavailable"}\nStop          ${campaign.stopCondition ?? "(none)"}`);
   });
 for (const action of ["pause", "resume", "stop"] as const) {
   research.command(action)
@@ -3335,9 +3336,9 @@ research
   .option("--executor <executor>", "experiment execution target: local, container, modal, or slurm", "local")
   .option("--resume", "resume the latest durable non-completed research campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; agentTokenBudget: string; roleTokenBudgets?: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
+  .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; agentTokenBudget: string; roleTokenBudgets?: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; autonomy: string; limitPolicy: string; executor: string; triggerContext?: string; resume?: boolean; skipBaseline?: boolean }) => {
     const savedStore = new ResearchStore(statePath);
-    const savedCampaign = savedStore.campaign() as { goal?: string; budgetMinutes?: number; gpuBudgetHours?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime?: unknown; runtimeFingerprint?: string; autoExecuteExperiments?: boolean } | undefined;
+    const savedCampaign = savedStore.campaign() as { goal?: string; budgetMinutes?: number; gpuBudgetHours?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; triggerContext?: { eventType: string; eventCreatedAt: string }; runtime?: unknown; runtimeFingerprint?: string; autoExecuteExperiments?: boolean } | undefined;
     const savedCheckpoint = options.resume ? readCampaignCheckpoint(savedCampaign) : undefined;
     const hasCheckpointFields = Boolean(savedCampaign && ["currentCycle", "currentStep", "checkpointedAt"].some((key) => key in savedCampaign));
     const invalidSavedCheckpoint = Boolean(options.resume && hasCheckpointFields && !savedCheckpoint);
@@ -3371,6 +3372,13 @@ research
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Mode must be 'research' or 'challenge'.");
     if (!["safe", "fast", "yolo"].includes(options.autonomy)) throw new Error("Autonomy must be 'safe', 'fast', or 'yolo'.");
     if (!["local", "container", "modal", "slurm"].includes(options.executor)) throw new Error("Executor must be 'local', 'container', 'modal', or 'slurm'.");
+    let triggerContext: { eventType: string; eventCreatedAt: string } | undefined;
+    if (options.triggerContext) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(options.triggerContext); } catch { throw new Error("Trigger context must be valid JSON."); }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || typeof (parsed as { eventType?: unknown }).eventType !== "string" || typeof (parsed as { eventCreatedAt?: unknown }).eventCreatedAt !== "string" || (parsed as { eventType: string }).eventType.length > 120 || (parsed as { eventCreatedAt: string }).eventCreatedAt.length > 80 || !Number.isFinite(Date.parse((parsed as { eventCreatedAt: string }).eventCreatedAt))) throw new Error("Trigger context must contain a bounded eventType and valid eventCreatedAt.");
+      triggerContext = { eventType: (parsed as { eventType: string }).eventType, eventCreatedAt: (parsed as { eventCreatedAt: string }).eventCreatedAt };
+    }
     const mode = options.mode as "research" | "challenge";
     const autonomy = options.autonomy as AutonomyLevel;
     const adapter = activeCompetition();
@@ -3437,9 +3445,9 @@ research
       throw new Error("Resumed campaign route differs from its saved runtime policy. Evidra will not silently switch provider, model, effort, autonomy, lanes, limit policy, or executor during resume.");
     }
     const releaseLease = await acquireCliControllerLease(mode);
-    let campaign: { goal: string; budgetMinutes: number; gpuBudgetHours: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime: CampaignRuntimeConfig; runtimeFingerprint: string; autoExecuteExperiments: boolean } = options.resume && savedCampaign && savedCampaign.status !== "completed"
-      ? { ...resumeCampaign({ goal: savedCampaign.goal ?? options.goal, budgetMinutes: savedCampaign.budgetMinutes ?? budget, stopCondition: savedCampaign.stopCondition ?? options.stop, startedAt: savedCampaign.startedAt ?? new Date(started).toISOString(), status: savedCampaign.status === "paused" ? "paused" : "running", pausedAt: savedCampaign.pausedAt, pausedDurationMinutes: savedCampaign.pausedDurationMinutes, runtime: savedRuntime ?? runtime, runtimeFingerprint: savedCampaign.runtimeFingerprint ?? campaignRuntimeFingerprint(savedRuntime ?? runtime) }), gpuBudgetHours, status: "running", runtime, autoExecuteExperiments: savedCampaign.autoExecuteExperiments === true || autonomy !== "safe" }
-      : { goal: options.goal, budgetMinutes: budget, gpuBudgetHours, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running", runtime, runtimeFingerprint: campaignRuntimeFingerprint(runtime), autoExecuteExperiments: autonomy !== "safe" };
+    let campaign: { goal: string; budgetMinutes: number; gpuBudgetHours: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; triggerContext?: { eventType: string; eventCreatedAt: string }; runtime: CampaignRuntimeConfig; runtimeFingerprint: string; autoExecuteExperiments: boolean } = options.resume && savedCampaign && savedCampaign.status !== "completed"
+      ? { ...resumeCampaign({ goal: savedCampaign.goal ?? options.goal, budgetMinutes: savedCampaign.budgetMinutes ?? budget, stopCondition: savedCampaign.stopCondition ?? options.stop, startedAt: savedCampaign.startedAt ?? new Date(started).toISOString(), status: savedCampaign.status === "paused" ? "paused" : "running", pausedAt: savedCampaign.pausedAt, pausedDurationMinutes: savedCampaign.pausedDurationMinutes, runtime: savedRuntime ?? runtime, runtimeFingerprint: savedCampaign.runtimeFingerprint ?? campaignRuntimeFingerprint(savedRuntime ?? runtime) }), gpuBudgetHours, status: "running", ...(savedCampaign.triggerContext ? { triggerContext: savedCampaign.triggerContext } : {}), runtime, autoExecuteExperiments: savedCampaign.autoExecuteExperiments === true || autonomy !== "safe" }
+      : { goal: options.goal, budgetMinutes: budget, gpuBudgetHours, stopCondition: options.stop, startedAt: new Date(started).toISOString(), status: "running", ...(triggerContext ? { triggerContext } : {}), runtime, runtimeFingerprint: campaignRuntimeFingerprint(runtime), autoExecuteExperiments: autonomy !== "safe" };
     if (options.resume && invalidSavedCheckpoint) console.log("Saved campaign checkpoint is invalid; preserving the campaign and restarting from a safe cycle boundary.");
     if (options.resume) console.log(savedCampaign && savedCampaign.status !== "completed" ? `Resuming durable research campaign from ${savedCampaign.startedAt ?? "saved state"}.` : "No resumable campaign found; starting a new research campaign.");
     const objective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}`;
