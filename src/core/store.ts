@@ -1627,6 +1627,15 @@ export class ResearchStore {
     return result.changes === 1;
   }
 
+  /** Complete a queue task only when the caller still owns its live claim. */
+  completeClaimedTask(id: string, ownerId: string, status: Extract<QueueTaskStatus, "completed" | "failed" | "cancelled">, payload?: unknown): boolean {
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ?").run(status, payload === undefined ? null : safeJson(payload), now, id, ownerId);
+    if (result.changes !== 1) return false;
+    this.appendEvent(`queue.${status}`, { id, ownerId, payload });
+    return true;
+  }
+
   retryTask(id: string, payload: unknown, availableAt: string): void {
     const now = new Date().toISOString();
     this.db.prepare("UPDATE work_queue SET status = 'queued', payload_json = ?, available_at = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ?").run(safeJson(payload), availableAt, now, id);

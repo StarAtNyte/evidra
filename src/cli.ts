@@ -2253,7 +2253,8 @@ event.command("serve")
         response.end(JSON.stringify({ ok: integrity.status !== "invalid", integrity }));
         return;
       }
-      if (request.method !== "POST" || request.url !== "/events") { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events or GET /health are supported" })); return; }
+      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/complete"].includes(request.url ?? "") ? request.url : undefined;
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/complete, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
@@ -2265,7 +2266,37 @@ event.command("serve")
       request.on("end", () => {
         if (rejected) return;
         try {
-          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown; idempotencyKey?: unknown };
+          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown; idempotencyKey?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; status?: unknown };
+          if (taskPath) {
+            const workerId = typeof parsed.workerId === "string" ? parsed.workerId.trim() : "";
+            if (!workerId || workerId.length > 200) throw new Error("Task requests require a workerId of 1–200 characters.");
+            const store = new ResearchStore(statePath);
+            if (taskPath === "/tasks/claim") {
+              const kinds = parsed.kinds === undefined ? undefined : Array.isArray(parsed.kinds) && parsed.kinds.length <= 16 && parsed.kinds.every((kind) => typeof kind === "string" && kind.length <= 120) ? parsed.kinds as string[] : undefined;
+              if (parsed.kinds !== undefined && !kinds) throw new Error("kinds must be an array of at most 16 strings.");
+              const task = store.claimNextTask(kinds, workerId);
+              store.close();
+              response.writeHead(200, headers);
+              response.end(JSON.stringify({ ok: true, task: task ?? null }));
+              return;
+            }
+            const taskId = typeof parsed.taskId === "string" ? parsed.taskId.trim() : "";
+            if (!taskId || taskId.length > 200) throw new Error("Task requests require a taskId of 1–200 characters.");
+            if (taskPath === "/tasks/heartbeat") {
+              const accepted = store.heartbeatTask(taskId, workerId);
+              store.close();
+              response.writeHead(accepted ? 200 : 409, headers);
+              response.end(JSON.stringify({ ok: accepted, taskId }));
+              return;
+            }
+            if (!(typeof parsed.status === "string" && ["completed", "failed", "cancelled"].includes(parsed.status))) throw new Error("Task completion status must be completed, failed, or cancelled.");
+            const taskPayload = parsed.payload === undefined ? undefined : parseExternalEventPayload(JSON.stringify(parsed.payload));
+            const accepted = store.completeClaimedTask(taskId, workerId, parsed.status as "completed" | "failed" | "cancelled", taskPayload);
+            store.close();
+            response.writeHead(accepted ? 200 : 409, headers);
+            response.end(JSON.stringify({ ok: accepted, taskId, status: parsed.status }));
+            return;
+          }
           if (typeof parsed.type !== "string") throw new Error("request JSON requires a string 'type'");
           const payload = parseExternalEventPayload(JSON.stringify(parsed.payload ?? {}));
           const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : request.headers["idempotency-key"];

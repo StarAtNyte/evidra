@@ -135,6 +135,17 @@ External workers may also report liveness through the authenticated endpoint:
 Evidra accepts only the owning lease, records accepted/rejected heartbeat events,
 and never grants the external worker controller or submission authority.
 
+Authenticated external workers may also participate in the durable queue:
+
+```text
+POST /tasks/claim     {"workerId":"agent-17","kinds":["research.lane"]}
+POST /tasks/heartbeat {"workerId":"agent-17","taskId":"task-123"}
+POST /tasks/complete  {"workerId":"agent-17","taskId":"task-123","status":"completed","payload":{"summary":"..."}}
+```
+
+Claim, heartbeat, and completion all enforce the queue owner. A stale or foreign
+worker receives a conflict response and cannot overwrite another worker’s task.
+
 Configure a routine with `--on-event external.github.push` (or the equivalent
 TUI routine flow). The event is hash-chained, wakes matching active routines,
 and remains visible in the event timeline for audit and replay.

@@ -348,6 +348,12 @@ test("durable research state and queue survive store reopen", () => {
     first.enqueueTask({ id: "task-1", kind: "research.cycle", priority: 4, payload: { smoke: true }, goalId: "goal-1", parentTaskId: "task-parent" });
     assert.equal(first.claimNextTask()?.id, "task-1");
     first.updateTask("task-1", "completed");
+    first.enqueueTask({ id: "task-external", kind: "research.lane", priority: 5, payload: { smoke: true } });
+    assert.equal(first.claimNextTask(["research.lane"], "external-worker")?.id, "task-external");
+    assert.equal(first.completeClaimedTask("task-external", "wrong-worker", "completed", { result: "spoofed" }), false);
+    assert.equal(first.heartbeatTask("task-external", "external-worker"), true);
+    assert.equal(first.completeClaimedTask("task-external", "external-worker", "completed", { result: "verified" }), true);
+    assert.equal(first.queueTasks().find((task) => task.id === "task-external")?.ownerId, null);
     first.close();
     const reopened = new ResearchStore(db);
     assert.equal(reopened.project()?.id, "p1");
