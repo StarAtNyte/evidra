@@ -3360,12 +3360,14 @@ challenge.command("start")
   .option("--limit-policy <policy>", "on provider usage limit: auto, wait, fallback, or stop", "auto")
   .option("--executor <executor>", "experiment execution target: local, container, modal, or slurm", "local")
   .option("--resume", "resume the saved challenge campaign")
+  .option("--resume-run <started-at>", "resume a specific retained campaign run by its startedAt timestamp")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; agentTokenBudget: string; roleTokenBudgets?: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
+  .action(async (options: { goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; agentTokenBudget: string; roleTokenBudgets?: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; resumeRun?: string; skipBaseline?: boolean }) => {
     const script = process.argv[1];
     if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
     const args = ["research", "--mode", "challenge", "--goal", options.goal, "--budget", options.budget, "--gpu-budget", options.gpuBudget, "--agent-token-budget", options.agentTokenBudget, ...(options.roleTokenBudgets ? ["--role-token-budgets", options.roleTokenBudgets] : []), "--stop", options.stop, "--provider", options.provider, "--model", options.model, "--fallback-model", options.fallbackModel, "--thinking", options.thinking, "--lanes", options.lanes, ...(options.laneBudget ? ["--lane-budget", options.laneBudget] : []), "--autonomy", options.autonomy, "--limit-policy", options.limitPolicy, "--executor", options.executor];
-    if (options.resume) args.push("--resume");
+    if (options.resume || options.resumeRun) args.push("--resume");
+    if (options.resumeRun) args.push("--resume-run", options.resumeRun);
     if (options.skipBaseline) args.push("--skip-baseline");
     const result = await runProcess([process.execPath, script, ...args], root, 7 * 24 * 60 * 60_000, (stream, chunk) => {
       (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
@@ -3508,19 +3510,28 @@ research
   .option("--executor <executor>", "experiment execution target: local, container, modal, or slurm", "local")
   .option("--trigger-context <json>", "bounded structured event context that caused this campaign to start")
   .option("--resume", "resume the latest durable non-completed research campaign")
+  .option("--resume-run <started-at>", "resume a specific retained campaign run by its startedAt timestamp")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; agentTokenBudget: string; roleTokenBudgets?: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; autonomy: string; limitPolicy: string; executor: string; triggerContext?: string; resume?: boolean; skipBaseline?: boolean }) => {
+  .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; agentTokenBudget: string; roleTokenBudgets?: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; autonomy: string; limitPolicy: string; executor: string; triggerContext?: string; resume?: boolean; resumeRun?: string; skipBaseline?: boolean }) => {
     const savedStore = new ResearchStore(statePath);
-    const savedCampaign = savedStore.campaign() as { goal?: string; goalSetId?: string; budgetMinutes?: number; gpuBudgetHours?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; triggerContext?: { eventType: string; eventCreatedAt: string }; runtime?: unknown; runtimeFingerprint?: string; autoExecuteExperiments?: boolean } | undefined;
-    const savedCheckpoint = options.resume ? readCampaignCheckpoint(savedCampaign) : undefined;
+    type SavedCampaign = { goal?: string; goalSetId?: string; budgetMinutes?: number; gpuBudgetHours?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; triggerContext?: { eventType: string; eventCreatedAt: string }; runtime?: unknown; runtimeFingerprint?: string; autoExecuteExperiments?: boolean };
+    const liveCampaign = savedStore.campaign() as SavedCampaign | undefined;
+    const resumeRequested = Boolean(options.resume || options.resumeRun);
+    const requestedRun = options.resumeRun?.trim();
+    const historicalRun = requestedRun ? savedStore.campaignHistory(128).find((entry) => entry.startedAt === requestedRun) : undefined;
+    if (requestedRun && !historicalRun) { savedStore.close(); throw new Error(`No retained campaign run matches startedAt '${requestedRun}'. Run 'evidra research history' to list available runs.`); }
+    if (historicalRun?.status === "completed") { savedStore.close(); throw new Error(`Campaign run '${requestedRun}' is completed and cannot be resumed; start a new campaign instead.`); }
+    if (historicalRun && liveCampaign?.status === "running" && liveCampaign.startedAt !== historicalRun.startedAt) { savedStore.close(); throw new Error("Cannot resume a historical campaign while another campaign is marked running. Pause or stop the live campaign first."); }
+    const savedCampaign = (historicalRun?.campaign ?? liveCampaign) as SavedCampaign | undefined;
+    const savedCheckpoint = resumeRequested ? readCampaignCheckpoint(savedCampaign) : undefined;
     const hasCheckpointFields = Boolean(savedCampaign && ["currentCycle", "currentStep", "checkpointedAt"].some((key) => key in savedCampaign));
-    const invalidSavedCheckpoint = Boolean(options.resume && hasCheckpointFields && !savedCheckpoint);
+    const invalidSavedCheckpoint = Boolean(resumeRequested && hasCheckpointFields && !savedCheckpoint);
     if (invalidSavedCheckpoint) savedStore.appendEvent("research.campaign.checkpoint.invalid", { reason: "saved checkpoint failed validation; resume will restart from the current durable campaign boundary" });
     savedStore.close();
     // A resume is a continuation of the durable campaign, not a new run with
     // whichever defaults the current terminal happens to have. Legacy
     // campaigns without runtime metadata retain the explicit CLI settings.
-    const savedRuntime = options.resume && savedCampaign && savedCampaign.status !== "completed"
+    const savedRuntime = resumeRequested && savedCampaign && savedCampaign.status !== "completed"
       ? readDurableCampaignRuntime(savedCampaign)
       : undefined;
     if (savedRuntime) {
@@ -3569,7 +3580,7 @@ research
     const roleTokenBudgets = parseRoleTokenBudgets(options.roleTokenBudgets);
     const parsedGpuBudget = Number(options.gpuBudget);
     if (!Number.isFinite(parsedGpuBudget) || parsedGpuBudget < 0) throw new Error("GPU budget must be a non-negative number of hours; use 0 for unlimited.");
-    const gpuBudgetHours = options.resume && savedCampaign?.gpuBudgetHours !== undefined ? savedCampaign.gpuBudgetHours : parsedGpuBudget;
+    const gpuBudgetHours = resumeRequested && savedCampaign?.gpuBudgetHours !== undefined ? savedCampaign.gpuBudgetHours : parsedGpuBudget;
     let selectedModel: string;
     if (options.provider === "local" && options.model === "default") {
       selectedModel = await resolveLocalFallbackModel("auto");
@@ -3611,21 +3622,21 @@ research
     }
     const started = Date.now();
     const runtime: CampaignRuntimeConfig = { mode, provider: options.provider as CampaignRuntimeConfig["provider"], model: selectedModel, fallbackModel: options.fallbackModel, thinking: options.thinking, lanes: laneLimit, ...(laneBudgetMinutes === undefined ? {} : { laneBudgetMinutes }), ...(parsedAgentTokenBudget > 0 ? { agentTokenBudget: parsedAgentTokenBudget } : {}), ...(Object.keys(roleTokenBudgets).length ? { roleTokenBudgets } : {}), autonomy, limitPolicy: options.limitPolicy as CampaignRuntimeConfig["limitPolicy"], executor: options.executor as CampaignRuntimeConfig["executor"] };
-    if (options.resume && savedRuntime && savedCampaign?.runtimeFingerprint && savedCampaign.runtimeFingerprint !== campaignRuntimeFingerprint(savedRuntime)) {
+    if (resumeRequested && savedRuntime && savedCampaign?.runtimeFingerprint && savedCampaign.runtimeFingerprint !== campaignRuntimeFingerprint(savedRuntime)) {
       throw new Error("Saved campaign runtime integrity check failed; its provider, model, effort, autonomy, lane, limit, or executor policy was modified. Start a new campaign or restore the original campaign state.");
     }
-    if (options.resume && savedRuntime && campaignRuntimeFingerprint(savedRuntime) !== campaignRuntimeFingerprint(runtime)) {
+    if (resumeRequested && savedRuntime && campaignRuntimeFingerprint(savedRuntime) !== campaignRuntimeFingerprint(runtime)) {
       throw new Error("Resumed campaign route differs from its saved runtime policy. Evidra will not silently switch provider, model, effort, autonomy, lanes, limit policy, or executor during resume.");
     }
     const releaseLease = await acquireCliControllerLease(mode);
-    let campaign: { goal: string; goalSetId: string; budgetMinutes: number; gpuBudgetHours: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; triggerContext?: { eventType: string; eventCreatedAt: string }; runtime: CampaignRuntimeConfig; runtimeFingerprint: string; autoExecuteExperiments: boolean } = options.resume && savedCampaign && savedCampaign.status !== "completed"
+    let campaign: { goal: string; goalSetId: string; budgetMinutes: number; gpuBudgetHours: number; stopCondition: string; startedAt: string; status: "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; triggerContext?: { eventType: string; eventCreatedAt: string }; runtime: CampaignRuntimeConfig; runtimeFingerprint: string; autoExecuteExperiments: boolean } = resumeRequested && savedCampaign && savedCampaign.status !== "completed"
       ? { ...resumeCampaign({ goal: savedCampaign.goal ?? options.goal, budgetMinutes: savedCampaign.budgetMinutes ?? budget, stopCondition: savedCampaign.stopCondition ?? options.stop, startedAt: savedCampaign.startedAt ?? new Date(started).toISOString(), status: savedCampaign.status === "paused" ? "paused" : "running", pausedAt: savedCampaign.pausedAt, pausedDurationMinutes: savedCampaign.pausedDurationMinutes, runtime: savedRuntime ?? runtime, runtimeFingerprint: savedCampaign.runtimeFingerprint ?? campaignRuntimeFingerprint(savedRuntime ?? runtime) }), goalSetId: typeof savedCampaign.goalSetId === "string" && savedCampaign.goalSetId.trim() ? savedCampaign.goalSetId : phaseGoalSetId(savedCampaign.goal ?? options.goal, mode), gpuBudgetHours, status: "running", ...(savedCampaign.triggerContext ? { triggerContext: savedCampaign.triggerContext } : {}), runtime, autoExecuteExperiments: savedCampaign.autoExecuteExperiments === true || autonomy !== "safe" }
       : (() => { const startedAt = new Date(started).toISOString(); return { goal: options.goal, goalSetId: phaseGoalSetId(options.goal, mode, startedAt), budgetMinutes: budget, gpuBudgetHours, stopCondition: options.stop, startedAt, status: "running" as const, ...(triggerContext ? { triggerContext } : {}), runtime, runtimeFingerprint: campaignRuntimeFingerprint(runtime), autoExecuteExperiments: autonomy !== "safe" }; })();
-    if (options.resume && invalidSavedCheckpoint) console.log("Saved campaign checkpoint is invalid; preserving the campaign and restarting from a safe cycle boundary.");
-    if (options.resume) console.log(savedCampaign && savedCampaign.status !== "completed" ? `Resuming durable research campaign from ${savedCampaign.startedAt ?? "saved state"}.` : "No resumable campaign found; starting a new research campaign.");
+    if (resumeRequested && invalidSavedCheckpoint) console.log("Saved campaign checkpoint is invalid; preserving the campaign and restarting from a safe cycle boundary.");
+    if (resumeRequested) console.log(savedCampaign && savedCampaign.status !== "completed" ? `Resuming durable research campaign from ${savedCampaign.startedAt ?? "saved state"}.` : "No resumable campaign found; starting a new research campaign.");
     const objective = `${campaign.goal}. Stop condition: ${campaign.stopCondition}`;
     const campaignGoalSetId = campaign.goalSetId;
-    let cycle = options.resume ? nextCampaignCycle(savedCheckpoint) : 0;
+    let cycle = resumeRequested ? nextCampaignCycle(savedCheckpoint) : 0;
     campaignLoop: do {
       recordCampaignCheckpoint(campaign, mode, cycle, "cycle-start");
       const directive = await waitForControllerDirective(
