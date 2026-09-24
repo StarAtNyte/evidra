@@ -1,4 +1,5 @@
 import { agentOrganization, type AgentRoleContract } from "./agent-organization.js";
+import { phaseGoalSetId } from "./phase-goals.js";
 import type { ResearchStore } from "./store.js";
 
 export type CampaignOrganizationPhase = {
@@ -52,11 +53,20 @@ function campaignMode(store: ResearchStore): "research" | "challenge" {
  * This is a projection only: it never changes scheduling, permissions, or gates.
  */
 export function campaignOrganization(store: ResearchStore): CampaignOrganization {
-  const campaign = store.campaign() as { goal?: unknown; status?: unknown } | undefined;
+  const campaign = store.campaign() as { goal?: unknown; status?: unknown; runtime?: { mode?: unknown } } | undefined;
   const tasks = store.queueTasks();
   const goals = store.phaseGoals();
-  const phaseById = new Map(goals.map((goal) => [goal.id, goal]));
-  const phaseRows = goals.slice(0, 24).map((entry) => {
+  const mode = campaignMode(store);
+  const campaignGoal = text(campaign?.goal);
+  const activeGoalSetId = campaignGoal ? phaseGoalSetId(campaignGoal, mode) : null;
+  const belongsToCampaign = (entry: { payload: unknown }): boolean => {
+    if (activeGoalSetId === null) return true;
+    const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { goalSetId?: unknown } : {};
+    return typeof payload.goalSetId !== "string" || payload.goalSetId === activeGoalSetId;
+  };
+  const campaignGoals = goals.filter(belongsToCampaign);
+  const phaseById = new Map(campaignGoals.map((goal) => [goal.id, goal]));
+  const phaseRows = campaignGoals.slice(0, 24).map((entry) => {
     const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as Record<string, unknown> : {};
     const phaseTasks = tasks.filter((task) => task.goalId === entry.id);
     return {
@@ -89,14 +99,14 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
   const blockedQueue = alignedTasks.filter((task) => task.status === "blocked" || task.approvalStatus === "pending").length;
   return {
     goal: text(campaign?.goal),
-    mode: campaignMode(store),
+    mode,
     status: text(campaign?.status) ?? "idle",
     phases: phaseRows,
     roles: organization,
     totals: { phases: phaseRows.length, roles: organization.length, queue: alignedTasks.length, activeQueue, blockedQueue },
     accountability: {
       unassignedRunning: liveTasks.filter((task) => task.status === "running" && !task.assigneeId && !task.ownerId).map((task) => task.id).slice(0, 64),
-      unscopedLive: liveTasks.filter((task) => !task.goalId).map((task) => task.id).slice(0, 64),
+      unscopedLive: liveTasks.filter((task) => !task.goalId || !phaseById.has(task.goalId)).map((task) => task.id).slice(0, 64),
       unbudgetedLive: liveTasks.filter((task) => task.tokenBudget === null && task.costBudgetUsd === null).map((task) => task.id).slice(0, 64),
     },
   };
