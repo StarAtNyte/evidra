@@ -84,7 +84,8 @@ export class QueueWorker {
       } else {
         const message = error instanceof Error ? error.message : String(error);
         const recovery = queueRecoveryAction(error);
-        this.store.updateTask(task.id, "failed", { error: message, attempts: task.attempts, recovery });
+        const payload = task.payload && typeof task.payload === "object" && !Array.isArray(task.payload) ? task.payload as Record<string, unknown> : {};
+        this.store.updateTask(task.id, "failed", { ...payload, error: message, attempts: task.attempts, recovery });
         this.store.appendEvent("queue.recovery_required", { taskId: task.id, kind: task.kind, attempts: task.attempts, error: message, ...recovery });
       }
     } finally {

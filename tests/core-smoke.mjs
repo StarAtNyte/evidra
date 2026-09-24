@@ -3357,6 +3357,24 @@ test("queue recovery classifies failures and records a route-changing action", a
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("failed queue recovery is explicit, bounded, and durable", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-recover-action-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "recoverable", kind: "smoke", priority: 1, payload: { input: "kept" } });
+    const worker = new QueueWorker(store, async () => { throw new Error("provider unavailable"); }, { maxAttempts: 1, retryDelayMs: () => 0 });
+    await worker.runOnce();
+    const recovered = store.recoverFailedTask("recoverable", "alternate_executor", "switch to a verified worker");
+    assert.equal(recovered.status, "queued");
+    assert.equal(recovered.attempts, 0);
+    assert.equal(recovered.payload.input, "kept");
+    assert.equal(recovered.payload.recovery.route, "alternate_executor");
+    assert.equal(store.eventsByType("queue.recovery_scheduled").length, 1);
+    assert.throws(() => store.recoverFailedTask("recoverable", "retry"), /only failed tasks/);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue heartbeats prevent live long-running work from being requeued", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-heartbeat-"));
   try {

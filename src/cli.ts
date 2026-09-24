@@ -2062,9 +2062,15 @@ queue.command("status").option("--json", "emit machine-readable queue state").ac
   if (recoveries.length) console.log(`\nRecovery actions\n${recoveries.slice().reverse().slice(0, 8).map((entry) => { const value = entry && typeof entry === "object" ? entry as Record<string, unknown> : {}; return `  ${String(value.taskId ?? "task")} · ${String(value.failureClass ?? "unknown")} · ${String(value.route ?? "change_route")} · ${String(value.action ?? "inspect failure")}`; }).join("\n")}`);
   store.close();
 });
-queue.command("recover").action(() => {
+queue.command("recover [id]").option("--route <route>", "materially changed execution route").option("--note <note>", "why this route is different").action((id: string | undefined, options: { route?: string; note?: string }) => {
   const store = new ResearchStore(statePath);
-  console.log(`Requeued ${store.requeueStaleTasks()} stale tasks.`);
+  if (id) {
+    if (!options.route) throw new Error("A changed route is required: evidra queue recover <task-id> --route <route>");
+    const task = store.recoverFailedTask(id, options.route, options.note);
+    console.log(`Recovered ${task.id} with route '${options.route}'. Attempts reset; the task is queued.`);
+  } else {
+    console.log(`Requeued ${store.requeueStaleTasks()} stale tasks.`);
+  }
   store.close();
 });
 program.addCommand(queue);

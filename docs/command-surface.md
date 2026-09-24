@@ -62,6 +62,8 @@ Inspect dependency readiness directly:
 ```text
 evidra queue status             Human-readable ownership and blocking reasons
 evidra queue status --json      Machine-readable readiness for automation
+evidra queue recover <id> --route <route>
+                                Resume one failed task after declaring a changed route
 ```
 
 Queued work reports `missing`, `waiting`, or `failed` prerequisites. This makes
@@ -72,6 +74,9 @@ When a task exhausts its bounded retries, the queue records a typed recovery
 action instead of only a terminal error. Actions include reauthentication,
 repair, refreshing data, reducing resources, using an alternate executor, or
 changing route. `queue status --json` returns these actions under `recoveries`.
+An operator can act on a terminal task explicitly with `queue recover`; this
+resets only that task's bounded attempt counter and preserves the prior route
+and reason in its payload and event history.
 
 For recurring work, define a durable routine. A routine stores the goal,
 provider route, autonomy policy, campaign budget, interval, last result, and a

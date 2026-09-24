@@ -1563,6 +1563,23 @@ export class ResearchStore {
     this.appendEvent("queue.retry_scheduled", { id, availableAt, payload });
   }
 
+  /** Resume one exhausted task only after an operator declares a changed route. */
+  recoverFailedTask(id: string, route: string, note = "operator-selected recovery route"): QueuedTask {
+    const normalizedRoute = route.trim().slice(0, 120);
+    if (!normalizedRoute) throw new Error("A changed recovery route is required.");
+    const current = this.queueTasks().find((task) => task.id === id);
+    if (!current) throw new Error(`Unknown queue task '${id}'.`);
+    if (current.status !== "failed") throw new Error(`Queue task '${id}' is ${current.status}; only failed tasks can be recovered.`);
+    const payload = current.payload && typeof current.payload === "object" && !Array.isArray(current.payload) ? current.payload as Record<string, unknown> : {};
+    const history = Array.isArray(payload.recoveryHistory) ? payload.recoveryHistory.slice(-7) : [];
+    const recovery = { route: normalizedRoute, note: note.trim().slice(0, 400) || "operator-selected recovery route", recoveredAt: new Date().toISOString(), priorAttempts: current.attempts };
+    const nextPayload = { ...payload, recoveryHistory: [...history, recovery], recovery };
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE work_queue SET status = 'queued', attempts = 0, payload_json = ?, available_at = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'failed'").run(safeJson(nextPayload), now, now, id);
+    this.appendEvent("queue.recovery_scheduled", { taskId: id, ...recovery });
+    return this.queueTasks().find((task) => task.id === id) ?? { ...current, status: "queued", attempts: 0, payload: nextPayload, availableAt: now, claimedAt: null, ownerId: null, updatedAt: now };
+  }
+
   requeueStaleTasks(maxAgeMs = 15 * 60_000, maxAttempts = 3): number {
     const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
     const limit = Math.max(1, Math.floor(maxAttempts));
