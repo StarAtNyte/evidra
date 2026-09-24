@@ -3168,10 +3168,13 @@ test("queue dependencies prevent work from running before prerequisites", () => 
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.enqueueTask({ id: "child", kind: "child", priority: 2, payload: {}, dependsOn: ["parent"] });
+    assert.deepEqual(store.taskReadiness("child"), { ready: false, missing: ["parent"], pending: [], failed: [] });
     assert.equal(store.claimNextTask()?.id, undefined);
     store.enqueueTask({ id: "parent", kind: "parent", priority: 1, payload: {} });
     assert.equal(store.claimNextTask()?.id, "parent");
+    assert.deepEqual(store.taskReadiness("child"), { ready: false, missing: [], pending: ["parent"], failed: [] });
     store.updateTask("parent", "completed");
+    assert.deepEqual(store.taskReadiness("child"), { ready: true, missing: [], pending: [], failed: [] });
     assert.equal(store.claimNextTask()?.id, "child");
     assert.deepEqual(store.queueTasks().find((task) => task.id === "child")?.dependsOn, ["parent"]);
     store.close();

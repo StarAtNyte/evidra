@@ -1086,14 +1086,27 @@ export class ResearchStore {
   }
 
   private taskDependenciesReady(id: string): boolean {
+    return this.taskReadiness(id)?.ready === true;
+  }
+
+  /** Explain why a queued task can or cannot be checked out. */
+  taskReadiness(id: string): { ready: boolean; missing: string[]; pending: string[]; failed: string[] } | undefined {
     const row = this.db.prepare("SELECT depends_on_json FROM work_queue WHERE id = ?").get(id) as { depends_on_json: string } | undefined;
-    if (!row) return false;
-    let dependencies: string[];
-    try { dependencies = JSON.parse(row.depends_on_json || "[]") as string[]; } catch { return false; }
-    return Array.isArray(dependencies) && dependencies.every((dependency) => {
+    if (!row) return undefined;
+    let dependencies: unknown;
+    try { dependencies = JSON.parse(row.depends_on_json || "[]"); } catch { return { ready: false, missing: [], pending: [], failed: ["invalid dependency metadata"] }; }
+    if (!Array.isArray(dependencies)) return { ready: false, missing: [], pending: [], failed: ["invalid dependency metadata"] };
+    const missing: string[] = [];
+    const pending: string[] = [];
+    const failed: string[] = [];
+    for (const dependency of dependencies.filter((entry): entry is string => typeof entry === "string")) {
       const status = this.db.prepare("SELECT status FROM work_queue WHERE id = ?").get(dependency) as { status: string } | undefined;
-      return status?.status === "completed";
-    });
+      if (!status) missing.push(dependency);
+      else if (status.status === "completed") continue;
+      else if (["failed", "cancelled"].includes(status.status)) failed.push(dependency);
+      else pending.push(dependency);
+    }
+    return { ready: missing.length === 0 && pending.length === 0 && failed.length === 0, missing, pending, failed };
   }
 
   claimNextTask(kinds?: string[], ownerId?: string): QueuedTask | undefined {

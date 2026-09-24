@@ -57,6 +57,17 @@ all dependency IDs have completed, and treats missing dependencies as blocked.
 Cycles are rejected when a task is enqueued, so a malformed decomposition
 cannot silently consume campaign time.
 
+Inspect dependency readiness directly:
+
+```text
+evidra queue status             Human-readable ownership and blocking reasons
+evidra queue status --json      Machine-readable readiness for automation
+```
+
+Queued work reports `missing`, `waiting`, or `failed` prerequisites. This makes
+the scheduler explainable to an operator and gives recovery controllers a
+stable reason instead of treating every unclaimed task as ready.
+
 For long campaigns, bound each specialist independently:
 
 ```text

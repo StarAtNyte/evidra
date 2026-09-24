@@ -1915,10 +1915,24 @@ for (const action of ["validate", "promote", "reject"] as const) {
 program.addCommand(ensemble);
 
 const queue = new Command("queue").description("Inspect the durable research work queue");
-queue.command("status").action(() => {
+queue.command("status").option("--json", "emit machine-readable queue state").action((options: { json?: boolean }) => {
   const store = new ResearchStore(statePath);
   const tasks = store.queueTasks();
-  console.log(tasks.length ? tasks.map((task) => `${task.status} ${task.id} · ${task.kind} · priority ${task.priority} · attempts ${task.attempts}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}`).join("\n") : "Research queue is empty.");
+  const rows = tasks.map((task) => ({ ...task, readiness: store.taskReadiness(task.id) }));
+  if (options.json) {
+    console.log(JSON.stringify(rows, null, 2));
+    store.close();
+    return;
+  }
+  console.log(rows.length ? rows.map((task) => {
+    const readiness = task.readiness;
+    const blocked = readiness && !readiness.ready ? ` · blocked ${[
+      ...readiness.missing.map((id) => `missing:${id}`),
+      ...readiness.pending.map((id) => `waiting:${id}`),
+      ...readiness.failed.map((id) => `failed:${id}`),
+    ].join(",")}` : "";
+    return `${task.status} ${task.id} · ${task.kind} · priority ${task.priority} · attempts ${task.attempts}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${blocked}`;
+  }).join("\n") : "Research queue is empty.");
   store.close();
 });
 queue.command("recover").action(() => {
