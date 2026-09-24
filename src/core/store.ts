@@ -272,6 +272,8 @@ export class ResearchStore {
         model TEXT NOT NULL,
         task TEXT,
         error TEXT,
+        heartbeat_at TEXT,
+        lease_id TEXT,
         updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS submissions (
@@ -354,6 +356,8 @@ export class ResearchStore {
     }
     try { this.db.exec("ALTER TABLE run_attempts ADD COLUMN metrics_json TEXT NOT NULL DEFAULT '{}'"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE run_attempts ADD COLUMN metric_conflicts_json TEXT NOT NULL DEFAULT '[]'"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN heartbeat_at TEXT"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN lease_id TEXT"); } catch { /* already migrated */ }
     this.db.prepare(`
       INSERT OR IGNORE INTO event_chain_state (id, head_hash, event_count)
       VALUES (1, (SELECT event_hash FROM events ORDER BY id DESC LIMIT 1), (SELECT COUNT(*) FROM events))
@@ -859,12 +863,56 @@ export class ResearchStore {
     return result.changes === 1;
   }
 
-  updateAgentLane(lane: { role: string; status: "idle" | "running" | "blocked" | "failed"; provider: string; model: string; task?: string | null; error?: string | null }): void {
+  updateAgentLane(lane: { role: string; status: "idle" | "running" | "blocked" | "failed"; provider: string; model: string; task?: string | null; error?: string | null; leaseId?: string | null }): void {
     const updatedAt = new Date().toISOString();
     this.db.prepare(`
-      INSERT INTO agent_lanes (role, status, provider, model, task, error, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(role) DO UPDATE SET status = excluded.status, provider = excluded.provider, model = excluded.model, task = excluded.task, error = excluded.error, updated_at = excluded.updated_at
-    `).run(lane.role, lane.status, lane.provider, lane.model, lane.task ?? null, lane.error ?? null, updatedAt);
+      INSERT INTO agent_lanes (role, status, provider, model, task, error, heartbeat_at, lease_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(role) DO UPDATE SET status = excluded.status, provider = excluded.provider, model = excluded.model, task = excluded.task, error = excluded.error, heartbeat_at = excluded.heartbeat_at, lease_id = COALESCE(excluded.lease_id, agent_lanes.lease_id), updated_at = excluded.updated_at
+    `).run(lane.role, lane.status, lane.provider, lane.model, lane.task ?? null, lane.error ?? null, lane.status === "running" ? updatedAt : null, lane.leaseId ?? null, updatedAt);
+  }
+
+  /** Atomically assign a lane to one worker. A live lease prevents duplicate specialist work. */
+  acquireAgentLane(input: { role: string; leaseId: string; provider: string; model: string; task?: string | null; staleAfterMs?: number }): { acquired: boolean; leaseId?: string; reason?: string } {
+    const now = new Date().toISOString();
+    const staleAfterMs = Math.max(1_000, input.staleAfterMs ?? 60_000);
+    const result = this.db.transaction(() => {
+      const existing = this.db.prepare("SELECT status, lease_id, heartbeat_at FROM agent_lanes WHERE role = ?").get(input.role) as { status: string; lease_id: string | null; heartbeat_at: string | null } | undefined;
+      if (existing?.status === "running" && existing.lease_id && existing.lease_id !== input.leaseId && existing.heartbeat_at && Date.now() - Date.parse(existing.heartbeat_at) <= staleAfterMs) {
+        return { acquired: false, reason: `lane is leased by ${existing.lease_id}` };
+      }
+      this.db.prepare(`
+        INSERT INTO agent_lanes (role, status, provider, model, task, error, heartbeat_at, lease_id, updated_at) VALUES (?, 'running', ?, ?, ?, NULL, ?, ?, ?)
+        ON CONFLICT(role) DO UPDATE SET status = 'running', provider = excluded.provider, model = excluded.model, task = excluded.task, error = NULL, heartbeat_at = excluded.heartbeat_at, lease_id = excluded.lease_id, updated_at = excluded.updated_at
+      `).run(input.role, input.provider, input.model, input.task ?? null, now, input.leaseId, now);
+      return { acquired: true, leaseId: input.leaseId };
+    })() as { acquired: boolean; leaseId?: string; reason?: string };
+    this.appendEvent(result.acquired ? "agent.lane.acquired" : "agent.lane.busy", { role: input.role, leaseId: input.leaseId, reason: result.reason });
+    return result;
+  }
+
+  /** Refresh only the holder's lease; stale workers cannot resurrect a replaced lane. */
+  heartbeatAgentLane(role: string, leaseId: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE agent_lanes SET heartbeat_at = ?, updated_at = ? WHERE role = ? AND status = 'running' AND lease_id = ?").run(now, now, role, leaseId);
+    return result.changes === 1;
+  }
+
+  releaseAgentLane(role: string, leaseId: string, status: "idle" | "blocked" | "failed" = "idle", error?: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE agent_lanes SET status = ?, error = ?, heartbeat_at = NULL, lease_id = NULL, updated_at = ? WHERE role = ? AND lease_id = ?").run(status, error ?? null, now, role, leaseId);
+    if (result.changes === 1) this.appendEvent("agent.lane.released", { role, leaseId, status, error });
+    return result.changes === 1;
+  }
+
+  staleAgentLanes(staleAfterMs = 60_000): string[] {
+    const cutoff = Date.now() - Math.max(1_000, staleAfterMs);
+    const rows = this.db.prepare("SELECT role, lease_id, heartbeat_at FROM agent_lanes WHERE status = 'running'").all() as Array<{ role: string; lease_id: string | null; heartbeat_at: string | null }>;
+    const stale = rows.filter((row) => !row.heartbeat_at || Date.parse(row.heartbeat_at) < cutoff);
+    for (const row of stale) {
+      this.db.prepare("UPDATE agent_lanes SET status = 'blocked', error = ?, heartbeat_at = NULL, lease_id = NULL, updated_at = ? WHERE role = ? AND status = 'running'").run("lane heartbeat expired; recovery required", new Date().toISOString(), row.role);
+      this.appendEvent("agent.lane.stale", { role: row.role, leaseId: row.lease_id });
+    }
+    return stale.map((row) => row.role);
   }
 
   saveSubmission(submission: { id: string; experimentId: string; path: string; status: "prepared" | "approved" | "rejected" | "submitted" | "scored"; payload?: unknown }): void {
@@ -945,9 +993,9 @@ export class ResearchStore {
     return result.changes === 1;
   }
 
-  agentLanes(): Array<{ role: string; status: string; provider: string; model: string; task: string | null; error: string | null; updatedAt: string }> {
-    const rows = this.db.prepare("SELECT role, status, provider, model, task, error, updated_at FROM agent_lanes ORDER BY role ASC").all() as Array<{ role: string; status: string; provider: string; model: string; task: string | null; error: string | null; updated_at: string }>;
-    return rows.map((row) => ({ role: row.role, status: row.status, provider: row.provider, model: row.model, task: row.task, error: row.error, updatedAt: row.updated_at }));
+  agentLanes(): Array<{ role: string; status: string; provider: string; model: string; task: string | null; error: string | null; heartbeatAt: string | null; leaseId: string | null; updatedAt: string }> {
+    const rows = this.db.prepare("SELECT role, status, provider, model, task, error, heartbeat_at, lease_id, updated_at FROM agent_lanes ORDER BY role ASC").all() as Array<{ role: string; status: string; provider: string; model: string; task: string | null; error: string | null; heartbeat_at: string | null; lease_id: string | null; updated_at: string }>;
+    return rows.map((row) => ({ role: row.role, status: row.status, provider: row.provider, model: row.model, task: row.task, error: row.error, heartbeatAt: row.heartbeat_at, leaseId: row.lease_id, updatedAt: row.updated_at }));
   }
 
   enqueueTask(task: { id: string; kind: string; priority: number; payload: unknown; availableAt?: string }): void {

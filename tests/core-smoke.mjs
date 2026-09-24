@@ -309,6 +309,10 @@ test("durable research state and queue survive store reopen", () => {
     first.createProject({ id: "p1", name: "Smoke", competitionId: "local", config: {} });
     first.saveCampaign({ goal: "test", budgetMinutes: 2, status: "running" });
     first.updateAgentLane({ role: "research director", status: "running", provider: "local", model: "test", task: "smoke" });
+    assert.equal(first.acquireAgentLane({ role: "model researcher", leaseId: "worker-a", provider: "local", model: "test", task: "lease" }).acquired, true);
+    assert.equal(first.acquireAgentLane({ role: "model researcher", leaseId: "worker-b", provider: "local", model: "test", task: "duplicate" }).acquired, false);
+    assert.equal(first.heartbeatAgentLane("model researcher", "worker-a"), true);
+    assert.equal(first.releaseAgentLane("model researcher", "worker-a"), true);
     first.enqueueTask({ id: "task-1", kind: "research.cycle", priority: 4, payload: { smoke: true } });
     assert.equal(first.claimNextTask()?.id, "task-1");
     first.updateTask("task-1", "completed");
@@ -316,7 +320,7 @@ test("durable research state and queue survive store reopen", () => {
     const reopened = new ResearchStore(db);
     assert.equal(reopened.project()?.id, "p1");
     assert.equal(reopened.campaign()?.goal, "test");
-    assert.equal(reopened.agentLanes()[0].status, "running");
+    assert.equal(reopened.agentLanes().find((lane) => lane.role === "research director")?.status, "running");
     assert.equal(reopened.queueTasks()[0].status, "completed");
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -2925,8 +2929,8 @@ test("project-local competition manifests replace hardcoded adapters", () => {
 test("included WhestBench manifest resolves its starter-kit workspace", () => {
   const adapter = loadCompetitionAdapter(process.cwd(), "whestbench");
   assert.equal(adapter.workspacePath(process.cwd()), join(process.cwd(), "competitions/whestbench/starterkit"));
-  assert.deepEqual(adapter.baselineCommand(), ["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"]);
-  assert.deepEqual(adapter.experimentCommand(), ["uv", "run", "python", "estimator.py"]);
+  assert.deepEqual(adapter.baselineCommand(), ["uv", "run", "whest", "run", "--estimator", "examples/02_mean_propagation.py", "--dataset", "hf://aicrowd/arc-whestbench-public-2026@v2-phase2", "--split", "mini", "--runner", "subprocess"]);
+  assert.deepEqual(adapter.experimentCommand(), ["uv", "run", "whest", "run", "--estimator", "estimator.py", "--dataset", "hf://aicrowd/arc-whestbench-public-2026@v2-phase2", "--split", "mini", "--runner", "subprocess"]);
 });
 
 test("detected Karpathy autoresearch workspaces get a usable adapter without a hand-written manifest", () => {

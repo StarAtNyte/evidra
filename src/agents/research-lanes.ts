@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { cpus, totalmem } from "node:os";
+import { randomUUID } from "node:crypto";
 import { ResearchStore } from "../core/store.js";
 import type { AgentProvider, CodexWebSearchMode, ExecAgentOptions } from "./codex-exec.js";
 import type { AgentResult } from "../core/types.js";
@@ -680,9 +681,22 @@ export async function runResearchSemanticAuditor(
 }
 
 async function runLane(role: ResearchLaneRole, objective: string, context: Record<string, unknown>, options: ResearchLanesOptions, laneRoute: ResearchLaneRoute): Promise<ResearchLaneReport> {
-  const store = new ResearchStore(options.storePath);
-  store.updateAgentLane({ role, status: "running", provider: laneRoute.provider, model: laneRoute.model, task: objective, error: null });
-  store.close();
+  const leaseId = `${role.replace(/[^a-z0-9]+/gi, "-")}-${randomUUID()}`;
+  const leaseStore = new ResearchStore(options.storePath);
+  const lease = leaseStore.acquireAgentLane({ role, leaseId, provider: laneRoute.provider, model: laneRoute.model, task: objective });
+  leaseStore.close();
+  if (!lease.acquired) {
+    const message = `Lane is already active; refusing duplicate work (${lease.reason ?? "live lease"}).`;
+    return { role, summary: "Lane was not started because another worker owns its lease.", findings: [], recommendations: [], uncertainties: [message], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0, status: "failed", error: message };
+  }
+  const heartbeat = setInterval(() => {
+    try {
+      const store = new ResearchStore(options.storePath);
+      store.heartbeatAgentLane(role, leaseId);
+      store.close();
+    } catch { /* telemetry must not turn a valid lane into a failure */ }
+  }, 15_000);
+  heartbeat.unref();
   options.onProgress?.(`Research lane · ${role} · investigating...`);
   try {
     const toolResults: ResearchToolResult[] = [];
@@ -780,7 +794,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     const report: ResearchLaneReport = { ...parsed, role, status: "completed", ...(options.executeTool ? { toolResults } : {}) };
     const verifiedEvidenceIds = saveLaneEvent(options.storePath, role, report);
     const completed = new ResearchStore(options.storePath);
-    completed.updateAgentLane({ role, status: "idle", provider: report.provider ?? options.provider, model: report.model ?? options.model, task: null, error: null });
+    completed.releaseAgentLane(role, leaseId, "idle");
     completed.close();
     return { ...report, verifiedEvidenceIds };
   } catch (error) {
@@ -788,9 +802,11 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     const report: ResearchLaneReport = { role, summary: "Lane failed before producing a validated report.", findings: [], recommendations: [], uncertainties: [message], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0, status: "failed", error: message };
     saveLaneEvent(options.storePath, role, report);
     const failed = new ResearchStore(options.storePath);
-    failed.updateAgentLane({ role, status: "failed", provider: laneRoute.provider, model: laneRoute.model, task: objective, error: message });
+    failed.releaseAgentLane(role, leaseId, "failed", message);
     failed.close();
     return report;
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 
