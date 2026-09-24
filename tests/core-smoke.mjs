@@ -6907,6 +6907,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.match(dashboardHtml(), /EVIDRA<\/span> \/ DASHBOARD/);
     assert.match(dashboardHtml(), /\/api\/status/);
     assert.match(dashboardHtml(), /id="stages"/);
+    assert.match(dashboardHtml(), /playbook/);
     assert.match(dashboardHtml(), /replace\(\/\[/);
     assert.match(dashboardHtml(), /Read-only local view/);
   } finally { rmSync(root, { recursive: true, force: true }); }
