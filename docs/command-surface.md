@@ -106,7 +106,8 @@ restart does not strand a routine.
 Use `--max-runs N` to pause a routine after N completed runs; omit it (or use
 `--max-runs 0`) for an unlimited routine. Reaching the cap emits
 `routine.max_runs_reached` and requires an explicit resume or configuration
-change before more work can run.
+configuration change before more work can run. Change it with
+`evidra routine max-runs <routine-id> <count>` or `/routine max-runs <id> <count>`.
 
 If a matching event arrives while a routine is already running, Evidra records
 one coalesced pending trigger and schedules the follow-up immediately after the

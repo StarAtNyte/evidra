@@ -2427,6 +2427,14 @@ routine.command("recover").description("Recover routines whose runner lease expi
   store.close();
   console.log(recovered.length ? `Recovered ${recovered.length} stale routine(s): ${recovered.join(", ")}` : "No stale routines found.");
 });
+routine.command("max-runs <id> <count>").description("Change a routine lifetime cap; use 0 for unlimited").action((id: string, count: string) => {
+  const value = Number.parseInt(count, 10);
+  if (!Number.isInteger(value) || value < 0) throw new Error("Routine max-runs must be zero or a positive integer.");
+  const store = new ResearchStore(statePath);
+  const entry = store.setRoutineMaxRuns(id, value === 0 ? null : value);
+  store.close();
+  console.log(`Routine ${entry.id} max runs: ${entry.maxRuns ?? "unlimited"}. Use evidra routine resume ${entry.id} to activate it.`);
+});
 routine.command("run <id>").option("--force", "run immediately even when the interval is not due").description("Run one routine and persist its next scheduled run").action(async (id: string, options: { force?: boolean }) => {
   const script = process.argv[1];
   if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");

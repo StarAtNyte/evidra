@@ -3543,6 +3543,13 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     assert.equal(store.claimRoutine(capped.id, "capped-next", 60_000, new Date(), true), undefined);
     assert.equal(store.routine(capped.id)?.status, "paused");
     assert.equal(store.recentEvents(4).some((event) => event.type === "routine.max_runs_reached" && event.payload?.id === capped.id), true);
+    const raised = store.setRoutineMaxRuns(capped.id, 2);
+    assert.equal(raised.maxRuns, 2);
+    assert.equal(raised.lastError, null);
+    assert.equal(store.setRoutineStatus(capped.id, "active").status, "active");
+    assert.equal(store.claimRoutine(capped.id, "capped-resumed", 60_000, new Date(), true)?.status, "running");
+    store.finishRoutine(capped.id, "capped-resumed", "completed");
+    assert.equal(store.recentEvents(8).some((event) => event.type === "routine.max_runs_updated" && event.payload?.id === capped.id), true);
     const stale = store.createRoutine({ ...routine, id: "routine-stale" });
     assert.equal(store.claimRoutine(stale.id, "runner-stale", -1)?.status, "running");
     assert.deepEqual(store.recoverStaleRoutines(), [stale.id]);

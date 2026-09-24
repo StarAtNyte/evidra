@@ -1578,6 +1578,17 @@ export class ResearchStore {
     return this.routine(id) ?? updated;
   }
 
+  setRoutineMaxRuns(id: string, maxRuns: number | null): ResearchRoutine {
+    const current = this.routine(id);
+    if (!current) throw new Error(`Unknown routine '${id}'.`);
+    if (current.status === "running") throw new Error(`Routine '${id}' is running; change its limit after the current run finishes.`);
+    if (maxRuns !== null && (!Number.isInteger(maxRuns) || maxRuns < 1)) throw new Error("Routine maxRuns must be null or a positive integer.");
+    const updated: ResearchRoutine = { ...current, maxRuns, lastError: null, updatedAt: new Date().toISOString() };
+    this.saveRoutine(updated);
+    this.appendEvent("routine.max_runs_updated", { id, maxRuns });
+    return this.routine(id) ?? updated;
+  }
+
   recoverStaleRoutines(now = new Date()): string[] {
     const rows = this.db.prepare("SELECT id FROM research_routines WHERE status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?").all(now.toISOString()) as Array<{ id: string }>;
     if (!rows.length) return [];
