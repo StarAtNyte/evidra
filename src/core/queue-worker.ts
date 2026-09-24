@@ -85,8 +85,29 @@ export class QueueWorker {
     this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "started", message: `Started ${task.kind} attempt ${task.attempts}` });
     try {
       const result = await this.handler(task, taskAbortController.signal);
-      if (this.store.completeClaimedTask(task.id, this.workerId, "completed", { result })) {
+      const completionPayload = { result };
+      if (this.store.completeClaimedTask(task.id, this.workerId, "completed", completionPayload)) {
         this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "completed", message: "Task completed" });
+      } else {
+        // A completion contract can reject an otherwise successful handler.
+        // Do not leave the ticket owned and running until stale recovery: give
+        // it another bounded attempt, or make the proof failure recoverable.
+        const current = this.store.queueTasks().find((entry) => entry.id === task.id);
+        const audit = this.store.taskCompletionAudit(task.id, completionPayload);
+        if (current?.status === "running" && current.ownerId === this.workerId && !audit.valid) {
+          const message = `Completion proof missing: ${audit.missing.join(", ")}`;
+          if (task.attempts < this.maxAttempts) {
+            const delay = Math.max(0, this.retryDelayMs(task, new Error(message)));
+            const retried = this.store.retryClaimedTask(task.id, this.workerId, { ...(typeof task.payload === "object" && task.payload ? task.payload : {}), lastError: message }, new Date(Date.now() + delay).toISOString());
+            if (retried) this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "progress", message: `Retry scheduled after rejected completion: ${message}`, metadata: { delayMs: delay, missing: audit.missing } });
+          } else {
+            const recovery = queueRecoveryAction(new Error(message));
+            if (this.store.completeClaimedTask(task.id, this.workerId, "failed", { ...(typeof task.payload === "object" && task.payload ? task.payload : {}), error: message, attempts: task.attempts, recovery })) {
+              this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "failed", message, metadata: recovery });
+              this.store.appendEvent("queue.recovery_required", { taskId: task.id, kind: task.kind, attempts: task.attempts, error: message, ...recovery });
+            }
+          }
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

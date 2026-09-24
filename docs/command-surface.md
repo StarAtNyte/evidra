@@ -93,7 +93,9 @@ all declared payload fields are present, evidence references resolve in the
 durable store, and the required activity milestones exist. A rejected
 completion leaves the task running, records `queue.completion.rejected`, and
 adds a blocked activity so another worker or operator can supply the missing
-proof. Failed and cancelled transitions remain available for recovery.
+proof. Local queue workers treat this as a bounded retryable failure and, after
+the retry ceiling, emit the normal recovery action instead of leaving a stale
+live lease. Failed and cancelled transitions remain available for recovery.
 
 Queued work reports `missing`, `waiting`, or `failed` prerequisites. This makes
 the scheduler explainable to an operator and gives recovery controllers a

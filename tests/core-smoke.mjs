@@ -3342,6 +3342,22 @@ test("queue completion contracts reject unsupported claims and accept durable pr
   }
 });
 
+test("queue worker retries rejected completion proof instead of stranding the ticket", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-worker-contract-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.enqueueTask({ id: "worker-contracted", kind: "research.lane", priority: 1, payload: { completionContract: { requiredPayloadKeys: ["result.summary"] } } });
+    const worker = new QueueWorker(store, async () => ({ value: "missing summary" }), { workerId: "worker-contract", maxAttempts: 1, retryDelayMs: () => 0, pollIntervalMs: 20 });
+    await worker.runOnce();
+    const task = store.queueTasks().find((entry) => entry.id === "worker-contracted");
+    assert.equal(task?.status, "failed");
+    assert.equal(store.eventsByType("queue.recovery_required").some((event) => event.payload && typeof event.payload === "object" && event.payload.taskId === "worker-contracted"), true);
+    await worker.stop();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("governance benchmark covers role boundaries and scoped handoffs", () => {
   const report = runGovernanceBenchmark();
   assert.equal(report.failed, 0);
