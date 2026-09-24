@@ -3603,6 +3603,11 @@ test("research lane teams share only cacheable observations within one invocatio
     });
     assert.equal(reports.length, 2);
     assert.equal(calls.get("workspace.files"), 1);
+    const usageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const laneUsage = usageStore.agentLanes().filter((lane) => lane.usedSeconds > 0);
+    assert.equal(laneUsage.length, 2);
+    assert.ok(laneUsage.every((lane) => lane.usageCalls >= 1));
+    usageStore.close();
   } finally {
     if (previousHost === undefined) delete process.env.OLLAMA_HOST;
     else process.env.OLLAMA_HOST = previousHost;

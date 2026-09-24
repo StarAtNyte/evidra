@@ -708,6 +708,18 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     store.close();
     if (budget?.bounded && (budget.remainingSeconds ?? 0) <= 0) throw new Error(`Lane budget exhausted for ${role}; preserving partial evidence and changing route.`);
   };
+  const remainingLaneTimeoutMs = (): number | undefined => {
+    const store = new ResearchStore(options.storePath);
+    const budget = store.agentLaneBudget(role, leaseId);
+    store.close();
+    if (!budget?.bounded || budget.remainingSeconds === null) return options.timeoutMs;
+    return Math.max(1, Math.min(options.timeoutMs ?? 120_000, Math.floor(budget.remainingSeconds * 1_000)));
+  };
+  const recordLaneWork = (startedAt: number): void => {
+    const store = new ResearchStore(options.storePath);
+    store.recordAgentLaneUsage(role, leaseId, (Date.now() - startedAt) / 1_000);
+    store.close();
+  };
   try {
     const toolResults: ResearchToolResult[] = [];
     if (options.executeTool) {
@@ -721,11 +733,14 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         const callId = options.onToolCall?.(`lane:${role}`, call) ?? `${role}-${call.name}-${toolResults.length + 1}`;
         let result: ResearchToolResult = { name: call.name, ok: false, error: "Tool did not return a result.", trust: "permission_boundary" };
         for (let attempt = 1; attempt <= 2; attempt += 1) {
+          const toolStartedAt = Date.now();
           try {
             result = boundLaneToolResult(await options.executeTool(call));
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             result = { name: call.name, ok: false, error: errorMessage, trust: toolFailureTrust(errorMessage) };
+          } finally {
+            recordLaneWork(toolStartedAt);
           }
           options.onToolResult?.(`lane:${role}`, attempt === 1 ? callId : `${callId}:retry`, result);
           if (result.ok || attempt === 2 || !isRetryableAgentError(new Error(result.error ?? ""))) break;
@@ -760,9 +775,10 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
       ensureLaneBudget();
       if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
       attemptedRoutes.add(laneRouteKey({ provider, model }));
+      let modelStartedAt = 0;
       try {
         const bounded = boundResearchContext({ ...context, laneToolResults: toolResults });
-        const modelStartedAt = Date.now();
+        modelStartedAt = Date.now();
         const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective), context: bounded.context, outputSchema: RESEARCH_LANE_OUTPUT_SCHEMA }, {
           provider,
           model,
@@ -770,15 +786,12 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
           reasoningEffort: options.reasoningEffort,
           networkAccessEnabled: options.networkAccessEnabled ?? true,
           webSearchMode: options.webSearchMode ?? "live",
-          timeoutMs: options.timeoutMs,
+          timeoutMs: remainingLaneTimeoutMs() ?? options.timeoutMs,
           cwd: options.cwd,
           sandbox: "read-only",
           onActivity: options.onActivity,
           onAssistant: options.onAssistant,
         }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
-        const usageStore = new ResearchStore(options.storePath);
-        usageStore.recordAgentLaneUsage(role, leaseId, (Date.now() - modelStartedAt) / 1_000);
-        usageStore.close();
         options.onUsage?.(result.usage, result.provider, result.model ?? model, role);
         parsed = { ...ResearchLaneReportSchema.parse(parseJson(result.output)), provider: result.provider, model: result.model ?? model };
       } catch (error) {
@@ -804,6 +817,8 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
           options.onProgress?.(`Research lane · ${role} · retry ${attempt}/2 in ${delayMs / 1000}s...`);
           await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
         }
+      } finally {
+        if (modelStartedAt > 0) recordLaneWork(modelStartedAt);
       }
     }
     if (!parsed) throw lastError instanceof Error ? lastError : new Error("Lane did not produce a validated report.");
