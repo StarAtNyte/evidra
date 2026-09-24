@@ -1,4 +1,5 @@
 import { ResearchStore, type QueuedTask } from "./store.js";
+import { randomUUID } from "node:crypto";
 
 export interface QueueWorkerOptions {
   concurrency?: number;
@@ -21,6 +22,7 @@ export class QueueWorker {
   private readonly pollIntervalMs: number;
   private readonly retryDelayMs: (task: QueuedTask, error: unknown) => number;
   private readonly kinds?: string[];
+  private readonly workerId = `queue-worker-${randomUUID()}`;
   private readonly active = new Set<Promise<void>>();
   private readonly abortController = new AbortController();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -41,7 +43,7 @@ export class QueueWorker {
     do {
       this.store.requeueStaleTasks(this.staleAfterMs, this.maxAttempts);
       while (!this.stopping && this.active.size < this.concurrency) {
-        const task = this.store.claimNextTask(this.kinds);
+        const task = this.store.claimNextTask(this.kinds, this.workerId);
         if (!task) break;
         const job = this.execute(task);
         this.active.add(job);
@@ -68,7 +70,7 @@ export class QueueWorker {
   }
 
   private async execute(task: QueuedTask): Promise<void> {
-    const heartbeat = setInterval(() => { this.store.heartbeatTask(task.id); }, this.heartbeatMs);
+    const heartbeat = setInterval(() => { this.store.heartbeatTask(task.id, this.workerId); }, this.heartbeatMs);
     try {
       const result = await this.handler(task, this.abortController.signal);
       this.store.updateTask(task.id, "completed", { result });

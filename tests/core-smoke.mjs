@@ -3137,6 +3137,18 @@ test("queue heartbeats prevent live long-running work from being requeued", asyn
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue heartbeats are owned by the claiming worker", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-owner-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "owned", kind: "ownership", priority: 1, payload: {} });
+    assert.equal(store.claimNextTask(undefined, "worker-a")?.ownerId, "worker-a");
+    assert.equal(store.heartbeatTask("owned", "worker-b"), false);
+    assert.equal(store.heartbeatTask("owned", "worker-a"), true);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("stale queue recovery stops retrying a task after its attempt budget", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-stale-queue-limit-"));
   const dbPath = join(root, ".sota", "database.sqlite");
