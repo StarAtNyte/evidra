@@ -1389,6 +1389,7 @@ test("campaign checkpoints accept known phases and reject corrupted metadata", (
   assert.equal(nextCampaignCycle(), 0);
   assert.deepEqual(withCampaignCheckpoint({ status: "running" }, "research-lanes", 2, checkpoint.checkpointedAt), { status: "running", ...checkpoint, currentCycle: 2, currentStep: "research-lanes" });
   assert.deepEqual(withCampaignCheckpoint({ status: "running" }, "research-lanes", 2, checkpoint.checkpointedAt, ["task-a", "task-a", "task-b"]), { status: "running", ...checkpoint, currentCycle: 2, currentStep: "research-lanes", activeTaskIds: ["task-a", "task-b"] });
+  assert.equal("activeTaskIds" in withCampaignCheckpoint({ status: "running", activeTaskIds: ["stale-task"] }, "cycle-complete", 3, checkpoint.checkpointedAt), false);
   assert.throws(() => withCampaignCheckpoint({}, "cycle-start", -1), /non-negative integer/);
 });
 

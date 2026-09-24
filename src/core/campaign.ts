@@ -41,7 +41,8 @@ export function withCampaignCheckpoint<T extends object>(campaign: T, step: Camp
   if (!Number.isInteger(cycle) || cycle < 0) throw new Error("Campaign checkpoint cycle must be a non-negative integer.");
   if (!Number.isFinite(Date.parse(checkpointedAt))) throw new Error("Campaign checkpoint timestamp must be a valid date.");
   const boundedTaskIds = [...new Set((activeTaskIds ?? []).filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim().slice(0, 240)))].slice(0, 64);
-  return { ...campaign, currentCycle: cycle, currentStep: step, checkpointedAt, ...(boundedTaskIds.length ? { activeTaskIds: boundedTaskIds } : {}) };
+  const { activeTaskIds: _previousActiveTaskIds, ...campaignWithoutPreviousTasks } = campaign as T & { activeTaskIds?: unknown };
+  return { ...campaignWithoutPreviousTasks, currentCycle: cycle, currentStep: step, checkpointedAt, ...(boundedTaskIds.length ? { activeTaskIds: boundedTaskIds } : {}) } as T & CampaignCheckpoint;
 }
 
 /**
