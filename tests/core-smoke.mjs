@@ -751,6 +751,14 @@ test("agent review scores favor the newest observed role behavior", () => {
   assert.ok(successLast.find((review) => review.role === "adaptive").score > failureLast.find((review) => review.role === "adaptive").score);
 });
 
+test("agent roles can recover trust after a clean recent window", () => {
+  const oldFailure = { payload: { laneReports: [{ role: "recovering", status: "failed", confidence: 0, evidence: ["failure-record"] }] }, quality: { overall: "FAIL" } };
+  const recentSuccess = { payload: { laneReports: [{ role: "recovering", status: "completed", confidence: 1, evidence: ["verified-run"] }] }, quality: { overall: "PASS" } };
+  const reviews = evaluateAgentRoles([...Array.from({ length: 8 }, () => oldFailure), ...Array.from({ length: 20 }, () => recentSuccess)]);
+  assert.equal(reviews.find((review) => review.role === "recovering")?.recommendation, "trusted");
+  assert.equal(reviews.find((review) => review.role === "recovering")?.failed, 8);
+});
+
 test("agent activity journal survives reopen and filters by specialist task", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-agent-activity-"));
   const path = join(root, "state.sqlite");

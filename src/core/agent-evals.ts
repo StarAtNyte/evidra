@@ -45,6 +45,8 @@ type ReviewBucket = {
   weightedPlaybookPasses: number;
   weightedPlaybookPartials: number;
   weightedPlaybookBlocks: number;
+  recentProcessFailures: number;
+  recentPlaybookBlocks: number;
 };
 
 function object(value: unknown): Record<string, unknown> {
@@ -58,6 +60,7 @@ function object(value: unknown): Record<string, unknown> {
  */
 export function evaluateAgentRoles(trajectories: Trajectory[]): AgentRoleReview[] {
   const selected = trajectories.slice(-128);
+  const recentCutoff = Math.max(0, selected.length - 16);
   const buckets = new Map<string, ReviewBucket>();
   for (const [index, trajectory] of selected.entries()) {
     // Durable history is chronological. A bounded exponential decay makes
@@ -71,7 +74,7 @@ export function evaluateAgentRoles(trajectories: Trajectory[]): AgentRoleReview[
     for (const raw of reports) {
       const report = object(raw);
       const role = typeof report.role === "string" && report.role.trim() ? report.role.trim() : "unknown";
-      const bucket = buckets.get(role) ?? { assignments: 0, completed: 0, failed: 0, confidence: 0, evidenceAnchors: 0, processPasses: 0, processWarnings: 0, processFailures: 0, playbookPasses: 0, playbookPartials: 0, playbookBlocks: 0, weightedAssignments: 0, weightedCompleted: 0, weightedConfidence: 0, weightedEvidenceAnchors: 0, weightedProcessPasses: 0, weightedProcessWarnings: 0, weightedPlaybookPasses: 0, weightedPlaybookPartials: 0, weightedPlaybookBlocks: 0 };
+      const bucket = buckets.get(role) ?? { assignments: 0, completed: 0, failed: 0, confidence: 0, evidenceAnchors: 0, processPasses: 0, processWarnings: 0, processFailures: 0, playbookPasses: 0, playbookPartials: 0, playbookBlocks: 0, weightedAssignments: 0, weightedCompleted: 0, weightedConfidence: 0, weightedEvidenceAnchors: 0, weightedProcessPasses: 0, weightedProcessWarnings: 0, weightedPlaybookPasses: 0, weightedPlaybookPartials: 0, weightedPlaybookBlocks: 0, recentProcessFailures: 0, recentPlaybookBlocks: 0 };
       bucket.assignments += 1;
       if (report.status === "failed") bucket.failed += 1;
       else bucket.completed += 1;
@@ -88,6 +91,7 @@ export function evaluateAgentRoles(trajectories: Trajectory[]): AgentRoleReview[
       if (overall === "PASS") bucket.processPasses += 1;
       else if (overall === "FAIL") bucket.processFailures += 1;
       else if (overall === "WARN") bucket.processWarnings += 1;
+      if (index >= recentCutoff && overall === "FAIL") bucket.recentProcessFailures += 1;
       bucket.weightedAssignments += recencyWeight;
       bucket.weightedCompleted += report.status === "failed" ? 0 : recencyWeight;
       bucket.weightedConfidence += (typeof report.confidence === "number" && Number.isFinite(report.confidence) ? Math.max(0, Math.min(1, report.confidence)) : 0) * recencyWeight;
@@ -99,6 +103,7 @@ export function evaluateAgentRoles(trajectories: Trajectory[]): AgentRoleReview[
         if (status === "pass") bucket.weightedPlaybookPasses += recencyWeight;
         else if (status === "partial") bucket.weightedPlaybookPartials += recencyWeight;
         else if (status === "blocked") bucket.weightedPlaybookBlocks += recencyWeight;
+        if (index >= recentCutoff && status === "blocked") bucket.recentPlaybookBlocks += 1;
       }
       buckets.set(role, bucket);
     }
@@ -129,7 +134,7 @@ export function evaluateAgentRoles(trajectories: Trajectory[]): AgentRoleReview[
       score,
       // A role cannot become trusted from self-reported process quality alone:
       // at least one durable evidence anchor per assignment is required.
-      recommendation: bucket.assignments < 2 ? "insufficient-data" : score >= 0.7 && bucket.evidenceAnchors >= bucket.assignments && bucket.processFailures === 0 && bucket.playbookBlocks === 0 ? "trusted" : "needs-review",
+      recommendation: bucket.assignments < 2 ? "insufficient-data" : score >= 0.7 && bucket.evidenceAnchors >= bucket.assignments && bucket.recentProcessFailures === 0 && bucket.recentPlaybookBlocks === 0 ? "trusted" : "needs-review",
     } satisfies AgentRoleReview;
   }).sort((left, right) => right.score - left.score || left.role.localeCompare(right.role));
 }

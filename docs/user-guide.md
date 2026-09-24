@@ -507,7 +507,8 @@ historical observations first, while still labeling them as context rather
 than evidence. This prevents obsolete failures or methods from dominating a
 long-running campaign. Role-review scores use the same bounded recency signal;
 raw assignment and failure counts remain visible, and historical failures
-still prevent an ungrounded role from being promoted silently.
+remain visible while recent process failures and playbook blocks keep trust
+withheld until the role demonstrates a clean recovery window.
 
 `/queue status` includes the durable `research.lane` tickets while specialists
 run. If a worker stops heartbeating, the next controller marks its ticket
