@@ -3571,6 +3571,20 @@ test("task activity history is filtered before the bounded per-task read", () =>
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("task usage history is filtered before the bounded per-task read", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-usage-filter-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "usage-target", kind: "research.lane", priority: 1, payload: {} });
+    store.enqueueTask({ id: "usage-noise", kind: "research.lane", priority: 1, payload: {} });
+    store.recordQueueUsage({ taskId: "usage-target", actorId: "worker-a", inputTokens: 1, outputTokens: 2, provider: "codex", model: "gpt-test" });
+    for (let index = 0; index < 140; index += 1) store.recordQueueUsage({ taskId: "usage-noise", actorId: "worker-b", inputTokens: index, outputTokens: 1 });
+    store.recordQueueUsage({ taskId: "usage-target", actorId: "worker-a", inputTokens: 3, outputTokens: 4, provider: "codex", model: "gpt-test" });
+    assert.deepEqual(store.queueUsage("usage-target", 2).map((entry) => entry.inputTokens), [1, 3]);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue dependencies prevent work from running before prerequisites", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-dependencies-"));
   try {

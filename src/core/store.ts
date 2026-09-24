@@ -1819,9 +1819,20 @@ export class ResearchStore {
   }
 
   queueUsage(taskId?: string, limit = 128): QueueUsage[] {
-    const events = this.eventsByType("queue.usage");
-    return events.flatMap((event) => {
-      const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    const boundedLimit = Math.max(1, Math.min(512, Math.floor(limit)));
+    let rows: Array<{ payload_json: string; created_at: string }>;
+    try {
+      rows = taskId
+        ? this.db.prepare("SELECT payload_json, created_at FROM events WHERE type = 'queue.usage' AND json_extract(payload_json, '$.taskId') = ? ORDER BY id DESC LIMIT ?").all(taskId, boundedLimit) as Array<{ payload_json: string; created_at: string }>
+        : this.db.prepare("SELECT payload_json, created_at FROM events WHERE type = 'queue.usage' ORDER BY id DESC LIMIT ?").all(boundedLimit) as Array<{ payload_json: string; created_at: string }>;
+    } catch {
+      const events = this.eventsByType("queue.usage");
+      rows = events.slice(taskId ? 0 : Math.max(0, events.length - boundedLimit)).filter((event) => !taskId || (event.payload && typeof event.payload === "object" && (event.payload as Record<string, unknown>).taskId === taskId)).slice(-boundedLimit).reverse().map((event) => ({ payload_json: JSON.stringify(event.payload), created_at: event.createdAt }));
+    }
+    return rows.reverse().flatMap((row) => {
+      let raw: unknown;
+      try { raw = JSON.parse(row.payload_json); } catch { return []; }
+      const payload = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
       const id = typeof payload.taskId === "string" ? payload.taskId : "";
       const actorId = typeof payload.actorId === "string" ? payload.actorId : "";
       const inputTokens = Number(payload.inputTokens);
@@ -1830,8 +1841,8 @@ export class ResearchStore {
       const provider = typeof payload.provider === "string" ? payload.provider : null;
       const model = typeof payload.model === "string" ? payload.model : null;
       if (!id || !actorId || !Number.isInteger(inputTokens) || inputTokens < 0 || !Number.isInteger(outputTokens) || outputTokens < 0 || (costUsd !== null && !Number.isFinite(costUsd)) || (taskId && taskId !== id)) return [];
-      return [{ taskId: id, actorId, inputTokens, outputTokens, costUsd, provider, model, createdAt: event.createdAt }];
-    }).slice(-Math.max(1, Math.min(512, Math.floor(limit))));
+      return [{ taskId: id, actorId, inputTokens, outputTokens, costUsd, provider, model, createdAt: row.created_at }];
+    });
   }
 
   /** Refresh a live claim so stale-task recovery cannot duplicate a healthy worker. */
