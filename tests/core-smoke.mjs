@@ -922,6 +922,7 @@ test("coaching progress compares the next role review and remains idempotent", (
     assert.deepEqual(improved[0], { role: "validation scientist", directiveIds: [7], beforeScore: 0.4, afterScore: 0.5, delta: 0.1, verdict: "improved", evidenceAt: "2026-09-25T00:01:00.000Z" });
     store.appendEvent("research.agent.coaching.evaluated", { evidenceAt: "2026-09-25T00:01:00.000Z", outcomes: improved });
     assert.deepEqual(evaluateAgentCoachingProgress(store, [{ role: "validation scientist", assignments: 3, completed: 3, failed: 0, confidence: 0.8, evidenceAnchors: 3, processPasses: 3, processWarnings: 0, processFailures: 0, playbookPasses: 3, playbookPartials: 0, playbookBlocks: 0, playbookRate: 1, score: 0.5, recommendation: "needs-review" }], "2026-09-25T00:01:00.000Z"), []);
+    assert.deepEqual(evaluateAgentCoachingProgress(store, [{ role: "validation scientist", assignments: 4, completed: 4, failed: 0, confidence: 0.9, evidenceAnchors: 4, processPasses: 4, processWarnings: 0, processFailures: 0, playbookPasses: 4, playbookPartials: 0, playbookBlocks: 0, playbookRate: 1, score: 0.8, recommendation: "trusted" }], "2026-09-25T00:02:00.000Z"), []);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

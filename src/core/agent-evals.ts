@@ -182,6 +182,10 @@ export function evaluateAgentCoachingProgress(store: ResearchStore, reviews: rea
   if (!evidenceAt) return [];
   const applied = store.eventsByType("research.agent.coaching.applied", 32).at(-1);
   if (!applied || Date.parse(evidenceAt) <= Date.parse(applied.createdAt)) return [];
+  // One applied coaching batch owns one outcome window. Later trajectories
+  // belong to a future intervention only after another batch is applied.
+  const latestEvaluation = store.eventsByType("research.agent.coaching.evaluated", 1).at(-1);
+  if (latestEvaluation && latestEvaluation.createdAt >= applied.createdAt) return [];
   const alreadyEvaluated = store.eventsByType("research.agent.coaching.evaluated", 64).some((event) => {
     const payload = object(event.payload);
     return payload.evidenceAt === evidenceAt;
