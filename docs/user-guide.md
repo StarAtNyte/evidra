@@ -85,6 +85,10 @@ redacted output. The event stores only a bounded preview, while the hash lets
 repeated observations be compared without treating raw adapter output as
 trusted evidence.
 
+Adapter events also carry the SHA-256 fingerprint of the exact tool manifest
+that produced them. Portable bundles preserve that fingerprint so an
+observation cannot silently be attributed to a later-edited adapter.
+
 Inspect and control the lifecycle without editing the manifest:
 
 ```bash

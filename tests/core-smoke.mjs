@@ -3699,6 +3699,7 @@ test("portable bundles are redacted metadata snapshots with artifact references"
     assert.ok(Array.isArray(bundle.agentSessions));
     assert.ok(Array.isArray(bundle.agentDirectives));
     assert.equal(bundle.externalTools[0].name, "external.bundle_probe");
+    assert.match(bundle.externalToolManifestHash, /^sha256:[a-f0-9]{64}$/);
     assert.equal(bundle.externalToolState["external.bundle_probe"].status, "quarantined");
     assert.ok(Array.isArray(bundle.limitations));
     store.close();
@@ -3837,6 +3838,10 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.equal(adapter.ok, true);
     assert.equal(adapter.trust, "untrusted_content");
     assert.equal(adapter.output.value.echoed.value, "hello");
+    const adapterEventStore = new ResearchStore(db);
+    const adapterEvent = adapterEventStore.eventsByType("research.tool.completed").find((event) => event.payload.name === "external.echo");
+    assert.match(adapterEvent?.payload.manifestHash, /^sha256:[a-f0-9]{64}$/);
+    adapterEventStore.close();
     const adapterDenied = await executeResearchTool({ name: "external.echo", arguments: { value: "hello" } }, { root, storePath: db, autonomy: "safe", role: "benchmark specialist" });
     assert.equal(adapterDenied.ok, false);
     assert.equal(adapterDenied.trust, "permission_boundary");

@@ -21,6 +21,7 @@ export type PortableBundleValidation = {
  * and relative paths make missing files explicit on the receiving machine.
  */
 export function createPortableBundle(store: ResearchStore, root: string): Record<string, unknown> {
+  const externalManifest = loadExternalResearchTools(root);
   const goals = store.phaseGoals().flatMap((entry) => {
     const parsed = PhaseGoalSchema.safeParse(entry.payload);
     return parsed.success ? [parsed.data] : [];
@@ -48,7 +49,8 @@ export function createPortableBundle(store: ResearchStore, root: string): Record
     agentControls: store.agentPauses(),
     agentSessions: store.agentSessions(),
     agentDirectives: store.agentDirectives(),
-    externalTools: loadExternalResearchTools(root).tools,
+    externalTools: externalManifest.tools,
+    externalToolManifestHash: externalManifest.contentHash,
     externalToolState: loadExternalToolState(root),
     events: store.recentEvents(512),
     limitations: [

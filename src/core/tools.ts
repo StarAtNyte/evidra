@@ -116,7 +116,7 @@ export function untrustedContentWarnings(value: unknown): string[] {
   return checks.filter(([, pattern]) => pattern.test(text)).map(([name]) => name);
 }
 
-function recordToolEvent(context: ResearchToolContext, result: ResearchToolResult): void {
+function recordToolEvent(context: ResearchToolContext, result: ResearchToolResult, metadata: Record<string, unknown> = {}): void {
   try {
     const store = new ResearchStore(context.storePath);
     const serializedOutput = result.output === undefined ? undefined : redactSecrets(JSON.stringify(result.output));
@@ -132,6 +132,7 @@ function recordToolEvent(context: ResearchToolContext, result: ResearchToolResul
       error: result.error,
       output,
       outputHash,
+      ...metadata,
     });
     store.close();
   } catch {
@@ -282,7 +283,8 @@ function validateToolArguments(name: string, value: unknown): Record<string, unk
 
 export async function executeResearchTool(call: ResearchToolCall, context: ResearchToolContext): Promise<ResearchToolResult> {
   try {
-    const external = loadExternalResearchTools(context.root).tools.find((tool) => tool.name === call.name);
+    const externalManifest = loadExternalResearchTools(context.root);
+    const external = externalManifest.tools.find((tool) => tool.name === call.name);
     const spec = RESEARCH_TOOLS.find((tool) => tool.name === call.name) ?? (external ? publicExternalSpec(external) : undefined);
     if (!spec) throw new Error(`Unknown research tool: ${call.name}`);
     if (external) {
@@ -613,7 +615,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       toolError = quarantineReason;
     }
     const result = { name: call.name, ok: toolOk, output, trust, ...(toolError ? { error: toolError } : {}), ...(securityWarnings.length ? { securityWarnings } : {}) };
-    recordToolEvent(context, result);
+    recordToolEvent(context, result, external ? { manifestHash: externalManifest.contentHash } : {});
     return result;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

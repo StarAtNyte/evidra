@@ -1,4 +1,5 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { ResearchStore } from "./store.js";
 
@@ -20,7 +21,7 @@ export type ExternalResearchTool = {
   timeoutMs: number;
 };
 
-export type ExternalToolLoadResult = { tools: ExternalResearchTool[]; warnings: string[]; path: string | null };
+export type ExternalToolLoadResult = { tools: ExternalResearchTool[]; warnings: string[]; path: string | null; contentHash: string | null };
 export type ExternalToolStatus = "enabled" | "disabled" | "quarantined";
 export type ExternalToolState = { status: ExternalToolStatus; reason?: string; changedAt: string };
 export type ExternalToolStateMap = Record<string, ExternalToolState>;
@@ -32,14 +33,16 @@ function boundedString(value: unknown, max: number): string | undefined {
 /** Load explicitly declared, argv-only project tools; malformed entries are quarantined as warnings. */
 export function loadExternalResearchTools(root: string): ExternalToolLoadResult {
   const path = resolve(root, MANIFEST_PATH);
-  if (!existsSync(path) || !lstatSync(path).isFile()) return { tools: [], warnings: [], path: null };
+  if (!existsSync(path) || !lstatSync(path).isFile()) return { tools: [], warnings: [], path: null, contentHash: null };
+  let text: string;
+  try { text = readFileSync(path, "utf8"); } catch (error) { return { tools: [], warnings: [`${MANIFEST_PATH} could not be read: ${error instanceof Error ? error.message : String(error)}`], path: MANIFEST_PATH, contentHash: null }; }
+  const contentHash = `sha256:${createHash("sha256").update(text).digest("hex")}`;
   let parsed: unknown;
   try {
-    const text = readFileSync(path, "utf8");
-    if (Buffer.byteLength(text, "utf8") > MAX_MANIFEST_BYTES) return { tools: [], warnings: [`${MANIFEST_PATH} exceeds the ${MAX_MANIFEST_BYTES}-byte limit`], path: MANIFEST_PATH };
+    if (Buffer.byteLength(text, "utf8") > MAX_MANIFEST_BYTES) return { tools: [], warnings: [`${MANIFEST_PATH} exceeds the ${MAX_MANIFEST_BYTES}-byte limit`], path: MANIFEST_PATH, contentHash };
     parsed = JSON.parse(text);
   } catch (error) {
-    return { tools: [], warnings: [`${MANIFEST_PATH} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`], path: MANIFEST_PATH };
+    return { tools: [], warnings: [`${MANIFEST_PATH} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`], path: MANIFEST_PATH, contentHash };
   }
   const entries = parsed && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray((parsed as Record<string, unknown>).tools)
     ? (parsed as { tools: unknown[] }).tools.slice(0, MAX_TOOLS)
@@ -70,7 +73,7 @@ export function loadExternalResearchTools(root: string): ExternalToolLoadResult 
     names.add(name);
     tools.push({ name, description, input, readOnly: value.readOnly === true, cacheable: value.cacheable !== false && value.readOnly === true, command, roles, timeoutMs });
   }
-  return { tools, warnings, path: MANIFEST_PATH };
+  return { tools, warnings, path: MANIFEST_PATH, contentHash };
 }
 
 /** Load operator-owned lifecycle state separately from the project manifest. */
