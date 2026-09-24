@@ -81,10 +81,15 @@ export function agentOrganization(store: ResearchStore): Array<AgentRoleContract
     return { ...contract, reviewRequired: contract.reviewRequired === true, admission: "approved" as const, status: lane?.status ?? "unstarted", health: lane ? agentLaneHealth(lane.status, lane.heartbeatAt) : "unstarted" as const, heartbeatAt: lane?.heartbeatAt ?? null, task: lane?.task ?? null, budgetSeconds: lane?.budgetSeconds ?? null, usedSeconds: lane?.usedSeconds ?? 0, leaseId: lane?.leaseId ?? null };
   });
   const known = new Set(AGENT_ROLE_CONTRACTS.map((contract) => contract.role));
-  const customRoles = [...lanes.keys()].filter((role) => !known.has(role)).sort((left, right) => left.localeCompare(right));
+  const customRoles = [...new Set([
+    ...lanes.keys(),
+    ...store.agentRoleContracts().map((contract) => contract.role),
+    ...store.agentPauses().map((control) => control.role),
+  ])].filter((role) => !known.has(role)).sort((left, right) => left.localeCompare(right));
   return [...builtIn, ...customRoles.map((role) => {
-    const lane = lanes.get(role)!;
-    return { ...agentRoleContract(role, store.agentRoleContract(role)), admission: store.agentRoleAdmissionStatus(role), status: lane.status, health: agentLaneHealth(lane.status, lane.heartbeatAt), heartbeatAt: lane.heartbeatAt, task: lane.task, budgetSeconds: lane.budgetSeconds, usedSeconds: lane.usedSeconds, leaseId: lane.leaseId };
+    const lane = lanes.get(role);
+    const status = lane?.status ?? "unstarted";
+    return { ...agentRoleContract(role, store.agentRoleContract(role)), admission: store.agentRoleAdmissionStatus(role), status, health: lane ? agentLaneHealth(lane.status, lane.heartbeatAt) : "unstarted" as const, heartbeatAt: lane?.heartbeatAt ?? null, task: lane?.task ?? null, budgetSeconds: lane?.budgetSeconds ?? null, usedSeconds: lane?.usedSeconds ?? 0, leaseId: lane?.leaseId ?? null };
   })];
 }
 

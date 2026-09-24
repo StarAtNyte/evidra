@@ -862,6 +862,9 @@ test("custom role contracts persist, shape the organization, and survive reopen"
       reviewRequired: true,
       playbook: ["inspect coordinate provenance", "test spatial split stability", "report unresolved geographic confounds"],
     }, "test contract");
+    const restoredOrganization = agentOrganization(store).find((entry) => entry.role === "geospatial specialist");
+    assert.equal(restoredOrganization?.status, "unstarted");
+    assert.equal(restoredOrganization?.parentRole, "validation scientist");
     store.updateAgentLane({ role: "geospatial specialist", status: "idle", provider: "remote", model: "bench", task: "spatial audit" });
     const saved = store.agentRoleContract("geospatial specialist");
     assert.equal(saved?.parentRole, "validation scientist");
