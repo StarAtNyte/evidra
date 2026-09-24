@@ -3558,6 +3558,18 @@ test("queue dependency cycles are rejected before they deadlock the scheduler", 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue priority aging prevents long-waiting work from starving", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-aging-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    store.enqueueTask({ id: "fresh-priority", kind: "research.lane", priority: 2, payload: {} });
+    store.enqueueTask({ id: "waiting-background", kind: "research.lane", priority: 1, payload: {}, availableAt: twoHoursAgo });
+    assert.equal(store.claimNextTask(["research.lane"])?.id, "waiting-background");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("campaign budget cancellation stops only matching queued work and records why", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-budget-queue-cancel-"));
   try {

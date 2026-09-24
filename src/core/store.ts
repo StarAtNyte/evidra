@@ -1679,10 +1679,14 @@ export class ResearchStore {
   claimNextTask(kinds?: string[], ownerId?: string): QueuedTask | undefined {
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
+      // Preserve explicit priority while giving long-waiting work a bounded
+      // boost. One point per hour, capped at three, prevents a steady stream
+      // of newer high-priority tickets from starving durable background work.
+      const order = "(priority + MIN(3.0, MAX(0.0, (julianday(?) - julianday(available_at)) * 24.0))) DESC, available_at ASC";
       const query = kinds?.length
-        ? `SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ? AND kind IN (${kinds.map(() => "?").join(",")}) ORDER BY priority DESC, available_at ASC LIMIT 1`
-        : "SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ? ORDER BY priority DESC, available_at ASC LIMIT 1";
-      const rows = (kinds?.length ? this.db.prepare(query.replace("LIMIT 1", "")).all(now, ...kinds) : this.db.prepare(query.replace("LIMIT 1", "")).all(now)) as Array<{ id: string }>;
+        ? `SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ? AND kind IN (${kinds.map(() => "?").join(",")}) ORDER BY ${order} LIMIT 1`
+        : `SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ? ORDER BY ${order} LIMIT 1`;
+      const rows = (kinds?.length ? this.db.prepare(query.replace("LIMIT 1", "")).all(now, ...kinds, now) : this.db.prepare(query.replace("LIMIT 1", "")).all(now, now)) as Array<{ id: string }>;
       const row = rows.find((candidate) => this.taskDependenciesReady(candidate.id));
       if (!row) return undefined;
       this.db.prepare("UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, owner_id = ?, updated_at = ? WHERE id = ? AND status = 'queued'").run(now, ownerId ?? null, now, row.id);

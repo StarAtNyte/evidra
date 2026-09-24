@@ -514,6 +514,10 @@ withheld until the role demonstrates a clean recovery window.
 run. If a worker stops heartbeating, the next controller marks its ticket
 failed with recovery metadata before launching replacement work.
 
+Queue checkout preserves declared priority but adds a capped waiting-time boost
+(one priority point per hour, up to three points). This keeps explicit urgent
+work ahead while ensuring durable background tasks eventually receive a turn.
+
 For a browser view of the active workspace, run `evidra dashboard --port 4310`
 and open `http://127.0.0.1:4310`. It is read-only, localhost-bound, and polls
 the same durable state used by the TUI.

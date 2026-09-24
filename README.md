@@ -300,7 +300,7 @@ Implemented today:
 - independent durable phase machines for Research and Challenge campaigns in the same project;
 - bounded research-director tool loop;
 - workspace file/search/read, Git status, safe shell, data audit, artifact checksum/JSON audit, source retrieval, validation-policy, and report tools;
-- durable queue with retries, stale-task recovery, bounded concurrency, and visible queued prompts;
+- durable queue with retries, stale-task recovery, bounded concurrency, visible queued prompts, and capped priority aging so background work cannot starve indefinitely;
 - typed exhausted-queue recovery: authentication, dependency, sandbox, data, resource, timeout, and route failures produce auditable next actions instead of dead-end errors;
 - ownership-aware queue checkout: each worker gets a durable identity, only the claimant can heartbeat a task, and stale claims are safely reclaimable;
 - goal-aligned queue ancestry: tasks can carry a phase-goal ID and parent-task ID, making autonomous decomposition traceable from mission to work item;
