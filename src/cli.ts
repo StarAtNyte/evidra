@@ -949,9 +949,10 @@ agents.command("recover").description("Reclaim internal agent leases and special
   const store = new ResearchStore(statePath);
   const tickets = store.staleLaneTickets();
   const roles = store.staleAgentLanes();
-  if (tickets.length || roles.length) store.appendEvent("research.agent.recovery.completed", { tickets, roles, source: "operator-cli" });
+  const directives = store.recoverStaleAgentDirectives();
+  if (tickets.length || roles.length || directives.length) store.appendEvent("research.agent.recovery.completed", { tickets, roles, directives, source: "operator-cli" });
   store.close();
-  console.log(`Recovered ${roles.length} stale agent lease(s) and ${tickets.length} stale specialist ticket(s).${roles.length || tickets.length ? `\nRoles  ${roles.join(", ") || "none"}\nTickets ${tickets.join(", ") || "none"}` : ""}`);
+  console.log(`Recovered ${roles.length} stale agent lease(s), ${tickets.length} stale specialist ticket(s), and ${directives.length} stale directive(s).${roles.length || tickets.length || directives.length ? `\nRoles      ${roles.join(", ") || "none"}\nTickets    ${tickets.join(", ") || "none"}\nDirectives ${directives.join(", ") || "none"}` : ""}`);
 });
 agents.command("message <role> <message>").description("Queue a durable directive for one specialist role").action((role: string, message: string) => {
   const store = new ResearchStore(statePath);

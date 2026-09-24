@@ -1420,6 +1420,16 @@ export class ResearchStore {
     });
   }
 
+  /** Resolve stale delivered handoffs as failed recovery records; callers can enqueue a changed route. */
+  recoverStaleAgentDirectives(maxAgeMs = 300_000, now = Date.now()): number[] {
+    const stale = this.staleAgentDirectives(maxAgeMs, now);
+    for (const entry of stale) {
+      this.recordAgentDirectiveOutcome(entry.directive.id, entry.directive.role, "failed", `Recovered stale handoff: ${entry.reason}. Enqueue a changed route before retrying.`);
+    }
+    if (stale.length) this.appendEvent("agent.directive.recovery.completed", { directiveIds: stale.map((entry) => entry.directive.id), source: "operator" });
+    return stale.map((entry) => entry.directive.id);
+  }
+
   pendingAgentDirectives(role?: string, scopeKey?: string | null): AgentDirective[] {
     return this.agentDirectives(role).filter((directive) => directive.appliedAt === null && directive.cancelledAt === null && (scopeKey === undefined || directive.scopeKey === null || directive.scopeKey === (scopeKey?.trim() || null)));
   }

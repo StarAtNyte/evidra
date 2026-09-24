@@ -3760,9 +3760,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const tickets = store.staleLaneTickets();
       const roles = store.staleAgentLanes();
-      if (tickets.length || roles.length) store.appendEvent("research.agent.recovery.completed", { tickets, roles, source: "operator-tui" });
+      const directives = store.recoverStaleAgentDirectives();
+      if (tickets.length || roles.length || directives.length) store.appendEvent("research.agent.recovery.completed", { tickets, roles, directives, source: "operator-tui" });
       store.close();
-      append("assistant", `Recovered ${roles.length} stale agent lease(s) and ${tickets.length} stale specialist ticket(s).${roles.length || tickets.length ? `\nRoles  ${roles.join(", ") || "none"}\nTickets ${tickets.join(", ") || "none"}` : ""}`);
+      append("assistant", `Recovered ${roles.length} stale agent lease(s), ${tickets.length} stale specialist ticket(s), and ${directives.length} stale directive(s).${roles.length || tickets.length || directives.length ? `\nRoles      ${roles.join(", ") || "none"}\nTickets    ${tickets.join(", ") || "none"}\nDirectives ${directives.join(", ") || "none"}` : ""}`);
       return;
     }
     const messageAgentMatch = request.match(/^\/agents\s+message\s+(.+?)\s+--\s+(.+)$/i);
