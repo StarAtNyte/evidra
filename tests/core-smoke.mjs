@@ -558,10 +558,12 @@ test("approval inbox unifies pending work without mutating any gate", () => {
   try {
     const store = new ResearchStore(join(root, "state.sqlite"));
     store.saveExperiment({ id: "proposal-1", payload: { status: "proposed", hypothesisId: "hyp-1" } });
+    store.savePhaseGoal({ id: "phase-1", phase: "validation", status: "blocked", payload: { title: "Validation blocked", objective: "resolve the evaluator issue" } });
     store.saveSubmission({ id: "bundle-1", experimentId: "exp-1", path: join(root, "bundle"), status: "prepared" });
     store.beginExternalAction({ id: "submission:bundle-1", kind: "competition_submission", fingerprint: "fp", payload: { bundle: "bundle-1" } });
     const items = approvalInbox(store);
     assert.deepEqual(items.map((item) => [item.kind, item.id, item.status]), [
+      ["phase-goal", "phase-1", "blocked"],
       ["experiment", "proposal-1", "pending"],
       ["submission", "bundle-1", "pending"],
       ["external-action", "submission:bundle-1", "in_flight"],

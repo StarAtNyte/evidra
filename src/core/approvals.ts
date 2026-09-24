@@ -1,7 +1,7 @@
 import type { ResearchStore } from "./store.js";
 
 export type ApprovalInboxItem = {
-  kind: "experiment" | "submission" | "external-action";
+  kind: "experiment" | "submission" | "external-action" | "phase-goal";
   id: string;
   status: string;
   next: string;
@@ -15,6 +15,12 @@ export type ApprovalInboxItem = {
  */
 export function approvalInbox(store: ResearchStore): ApprovalInboxItem[] {
   const items: ApprovalInboxItem[] = [];
+  for (const goal of store.phaseGoals()) {
+    if (goal.status === "blocked") {
+      const payload = goal.payload as { title?: unknown; objective?: unknown };
+      items.push({ kind: "phase-goal", id: goal.id, status: "blocked", next: "/resume", detail: `${typeof payload.title === "string" ? payload.title : goal.phase}${typeof payload.objective === "string" ? ` · ${payload.objective}` : ""}` });
+    }
+  }
   for (const experiment of store.experiments()) {
     const payload = experiment.payload as { status?: unknown; hypothesisId?: unknown };
     if (payload.status === "proposed") {

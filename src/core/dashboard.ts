@@ -1,6 +1,7 @@
 import { redactStructured } from "./redaction.js";
 import { phaseGoalsForMode, researchStageProgress } from "./phase-goals.js";
 import { PhaseGoalSchema } from "./types.js";
+import { approvalInbox } from "./approvals.js";
 import type { ResearchStore } from "./store.js";
 
 /** Build a bounded, secret-redacted read model for the local dashboard. */
@@ -31,7 +32,7 @@ export function dashboardSnapshot(store: ResearchStore): Record<string, unknown>
     phases,
     agents: store.agentLanes().slice(0, 24).map((agent) => ({ ...agent, leaseId: agent.leaseId ? `${agent.leaseId.slice(0, 12)}…` : null })),
     routines: store.routines().slice(0, 24).map((routine) => ({ id: routine.id, name: routine.name, mode: routine.mode, status: routine.status, nextRunAt: routine.nextRunAt, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult, lastError: routine.lastError, runCount: routine.runCount, leaseId: routine.leaseId ? `${routine.leaseId.slice(0, 12)}…` : null, recentRuns: store.routineRuns(routine.id).slice(0, 3).map((run) => ({ status: run.status, startedAt: run.startedAt, finishedAt: run.finishedAt, exitCode: run.exitCode, error: run.error })) })),
-    approvals: { proposedExperiments: store.experiments().filter((entry) => (entry.payload as { status?: unknown }).status === "proposed").slice(0, 24).map((entry) => entry.id), preparedSubmissions: store.submissions().filter((entry) => entry.status === "prepared").slice(0, 24).map((entry) => entry.id), unresolvedExternalActions: store.externalActions().filter((entry) => entry.status === "unknown" || entry.status === "in_flight").slice(0, 24).map((entry) => ({ id: entry.id, kind: entry.kind, status: entry.status })) },
+    approvals: approvalInbox(store).slice(0, 48),
     queue: store.queueTasks().slice(0, 40).map((task) => ({ id: task.id, kind: task.kind, priority: task.priority, status: task.status, attempts: task.attempts, claimedAt: task.claimedAt, ownerId: task.ownerId ? `${task.ownerId.slice(0, 12)}…` : null, goalId: task.goalId, parentTaskId: task.parentTaskId, readiness: store.taskReadiness(task.id), updatedAt: task.updatedAt })),
     experiments: experiments.slice(0, 40).map((entry) => {
       const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as Record<string, unknown> : {};
@@ -68,7 +69,7 @@ function render(d){
  document.getElementById('phases').innerHTML=(d.phases||[]).map(p=>row(esc(p.name||p.id),status(p.status))).join('')||empty;
  document.getElementById('agents').innerHTML=(d.agents||[]).map(a=>row(esc(a.role),status(a.status)+(a.leaseId?' · '+esc(a.leaseId)+' · '+age(a.heartbeatAt):'')+(a.budgetSeconds!==null&&a.budgetSeconds!==undefined?' · '+Math.round(a.usedSeconds||0)+'/'+Math.round(a.budgetSeconds)+'s':''))).join('')||empty;
  document.getElementById('routines').innerHTML=(d.routines||[]).map(r=>row(esc(r.name)+' · '+esc(r.mode),status(r.status)+' · next '+esc(r.nextRunAt)+' · '+esc(r.runCount)+' run'+(r.runCount===1?'':'s')+(r.lastResult?' · last '+esc(r.lastResult):'')+(r.lastError?' · '+esc(r.lastError):'')+(r.recentRuns?.length?' · history '+r.recentRuns.map(x=>esc(x.status)).join(' → '):''))).join('')||empty;
- const a=d.approvals||{}; document.getElementById('approvals').innerHTML=[...(a.proposedExperiments||[]).map(x=>row('experiment '+esc(x),'<span class="pill pending">pending</span> · run approval')), ...(a.preparedSubmissions||[]).map(x=>row('submission '+esc(x),'<span class="pill pending">pending</span> · approve bundle')), ...(a.unresolvedExternalActions||[]).map(x=>row(esc(x.id),status(x.status)+' · reconcile '+esc(x.kind)))].join('')||empty;
+ document.getElementById('approvals').innerHTML=(d.approvals||[]).map(a=>row(esc(a.kind)+' · '+esc(a.id),status(a.status)+' · '+esc(a.detail)+' · next '+esc(a.next))).join('')||empty;
  document.getElementById('queue').innerHTML=(d.queue||[]).map(q=>row(esc(q.kind)+' · '+esc(q.id),status(q.status)+' · '+(q.ownerId?esc(q.ownerId):'unclaimed')+' · '+esc(q.attempts)+' attempt'+(q.attempts===1?'':'s')+(q.goalId?' · goal '+esc(q.goalId):'')+readiness(q))).join('')||empty;
  const ex=(d.experiments||[]).slice(0,20).map(e=>row('experiment '+e.id,status(e.status))).join(''); const ru=(d.runs||[]).slice(0,20).map(r=>row('run '+r.id,status(r.status))).join(''); document.getElementById('work').innerHTML=ex+ru||empty;
  document.getElementById('events').textContent=(d.events||[]).map(e=>new Date(e.createdAt).toLocaleTimeString()+'  '+e.type).join('\n')||'Nothing recorded yet.';
