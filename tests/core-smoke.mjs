@@ -75,7 +75,7 @@ import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperi
 import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, createLaneToolExecutor, laneHandoffBoard, lanePrompt, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneTeamSize, researchLiteratureQueries, roleMemoryFromTrajectories, runResearchLanes, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
-import { campaignAgentTokens, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "../dist/core/usage.js";
+import { agentBudgetLedger, campaignAgentTokens, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { assessForecast, summarizeForecastAssessments } from "../dist/core/forecast-calibration.js";
@@ -4238,6 +4238,21 @@ test("campaign token usage isolates durable campaign boundaries", () => {
     { payload: { campaignStartedAt: "campaign-b", inputTokens: 100, outputTokens: 100 } },
     { payload: { campaignStartedAt: "campaign-a", inputTokens: 3, outputTokens: 4 } },
   ], "campaign-a"), 24);
+});
+
+test("agent budget ledger exposes warning, exhaustion, and per-role attribution", () => {
+  const events = [
+    { payload: { campaignStartedAt: "campaign-a", role: "critic", provider: "codex", model: "gpt", inputTokens: 60, outputTokens: 20 } },
+    { payload: { campaignStartedAt: "campaign-a", role: "model researcher", provider: "codex", model: "gpt", inputTokens: 10, outputTokens: 10, reasoningOutputTokens: 10 } },
+    { payload: { campaignStartedAt: "campaign-b", role: "critic", inputTokens: 1_000, outputTokens: 1_000 } },
+  ];
+  const warning = agentBudgetLedger(events, "campaign-a", 120);
+  assert.equal(warning.usedTokens, 110);
+  assert.equal(warning.status, "warning");
+  assert.equal(warning.remainingTokens, 10);
+  assert.equal(warning.byRole[0].role, "critic");
+  assert.equal(agentBudgetLedger(events, "campaign-a", 100).status, "exhausted");
+  assert.equal(agentBudgetLedger(events, "campaign-a", 0).status, "unlimited");
 });
 
 test("Codex model responses normalize reasoning-effort objects", () => {

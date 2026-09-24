@@ -33,6 +33,16 @@ export interface AgentUsageBucket extends AgentUsageSummary {
   model: string;
 }
 
+export interface AgentBudgetLedger {
+  budgetTokens: number | null;
+  usedTokens: number;
+  remainingTokens: number | null;
+  utilization: number | null;
+  status: "unlimited" | "healthy" | "warning" | "exhausted";
+  warningThreshold: number;
+  byRole: AgentUsageBucket[];
+}
+
 /** Count the durable model tokens attributed to one campaign start boundary. */
 export function campaignAgentTokens(events: Array<{ payload: unknown }>, campaignStartedAt: string): number {
   const scoped = events.filter((event) => {
@@ -41,6 +51,21 @@ export function campaignAgentTokens(events: Array<{ payload: unknown }>, campaig
   });
   const usage = summarizeAgentUsage(scoped);
   return usage.inputTokens + usage.outputTokens + usage.reasoningOutputTokens;
+}
+
+/** Build one consistent campaign budget ledger for CLI, TUI, and dashboard. */
+export function agentBudgetLedger(events: Array<{ payload: unknown }>, campaignStartedAt: string, budgetTokens: number | null | undefined, warningThreshold = 0.8): AgentBudgetLedger {
+  const scoped = events.filter((event) => {
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    return payload.campaignStartedAt === campaignStartedAt;
+  });
+  const usage = summarizeAgentUsage(scoped);
+  const usedTokens = usage.inputTokens + usage.outputTokens + usage.reasoningOutputTokens;
+  const budget = typeof budgetTokens === "number" && Number.isFinite(budgetTokens) && budgetTokens > 0 ? Math.floor(budgetTokens) : null;
+  const threshold = Math.min(0.99, Math.max(0.5, Number.isFinite(warningThreshold) ? warningThreshold : 0.8));
+  const utilization = budget === null ? null : usedTokens / budget;
+  const status = budget === null ? "unlimited" : usedTokens >= budget ? "exhausted" : (utilization ?? 0) >= threshold ? "warning" : "healthy";
+  return { budgetTokens: budget, usedTokens, remainingTokens: budget === null ? null : Math.max(0, budget - usedTokens), utilization, status, warningThreshold: threshold, byRole: summarizeAgentUsageBy(scoped) };
 }
 
 function usageNumber(payload: Record<string, unknown>, key: string): number {

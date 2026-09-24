@@ -5,7 +5,7 @@ import { approvalInbox } from "./approvals.js";
 import { goalAlignment } from "./goal-alignment.js";
 import { agentOrganization } from "./agent-organization.js";
 import { evaluateAgentRoles } from "./agent-evals.js";
-import { summarizeAgentUsageBy } from "./usage.js";
+import { agentBudgetLedger, summarizeAgentUsageBy } from "./usage.js";
 import type { ResearchStore } from "./store.js";
 
 /** Build a bounded, secret-redacted read model for the local dashboard. */
@@ -25,6 +25,9 @@ export function dashboardSnapshot(store: ResearchStore): Record<string, unknown>
     const parsed = PhaseGoalSchema.safeParse(entry.payload);
     return parsed.success ? [parsed.data] : [];
   });
+  const agentEvents = store.eventsByType("research.agent.usage");
+  const campaignStartedAt = campaign && typeof (campaign as { startedAt?: unknown }).startedAt === "string" ? (campaign as { startedAt: string }).startedAt : "";
+  const agentBudget = campaignStartedAt ? agentBudgetLedger(agentEvents, campaignStartedAt, typeof (campaign?.runtime as { agentTokenBudget?: unknown } | undefined)?.agentTokenBudget === "number" ? (campaign?.runtime as { agentTokenBudget: number }).agentTokenBudget : null) : agentBudgetLedger([], "", null);
   const snapshot = {
     generatedAt: new Date().toISOString(),
     project: store.project() ?? null,
@@ -47,7 +50,8 @@ export function dashboardSnapshot(store: ResearchStore): Record<string, unknown>
       };
     }),
     agentActivity: store.agentActivities({ limit: 32 }).map((activity) => ({ role: activity.role, taskId: activity.taskId, kind: activity.kind, message: activity.message, createdAt: activity.createdAt })),
-    agentUsage: summarizeAgentUsageBy(store.eventsByType("research.agent.usage")).slice(0, 24),
+    agentUsage: summarizeAgentUsageBy(agentEvents).slice(0, 24),
+    agentBudget,
     routines: store.routines().slice(0, 24).map((routine) => ({ id: routine.id, name: routine.name, mode: routine.mode, status: routine.status, nextRunAt: routine.nextRunAt, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult, lastError: routine.lastError, runCount: routine.runCount, leaseId: routine.leaseId ? `${routine.leaseId.slice(0, 12)}…` : null, recentRuns: store.routineRuns(routine.id).slice(0, 3).map((run) => ({ status: run.status, startedAt: run.startedAt, finishedAt: run.finishedAt, exitCode: run.exitCode, error: run.error })) })),
     approvals: approvalInbox(store).slice(0, 48),
     alignment: goalAlignment(store),
@@ -81,7 +85,7 @@ const readiness=q=>{const r=q.readiness;if(!r||r.ready)return '';const reasons=[
 function render(d){
  document.getElementById('updated').textContent='Updated '+new Date(d.generatedAt).toLocaleTimeString();
  const c=d.counts||{}; document.getElementById('stats').innerHTML=[['Hypotheses',c.hypotheses],['Experiments',c.experiments],['Runs',c.runs],['Sources',c.sources],['Claims',c.claims],['Artifacts',c.artifacts],['Decisions',c.decisions],['Integrity',d.integrity?.status||'—']].map(x=>'<div class="card"><div class="label">'+x[0]+'</div><div class="value">'+esc(x[1])+'</div></div>').join('');
- const campaign=d.campaign; document.getElementById('campaign').innerHTML=campaign?row('Status',status(campaign.status))+row('Mode',esc(campaign.runtime?.mode||d.scheduler?.mode||'research'))+row('Goal',esc(campaign.goal))+row('Budget',esc(campaign.budgetMinutes)+' min'):empty;
+ const campaign=d.campaign; const ab=d.agentBudget||{}; const agentBudgetText=ab.budgetTokens?esc(ab.usedTokens)+' / '+esc(ab.budgetTokens)+' tokens · '+status(ab.status):esc(ab.status||'unlimited'); document.getElementById('campaign').innerHTML=campaign?row('Status',status(campaign.status))+row('Mode',esc(campaign.runtime?.mode||d.scheduler?.mode||'research'))+row('Goal',esc(campaign.goal))+row('Budget',esc(campaign.budgetMinutes)+' min')+row('Agent tokens',agentBudgetText):empty;
  const al=d.alignment||{}; document.getElementById('campaign').innerHTML+=(al.status?row('Alignment',status(al.status)+' · '+esc(Math.round((al.score||0)*100))+'%'):'')+(al.checks||[]).filter(x=>x.status!=='pass').map(x=>row(esc(x.id),status(x.status)+' · '+esc(x.detail))).join('');
  document.getElementById('stages').innerHTML=(d.stages||[]).map(s=>row(esc(s.stage)+' · '+esc(s.activePhase||'ready'),status(s.status)+' '+esc(s.completed)+'/'+esc(s.total))).join('')||empty;
  document.getElementById('phases').innerHTML=(d.phases||[]).map(p=>row(esc(p.name||p.id),status(p.status))).join('')||empty;
