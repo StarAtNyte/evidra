@@ -201,6 +201,8 @@ export interface ResearchLanesOptions {
   laneBudgetMs?: number;
   /** Durable phase goal carried by the specialist ticket. */
   goalId?: string | null;
+  /** Durable parent cycle ticket for hierarchical campaign tracing. */
+  parentTaskId?: string | null;
   /** Collaboration scheduler. Non-safe teams default to asynchronous completion-driven hand-offs. */
   executionMode?: "waves" | "asynchronous";
   autonomy?: AutonomyLevel;
@@ -545,6 +547,7 @@ function openReviewTicket(options: ResearchLanesOptions, role: string, objective
     kind: "research.review",
     priority: 8,
     goalId: options.goalId ?? null,
+    parentTaskId: options.parentTaskId ?? null,
     payload: { role, objective, ownerId },
   });
   const claimed = ticketStore.claimTask(id, ["research.review"], ownerId);
@@ -763,7 +766,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
   try {
     const ticketStore = new ResearchStore(options.storePath);
     try {
-      ticketStore.enqueueTask({ id: laneTaskId, kind: "research.lane", priority: 6, goalId: options.goalId ?? null, payload: { role, objective, leaseId, provider: laneRoute.provider, model: laneRoute.model } });
+      ticketStore.enqueueTask({ id: laneTaskId, kind: "research.lane", priority: 6, goalId: options.goalId ?? null, parentTaskId: options.parentTaskId ?? null, payload: { role, objective, leaseId, provider: laneRoute.provider, model: laneRoute.model } });
       ticket = ticketStore.claimTask(laneTaskId, ["research.lane"], leaseId);
     } finally {
       ticketStore.close();

@@ -962,7 +962,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     return observation;
   };
 
-  const runResearchCycle = async (objective: string, campaign?: ResearchCampaign): Promise<{ text: string; goalStatus: "active" | "blocked" | "met"; decision: "inspect" | "propose" | "run" | "replicate" | "stop" }> => {
+  const runResearchCycle = async (objective: string, campaign?: ResearchCampaign, parentTaskId?: string): Promise<{ text: string; goalStatus: "active" | "blocked" | "met"; decision: "inspect" | "propose" | "run" | "replicate" | "stop" }> => {
     // A resumed campaign owns its model route. Keep permissions and limit
     // policy terminal-scoped, however: a previous session must never restore
     // YOLO authority into a fresh terminal.
@@ -1163,6 +1163,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         peerLaneBoard,
         agentRoleReviews,
         goalId: phaseGoal?.id ?? null,
+        parentTaskId: parentTaskId ?? null,
       }, {
         provider: config.provider,
         model: config.model,
@@ -1219,6 +1220,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
             priorLaneReports: initialLaneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
             agentRoleReviews,
             goalId: phaseGoal?.id ?? null,
+            parentTaskId: parentTaskId ?? null,
           },
           {
             provider: config.provider,
@@ -1305,6 +1307,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         storePath: join(root, ".sota", "database.sqlite"),
         maxParallel: 1,
         autonomy: config.autonomy,
+        goalId: phaseGoal?.id ?? null,
+        parentTaskId: parentTaskId ?? null,
         executeTool: (call) => executeResearchTool(call, {
           root,
           storePath: join(root, ".sota", "database.sqlite"),
@@ -1336,6 +1340,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         storePath: join(root, ".sota", "database.sqlite"),
         maxParallel: 1,
         autonomy: config.autonomy,
+        goalId: phaseGoal?.id ?? null,
+        parentTaskId: parentTaskId ?? null,
         executeTool: (call) => executeResearchTool(call, {
           root,
           storePath: join(root, ".sota", "database.sqlite"),
@@ -2228,7 +2234,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           ? `\n\nThis is bounded retry ${task.attempts}. The previous attempt failed with: ${payload.lastError}\nDo not blindly repeat the failed route; inspect the failure evidence and choose a different, lower-risk path if appropriate.`
           : "";
         if (retryContext) queueStore.appendEvent("research.cycle.retrying", { taskId: task.id, attempt: task.attempts, error: payload.lastError });
-        cycle = await runResearchCycle(`${payload.objective ?? objective}${retryContext}`, campaign);
+        cycle = await runResearchCycle(`${payload.objective ?? objective}${retryContext}`, campaign, queueTaskId);
         return cycle;
       }, { concurrency: 1, maxAttempts: 3, kinds: ["research.cycle"] });
       await worker.runOnce();
