@@ -464,6 +464,46 @@ export function lanePrompt(
     "Recommendations must be testable and should state what would falsify them. For every material uncertainty or disagreement, propose a concrete discriminating test. A bounded prior-peer board may be present in the context: use it to challenge, extend, or explicitly reject earlier findings, but never treat it as stronger than primary evidence.";
 }
 
+/**
+ * Project durable trajectory reports into private role memory. This is
+ * procedural context, not evidence: every entry is labeled historical so a
+ * specialist must re-check it against current observations before relying on
+ * it. Keeping this separate from the shared board prevents one role's stale
+ * conclusions from becoming universal consensus.
+ */
+export function roleMemoryFromTrajectories(
+  trajectories: ReadonlyArray<{ id: string; payload: unknown; quality: unknown }>,
+  role: string,
+  limit = 3,
+): Array<Record<string, unknown>> {
+  const bounded = Math.max(1, Math.min(8, Math.floor(limit)));
+  const memory: Array<Record<string, unknown>> = [];
+  for (const trajectory of trajectories) {
+    const payload = trajectory.payload && typeof trajectory.payload === "object" && !Array.isArray(trajectory.payload)
+      ? trajectory.payload as Record<string, unknown>
+      : {};
+    const reports = Array.isArray(payload.laneReports) ? payload.laneReports : [];
+    const report = reports.find((candidate) => candidate && typeof candidate === "object" && !Array.isArray(candidate) && (candidate as { role?: unknown }).role === role) as Record<string, unknown> | undefined;
+    if (!report) continue;
+    const quality = trajectory.quality && typeof trajectory.quality === "object" && !Array.isArray(trajectory.quality)
+      ? trajectory.quality as Record<string, unknown>
+      : {};
+    memory.push({
+      historical: true,
+      trajectoryId: trajectory.id,
+      quality: typeof quality.overall === "string" ? quality.overall : "not-evaluated",
+      status: typeof report.status === "string" ? report.status : "unknown",
+      summary: typeof report.summary === "string" ? report.summary.slice(0, 900) : "",
+      findings: boundedStrings(report.findings, 4, 500),
+      recommendations: boundedStrings(report.recommendations, 3, 500),
+      uncertainties: boundedStrings(report.uncertainties, 3, 400),
+      discriminatingTests: boundedStrings(report.discriminatingTests, 3, 400),
+    });
+    if (memory.length >= bounded) break;
+  }
+  return memory;
+}
+
 function boundedStrings(value: unknown, limit: number, itemLimit: number): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim().slice(0, itemLimit)).slice(0, limit)
@@ -970,6 +1010,10 @@ export async function runResearchLanes(objective: string, context: Record<string
   const teamSize = researchLaneTeamSize(objective, concurrency, options);
   const roles = selectResearchLaneRoles(objective, teamSize, { focus: options.laneFocus, rotation: options.laneRotation, roleReviews: options.roleReviews });
   const routes = assignResearchLaneRoutes(roles, options);
+  const memoryStore = new ResearchStore(options.storePath);
+  const historicalTrajectories = memoryStore.trajectories(128);
+  memoryStore.close();
+  const roleMemory = new Map(roles.map((role) => [role, roleMemoryFromTrajectories(historicalTrajectories, role)]));
   // Share only immutable read-only observations within this invocation. The
   // promise map also collapses simultaneous identical calls from parallel
   // lanes, while cacheable=false tools (notably shell.exec) always execute.
@@ -991,7 +1035,7 @@ export async function runResearchLanes(objective: string, context: Record<string
         const peerLaneBoard = laneHandoffBoard(reports);
         running.push({
           role,
-          promise: runLane(role, objective, { ...context, ...(peerLaneBoard.length ? { peerLaneBoard } : {}) }, laneOptions, routes.find((route) => route.role === role)!),
+          promise: runLane(role, objective, { ...context, ...(peerLaneBoard.length ? { peerLaneBoard } : {}), ...(roleMemory.get(role)?.length ? { roleMemory: roleMemory.get(role) } : {}) }, laneOptions, routes.find((route) => route.role === role)!),
         });
       }
       if (!running.length) continue;
@@ -1024,7 +1068,7 @@ export async function runResearchLanes(objective: string, context: Record<string
     const waveReports = await Promise.all(wave.map((role) => runLane(
       role,
       objective,
-      { ...context, ...(peerLaneBoard.length ? { peerLaneBoard } : {}) },
+      { ...context, ...(peerLaneBoard.length ? { peerLaneBoard } : {}), ...(roleMemory.get(role)?.length ? { roleMemory: roleMemory.get(role) } : {}) },
       laneOptions,
       routes.find((route) => route.role === role)!,
     )));

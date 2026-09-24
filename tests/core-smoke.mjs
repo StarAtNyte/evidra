@@ -72,7 +72,7 @@ import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence } from "../dist/core/baseline.js";
 import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
-import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, createLaneToolExecutor, laneHandoffBoard, lanePrompt, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneTeamSize, researchLiteratureQueries, runResearchLanes, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
+import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, createLaneToolExecutor, laneHandoffBoard, lanePrompt, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneTeamSize, researchLiteratureQueries, roleMemoryFromTrajectories, runResearchLanes, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
 import { campaignAgentTokens, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "../dist/core/usage.js";
@@ -3701,6 +3701,17 @@ test("role reviews become bounded specialist coaching instructions", () => {
   assert.match(trusted, /Preserve its evidence discipline/);
   const newRole = lanePrompt("method researcher", "find a method");
   assert.match(newRole, /insufficient prior evidence/);
+});
+
+test("role memory stays private, bounded, and explicitly historical", () => {
+  const memory = roleMemoryFromTrajectories([
+    { id: "newer", quality: { overall: "WARN" }, payload: { laneReports: [{ role: "data detective", summary: "recent", findings: ["f1", "f2", "f3", "f4", "f5"], recommendations: ["r1"], uncertainties: ["u1"], discriminatingTests: ["t1"] }] } },
+    { id: "other", quality: { overall: "PASS" }, payload: { laneReports: [{ role: "model researcher", summary: "not for this role" }] } },
+  ], "data detective", 1);
+  assert.equal(memory.length, 1);
+  assert.equal(memory[0].historical, true);
+  assert.equal(memory[0].trajectoryId, "newer");
+  assert.deepEqual(memory[0].findings, ["f1", "f2", "f3", "f4"]);
 });
 
 test("lane observation cache never reuses a failed in-flight result", async () => {

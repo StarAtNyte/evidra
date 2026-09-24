@@ -316,6 +316,7 @@ Implemented today:
 - enforceable delegation boundaries: specialist identity follows every lane tool call; read-only evidence tools are shared safely, while controller-owned actions such as report and validation-policy generation are rejected at the tool boundary and recorded as permission events;
 - role performance reviews: durable lane reports are scored for completion, evidence density, confidence, and process quality; the review is fed into the next research context and never pretends to attribute the final task metric to one agent;
 - bounded coaching allocation: roles with sufficient `needs-review` evidence are deliberately scheduled for a controlled follow-up attempt, receive a bounded evidence-discipline coaching signal in their next prompt, while trusted roles continue to rotate and resource ceilings remain authoritative;
+- private role memory: each specialist receives a small, explicitly historical projection of its own prior findings, uncertainties, and failed directions across cycles; this improves continuity without promoting old reports to current evidence or universal consensus;
 - detached process groups so Escape stops child workers as well as the parent;
 - experiment manifests, isolated worktrees, local/Modal executor boundaries, artifact capture, retries, and failure classification;
 - failure finalization that prevents started experiments from remaining indefinitely in `running` state;
