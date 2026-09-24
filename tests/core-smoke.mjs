@@ -7894,8 +7894,22 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal((await post("/tasks/heartbeat", { workerId: "worker-b", taskId: task.id }, token, "worker-b", "worker-b-secret")).status, 403);
     assert.equal((await post("/tasks/complete", { workerId: "worker-b", taskId: task.id, status: "completed", payload: { result: "spoofed" } }, token, "worker-b", "worker-b-secret")).status, 403);
     assert.equal((await post("/tasks/complete", { workerId: "worker-a", taskId: task.id, status: "completed", payload: { result: "verified" } }, token, "worker-a", "worker-secret")).status, 200);
+    const contractStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    contractStore.enqueueTask({ id: "bridge-contracted", kind: "research.lane", priority: 3, payload: { completionContract: { requiredPayloadKeys: ["summary"], requiredActivityKinds: ["progress"] } } });
+    contractStore.close();
+    const claimedContract = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"] }, token, "worker-a", "worker-secret");
+    const contractTask = (await claimedContract.json()).task;
+    assert.equal(contractTask.id, "bridge-contracted");
+    assert.equal((await post("/tasks/activity", { workerId: "worker-a", taskId: contractTask.id, kind: "progress", message: "checked remote proof" }, token, "worker-a", "worker-secret")).status, 200);
+    const rejectedCompletion = await post("/tasks/complete", { workerId: "worker-a", taskId: contractTask.id, status: "completed", payload: {} }, token, "worker-a", "worker-secret");
+    assert.equal(rejectedCompletion.status, 409);
+    const rejectedBody = await rejectedCompletion.json();
+    assert.equal(rejectedBody.error, "completion proof rejected");
+    assert.deepEqual(rejectedBody.missing, ["payload:summary"]);
+    assert.equal((await post("/tasks/complete", { workerId: "worker-a", taskId: contractTask.id, status: "completed", payload: { summary: "verified" } }, token, "worker-a", "worker-secret")).status, 200);
     const reopened = new ResearchStore(join(root, ".sota", "database.sqlite"));
     assert.equal(reopened.queueTasks().find((entry) => entry.id === task.id)?.status, "completed");
+    assert.equal(reopened.queueTasks().find((entry) => entry.id === contractTask.id)?.status, "completed");
     reopened.close();
   } finally {
     if (child && child.exitCode === null) child.kill("SIGINT");

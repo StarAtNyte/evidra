@@ -98,6 +98,9 @@ adds a blocked activity so another worker or operator can supply the missing
 proof. Local queue workers treat this as a bounded retryable failure and, after
 the retry ceiling, emit the normal recovery action instead of leaving a stale
 live lease. Failed and cancelled transitions remain available for recovery.
+Authenticated external workers receive the same missing-proof list in the
+`409` response from `/tasks/complete`, allowing them to repair the result at
+the next completion attempt.
 
 Queued work reports `missing`, `waiting`, or `failed` prerequisites. This makes
 the scheduler explainable to an operator and gives recovery controllers a

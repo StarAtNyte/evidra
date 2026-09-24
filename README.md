@@ -493,6 +493,7 @@ evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" \
 - operators can attach or clear those contracts on queued/failed work with `evidra queue contract <id> '<json>'` (or `/queue contract`), preserving the change as a durable audit event;
 - queue insertion is idempotent by task ID: duplicate scheduling requests cannot silently replace work and are recorded as duplicate enqueue attempts;
 - terminal queue records retain the original task specification under `_task` and worker output under `completion`, keeping objectives and proof contracts inspectable after execution;
+- authenticated external workers receive structured missing-proof details on rejected `/tasks/complete` calls, making remote contract repair actionable instead of opaque;
 - a deterministic agent-governance benchmark (`evidra benchmark governance`) covering role-contract completeness, tool authority boundaries, pause/resume controls, scoped handoff isolation, durable handoff auditability, and recovery approval boundaries;
 - durable external-action intents that reserve submissions before invocation, refuse restart-time replay, and require explicit `evidra submission reconcile <bundle> --status submitted|not-submitted` after an ambiguous crash;
 - integrity-bound campaign runtime policy: resume verifies provider, model, thinking effort, lanes, autonomy, usage-limit policy, and executor before continuing;
