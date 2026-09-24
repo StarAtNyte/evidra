@@ -9,6 +9,7 @@ import { approvalInbox } from "../core/approvals.js";
 import { loadProjectGuidance } from "../core/project-guidance.js";
 import { externalEventPayload, parseExternalEventPayload, validateExternalEventType } from "../core/external-events.js";
 import { createPortableBundle, validatePortableBundle } from "../core/portable-bundle.js";
+import { campaignOrganization, formatCampaignOrganization } from "../core/campaign-organization.js";
 import { roleBudgetLedger } from "../core/usage.js";
 import { formatGoalAlignment, goalAlignment, pauseForGoalAlignment } from "../core/goal-alignment.js";
 import { operatorAttention } from "../core/attention.js";
@@ -141,6 +142,7 @@ const COMMANDS = [
   ["/routine", "Create and run recurring autonomous campaigns"],
   ["/steer", "Guide the active campaign at its next safe boundary"],
   ["/status", "Show complete workbench state"],
+  ["/organization", "Show campaign ownership and reporting lines"],
   ["/goals", "Show the durable goal tree and phase progress"],
   ["/experience", "Show reusable trajectory experience and curriculum"],
   ["/usage", "Show budget, activity, and campaign usage"],
@@ -246,6 +248,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/guidance": [["/guidance", "Inspect project runtime guidance and hash"]],
   "/tools": [["/tools", "Show built-in and project research adapters"], ["/tools health", "Probe zero-argument adapters"], ["/tools enable ", "Enable a project adapter"], ["/tools disable ", "Disable a project adapter"], ["/tools quarantine ", "Quarantine a project adapter"]],
   "/goals": [["/goals", "Show goal criteria, evidence, and stage progress"]],
+  "/organization": [["/organization", "Show campaign ownership and reporting lines"], ["/org", "Show campaign ownership and reporting lines"]],
   "/bundle": [["/bundle validate ", "Validate a portable bundle"]],
   "/event": [["/event emit ", "Emit an external wake-up event"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
@@ -3357,6 +3360,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
         store.close();
         append("assistant", `AutoResearchBench · ${report.source.toUpperCase()} · ${report.records} records\n${Object.entries(report.metrics).map(([name, score]) => `${name}: ${score < 1 ? score.toFixed(4) : score.toFixed(2)}`).join("\n")}\n\nImported as diagnostic benchmark evidence; it does not replace workspace evaluator proof.`);
       } catch (error) { appendError(error); }
+      return;
+    }
+    if (request === "/organization" || request === "/org") {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      append("assistant", formatCampaignOrganization(campaignOrganization(store)));
+      store.close();
       return;
     }
     if (request === "/status" || request === "/project status") {

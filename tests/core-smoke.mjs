@@ -14,7 +14,7 @@ import { approvalInbox } from "../dist/core/approvals.js";
 import { controlPlaneHealth, operatorAttention } from "../dist/core/attention.js";
 import { goalAlignment, pauseForGoalAlignment } from "../dist/core/goal-alignment.js";
 import { agentLaneHealth, agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
-import { campaignOrganization } from "../dist/core/campaign-organization.js";
+import { campaignOrganization, formatCampaignOrganization } from "../dist/core/campaign-organization.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "../dist/core/agent-evals.js";
 import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "../dist/core/external-events.js";
 import { createPortableBundle, PORTABLE_BUNDLE_TYPE, validatePortableBundle } from "../dist/core/portable-bundle.js";
@@ -823,6 +823,8 @@ test("campaign organization maps goals, reporting lines, and aligned queue work"
     assert.equal(map.totals.activeQueue, 1);
     assert.equal(map.totals.queue, 1);
     assert.equal(map.roles.find((role) => role.role === "validation scientist")?.activeQueue, 1);
+    assert.match(formatCampaignOrganization(map), /Phase ownership/);
+    assert.match(formatCampaignOrganization(map), /validation scientist/);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

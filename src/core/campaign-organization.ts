@@ -90,3 +90,22 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
     totals: { phases: phaseRows.length, roles: organization.length, queue: alignedTasks.length, activeQueue, blockedQueue },
   };
 }
+
+export function formatCampaignOrganization(map: CampaignOrganization): string {
+  const phaseLines = map.phases.map((phase) => `  ${phase.status.padEnd(9)} ${phase.phase} · ${phase.id} · ${phase.queue.active} active / ${phase.queue.total} queued${phase.queue.blocked ? ` · ${phase.queue.blocked} blocked` : ""}${phase.objective ? `\n    ${phase.objective}` : ""}`);
+  const roleLines = map.roles
+    .filter((role) => role.parentRole === null || role.status !== "unstarted" || role.pendingDirectives > 0 || role.activeQueue > 0)
+    .map((role) => `  ${role.status.padEnd(9)} ${role.role} → ${role.parentRole ?? "operator"} · ${role.health}${role.activeQueue ? ` · ${role.activeQueue} active` : ""}${role.pendingDirectives ? ` · ${role.pendingDirectives} directives` : ""}${role.task ? `\n    ${role.task}` : ""}`);
+  return [
+    "Campaign organization",
+    `  mission: ${map.goal ?? "not initialized"}`,
+    `  mode: ${map.mode} · status: ${map.status}`,
+    `  work: ${map.totals.activeQueue} active · ${map.totals.queue} aligned${map.totals.blockedQueue ? ` · ${map.totals.blockedQueue} blocked` : ""}`,
+    "",
+    "Phase ownership",
+    ...(phaseLines.length ? phaseLines : ["  No phase goals recorded."]),
+    "",
+    "Reporting lines",
+    ...(roleLines.length ? roleLines : ["  No active roles recorded."]),
+  ].join("\n");
+}

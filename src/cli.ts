@@ -119,6 +119,7 @@ import { agentCoachingDirective, agentRoleInterventions, evaluateAgentRoles } fr
 import { agentOrganization } from "./core/agent-organization.js";
 import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "./core/external-events.js";
 import { createPortableBundle, validatePortableBundle } from "./core/portable-bundle.js";
+import { campaignOrganization, formatCampaignOrganization } from "./core/campaign-organization.js";
 
 const PHASE_GATE_EVENT_TYPES = [
   "research.observation", "project.created", "baseline.completed", "data.audit.completed", "data.audit.accepted",
@@ -581,6 +582,16 @@ program.command("status").action(() => {
   }
   store.close();
 });
+
+program.command("organization")
+  .option("--json", "emit the bounded organization projection as JSON")
+  .description("Inspect campaign mission, phase ownership, reporting lines, and active work")
+  .action((options: { json?: boolean }) => {
+    const store = new ResearchStore(statePath);
+    const map = campaignOrganization(store);
+    console.log(options.json ? JSON.stringify(map, null, 2) : formatCampaignOrganization(map));
+    store.close();
+  });
 
 program.command("goals")
   .option("--mode <mode>", "filter by research or challenge mode")
