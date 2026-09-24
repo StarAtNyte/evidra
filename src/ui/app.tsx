@@ -4133,10 +4133,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
           append("assistant", value === null ? `Cleared token budget for ${budgetMatch[1]}.` : `Set token budget for ${budgetMatch[1]} to ${value} tokens.`);
         } catch (error) { append("assistant", `Queue budget update failed: ${error instanceof Error ? error.message : String(error)}`); }
       } else if (deadlineMatch) {
-        const value = /^none$/i.test(deadlineMatch[2]) ? null : deadlineMatch[2];
+        const duration = parseBudgetMinutes(deadlineMatch[2]);
+        const value = /^none$/i.test(deadlineMatch[2]) ? null : duration ? new Date(Date.now() + duration * 60_000).toISOString() : deadlineMatch[2];
         try {
           if (!store.setTaskDeadline(deadlineMatch[1], value)) throw new Error("task is missing or not queued/failed");
-          append("assistant", value === null ? `Cleared deadline for ${deadlineMatch[1]}.` : `Set deadline for ${deadlineMatch[1]} to ${new Date(deadlineMatch[2]).toISOString()}.`);
+          append("assistant", value === null ? `Cleared deadline for ${deadlineMatch[1]}.` : `Set deadline for ${deadlineMatch[1]} to ${new Date(value).toISOString()}.`);
         } catch (error) { append("assistant", `Queue deadline update failed: ${error instanceof Error ? error.message : String(error)}`); }
       } else if (noteMatch) {
         const recorded = store.recordQueueActivity({ taskId: noteMatch[1], actorId: "operator", kind: "handoff", message: noteMatch[2] });

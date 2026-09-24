@@ -2273,13 +2273,15 @@ queue.command("budget <id> <tokens>").description("Set a queued/failed task toke
   console.log(value === null ? `Cleared token budget for ${id}.` : `Set token budget for ${id} to ${value} tokens.`);
 });
 queue.command("deadline <id> <timestamp>").description("Set a queued/failed task ISO deadline; use none to clear it").action((id: string, timestamp: string) => {
-  const value = /^none$/i.test(timestamp) ? null : timestamp;
+  const value = /^none$/i.test(timestamp) ? null : /^\d+(?:\.\d+)?\s*(?:m|min|minutes?|h|hours?|d|days?)?$/i.test(timestamp)
+    ? new Date(Date.now() + durationMinutes(timestamp) * 60_000).toISOString()
+    : timestamp;
   if (value !== null && !Number.isFinite(Date.parse(value))) throw new Error("Task deadline must be a valid ISO timestamp or none.");
   const store = new ResearchStore(statePath);
   const updated = store.setTaskDeadline(id, value);
   store.close();
   if (!updated) throw new Error(`Task '${id}' is missing or not queued/failed; live work cannot be re-deadlined.`);
-  console.log(value === null ? `Cleared deadline for ${id}.` : `Set deadline for ${id} to ${new Date(timestamp).toISOString()}.`);
+  console.log(value === null ? `Cleared deadline for ${id}.` : `Set deadline for ${id} to ${new Date(value).toISOString()}.`);
 });
 queue.command("activity <id>").option("--limit <count>", "number of task updates", "32").action((id: string, options: { limit: string }) => {
   const store = new ResearchStore(statePath);
