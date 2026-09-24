@@ -1402,6 +1402,24 @@ export class ResearchStore {
     return [...latest.values()].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)).slice(0, Math.max(1, Math.min(256, limit)));
   }
 
+  /** Find delivered handoffs that no longer have a healthy recipient lease. */
+  staleAgentDirectives(maxAgeMs = 300_000, now = Date.now()): Array<{ directive: AgentDirective; outcome: AgentDirectiveOutcome; reason: string }> {
+    const outcomes = new Map(this.agentDirectiveOutcomes(256).map((outcome) => [outcome.directiveId, outcome]));
+    const lanes = new Map(this.agentLanes().map((lane) => [lane.role, lane]));
+    return this.agentDirectives(undefined, 256).flatMap((directive) => {
+      const outcome = outcomes.get(directive.id);
+      if (!outcome || outcome.status !== "acknowledged") return [];
+      const ageMs = now - Date.parse(outcome.createdAt);
+      if (!Number.isFinite(ageMs) || ageMs < Math.max(1, maxAgeMs)) return [];
+      const lane = lanes.get(directive.role);
+      const heartbeat = lane?.heartbeatAt ? Date.parse(lane.heartbeatAt) : Number.NaN;
+      const healthy = lane?.status === "running" && Number.isFinite(heartbeat) && now - heartbeat <= 120_000;
+      if (healthy) return [];
+      const reason = !lane ? "recipient lane is not present" : lane.status !== "running" ? `recipient lane is ${lane.status}` : "recipient heartbeat is stale";
+      return [{ directive, outcome, reason }];
+    });
+  }
+
   pendingAgentDirectives(role?: string, scopeKey?: string | null): AgentDirective[] {
     return this.agentDirectives(role).filter((directive) => directive.appliedAt === null && directive.cancelledAt === null && (scopeKey === undefined || directive.scopeKey === null || directive.scopeKey === (scopeKey?.trim() || null)));
   }

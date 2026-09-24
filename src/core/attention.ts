@@ -123,6 +123,9 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
     if (organization.accountability.misalignedLive.length) items.push({ id: "accountability:misaligned", severity: "critical", kind: "accountability", summary: `${organization.accountability.misalignedLive.length} live task(s) reference a foreign or missing phase`, next: "/organization" });
     if (organization.accountability.unbudgetedLive.length) items.push({ id: "accountability:budget", severity: "warning", kind: "accountability", summary: `${organization.accountability.unbudgetedLive.length} live task(s) have no task-level budget`, next: "/organization" });
   }
+  for (const stale of store.staleAgentDirectives().slice(0, 24)) {
+    items.push({ id: `directive-stale:${stale.directive.id}`, severity: "critical", kind: "directive-stale", summary: `Directive #${stale.directive.id} to ${stale.directive.role} was acknowledged but ${stale.reason}`, next: "/agents recover" });
+  }
   const control = store.queueControl();
   if (control.paused) items.push({ id: "queue-control", severity: "info", kind: "queue-control", summary: `Queue dispatch paused${control.reason ? ` · ${control.reason}` : ""}`, next: "/queue resume" });
 

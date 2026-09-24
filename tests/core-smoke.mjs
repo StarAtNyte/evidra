@@ -779,6 +779,7 @@ test("agent organization gives every lane a responsibility and reporting line", 
     assert.equal(store.consumeAgentDirectives("validation scientist").length, 0);
     assert.equal(store.agentDirectives("validation scientist")[0].appliedAt !== null, true);
     assert.equal(store.agentDirectives("validation scientist")[0].sourceRole, "research director");
+    assert.equal(store.staleAgentDirectives(1, Date.now() + 2_000)[0]?.reason, "recipient lane is idle");
     store.recordAgentDirectiveOutcome(directive.id, "validation scientist", "completed", "split rechecked; no leakage found");
     assert.equal(store.agentDirectiveOutcomes()[0]?.directiveId, directive.id);
     assert.equal(store.agentDirectiveOutcomes()[0]?.status, "completed");
@@ -8252,6 +8253,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.equal(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.parentTaskId, "dashboard-parent");
     assert.deepEqual(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.requiredCapabilities, ["critic"]);
     assert.equal(snapshot.agentDirectiveOutcomes[0]?.directiveId, dashboardDirective.id);
+    assert.deepEqual(snapshot.staleAgentDirectives, []);
     assert.equal(snapshot.tools[0].status, "disabled");
     assert.match(dashboardHtml(), /EVIDRA<\/span> \/ DASHBOARD/);
     assert.match(dashboardHtml(), /\/api\/status/);
