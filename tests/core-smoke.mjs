@@ -7906,6 +7906,8 @@ test("authenticated external queue worker endpoints enforce ownership end to end
       child.once("error", (error) => { clearTimeout(timer); reject(error); });
     });
     const post = (path, body, auth = token, scopedWorkerId, scopedWorkerToken) => fetch(`http://127.0.0.1:${port}${path}`, { method: "POST", headers: { "content-type": "application/json", ...(auth ? { authorization: `Bearer ${auth}` } : {}), ...(scopedWorkerId ? { "x-evidra-worker-id": scopedWorkerId, "x-evidra-worker-token": scopedWorkerToken } : {}) }, body: JSON.stringify(body) });
+    const heartbeatResponse = await post("/events", { type: "external.agent.heartbeat", payload: { role: "remote lane", leaseId: "worker-a", provider: "codex", model: "gpt-test", status: "idle", capabilities: ["python", "gpu.cuda"] } });
+    assert.equal(heartbeatResponse.status, 202);
     assert.equal((await post("/tasks/claim", { workerId: "worker-a" }, "wrong-token")).status, 401);
     assert.equal((await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"] })).status, 401);
     const claimed = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"] }, token, "worker-a", "worker-secret");
@@ -7948,7 +7950,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal((await unqualifiedClaim.json()).task, null);
     const disallowedCapabilityClaim = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"], capabilities: ["modal"] }, token, "worker-a", "worker-secret");
     assert.equal(disallowedCapabilityClaim.status, 403);
-    const qualifiedClaim = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"], capabilities: ["python", "gpu.cuda"] }, token, "worker-a", "worker-secret");
+    const qualifiedClaim = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"] }, token, "worker-a", "worker-secret");
     assert.equal(qualifiedClaim.status, 200);
     const qualifiedTask = (await qualifiedClaim.json()).task;
     assert.equal(qualifiedTask.id, "bridge-gpu");

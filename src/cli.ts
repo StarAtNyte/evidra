@@ -2393,9 +2393,14 @@ function secretMatches(expected: string | undefined, actual: string): boolean {
   const actualBytes = Buffer.from(actual, "utf8");
   return expectedBytes.length === actualBytes.length && timingSafeEqual(expectedBytes, actualBytes);
 }
-function recordExternalEvent(type: string, payload: Record<string, unknown>, source: string, idempotencyKey?: string): { triggered: string[]; deduplicated: boolean; heartbeatAccepted?: boolean } {
+function recordExternalEvent(type: string, payload: Record<string, unknown>, source: string, idempotencyKey?: string, workerCapabilityAllowlist?: Map<string, string[]>): { triggered: string[]; deduplicated: boolean; heartbeatAccepted?: boolean } {
   const eventType = validateExternalEventType(type);
   const heartbeat = eventType === "external.agent.heartbeat" ? parseExternalAgentHeartbeat(payload) : undefined;
+  if (heartbeat && workerCapabilityAllowlist?.size) {
+    const allowlist = workerCapabilityAllowlist.get(heartbeat.leaseId);
+    if (!allowlist) throw new Error(`Worker '${heartbeat.leaseId}' has no configured capability allowlist.`);
+    if (heartbeat.capabilities.some((capability) => !allowlist.includes(capability))) throw new Error(`Worker '${heartbeat.leaseId}' heartbeat advertises a capability outside its configured allowlist.`);
+  }
   const store = new ResearchStore(statePath);
   const eventPayload = externalEventPayload(payload, source.trim().slice(0, 80) || "cli");
   const result = idempotencyKey?.trim()
@@ -2653,7 +2658,7 @@ event.command("serve")
           if (typeof parsed.type !== "string") throw new Error("request JSON requires a string 'type'");
           const payload = parseExternalEventPayload(JSON.stringify(parsed.payload ?? {}));
           const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : request.headers["idempotency-key"];
-          const result = recordExternalEvent(parsed.type, payload, typeof parsed.source === "string" ? parsed.source : "http", typeof idempotencyKey === "string" ? idempotencyKey : undefined);
+          const result = recordExternalEvent(parsed.type, payload, typeof parsed.source === "string" ? parsed.source : "http", typeof idempotencyKey === "string" ? idempotencyKey : undefined, workerCapabilities);
           response.writeHead(result.heartbeatAccepted === false ? 409 : 202, headers);
           response.end(JSON.stringify({ ok: result.heartbeatAccepted !== false, type: parsed.type, deduplicated: result.deduplicated, heartbeatAccepted: result.heartbeatAccepted, triggered: result.triggered }));
         } catch (error) {

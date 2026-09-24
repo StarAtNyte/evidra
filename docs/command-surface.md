@@ -194,6 +194,8 @@ operator-owned capability ceiling, for example
 must have an allowlist entry and heartbeat/claim capabilities outside that
 allowlist are rejected. This prevents a remote worker from self-declaring
 access to resources it was never granted.
+The same ceiling is enforced when `external.agent.heartbeat` events arrive, so
+the dashboard cannot be poisoned with an unauthorized capability report.
 
 Workers may also include `capabilities` in external agent heartbeats. Evidra
 stores the latest bounded capability and liveness snapshot for each lease and
