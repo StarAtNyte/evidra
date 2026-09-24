@@ -52,6 +52,11 @@ export function runGovernanceBenchmark(): GovernanceBenchmarkReport {
     });
     const customRole = organization.find((role) => role.role === "external domain specialist");
     check("custom-agent-visibility", "External workers with custom roles are visible with a conservative reporting contract.", customRole?.status === "idle" && customRole.parentRole === "research director" && customRole.authority === "investigate" && customRole.reviewRequired === true, { customRole });
+    const unapprovedExecution = store.acquireAgentLane({ role: "external domain specialist", leaseId: "custom-worker", provider: "remote", model: "bench" });
+    store.setAgentRoleAdmission("external domain specialist", true, "governance benchmark approval");
+    const approvedExecution = store.acquireAgentLane({ role: "external domain specialist", leaseId: "custom-worker", provider: "remote", model: "bench" });
+    check("role-admission-boundary", "Custom roles require explicit operator admission before they can acquire execution leases.", !unapprovedExecution.acquired && approvedExecution.acquired && customRole?.admission === "review", { unapprovedExecution, approvedExecution, admissionAfterApproval: store.agentRoleAdmitted("external domain specialist") });
+    store.releaseAgentLane("external domain specialist", "custom-worker");
 
     const directorShell = agentToolPermission("research director", "shell.exec");
     const engineerShell = agentToolPermission("experiment engineer", "shell.exec");
