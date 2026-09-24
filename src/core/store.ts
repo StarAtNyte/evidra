@@ -909,7 +909,10 @@ export class ResearchStore {
 
   staleAgentLanes(staleAfterMs = 60_000): string[] {
     const cutoff = Date.now() - Math.max(1_000, staleAfterMs);
-    const rows = this.db.prepare("SELECT role, lease_id, heartbeat_at FROM agent_lanes WHERE status = 'running'").all() as Array<{ role: string; lease_id: string | null; heartbeat_at: string | null }>;
+    // Only lease-backed lanes participate in automatic stale recovery. Older
+    // controller roles still use updateAgentLane() as status telemetry and do
+    // not yet own a worker lease, so they must not be reclaimed here.
+    const rows = this.db.prepare("SELECT role, lease_id, heartbeat_at FROM agent_lanes WHERE status = 'running' AND lease_id IS NOT NULL").all() as Array<{ role: string; lease_id: string | null; heartbeat_at: string | null }>;
     const stale = rows.filter((row) => !row.heartbeat_at || Date.parse(row.heartbeat_at) < cutoff);
     for (const row of stale) {
       this.db.prepare("UPDATE agent_lanes SET status = 'blocked', error = ?, heartbeat_at = NULL, lease_id = NULL, updated_at = ? WHERE role = ? AND status = 'running'").run("lane heartbeat expired; recovery required", new Date().toISOString(), row.role);
