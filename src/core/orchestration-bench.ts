@@ -120,6 +120,12 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     check("task-pause-resume", "A single ticket can be suspended and resumed without consuming a retry.", taskPaused && !taskPausedClaim && taskResumed && taskResumedClaim?.attempts === 1, { taskPaused, taskPausedClaim: taskPausedClaim?.id, taskResumed, attempts: taskResumedClaim?.attempts });
     if (taskResumedClaim) store.updateTask("task-pause", "completed");
 
+    store.enqueueTask({ id: "tree-pause", kind: "governed", priority: 1, payload: {} });
+    store.enqueueTask({ id: "tree-pause-child", kind: "governed", priority: 1, parentTaskId: "tree-pause", payload: {} });
+    const treePaused = store.pauseTask("tree-pause", "benchmark hierarchy inspection");
+    const treeResumed = store.resumeTask("tree-pause");
+    check("hierarchical-pause-resume", "Coordinator pause/resume propagates only across its own unfinished descendants.", treePaused && treeResumed && store.queueTasks().find((task) => task.id === "tree-pause")?.status === "queued" && store.queueTasks().find((task) => task.id === "tree-pause-child")?.status === "queued", { treePaused, treeResumed, root: store.queueTasks().find((task) => task.id === "tree-pause")?.status, child: store.queueTasks().find((task) => task.id === "tree-pause-child")?.status });
+
     store.enqueueTask({ id: "priority-control", kind: "governed", priority: 1, payload: {} });
     const priorityUpdated = store.setTaskPriority("priority-control", 9);
     const priorityClaim = store.claimTask("priority-control", ["governed"], "worker-a");

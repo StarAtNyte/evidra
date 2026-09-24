@@ -3321,7 +3321,7 @@ test("orchestration benchmark covers worker ownership and recovery", () => {
   const report = runOrchestrationBenchmark();
   assert.equal(report.failed, 0);
   assert.equal(report.score, 1);
-  assert.equal(report.probes.length, 18);
+  assert.equal(report.probes.length, 19);
   assert.equal(report.probes.some((probe) => probe.id === "queue-starvation-prevention"), true);
   assert.equal(report.probes.some((probe) => probe.id === "completion-watchdog"), true);
   assert.equal(report.probes.some((probe) => probe.id === "hierarchical-cancellation"), true);
@@ -3329,6 +3329,7 @@ test("orchestration benchmark covers worker ownership and recovery", () => {
   assert.equal(report.probes.some((probe) => probe.id === "approval-gate"), true);
   assert.equal(report.probes.some((probe) => probe.id === "queue-pause-governance"), true);
   assert.equal(report.probes.some((probe) => probe.id === "task-pause-resume"), true);
+  assert.equal(report.probes.some((probe) => probe.id === "hierarchical-pause-resume"), true);
   assert.equal(report.probes.some((probe) => probe.id === "priority-control"), true);
   assert.equal(report.probes.some((probe) => probe.id === "label-control"), true);
   assert.equal(report.probes.some((probe) => probe.id === "live-budget-stop"), true);
@@ -4076,6 +4077,24 @@ test("cancellation refuses missing roots without touching orphaned descendants",
     assert.equal(store.cancelTask("missing-root", "operator stop"), false);
     assert.equal(store.queueTasks().find((task) => task.id === "orphan-child")?.status, "queued");
     assert.equal(store.eventsByType("queue.cancelled").length, 0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("pause and resume cascade only through the coordinator's pause boundary", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-pause-tree-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.enqueueTask({ id: "pause-root", kind: "research.cycle", priority: 1, payload: {} });
+    store.enqueueTask({ id: "pause-child", kind: "research.lane", priority: 1, parentTaskId: "pause-root", payload: {} });
+    store.enqueueTask({ id: "pause-independent", kind: "research.lane", priority: 1, payload: {} });
+    assert.equal(store.pauseTask("pause-root", "operator inspection"), true);
+    assert.equal(store.queueTasks().find((task) => task.id === "pause-root")?.status, "paused");
+    assert.equal(store.queueTasks().find((task) => task.id === "pause-child")?.status, "paused");
+    assert.equal(store.queueTasks().find((task) => task.id === "pause-independent")?.status, "queued");
+    assert.equal(store.resumeTask("pause-root"), true);
+    assert.equal(store.queueTasks().find((task) => task.id === "pause-root")?.status, "queued");
+    assert.equal(store.queueTasks().find((task) => task.id === "pause-child")?.status, "queued");
+    assert.equal(store.queueTasks().find((task) => task.id === "pause-independent")?.status, "queued");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

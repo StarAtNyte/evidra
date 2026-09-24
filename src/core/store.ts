@@ -1399,22 +1399,53 @@ export class ResearchStore {
     return { paused, reason: normalizedReason, updatedAt };
   }
 
-  /** Suspend one queue ticket without cancelling its work or counting a retry. */
+  /** Suspend one queue ticket and unfinished descendants without counting retries. */
   pauseTask(id: string, reason = "operator paused task"): boolean {
     const normalizedReason = reason.trim().slice(0, 500) || "operator paused task";
     const now = new Date().toISOString();
-    const result = this.db.prepare("UPDATE work_queue SET status = 'paused', claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')").run(now, id);
-    if (result.changes !== 1) return false;
-    this.appendEvent("queue.task.paused", { id, reason: normalizedReason, pausedAt: now });
+    const candidateIds = [id, ...this.taskDescendantIds(id)];
+    const paused: Array<{ id: string; kind: string; status: QueueTaskStatus; ownerId: string | null; parentTaskId: string | null }> = [];
+    const rootPaused = this.db.transaction(() => {
+      const root = this.db.prepare("SELECT status FROM work_queue WHERE id = ?").get(id) as { status: QueueTaskStatus } | undefined;
+      if (!root || !["queued", "running"].includes(root.status)) return false;
+      for (const candidateId of candidateIds) {
+        const current = this.db.prepare("SELECT status, kind, owner_id, parent_task_id FROM work_queue WHERE id = ?").get(candidateId) as { status: QueueTaskStatus; kind: string; owner_id: string | null; parent_task_id: string | null } | undefined;
+        if (!current || !["queued", "running"].includes(current.status)) continue;
+        const result = this.db.prepare("UPDATE work_queue SET status = 'paused', claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')").run(now, candidateId);
+        if (result.changes === 1) paused.push({ id: candidateId, kind: current.kind, status: current.status, ownerId: current.owner_id, parentTaskId: current.parent_task_id });
+      }
+      return paused.some((entry) => entry.id === id);
+    })();
+    if (!rootPaused) return false;
+    for (const entry of paused) {
+      this.appendEvent("queue.task.paused", { id: entry.id, kind: entry.kind, priorStatus: entry.status, priorOwnerId: entry.ownerId, parentTaskId: entry.parentTaskId, reason: normalizedReason, pausedAt: now, ...(entry.id === id ? {} : { cascadedFrom: id }) });
+    }
     return true;
   }
 
-  /** Resume a specifically suspended ticket; it becomes claimable immediately. */
+  /** Resume a suspended ticket and descendants paused by that ticket. */
   resumeTask(id: string): boolean {
     const now = new Date().toISOString();
-    const result = this.db.prepare("UPDATE work_queue SET status = 'queued', available_at = ?, updated_at = ? WHERE id = ? AND status = 'paused'").run(now, now, id);
-    if (result.changes !== 1) return false;
-    this.appendEvent("queue.task.resumed", { id, resumedAt: now });
+    const latestPauses = new Map<string, Record<string, unknown>>();
+    for (const event of this.eventsByType("queue.task.paused")) {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+      if (typeof payload.id === "string") latestPauses.set(payload.id, payload);
+    }
+    const candidateIds = [id, ...this.taskDescendantIds(id)];
+    const resumed: string[] = [];
+    const rootResumed = this.db.transaction(() => {
+      const root = this.db.prepare("SELECT status FROM work_queue WHERE id = ?").get(id) as { status: QueueTaskStatus } | undefined;
+      if (!root || root.status !== "paused") return false;
+      for (const candidateId of candidateIds) {
+        const current = this.db.prepare("SELECT status FROM work_queue WHERE id = ?").get(candidateId) as { status: QueueTaskStatus } | undefined;
+        if (!current || current.status !== "paused" || (candidateId !== id && latestPauses.get(candidateId)?.cascadedFrom !== id)) continue;
+        const result = this.db.prepare("UPDATE work_queue SET status = 'queued', available_at = ?, updated_at = ? WHERE id = ? AND status = 'paused'").run(now, now, candidateId);
+        if (result.changes === 1) resumed.push(candidateId);
+      }
+      return resumed.includes(id);
+    })();
+    if (!rootResumed) return false;
+    for (const resumedId of resumed) this.appendEvent("queue.task.resumed", { id: resumedId, resumedAt: now, ...(resumedId === id ? {} : { cascadedFrom: id }) });
     return true;
   }
 
