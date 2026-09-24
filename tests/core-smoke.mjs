@@ -731,7 +731,8 @@ test("agent organization gives every lane a responsibility and reporting line", 
     assert.equal(store.agentPause("validation scientist")?.terminated, false);
     assert.equal(store.acquireAgentLane({ role: "validation scientist", leaseId: "revived-worker", provider: "local", model: "bench", task: "can start again" }).acquired, true);
     store.releaseAgentLane("validation scientist", "revived-worker");
-    const directive = store.enqueueAgentDirective("validation scientist", "recheck the locked split before recommending promotion");
+    const directive = store.enqueueAgentDirective("validation scientist", "recheck the locked split before recommending promotion", null, "research director");
+    assert.equal(directive.sourceRole, "research director");
     assert.equal(store.pendingAgentDirectives("validation scientist").length, 1);
     assert.equal(store.agentDirectives("validation scientist").length, 1);
     assert.equal(store.agentDirectives("validation scientist")[0].appliedAt, null);
@@ -739,6 +740,7 @@ test("agent organization gives every lane a responsibility and reporting line", 
     assert.equal(store.consumeAgentDirectives("validation scientist")[0].message, directive.message);
     assert.equal(store.consumeAgentDirectives("validation scientist").length, 0);
     assert.equal(store.agentDirectives("validation scientist")[0].appliedAt !== null, true);
+    assert.equal(store.agentDirectives("validation scientist")[0].sourceRole, "research director");
     const scoped = store.enqueueAgentDirective("validation scientist", "only apply to phase alpha", "phase-alpha");
     assert.equal(scoped.scopeKey, "phase-alpha");
     assert.equal(store.pendingAgentDirectives("validation scientist", "phase-beta").length, 0);
@@ -755,6 +757,8 @@ test("agent organization gives every lane a responsibility and reporting line", 
     const longLived = store.enqueueAgentDirectiveOnce("validation scientist", "retain this pending handoff", "phase-delta");
     for (let index = 0; index < 40; index += 1) store.enqueueAgentDirective("validation scientist", `filler directive ${index}`, "phase-gamma");
     assert.equal(store.enqueueAgentDirectiveOnce("validation scientist", "retain this pending handoff", "phase-delta").id, longLived.id);
+    const alternateSource = store.enqueueAgentDirectiveOnce("validation scientist", "retain this pending handoff", "phase-delta", "critic");
+    assert.notEqual(alternateSource.id, longLived.id);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -8103,6 +8107,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.ok(snapshot.attention && typeof snapshot.attention.total === "number");
     assert.equal(snapshot.agentReviewHistory.length, 1);
     assert.equal(snapshot.agentReviewHistory[0].interventions[0].action, "coach");
+    assert.ok(Array.isArray(snapshot.agentDirectives));
     assert.equal(snapshot.agentActivity[0].message, "inspecting evidence");
     assert.equal(snapshot.agentSessions[0].threadId, "thread-dashb…");
     assert.ok(snapshot.organization.some((entry) => entry.role === "research director"));

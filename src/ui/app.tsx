@@ -3800,7 +3800,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const directives = store.agentDirectives(directivesAgentMatch[1]?.trim());
       store.close();
       append("assistant", directives.length
-        ? `Agent directives${directivesAgentMatch[1] ? ` · ${directivesAgentMatch[1].trim()}` : ""}\n${directives.map((directive) => `  ${directive.cancelledAt ? "×" : directive.appliedAt ? "✓" : "○"} #${directive.id} · ${directive.role} · ${directive.createdAt} · ${directive.scopeKey ? `scope ${directive.scopeKey}` : "global"}\n    ${directive.message}${directive.appliedAt ? `\n    applied: ${directive.appliedAt}` : ""}${directive.cancelledAt ? `\n    cancelled: ${directive.cancelledAt}` : ""}`).join("\n")}`
+        ? `Agent directives${directivesAgentMatch[1] ? ` · ${directivesAgentMatch[1].trim()}` : ""}\n${directives.map((directive) => `  ${directive.cancelledAt ? "×" : directive.appliedAt ? "✓" : "○"} #${directive.id} · ${directive.sourceRole ?? "operator"} → ${directive.role} · ${directive.createdAt} · ${directive.scopeKey ? `scope ${directive.scopeKey}` : "global"}\n    ${directive.message}${directive.appliedAt ? `\n    applied: ${directive.appliedAt}` : ""}${directive.cancelledAt ? `\n    cancelled: ${directive.cancelledAt}` : ""}`).join("\n")}`
         : `No directives recorded${directivesAgentMatch[1] ? ` for ${directivesAgentMatch[1].trim()}` : ""}.`);
       return;
     }

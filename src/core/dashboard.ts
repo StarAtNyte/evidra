@@ -43,6 +43,7 @@ export function dashboardSnapshot(store: ResearchStore, root?: string): Record<s
     agents: store.agentLanes().slice(0, 24).map((agent) => ({ ...agent, leaseId: agent.leaseId ? `${agent.leaseId.slice(0, 12)}…` : null })),
     externalWorkers: store.externalWorkers(32).map((worker) => ({ ...worker, workerId: `${worker.workerId.slice(0, 12)}…` })),
     organization: agentOrganization(store).map((agent) => ({ ...agent, control: store.agentPause(agent.role) ?? null, pendingDirectives: store.pendingAgentDirectives(agent.role).length })),
+    agentDirectives: store.agentDirectives(undefined, 48).map((directive) => ({ id: directive.id, sourceRole: directive.sourceRole, role: directive.role, scopeKey: directive.scopeKey, status: directive.cancelledAt ? "cancelled" : directive.appliedAt ? "applied" : "pending", createdAt: directive.createdAt, appliedAt: directive.appliedAt, cancelledAt: directive.cancelledAt })),
     agentReviews: evaluateAgentRoles(store.trajectoryHistory()),
     agentReviewHistory: store.eventsByType("research.agent.reviewed", 12).map((event) => {
       const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};

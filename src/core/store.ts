@@ -283,6 +283,8 @@ export interface ControllerSteer {
 }
 export interface AgentDirective {
   id: number;
+  /** The role or operator that authored the handoff. */
+  sourceRole: string | null;
   role: string;
   message: string;
   /** Null means an operator-wide directive; otherwise it is limited to one phase/goal scope. */
@@ -661,6 +663,7 @@ export class ResearchStore {
       );
       CREATE TABLE IF NOT EXISTS agent_directives (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_role TEXT,
         role TEXT NOT NULL,
         message TEXT NOT NULL,
         scope_key TEXT,
@@ -732,6 +735,7 @@ export class ResearchStore {
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN usage_calls INTEGER NOT NULL DEFAULT 0"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_directives ADD COLUMN scope_key TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_directives ADD COLUMN cancelled_at TEXT"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE agent_directives ADD COLUMN source_role TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_controls ADD COLUMN terminated INTEGER NOT NULL DEFAULT 0"); } catch { /* already migrated */ }
     this.db.prepare(`
       INSERT OR IGNORE INTO event_chain_state (id, head_hash, event_count)
@@ -1315,36 +1319,38 @@ export class ResearchStore {
     return consumed;
   }
 
-  enqueueAgentDirective(role: string, message: string, scopeKey: string | null = null): AgentDirective {
+  enqueueAgentDirective(role: string, message: string, scopeKey: string | null = null, sourceRole: string | null = null): AgentDirective {
     const normalizedRole = role.trim();
     const normalizedMessage = message.trim();
     if (!normalizedRole || !normalizedMessage) throw new Error("Agent role and directive message are required.");
     const createdAt = new Date().toISOString();
     const normalizedScope = scopeKey?.trim() || null;
-    const result = this.db.prepare("INSERT INTO agent_directives (role, message, scope_key, created_at, applied_at) VALUES (?, ?, ?, ?, NULL)").run(normalizedRole, normalizedMessage.slice(0, 4_000), normalizedScope, createdAt);
-    const directive = { id: Number(result.lastInsertRowid), role: normalizedRole, message: normalizedMessage.slice(0, 4_000), scopeKey: normalizedScope, createdAt, appliedAt: null, cancelledAt: null } satisfies AgentDirective;
+    const normalizedSource = sourceRole?.trim().slice(0, 120) || null;
+    const result = this.db.prepare("INSERT INTO agent_directives (source_role, role, message, scope_key, created_at, applied_at) VALUES (?, ?, ?, ?, ?, NULL)").run(normalizedSource, normalizedRole, normalizedMessage.slice(0, 4_000), normalizedScope, createdAt);
+    const directive = { id: Number(result.lastInsertRowid), sourceRole: normalizedSource, role: normalizedRole, message: normalizedMessage.slice(0, 4_000), scopeKey: normalizedScope, createdAt, appliedAt: null, cancelledAt: null } satisfies AgentDirective;
     this.appendEvent("agent.directive.queued", directive);
     return directive;
   }
 
   /** Queue a directive only when the same role-scoped handoff is not already pending. */
-  enqueueAgentDirectiveOnce(role: string, message: string, scopeKey: string | null = null): AgentDirective {
+  enqueueAgentDirectiveOnce(role: string, message: string, scopeKey: string | null = null, sourceRole: string | null = null): AgentDirective {
     const normalizedRole = role.trim();
     const normalizedMessage = message.trim().slice(0, 4_000);
     const normalizedScope = scopeKey?.trim() || null;
-    const existing = this.db.prepare("SELECT id, role, message, scope_key, created_at, applied_at, cancelled_at FROM agent_directives WHERE role = ? AND message = ? AND scope_key IS ? AND applied_at IS NULL AND cancelled_at IS NULL ORDER BY id ASC LIMIT 1").get(normalizedRole, normalizedMessage, normalizedScope) as { id: number; role: string; message: string; scope_key: string | null; created_at: string; applied_at: string | null; cancelled_at: string | null } | undefined;
+    const normalizedSource = sourceRole?.trim().slice(0, 120) || null;
+    const existing = this.db.prepare("SELECT id, source_role, role, message, scope_key, created_at, applied_at, cancelled_at FROM agent_directives WHERE source_role IS ? AND role = ? AND message = ? AND scope_key IS ? AND applied_at IS NULL AND cancelled_at IS NULL ORDER BY id ASC LIMIT 1").get(normalizedSource, normalizedRole, normalizedMessage, normalizedScope) as { id: number; source_role: string | null; role: string; message: string; scope_key: string | null; created_at: string; applied_at: string | null; cancelled_at: string | null } | undefined;
     return existing
-      ? { id: existing.id, role: existing.role, message: existing.message, scopeKey: existing.scope_key, createdAt: existing.created_at, appliedAt: existing.applied_at, cancelledAt: existing.cancelled_at }
-      : this.enqueueAgentDirective(normalizedRole, normalizedMessage, normalizedScope);
+      ? { id: existing.id, sourceRole: existing.source_role, role: existing.role, message: existing.message, scopeKey: existing.scope_key, createdAt: existing.created_at, appliedAt: existing.applied_at, cancelledAt: existing.cancelled_at }
+      : this.enqueueAgentDirective(normalizedRole, normalizedMessage, normalizedScope, normalizedSource);
   }
 
   consumeAgentDirectives(role: string, limit = 4, scopeKey: string | null = null): AgentDirective[] {
     const now = new Date().toISOString();
     const normalizedScope = scopeKey?.trim() || null;
     const transaction = this.db.transaction(() => {
-      const rows = this.db.prepare("SELECT id, role, message, scope_key, created_at, applied_at, cancelled_at FROM agent_directives WHERE role = ? AND applied_at IS NULL AND cancelled_at IS NULL AND (scope_key IS NULL OR scope_key = ?) ORDER BY id ASC LIMIT ?").all(role, normalizedScope, Math.max(1, Math.min(16, limit))) as Array<{ id: number; role: string; message: string; scope_key: string | null; created_at: string; applied_at: string | null; cancelled_at: string | null }>;
+      const rows = this.db.prepare("SELECT id, source_role, role, message, scope_key, created_at, applied_at, cancelled_at FROM agent_directives WHERE role = ? AND applied_at IS NULL AND cancelled_at IS NULL AND (scope_key IS NULL OR scope_key = ?) ORDER BY id ASC LIMIT ?").all(role, normalizedScope, Math.max(1, Math.min(16, limit))) as Array<{ id: number; source_role: string | null; role: string; message: string; scope_key: string | null; created_at: string; applied_at: string | null; cancelled_at: string | null }>;
       const mark = this.db.prepare("UPDATE agent_directives SET applied_at = ? WHERE id = ? AND applied_at IS NULL");
-      return rows.flatMap((row) => mark.run(now, row.id).changes === 1 ? [{ id: row.id, role: row.role, message: row.message, scopeKey: row.scope_key, createdAt: row.created_at, appliedAt: now, cancelledAt: row.cancelled_at }] : []);
+      return rows.flatMap((row) => mark.run(now, row.id).changes === 1 ? [{ id: row.id, sourceRole: row.source_role, role: row.role, message: row.message, scopeKey: row.scope_key, createdAt: row.created_at, appliedAt: now, cancelledAt: row.cancelled_at }] : []);
     })() as AgentDirective[];
     if (transaction.length) this.appendEvent("agent.directive.applied", { role, scopeKey: normalizedScope, ids: transaction.map((item) => item.id) });
     return transaction;
@@ -1365,9 +1371,9 @@ export class ResearchStore {
   /** Read the durable specialist inbox, including already-applied handoffs. */
   agentDirectives(role?: string, limit = 32): AgentDirective[] {
     const rows = (role
-      ? this.db.prepare("SELECT id, role, message, scope_key, created_at, applied_at, cancelled_at FROM agent_directives WHERE role = ? ORDER BY id DESC LIMIT ?").all(role, Math.max(1, Math.min(128, limit)))
-      : this.db.prepare("SELECT id, role, message, scope_key, created_at, applied_at, cancelled_at FROM agent_directives ORDER BY id DESC LIMIT ?").all(Math.max(1, Math.min(128, limit)))) as Array<{ id: number; role: string; message: string; scope_key: string | null; created_at: string; applied_at: string | null; cancelled_at: string | null }>;
-    return rows.map((row) => ({ id: row.id, role: row.role, message: row.message, scopeKey: row.scope_key, createdAt: row.created_at, appliedAt: row.applied_at, cancelledAt: row.cancelled_at })).reverse();
+      ? this.db.prepare("SELECT id, source_role, role, message, scope_key, created_at, applied_at, cancelled_at FROM agent_directives WHERE role = ? ORDER BY id DESC LIMIT ?").all(role, Math.max(1, Math.min(128, limit)))
+      : this.db.prepare("SELECT id, source_role, role, message, scope_key, created_at, applied_at, cancelled_at FROM agent_directives ORDER BY id DESC LIMIT ?").all(Math.max(1, Math.min(128, limit)))) as Array<{ id: number; source_role: string | null; role: string; message: string; scope_key: string | null; created_at: string; applied_at: string | null; cancelled_at: string | null }>;
+    return rows.map((row) => ({ id: row.id, sourceRole: row.source_role, role: row.role, message: row.message, scopeKey: row.scope_key, createdAt: row.created_at, appliedAt: row.applied_at, cancelledAt: row.cancelled_at })).reverse();
   }
 
   releaseControllerLease(controllerId: string, status: "released" | "stale" = "released"): boolean {
