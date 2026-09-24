@@ -8,6 +8,7 @@ import { ResearchStore } from "../core/store.js";
 import { approvalInbox } from "../core/approvals.js";
 import { loadProjectGuidance } from "../core/project-guidance.js";
 import { externalEventPayload, parseExternalEventPayload, validateExternalEventType } from "../core/external-events.js";
+import { createPortableBundle } from "../core/portable-bundle.js";
 import { formatGoalAlignment, goalAlignment, pauseForGoalAlignment } from "../core/goal-alignment.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "../core/agent-evals.js";
 import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
@@ -4026,8 +4027,19 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Ensemble candidate created\n  id: ${blend.id}\n  members: ${vectors.length}\n  path: ${blend.path}\n  checksum: ${blend.checksum}\n  status: candidate\n\nEvaluate only on out-of-fold data before promotion.`);
       return;
     }
-    if (request === "/report" || request === "/report research" || request === "/report challenge" || request === "/report final" || request === "/export") {
-      const requested = request === "/export" ? "final" : (request.split(/\s+/)[1] ?? "research");
+    if (request === "/export") {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const bundle = createPortableBundle(store, root);
+      const path = join(root, ".sota", "exports", "evidra-bundle.json");
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, `${JSON.stringify(bundle, null, 2)}\n`);
+      store.appendEvent("bundle.exported", { path: relative(root, path), schemaVersion: bundle.schemaVersion, counts: bundle.counts });
+      store.close();
+      append("assistant", `Portable bundle exported\n  path: ${path}\n  type: ${bundle.type}\n  schema: ${bundle.schemaVersion}\n  note: metadata and checksums only; rerun validation before trusting it elsewhere.`);
+      return;
+    }
+    if (request === "/report" || request === "/report research" || request === "/report challenge" || request === "/report final") {
+      const requested = request.split(/\s+/)[1] ?? "research";
       if (!["research", "challenge", "final"].includes(requested)) { append("assistant", "Usage: /report research, /report challenge, or /report final"); return; }
       const kind = requested as ReportKind;
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));

@@ -116,6 +116,7 @@ import { formatGoalAlignment, goalAlignment } from "./core/goal-alignment.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "./core/agent-evals.js";
 import { agentOrganization } from "./core/agent-organization.js";
 import { externalEventPayload, parseExternalEventPayload, validateExternalEventType } from "./core/external-events.js";
+import { createPortableBundle } from "./core/portable-bundle.js";
 
 const PHASE_GATE_EVENT_TYPES = [
   "research.observation", "project.created", "baseline.completed", "data.audit.completed", "data.audit.accepted",
@@ -613,6 +614,22 @@ program.command("guidance")
     const guidance = loadProjectGuidance(root);
     if (options.json) console.log(JSON.stringify(guidance ?? { paths: [], text: "", contentHash: null, truncated: false }, null, 2));
     else console.log(guidance ? `Project guidance\nFiles       ${guidance.paths.join(", ")}\nHash        ${guidance.contentHash}\nTruncated   ${guidance.truncated ? "yes" : "no"}\n\n${guidance.text}` : "No project guidance found. Add EVIDRA.md or .evidra/instructions.md.");
+  });
+
+program.command("export")
+  .option("-o, --output <path>", "workspace-relative JSON bundle path", ".sota/exports/evidra-bundle.json")
+  .description("Export a secret-redacted portable research bundle")
+  .action((options: { output: string }) => {
+    const output = resolve(root, options.output);
+    const outputRelative = relative(root, output);
+    if (outputRelative.startsWith("..") || outputRelative.startsWith("/") || outputRelative.includes("..")) throw new Error("Export path must stay inside the Evidra workspace.");
+    const store = new ResearchStore(statePath);
+    const bundle = createPortableBundle(store, root);
+    mkdirSync(dirname(output), { recursive: true });
+    writeFileSync(output, `${JSON.stringify(bundle, null, 2)}\n`);
+    store.appendEvent("bundle.exported", { path: outputRelative, schemaVersion: bundle.schemaVersion, counts: bundle.counts });
+    store.close();
+    console.log(`Portable bundle exported\n  path: ${output}\n  type: ${bundle.type}\n  schema: ${bundle.schemaVersion}`);
   });
 
 program.command("backup")
