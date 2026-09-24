@@ -3450,9 +3450,14 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     const routine = store.createRoutine({
       id: "routine-demo", name: "Demo routine", mode: "research", goal: "measure a reproducible improvement",
       budgetMinutes: 10, intervalSeconds: 60, stopCondition: "stop after replication", provider: "codex",
-      model: "gpt-test", thinking: "medium", autonomy: "safe", limitPolicy: "auto", executor: "local", lanes: 1,
+      model: "gpt-test", thinking: "medium", autonomy: "safe", limitPolicy: "auto", executor: "local", lanes: 1, triggerEvent: "research.test",
     });
     assert.equal(routine.status, "active");
+    assert.equal(routine.triggerEvent, "research.test");
+    const triggerAt = new Date(Date.now() + 1_000).toISOString();
+    assert.deepEqual(store.triggerRoutines("research.test", triggerAt), [routine.id]);
+    assert.deepEqual(store.triggerRoutines("research.test", triggerAt), []);
+    assert.equal(store.routine(routine.id)?.lastTriggerAt, triggerAt);
     assert.equal(store.claimRoutine("routine-demo", "runner-a", 60_000)?.leaseId, "runner-a");
     assert.equal(store.claimRoutine("routine-demo", "runner-b"), undefined);
     const finished = store.finishRoutine("routine-demo", "runner-a", "completed");

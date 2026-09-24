@@ -82,6 +82,8 @@ export interface ResearchRoutine {
   limitPolicy: "auto" | "wait" | "fallback" | "stop";
   executor: "local" | "container" | "modal" | "slurm";
   lanes: number;
+  triggerEvent?: string | null;
+  lastTriggerAt?: string | null;
   status: RoutineStatus;
   nextRunAt: string;
   lastRunAt: string | null;
@@ -104,7 +106,7 @@ export interface ResearchRoutineRun {
   error: string | null;
 }
 
-function validateRoutine(routine: Pick<ResearchRoutine, "name" | "goal" | "mode" | "budgetMinutes" | "intervalSeconds" | "provider" | "model" | "thinking" | "autonomy" | "limitPolicy" | "executor" | "lanes">): void {
+function validateRoutine(routine: Pick<ResearchRoutine, "name" | "goal" | "mode" | "budgetMinutes" | "intervalSeconds" | "provider" | "model" | "thinking" | "autonomy" | "limitPolicy" | "executor" | "lanes" | "triggerEvent">): void {
   if (!routine.name.trim()) throw new Error("Routine name must not be empty.");
   if (!routine.goal.trim()) throw new Error("Routine goal must not be empty.");
   if (!Number.isFinite(routine.budgetMinutes) || routine.budgetMinutes <= 0) throw new Error("Routine budget must be positive.");
@@ -117,6 +119,7 @@ function validateRoutine(routine: Pick<ResearchRoutine, "name" | "goal" | "mode"
   if (!["auto", "wait", "fallback", "stop"].includes(routine.limitPolicy)) throw new Error("Routine limit policy must be auto, wait, fallback, or stop.");
   if (!["local", "container", "modal", "slurm"].includes(routine.executor)) throw new Error("Routine executor must be local, container, modal, or slurm.");
   if (!Number.isInteger(routine.lanes) || routine.lanes < 1 || routine.lanes > 6) throw new Error("Routine lanes must be an integer from 1 to 6.");
+  if (routine.triggerEvent !== undefined && routine.triggerEvent !== null && !/^[a-zA-Z0-9_.:-]{1,120}$/.test(routine.triggerEvent)) throw new Error("Routine trigger event must be a simple event type such as research.agent_budget.exhausted.");
 }
 
 export type ControllerAction = "pause" | "resume" | "stop";
@@ -1399,7 +1402,7 @@ export class ResearchStore {
       name: routine.name, mode: routine.mode, goal: routine.goal, budgetMinutes: routine.budgetMinutes,
       intervalSeconds: routine.intervalSeconds, stopCondition: routine.stopCondition, provider: routine.provider,
       model: routine.model, thinking: routine.thinking, autonomy: routine.autonomy, limitPolicy: routine.limitPolicy,
-      executor: routine.executor, lanes: routine.lanes, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult,
+      executor: routine.executor, lanes: routine.lanes, triggerEvent: routine.triggerEvent ?? null, lastTriggerAt: routine.lastTriggerAt ?? null, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult,
       lastError: routine.lastError, runCount: routine.runCount,
     };
     this.db.prepare(`
@@ -1422,14 +1425,30 @@ export class ResearchStore {
       lastResult: null,
       lastError: null,
       runCount: 0,
+      triggerEvent: input.triggerEvent ?? null,
+      lastTriggerAt: null,
       leaseId: null,
       leaseExpiresAt: null,
       createdAt: now,
       updatedAt: now,
     };
     this.saveRoutine(routine);
-    this.appendEvent("routine.created", { id: routine.id, name: routine.name, mode: routine.mode, intervalSeconds: routine.intervalSeconds });
+    this.appendEvent("routine.created", { id: routine.id, name: routine.name, mode: routine.mode, intervalSeconds: routine.intervalSeconds, triggerEvent: routine.triggerEvent ?? null });
     return routine;
+  }
+
+  /** Wake active routines from a newer matching event without duplicating triggers. */
+  triggerRoutines(eventType: string, eventCreatedAt: string): string[] {
+    const triggered: string[] = [];
+    for (const routine of this.routines()) {
+      if (routine.status !== "active" || routine.triggerEvent !== eventType) continue;
+      if (routine.lastTriggerAt && Date.parse(routine.lastTriggerAt) >= Date.parse(eventCreatedAt)) continue;
+      const updated: ResearchRoutine = { ...routine, nextRunAt: new Date().toISOString(), lastTriggerAt: eventCreatedAt, updatedAt: new Date().toISOString() };
+      this.saveRoutine(updated);
+      this.appendEvent("routine.triggered", { id: routine.id, eventType, eventCreatedAt });
+      triggered.push(routine.id);
+    }
+    return triggered;
   }
 
   claimRoutine(id: string, ownerId: string, leaseMs = 7 * 24 * 60 * 60_000, now = new Date()): ResearchRoutine | undefined {

@@ -85,6 +85,7 @@ duplicate campaigns:
 
 ```text
 evidra routine create --name nightly-literature --goal "find and test robust improvements" --every 1d --budget 4h
+evidra routine create --name recovery-review --goal "audit the latest recovery" --on-event research.agent_budget.exhausted
 evidra routine list --json
 evidra routine history <routine-id>
 evidra routine run <routine-id>

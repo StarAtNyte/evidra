@@ -2117,7 +2117,8 @@ routine.command("create")
   .option("--limit-policy <policy>", "auto, wait, fallback, or stop", "auto")
   .option("--executor <executor>", "local, container, modal, or slurm", "local")
   .option("--lanes <count>", "maximum concurrent research lanes", "3")
-  .action((options: { name: string; goal: string; mode: string; every: string; budget: string; stop: string; provider: string; model: string; thinking: string; autonomy: string; limitPolicy: string; executor: string; lanes: string }) => {
+  .option("--on-event <event>", "wake immediately when this durable event type is emitted")
+  .action((options: { name: string; goal: string; mode: string; every: string; budget: string; stop: string; provider: string; model: string; thinking: string; autonomy: string; limitPolicy: string; executor: string; lanes: string; onEvent?: string }) => {
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Routine mode must be 'research' or 'challenge'.");
     if (options.provider !== "codex" && options.provider !== "local") throw new Error("Routine provider must be 'codex' or 'local'.");
     if (!["safe", "fast", "yolo"].includes(options.autonomy)) throw new Error("Routine autonomy must be 'safe', 'fast', or 'yolo'.");
@@ -2126,9 +2127,9 @@ routine.command("create")
     const lanes = Number.parseInt(options.lanes, 10);
     if (!Number.isInteger(lanes) || lanes < 1 || lanes > 6) throw new Error("Routine lanes must be an integer from 1 to 6.");
     const store = new ResearchStore(statePath);
-    const entry = store.createRoutine({ name: options.name.trim(), mode: options.mode as "research" | "challenge", goal: options.goal.trim(), budgetMinutes: durationMinutes(options.budget), intervalSeconds: durationMinutes(options.every) * 60, stopCondition: options.stop.trim(), provider: options.provider as "codex" | "local", model: options.model, thinking: options.thinking, autonomy: options.autonomy as "safe" | "fast" | "yolo", limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", executor: options.executor as "local" | "container" | "modal" | "slurm", lanes });
+    const entry = store.createRoutine({ name: options.name.trim(), mode: options.mode as "research" | "challenge", goal: options.goal.trim(), budgetMinutes: durationMinutes(options.budget), intervalSeconds: durationMinutes(options.every) * 60, stopCondition: options.stop.trim(), provider: options.provider as "codex" | "local", model: options.model, thinking: options.thinking, autonomy: options.autonomy as "safe" | "fast" | "yolo", limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", executor: options.executor as "local" | "container" | "modal" | "slurm", lanes, triggerEvent: options.onEvent?.trim() || null });
     store.close();
-    console.log(`Routine created: ${entry.id}\nNext run: ${entry.nextRunAt}\nUse evidra routine run ${entry.id} or schedule it from cron.`);
+    console.log(`Routine created: ${entry.id}\nNext run: ${entry.nextRunAt}\nTrigger: ${entry.triggerEvent ?? "interval only"}\nUse evidra routine run ${entry.id} or schedule it from cron.`);
   });
 for (const action of ["pause", "resume"] as const) {
   routine.command(`${action} <id>`).description(`${action[0].toUpperCase()}${action.slice(1)} a recurring routine`).action((id: string) => {
@@ -2180,10 +2181,14 @@ routine.command("daemon")
     do {
       const store = new ResearchStore(statePath);
       const recovered = store.recoverStaleRoutines();
+      const triggerEvents = store.recentEvents(128);
+      const triggered = new Set<string>();
+      for (const event of triggerEvents) for (const id of store.triggerRoutines(event.type, event.createdAt)) triggered.add(id);
       const now = Date.now();
       const due = store.routines().filter((entry) => entry.status === "active" && Date.parse(entry.nextRunAt) <= now).map((entry) => entry.id);
       store.close();
       if (recovered.length) console.log(`Recovered stale routines: ${recovered.join(", ")}`);
+      if (triggered.size) console.log(`Triggered routines: ${[...triggered].join(", ")}`);
       if (!due.length) {
         if (options.once) return;
         console.log(`Routine daemon idle · next poll in ${Math.round(pollMs / 60_000)}m`);
