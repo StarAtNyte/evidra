@@ -173,6 +173,8 @@ This headless mode has no interactive TUI or implicit approval channel. Inspect 
 The controller initializes the requested competition in the durable Modal state volume on first start. `--executor local` runs experiments inside the controller container; `--executor modal` routes them to a separate Modal worker and requires the Modal CLI/runtime in the image.
 Autonomous campaigns accept `--gpu-budget <hours>` (zero means unlimited). Before each GPU-backed experiment, Evidra atomically reserves the declared cost against observed usage plus other active reservations; over-budget work is blocked and recorded rather than launched. Reservations are released on terminal outcomes, shown by `/usage`, and retained across crashes until startup recovery resolves the running experiment.
 
+Agent inference can be governed independently of wall-clock and GPU budgets. Set `--agent-token-budget <tokens>` on `evidra research` or `evidra challenge start`; the default `0` is unlimited. Usage is attributed to the durable campaign start boundary, counted across Codex/local routes, and checked before the next agent allocation. When the ceiling is reached, Evidra pauses the campaign with a durable `research.agent_budget.exhausted` event instead of starting another turn. In the TUI, use `/budget tokens <count>`, `/budget`, or `/budget tokens 0` to inspect, set, or remove the ceiling. The limit is included in the campaign runtime fingerprint and is preserved on resume.
+
 Every executor exposes the same experiment configuration contract to worker code. Evidra writes a redacted JSON document at `.sota/experiment-config.json` and sets `EVIDRA_EXPERIMENT_CONFIG` plus `EVIDRA_EXPERIMENT_ID`; container and Modal workers receive the equivalent `/workspace/.sota/experiment-config.json` path. The document contains the immutable experiment id, dataset/split versions, declared fold/seed matrix, resource route, and `configPatch`, so ablations and research-generated variants are real, reproducible inputs rather than metadata-only labels. Training code may load it in any language without depending on Evidra internals. Dataset and split versions are also available as `EVIDRA_DATASET_VERSION` and `EVIDRA_SPLIT_VERSION`.
 
 Worker processes receive a minimal runtime environment (`PATH`, locale, temporary directories, and hardware/runtime hints) plus a workspace-scoped or ephemeral `HOME`; they cannot inherit the controller user's dotfiles. Controller credentials—including Codex, OpenAI, Modal, competition, GitHub, and arbitrary `*_TOKEN`/`*_KEY`/`*_SECRET` values—are stripped before local or Modal experiment code starts. Credentials are therefore available only to the controller/provider boundary that explicitly needs them, never as ambient inputs to model-generated training code.
@@ -520,6 +522,7 @@ Useful commands:
     /integrity            Verify the durable event history for tampering/corruption
     /backup [path]        Create a consistent durable state backup
     /usage                Show durable activity, experiment time, and agent tokens
+    /budget tokens <n>    Set the campaign agent-token ceiling (`0` = unlimited)
     /research             Start or run an evidence-gathering cycle
     /research start       Start a fully autonomous research campaign
     /research examples    Show contemporary starter briefs with metrics and stop rules

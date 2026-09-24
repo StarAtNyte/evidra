@@ -70,7 +70,7 @@ import { recordBaselineEvidence } from "../core/baseline.js";
 import { redactSecrets } from "../core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "../core/claim-audit.js";
-import { summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "../core/usage.js";
+import { campaignAgentTokens, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "../core/usage.js";
 import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "../core/literature-bench.js";
 import { parseAutoResearchBenchEvaluation } from "../core/autoresearch-bench.js";
 import { assessResearchDecisionRubric } from "../core/research-rubric.js";
@@ -137,6 +137,7 @@ const COMMANDS = [
   ["/status", "Show complete workbench state"],
   ["/experience", "Show reusable trajectory experience and curriculum"],
   ["/usage", "Show budget, activity, and campaign usage"],
+  ["/budget", "Set the campaign agent-token ceiling"],
   ["/sources", "Retrieve and search research sources"],
   ["/evidence", "Audit claim provenance and completion blockers"],
   ["/memory", "Search durable evidence and research memory"],
@@ -304,6 +305,7 @@ function help(): string {
     "/status                      Show complete workbench state",
     "/experience [export]       Show or export trajectory experience",
     "/usage                       Show budgets and research activity",
+    "/budget tokens <count>       Set the campaign agent-token ceiling (0 = unlimited)",
     "/sources [channels|add|discover|search|show] Retrieve or search research sources",
     "/memory [recent|search]      Search durable evidence memory",
     "/data audit                 Audit challenge files and duplicates",
@@ -877,6 +879,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       fallbackModel: savedRuntime?.fallbackModel ?? configRef.current.fallbackModel,
       thinking: savedRuntime?.thinking ?? configRef.current.reasoningEffort,
       lanes: savedRuntime?.lanes ?? (configRef.current.autonomy === "safe" ? 1 : configRef.current.autonomy === "fast" ? 2 : 4),
+      ...(savedRuntime?.agentTokenBudget !== undefined ? { agentTokenBudget: savedRuntime.agentTokenBudget } : {}),
       autonomy: configRef.current.autonomy,
       limitPolicy: savedRuntime?.limitPolicy ?? configRef.current.limitPolicy,
       executor: savedRuntime?.executor ?? configRef.current.experimentExecutor,
@@ -1017,6 +1020,19 @@ export function App({ root }: { root: string }): React.JSX.Element {
       store.close();
       throw new Error(`Autonomous campaign paused before agent allocation.\n${message}`);
     }
+    const agentTokenBudget = campaign?.runtime?.agentTokenBudget ?? 0;
+    if (campaign && agentTokenBudget > 0) {
+      const agentTokens = campaignAgentTokens(store.eventsByType("research.agent.usage"), campaign.startedAt);
+      if (agentTokens >= agentTokenBudget) {
+        const paused = pauseCampaign(campaign);
+        Object.assign(campaign, paused);
+        store.saveCampaign(paused);
+        store.setSchedulerState({ status: "paused", mode, currentStep: "agent-token-budget" });
+        store.appendEvent("research.agent_budget.exhausted", { campaignStartedAt: campaign.startedAt, usedTokens: agentTokens, budgetTokens: agentTokenBudget, action: "pause-before-agent-allocation" });
+        store.close();
+        throw new Error(`Autonomous campaign paused: agent token budget exhausted (${agentTokens}/${agentTokenBudget}).`);
+      }
+    }
     const recentEvents = store.recentEvents(20);
     const consistencyEvents = store.recentEvents(200);
     const evidenceConflicts = {
@@ -1138,7 +1154,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     } });
     const recordAgentUsage = (usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningOutputTokens?: number } | undefined, provider: string, model: string, role: string): void => {
       const usageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      usageStore.appendEvent("research.agent.usage", { role, provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, cacheWriteInputTokens: usage?.cacheWriteInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens });
+      usageStore.appendEvent("research.agent.usage", { ...(campaign?.startedAt ? { campaignStartedAt: campaign.startedAt } : {}), role, provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, cacheWriteInputTokens: usage?.cacheWriteInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens });
       usageStore.close();
     };
     try {
@@ -2674,6 +2690,29 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", queued ? `Steering instruction queued · will be applied at the next safe cycle boundary (id ${queued.id}).` : "No live campaign controller is running. Start or resume a campaign before steering it.");
       return;
     }
+    const tokenBudgetMatch = request.match(/^\/budget(?:\s+tokens(?:\s+(\S+))?)?$/i);
+    if (tokenBudgetMatch) {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const campaign = store.campaign() as ResearchCampaign | undefined;
+      const usedTokens = campaign ? campaignAgentTokens(store.eventsByType("research.agent.usage"), campaign.startedAt) : 0;
+      store.close();
+      if (!campaign) { append("assistant", "No campaign exists. Start /research or /challenge first."); return; }
+      const raw = tokenBudgetMatch[1];
+      if (!raw) {
+        append("assistant", `Agent token budget\n  ceiling: ${campaign.runtime?.agentTokenBudget ? `${campaign.runtime.agentTokenBudget} tokens` : "unlimited"}\n  attributed usage: ${usedTokens} tokens`);
+        return;
+      }
+      const parsed = /^(?:0|unlimited)$/i.test(raw) ? 0 : Number(raw);
+      if (!Number.isInteger(parsed) || parsed < 0) { append("assistant", "Use a non-negative integer token count, or 0/unlimited."); return; }
+      const currentRuntime = campaign.runtime;
+      if (!currentRuntime) { append("assistant", "This legacy campaign has no durable runtime route. Start a new campaign before setting an agent budget."); return; }
+      const { fingerprint: _fingerprint, ...runtimeWithoutFingerprint } = currentRuntime;
+      const nextCampaign = { ...campaign, runtime: { ...runtimeWithoutFingerprint, ...(parsed > 0 ? { agentTokenBudget: parsed } : {}) } } as ResearchCampaign;
+      persistCampaign(nextCampaign);
+      setConfig((current) => ({ ...current, campaign: nextCampaign }));
+      append("assistant", `Agent token ceiling ${parsed > 0 ? `set to ${parsed} tokens` : "removed (unlimited)"}. Current attributed usage: ${usedTokens} tokens.`);
+      return;
+    }
     if (["/challenge pause", "/challenge resume", "/challenge stop", "/challenge status", "/research pause", "/research resume", "/research stop", "/research status"].includes(request)) {
       const action = request.split(/\s+/)[1];
       const lifecycleMode = request.startsWith("/challenge") ? "challenge" : "research";
@@ -3122,7 +3161,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const elapsed = campaign ? campaignElapsedMinutes(campaign) : 0;
       const executorUsage = Object.entries(usage.byExecutor).map(([executor, bucket]) => `  ${executor}: ${bucket.runs} runs · ${bucket.wallMinutes.toFixed(1)}m · ${bucket.gpuWallHours.toFixed(3)} GPU-h`).join("\n");
       append("assistant", `Usage\n  provider: ${config.provider}\n  model: ${config.model}\n  thinking: ${config.reasoningEffort}\n  scheduler: ${state.status}\n  events: ${events}\n  hypotheses: ${counts.hypotheses} · claims: ${counts.claims} · decisions: ${counts.decisions}\n  experiments: ${counts.experiments} · runs: ${counts.runs} · attempts: ${counts.attempts} · artifacts: ${counts.artifacts}\n  run wall time: ${usage.wallMinutes.toFixed(1)} minutes\n  GPU-tagged wall time: ${usage.gpuWallHours.toFixed(3)} hours\n  GPU reserved: ${gpuReserved.toFixed(3)} hours${executorUsage ? `\n${executorUsage}` : ""}\n${campaign ? `\nCampaign\n  status: ${campaign.status}\n  elapsed: ${elapsed.toFixed(1)} / ${campaign.budgetMinutes} minutes\n  remaining: ${Math.max(0, campaign.budgetMinutes - elapsed).toFixed(1)} minutes\n  GPU committed: ${(gpuUsed + gpuReserved).toFixed(3)} / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed - gpuReserved).toFixed(3)} available)` : ""}\n  goal: ${campaign.goal}\n  stop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\n  provider retry: ${campaign.nextAttemptAt}` : ""}` : "\nNo autonomous campaign configured. Start one with /research."}`);
-      append("assistant", `Agent usage\n  calls: ${agentUsage.calls}\n  tokens: ${agentUsage.inputTokens + agentUsage.outputTokens} (${agentUsage.inputTokens} in / ${agentUsage.outputTokens} out)`);
+      const campaignTokenBudget = campaign?.runtime?.agentTokenBudget;
+      append("assistant", `Agent usage\n  calls: ${agentUsage.calls}\n  tokens: ${agentUsage.inputTokens + agentUsage.outputTokens} (${agentUsage.inputTokens} in / ${agentUsage.outputTokens} out)${campaignTokenBudget ? `\n  campaign ceiling: ${campaignTokenBudget} tokens` : ""}`);
       append("assistant", `Codex accounting\n  cached input: ${agentUsage.cachedInputTokens}\n  cache written: ${agentUsage.cacheWriteInputTokens}\n  reasoning output: ${agentUsage.reasoningOutputTokens}`);
       if (agentRoutes.length) append("assistant", `Agent routes\n${agentRoutes.map((bucket) => `  ${bucket.role} · ${bucket.provider}/${bucket.model} · ${bucket.calls} calls · ${bucket.inputTokens + bucket.outputTokens} tokens`).join("\n")}`);
       return;

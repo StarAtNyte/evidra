@@ -33,6 +33,16 @@ export interface AgentUsageBucket extends AgentUsageSummary {
   model: string;
 }
 
+/** Count the durable model tokens attributed to one campaign start boundary. */
+export function campaignAgentTokens(events: Array<{ payload: unknown }>, campaignStartedAt: string): number {
+  const scoped = events.filter((event) => {
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    return payload.campaignStartedAt === campaignStartedAt;
+  });
+  const usage = summarizeAgentUsage(scoped);
+  return usage.inputTokens + usage.outputTokens + usage.reasoningOutputTokens;
+}
+
 function usageNumber(payload: Record<string, unknown>, key: string): number {
   return typeof payload[key] === "number" && Number.isFinite(payload[key]) && (payload[key] as number) >= 0 ? payload[key] as number : 0;
 }

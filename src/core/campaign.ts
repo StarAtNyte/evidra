@@ -56,6 +56,8 @@ export interface CampaignRuntimeConfig {
   lanes: number;
   /** Optional hard wall-clock budget per specialist lane. */
   laneBudgetMinutes?: number;
+  /** Optional aggregate model-token ceiling for one durable campaign; zero/unset means unlimited. */
+  agentTokenBudget?: number;
   autonomy: "safe" | "fast" | "yolo";
   limitPolicy: "auto" | "wait" | "fallback" | "stop";
   executor: ExperimentExecutorKind;
@@ -79,6 +81,7 @@ export function campaignRuntimeFingerprint(runtime: CampaignRuntimeConfig): stri
     thinking: runtime.thinking,
     lanes: runtime.lanes,
     ...(runtime.laneBudgetMinutes !== undefined ? { laneBudgetMinutes: runtime.laneBudgetMinutes } : {}),
+    ...(runtime.agentTokenBudget !== undefined ? { agentTokenBudget: runtime.agentTokenBudget } : {}),
     autonomy: runtime.autonomy,
     limitPolicy: runtime.limitPolicy,
     executor: runtime.executor,
@@ -97,6 +100,7 @@ export function readCampaignRuntime(value: unknown): CampaignRuntimeConfig | und
   if (typeof candidate.thinking !== "string" || !candidate.thinking) return undefined;
   if (typeof candidate.lanes !== "number" || !Number.isInteger(candidate.lanes) || candidate.lanes < 1 || candidate.lanes > 6) return undefined;
   if (candidate.laneBudgetMinutes !== undefined && (typeof candidate.laneBudgetMinutes !== "number" || !Number.isFinite(candidate.laneBudgetMinutes) || candidate.laneBudgetMinutes <= 0)) return undefined;
+  if (candidate.agentTokenBudget !== undefined && (typeof candidate.agentTokenBudget !== "number" || !Number.isFinite(candidate.agentTokenBudget) || candidate.agentTokenBudget <= 0)) return undefined;
   if (!( ["safe", "fast", "yolo"] as const).includes(candidate.autonomy as "safe" | "fast" | "yolo")) return undefined;
   if (!( ["auto", "wait", "fallback", "stop"] as const).includes(candidate.limitPolicy as "auto" | "wait" | "fallback" | "stop")) return undefined;
   if (!( ["local", "container", "modal", "slurm"] as const).includes(candidate.executor as ExperimentExecutorKind)) return undefined;
@@ -108,6 +112,7 @@ export function readCampaignRuntime(value: unknown): CampaignRuntimeConfig | und
     thinking: candidate.thinking,
     lanes: candidate.lanes,
     ...(candidate.laneBudgetMinutes !== undefined ? { laneBudgetMinutes: candidate.laneBudgetMinutes } : {}),
+    ...(candidate.agentTokenBudget !== undefined ? { agentTokenBudget: candidate.agentTokenBudget } : {}),
     autonomy: candidate.autonomy as CampaignRuntimeConfig["autonomy"],
     limitPolicy: candidate.limitPolicy as CampaignRuntimeConfig["limitPolicy"],
     executor: candidate.executor as CampaignRuntimeConfig["executor"],

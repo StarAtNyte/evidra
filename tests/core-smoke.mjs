@@ -75,7 +75,7 @@ import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperi
 import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, createLaneToolExecutor, laneHandoffBoard, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneTeamSize, researchLiteratureQueries, runResearchLanes, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
-import { summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "../dist/core/usage.js";
+import { campaignAgentTokens, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { assessForecast, summarizeForecastAssessments } from "../dist/core/forecast-calibration.js";
@@ -1197,6 +1197,7 @@ test("durable campaign runtime settings are validated before resume", () => {
     thinking: "high",
     lanes: 4,
     laneBudgetMinutes: 20,
+    agentTokenBudget: 50_000,
     autonomy: "fast",
     limitPolicy: "auto",
     executor: "modal",
@@ -1205,6 +1206,7 @@ test("durable campaign runtime settings are validated before resume", () => {
   assert.equal(readCampaignRuntime({ runtime: { ...runtime, lanes: 0 } }), undefined);
   assert.equal(readCampaignRuntime({ runtime: { ...runtime, provider: "unknown" } }), undefined);
   assert.equal(readCampaignRuntime({ runtime: { ...runtime, laneBudgetMinutes: 0 } }), undefined);
+  assert.equal(readCampaignRuntime({ runtime: { ...runtime, agentTokenBudget: 0 } }), undefined);
   assert.equal(readCampaignRuntime({ goal: "legacy campaign" }), undefined);
   assert.equal(campaignRuntimeFingerprint(runtime), campaignRuntimeFingerprint({ ...runtime }));
   assert.notEqual(campaignRuntimeFingerprint(runtime), campaignRuntimeFingerprint({ ...runtime, autonomy: "yolo" }));
@@ -4144,6 +4146,14 @@ test("agent usage preserves role and route attribution", () => {
     ["domain researcher", "local", "qwen", 1, 102],
     ["critic", "codex", "gpt-5.6-luna", 2, 20],
   ]);
+});
+
+test("campaign token usage isolates durable campaign boundaries", () => {
+  assert.equal(campaignAgentTokens([
+    { payload: { campaignStartedAt: "campaign-a", inputTokens: 10, outputTokens: 5, reasoningOutputTokens: 2 } },
+    { payload: { campaignStartedAt: "campaign-b", inputTokens: 100, outputTokens: 100 } },
+    { payload: { campaignStartedAt: "campaign-a", inputTokens: 3, outputTokens: 4 } },
+  ], "campaign-a"), 24);
 });
 
 test("Codex model responses normalize reasoning-effort objects", () => {

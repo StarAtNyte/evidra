@@ -56,7 +56,7 @@ import { observedGpuHours } from "./core/compute-budget.js";
 import { enforceClaimTermination, enforceGoalTermination } from "./core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds, type ClaimAuditReport } from "./core/claim-audit.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "./core/error-analysis.js";
-import { summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "./core/usage.js";
+import { campaignAgentTokens, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "./core/usage.js";
 import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "./core/ensemble.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
@@ -142,6 +142,7 @@ const program = new Command();
 const activeCompetition = () => {
   const store = new ResearchStore(statePath);
   const project = store.project();
+  const campaign = store.campaign() as { runtime?: { agentTokenBudget?: unknown } } | undefined;
   store.close();
   return loadCompetitionAdapter(root, project?.competitionId ?? "local-research");
 };
@@ -725,6 +726,7 @@ program.command("usage").description("Show research, experiment, and campaign us
   const store = new ResearchStore(statePath);
   const counts = store.counts();
   const project = store.project();
+  const campaign = store.campaign() as { runtime?: { agentTokenBudget?: unknown } } | undefined;
   const usage = summarizeUsage(store.runs(), store.experiments());
   const agentEvents = store.eventsByType("research.agent.usage");
   const agentUsage = summarizeAgentUsage(agentEvents);
@@ -743,6 +745,7 @@ program.command("usage").description("Show research, experiment, and campaign us
   console.log(`Agent calls   ${agentUsage.calls}`);
   console.log(`Agent tokens  ${agentUsage.inputTokens + agentUsage.outputTokens} (${agentUsage.inputTokens} in / ${agentUsage.outputTokens} out)`);
   console.log(`Agent cache   ${agentUsage.cachedInputTokens} cached input · ${agentUsage.cacheWriteInputTokens} cache written · ${agentUsage.reasoningOutputTokens} reasoning output`);
+  if (typeof campaign?.runtime?.agentTokenBudget === "number") console.log(`Agent budget  ${campaign.runtime.agentTokenBudget} tokens (campaign ceiling)`);
   if (agentRoutes.length) console.log(`Agent routes\n${agentRoutes.map((bucket) => `  ${bucket.role} · ${bucket.provider}/${bucket.model} · ${bucket.calls} calls · ${bucket.inputTokens + bucket.outputTokens} tokens`).join("\n")}`);
   console.log(`GPU-tagged    ${usage.gpuWallHours.toFixed(3)} hours`);
   console.log(`GPU reserved  ${store.reservedComputeGpuHours().toFixed(3)} hours`);
@@ -2245,15 +2248,16 @@ challenge.command("start")
   .option("--thinking <effort>", "reasoning effort", "medium")
   .option("--lanes <count>", "maximum concurrent research lanes (non-safe teams may use bounded waves)", "3")
   .option("--lane-budget <duration>", "optional hard budget per specialist lane, e.g. 20m or 1h")
+  .option("--agent-token-budget <tokens>", "aggregate model-token ceiling for this campaign; 0 means unlimited", "0")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: auto, wait, fallback, or stop", "auto")
   .option("--executor <executor>", "experiment execution target: local, container, modal, or slurm", "local")
   .option("--resume", "resume the saved challenge campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
+  .action(async (options: { goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; agentTokenBudget: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
     const script = process.argv[1];
     if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
-    const args = ["research", "--mode", "challenge", "--goal", options.goal, "--budget", options.budget, "--gpu-budget", options.gpuBudget, "--stop", options.stop, "--provider", options.provider, "--model", options.model, "--fallback-model", options.fallbackModel, "--thinking", options.thinking, "--lanes", options.lanes, ...(options.laneBudget ? ["--lane-budget", options.laneBudget] : []), "--autonomy", options.autonomy, "--limit-policy", options.limitPolicy, "--executor", options.executor];
+    const args = ["research", "--mode", "challenge", "--goal", options.goal, "--budget", options.budget, "--gpu-budget", options.gpuBudget, "--agent-token-budget", options.agentTokenBudget, "--stop", options.stop, "--provider", options.provider, "--model", options.model, "--fallback-model", options.fallbackModel, "--thinking", options.thinking, "--lanes", options.lanes, ...(options.laneBudget ? ["--lane-budget", options.laneBudget] : []), "--autonomy", options.autonomy, "--limit-policy", options.limitPolicy, "--executor", options.executor];
     if (options.resume) args.push("--resume");
     if (options.skipBaseline) args.push("--skip-baseline");
     const result = await runProcess([process.execPath, script, ...args], root, 7 * 24 * 60 * 60_000, (stream, chunk) => {
@@ -2366,12 +2370,13 @@ research
   .option("--thinking <effort>", "reasoning effort", "medium")
   .option("--lanes <count>", "maximum concurrent research lanes (non-safe teams may use bounded waves)", "3")
   .option("--lane-budget <duration>", "optional hard budget per specialist lane, e.g. 20m or 1h")
+  .option("--agent-token-budget <tokens>", "aggregate model-token ceiling for this campaign; 0 means unlimited", "0")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: auto, wait, fallback, or stop", "auto")
   .option("--executor <executor>", "experiment execution target: local, container, modal, or slurm", "local")
   .option("--resume", "resume the latest durable non-completed research campaign")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
+  .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; agentTokenBudget: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; autonomy: string; limitPolicy: string; executor: string; resume?: boolean; skipBaseline?: boolean }) => {
     const savedStore = new ResearchStore(statePath);
     const savedCampaign = savedStore.campaign() as { goal?: string; budgetMinutes?: number; gpuBudgetHours?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; runtime?: unknown; runtimeFingerprint?: string; autoExecuteExperiments?: boolean } | undefined;
     const savedCheckpoint = options.resume ? readCampaignCheckpoint(savedCampaign) : undefined;
@@ -2392,6 +2397,7 @@ research
       options.thinking = savedRuntime.thinking;
       options.lanes = String(savedRuntime.lanes);
       options.laneBudget = savedRuntime.laneBudgetMinutes === undefined ? undefined : `${savedRuntime.laneBudgetMinutes}m`;
+      options.agentTokenBudget = savedRuntime.agentTokenBudget === undefined ? "0" : String(savedRuntime.agentTokenBudget);
       options.autonomy = savedRuntime.autonomy;
       options.limitPolicy = savedRuntime.limitPolicy;
       options.executor = savedRuntime.executor;
@@ -2417,6 +2423,8 @@ research
     await ingestCompetitionSources(adapter);
     const budget = durationMinutes(options.budget);
     const laneBudgetMinutes = options.laneBudget ? durationMinutes(options.laneBudget) : undefined;
+    const parsedAgentTokenBudget = Number(options.agentTokenBudget);
+    if (!Number.isFinite(parsedAgentTokenBudget) || parsedAgentTokenBudget < 0 || !Number.isInteger(parsedAgentTokenBudget)) throw new Error("Agent token budget must be a non-negative integer; use 0 for unlimited.");
     const parsedGpuBudget = Number(options.gpuBudget);
     if (!Number.isFinite(parsedGpuBudget) || parsedGpuBudget < 0) throw new Error("GPU budget must be a non-negative number of hours; use 0 for unlimited.");
     const gpuBudgetHours = options.resume && savedCampaign?.gpuBudgetHours !== undefined ? savedCampaign.gpuBudgetHours : parsedGpuBudget;
@@ -2460,7 +2468,7 @@ research
       }
     }
     const started = Date.now();
-    const runtime: CampaignRuntimeConfig = { mode, provider: options.provider as CampaignRuntimeConfig["provider"], model: selectedModel, fallbackModel: options.fallbackModel, thinking: options.thinking, lanes: laneLimit, ...(laneBudgetMinutes === undefined ? {} : { laneBudgetMinutes }), autonomy, limitPolicy: options.limitPolicy as CampaignRuntimeConfig["limitPolicy"], executor: options.executor as CampaignRuntimeConfig["executor"] };
+    const runtime: CampaignRuntimeConfig = { mode, provider: options.provider as CampaignRuntimeConfig["provider"], model: selectedModel, fallbackModel: options.fallbackModel, thinking: options.thinking, lanes: laneLimit, ...(laneBudgetMinutes === undefined ? {} : { laneBudgetMinutes }), ...(parsedAgentTokenBudget > 0 ? { agentTokenBudget: parsedAgentTokenBudget } : {}), autonomy, limitPolicy: options.limitPolicy as CampaignRuntimeConfig["limitPolicy"], executor: options.executor as CampaignRuntimeConfig["executor"] };
     if (options.resume && savedRuntime && savedCampaign?.runtimeFingerprint && savedCampaign.runtimeFingerprint !== campaignRuntimeFingerprint(savedRuntime)) {
       throw new Error("Saved campaign runtime integrity check failed; its provider, model, effort, autonomy, lane, limit, or executor policy was modified. Start a new campaign or restore the original campaign state.");
     }
@@ -2591,6 +2599,19 @@ research
         const message = formatGoalAlignment(alignment);
         store.close();
         throw new Error(`Autonomous campaign paused before agent allocation.\n${message}`);
+      }
+      const agentTokenBudget = campaign.runtime.agentTokenBudget ?? 0;
+      if (agentTokenBudget > 0) {
+        const agentTokens = campaignAgentTokens(store.eventsByType("research.agent.usage"), campaign.startedAt);
+        if (agentTokens >= agentTokenBudget) {
+          campaign = pauseCampaign(campaign);
+          store.saveCampaign(campaign);
+          store.setSchedulerState({ status: "paused", mode, currentStep: "agent-token-budget" });
+          store.appendEvent("research.agent_budget.exhausted", { campaignStartedAt: campaign.startedAt, usedTokens: agentTokens, budgetTokens: agentTokenBudget, action: "pause-before-agent-allocation" });
+          store.close();
+          console.log(`Agent token budget exhausted (${agentTokens}/${agentTokenBudget}); campaign paused before agent allocation.`);
+          break campaignLoop;
+        }
       }
       const durableEvents = store.recentEvents(500);
       // Keep the prompt/event window bounded, but never truncate the reward
@@ -3032,7 +3053,7 @@ research
       } });
       const recordAgentUsage = (usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningOutputTokens?: number } | undefined, provider: string, model: string, role: string): void => {
         const usageStore = new ResearchStore(statePath);
-        usageStore.appendEvent("research.agent.usage", { cycle, role, provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, cacheWriteInputTokens: usage?.cacheWriteInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens });
+        usageStore.appendEvent("research.agent.usage", { cycle, campaignStartedAt: campaign.startedAt, role, provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, cacheWriteInputTokens: usage?.cacheWriteInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens });
         usageStore.close();
       };
       let researchAttempt = 0;
