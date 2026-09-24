@@ -311,6 +311,22 @@ Implemented today:
 - safe external wake-ups: `evidra event emit external.<source>.<event>`, `/event emit`, and the authenticated loopback `evidra event serve` endpoint accept bounded, redacted integration payloads, hash-chain them as non-evidence signals, deduplicate webhook retries with durable idempotency keys, and wake matching routines from CI, webhooks, schedulers, or competition monitors;
 - external agent heartbeats: authenticated workers can emit `external.agent.heartbeat` with a role, lease, provider, model, and status; Evidra updates durable health only for the owning lease and rejects fresh-lease impersonation, allowing heterogeneous agents to be monitored without granting them controller authority;
 - external queue workers: the authenticated listener also exposes owner-checked `/tasks/claim`, `/tasks/heartbeat`, and `/tasks/complete` endpoints, so outside runtimes can execute durable Evidra tasks while dependencies, retries, and audit events remain controller-owned;
+
+External worker loop:
+
+```bash
+BASE=http://127.0.0.1:4311
+AUTH="Authorization: Bearer $EVIDRA_EVENT_TOKEN"
+WORKER_ID="agent-17"
+TASK_RESPONSE=$(curl -fsS -H "$AUTH" -H 'content-type: application/json' \
+  -d '{"workerId":"agent-17","kinds":["research.lane"]}' "$BASE/tasks/claim")
+TASK_ID=$(printf '%s' "$TASK_RESPONSE" | jq -r '.task.id')
+# Send heartbeats while work runs, then complete only with the same worker ID.
+curl -fsS -H "$AUTH" -H 'content-type: application/json' \
+  -d "{\"workerId\":\"$WORKER_ID\",\"taskId\":\"$TASK_ID\"}" "$BASE/tasks/heartbeat"
+curl -fsS -H "$AUTH" -H 'content-type: application/json' \
+  -d "{\"workerId\":\"$WORKER_ID\",\"taskId\":\"$TASK_ID\",\"status\":\"completed\",\"payload\":{\"summary\":\"done\"}}" "$BASE/tasks/complete"
+```
 - routine trigger coalescing: events arriving while a campaign is running become one durable pending wake-up and launch immediately after completion, preventing both lost updates and concurrent duplicate campaigns;
 - portable research bundles: `evidra export` captures secret-redacted goals, claims, sources, decisions, runs, artifact checksums, routines, and recent events without copying datasets or credentials; the receiving workspace must revalidate before trusting the imported context;
 - portable bundle validation: `evidra bundle validate <path>` checks schema, credential redaction, safe workspace-relative artifact paths, and missing-file warnings without importing anything into live evidence;
