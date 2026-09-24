@@ -237,8 +237,8 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
   "/logout": [["/logout", "Sign out of the Codex account"]],
-  "/research": [["/research plan", "Show the three high-level research steps"], ["/research plan history", "Show structural plan revisions"], ["/research history", "Show durable campaign runs"], ["/research examples", "Show contemporary starter research briefs"], ["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research steer ", "Guide the active campaign at the next safe boundary"], ["/research resume", "Resume the saved campaign"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
-  "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge steer ", "Guide the active campaign at the next safe boundary"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
+  "/research": [["/research plan", "Show the three high-level research steps"], ["/research plan history", "Show structural plan revisions"], ["/research history", "Show durable campaign runs"], ["/research examples", "Show contemporary starter research briefs"], ["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research steer ", "Guide the active campaign at the next safe boundary"], ["/research resume", "Resume the saved campaign"], ["/research resume ", "Resume a selected campaign run"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
+  "/challenge": [["/challenge status", "Show challenge state"], ["/challenge history", "Show durable challenge runs"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge steer ", "Guide the active campaign at the next safe boundary"], ["/challenge resume", "Resume the saved campaign"], ["/challenge resume ", "Resume a selected campaign run"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
   "/sources": [["/sources list", "List retrieved sources"], ["/sources channels", "Show discussion and leaderboard insights"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources discover", "Search scholarly literature"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
   "/benchmark": [["/benchmark literature-score ", "Score Evidra literature discovery"], ["/benchmark autoresearch ", "Import official AutoResearchBench evaluation"], ["/benchmark safety", "Run safety-boundary probes"], ["/benchmark orchestration", "Run worker-orchestration probes"], ["/benchmark governance", "Run role-governance probes"]],
@@ -2806,6 +2806,25 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Agent token ceiling ${parsed > 0 ? `set to ${parsed} tokens` : "removed (unlimited)"}. Current attributed usage: ${usedTokens} tokens.`);
       return;
     }
+    const targetedResumeMatch = request.match(/^\/(research|challenge)\s+resume\s+(\S+)$/i);
+    if (targetedResumeMatch) {
+      const requestedMode = targetedResumeMatch[1].toLowerCase() as "research" | "challenge";
+      const requestedStartedAt = targetedResumeMatch[2];
+      const historyStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const current = historyStore.campaign() as ResearchCampaign | undefined;
+      const historical = historyStore.campaignHistory(128).find((entry) => entry.startedAt === requestedStartedAt);
+      if (!historical) { historyStore.close(); append("assistant", `No campaign run matches ${requestedStartedAt}. Use /${requestedMode} history first.`); return; }
+      const historicalMode = historical.campaign.runtime && typeof historical.campaign.runtime === "object" && !Array.isArray(historical.campaign.runtime) && (historical.campaign.runtime as Record<string, unknown>).mode === "challenge" ? "challenge" : "research";
+      if (historicalMode !== requestedMode) { historyStore.close(); append("assistant", `That run belongs to ${historicalMode}. Use /${historicalMode} resume ${requestedStartedAt}.`); return; }
+      if (historical.status === "completed") { historyStore.close(); append("assistant", "Completed campaign runs are immutable. Start a new campaign instead."); return; }
+      if (current?.status === "running" && current.startedAt !== requestedStartedAt) { historyStore.close(); append("assistant", "Another campaign is running. Pause or stop it before resuming a historical run."); return; }
+      const resumed = { ...(historical.campaign as ResearchCampaign), status: "running" as const, nextAttemptAt: undefined, limitMessage: undefined };
+      historyStore.saveCampaign(resumed); historyStore.setSchedulerState({ status: "running", mode: requestedMode, currentStep: "resuming" }); historyStore.close();
+      setConfig((existing) => ({ ...existing, mode: requestedMode, campaign: resumed }));
+      append("assistant", `${requestedMode === "challenge" ? "Challenge" : "Research"} run ${requestedStartedAt} resumed. Evidra will continue from its durable phase, evidence, and experiment state.`);
+      setTimeout(() => { void runAutonomousCycle(resumed, true); }, 0);
+      return;
+    }
     if (["/challenge pause", "/challenge resume", "/challenge stop", "/challenge status", "/research pause", "/research resume", "/research stop", "/research status"].includes(request)) {
       const action = request.split(/\s+/)[1];
       const lifecycleMode = request.startsWith("/challenge") ? "challenge" : "research";
@@ -3393,7 +3412,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     const challengeSubcommand = request.split(/\s+/)[1] ?? "";
-    if (request.startsWith("/challenge ") && (challengeSubcommand === "start" || !["status", "list", "inspect", "audit", "policy", "baseline", "init"].includes(challengeSubcommand))) {
+    if (request === "/challenge history") {
+      const historyStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const history = historyStore.campaignHistory(128).filter((entry) => entry.campaign.runtime && typeof entry.campaign.runtime === "object" && !Array.isArray(entry.campaign.runtime) && (entry.campaign.runtime as Record<string, unknown>).mode === "challenge");
+      historyStore.close();
+      append("assistant", history.length ? `Challenge campaign history\n${history.map((entry) => `  ${entry.status.padEnd(9)} ${entry.startedAt} · ${typeof entry.campaign.goal === "string" ? entry.campaign.goal : "(no goal)"}${typeof entry.campaign.goalSetId === "string" ? ` · plan ${entry.campaign.goalSetId}` : ""}`).join("\n")}` : "No durable challenge campaign runs recorded.");
+      return;
+    }
+    if (request.startsWith("/challenge ") && (challengeSubcommand === "start" || !["status", "list", "history", "inspect", "audit", "policy", "baseline", "init"].includes(challengeSubcommand))) {
       const campaignStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const durableCampaign = campaignStore.campaign() as ResearchCampaign | undefined;
       const liveController = campaignStore.liveControllerLease();
