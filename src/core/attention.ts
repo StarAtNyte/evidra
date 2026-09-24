@@ -90,6 +90,7 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
   }
 
   const queue = store.queueTasks();
+  const taskById = new Map(queue.map((task) => [task.id, task]));
   for (const task of queue) {
     if (!["queued", "running"].includes(task.status)) continue;
     const readiness = store.taskReadiness(task.id);
@@ -100,6 +101,21 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
   }
   for (const task of queue.filter((entry) => entry.status === "failed").slice(0, 24)) {
     items.push({ id: `queue-failed:${task.id}`, severity: "warning", kind: "queue-failed", summary: `${task.id} · ${task.kind} · failed`, next: `/queue history ${task.id}` });
+  }
+  // A delegated failure is actionable in the context of its live parent. Make
+  // the supervision boundary visible so the route or decomposition can change
+  // deliberately instead of the parent silently repeating a broken branch.
+  for (const child of queue.filter((entry) => entry.parentTaskId && ["failed", "cancelled"].includes(entry.status)).slice(0, 32)) {
+    const parent = taskById.get(child.parentTaskId as string);
+    if (!parent || ["completed", "failed", "cancelled"].includes(parent.status)) continue;
+    const outcome = child.status === "failed" ? "failed" : "was cancelled";
+    items.push({
+      id: `queue-supervision:${parent.id}:${child.id}`,
+      severity: child.status === "failed" ? "critical" : "warning",
+      kind: "queue-supervision",
+      summary: `${parent.id} · delegated child ${child.id} ${outcome}; parent supervision required`,
+      next: `/queue history ${parent.id}`,
+    });
   }
   for (const lane of store.agentLanes().filter((entry) => entry.status === "blocked" || entry.status === "failed").slice(0, 24)) {
     items.push({ id: `agent:${lane.role}`, severity: "critical", kind: "agent", summary: `${lane.role} · ${lane.status}${lane.error ? ` · ${lane.error.slice(0, 160)}` : ""}`, next: "/agents status" });

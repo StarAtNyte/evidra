@@ -698,6 +698,9 @@ test("operator attention consolidates durable intervention signals", () => {
     const store = new ResearchStore(join(root, "state.sqlite"));
     store.savePhaseGoal({ id: "blocked-phase", phase: "validation", status: "blocked", payload: { title: "Validate result" } });
     store.enqueueTask({ id: "waiting-task", kind: "research.review", priority: 1, dependsOn: ["missing-task"], payload: {} });
+    store.enqueueTask({ id: "supervised-parent", kind: "research.cycle", priority: 1, payload: {} });
+    store.enqueueTask({ id: "supervised-child", kind: "research.lane", priority: 1, parentTaskId: "supervised-parent", payload: {} });
+    store.updateTask("supervised-child", "failed", { error: "worker route unavailable" });
     store.updateAgentLane({ role: "critic", status: "blocked", provider: "local", model: "test", task: "missing evidence", error: "replication required" });
     store.setQueuePaused(true, "operator inspection");
     const attention = operatorAttention(store);
@@ -705,6 +708,7 @@ test("operator attention consolidates durable intervention signals", () => {
     assert.ok(attention.critical >= 2);
     assert.ok(attention.items.some((item) => item.kind === "phase-goal" && item.next === "/resume"));
     assert.ok(attention.items.some((item) => item.kind === "queue-blocked" && item.id === "queue-blocked:waiting-task"));
+    assert.ok(attention.items.some((item) => item.kind === "queue-supervision" && item.id === "queue-supervision:supervised-parent:supervised-child" && item.severity === "critical"));
     assert.ok(attention.items.some((item) => item.kind === "agent" && item.id === "agent:critic"));
     assert.ok(attention.items.some((item) => item.kind === "queue-control"));
     assert.equal(attention.health.status, "degraded");
