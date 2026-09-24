@@ -54,8 +54,8 @@ const whestbenchAdapter: CompetitionAdapter = {
   id: whestbenchConfig.id,
   config: whestbenchConfig,
   workspacePath: (projectRoot) => join(projectRoot, "competitions", "whestbench", "starterkit"),
-  baselineCommand: () => ["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"],
-  experimentCommand: () => ["uv", "run", "python", "estimator.py"],
+  baselineCommand: () => [...(whestbenchConfig.baselineCommand ?? whestbenchConfig.evaluator.command)],
+  experimentCommand: () => [...(whestbenchConfig.experimentCommand ?? whestbenchConfig.evaluator.command)],
 };
 
 const autoresearchAdapter: CompetitionAdapter = {

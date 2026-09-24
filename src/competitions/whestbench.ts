@@ -8,7 +8,7 @@ export const whestbenchConfig: CompetitionConfig = {
   metric: { name: "final_layer_mse", direction: "minimize" },
   secondaryMetrics: [],
   evaluator: {
-    command: ["uv", "run", "whest", "run", "--estimator", "estimator.py", "--split", "mini", "--runner", "subprocess"],
+    command: ["uv", "run", "whest", "run", "--estimator", "estimator.py", "--dataset", "hf://aicrowd/arc-whestbench-public-2026@v2-phase2", "--split", "mini", "--runner", "subprocess"],
     estimatorPath: "estimator.py",
   },
   researchSources: [
@@ -26,6 +26,8 @@ export const whestbenchConfig: CompetitionConfig = {
     { kind: "repository", url: "https://github.com/AIcrowd/whestbench" },
   ],
   evaluatorTimeoutMinutes: 60,
+  baselineCommand: ["uv", "run", "whest", "run", "--estimator", "examples/02_mean_propagation.py", "--dataset", "hf://aicrowd/arc-whestbench-public-2026@v2-phase2", "--split", "mini", "--runner", "subprocess"],
+  experimentCommand: ["uv", "run", "whest", "run", "--estimator", "estimator.py", "--dataset", "hf://aicrowd/arc-whestbench-public-2026@v2-phase2", "--split", "mini", "--runner", "subprocess"],
   submission: {
     platform: "command",
     source: "workspace",

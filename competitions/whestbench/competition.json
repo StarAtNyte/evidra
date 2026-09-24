@@ -16,6 +16,8 @@
       "run",
       "--estimator",
       "estimator.py",
+      "--dataset",
+      "hf://aicrowd/arc-whestbench-public-2026@v2-phase2",
       "--split",
       "mini",
       "--runner",
@@ -23,8 +25,8 @@
     ],
     "estimatorPath": "estimator.py"
   },
-  "baselineCommand": ["uv", "run", "python", "estimator.py", "--baseline", "mean_propagation"],
-  "experimentCommand": ["uv", "run", "python", "estimator.py"],
+  "baselineCommand": ["uv", "run", "whest", "run", "--estimator", "examples/02_mean_propagation.py", "--dataset", "hf://aicrowd/arc-whestbench-public-2026@v2-phase2", "--split", "mini", "--runner", "subprocess"],
+  "experimentCommand": ["uv", "run", "whest", "run", "--estimator", "estimator.py", "--dataset", "hf://aicrowd/arc-whestbench-public-2026@v2-phase2", "--split", "mini", "--runner", "subprocess"],
   "execution": {
     "reducedValidationCommand": [
       "uv", "run", "whest", "run",
