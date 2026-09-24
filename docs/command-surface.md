@@ -105,6 +105,10 @@ stable reason instead of treating every unclaimed task as ready.
 Queue insertion is idempotent by task ID: a duplicate request preserves the
 original ticket and records `queue.enqueue.duplicate` rather than creating a
 misleading second enqueue event.
+Terminal transitions also preserve the original task specification under
+`payload._task` and place the worker's terminal output under `payload.completion`;
+the task's objective, route, and completion contract therefore remain visible
+after execution.
 
 When a task exhausts its bounded retries, the queue records a typed recovery
 action instead of only a terminal error. Actions include reauthentication,

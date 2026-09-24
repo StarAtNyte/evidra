@@ -3336,7 +3336,11 @@ test("queue completion contracts reject unsupported claims and accept durable pr
     store.recordQueueActivity({ taskId: "contracted", actorId: "worker-a", kind: "progress", message: "artifact verified" });
     store.appendEvent("artifact:missing", { taskId: "contracted" });
     assert.equal(store.completeClaimedTask("contracted", "worker-a", "completed", { summary: "verified" }), true);
-    assert.equal(store.queueTasks().find((task) => task.id === "contracted")?.status, "completed");
+    const completed = store.queueTasks().find((task) => task.id === "contracted");
+    assert.equal(completed?.status, "completed");
+    assert.equal(completed?.payload.completionContract.requiredEvidenceRefs[0], "artifact:missing");
+    assert.equal(completed?.payload._task.completionContract.requiredPayloadKeys[0], "summary");
+    assert.deepEqual(completed?.payload.completion, { summary: "verified" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -27,6 +27,18 @@ function canonicalValue(value: unknown): unknown {
     .map(([key, entry]) => [key, canonicalValue(entry)]));
 }
 
+function preserveQueuePayload(previous: unknown, update: unknown): unknown {
+  if (update === undefined) return previous;
+  const previousObject = previous && typeof previous === "object" && !Array.isArray(previous) ? previous as Record<string, unknown> : {};
+  const original = previousObject._task && typeof previousObject._task === "object" && !Array.isArray(previousObject._task)
+    ? previousObject._task
+    : previousObject;
+  if (update && typeof update === "object" && !Array.isArray(update)) {
+    return { ...previousObject, ...(update as Record<string, unknown>), _task: original, completion: update };
+  }
+  return { ...previousObject, _task: original, completion: update };
+}
+
 /** Return the pre-registered portion of a persisted experiment, if present. */
 function registeredManifest(payload: unknown): Record<string, unknown> | null {
   if (!payload || typeof payload !== "object") return null;
@@ -2091,8 +2103,9 @@ export class ResearchStore {
         return false;
       }
     }
+    const current = this.queueTasks().find((task) => task.id === id);
     const now = new Date().toISOString();
-    const result = this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ?").run(status, payload === undefined ? null : safeJson(payload), now, id, ownerId);
+    const result = this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ?").run(status, payload === undefined ? null : safeJson(preserveQueuePayload(current?.payload, payload)), now, id, ownerId);
     if (result.changes !== 1) return false;
     this.appendEvent(`queue.${status}`, { id, ownerId, payload });
     return true;
