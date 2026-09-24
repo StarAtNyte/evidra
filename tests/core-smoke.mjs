@@ -5093,6 +5093,7 @@ test("research director executes typed tools and reasons over returned evidence"
   let toolAttempts = 0;
   const usageRoles = [];
   let observedSteering = false;
+  let observedTriggerContext = false;
   let observedRefreshedState = false;
   let refreshes = 0;
   const server = createServer((request, response) => {
@@ -5104,6 +5105,7 @@ test("research director executes typed tools and reasons over returned evidence"
     request.on("data", (chunk) => { body += chunk.toString(); });
     request.on("end", () => {
       if (body.includes("focus on falsification")) observedSteering = true;
+      if (body.includes("routine.completed") && body.includes("external_wakeup_signal")) observedTriggerContext = true;
       if (body.includes("sha256:refreshed-state")) observedRefreshedState = true;
       response.setHeader("content-type", "application/json");
       response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
@@ -5113,7 +5115,7 @@ test("research director executes typed tools and reasons over returned evidence"
   const address = server.address();
   process.env.OLLAMA_HOST = `http://127.0.0.1:${address.port}`;
   try {
-    const decision = await runResearchDirector("Inspect this workspace", {}, { provider: "local", model: "test", cwd: root, maxToolRounds: 2, executeTool: async (call) => {
+    const decision = await runResearchDirector("Inspect this workspace", { triggerContext: { eventType: "routine.completed", eventCreatedAt: "2026-09-25T00:00:00.000Z", trust: "external_wakeup_signal" } }, { provider: "local", model: "test", cwd: root, maxToolRounds: 2, executeTool: async (call) => {
       toolAttempts += 1;
       if (toolAttempts === 1) return { name: call.name, ok: false, error: "temporary network unavailable" };
       return { name: call.name, ok: true, output: { files: ["notes.txt"] } };
@@ -5122,6 +5124,7 @@ test("research director executes typed tools and reasons over returned evidence"
     assert.equal(toolAttempts, 2);
     assert.deepEqual(usageRoles, ["director", "director"]);
     assert.equal(observedSteering, true);
+    assert.equal(observedTriggerContext, true);
     assert.equal(refreshes, 1);
     assert.equal(observedRefreshedState, true);
     assert.equal(decision.decision, "propose");

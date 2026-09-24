@@ -392,7 +392,7 @@ evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" \
 ```
 - routine trigger coalescing: events arriving while a campaign is running become one durable pending wake-up and launch immediately after completion, preventing both lost updates and concurrent duplicate campaigns;
 - routine trigger provenance: each wake-up retains the newest triggering event type and timestamp through coalescing and restart, then clears it only after the corresponding run consumes the wake-up;
-- trigger context propagation: routine-launched campaigns receive that bounded event context as durable campaign metadata, and `research status` reports whether the current run was event-triggered;
+- trigger context propagation: routine-launched campaigns receive that bounded event context as durable campaign metadata, `research status` reports whether the current run was event-triggered, and the director receives only an explicitly untrusted wake-up signal that can prioritize inspection but can never count as evidence;
 - portable research bundles: `evidra export` captures secret-redacted goals, claims, sources, decisions, runs, artifact checksums, routines, specialist sessions, pause controls, directives, and recent events without copying datasets or credentials; the receiving workspace must revalidate before trusting the imported context;
 - portable bundle validation: `evidra bundle validate <path>` checks schema, credential redaction, safe workspace-relative artifact paths, and missing-file warnings without importing anything into live evidence;
 - TUI-first routine authoring: `/routine create` guides the operator through a reusable goal, cadence, and per-run budget while inheriting the selected provider policy;
