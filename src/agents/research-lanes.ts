@@ -1191,6 +1191,25 @@ export async function runResearchLanes(objective: string, context: Record<string
   dispatchStore.close();
   const historicalTrajectories = memoryStore.trajectories(128);
   memoryStore.close();
+  // Keep recovery live while a long provider turn is in flight. A controller
+  // that only checks at the next allocation boundary can leave a dead lane
+  // looking active for the remainder of a wave. The watchdog never starts
+  // replacement work or mutates evidence; it only applies the same durable
+  // stale-lease fencing used at dispatch time.
+  const watchdog = setInterval(() => {
+    try {
+      const store = new ResearchStore(options.storePath);
+      const recoveredTickets = store.staleLaneTickets();
+      const recoveredRoles = store.staleAgentLanes();
+      const recoveredDirectives = store.recoverStaleAgentDirectives();
+      store.close();
+      if (recoveredTickets.length) options.onProgress?.(`Research lanes · watchdog recovered stale tickets: ${recoveredTickets.length}`);
+      if (recoveredRoles.length) options.onProgress?.(`Research lanes · watchdog fenced stale leases: ${recoveredRoles.join(", ")}`);
+      if (recoveredDirectives.length) options.onProgress?.(`Research lanes · watchdog recovered stale directives: ${recoveredDirectives.join(", ")}`);
+    } catch { /* watchdog telemetry must not invalidate active research */ }
+  }, 15_000);
+  watchdog.unref();
+  const stopWatchdog = (): void => clearInterval(watchdog);
   const routes = assignResearchLaneRoutes(roles, options);
   const roleMemory = new Map(roles.map((role) => [role, roleMemoryFromTrajectories(historicalTrajectories, role)]));
   // Share only immutable read-only observations within this invocation. The
@@ -1235,6 +1254,7 @@ export async function runResearchLanes(objective: string, context: Record<string
         handoffStore.close();
       }
     }
+    stopWatchdog();
     return roles.map((role) => reports.find((report) => report.role === role)!).filter(Boolean);
   }
   // Run bounded waves. A wave remains parallel, while the next wave receives
@@ -1265,5 +1285,6 @@ export async function runResearchLanes(objective: string, context: Record<string
       handoffStore.close();
     }
   }
+  stopWatchdog();
   return roles.map((role) => reports.find((report) => report.role === role)!).filter(Boolean);
 }

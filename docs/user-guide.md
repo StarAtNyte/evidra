@@ -535,6 +535,12 @@ withheld until the role demonstrates a clean recovery window.
 run. If a worker stops heartbeating, the next controller marks its ticket
 failed with recovery metadata before launching replacement work.
 
+During an active lane wave, a bounded watchdog performs the same stale-lease
+check continuously. It only fences expired ownership and records recovery; it
+does not start replacement work, rewrite evidence, or treat a timeout as a
+successful result. The next allocation boundary can then choose a changed
+route using the durable failure record.
+
 Queue checkout preserves declared priority but adds a capped waiting-time boost
 (one priority point per hour, up to three points). This keeps explicit urgent
 work ahead while ensuring durable background tasks eventually receive a turn.
