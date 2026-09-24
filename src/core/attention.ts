@@ -56,7 +56,7 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
   for (const lane of store.agentLanes().filter((entry) => entry.status === "running").slice(0, 24)) {
     const heartbeat = lane.heartbeatAt ? Date.parse(lane.heartbeatAt) : Number.NaN;
     if (!Number.isFinite(heartbeat) || Date.now() - heartbeat > 120_000) {
-      items.push({ id: `agent-stale:${lane.role}`, severity: "critical", kind: "agent-stale", summary: `${lane.role} · running without a fresh heartbeat`, next: "/agents status" });
+      items.push({ id: `agent-stale:${lane.role}`, severity: "critical", kind: "agent-stale", summary: `${lane.role} · running without a fresh heartbeat${lane.leaseId ? " · lease can be recovered" : " · no reclaimable lease"}`, next: lane.leaseId ? "/agents recover" : "/agents status" });
     }
   }
   for (const worker of store.externalWorkers(64).filter((entry) => entry.health === "stale" && entry.status === "running").slice(0, 24)) {

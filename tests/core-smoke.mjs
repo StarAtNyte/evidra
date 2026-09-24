@@ -3545,6 +3545,25 @@ test("review tickets recover through the same heartbeat boundary as lane tickets
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("stale leased agent recovery is fenced and auditable", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-agent-recovery-"));
+  try {
+    const dbPath = join(root, "state.sqlite");
+    const store = new ResearchStore(dbPath);
+    assert.equal(store.acquireAgentLane({ role: "model researcher", leaseId: "worker-stale", provider: "local", model: "test", task: "recover me" }).acquired, true);
+    store.close();
+    const raw = new Database(dbPath);
+    raw.prepare("UPDATE agent_lanes SET heartbeat_at = ? WHERE role = ?").run("2020-01-01T00:00:00.000Z", "model researcher");
+    raw.close();
+    const reopened = new ResearchStore(dbPath);
+    assert.deepEqual(reopened.staleAgentLanes(1_000), ["model researcher"]);
+    assert.equal(reopened.agentLanes().find((lane) => lane.role === "model researcher")?.status, "blocked");
+    assert.equal(reopened.eventsByType("agent.lane.stale").length, 1);
+    assert.equal(reopened.staleAgentLanes(1_000).length, 0);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("research lanes use bounded role-specific workspace observations", () => {
   const dataCalls = laneToolCalls("data detective");
   const validationCalls = laneToolCalls("validation scientist");
