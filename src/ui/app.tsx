@@ -254,7 +254,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
   "/approvals": [["/approvals", "Show pending operator approvals"]],
-  "/queue": [["/queue status", "Show queued and running tasks"], ["/queue priority ", "Reprioritize queued work"], ["/queue labels ", "Classify queued work"], ["/queue pause-task ", "Suspend one queue task"], ["/queue resume-task ", "Resume one paused queue task"], ["/queue pause", "Stop new queue claims"], ["/queue resume", "Resume new queue claims"], ["/queue approve ", "Approve a pending queue task"], ["/queue reject ", "Reject a queue task"], ["/queue activity ", "Inspect task handoff notes"], ["/queue usage", "Show external worker usage"], ["/queue usage ", "Show one task's usage"], ["/queue assign ", "Assign or clear a task worker"], ["/queue budget ", "Set or clear a task token ceiling"], ["/queue cost-budget ", "Set or clear a task USD ceiling"], ["/queue deadline ", "Set or clear a task wall-clock deadline"], ["/queue contract ", "Set or clear task proof requirements"], ["/queue cancel ", "Cancel queued or running work"], ["/queue note ", "Add an operator handoff note"], ["/queue recover", "Requeue stale tasks"], ["/queue recover ", "Resume a failed task with a changed route"]],
+  "/queue": [["/queue status", "Show queued and running tasks"], ["/queue status ", "Filter queue by label"], ["/queue priority ", "Reprioritize queued work"], ["/queue labels ", "Classify queued work"], ["/queue pause-task ", "Suspend one queue task"], ["/queue resume-task ", "Resume one paused queue task"], ["/queue pause", "Stop new queue claims"], ["/queue resume", "Resume new queue claims"], ["/queue approve ", "Approve a pending queue task"], ["/queue reject ", "Reject a queue task"], ["/queue activity ", "Inspect task handoff notes"], ["/queue usage", "Show external worker usage"], ["/queue usage ", "Show one task's usage"], ["/queue assign ", "Assign or clear a task worker"], ["/queue budget ", "Set or clear a task token ceiling"], ["/queue cost-budget ", "Set or clear a task USD ceiling"], ["/queue deadline ", "Set or clear a task wall-clock deadline"], ["/queue contract ", "Set or clear task proof requirements"], ["/queue cancel ", "Cancel queued or running work"], ["/queue note ", "Add an operator handoff note"], ["/queue recover", "Requeue stale tasks"], ["/queue recover ", "Resume a failed task with a changed route"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/clear": [["/clear", "Clear the current conversation"]],
   "/new": [["/new", "Start a fresh terminal session"]],
@@ -4100,7 +4100,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
     }
-    if (request === "/queue" || request === "/queue status" || request === "/queue pause" || request.startsWith("/queue pause ") || request === "/queue resume" || request.startsWith("/queue priority ") || request.startsWith("/queue labels ") || request.startsWith("/queue pause-task ") || request.startsWith("/queue resume-task ") || request.startsWith("/queue approve ") || request.startsWith("/queue reject ") || request === "/queue usage" || request.startsWith("/queue usage ") || request === "/queue recover" || request.startsWith("/queue recover ") || request.startsWith("/queue activity ") || request.startsWith("/queue assign ") || request.startsWith("/queue budget ") || request.startsWith("/queue cost-budget ") || request.startsWith("/queue deadline ") || request.startsWith("/queue contract ") || request.startsWith("/queue cancel ") || request.startsWith("/queue note ")) {
+    if (request === "/queue" || request === "/queue status" || request.startsWith("/queue status ") || request === "/queue pause" || request.startsWith("/queue pause ") || request === "/queue resume" || request.startsWith("/queue priority ") || request.startsWith("/queue labels ") || request.startsWith("/queue pause-task ") || request.startsWith("/queue resume-task ") || request.startsWith("/queue approve ") || request.startsWith("/queue reject ") || request === "/queue usage" || request.startsWith("/queue usage ") || request === "/queue recover" || request.startsWith("/queue recover ") || request.startsWith("/queue activity ") || request.startsWith("/queue assign ") || request.startsWith("/queue budget ") || request.startsWith("/queue cost-budget ") || request.startsWith("/queue deadline ") || request.startsWith("/queue contract ") || request.startsWith("/queue cancel ") || request.startsWith("/queue note ")) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const recoveryMatch = request.match(/^\/queue recover\s+(\S+)\s+--route\s+(\S+)(?:\s+--note\s+(.+))?$/);
       const activityMatch = request.match(/^\/queue activity\s+(\S+)$/);
@@ -4119,6 +4119,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const noteMatch = request.match(/^\/queue note\s+(\S+)\s+(.+)$/);
       const priorityMatch = request.match(/^\/queue priority\s+(\S+)\s+(-?\d+(?:\.\d+)?)$/);
       const labelsMatch = request.match(/^\/queue labels\s+(\S+)\s+(.+)$/);
+      const statusLabelMatch = request.match(/^\/queue status(?:\s+(\S+))?$/);
       if (labelsMatch) {
         try {
           const labels = /^none$/i.test(labelsMatch[2].trim()) ? [] : labelsMatch[2].split(",").map((label) => label.trim()).filter(Boolean);
@@ -4228,7 +4229,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       } else if (request.startsWith("/queue recover ")) {
         append("assistant", "Usage: /queue recover <task-id> --route <changed-route> [--note <reason>]");
       } else {
-        const tasks = store.queueTasks();
+        const statusLabel = statusLabelMatch?.[1]?.trim().toLowerCase();
+        const tasks = store.queueTasks().filter((task) => !statusLabel || task.labels.includes(statusLabel));
         const queueControl = store.queueControl();
         const recoveries = store.eventsByType("queue.recovery_required", 8).slice().reverse();
         const queueText = tasks.length ? `Research queue\n${tasks.slice(0, 24).map((task) => {
@@ -4249,7 +4251,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const aging = queueEffectivePriority(task) > task.priority ? ` (aged ${queueEffectivePriority(task)})` : "";
           return `${task.status === "running" ? "●" : task.status === "queued" ? "○" : task.status === "paused" ? "Ⅱ" : task.status === "completed" ? "✓" : "✗"} ${task.id} · ${task.kind} · priority ${task.priority}${aging} · attempts ${task.attempts}${lineage ? `\n  ${lineage}` : ""}${blocked}`;
         }).join("\n")}` : "Research queue is empty.";
-        append("assistant", `${queueControl.paused ? `Queue paused${queueControl.reason ? `: ${queueControl.reason}` : ""}\n\n` : ""}${queueText}${recoveries.length ? `\n\nRecovery actions\n${recoveries.map((event) => { const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {}; return `  ${String(payload.taskId ?? "task")} · ${String(payload.failureClass ?? "unknown")} · ${String(payload.route ?? "change_route")} · ${String(payload.action ?? "inspect failure")}`; }).join("\n")}` : ""}`);
+        append("assistant", `${queueControl.paused ? `Queue paused${queueControl.reason ? `: ${queueControl.reason}` : ""}\n\n` : ""}${statusLabel ? `Queue label: ${statusLabel}\n\n` : ""}${queueText}${recoveries.length ? `\n\nRecovery actions\n${recoveries.map((event) => { const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {}; return `  ${String(payload.taskId ?? "task")} · ${String(payload.failureClass ?? "unknown")} · ${String(payload.route ?? "change_route")} · ${String(payload.action ?? "inspect failure")}`; }).join("\n")}` : ""}`);
       }
       store.close();
       return;

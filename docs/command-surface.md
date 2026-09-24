@@ -64,6 +64,7 @@ Inspect dependency readiness directly:
 ```text
 evidra queue status             Human-readable ownership and blocking reasons
 evidra queue status --json      Machine-readable readiness for automation
+evidra queue status --label gpu
 evidra queue usage --json       Exact queue-wide usage and bounded records
 evidra queue usage <id> --json  Exact task usage, budget state, and records
 evidra queue cancel <id> --reason "operator decision"

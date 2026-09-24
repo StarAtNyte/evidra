@@ -2225,9 +2225,10 @@ for (const action of ["validate", "promote", "reject"] as const) {
 program.addCommand(ensemble);
 
 const queue = new Command("queue").description("Inspect the durable research work queue");
-queue.command("status").option("--json", "emit machine-readable queue state").action((options: { json?: boolean }) => {
+queue.command("status").option("--json", "emit machine-readable queue state").option("--label <label>", "show only tasks carrying this label").action((options: { json?: boolean; label?: string }) => {
   const store = new ResearchStore(statePath);
-  const tasks = store.queueTasks();
+  const label = options.label?.trim().toLowerCase() || undefined;
+  const tasks = store.queueTasks().filter((task) => !label || task.labels.includes(label));
   const queueControl = store.queueControl();
   const rows = tasks.map((task) => {
     const { claimToken: _claimToken, ...publicTask } = task;
@@ -2235,11 +2236,11 @@ queue.command("status").option("--json", "emit machine-readable queue state").ac
   });
   const recoveries = store.eventsByType("queue.recovery_required", 24).map((event) => event.payload);
   if (options.json) {
-    console.log(JSON.stringify({ paused: queueControl.paused, pauseReason: queueControl.reason, tasks: rows, recoveries }, null, 2));
+    console.log(JSON.stringify({ paused: queueControl.paused, pauseReason: queueControl.reason, label: label ?? null, tasks: rows, recoveries }, null, 2));
     store.close();
     return;
   }
-  console.log(`${queueControl.paused ? `Queue paused${queueControl.reason ? `: ${queueControl.reason}` : ""}\n` : ""}${rows.length ? rows.map((task) => {
+  console.log(`${queueControl.paused ? `Queue paused${queueControl.reason ? `: ${queueControl.reason}` : ""}\n` : ""}${label ? `Queue label: ${label}\n` : ""}${rows.length ? rows.map((task) => {
     const readiness = task.readiness;
     const blocked = readiness && !readiness.ready ? ` · blocked ${[
       ...readiness.missing.map((id) => `missing:${id}`),
