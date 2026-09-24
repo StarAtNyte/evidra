@@ -767,6 +767,13 @@ agents.command("message <role> <message>").description("Queue a durable directiv
   console.log(`Directive ${directive.id} queued for ${directive.role}; it will apply at the next safe boundary.`);
   store.close();
 });
+agents.command("directives [role]").description("Show durable specialist handoffs and delivery status").action((role?: string) => {
+  const store = new ResearchStore(statePath);
+  const directives = store.agentDirectives(role);
+  if (!directives.length) console.log(role ? `No directives recorded for ${role}.` : "No specialist directives recorded.");
+  else console.log(directives.map((directive) => `${directive.appliedAt ? "applied" : "pending"}  #${directive.id}  ${directive.role}  ${directive.createdAt}\n  ${directive.message}${directive.appliedAt ? `\n  applied: ${directive.appliedAt}` : ""}`).join("\n"));
+  store.close();
+});
 
 program.command("usage").description("Show research, experiment, and campaign usage").action(() => {
   const store = new ResearchStore(statePath);

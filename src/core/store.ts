@@ -994,10 +994,15 @@ export class ResearchStore {
   }
 
   pendingAgentDirectives(role?: string): AgentDirective[] {
+    return this.agentDirectives(role).filter((directive) => directive.appliedAt === null);
+  }
+
+  /** Read the durable specialist inbox, including already-applied handoffs. */
+  agentDirectives(role?: string, limit = 32): AgentDirective[] {
     const rows = (role
-      ? this.db.prepare("SELECT id, role, message, created_at, applied_at FROM agent_directives WHERE role = ? AND applied_at IS NULL ORDER BY id ASC").all(role)
-      : this.db.prepare("SELECT id, role, message, created_at, applied_at FROM agent_directives WHERE applied_at IS NULL ORDER BY id ASC").all()) as Array<{ id: number; role: string; message: string; created_at: string; applied_at: string | null }>;
-    return rows.map((row) => ({ id: row.id, role: row.role, message: row.message, createdAt: row.created_at, appliedAt: row.applied_at }));
+      ? this.db.prepare("SELECT id, role, message, created_at, applied_at FROM agent_directives WHERE role = ? ORDER BY id DESC LIMIT ?").all(role, Math.max(1, Math.min(128, limit)))
+      : this.db.prepare("SELECT id, role, message, created_at, applied_at FROM agent_directives ORDER BY id DESC LIMIT ?").all(Math.max(1, Math.min(128, limit)))) as Array<{ id: number; role: string; message: string; created_at: string; applied_at: string | null }>;
+    return rows.map((row) => ({ id: row.id, role: row.role, message: row.message, createdAt: row.created_at, appliedAt: row.applied_at })).reverse();
   }
 
   releaseControllerLease(controllerId: string, status: "released" | "stale" = "released"): boolean {
