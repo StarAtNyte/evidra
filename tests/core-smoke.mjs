@@ -3835,6 +3835,26 @@ test("stale queue recovery stops retrying a task after its attempt budget", () =
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("stale assigned queue work creates an explicit reassignment approval", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-stale-assignment-"));
+  const dbPath = join(root, ".sota", "database.sqlite");
+  try {
+    const store = new ResearchStore(dbPath);
+    store.enqueueTask({ id: "stale-assigned", kind: "research.lane", priority: 1, assigneeId: "dead-worker", payload: {} });
+    assert.equal(store.claimTask("stale-assigned", undefined, "dead-worker")?.ownerId, "dead-worker");
+    store.close();
+    const raw = new Database(dbPath);
+    raw.prepare("UPDATE work_queue SET updated_at = ?, claimed_at = ? WHERE id = ?").run(new Date(Date.now() - 10_000).toISOString(), new Date(Date.now() - 10_000).toISOString(), "stale-assigned");
+    raw.close();
+    const reopened = new ResearchStore(dbPath);
+    assert.equal(reopened.requeueStaleTasks(1_000, 3), 1);
+    const approval = approvalInbox(reopened).find((item) => item.id === "stale-assigned");
+    assert.equal(approval?.next, "/queue assign stale-assigned");
+    assert.match(approval?.detail ?? "", /dead-worker/);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("research tool registry exposes safe workspace tools", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-tools-"));
   try {

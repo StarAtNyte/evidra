@@ -16,7 +16,7 @@ export type ApprovalInboxItem = {
  */
 export function approvalInbox(store: ResearchStore, root?: string): ApprovalInboxItem[] {
   const items: ApprovalInboxItem[] = [];
-  const recoveryEvents = store.eventsByTypes(["queue.recovery_required", "queue.recovery_scheduled", "queue.lane.stale", "queue.review.stale"]);
+  const recoveryEvents = store.eventsByTypes(["queue.recovery_required", "queue.recovery_scheduled", "queue.lane.stale", "queue.review.stale", "queue.task.stale_requeued"]);
   const latestRecovery = new Map<string, { type: string; payload: Record<string, unknown> }>();
   for (const event of recoveryEvents) {
     const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
@@ -66,6 +66,10 @@ export function approvalInbox(store: ResearchStore, root?: string): ApprovalInbo
     }
   }
   for (const [taskId, entry] of latestRecovery) {
+    if (entry.type === "queue.task.stale_requeued" && entry.payload.assigneeId) {
+      items.push({ kind: "queue-recovery", id: taskId, status: "pending", next: `/queue assign ${taskId}`, detail: `assigned worker ${String(entry.payload.assigneeId)} went stale; clear or replace the assignment before another worker can claim it` });
+      continue;
+    }
     if (entry.type !== "queue.recovery_required" && !entry.type.endsWith(".stale")) continue;
     const route = typeof entry.payload.route === "string" ? entry.payload.route : entry.type.endsWith(".stale") ? "restart_worker" : "change_route";
     const action = typeof entry.payload.action === "string" ? entry.payload.action : "inspect failure";

@@ -315,6 +315,7 @@ Implemented today:
 - durable task assignment: queue work may carry an `assigneeId`; only that worker can atomically claim it, while unassigned work remains available to eligible workers. Assignment survives reopen and is visible in the dashboard;
 - task handoff journals: workers append bounded progress, blocker, and handoff notes to their queue ticket; notes are redacted, hash-chained, visible in the dashboard, and available through `evidra queue activity <task-id>` so recovery does not depend on reconstructing the global event stream;
 - operator reassignment: `evidra queue assign <task-id> <worker-id>` routes queued or recovered work explicitly; omit the worker ID to return it to the shared pool. Live claims cannot be reassigned underneath a running worker;
+- stale assignment recovery: when a leased task times out, Evidra preserves its assignment and places an explicit reassignment item in `/approvals`, preventing a dead worker from silently losing or transferring work;
 - scoped worker identity: `--worker-tokens worker-id=secret,...` (or `EVIDRA_WORKER_TOKENS`) gives each external worker its own credential and requires its authenticated header identity to match the claimed task, instead of trusting a shared body-level worker ID;
 - per-worker task scopes: `--worker-scopes worker-id=kind|kind,...` (or `EVIDRA_WORKER_SCOPES`) restricts each authenticated worker to its assigned queue families; workers cannot claim, heartbeat, or complete tasks outside that scope. If omitted, the bridge retains its global `--task-kinds` behavior;
 

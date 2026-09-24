@@ -179,6 +179,9 @@ assignment; live claims cannot be changed underneath a running worker.
 Workers can append bounded handoff/progress notes through `/tasks/activity`
 while they own a live claim. Inspect them with `evidra queue activity <task-id>`;
 the notes are redacted, hash-chained, and included in the dashboard read model.
+If an assigned worker goes stale, the task is requeued but remains assigned and
+appears in `/approvals`; clear or replace that assignment explicitly before a
+different worker can claim it.
 For scoped identity, configure `--worker-tokens 'agent-17=secret'` (or
 `EVIDRA_WORKER_TOKENS`). Task calls must include `X-Evidra-Worker-Id`,
 `X-Evidra-Worker-Token`, and the same `workerId` in the JSON body.

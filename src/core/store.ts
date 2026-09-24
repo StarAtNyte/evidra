@@ -1869,6 +1869,7 @@ export class ResearchStore {
     const now = new Date().toISOString();
     const exhaustedRecovery: Array<{ taskId: string; kind: string; attempts: number; recovery: ReturnType<typeof queueRecoveryAction> }> = [];
     const result = this.db.transaction(() => {
+      const staleRows = this.db.prepare("SELECT id, kind, owner_id, assignee_id FROM work_queue WHERE status = 'running' AND updated_at < ? AND attempts < ?").all(cutoff, limit) as Array<{ id: string; kind: string; owner_id: string | null; assignee_id: string | null }>;
       const requeued = this.db.prepare("UPDATE work_queue SET status = 'queued', claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE status = 'running' AND updated_at < ? AND attempts < ?").run(now, cutoff, limit).changes;
       const exhaustedRows = this.db.prepare("SELECT id, kind, payload_json, attempts FROM work_queue WHERE status = 'running' AND updated_at < ? AND attempts >= ?").all(cutoff, limit) as Array<{ id: string; kind: string; payload_json: string; attempts: number }>;
       for (const row of exhaustedRows) {
@@ -1882,9 +1883,10 @@ export class ResearchStore {
         this.db.prepare("UPDATE work_queue SET status = 'failed', payload_json = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ?").run(safeJson({ ...payload, error: "stale task exceeded bounded attempts", attempts: row.attempts, failedAt: now, recovery }), now, row.id);
       }
       const exhausted = exhaustedRows.length;
-      return { requeued, exhausted };
+      return { requeued, exhausted, staleRows };
     })();
     if (result.requeued) this.appendEvent("queue.stale_requeued", { count: result.requeued, cutoff, maxAttempts: limit });
+    for (const row of result.staleRows) this.appendEvent("queue.task.stale_requeued", { taskId: row.id, kind: row.kind, priorOwnerId: row.owner_id, assigneeId: row.assignee_id, cutoff, maxAttempts: limit, requiresReassignment: Boolean(row.assignee_id) });
     if (result.exhausted) this.appendEvent("queue.stale_failed", { count: result.exhausted, cutoff, maxAttempts: limit, reason: "stale task exceeded bounded attempts" });
     for (const entry of exhaustedRecovery) this.appendEvent("queue.recovery_required", { taskId: entry.taskId, kind: entry.kind, attempts: entry.attempts, error: "stale task exceeded bounded attempts", ...entry.recovery });
     return result.requeued;
