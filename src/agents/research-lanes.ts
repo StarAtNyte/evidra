@@ -502,7 +502,10 @@ export function roleMemoryFromTrajectories(
 ): Array<Record<string, unknown>> {
   const bounded = Math.max(1, Math.min(8, Math.floor(limit)));
   const memory: Array<Record<string, unknown>> = [];
-  for (const trajectory of trajectories) {
+  // ResearchStore's durable history is chronological (oldest first). Role
+  // coaching must be recency-aware, otherwise a long campaign keeps feeding
+  // stale failures or obsolete methods back into the next lane prompt.
+  for (const trajectory of [...trajectories].reverse()) {
     const payload = trajectory.payload && typeof trajectory.payload === "object" && !Array.isArray(trajectory.payload)
       ? trajectory.payload as Record<string, unknown>
       : {};

@@ -4157,8 +4157,9 @@ test("lane reports expose bounded self-reported playbook checks without making t
 
 test("role memory stays private, bounded, and explicitly historical", () => {
   const memory = roleMemoryFromTrajectories([
-    { id: "newer", quality: { overall: "WARN" }, payload: { laneReports: [{ role: "data detective", summary: "recent", findings: ["f1", "f2", "f3", "f4", "f5"], recommendations: ["r1"], uncertainties: ["u1"], discriminatingTests: ["t1"] }] } },
+    { id: "older", quality: { overall: "FAIL" }, payload: { laneReports: [{ role: "data detective", summary: "stale", findings: ["old"], recommendations: [], uncertainties: [], discriminatingTests: [] }] } },
     { id: "other", quality: { overall: "PASS" }, payload: { laneReports: [{ role: "model researcher", summary: "not for this role" }] } },
+    { id: "newer", quality: { overall: "WARN" }, payload: { laneReports: [{ role: "data detective", summary: "recent", findings: ["f1", "f2", "f3", "f4", "f5"], recommendations: ["r1"], uncertainties: ["u1"], discriminatingTests: ["t1"] }] } },
   ], "data detective", 1);
   assert.equal(memory.length, 1);
   assert.equal(memory[0].historical, true);

@@ -502,6 +502,11 @@ role playbook steps. These are self-reported process telemetry: they feed role
 reviews and coaching, but never count as scientific evidence without an
 independent durable observation.
 
+Role memory is recency-aware: the next lane prompt receives the newest bounded
+historical observations first, while still labeling them as context rather
+than evidence. This prevents obsolete failures or methods from dominating a
+long-running campaign.
+
 `/queue status` includes the durable `research.lane` tickets while specialists
 run. If a worker stops heartbeating, the next controller marks its ticket
 failed with recovery metadata before launching replacement work.
