@@ -75,6 +75,14 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     const lateCompletion = store.completeClaimedTask("cancel-race", "worker-a", "completed");
     check("cancellation-race", "Operator cancellation wins over a late worker completion.", cancelClaim?.id === "cancel-race" && cancelled && !lateCompletion && store.queueTasks().find((task) => task.id === "cancel-race")?.status === "cancelled", { claimed: cancelClaim?.id, cancelled, lateCompletion, status: store.queueTasks().find((task) => task.id === "cancel-race")?.status });
 
+    store.enqueueTask({ id: "proof-contract", kind: "validated-work", priority: 1, payload: { completionContract: { requiredPayloadKeys: ["summary"], requiredEvidenceRefs: ["benchmark-proof"], requiredActivityKinds: ["progress"] } } });
+    const proofClaim = store.claimTask("proof-contract", ["validated-work"], "worker-a");
+    const rejected = !store.completeClaimedTask("proof-contract", "worker-a", "completed", {});
+    store.recordQueueActivity({ taskId: "proof-contract", actorId: "worker-a", kind: "progress", message: "validated benchmark path" });
+    store.appendEvent("benchmark-proof", { taskId: "proof-contract" });
+    const accepted = store.completeClaimedTask("proof-contract", "worker-a", "completed", { summary: "verified" });
+    check("completion-watchdog", "A task cannot complete until its declared proof contract is satisfied.", proofClaim?.id === "proof-contract" && rejected && accepted && store.queueTasks().find((task) => task.id === "proof-contract")?.status === "completed", { rejected, accepted, status: store.queueTasks().find((task) => task.id === "proof-contract")?.status });
+
     store.releaseAgentLane("model researcher", "worker-a");
     const stale = store.acquireAgentLane({ role: "validation scientist", leaseId: "worker-stale", provider: "local", model: "bench" });
     store.enqueueTask({ id: "stale-lane-ticket", kind: "research.lane", priority: 1, payload: { role: "validation scientist", leaseId: "worker-stale" } });

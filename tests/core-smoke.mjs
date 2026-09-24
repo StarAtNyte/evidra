@@ -3319,8 +3319,27 @@ test("orchestration benchmark covers worker ownership and recovery", () => {
   const report = runOrchestrationBenchmark();
   assert.equal(report.failed, 0);
   assert.equal(report.score, 1);
-  assert.equal(report.probes.length, 9);
+  assert.equal(report.probes.length, 10);
   assert.equal(report.probes.some((probe) => probe.id === "queue-starvation-prevention"), true);
+  assert.equal(report.probes.some((probe) => probe.id === "completion-watchdog"), true);
+});
+
+test("queue completion contracts reject unsupported claims and accept durable proof", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-completion-contract-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.enqueueTask({ id: "contracted", kind: "research.lane", priority: 1, payload: { completionContract: { requiredPayloadKeys: ["summary"], requiredEvidenceRefs: ["artifact:missing"], requiredActivityKinds: ["progress"] } } });
+    assert.equal(store.claimTask("contracted", ["research.lane"], "worker-a")?.id, "contracted");
+    assert.equal(store.completeClaimedTask("contracted", "worker-a", "completed", {}), false);
+    assert.equal(store.queueTasks().find((task) => task.id === "contracted")?.status, "running");
+    assert.equal(store.eventsByType("queue.completion.rejected").length, 1);
+    store.recordQueueActivity({ taskId: "contracted", actorId: "worker-a", kind: "progress", message: "artifact verified" });
+    store.appendEvent("artifact:missing", { taskId: "contracted" });
+    assert.equal(store.completeClaimedTask("contracted", "worker-a", "completed", { summary: "verified" }), true);
+    assert.equal(store.queueTasks().find((task) => task.id === "contracted")?.status, "completed");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("governance benchmark covers role boundaries and scoped handoffs", () => {

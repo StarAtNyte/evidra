@@ -69,6 +69,13 @@ export interface QueuedTask {
   updatedAt: string;
 }
 
+/** Optional, provider-neutral proof requirements for a queue task. */
+export interface QueueCompletionContract {
+  requiredPayloadKeys?: string[];
+  requiredEvidenceRefs?: string[];
+  requiredActivityKinds?: QueueActivityKind[];
+}
+
 /** Effective scheduler priority, including the same bounded waiting boost used by claimNextTask. */
 export function queueEffectivePriority(task: Pick<QueuedTask, "priority" | "availableAt">, now = Date.now()): number {
   const availableAt = Date.parse(task.availableAt);
@@ -1866,6 +1873,46 @@ export class ResearchStore {
     });
   }
 
+  /**
+   * Check whether a worker supplied the proof promised by a task's contract.
+   * Tasks without a contract remain backward compatible and accept completion.
+   */
+  taskCompletionAudit(id: string, completionPayload: unknown): { valid: boolean; missing: string[]; contract?: QueueCompletionContract } {
+    const task = this.queueTasks().find((entry) => entry.id === id);
+    const raw = task?.payload && typeof task.payload === "object" && !Array.isArray(task.payload)
+      ? (task.payload as Record<string, unknown>).completionContract
+      : undefined;
+    if (raw === undefined) return { valid: true, missing: [] };
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { valid: false, missing: ["valid completionContract"] };
+    const value = raw as Record<string, unknown>;
+    const requiredPayloadKeys = Array.isArray(value.requiredPayloadKeys)
+      ? value.requiredPayloadKeys.filter((key): key is string => typeof key === "string" && key.length > 0 && key.length <= 120).slice(0, 32)
+      : [];
+    const requiredEvidenceRefs = Array.isArray(value.requiredEvidenceRefs)
+      ? value.requiredEvidenceRefs.filter((ref): ref is string => typeof ref === "string" && ref.trim().length > 0 && ref.length <= 240).slice(0, 64)
+      : [];
+    const allowedKinds: QueueActivityKind[] = ["started", "progress", "blocked", "handoff", "completed", "failed"];
+    const requiredActivityKinds = Array.isArray(value.requiredActivityKinds)
+      ? value.requiredActivityKinds.filter((kind): kind is QueueActivityKind => typeof kind === "string" && allowedKinds.includes(kind as QueueActivityKind)).slice(0, 16)
+      : [];
+    const contract: QueueCompletionContract = { requiredPayloadKeys, requiredEvidenceRefs, requiredActivityKinds };
+    const payloadObject = completionPayload && typeof completionPayload === "object" && !Array.isArray(completionPayload)
+      ? completionPayload as Record<string, unknown>
+      : {};
+    const missing: string[] = [];
+    for (const key of requiredPayloadKeys) {
+      if (!(key in payloadObject) || payloadObject[key] === undefined || payloadObject[key] === null) missing.push(`payload:${key}`);
+    }
+    for (const reference of requiredEvidenceRefs) {
+      if (!this.evidenceReferenceExists(reference)) missing.push(`evidence:${reference}`);
+    }
+    const activities = this.queueActivities(id, 128);
+    for (const kind of requiredActivityKinds) {
+      if (!activities.some((activity) => activity.kind === kind)) missing.push(`activity:${kind}`);
+    }
+    return { valid: missing.length === 0, missing, contract };
+  }
+
   /** Record bounded provider-neutral usage reported by a queue worker. */
   recordQueueUsage(input: { taskId: string; actorId: string; inputTokens?: number; outputTokens?: number; costUsd?: number | null; provider?: string | null; model?: string | null; idempotencyKey?: string | null }): boolean {
     const taskId = input.taskId.trim().slice(0, 200);
@@ -1994,6 +2041,14 @@ export class ResearchStore {
     if (this.taskDeadlineExpired(id)) {
       this.cancelTask(id, "task wall-clock deadline exceeded", "deadline");
       return false;
+    }
+    if (status === "completed") {
+      const audit = this.taskCompletionAudit(id, payload);
+      if (!audit.valid) {
+        this.appendEvent("queue.completion.rejected", { id, ownerId, missing: audit.missing });
+        this.recordQueueActivity({ taskId: id, actorId: ownerId, kind: "blocked", message: `Completion rejected; missing proof: ${audit.missing.join(", ")}` });
+        return false;
+      }
     }
     const now = new Date().toISOString();
     const result = this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ?").run(status, payload === undefined ? null : safeJson(payload), now, id, ownerId);

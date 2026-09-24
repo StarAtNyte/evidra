@@ -76,6 +76,25 @@ evidra queue recover <id> --route <route>
                                 Resume one failed task after declaring a changed route
 ```
 
+Queue tasks can also carry an optional `completionContract` in their payload:
+
+```json
+{
+  "completionContract": {
+    "requiredPayloadKeys": ["summary"],
+    "requiredEvidenceRefs": ["run:run-17"],
+    "requiredActivityKinds": ["progress"]
+  }
+}
+```
+
+For contracted work, a worker's `completed` transition is accepted only when
+all declared payload fields are present, evidence references resolve in the
+durable store, and the required activity milestones exist. A rejected
+completion leaves the task running, records `queue.completion.rejected`, and
+adds a blocked activity so another worker or operator can supply the missing
+proof. Failed and cancelled transitions remain available for recovery.
+
 Queued work reports `missing`, `waiting`, or `failed` prerequisites. This makes
 the scheduler explainable to an operator and gives recovery controllers a
 stable reason instead of treating every unclaimed task as ready.
