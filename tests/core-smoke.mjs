@@ -6830,6 +6830,8 @@ test("dashboard read model is bounded and secret-redacted", () => {
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.appendEvent("test.dashboard", { token: "sk-test-dashboard-secret-value", command: ["tool", "--token", "secret-value"] });
+    store.enqueueTask({ id: "dashboard-parent", kind: "research.cycle", priority: 10, payload: {} });
+    store.enqueueTask({ id: "dashboard-child", kind: "research.review", priority: 8, payload: {}, parentTaskId: "dashboard-parent", dependsOn: ["dashboard-parent"] });
     const snapshot = dashboardSnapshot(store);
     store.close();
     assert.equal(snapshot.counts.events, undefined);
@@ -6839,6 +6841,8 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.equal(snapshot.stages.length, 3);
     assert.equal(Array.isArray(snapshot.organization), true);
     assert.ok(snapshot.organization.some((entry) => entry.role === "research director"));
+    assert.deepEqual(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.dependsOn, ["dashboard-parent"]);
+    assert.equal(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.parentTaskId, "dashboard-parent");
     assert.match(dashboardHtml(), /EVIDRA<\/span> \/ DASHBOARD/);
     assert.match(dashboardHtml(), /\/api\/status/);
     assert.match(dashboardHtml(), /id="stages"/);

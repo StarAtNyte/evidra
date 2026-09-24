@@ -3781,7 +3781,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", `Requeued ${count} stale task${count === 1 ? "" : "s"}.`);
       } else {
         const tasks = store.queueTasks();
-        append("assistant", tasks.length ? `Research queue\n${tasks.slice(0, 24).map((task) => `${task.status === "running" ? "●" : task.status === "queued" ? "○" : task.status === "completed" ? "✓" : "✗"} ${task.id} · ${task.kind} · priority ${task.priority} · attempts ${task.attempts}`).join("\n")}` : "Research queue is empty.");
+        append("assistant", tasks.length ? `Research queue\n${tasks.slice(0, 24).map((task) => {
+          const readiness = store.taskReadiness(task.id);
+          const blocked = readiness && !readiness.ready ? ` · blocked ${[...readiness.missing.map((id) => `missing:${id}`), ...readiness.pending.map((id) => `waiting:${id}`), ...readiness.failed.map((id) => `failed:${id}`)].join(",")}` : "";
+          const lineage = [task.parentTaskId ? `parent ${task.parentTaskId}` : "", task.goalId ? `goal ${task.goalId}` : "", task.dependsOn.length ? `depends ${task.dependsOn.join(",")}` : "", task.ownerId ? `owner ${task.ownerId}` : ""].filter(Boolean).join(" · ");
+          return `${task.status === "running" ? "●" : task.status === "queued" ? "○" : task.status === "completed" ? "✓" : "✗"} ${task.id} · ${task.kind} · priority ${task.priority} · attempts ${task.attempts}${lineage ? `\n  ${lineage}` : ""}${blocked}`;
+        }).join("\n")}` : "Research queue is empty.");
       }
       store.close();
       return;
