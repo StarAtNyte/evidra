@@ -118,6 +118,8 @@ export class QueueWorker {
       const current = this.store.queueTasks().find((entry) => entry.id === task.id);
       if (current?.status === "cancelled") {
         this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "blocked", message: `Cancellation observed: ${message}` });
+      } else if (current?.status === "paused") {
+        this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "blocked", message: `Pause observed: ${message}` });
       } else if (this.stopping || this.abortController.signal.aborted) {
         if (this.store.completeClaimedTask(task.id, this.workerId, "cancelled", { error: error instanceof Error ? error.message : String(error) }, undefined, task.claimToken ?? undefined)) {
           this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "blocked", message: `Task cancelled: ${message}` });

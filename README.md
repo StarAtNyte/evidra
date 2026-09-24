@@ -302,6 +302,7 @@ Implemented today:
 - workspace file/search/read, Git status, safe shell, data audit, artifact checksum/JSON audit, source retrieval, validation-policy, and report tools;
 - durable queue with retries, stale-task recovery, bounded concurrency, visible queued prompts, and capped priority aging so background work cannot starve indefinitely;
 - queue-wide governance pause: `evidra queue pause --reason ...` (or `/queue pause`) stops new local and remote claims without cancelling live work; `queue resume` reopens dispatch and the state survives controller restart;
+- per-task suspension: `evidra queue pause-task <id>` (or `/queue pause-task <id>`) cooperatively stops one queued/running ticket without consuming a retry, while `resume-task` returns it to the claimable pool;
 - durable queue approval gates: enqueue work with `requiresApproval`, then release it with `evidra queue approve <id>` (or `/queue approve`); rejected/pending tasks remain visible but cannot be claimed until explicitly approved;
 - unified approval inbox: pending/rejected queue tasks appear alongside experiment, submission, recovery, and external-action approvals in `/approvals` and the dashboard;
 - remote claim diagnostics: external workers receive bounded approval blockers when no eligible task can be claimed, making operator-gated queues explainable without exposing unrelated task payloads;
@@ -498,7 +499,7 @@ evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" \
 - Codex-backed experiment engineers honor the configured entitlement policy: they switch to an installed local fallback in `auto`/`fallback` mode, or wait durably when `wait` is selected, instead of silently abandoning an authorized campaign;
 - shell and autonomy safety guards.
 - a deterministic six-lifecycle safety boundary benchmark (`evidra benchmark safety`) covering configuration, capability extension, runtime, persistence, action control, and recovery;
-- a deterministic orchestration benchmark (`evidra benchmark orchestration`) covering duplicate lane prevention, lease ownership, queue ownership, dependency ordering, starvation prevention, deadline expiry, cancellation races, stale recovery, per-lane budget accounting, completion-proof enforcement, approval gates, queue-wide pause governance, and live budget stops;
+- a deterministic orchestration benchmark (`evidra benchmark orchestration`) covering duplicate lane prevention, lease ownership, queue ownership, dependency ordering, starvation prevention, deadline expiry, cancellation races, stale recovery, per-lane budget accounting, completion-proof enforcement, approval gates, queue-wide and per-task pause governance, and live budget stops;
 - optional queue completion contracts: declare `requiredPayloadKeys`, `requiredEvidenceRefs`, and `requiredActivityKinds` in a task payload so workers must produce verifiable proof before a task can become completed; rejected completions are auditable, retried within the task ceiling, and converted into recoverable failures rather than stranded leases;
 - operators can attach or clear those contracts on queued/failed work with `evidra queue contract <id> '<json>'` (or `/queue contract`), preserving the change as a durable audit event;
 - queue insertion is idempotent by task ID: duplicate scheduling requests cannot silently replace work and are recorded as duplicate enqueue attempts;

@@ -1371,6 +1371,25 @@ export class ResearchStore {
     return { paused, reason: normalizedReason, updatedAt };
   }
 
+  /** Suspend one queue ticket without cancelling its work or counting a retry. */
+  pauseTask(id: string, reason = "operator paused task"): boolean {
+    const normalizedReason = reason.trim().slice(0, 500) || "operator paused task";
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE work_queue SET status = 'paused', claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')").run(now, id);
+    if (result.changes !== 1) return false;
+    this.appendEvent("queue.task.paused", { id, reason: normalizedReason, pausedAt: now });
+    return true;
+  }
+
+  /** Resume a specifically suspended ticket; it becomes claimable immediately. */
+  resumeTask(id: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE work_queue SET status = 'queued', available_at = ?, updated_at = ? WHERE id = ? AND status = 'paused'").run(now, now, id);
+    if (result.changes !== 1) return false;
+    this.appendEvent("queue.task.resumed", { id, resumedAt: now });
+    return true;
+  }
+
   /** Permanently block a role until an explicit revive/restart action. */
   setAgentTermination(role: string, terminated: boolean, reason = "operator request"): void {
     const normalized = role.trim();

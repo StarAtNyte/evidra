@@ -72,6 +72,8 @@ evidra queue budget <id> <tokens|0>
 evidra queue cost-budget <id> <usd|0>
 evidra queue pause --reason "maintenance"
 evidra queue resume
+evidra queue pause-task <id> --reason "inspect before continuing"
+evidra queue resume-task <id>
 evidra queue approve <id> [--note "reviewed"]
 evidra queue reject <id> [--reason "needs more evidence"]
                                 Set a queued/failed task ceiling; 0 clears it

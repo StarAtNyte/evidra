@@ -3321,11 +3321,12 @@ test("orchestration benchmark covers worker ownership and recovery", () => {
   const report = runOrchestrationBenchmark();
   assert.equal(report.failed, 0);
   assert.equal(report.score, 1);
-  assert.equal(report.probes.length, 13);
+  assert.equal(report.probes.length, 14);
   assert.equal(report.probes.some((probe) => probe.id === "queue-starvation-prevention"), true);
   assert.equal(report.probes.some((probe) => probe.id === "completion-watchdog"), true);
   assert.equal(report.probes.some((probe) => probe.id === "approval-gate"), true);
   assert.equal(report.probes.some((probe) => probe.id === "queue-pause-governance"), true);
+  assert.equal(report.probes.some((probe) => probe.id === "task-pause-resume"), true);
   assert.equal(report.probes.some((probe) => probe.id === "live-budget-stop"), true);
 });
 
@@ -3846,6 +3847,24 @@ test("queue-wide pause blocks new claims and survives store reopen", () => {
     assert.equal(reopened.setQueuePaused(false).paused, false);
     assert.equal(reopened.claimNextTask(undefined, "worker-a")?.id, "paused-task");
     reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("individual queue tasks can pause cooperatively and resume without retry penalty", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-task-pause-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "suspend-me", kind: "research.lane", priority: 1, payload: {} });
+    assert.equal(store.pauseTask("suspend-me", "operator inspection"), true);
+    assert.equal(store.queueTasks().find((task) => task.id === "suspend-me")?.status, "paused");
+    assert.equal(store.claimTask("suspend-me", undefined, "worker-a"), undefined);
+    assert.equal(store.resumeTask("suspend-me"), true);
+    const claimed = store.claimTask("suspend-me", undefined, "worker-a");
+    assert.equal(claimed?.id, "suspend-me");
+    assert.equal(claimed?.attempts, 1);
+    assert.equal(store.eventsByType("queue.task.paused").length, 1);
+    assert.equal(store.eventsByType("queue.task.resumed").length, 1);
+    store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

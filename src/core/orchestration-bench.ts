@@ -98,6 +98,14 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     check("queue-pause-governance", "A durable queue pause blocks new claims and resume reopens dispatch.", paused.paused && !pausedClaim && resumedClaim?.id === "paused-dispatch", { paused: paused.paused, pausedClaim: pausedClaim?.id, resumedClaim: resumedClaim?.id });
     if (resumedClaim) store.updateTask("paused-dispatch", "completed");
 
+    store.enqueueTask({ id: "task-pause", kind: "governed", priority: 1, payload: {} });
+    const taskPaused = store.pauseTask("task-pause", "benchmark inspection");
+    const taskPausedClaim = store.claimTask("task-pause", ["governed"], "worker-a");
+    const taskResumed = store.resumeTask("task-pause");
+    const taskResumedClaim = store.claimTask("task-pause", ["governed"], "worker-a");
+    check("task-pause-resume", "A single ticket can be suspended and resumed without consuming a retry.", taskPaused && !taskPausedClaim && taskResumed && taskResumedClaim?.attempts === 1, { taskPaused, taskPausedClaim: taskPausedClaim?.id, taskResumed, attempts: taskResumedClaim?.attempts });
+    if (taskResumedClaim) store.updateTask("task-pause", "completed");
+
     store.enqueueTask({ id: "budget-stop", kind: "governed", priority: 1, tokenBudget: 2, payload: {} });
     const budgetClaim = store.claimTask("budget-stop", ["governed"], "worker-a");
     const budgetRecorded = budgetClaim ? store.recordQueueUsage({ taskId: "budget-stop", actorId: "worker-a", inputTokens: 1, outputTokens: 1, claimToken: budgetClaim.claimToken ?? undefined }) : false;

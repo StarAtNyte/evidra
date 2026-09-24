@@ -2271,6 +2271,20 @@ queue.command("cancel <id>").option("--reason <reason>", "why the work is being 
   if (!cancelled) throw new Error(`Task '${id}' is missing or already terminal; only queued/running work can be cancelled.`);
   console.log(`Cancelled ${id}.`);
 });
+queue.command("pause-task <id>").option("--reason <reason>", "why this task is being paused", "operator paused task").description("Suspend one queued or running task without cancelling it").action((id: string, options: { reason: string }) => {
+  const store = new ResearchStore(statePath);
+  const paused = store.pauseTask(id, options.reason);
+  store.close();
+  if (!paused) throw new Error(`Task '${id}' is missing or already terminal; only queued/running work can be paused.`);
+  console.log(`Paused task ${id}.`);
+});
+queue.command("resume-task <id>").description("Resume one specifically paused task").action((id: string) => {
+  const store = new ResearchStore(statePath);
+  const resumed = store.resumeTask(id);
+  store.close();
+  if (!resumed) throw new Error(`Task '${id}' is missing or not paused.`);
+  console.log(`Resumed task ${id}.`);
+});
 queue.command("pause").option("--reason <reason>", "why new claims should stop", "operator paused queue").description("Pause new queue claims without cancelling live work").action((options: { reason: string }) => {
   const store = new ResearchStore(statePath);
   const control = store.setQueuePaused(true, options.reason);
