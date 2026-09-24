@@ -839,17 +839,20 @@ const agents = program.command("agents")
     store.close();
   });
 
-agents.command("evaluate").description("Evaluate specialist roles and persist bounded coaching interventions").option("--json", "emit machine-readable reviews").action((options: { json?: boolean }) => {
+agents.command("evaluate").description("Evaluate specialist roles and persist bounded coaching interventions").option("--json", "emit machine-readable reviews").option("--apply", "queue coaching directives for roles needing review").action((options: { json?: boolean; apply?: boolean }) => {
   const store = new ResearchStore(statePath);
   const reviews = evaluateAgentRoles(store.trajectoryHistory());
   const interventions = agentRoleInterventions(reviews);
+  const applied = options.apply ? interventions.filter((intervention) => intervention.action === "coach").map((intervention) => store.enqueueAgentDirective(intervention.role, `Coaching intervention: ${intervention.reason}. Change the route, ground material findings in durable observations, and state a falsification test.`).id) : [];
   store.appendEvent("research.agent.reviewed", { reviews, interventions, source: "operator-cli" });
+  if (applied.length) store.appendEvent("research.agent.coaching.applied", { directiveIds: applied, roles: interventions.filter((intervention) => intervention.action === "coach").map((intervention) => intervention.role), source: "operator-cli" });
   store.close();
-  if (options.json) { console.log(JSON.stringify({ reviews, interventions }, null, 2)); return; }
+  if (options.json) { console.log(JSON.stringify({ reviews, interventions, appliedDirectiveIds: applied }, null, 2)); return; }
   console.log(reviews.length
     ? reviews.map((review) => `${review.role} · ${review.recommendation} · score ${(review.score * 100).toFixed(0)}% · ${review.assignments} assignment(s) · ${review.evidenceAnchors} evidence anchor(s)`).join("\n")
     : "No specialist trajectories recorded; role evaluation needs completed research lanes.");
   if (interventions.length) console.log(`\nInterventions\n${interventions.map((intervention) => `  ${intervention.role} → ${intervention.action} · ${intervention.priority} · ${intervention.reason}`).join("\n")}`);
+  if (applied.length) console.log(`\nApplied ${applied.length} coaching directive(s); they will be delivered at the next safe role boundary.`);
 });
 
 for (const action of ["pause", "resume"] as const) {

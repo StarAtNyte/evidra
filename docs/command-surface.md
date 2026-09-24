@@ -293,6 +293,7 @@ Source retrieval records URL, retrieval time, content hash, license, claims, and
 /agents list                  List roles and active threads
 /agents logs <role>           Show role activity
 /agents evaluate              Evaluate role trajectories and generate coaching interventions
+/agents evaluate apply        Apply coach interventions as durable role directives
 /agents message <role> <msg> Send a directed instruction
 /agents restart <role>       Restart a disposable or stale lane
 /agents limits                Show concurrency and model limits
