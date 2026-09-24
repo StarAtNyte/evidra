@@ -82,6 +82,8 @@ export interface ResearchRoutine {
   limitPolicy: "auto" | "wait" | "fallback" | "stop";
   executor: "local" | "container" | "modal" | "slurm";
   lanes: number;
+  /** Null means the routine may run until explicitly paused or its goal stops it. */
+  maxRuns: number | null;
   triggerEvent?: string | null;
   lastTriggerAt?: string | null;
   /** Coalesced wake-up waiting for the current run to finish. */
@@ -108,7 +110,7 @@ export interface ResearchRoutineRun {
   error: string | null;
 }
 
-function validateRoutine(routine: Pick<ResearchRoutine, "name" | "goal" | "mode" | "budgetMinutes" | "intervalSeconds" | "provider" | "model" | "thinking" | "autonomy" | "limitPolicy" | "executor" | "lanes" | "triggerEvent">): void {
+function validateRoutine(routine: Pick<ResearchRoutine, "name" | "goal" | "mode" | "budgetMinutes" | "intervalSeconds" | "provider" | "model" | "thinking" | "autonomy" | "limitPolicy" | "executor" | "lanes" | "maxRuns" | "triggerEvent">): void {
   if (!routine.name.trim()) throw new Error("Routine name must not be empty.");
   if (!routine.goal.trim()) throw new Error("Routine goal must not be empty.");
   if (!Number.isFinite(routine.budgetMinutes) || routine.budgetMinutes <= 0) throw new Error("Routine budget must be positive.");
@@ -121,6 +123,7 @@ function validateRoutine(routine: Pick<ResearchRoutine, "name" | "goal" | "mode"
   if (!["auto", "wait", "fallback", "stop"].includes(routine.limitPolicy)) throw new Error("Routine limit policy must be auto, wait, fallback, or stop.");
   if (!["local", "container", "modal", "slurm"].includes(routine.executor)) throw new Error("Routine executor must be local, container, modal, or slurm.");
   if (!Number.isInteger(routine.lanes) || routine.lanes < 1 || routine.lanes > 6) throw new Error("Routine lanes must be an integer from 1 to 6.");
+  if (routine.maxRuns !== null && (!Number.isInteger(routine.maxRuns) || routine.maxRuns < 1)) throw new Error("Routine maxRuns must be null or a positive integer.");
   if (routine.triggerEvent !== undefined && routine.triggerEvent !== null && !/^[a-zA-Z0-9_.:-]{1,120}$/.test(routine.triggerEvent)) throw new Error("Routine trigger event must be a simple event type such as research.agent_budget.exhausted.");
   if (routine.triggerEvent?.startsWith("routine.")) throw new Error("Routine triggers cannot subscribe to routine lifecycle events; this would permit self-triggering loops.");
 }
@@ -1443,7 +1446,7 @@ export class ResearchStore {
 
   private routineFromRow(row: { id: string; payload_json: string; status: string; next_run_at: string; lease_id: string | null; lease_expires_at: string | null; created_at: string; updated_at: string }): ResearchRoutine {
     const payload = JSON.parse(row.payload_json) as Omit<ResearchRoutine, "id" | "status" | "nextRunAt" | "leaseId" | "leaseExpiresAt" | "createdAt" | "updatedAt">;
-    return { ...payload, pendingTriggers: Math.max(0, Number(payload.pendingTriggers) || 0), id: row.id, status: row.status as RoutineStatus, nextRunAt: row.next_run_at, leaseId: row.lease_id, leaseExpiresAt: row.lease_expires_at, createdAt: row.created_at, updatedAt: row.updated_at };
+    return { ...payload, maxRuns: Number.isInteger(payload.maxRuns) && (payload.maxRuns as number) > 0 ? payload.maxRuns as number : null, pendingTriggers: Math.max(0, Number(payload.pendingTriggers) || 0), id: row.id, status: row.status as RoutineStatus, nextRunAt: row.next_run_at, leaseId: row.lease_id, leaseExpiresAt: row.lease_expires_at, createdAt: row.created_at, updatedAt: row.updated_at };
   }
 
   routines(): ResearchRoutine[] {
@@ -1470,7 +1473,7 @@ export class ResearchStore {
       name: routine.name, mode: routine.mode, goal: routine.goal, budgetMinutes: routine.budgetMinutes,
       intervalSeconds: routine.intervalSeconds, stopCondition: routine.stopCondition, provider: routine.provider,
       model: routine.model, thinking: routine.thinking, autonomy: routine.autonomy, limitPolicy: routine.limitPolicy,
-      executor: routine.executor, lanes: routine.lanes, triggerEvent: routine.triggerEvent ?? null, lastTriggerAt: routine.lastTriggerAt ?? null, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult,
+      executor: routine.executor, lanes: routine.lanes, maxRuns: routine.maxRuns ?? null, triggerEvent: routine.triggerEvent ?? null, lastTriggerAt: routine.lastTriggerAt ?? null, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult,
       lastError: routine.lastError, runCount: routine.runCount, pendingTriggers: Math.max(0, Math.min(1, routine.pendingTriggers ?? 0)),
     };
     this.db.prepare(`
@@ -1493,6 +1496,7 @@ export class ResearchStore {
       lastResult: null,
       lastError: null,
       runCount: 0,
+      maxRuns: input.maxRuns ?? null,
       pendingTriggers: 0,
       triggerEvent: input.triggerEvent ?? null,
       lastTriggerAt: input.triggerEvent ? now : null,
@@ -1523,17 +1527,29 @@ export class ResearchStore {
   }
 
   claimRoutine(id: string, ownerId: string, leaseMs = 7 * 24 * 60 * 60_000, now = new Date(), force = false): ResearchRoutine | undefined {
+    let exhausted = false;
     const claimed = this.db.transaction(() => {
       const row = this.db.prepare("SELECT * FROM research_routines WHERE id = ?").get(id) as { id: string; payload_json: string; status: string; next_run_at: string; lease_id: string | null; lease_expires_at: string | null; created_at: string; updated_at: string } | undefined;
       if (!row) return undefined;
       const due = force || Date.parse(row.next_run_at) <= now.getTime();
       const leaseExpired = !row.lease_expires_at || Date.parse(row.lease_expires_at) <= now.getTime();
       if (!due || (row.status !== "active" && !(row.status === "running" && leaseExpired))) return undefined;
+      let payload: Record<string, unknown> = {};
+      try { payload = JSON.parse(row.payload_json) as Record<string, unknown>; } catch { /* preserve ordinary claim behavior; validation will surface corruption */ }
+      const maxRuns = typeof payload.maxRuns === "number" && Number.isInteger(payload.maxRuns) && payload.maxRuns > 0 ? payload.maxRuns : null;
+      const runCount = typeof payload.runCount === "number" && Number.isInteger(payload.runCount) ? payload.runCount : 0;
+      if (maxRuns !== null && runCount >= maxRuns) {
+        exhausted = true;
+        const exhaustedPayload = { ...payload, lastError: `routine run cap reached (${maxRuns})` };
+        this.db.prepare("UPDATE research_routines SET status = 'paused', payload_json = ?, lease_id = NULL, lease_expires_at = NULL, updated_at = ? WHERE id = ?").run(safeJson(exhaustedPayload), now.toISOString(), id);
+        return undefined;
+      }
       const expires = new Date(now.getTime() + leaseMs).toISOString();
       this.db.prepare("UPDATE research_routines SET status = 'running', lease_id = ?, lease_expires_at = ?, updated_at = ? WHERE id = ?").run(ownerId, expires, now.toISOString(), id);
       this.db.prepare("INSERT INTO research_routine_runs (id, routine_id, owner_id, status, started_at, finished_at, exit_code, error) VALUES (?, ?, ?, 'running', ?, NULL, NULL, NULL)").run(randomUUID(), id, ownerId, now.toISOString());
       return this.routine(id);
     })();
+    if (exhausted) this.appendEvent("routine.max_runs_reached", { id, ownerId });
     if (claimed) this.appendEvent("routine.claimed", { id, ownerId, leaseExpiresAt: claimed.leaseExpiresAt, forced: force });
     return claimed;
   }

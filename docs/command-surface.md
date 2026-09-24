@@ -86,7 +86,7 @@ runner lease. It can be driven by cron or another scheduler without launching
 duplicate campaigns:
 
 ```text
-evidra routine create --name nightly-literature --goal "find and test robust improvements" --every 1d --budget 4h
+evidra routine create --name nightly-literature --goal "find and test robust improvements" --every 1d --budget 4h --max-runs 14
 evidra routine create --name recovery-review --goal "audit the latest recovery" --on-event research.agent_budget.exhausted
 evidra routine list --json
 evidra routine history <routine-id>
@@ -103,6 +103,10 @@ advances the next run only after the child campaign exits. Manual runs use
 provides the native heartbeat loop; it polls due routines sequentially and
 recovers expired runner leases. Expired leases are recoverable, so a machine
 restart does not strand a routine.
+Use `--max-runs N` to pause a routine after N completed runs; omit it (or use
+`--max-runs 0`) for an unlimited routine. Reaching the cap emits
+`routine.max_runs_reached` and requires an explicit resume or configuration
+change before more work can run.
 
 If a matching event arrives while a routine is already running, Evidra records
 one coalesced pending trigger and schedules the follow-up immediately after the

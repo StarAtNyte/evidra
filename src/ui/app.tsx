@@ -2503,7 +2503,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         name: draft.name ?? "evidra-routine", mode: configRef.current.mode, goal: draft.goal ?? "Advance the research project",
         budgetMinutes: draft.budgetMinutes ?? 60, intervalSeconds: draft.intervalSeconds ?? 86_400, triggerEvent, stopCondition: "stop when the stated goal has sufficient reproducible evidence",
         provider: configRef.current.provider, model: configRef.current.model, thinking: configRef.current.reasoningEffort,
-        autonomy: configRef.current.autonomy, limitPolicy: configRef.current.limitPolicy, executor: configRef.current.experimentExecutor, lanes: 3,
+        autonomy: configRef.current.autonomy, limitPolicy: configRef.current.limitPolicy, executor: configRef.current.experimentExecutor, lanes: 3, maxRuns: null,
       });
       store.close();
       setRoutineSetupStep(null); setRoutineSetupDraft({});
@@ -2966,7 +2966,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const routines = store.routines();
         store.close();
         append("assistant", routines.length
-          ? `Research routines\n${routines.map((entry) => `  ${entry.status} · ${entry.name} · ${entry.id}\n    ${entry.mode} · next ${entry.nextRunAt} · every ${entry.intervalSeconds}s · trigger ${entry.triggerEvent ?? "none"}${entry.pendingTriggers ? ` · pending ${entry.pendingTriggers}` : ""} · runs ${entry.runCount}${entry.lastResult ? ` · last ${entry.lastResult}` : ""}`).join("\n")}`
+          ? `Research routines\n${routines.map((entry) => `  ${entry.status} · ${entry.name} · ${entry.id}\n    ${entry.mode} · next ${entry.nextRunAt} · every ${entry.intervalSeconds}s · trigger ${entry.triggerEvent ?? "none"}${entry.pendingTriggers ? ` · pending ${entry.pendingTriggers}` : ""} · runs ${entry.runCount}${entry.maxRuns !== null ? `/${entry.maxRuns}` : ""}${entry.lastResult ? ` · last ${entry.lastResult}` : ""}`).join("\n")}`
           : "No recurring routines configured. Create one with `evidra routine create --name ... --goal ...`, then use /routine run <id>.");
         return;
       }

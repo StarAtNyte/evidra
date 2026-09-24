@@ -3511,7 +3511,7 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     const routine = store.createRoutine({
       id: "routine-demo", name: "Demo routine", mode: "research", goal: "measure a reproducible improvement",
       budgetMinutes: 10, intervalSeconds: 60, stopCondition: "stop after replication", provider: "codex",
-      model: "gpt-test", thinking: "medium", autonomy: "safe", limitPolicy: "auto", executor: "local", lanes: 1, triggerEvent: "research.test",
+      model: "gpt-test", thinking: "medium", autonomy: "safe", limitPolicy: "auto", executor: "local", lanes: 1, maxRuns: null, triggerEvent: "research.test",
     });
     assert.equal(routine.status, "active");
     assert.equal(routine.triggerEvent, "research.test");
@@ -3537,6 +3537,12 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     assert.equal(forcedFinished.pendingTriggers, 0);
     assert.ok(Date.parse(forcedFinished.nextRunAt) <= Date.now() + 1_000);
     assert.equal(store.recentEvents(8).some((event) => event.type === "routine.trigger_queued"), true);
+    const capped = store.createRoutine({ ...routine, id: "routine-capped", maxRuns: 1, triggerEvent: null });
+    assert.equal(store.claimRoutine(capped.id, "capped-runner", 60_000)?.status, "running");
+    store.finishRoutine(capped.id, "capped-runner", "completed");
+    assert.equal(store.claimRoutine(capped.id, "capped-next", 60_000, new Date(), true), undefined);
+    assert.equal(store.routine(capped.id)?.status, "paused");
+    assert.equal(store.recentEvents(4).some((event) => event.type === "routine.max_runs_reached" && event.payload?.id === capped.id), true);
     const stale = store.createRoutine({ ...routine, id: "routine-stale" });
     assert.equal(store.claimRoutine(stale.id, "runner-stale", -1)?.status, "running");
     assert.deepEqual(store.recoverStaleRoutines(), [stale.id]);
