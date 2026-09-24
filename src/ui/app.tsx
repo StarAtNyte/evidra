@@ -235,6 +235,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/telemetry": [["/telemetry export", "Export MLflow-compatible run telemetry"]],
   "/evidence": [["/evidence audit", "Audit claim provenance and completion blockers"], ["/evidence analyze", "Analyze prediction errors and worst groups"]],
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
+  "/guidance": [["/guidance", "Inspect project runtime guidance and hash"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
   "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
@@ -2877,6 +2878,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         loopTimer.current = setInterval(() => { void runAutonomousCycle(); }, 60_000);
         append("assistant", "Autonomous loop started. It will evaluate the next decision every 60 seconds. Use /loop pause or /loop stop to halt it.");
       }
+      return;
+    }
+    if (request === "/guidance") {
+      const guidance = loadProjectGuidance(root);
+      append("assistant", guidance ? `Project guidance\n  files: ${guidance.paths.join(", ")}\n  hash: ${guidance.contentHash}\n  truncated: ${guidance.truncated ? "yes" : "no"}\n\n${guidance.text}` : "No project guidance found. Add EVIDRA.md or .evidra/instructions.md.");
       return;
     }
     if (request === "/routine" || request.startsWith("/routine ")) {

@@ -213,6 +213,7 @@ The initial adapter is `whestbench`. Future adapters include Kaggle, AIcrowd, ma
 /memory search <query>        Search prior claims, decisions, and experiment notes
 /memory recent               Show recent evidence and decisions
 /approvals                    Show the operator approval inbox
+/guidance                     Inspect loaded project runtime guidance and hash
 ```
 
 Project-local operator guidance can be placed in `EVIDRA.md` or

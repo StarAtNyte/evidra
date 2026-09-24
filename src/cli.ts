@@ -574,6 +574,15 @@ program.command("status").action(() => {
   store.close();
 });
 
+program.command("guidance")
+  .option("--json", "emit machine-readable guidance metadata")
+  .description("Inspect bounded project runtime guidance loaded by research agents")
+  .action((options: { json?: boolean }) => {
+    const guidance = loadProjectGuidance(root);
+    if (options.json) console.log(JSON.stringify(guidance ?? { paths: [], text: "", contentHash: null, truncated: false }, null, 2));
+    else console.log(guidance ? `Project guidance\nFiles       ${guidance.paths.join(", ")}\nHash        ${guidance.contentHash}\nTruncated   ${guidance.truncated ? "yes" : "no"}\n\n${guidance.text}` : "No project guidance found. Add EVIDRA.md or .evidra/instructions.md.");
+  });
+
 program.command("backup")
   .argument("[destination]", "workspace-relative SQLite backup path")
   .description("Create a consistent backup of durable research state")
