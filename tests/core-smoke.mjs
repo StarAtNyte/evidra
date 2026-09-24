@@ -13,7 +13,7 @@ import { ResearchStore } from "../dist/core/store.js";
 import { approvalInbox } from "../dist/core/approvals.js";
 import { goalAlignment, pauseForGoalAlignment } from "../dist/core/goal-alignment.js";
 import { agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
-import { evaluateAgentRoles } from "../dist/core/agent-evals.js";
+import { agentRoleInterventions, evaluateAgentRoles } from "../dist/core/agent-evals.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaimRecords, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
@@ -664,11 +664,13 @@ test("agent reviews learn from durable lane evidence without claiming metric att
     { payload: { laneReports: [{ role: "model researcher", status: "failed", confidence: 0.2, evidence: [] }] }, quality: { overall: "FAIL" } },
   ]);
   assert.equal(reviews[0].role, "validation scientist");
-  assert.equal(reviews[0].recommendation, "trusted");
+  assert.equal(reviews[0].recommendation, "needs-review");
   assert.equal(reviews.find((review) => review.role === "model researcher")?.recommendation, "insufficient-data");
   assert.equal(reviews.find((review) => review.role === "validation scientist")?.evidenceAnchors, 3);
   assert.equal(reviews.find((review) => review.role === "validation scientist")?.playbookPasses, 1);
   assert.equal(reviews.find((review) => review.role === "validation scientist")?.playbookBlocks, 1);
+  assert.equal(reviews.find((review) => review.role === "validation scientist")?.playbookRate, 0.5);
+  assert.equal(agentRoleInterventions(reviews).find((intervention) => intervention.role === "validation scientist")?.action, "coach");
 });
 
 test("Codex sandbox preserves read-only role boundaries", () => {

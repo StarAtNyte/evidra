@@ -11,8 +11,16 @@ export type AgentRoleReview = {
   playbookPasses: number;
   playbookPartials: number;
   playbookBlocks: number;
+  playbookRate: number;
   score: number;
   recommendation: "trusted" | "needs-review" | "insufficient-data";
+};
+
+export type AgentRoleIntervention = {
+  role: string;
+  action: "preserve" | "coach" | "observe";
+  priority: "normal" | "high";
+  reason: string;
 };
 
 type Trajectory = { payload: unknown; quality: unknown };
@@ -61,13 +69,25 @@ export function evaluateAgentRoles(trajectories: Trajectory[]): AgentRoleReview[
     const confidence = bucket.assignments ? bucket.confidence / bucket.assignments : 0;
     const evidenceRate = bucket.assignments ? Math.min(1, bucket.evidenceAnchors / (bucket.assignments * 2)) : 0;
     const processRate = bucket.assignments ? (bucket.processPasses + bucket.processWarnings * 0.5) / bucket.assignments : 0;
-    const score = Math.round((completionRate * 0.3 + confidence * 0.2 + evidenceRate * 0.2 + processRate * 0.3) * 1000) / 1000;
+    const playbookChecks = bucket.playbookPasses + bucket.playbookPartials + bucket.playbookBlocks;
+    const playbookRate = playbookChecks ? (bucket.playbookPasses + bucket.playbookPartials * 0.5) / playbookChecks : 1;
+    const score = Math.round((completionRate * 0.25 + confidence * 0.15 + evidenceRate * 0.2 + processRate * 0.25 + playbookRate * 0.15) * 1000) / 1000;
     return {
       role,
       ...bucket,
       confidence: Math.round(confidence * 1000) / 1000,
+      playbookRate: Math.round(playbookRate * 1000) / 1000,
       score,
-      recommendation: bucket.assignments < 2 ? "insufficient-data" : score >= 0.7 && bucket.processFailures === 0 ? "trusted" : "needs-review",
+      recommendation: bucket.assignments < 2 ? "insufficient-data" : score >= 0.7 && bucket.processFailures === 0 && bucket.playbookBlocks === 0 ? "trusted" : "needs-review",
     } satisfies AgentRoleReview;
   }).sort((left, right) => right.score - left.score || left.role.localeCompare(right.role));
+}
+
+/** Turn a review into a bounded controller action; this is policy, not metric attribution. */
+export function agentRoleInterventions(reviews: readonly AgentRoleReview[]): AgentRoleIntervention[] {
+  return reviews.map((review) => review.recommendation === "trusted"
+    ? { role: review.role, action: "preserve", priority: "normal", reason: "recent role evidence meets completion, evidence, process, and playbook gates" }
+    : review.recommendation === "needs-review"
+      ? { role: review.role, action: "coach", priority: "high", reason: `${review.playbookBlocks} blocked playbook step(s), ${review.processFailures} process failure(s), and score ${(review.score * 100).toFixed(0)}% require a changed route` }
+      : { role: review.role, action: "observe", priority: "normal", reason: "not enough durable assignments to change role allocation" });
 }

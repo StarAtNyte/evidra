@@ -112,7 +112,7 @@ import { selectRatchetReference } from "./core/ratchet.js";
 import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.js";
 import { approvalInbox } from "./core/approvals.js";
 import { formatGoalAlignment, goalAlignment } from "./core/goal-alignment.js";
-import { evaluateAgentRoles } from "./core/agent-evals.js";
+import { agentRoleInterventions, evaluateAgentRoles } from "./core/agent-evals.js";
 import { agentOrganization } from "./core/agent-organization.js";
 
 const PHASE_GATE_EVENT_TYPES = [
@@ -2759,6 +2759,7 @@ research
         : `No matched harness benchmark evidence is recorded yet; preserve failure telemetry for the first comparison. The harness action space is inventory-backed; use these candidate intervention contracts when a failure is observed: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}`;
       const recentTrajectories = store.trajectories(20);
       const agentRoleReviews = evaluateAgentRoles(recentTrajectories);
+      store.appendEvent("research.agent.reviewed", { objective, reviews: agentRoleReviews, interventions: agentRoleInterventions(agentRoleReviews), source: "cli" });
       const latestTrajectoryAt = recentTrajectories[0]?.createdAt;
       const unreconciledTraceRecovery = durableEvents.some((event) => event.type === "research.trace.recovered" && (!latestTrajectoryAt || event.createdAt > latestTrajectoryAt));
       const recentQuality = recentTrajectories.map((entry) => qualityFeedback(entry.quality));
