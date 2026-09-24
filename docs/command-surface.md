@@ -109,14 +109,18 @@ database. Only the `external.<source>.<event>` namespace is accepted, and the
 payload is stored as a redacted wake-up signal rather than research evidence:
 
 ```text
-evidra event emit external.github.push --payload '{"branch":"main"}'
+evidra event emit external.github.push --payload '{"branch":"main"}' --idempotency-key push-123
 /event emit external.ci.completed {"run":"1234","status":"success"}
 evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN"
 ```
 
 `event serve` accepts `POST /events` with `{ "type": "external.ci.completed",
-"payload": { ... }, "source": "ci" }`. It binds to loopback by default; a
-non-loopback bind requires a bearer token (`Authorization: Bearer ...`).
+"payload": { ... }, "source": "ci", "idempotencyKey": "run-123" }`. It binds
+to loopback by default; a non-loopback bind requires a bearer token
+(`Authorization: Bearer ...`). The `Idempotency-Key` header is also accepted;
+retries with the same key and event type are acknowledged without appending a
+second event or waking a routine again. `GET /health` reports event-chain
+integrity for liveness checks.
 
 Configure a routine with `--on-event external.github.push` (or the equivalent
 TUI routine flow). The event is hash-chained, wakes matching active routines,

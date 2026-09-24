@@ -484,6 +484,13 @@ export class ResearchStore {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS external_event_keys (
+        event_type TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        event_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (event_type, idempotency_key)
+      );
       CREATE TABLE IF NOT EXISTS trajectories (
         id TEXT PRIMARY KEY,
         run_id TEXT,
@@ -577,17 +584,31 @@ export class ResearchStore {
     return { id: row.id, name: row.name, competitionId: row.competition_id, config: JSON.parse(row.config_json) };
   }
 
+  private appendEventRow(type: string, payload: unknown, createdAt = new Date().toISOString()): { eventId: number; createdAt: string } {
+    const safePayload = redactStructured(payload);
+    const payloadJson = JSON.stringify(safePayload);
+    const previousHash = (this.db.prepare("SELECT event_hash AS eventHash FROM events ORDER BY id DESC LIMIT 1").get() as { eventHash: string | null } | undefined)?.eventHash ?? null;
+    const eventHash = createHash("sha256").update(`${type}\0${payloadJson}\0${createdAt}\0${previousHash ?? ""}`).digest("hex");
+    const result = this.db.prepare("INSERT INTO events (type, payload_json, created_at, previous_hash, event_hash) VALUES (?, ?, ?, ?, ?)").run(type, payloadJson, createdAt, previousHash, eventHash);
+    this.db.prepare("UPDATE event_chain_state SET head_hash = ?, event_count = event_count + 1 WHERE id = 1").run(eventHash);
+    return { eventId: Number(result.lastInsertRowid), createdAt };
+  }
+
   appendEvent(type: string, payload: unknown): void {
-    this.db.transaction(() => {
-      const safePayload = redactStructured(payload);
-      const payloadJson = JSON.stringify(safePayload);
-      const createdAt = new Date().toISOString();
-      const previousHash = (this.db.prepare("SELECT event_hash AS eventHash FROM events ORDER BY id DESC LIMIT 1").get() as { eventHash: string | null } | undefined)?.eventHash ?? null;
-      const eventHash = createHash("sha256").update(`${type}\0${payloadJson}\0${createdAt}\0${previousHash ?? ""}`).digest("hex");
-      this.db.prepare(`
-        INSERT INTO events (type, payload_json, created_at, previous_hash, event_hash) VALUES (?, ?, ?, ?, ?)
-      `).run(type, payloadJson, createdAt, previousHash, eventHash);
-      this.db.prepare("UPDATE event_chain_state SET head_hash = ?, event_count = event_count + 1 WHERE id = 1").run(eventHash);
+    this.db.transaction(() => { this.appendEventRow(type, payload); })();
+  }
+
+  /** Append an external wake-up exactly once for a (type, idempotency key) pair. */
+  appendExternalEvent(type: string, payload: unknown, idempotencyKey: string): { accepted: boolean; createdAt: string | null } {
+    const key = idempotencyKey.trim();
+    if (!key) throw new Error("External event idempotency key must not be empty.");
+    if (key.length > 256) throw new Error("External event idempotency key must be at most 256 characters.");
+    return this.db.transaction(() => {
+      const existing = this.db.prepare("SELECT created_at AS createdAt FROM external_event_keys WHERE event_type = ? AND idempotency_key = ?").get(type, key) as { createdAt: string } | undefined;
+      if (existing) return { accepted: false, createdAt: existing.createdAt };
+      const event = this.appendEventRow(type, payload);
+      this.db.prepare("INSERT INTO external_event_keys (event_type, idempotency_key, event_id, created_at) VALUES (?, ?, ?, ?)").run(type, key, event.eventId, event.createdAt);
+      return { accepted: true, createdAt: event.createdAt };
     })();
   }
 

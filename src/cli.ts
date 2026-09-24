@@ -2130,24 +2130,27 @@ approvals.command("status").option("--json", "emit machine-readable approval ite
 program.addCommand(approvals);
 
 const event = new Command("event").description("Emit safe external wake-up events for integrations");
-function recordExternalEvent(type: string, payload: Record<string, unknown>, source: string): string[] {
+function recordExternalEvent(type: string, payload: Record<string, unknown>, source: string, idempotencyKey?: string): { triggered: string[]; deduplicated: boolean } {
   const eventType = validateExternalEventType(type);
   const store = new ResearchStore(statePath);
-  store.appendEvent(eventType, externalEventPayload(payload, source.trim().slice(0, 80) || "cli"));
-  const eventRecord = store.recentEvents(1)[0];
-  const triggered = eventRecord ? store.triggerRoutines(eventType, eventRecord.createdAt) : [];
+  const eventPayload = externalEventPayload(payload, source.trim().slice(0, 80) || "cli");
+  const result = idempotencyKey?.trim()
+    ? store.appendExternalEvent(eventType, eventPayload, idempotencyKey)
+    : (store.appendEvent(eventType, eventPayload), { accepted: true, createdAt: store.recentEvents(1)[0]?.createdAt ?? null });
+  const triggered = result.accepted && result.createdAt ? store.triggerRoutines(eventType, result.createdAt) : [];
   store.close();
-  return triggered;
+  return { triggered, deduplicated: !result.accepted };
 }
 event.command("emit <type>")
   .option("--payload <json>", "JSON object delivered as an external trigger payload", "{}")
   .option("--source <source>", "origin label for the event", "cli")
+  .option("--idempotency-key <key>", "deduplicate retries for this event type and key")
   .description("Record an external event and wake matching routines")
-  .action((type: string, options: { payload: string; source: string }) => {
+  .action((type: string, options: { payload: string; source: string; idempotencyKey?: string }) => {
     const eventType = validateExternalEventType(type);
     const payload = parseExternalEventPayload(options.payload);
-    const triggered = recordExternalEvent(eventType, payload, options.source);
-    console.log(`Emitted ${eventType}${triggered.length ? `\nTriggered routines: ${triggered.join(", ")}` : "\nNo matching active routines."}`);
+    const result = recordExternalEvent(eventType, payload, options.source, options.idempotencyKey);
+    console.log(`${result.deduplicated ? "Deduplicated" : "Emitted"} ${eventType}${result.triggered.length ? `\nTriggered routines: ${result.triggered.join(", ")}` : "\nNo matching active routines."}`);
   });
 event.command("serve")
   .option("--port <port>", "HTTP port", "4311")
@@ -2161,8 +2164,16 @@ event.command("serve")
     if (!loopback && !options.token?.trim()) throw new Error("A token is required when the event server is not bound to loopback.");
     const server = createServer((request, response) => {
       const headers = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" };
-      if (request.method !== "POST" || request.url !== "/events") { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events is the only supported endpoint" })); return; }
       if (options.token?.trim() && request.headers.authorization !== `Bearer ${options.token.trim()}`) { response.writeHead(401, headers); response.end(JSON.stringify({ error: "invalid bearer token" })); return; }
+      if (request.method === "GET" && request.url === "/health") {
+        const store = new ResearchStore(statePath);
+        const integrity = store.verifyEventChain();
+        store.close();
+        response.writeHead(integrity.status === "invalid" ? 503 : 200, headers);
+        response.end(JSON.stringify({ ok: integrity.status !== "invalid", integrity }));
+        return;
+      }
+      if (request.method !== "POST" || request.url !== "/events") { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
@@ -2174,12 +2185,13 @@ event.command("serve")
       request.on("end", () => {
         if (rejected) return;
         try {
-          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown };
+          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown; idempotencyKey?: unknown };
           if (typeof parsed.type !== "string") throw new Error("request JSON requires a string 'type'");
           const payload = parseExternalEventPayload(JSON.stringify(parsed.payload ?? {}));
-          const triggered = recordExternalEvent(parsed.type, payload, typeof parsed.source === "string" ? parsed.source : "http");
+          const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : request.headers["idempotency-key"];
+          const result = recordExternalEvent(parsed.type, payload, typeof parsed.source === "string" ? parsed.source : "http", typeof idempotencyKey === "string" ? idempotencyKey : undefined);
           response.writeHead(202, headers);
-          response.end(JSON.stringify({ ok: true, type: parsed.type, triggered }));
+          response.end(JSON.stringify({ ok: true, type: parsed.type, deduplicated: result.deduplicated, triggered: result.triggered }));
         } catch (error) {
           response.writeHead(400, headers);
           response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));

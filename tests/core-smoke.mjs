@@ -3525,6 +3525,26 @@ test("external events are bounded wake-up signals and cannot impersonate evidenc
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("external event idempotency keys suppress webhook retries durably", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-external-idempotency-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const first = store.appendExternalEvent("external.ci.completed", externalEventPayload({ run: "42" }, "ci"), "run-42");
+    const second = store.appendExternalEvent("external.ci.completed", externalEventPayload({ run: "42" }, "ci"), "run-42");
+    const differentType = store.appendExternalEvent("external.github.completed", externalEventPayload({ run: "42" }, "github"), "run-42");
+    assert.equal(first.accepted, true);
+    assert.equal(second.accepted, false);
+    assert.equal(second.createdAt, first.createdAt);
+    assert.equal(differentType.accepted, true);
+    assert.equal(store.eventsByType("external.ci.completed").length, 1);
+    store.close();
+    const reopened = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    assert.equal(reopened.appendExternalEvent("external.ci.completed", externalEventPayload({ run: "42" }, "ci"), "run-42").accepted, false);
+    assert.equal(reopened.verifyEventChain().status, "valid");
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("stale queue recovery stops retrying a task after its attempt budget", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-stale-queue-limit-"));
   const dbPath = join(root, ".sota", "database.sqlite");
