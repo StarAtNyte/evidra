@@ -298,7 +298,10 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       if (external) {
         if (!external.roles.includes(context.role)) throw new Error(`Permission boundary: external tool '${call.name}' has no grant for role '${context.role}'.`);
       } else {
-        const permission = agentToolPermission(context.role, call.name);
+        const admissionStore = new ResearchStore(context.storePath);
+        const admitted = admissionStore.agentRoleAdmitted(context.role);
+        admissionStore.close();
+        const permission = agentToolPermission(context.role, call.name, admitted);
         if (!permission.allowed) throw new Error(`Permission boundary: ${permission.reason}`);
       }
     }

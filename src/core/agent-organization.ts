@@ -53,7 +53,7 @@ export function agentRoleContract(role: string): AgentRoleContract {
 }
 
 /** Enforce specialist authority at the tool boundary, not only in prompts. */
-export function agentToolPermission(role: string, toolName: string): { allowed: boolean; reason?: string } {
+export function agentToolPermission(role: string, toolName: string, admitted = false): { allowed: boolean; reason?: string } {
   const contract = agentRoleContract(role);
   const observationTools = new Set([
     "workspace.files", "workspace.search", "workspace.read", "git.status", "git.diff",
@@ -63,7 +63,7 @@ export function agentToolPermission(role: string, toolName: string): { allowed: 
   if (observationTools.has(toolName)) return { allowed: true };
   if (toolName === "shell.exec" && ["data detective", "model researcher", "ensemble scientist", "validation scientist", "reproducibility engineer", "experiment engineer", "repair agent"].includes(role)) return { allowed: true };
   if (toolName === "ensemble.analyze" && ["model researcher", "ensemble scientist", "validation scientist", "reproducibility engineer", "critic", "semantic auditor"].includes(role)) return { allowed: true };
-  if (toolName === "agent.handoff" && contract.reviewRequired !== true) return { allowed: true };
+  if (toolName === "agent.handoff" && (contract.reviewRequired !== true || admitted)) return { allowed: true };
   return { allowed: false, reason: `Role '${role}' (${contract.authority}) is not authorized to use '${toolName}'; the research director must perform or explicitly route this action.` };
 }
 
