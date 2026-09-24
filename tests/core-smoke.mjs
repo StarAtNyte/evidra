@@ -14,6 +14,7 @@ import { approvalInbox } from "../dist/core/approvals.js";
 import { goalAlignment, pauseForGoalAlignment } from "../dist/core/goal-alignment.js";
 import { agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "../dist/core/agent-evals.js";
+import { externalEventPayload, parseExternalEventPayload, validateExternalEventType } from "../dist/core/external-events.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaimRecords, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
@@ -3493,6 +3494,33 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     assert.deepEqual(store.recoverStaleRoutines(), [stale.id]);
     assert.equal(store.routine(stale.id)?.status, "active");
     assert.equal(store.routineRuns(stale.id)[0]?.status, "abandoned");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("external events are bounded wake-up signals and cannot impersonate evidence", async () => {
+  assert.equal(validateExternalEventType("external.github.push"), "external.github.push");
+  assert.throws(() => validateExternalEventType("research.observation"), /External event types/);
+  assert.throws(() => parseExternalEventPayload("[]"), /JSON object/);
+  assert.throws(() => parseExternalEventPayload("not-json"), /valid JSON/);
+  const payload = externalEventPayload(parseExternalEventPayload('{"branch":"main"}'), "github");
+  assert.equal(payload.source, "github");
+  assert.deepEqual(payload.payload, { branch: "main" });
+  const root = mkdtempSync(join(tmpdir(), "evidra-external-event-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const routine = store.createRoutine({
+      id: "external-routine", name: "External routine", mode: "research", goal: "react to a CI event",
+      budgetMinutes: 10, intervalSeconds: 3_600, stopCondition: "stop", provider: "codex", model: "test",
+      thinking: "medium", autonomy: "safe", limitPolicy: "auto", executor: "local", lanes: 1,
+      triggerEvent: "external.github.push",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    store.appendEvent("external.github.push", externalEventPayload({ branch: "main" }, "github"));
+    const event = store.recentEvents(1)[0];
+    assert.deepEqual(store.triggerRoutines(event.type, event.createdAt), [routine.id]);
+    assert.equal(store.eventsByType("external.github.push")[0].payload.source, "github");
+    assert.equal(store.eventsByType("external.github.push")[0].payload.observation, undefined);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

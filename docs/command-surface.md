@@ -31,6 +31,7 @@ The TUI is the primary interface. Every command is available after typing `/`; c
 /hero start                   Initialize, reproduce baseline, and generate first decision
 /hero stop                    Stop the zero-to-hero loop without deleting artifacts
 /goals                        Show the durable goal tree and phase progress
+/event emit <type> [json]     Emit a safe external event and wake matching routines
 /exit                         Exit the TUI
 ```
 
@@ -102,6 +103,19 @@ advances the next run only after the child campaign exits. Manual runs use
 provides the native heartbeat loop; it polls due routines sequentially and
 recovers expired runner leases. Expired leases are recoverable, so a machine
 restart does not strand a routine.
+
+External integrations can wake a routine without writing directly to Evidra's
+database. Only the `external.<source>.<event>` namespace is accepted, and the
+payload is stored as a redacted wake-up signal rather than research evidence:
+
+```text
+evidra event emit external.github.push --payload '{"branch":"main"}'
+/event emit external.ci.completed {"run":"1234","status":"success"}
+```
+
+Configure a routine with `--on-event external.github.push` (or the equivalent
+TUI routine flow). The event is hash-chained, wakes matching active routines,
+and remains visible in the event timeline for audit and replay.
 
 For long campaigns, bound each specialist independently:
 

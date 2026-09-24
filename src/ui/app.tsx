@@ -7,6 +7,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, write
 import { ResearchStore } from "../core/store.js";
 import { approvalInbox } from "../core/approvals.js";
 import { loadProjectGuidance } from "../core/project-guidance.js";
+import { externalEventPayload, parseExternalEventPayload, validateExternalEventType } from "../core/external-events.js";
 import { formatGoalAlignment, goalAlignment, pauseForGoalAlignment } from "../core/goal-alignment.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "../core/agent-evals.js";
 import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
@@ -238,6 +239,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/guidance": [["/guidance", "Inspect project runtime guidance and hash"]],
   "/goals": [["/goals", "Show goal criteria, evidence, and stage progress"]],
+  "/event": [["/event emit ", "Emit an external wake-up event"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
   "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
@@ -2900,6 +2902,20 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const stages = researchStageProgress(scoped);
       store.close();
       append("assistant", `Goals · ${goalMode}${campaign?.goal ? `\nObjective: ${campaign.goal}` : ""}\n\nStages\n${stages.map((stage) => `  ${stage.status.padEnd(7)} ${stage.stage.padEnd(8)} ${stage.completed}/${stage.total} · ${stage.activePhase ?? "ready"}`).join("\n") || "  No stages initialized."}\n\nGoal tree\n${scoped.map((goal) => `${goal.status === "met" ? "✓" : goal.status === "blocked" ? "!" : goal.status === "active" ? "●" : "○"} ${goal.phase} · ${goal.title} · ${goal.status}\n    ${goal.objective}\n    criteria ${goal.completionCriteria.map((criterion, index) => `${index + 1}. ${criterion}`).join(" | ")}\n    evidence ${goal.evidenceIds.length} · attempts ${goal.attempts}`).join("\n") || "  No goals initialized. Start /research or /challenge."}`);
+      return;
+    }
+    const externalEventMatch = request.match(/^\/event\s+emit\s+(\S+)(?:\s+([\s\S]+))?$/i);
+    if (externalEventMatch) {
+      try {
+        const eventType = validateExternalEventType(externalEventMatch[1]);
+        const payload = parseExternalEventPayload(externalEventMatch[2]);
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        store.appendEvent(eventType, externalEventPayload(payload, "tui"));
+        const eventRecord = store.recentEvents(1)[0];
+        const triggered = eventRecord ? store.triggerRoutines(eventType, eventRecord.createdAt) : [];
+        store.close();
+        append("assistant", `Emitted ${eventType}${triggered.length ? `\nTriggered routines: ${triggered.join(", ")}` : "\nNo matching active routines."}`);
+      } catch (error) { appendError(error); }
       return;
     }
     if (request === "/routine" || request.startsWith("/routine ")) {

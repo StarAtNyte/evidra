@@ -115,6 +115,7 @@ import { loadProjectGuidance } from "./core/project-guidance.js";
 import { formatGoalAlignment, goalAlignment } from "./core/goal-alignment.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "./core/agent-evals.js";
 import { agentOrganization } from "./core/agent-organization.js";
+import { externalEventPayload, parseExternalEventPayload, validateExternalEventType } from "./core/external-events.js";
 
 const PHASE_GATE_EVENT_TYPES = [
   "research.observation", "project.created", "baseline.completed", "data.audit.completed", "data.audit.accepted",
@@ -2127,6 +2128,23 @@ const showApprovals = (options: { json?: boolean }): void => {
 approvals.option("--json", "emit machine-readable approval items").action(showApprovals);
 approvals.command("status").option("--json", "emit machine-readable approval items").action(showApprovals);
 program.addCommand(approvals);
+
+const event = new Command("event").description("Emit safe external wake-up events for integrations");
+event.command("emit <type>")
+  .option("--payload <json>", "JSON object delivered as an external trigger payload", "{}")
+  .option("--source <source>", "origin label for the event", "cli")
+  .description("Record an external event and wake matching routines")
+  .action((type: string, options: { payload: string; source: string }) => {
+    const eventType = validateExternalEventType(type);
+    const payload = parseExternalEventPayload(options.payload);
+    const store = new ResearchStore(statePath);
+    store.appendEvent(eventType, externalEventPayload(payload, options.source.trim() || "cli"));
+    const eventRecord = store.recentEvents(1)[0];
+    const triggered = eventRecord ? store.triggerRoutines(eventType, eventRecord.createdAt) : [];
+    store.close();
+    console.log(`Emitted ${eventType}${triggered.length ? `\nTriggered routines: ${triggered.join(", ")}` : "\nNo matching active routines."}`);
+  });
+program.addCommand(event);
 
 const routine = new Command("routine").description("Manage durable recurring research and challenge campaigns");
 routine.command("list").option("--json", "emit machine-readable routines").action((options: { json?: boolean }) => {
