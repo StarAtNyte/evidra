@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { ResearchStore } from "./store.js";
 
 const MANIFEST_PATH = ".evidra/tools.json";
 const MAX_MANIFEST_BYTES = 128_000;
@@ -111,5 +112,12 @@ export function setExternalToolStatus(root: string, name: string, status: Extern
   const path = resolve(root, TOOL_STATE_PATH);
   mkdirSync(resolve(root, ".sota"), { recursive: true });
   writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  try {
+    const store = new ResearchStore(resolve(root, ".sota/database.sqlite"));
+    store.appendEvent("research.external_tool.lifecycle_changed", { name, status, reason: next.reason ?? null, source: "operator" });
+    store.close();
+  } catch {
+    // The lifecycle file remains authoritative if telemetry cannot be opened.
+  }
   return next;
 }

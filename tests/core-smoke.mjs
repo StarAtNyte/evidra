@@ -3847,6 +3847,9 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.equal(quarantinedResult.ok, false);
     assert.match(quarantinedResult.error, /quarantined/);
     setExternalToolStatus(root, "external.echo", "enabled");
+    const lifecycleStore = new ResearchStore(db);
+    assert.equal(lifecycleStore.eventsByType("research.external_tool.lifecycle_changed").length, 2);
+    lifecycleStore.close();
     assert.equal(existsSync(join(root, "reports")), false);
     const predictionA = join(root, "pred-a.json");
     const predictionB = join(root, "pred-b.json");
