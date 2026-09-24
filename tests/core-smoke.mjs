@@ -707,6 +707,23 @@ test("agent provider sessions are durable and isolated by role, scope, and route
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("phase plan revisions fingerprint structural changes but ignore progress updates", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-plan-revisions-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    const base = { id: "goal_research_demo_orientation", goalSetId: "demo", phase: "orientation", title: "Orient", objective: "Inspect the workspace", completionCriteria: ["inventory recorded"], status: "active", attempts: 0, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+    store.savePhaseGoal({ id: base.id, phase: base.phase, status: base.status, payload: base });
+    store.savePhaseGoal({ id: base.id, phase: base.phase, status: "blocked", payload: { ...base, status: "blocked", attempts: 1, updatedAt: "2026-01-01T00:01:00.000Z" } });
+    assert.equal(store.phaseGoalRevisions().length, 0);
+    store.savePhaseGoal({ id: base.id, phase: base.phase, status: "blocked", payload: { ...base, status: "blocked", title: "Orient safely", updatedAt: "2026-01-01T00:02:00.000Z" } });
+    const revisions = store.phaseGoalRevisions();
+    assert.equal(revisions.length, 1);
+    assert.equal(revisions[0].revision, 1);
+    assert.notEqual(revisions[0].fingerprint, revisions[0].previousFingerprint);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("Codex sandbox preserves read-only role boundaries", () => {
   const previous = process.env.EVIDRA_CODEX_SANDBOX;
   delete process.env.EVIDRA_CODEX_SANDBOX;

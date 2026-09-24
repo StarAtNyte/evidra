@@ -225,7 +225,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
   "/logout": [["/logout", "Sign out of the Codex account"]],
-  "/research": [["/research plan", "Show the three high-level research steps"], ["/research examples", "Show contemporary starter research briefs"], ["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research steer ", "Guide the active campaign at the next safe boundary"], ["/research resume", "Resume the saved campaign"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
+  "/research": [["/research plan", "Show the three high-level research steps"], ["/research plan history", "Show structural plan revisions"], ["/research examples", "Show contemporary starter research briefs"], ["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research steer ", "Guide the active campaign at the next safe boundary"], ["/research resume", "Resume the saved campaign"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
   "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge steer ", "Guide the active campaign at the next safe boundary"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
   "/sources": [["/sources list", "List retrieved sources"], ["/sources channels", "Show discussion and leaderboard insights"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources discover", "Search scholarly literature"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
@@ -4152,15 +4152,19 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request === "/research" || request.startsWith("/research ")) {
       const objective = request.slice("/research".length).trim();
-      if (objective === "plan") {
+      if (objective === "plan" || objective === "plan history") {
         const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
         const campaign = store.campaign() as ResearchCampaign | undefined;
         const goals = phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), "research");
+        const revisions = store.phaseGoalRevisions();
         store.close();
         const detailed = goals.length
           ? `\n\nDetailed phase goals\n${goals.map((goal, index) => `  ${String(index + 1).padStart(2, "0")} · ${goal.title} · ${goal.status}`).join("\n")}`
           : "\n\nDetailed phase goals\n  Not initialized yet — start a campaign to create them.";
-        append("assistant", `Research plan\n${RESEARCH_PLAN}${campaign ? `\n\nCampaign goal\n  ${campaign.goal}\n  status: ${campaign.status}` : ""}${detailed}`);
+        const history = objective === "plan history"
+          ? `\n\nStructural revisions\n${revisions.length ? revisions.slice().reverse().map((revision) => `  r${revision.revision} · ${revision.phase ?? revision.goalId} · ${revision.createdAt}\n    ${revision.previousFingerprint} → ${revision.fingerprint}`).join("\n") : "  No structural revisions recorded."}`
+          : "";
+        append("assistant", `Research plan\n${RESEARCH_PLAN}${campaign ? `\n\nCampaign goal\n  ${campaign.goal}\n  status: ${campaign.status}` : ""}${detailed}${history}`);
         return;
       }
       if (objective === "examples") {

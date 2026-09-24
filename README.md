@@ -324,6 +324,7 @@ Implemented today:
 - durable work activity: specialist starts, tool progress, safe-boundary handoffs, completions, and failures are journaled against their queue ticket; `/agents activity` and the dashboard make recovery context visible across controller restarts;
 - unified budget ledger: campaign token usage is filtered by campaign boundary, attributed by role/provider/model, and classified as healthy, warning, exhausted, or unlimited across the CLI, TUI, and dashboard;
 - resumable specialist sessions: Codex lane thread IDs are persisted per role, campaign goal, provider, and model; matching lanes resume their provider context while route changes and scopes invalidate reuse;
+- revisioned research plans: structural phase-plan changes receive fingerprints and durable revisions; `/research plan history`, the CLI, and dashboard expose what changed without confusing ordinary progress updates with plan edits;
 - enforceable delegation boundaries: specialist identity follows every lane tool call; read-only evidence tools are shared safely, while controller-owned actions such as report and validation-policy generation are rejected at the tool boundary and recorded as permission events;
 - role performance reviews: durable lane reports are scored for completion, evidence density, confidence, and process quality; the review is fed into the next research context and never pretends to attribute the final task metric to one agent;
 - bounded coaching allocation: roles with sufficient `needs-review` evidence are deliberately scheduled for a controlled follow-up attempt, receive a bounded evidence-discipline coaching signal in their next prompt, while trusted roles continue to rotate and resource ceilings remain authoritative;
@@ -546,6 +547,7 @@ Useful commands:
                           Export starter briefs for an external runner
     /research plan        Show the three high-level steps and internal phase goals
     /research plan --json Export the stages and current phase progress as JSON
+    /research plan history Show structural phase-plan revisions
     /research pause       Pause workers and preserve the campaign
     /research resume      Resume the saved research campaign
     /research stop        Stop the campaign without deleting evidence

@@ -2393,20 +2393,23 @@ research.command("examples")
   });
 research.command("plan")
   .option("--json", "emit the plan and progress as JSON")
+  .option("--history", "show structural plan revisions")
   .description("Show the three user-facing research stages and their internal contract")
-  .action((options: { json?: boolean }) => {
+  .action((options: { json?: boolean; history?: boolean }) => {
     const store = new ResearchStore(statePath);
     const campaign = store.campaign() as { goal?: string; runtime?: { mode?: unknown } } | undefined;
     const researchCampaign = campaign?.runtime?.mode === "research" ? campaign : undefined;
     const goals = phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), "research");
     const stages = researchStageProgress(goals);
+    const revisions = store.phaseGoalRevisions();
     store.close();
     if (options.json) {
-      console.log(JSON.stringify({ stages: RESEARCH_STAGE_PLAN, internalPhaseProgress: stages, ...(researchCampaign?.goal ? { activeGoal: researchCampaign.goal } : {}) }, null, 2));
+      console.log(JSON.stringify({ stages: RESEARCH_STAGE_PLAN, internalPhaseProgress: stages, revisions, ...(researchCampaign?.goal ? { activeGoal: researchCampaign.goal } : {}) }, null, 2));
       return;
     }
     const progress = stages.map((stage) => `   State: ${stage.completed}/${stage.total} internal phases · ${stage.status}`).join("\n");
-    console.log(`Research plan\n\n${formatResearchStagePlan()}\n\nInternal phase progress\n${progress}${researchCampaign?.goal ? `\n\nActive goal\n   ${researchCampaign.goal}` : ""}`);
+    const history = options.history ? `\n\nStructural revisions\n${revisions.length ? revisions.slice().reverse().map((revision) => `   r${revision.revision} · ${revision.phase ?? revision.goalId} · ${revision.createdAt} · ${revision.previousFingerprint} → ${revision.fingerprint}`).join("\n") : "   No structural revisions recorded."}` : "";
+    console.log(`Research plan\n\n${formatResearchStagePlan()}\n\nInternal phase progress\n${progress}${researchCampaign?.goal ? `\n\nActive goal\n   ${researchCampaign.goal}` : ""}${history}`);
   });
 research.command("status")
   .description("Show durable research campaign and three-stage progress")

@@ -36,6 +36,18 @@ function registeredManifest(payload: unknown): Record<string, unknown> | null {
     .map((field) => [field, candidate[field]]));
 }
 
+function phasePlanProjection(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
+  const value = payload as Record<string, unknown>;
+  return Object.fromEntries(["id", "goalSetId", "phase", "title", "objective", "completionCriteria"]
+    .filter((field) => field in value)
+    .map((field) => [field, value[field]]));
+}
+
+function phasePlanFingerprint(payload: unknown): string {
+  return createHash("sha256").update(JSON.stringify(canonicalValue(phasePlanProjection(payload)))).digest("hex").slice(0, 20);
+}
+
 export type QueueTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export interface QueuedTask {
   id: string;
@@ -884,8 +896,17 @@ export class ResearchStore {
 
   savePhaseGoal(goal: { id: string; phase: string; status: string; payload: unknown }): void {
     const now = new Date().toISOString();
-    this.db.prepare(`INSERT OR REPLACE INTO phase_goals (id, phase, status, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, COALESCE((SELECT created_at FROM phase_goals WHERE id = ?), ?), ?)`)
+    const existing = this.db.prepare("SELECT payload_json FROM phase_goals WHERE id = ?").get(goal.id) as { payload_json: string } | undefined;
+    const previousFingerprint = existing ? phasePlanFingerprint(JSON.parse(existing.payload_json)) : undefined;
+    const nextFingerprint = phasePlanFingerprint(goal.payload);
+    this.db.prepare(
+      `INSERT OR REPLACE INTO phase_goals (id, phase, status, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, COALESCE((SELECT created_at FROM phase_goals WHERE id = ?), ?), ?)`,
+    )
       .run(goal.id, goal.phase, goal.status, safeJson(goal.payload), goal.id, now, now);
+    if (previousFingerprint && previousFingerprint !== nextFingerprint) {
+      const revision = this.eventsByType("phase_goal.revised").filter((event) => (event.payload as { goalId?: unknown }).goalId === goal.id).length + 1;
+      this.appendEvent("phase_goal.revised", { goalId: goal.id, phase: goal.phase, revision, previousFingerprint, fingerprint: nextFingerprint, plan: phasePlanProjection(goal.payload) });
+    }
     this.appendEvent("phase_goal.updated", goal.payload);
   }
 
@@ -1603,6 +1624,15 @@ export class ResearchStore {
   phaseGoals(): Array<{ id: string; phase: string; status: string; payload: unknown; updatedAt: string }> {
     const rows = this.db.prepare("SELECT id, phase, status, payload_json, updated_at FROM phase_goals ORDER BY rowid ASC").all() as Array<{ id: string; phase: string; status: string; payload_json: string; updated_at: string }>;
     return rows.map((row) => ({ id: row.id, phase: row.phase, status: row.status, payload: JSON.parse(row.payload_json), updatedAt: row.updated_at }));
+  }
+
+  phaseGoalRevisions(goalId?: string, limit = 32): Array<{ goalId: string; phase: string | null; revision: number; fingerprint: string; previousFingerprint: string; plan: unknown; createdAt: string }> {
+    return this.eventsByType("phase_goal.revised", Math.max(1, Math.min(128, Math.floor(limit)))).flatMap((event) => {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+      if (goalId && payload.goalId !== goalId) return [];
+      if (typeof payload.goalId !== "string" || typeof payload.fingerprint !== "string" || typeof payload.previousFingerprint !== "string") return [];
+      return [{ goalId: payload.goalId, phase: typeof payload.phase === "string" ? payload.phase : null, revision: typeof payload.revision === "number" ? payload.revision : 0, fingerprint: payload.fingerprint, previousFingerprint: payload.previousFingerprint, plan: payload.plan ?? null, createdAt: event.createdAt }];
+    });
   }
 
   setExperimentGates(experimentId: string, gates: { leakageAuditPassed?: boolean; reviewerApproved?: boolean; notes?: string }): void {

@@ -164,6 +164,7 @@ The initial adapter is `whestbench`. Future adapters include Kaggle, AIcrowd, ma
 /research next                Same as /research
 /research status              Show active questions and unresolved edges
 /research plan [--json]       Show or export the three-stage plan and phase progress
+/research plan --history      Show structural phase-plan revisions
 /research examples [--json]   Show or export contemporary starter briefs
 /research start               Start autonomous research scheduling
 /research pause               Pause only the research scheduler
