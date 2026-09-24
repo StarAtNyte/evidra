@@ -2990,6 +2990,28 @@ research
       store.appendEvent("research.observation", { ...observation, sourceId: observationId });
       store.saveSource({ id: observationId, payload: { id: observationId, title: "Evidra workspace observation", url: `https://evidra.local/observation/${observationId}`, retrievedAt: new Date().toISOString(), contentHash: observationId, evidenceClass: "implementation", claims: [] } });
       store.saveClaim({ id: `claim_${observationId}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: observationId, status: "active", observation } });
+      const cycleTaskId = `task_research_cycle_${cycle}_${randomUUID()}`;
+      const cycleOwnerId = `controller-cycle-${randomUUID()}`;
+      store.enqueueTask({ id: cycleTaskId, kind: "research.cycle", priority: 10, goalId: phaseGoal?.id ?? null, payload: { cycle, objective: campaign.goal, ownerId: cycleOwnerId } });
+      if (!store.claimTask(cycleTaskId, ["research.cycle"], cycleOwnerId)) {
+        store.close();
+        throw new Error(`Research cycle ticket '${cycleTaskId}' could not be claimed.`);
+      }
+      const cycleHeartbeat = setInterval(() => {
+        const heartbeatStore = new ResearchStore(statePath);
+        heartbeatStore.heartbeatTask(cycleTaskId, cycleOwnerId);
+        heartbeatStore.close();
+      }, 15_000);
+      cycleHeartbeat.unref?.();
+      let cycleTaskFinished = false;
+      const finishCycleTask = (status: "completed" | "failed", payload: Record<string, unknown>): void => {
+        if (cycleTaskFinished) return;
+        cycleTaskFinished = true;
+        clearInterval(cycleHeartbeat);
+        const finishedStore = new ResearchStore(statePath);
+        finishedStore.updateTask(cycleTaskId, status, { ...payload, cycle, ownerId: cycleOwnerId });
+        finishedStore.close();
+      };
       store.close();
       const projectStore = new ResearchStore(statePath);
       const activeProject = projectStore.project();
@@ -3017,6 +3039,7 @@ research
       let agentObjective = cycleObjective;
       const remainingBudgetMs = Math.max(0, campaignRemainingMs({ ...campaign, startedAt: campaign.startedAt }));
       if (remainingBudgetMs <= 0) {
+        finishCycleTask("completed", { terminal: true, reason: "budget exhausted before agent allocation" });
         const expiredStore = new ResearchStore(statePath);
         campaign.status = "completed";
         expiredStore.saveCampaign(campaign);
@@ -3069,6 +3092,7 @@ research
             cwd: root,
             storePath: statePath,
             maxParallel: researchLaneLimit,
+            parentTaskId: cycleTaskId,
             laneBudgetMs: campaign.runtime.laneBudgetMinutes ? campaign.runtime.laneBudgetMinutes * 60_000 : undefined,
             autonomy,
             laneFocus: `${allocation.focus} ${allocation.strategy}`,
@@ -3120,6 +3144,7 @@ research
                 cwd: root,
                 storePath: statePath,
                 maxParallel: researchLaneLimit,
+                parentTaskId: cycleTaskId,
                 laneBudgetMs: campaign.runtime.laneBudgetMinutes ? campaign.runtime.laneBudgetMinutes * 60_000 : undefined,
                 autonomy,
                 laneFocus: "evidence-validation",
@@ -3174,6 +3199,8 @@ research
             cwd: root,
             storePath: statePath,
             maxParallel: 1,
+            goalId: phaseGoal?.id ?? null,
+            parentTaskId: cycleTaskId,
             autonomy,
             executeTool: researchToolExecutor(adapter, autonomy),
             onActivity: toolTrace.onActivity,
@@ -3196,6 +3223,8 @@ research
             cwd: root,
             storePath: statePath,
             maxParallel: 1,
+            goalId: phaseGoal?.id ?? null,
+            parentTaskId: cycleTaskId,
             autonomy,
             executeTool: researchToolExecutor(adapter, autonomy),
             onActivity: toolTrace.onActivity,
@@ -3238,6 +3267,7 @@ research
             const waitMs = delay;
             console.log(`Provider usage limit reached; pausing campaign budget and waiting ${Math.ceil(waitMs / 60_000)} minute(s) before retrying the same cycle.`);
             if (await waitForProviderReset(waitMs) === "stop") {
+              finishCycleTask("failed", { reason: "controller stop requested during provider wait" });
               campaign.status = "completed";
               const stoppedStore = new ResearchStore(statePath);
               stoppedStore.saveCampaign(campaign);
@@ -3268,6 +3298,7 @@ research
           const budgetExpired = campaignElapsedMinutes(campaign) >= budget;
           const timeoutRetriesExhausted = routeTimedOut && researchAttempt >= 2;
           if (budgetExpired || timeoutRetriesExhausted || !isRetryableAgentError(error) || researchAttempt >= 3) {
+            finishCycleTask("failed", { error: routeError, attempts: researchAttempt });
             const failure = researchFailureRecord(cycle, error, toolTrace.events, laneReports.filter((lane) => lane.status === "failed"));
             const failureStore = new ResearchStore(statePath);
             failureStore.appendEvent("research.agent.failed", { cycle, error: failure.error, attempts: researchAttempt, quality: failure.quality });
@@ -3916,6 +3947,7 @@ research
         });
       }
       recordCampaignCheckpoint(campaign, mode, cycle, terminal ? "campaign-terminal" : "cycle-complete");
+      finishCycleTask("completed", { terminal, decision: decision.decision, goalStatus: decision.goalStatus });
       decisionStore.close();
       console.log(formatResearchDecision(decision));
       if (stagnation.stagnant) console.log(`\nCampaign paused after ${stagnation.cycles} unchanged active decisions; review the bottleneck before resuming.`);
