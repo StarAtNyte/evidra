@@ -889,7 +889,7 @@ const agents = program.command("agents")
     if (options.json) {
       console.log(JSON.stringify(output, null, 2));
     } else {
-      const roleLines = organization.map((agent) => `${agent.control?.terminated ? "terminated" : agent.control?.paused ? "paused" : agent.status.padEnd(8)} ${agent.role} · health ${agent.health} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.pendingDirectives ? ` · ${agent.pendingDirectives} directive(s)` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`);
+      const roleLines = organization.map((agent) => `${agent.control?.terminated ? "terminated" : agent.control?.paused ? "paused" : agent.status.padEnd(8)} ${agent.role} · ${agent.admission} · health ${agent.health} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.pendingDirectives ? ` · ${agent.pendingDirectives} directive(s)` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`);
       const workerLines = output.externalWorkers.map((worker) => `external ${worker.status.padEnd(7)} ${worker.workerId} · ${worker.provider}/${worker.model} · ${worker.health}${worker.capabilities.length ? ` · ${worker.capabilities.join(",")}` : ""}`);
       console.log([...roleLines, ...(workerLines.length ? ["External workers", ...workerLines] : [])].join("\n") || "No agent roles recorded.");
       console.log(`\nResumable sessions  ${sessions.length}`);
@@ -954,6 +954,14 @@ agents.command("recover").description("Reclaim internal agent leases and special
   store.close();
   console.log(`Recovered ${roles.length} stale agent lease(s), ${tickets.length} stale specialist ticket(s), and ${directives.length} stale directive(s).${roles.length || tickets.length || directives.length ? `\nRoles      ${roles.join(", ") || "none"}\nTickets    ${tickets.join(", ") || "none"}\nDirectives ${directives.join(", ") || "none"}` : ""}`);
 });
+for (const action of ["approve", "revoke"] as const) {
+  agents.command(`${action} <role>`).description(`${action === "approve" ? "Approve" : "Revoke"} external execution for a custom role`).action((role: string) => {
+    const store = new ResearchStore(statePath);
+    store.setAgentRoleAdmission(role, action === "approve", `operator CLI ${action} request`);
+    store.close();
+    console.log(action === "approve" ? `Approved ${role}.` : `Revoked admission for ${role}.`);
+  });
+}
 agents.command("message <role> <message>").description("Queue a durable directive for one specialist role").action((role: string, message: string) => {
   const store = new ResearchStore(statePath);
   const directive = store.enqueueAgentDirective(role, message, null, "operator");

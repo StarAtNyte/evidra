@@ -8,6 +8,7 @@ import { redactCommand, redactStructured } from "./redaction.js";
 import { canonicalSourceUrl } from "./sources.js";
 import { subtaskAuditFingerprint } from "./subtask-state.js";
 import { queueRecoveryAction } from "./queue-recovery.js";
+import { isBuiltInAgentRole } from "./agent-organization.js";
 
 function safeJson(value: unknown): string {
   return JSON.stringify(redactStructured(value));
@@ -597,6 +598,7 @@ export class ResearchStore {
         role TEXT PRIMARY KEY,
         paused INTEGER NOT NULL DEFAULT 0,
         terminated INTEGER NOT NULL DEFAULT 0,
+        admitted INTEGER NOT NULL DEFAULT 0,
         reason TEXT,
         updated_at TEXT NOT NULL
       );
@@ -751,6 +753,7 @@ export class ResearchStore {
     try { this.db.exec("ALTER TABLE agent_directives ADD COLUMN cancelled_at TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_directives ADD COLUMN source_role TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_controls ADD COLUMN terminated INTEGER NOT NULL DEFAULT 0"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE agent_controls ADD COLUMN admitted INTEGER NOT NULL DEFAULT 0"); } catch { /* already migrated */ }
     this.db.prepare(`
       INSERT OR IGNORE INTO event_chain_state (id, head_hash, event_count)
       VALUES (1, (SELECT event_hash FROM events ORDER BY id DESC LIMIT 1), (SELECT COUNT(*) FROM events))
@@ -1548,8 +1551,30 @@ export class ResearchStore {
     this.appendEvent(terminated ? "agent.termination.requested" : "agent.termination.cleared", { role: normalized, reason: terminated ? reason.slice(0, 500) : undefined });
   }
 
+  /** Built-in roles are trusted by default; custom/external roles need explicit admission. */
+  agentRoleAdmitted(role: string): boolean {
+    const normalized = role.trim();
+    if (!normalized) return false;
+    if (isBuiltInAgentRole(normalized)) return true;
+    const row = this.db.prepare("SELECT admitted FROM agent_controls WHERE role = ?").get(normalized) as { admitted: number } | undefined;
+    return row?.admitted === 1;
+  }
+
+  setAgentRoleAdmission(role: string, admitted: boolean, reason = "operator request"): void {
+    const normalized = role.trim();
+    if (!normalized) throw new Error("Agent role is required.");
+    const now = new Date().toISOString();
+    this.db.prepare(`INSERT INTO agent_controls (role, paused, terminated, admitted, reason, updated_at) VALUES (?, 0, 0, ?, ?, ?) ON CONFLICT(role) DO UPDATE SET admitted = excluded.admitted, reason = excluded.reason, updated_at = excluded.updated_at`).run(normalized, admitted ? 1 : 0, reason.slice(0, 500), now);
+    this.appendEvent(admitted ? "agent.role.admitted" : "agent.role.admission.revoked", { role: normalized, reason: reason.slice(0, 500) });
+  }
+
   /** Accept a heartbeat from an authenticated external worker without allowing lease takeover. */
   recordExternalAgentHeartbeat(input: { role: string; leaseId: string; provider: string; model: string; status: "running" | "idle" | "blocked" | "failed"; task?: string | null; budgetSeconds?: number | null; capabilities?: string[] }): { accepted: boolean; reason?: string } {
+    if (input.status === "running" && !this.agentRoleAdmitted(input.role)) {
+      const reason = `role '${input.role}' requires explicit operator admission before external execution`;
+      this.appendEvent("agent.external_heartbeat.rejected", { role: input.role, leaseId: input.leaseId, reason });
+      return { accepted: false, reason };
+    }
     const existing = this.db.prepare("SELECT status, lease_id, heartbeat_at FROM agent_lanes WHERE role = ?").get(input.role) as { status: string; lease_id: string | null; heartbeat_at: string | null } | undefined;
     if (existing?.status === "running" && existing.lease_id && existing.lease_id !== input.leaseId && existing.heartbeat_at && Date.now() - Date.parse(existing.heartbeat_at) <= 60_000) {
       const reason = `lane is leased by ${existing.lease_id}`;

@@ -4453,6 +4453,11 @@ test("authenticated external agent heartbeats preserve lease ownership", () => {
     assert.equal(store.agentLanes().find((lane) => lane.role === "model researcher")?.status, "idle");
     assert.equal(store.recordExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "blocked", capabilities: ["python"] }).accepted, true);
     assert.equal(store.externalWorkerCapabilities("worker-a"), undefined);
+    const unapproved = store.recordExternalAgentHeartbeat({ role: "external geologist", leaseId: "worker-custom", provider: "codex", model: "gpt-test", status: "running", capabilities: ["python"] });
+    assert.equal(unapproved.accepted, false);
+    assert.match(unapproved.reason ?? "", /explicit operator admission/);
+    store.setAgentRoleAdmission("external geologist", true, "test approval");
+    assert.equal(store.recordExternalAgentHeartbeat({ role: "external geologist", leaseId: "worker-custom", provider: "codex", model: "gpt-test", status: "running", capabilities: ["python"] }).accepted, true);
     assert.ok(store.eventsByType("agent.external_heartbeat.rejected").length >= 1);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
