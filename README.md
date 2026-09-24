@@ -356,6 +356,7 @@ curl -fsS -H "$AUTH" "${WORKER_HEADERS[@]}" -H 'content-type: application/json' 
 - hierarchical queue lineage: parent-task chains are resolved with bounded depth, surfaced in queue/dashboard views, and treated as a goal-alignment blocker when live work points to a missing parent or contains a cycle;
 - governed agent termination: operators can terminate a specialist until explicit revival; allocation and heartbeats reject terminated roles, running lanes stop at a safe boundary, and the terminal state survives controller restarts and portable export;
 - attributed tool audit: every research-tool success or failure records the invoking actor (`controller` or specialist role) and autonomy level in the durable event chain, making delegated actions reviewable after the turn ends;
+- governed project adapters: `.evidra/tools.json` extends the typed research registry with argv-only domain tools; explicit role grants, bounded execution, manifest fingerprints, output hashes, automatic injection-signal quarantine, lifecycle controls, approval-inbox review, health probes, and portable redacted state keep extensions accountable without forking Evidra;
 - explainable dispatch plans: every lane wave records candidate roles, paused roles, budget-exhausted roles, concurrency, execution mode, goal, and parent task; inspect the latest decision with `evidra agents dispatch` or `/agents dispatch`;
 - unified budget ledger: campaign token usage is filtered by campaign boundary, attributed by role/provider/model, and classified as healthy, warning, exhausted, or unlimited across the CLI, TUI, and dashboard; aggregate and per-role ceilings prevent specialist starvation or runaway spend;
 - resumable specialist sessions: Codex lane thread IDs are persisted per role, campaign goal, provider, and model; matching lanes resume their provider context while route changes and scopes invalidate reuse;
@@ -630,6 +631,9 @@ does not expose mutation endpoints.
     /challenge stop       Stop the challenge campaign safely
     /challenge steer ...  Guide the next safe challenge cycle
     /agents               Show agent lanes and health
+    /tools                Show built-in and project research adapters
+    /tools health         Probe enabled zero-argument adapters
+    evidra tools          Inspect or control adapter lifecycle
     /compute              Show executor and budget health
     /queue                Show durable tasks and recover stale work
     /submission           Prepare, validate, approve, submit, or poll a bundle
