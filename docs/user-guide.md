@@ -395,6 +395,13 @@ phase goals, and whether running agent lanes have assigned work. A blocked
 alignment check is a control-plane issue to resolve before trusting autonomous
 progress; the read-only dashboard shows the same report.
 
+The dashboard also presents Evidra's agent organization. The research director
+coordinates specialist lanes; validation and critic roles protect evidence;
+execution roles are responsible for isolated runs; and repair roles change the
+route after failure. These are responsibility contracts, not cosmetic labels:
+lane prompts receive their reporting line and authority boundary so a specialist
+cannot silently redefine the campaign objective.
+
 For a browser view of the active workspace, run `evidra dashboard --port 4310`
 and open `http://127.0.0.1:4310`. It is read-only, localhost-bound, and polls
 the same durable state used by the TUI.

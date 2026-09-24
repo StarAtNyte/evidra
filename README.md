@@ -307,6 +307,7 @@ Implemented today:
 - unified approval inbox: `/approvals` and the dashboard collect pending experiment approvals, prepared submissions, and unresolved external actions without bypassing any existing gate;
 - goal-alignment audit: `/status` and the dashboard verify that running campaigns have an objective and active phase, that live queue work resolves to phase goals, and that leased lanes have assigned work;
 - atomic research-lane leases with heartbeats, duplicate-specialist protection, and restart-time stale-lane recovery;
+- explicit agent organization: director, specialist, validation, execution, critic, auditor, and repair roles have durable reporting lines, authority boundaries, and responsibility contracts visible in the dashboard and injected into lane prompts;
 - detached process groups so Escape stops child workers as well as the parent;
 - experiment manifests, isolated worktrees, local/Modal executor boundaries, artifact capture, retries, and failure classification;
 - failure finalization that prevents started experiments from remaining indefinitely in `running` state;

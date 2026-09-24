@@ -10,6 +10,7 @@ import type { AutonomyLevel } from "../core/permissions.js";
 import { normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
 import { boundResearchContext } from "../core/context-budget.js";
 import type { LaneFinding } from "../core/cross-pollination.js";
+import { agentRoleContract } from "../core/agent-organization.js";
 
 export const RESEARCH_LANE_ROLES = [
   "data detective",
@@ -416,6 +417,7 @@ function parseJson(output: unknown): unknown {
 }
 
 function lanePrompt(role: ResearchLaneRole, objective: string): string {
+  const contract = agentRoleContract(role);
   const focus = role === "data detective"
     ? "Inspect data provenance, duplicates, leakage, distributions, hidden groups, and train/test shift."
     : role === "validation scientist"
@@ -427,7 +429,7 @@ function lanePrompt(role: ResearchLaneRole, objective: string): string {
         : role === "domain researcher"
           ? "Investigate the domain, definitions, assumptions, relevant literature, competing explanations, and unresolved questions."
           : "Investigate alternative methods, mechanisms, procedures, and implementation paths; propose falsifiable comparisons.";
-  return `${focus}\n\nObjective: ${objective}\n\n` +
+  return `${focus}\n\nRole contract: report to ${contract.parentRole ?? "the operator"}; authority=${contract.authority}; responsibility=${contract.responsibility}.\n\nObjective: ${objective}\n\n` +
     "You are an independent Evidra research lane. Use the supplied workspace and evidence context; run only read-only inspection when tools are available. Do not edit files, submit anything, or claim measurements you did not observe. Return ONLY JSON with this shape: " +
     '{"role":"...","summary":"...","findings":["..."],"recommendations":["..."],"uncertainties":["..."],"discriminatingTests":["cheapest observation or experiment that would distinguish competing explanations"],"evidence":["command, artifact, or source supporting each important statement"],"evidenceSourceIds":["exact durable source IDs for literature-derived evidence"],"confidence":0.0}. ' +
     "Recommendations must be testable and should state what would falsify them. For every material uncertainty or disagreement, propose a concrete discriminating test. A bounded prior-peer board may be present in the context: use it to challenge, extend, or explicitly reject earlier findings, but never treat it as stronger than primary evidence.";

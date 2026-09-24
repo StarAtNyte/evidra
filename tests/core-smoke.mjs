@@ -12,6 +12,7 @@ import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "
 import { ResearchStore } from "../dist/core/store.js";
 import { approvalInbox } from "../dist/core/approvals.js";
 import { goalAlignment } from "../dist/core/goal-alignment.js";
+import { agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaimRecords, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
@@ -590,6 +591,21 @@ test("goal alignment traces live work to a durable campaign phase", () => {
     const drifted = goalAlignment(store);
     assert.equal(drifted.status, "blocked");
     assert.equal(drifted.checks.find((check) => check.id === "queue-lineage")?.count, 1);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("agent organization gives every lane a responsibility and reporting line", () => {
+  assert.equal(agentRoleContract("validation scientist").parentRole, "research director");
+  assert.equal(agentRoleContract("validation scientist").authority, "validate");
+  assert.equal(agentRoleContract("new specialist").parentRole, "research director");
+  const root = mkdtempSync(join(tmpdir(), "evidra-org-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.updateAgentLane({ role: "validation scientist", status: "running", provider: "local", model: "bench", task: "check replication" });
+    const org = agentOrganization(store);
+    assert.equal(org.find((entry) => entry.role === "validation scientist")?.status, "running");
+    assert.ok(org.every((entry) => entry.responsibility.length > 0));
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -6747,6 +6763,8 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.doesNotMatch(serialized, /sk-test-dashboard-secret-value|secret-value/);
     assert.equal(Array.isArray(snapshot.stages), true);
     assert.equal(snapshot.stages.length, 3);
+    assert.equal(Array.isArray(snapshot.organization), true);
+    assert.ok(snapshot.organization.some((entry) => entry.role === "research director"));
     assert.match(dashboardHtml(), /EVIDRA<\/span> \/ DASHBOARD/);
     assert.match(dashboardHtml(), /\/api\/status/);
     assert.match(dashboardHtml(), /id="stages"/);
