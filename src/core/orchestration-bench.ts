@@ -64,6 +64,17 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     check("queue-starvation-prevention", "Bounded priority aging gives long-waiting background work a turn without removing explicit priority.", aged?.id === "aging-waiting", { selected: aged?.id });
     if (aged) store.updateTask(aged.id, "completed");
 
+    store.enqueueTask({ id: "expired-deadline", kind: "deadline", priority: 1, deadlineAt: new Date(Date.now() - 1_000).toISOString(), payload: {} });
+    const expiredClaim = store.claimNextTask(["deadline"], "worker-a");
+    const expiredTask = store.queueTasks().find((task) => task.id === "expired-deadline");
+    check("deadline-expiry", "Expired work is cancelled durably instead of being claimed or stranded.", !expiredClaim && expiredTask?.status === "cancelled", { claimed: expiredClaim?.id, status: expiredTask?.status });
+
+    store.enqueueTask({ id: "cancel-race", kind: "cancellation", priority: 1, payload: {} });
+    const cancelClaim = store.claimTask("cancel-race", ["cancellation"], "worker-a");
+    const cancelled = store.cancelTask("cancel-race", "benchmark operator stop");
+    const lateCompletion = store.completeClaimedTask("cancel-race", "worker-a", "completed");
+    check("cancellation-race", "Operator cancellation wins over a late worker completion.", cancelClaim?.id === "cancel-race" && cancelled && !lateCompletion && store.queueTasks().find((task) => task.id === "cancel-race")?.status === "cancelled", { claimed: cancelClaim?.id, cancelled, lateCompletion, status: store.queueTasks().find((task) => task.id === "cancel-race")?.status });
+
     store.releaseAgentLane("model researcher", "worker-a");
     const stale = store.acquireAgentLane({ role: "validation scientist", leaseId: "worker-stale", provider: "local", model: "bench" });
     store.enqueueTask({ id: "stale-lane-ticket", kind: "research.lane", priority: 1, payload: { role: "validation scientist", leaseId: "worker-stale" } });
