@@ -592,6 +592,8 @@ test("goal alignment traces live work to a durable campaign phase", () => {
     const drifted = goalAlignment(store);
     assert.equal(drifted.status, "blocked");
     assert.equal(drifted.checks.find((check) => check.id === "queue-lineage")?.count, 1);
+    store.updateTask("orphan", "completed");
+    assert.notEqual(goalAlignment(store).status, "blocked");
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

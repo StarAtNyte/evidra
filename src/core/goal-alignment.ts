@@ -32,9 +32,9 @@ export function goalAlignment(store: ResearchStore): GoalAlignmentReport {
   const active = phases.find((phase) => phase.status === "active") ?? null;
   const phaseIds = new Set(phases.map((phase) => phase.id));
   const tasks = store.queueTasks();
-  const orphanedTasks = tasks.filter((task) => task.goalId !== null && !phaseIds.has(task.goalId));
-  const runningWithoutTask = store.agentLanes().filter((lane) => lane.status === "running" && !lane.task?.trim());
   const liveTasks = tasks.filter((task) => task.status === "queued" || task.status === "running");
+  const orphanedTasks = liveTasks.filter((task) => task.goalId !== null && !phaseIds.has(task.goalId));
+  const runningWithoutTask = store.agentLanes().filter((lane) => lane.status === "running" && !lane.task?.trim());
   const checks: GoalAlignmentCheck[] = [
     {
       id: "campaign-goal",
