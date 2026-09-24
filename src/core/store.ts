@@ -1572,6 +1572,8 @@ export class ResearchStore {
     if (!current) throw new Error(`Unknown queue task '${id}'.`);
     if (current.status !== "failed") throw new Error(`Queue task '${id}' is ${current.status}; only failed tasks can be recovered.`);
     const payload = current.payload && typeof current.payload === "object" && !Array.isArray(current.payload) ? current.payload as Record<string, unknown> : {};
+    const previousRecovery = payload.recovery && typeof payload.recovery === "object" ? payload.recovery as Record<string, unknown> : undefined;
+    if (previousRecovery?.route === normalizedRoute) throw new Error(`Queue task '${id}' must use a materially different recovery route.`);
     const history = Array.isArray(payload.recoveryHistory) ? payload.recoveryHistory.slice(-7) : [];
     const recovery = { route: normalizedRoute, note: note.trim().slice(0, 400) || "operator-selected recovery route", recoveredAt: new Date().toISOString(), priorAttempts: current.attempts };
     const nextPayload = { ...payload, recoveryHistory: [...history, recovery], recovery };

@@ -3364,12 +3364,14 @@ test("failed queue recovery is explicit, bounded, and durable", async () => {
     store.enqueueTask({ id: "recoverable", kind: "smoke", priority: 1, payload: { input: "kept" } });
     const worker = new QueueWorker(store, async () => { throw new Error("provider unavailable"); }, { maxAttempts: 1, retryDelayMs: () => 0 });
     await worker.runOnce();
+    assert.throws(() => store.recoverFailedTask("recoverable", "change_route"), /materially different/);
     const recovered = store.recoverFailedTask("recoverable", "alternate_executor", "switch to a verified worker");
     assert.equal(recovered.status, "queued");
     assert.equal(recovered.attempts, 0);
     assert.equal(recovered.payload.input, "kept");
     assert.equal(recovered.payload.recovery.route, "alternate_executor");
     assert.equal(store.eventsByType("queue.recovery_scheduled").length, 1);
+    assert.throws(() => store.recoverFailedTask("recoverable", "alternate_executor"), /only failed tasks/);
     assert.throws(() => store.recoverFailedTask("recoverable", "retry"), /only failed tasks/);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
