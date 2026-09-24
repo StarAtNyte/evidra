@@ -1210,6 +1210,7 @@ export async function runResearchLanes(objective: string, context: Record<string
   }, 15_000);
   watchdog.unref();
   const stopWatchdog = (): void => clearInterval(watchdog);
+  return (async (): Promise<ResearchLaneReport[]> => {
   const routes = assignResearchLaneRoutes(roles, options);
   const roleMemory = new Map(roles.map((role) => [role, roleMemoryFromTrajectories(historicalTrajectories, role)]));
   // Share only immutable read-only observations within this invocation. The
@@ -1254,7 +1255,6 @@ export async function runResearchLanes(objective: string, context: Record<string
         handoffStore.close();
       }
     }
-    stopWatchdog();
     return roles.map((role) => reports.find((report) => report.role === role)!).filter(Boolean);
   }
   // Run bounded waves. A wave remains parallel, while the next wave receives
@@ -1285,6 +1285,6 @@ export async function runResearchLanes(objective: string, context: Record<string
       handoffStore.close();
     }
   }
-  stopWatchdog();
   return roles.map((role) => reports.find((report) => report.role === role)!).filter(Boolean);
+  })().finally(stopWatchdog);
 }
