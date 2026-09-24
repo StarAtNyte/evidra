@@ -4156,6 +4156,27 @@ test("Codex adapter accepts only a completed injected stream", async () => {
   }
 });
 
+test("Codex adapter resumes a supplied provider thread", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-codex-resume-"));
+  let resumedThread;
+  try {
+    const agent = new CodexExecAgent({ provider: "codex", model: "gpt-test", cwd: root, threadId: "thread-existing" }, {
+      isLoggedIn: async () => true,
+      createClient: () => ({
+        startThread: () => { throw new Error("must resume the supplied thread"); },
+        resumeThread: (threadId, options) => { resumedThread = { threadId, options }; return { runStreamed: async () => ({ events: (async function* () {
+          yield { type: "thread.started", thread_id: threadId };
+          yield { type: "item.completed", item: { type: "agent_message", text: "continued" } };
+          yield { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } };
+        })() }) }; },
+      }),
+    });
+    const result = await agent.run({ role: "model researcher", objective: "continue", context: {} });
+    assert.equal(result.threadId, "thread-existing");
+    assert.equal(resumedThread.threadId, "thread-existing");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("Codex agent stops after consecutive failed shell commands", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-codex-fail-watchdog-"));
   const events = [
