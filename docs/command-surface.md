@@ -143,6 +143,7 @@ The initial adapter is `whestbench`. Future adapters include Kaggle, AIcrowd, ma
 /sources                      List cached research sources
 /benchmark score <file>       Score comparable harness trials from JSON
 /benchmark run <protocol>     Execute matched harness arms and score them (`--parallel N` enables bounded concurrency)
+/benchmark orchestration      Verify worker ownership, lease recovery, and lane budgets locally
 /benchmark compare <file> <challenger> <incumbent>
                               Require paired, task-balanced evidence for a win claim
 /benchmark airs discover <repo>

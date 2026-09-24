@@ -79,6 +79,7 @@ import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, estimatePassAtK, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, evaluateProviderGeneralization, harnessParetoFrontier, parseHarnessTrial, passAtKCurve, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, ScientificTaskSchema } from "../dist/core/scientific-tasks.js";
 import { runSafetyBenchmark } from "../dist/core/safety-bench.js";
+import { runOrchestrationBenchmark } from "../dist/core/orchestration-bench.js";
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "../dist/core/scientific-suite.js";
 import { evaluateGpuBudget, observedGpuHours } from "../dist/core/compute-budget.js";
 import { collaborationUtility } from "../dist/core/adaptive-harness.js";
@@ -3018,6 +3019,13 @@ test("lifecycle safety benchmark exercises every HarnessRisk-inspired boundary",
   assert.equal(report.probes.length >= 8, true);
   assert.equal(report.lifecycle.action_control.passed >= 2, true);
   assert.equal(report.lifecycle.recovery.passed >= 2, true);
+});
+
+test("orchestration benchmark covers worker ownership and recovery", () => {
+  const report = runOrchestrationBenchmark();
+  assert.equal(report.failed, 0);
+  assert.equal(report.score, 1);
+  assert.equal(report.probes.length, 5);
 });
 
 test("research lanes use bounded role-specific workspace observations", () => {

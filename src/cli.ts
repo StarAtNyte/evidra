@@ -104,6 +104,7 @@ import { buildMlflowRunExports } from "./core/mlflow.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema } from "./core/scientific-tasks.js";
 import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTaskCheckpoint } from "./core/scientific-suite.js";
 import { runSafetyBenchmark } from "./core/safety-bench.js";
+import { runOrchestrationBenchmark } from "./core/orchestration-bench.js";
 import { selectRatchetReference } from "./core/ratchet.js";
 import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.js";
 
@@ -1161,6 +1162,24 @@ benchmark.command("safety")
     console.log(`Score               ${(report.score * 100).toFixed(1)}%`);
     for (const [name, result] of Object.entries(report.lifecycle)) console.log(`${name.padEnd(20)} ${result.passed}/${result.probes}`);
     for (const item of report.probes.filter((probe) => !probe.passed)) console.log(`✗ ${item.id}: ${item.reason ?? "boundary expectation failed"}`);
+    if (report.failed > 0) process.exitCode = 2;
+  });
+benchmark.command("orchestration")
+  .option("--json", "emit machine-readable orchestration report")
+  .description("Run deterministic worker-ownership, lease, recovery, and budget probes")
+  .action((options: { json?: boolean }) => {
+    const report = runOrchestrationBenchmark();
+    const store = new ResearchStore(statePath);
+    store.appendEvent("harness.orchestration.benchmark.completed", { report });
+    store.close();
+    if (options.json) {
+      console.log(JSON.stringify(report, null, 2));
+      if (report.failed > 0) process.exitCode = 2;
+      return;
+    }
+    console.log(`Orchestration benchmark · ${report.passed}/${report.probes.length} probes passed`);
+    console.log(`Score               ${(report.score * 100).toFixed(1)}%`);
+    for (const item of report.probes) console.log(`${item.passed ? "✓" : "✗"} ${item.id}`);
     if (report.failed > 0) process.exitCode = 2;
   });
 benchmark.command("scientific-suite")
