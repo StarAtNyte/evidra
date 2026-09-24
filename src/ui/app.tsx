@@ -2182,7 +2182,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         : `Run the next zero-to-hero research cycle: inspect current state, identify the highest-information bottleneck, and propose one falsifiable experiment with explicit validation and replication criteria.${steeringContext}`;
       queueTaskId = `task_research_${Date.now()}`;
       const queueStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      queueStore.enqueueTask({ id: queueTaskId, kind: "research.cycle", priority: campaign ? 10 : 5, payload: { objective, campaign: campaign ?? null } });
+      const queuePhaseGoal = activePhaseGoal(phaseGoalsForMode(queueStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode));
+      queueStore.enqueueTask({ id: queueTaskId, kind: "research.cycle", priority: campaign ? 10 : 5, goalId: queuePhaseGoal?.id ?? null, payload: { objective, campaign: campaign ?? null } });
       let cycle: Awaited<ReturnType<typeof runResearchCycle>> | undefined;
       const worker = new QueueWorker(queueStore, async (task) => {
         const payload = task.payload as { objective?: string; lastError?: unknown };
