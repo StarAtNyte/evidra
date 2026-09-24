@@ -2225,7 +2225,7 @@ const queue = new Command("queue").description("Inspect the durable research wor
 queue.command("status").option("--json", "emit machine-readable queue state").action((options: { json?: boolean }) => {
   const store = new ResearchStore(statePath);
   const tasks = store.queueTasks();
-  const rows = tasks.map((task) => ({ ...task, effectivePriority: queueEffectivePriority(task), readiness: store.taskReadiness(task.id) }));
+  const rows = tasks.map((task) => ({ ...task, effectivePriority: queueEffectivePriority(task), readiness: store.taskReadiness(task.id), usageState: store.queueUsageState(task.id), usageTotals: store.queueUsageTotals(task.id) }));
   const recoveries = store.eventsByType("queue.recovery_required", 24).map((event) => event.payload);
   if (options.json) {
     console.log(JSON.stringify({ tasks: rows, recoveries }, null, 2));

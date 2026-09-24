@@ -3656,6 +3656,29 @@ test("queued task token budgets can be revised without changing a live claim", (
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue status JSON exposes exact budget and usage state", async () => {
+  const { spawn } = await import("node:child_process");
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-status-json-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "status-budget", kind: "research.lane", priority: 1, tokenBudget: 20, payload: {} });
+    store.recordQueueUsage({ taskId: "status-budget", actorId: "worker-a", inputTokens: 8, outputTokens: 7 });
+    store.close();
+    const result = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "queue", "status", "--json"], { cwd: root, env: { ...process.env, EVIDRA_STATE_DIR: join(root, ".sota") }, stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.on("close", (code) => resolve({ code, stdout, stderr }));
+    });
+    assert.equal(result.code, 0, result.stderr);
+    const task = JSON.parse(result.stdout).tasks.find((entry) => entry.id === "status-budget");
+    assert.deepEqual(task.usageState, { usedTokens: 15, budgetTokens: 20, remainingTokens: 5, exhausted: false });
+    assert.deepEqual(task.usageTotals, { inputTokens: 8, outputTokens: 7, costUsd: 0 });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("operator cancellation wins races with late worker completion and retry", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-cancel-"));
   try {
