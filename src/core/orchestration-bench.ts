@@ -44,11 +44,11 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     const budget = store.agentLaneBudget("model researcher", "worker-a");
     check("lane-budget-accounting", "Lane usage is durable and reduces remaining budget.", recorded && budget?.remainingSeconds === 7 && budget.usageCalls === 1, { recorded, budget });
 
-    store.enqueueTask({ id: "bench-task", kind: "research.cycle", priority: 1, payload: {} });
+    store.enqueueTask({ id: "bench-task", kind: "research.cycle", priority: 1, payload: {}, goalId: "goal-bench", parentTaskId: "task-parent" });
     const claimed = store.claimNextTask(undefined, "worker-a");
     const wrongTaskHeartbeat = store.heartbeatTask("bench-task", "worker-b");
     const rightTaskHeartbeat = store.heartbeatTask("bench-task", "worker-a");
-    check("queue-heartbeat-ownership", "Only the queue claimant can refresh a running task.", claimed?.ownerId === "worker-a" && !wrongTaskHeartbeat && rightTaskHeartbeat, { claimedOwner: claimed?.ownerId, wrongTaskHeartbeat, rightTaskHeartbeat });
+    check("queue-heartbeat-ownership", "Only the queue claimant can refresh a running task.", claimed?.ownerId === "worker-a" && claimed.goalId === "goal-bench" && claimed.parentTaskId === "task-parent" && !wrongTaskHeartbeat && rightTaskHeartbeat, { claimedOwner: claimed?.ownerId, goalId: claimed?.goalId, parentTaskId: claimed?.parentTaskId, wrongTaskHeartbeat, rightTaskHeartbeat });
 
     store.releaseAgentLane("model researcher", "worker-a");
     const stale = store.acquireAgentLane({ role: "validation scientist", leaseId: "worker-stale", provider: "local", model: "bench" });

@@ -316,7 +316,7 @@ test("durable research state and queue survive store reopen", () => {
     assert.equal(first.recordAgentLaneUsage("model researcher", "worker-a", 3), true);
     assert.equal(first.agentLaneBudget("model researcher", "worker-a")?.remainingSeconds, 27);
     assert.equal(first.releaseAgentLane("model researcher", "worker-a"), true);
-    first.enqueueTask({ id: "task-1", kind: "research.cycle", priority: 4, payload: { smoke: true } });
+    first.enqueueTask({ id: "task-1", kind: "research.cycle", priority: 4, payload: { smoke: true }, goalId: "goal-1", parentTaskId: "task-parent" });
     assert.equal(first.claimNextTask()?.id, "task-1");
     first.updateTask("task-1", "completed");
     first.close();
@@ -325,6 +325,8 @@ test("durable research state and queue survive store reopen", () => {
     assert.equal(reopened.campaign()?.goal, "test");
     assert.equal(reopened.agentLanes().find((lane) => lane.role === "research director")?.status, "running");
     assert.equal(reopened.queueTasks()[0].status, "completed");
+    assert.equal(reopened.queueTasks()[0].goalId, "goal-1");
+    assert.equal(reopened.queueTasks()[0].parentTaskId, "task-parent");
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -50,7 +50,8 @@ heartbeat is refreshed while the provider is working, so a second controller
 cannot duplicate a live role. If a process disappears, the next research wave
 marks only expired leases as blocked and can recover them; live lanes remain
 untouched. Queue tasks use the same ownership rule: a worker can heartbeat only
-the task it claimed.
+the task it claimed. Queue records also preserve optional goal and parent-task
+links, so recovery and dashboard inspection retain the reason a job exists.
 
 For long campaigns, bound each specialist independently:
 

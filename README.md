@@ -300,6 +300,7 @@ Implemented today:
 - workspace file/search/read, Git status, safe shell, data audit, artifact checksum/JSON audit, source retrieval, validation-policy, and report tools;
 - durable queue with retries, stale-task recovery, bounded concurrency, and visible queued prompts;
 - ownership-aware queue checkout: each worker gets a durable identity, only the claimant can heartbeat a task, and stale claims are safely reclaimable;
+- goal-aligned queue ancestry: tasks can carry a phase-goal ID and parent-task ID, making autonomous decomposition traceable from mission to work item;
 - atomic research-lane leases with heartbeats, duplicate-specialist protection, and restart-time stale-lane recovery;
 - detached process groups so Escape stops child workers as well as the parent;
 - experiment manifests, isolated worktrees, local/Modal executor boundaries, artifact capture, retries, and failure classification;

@@ -30,7 +30,7 @@ export function dashboardSnapshot(store: ResearchStore): Record<string, unknown>
     stages: researchStageProgress(phaseGoalsForMode(goals, mode)),
     phases,
     agents: store.agentLanes().slice(0, 24).map((agent) => ({ ...agent, leaseId: agent.leaseId ? `${agent.leaseId.slice(0, 12)}…` : null })),
-    queue: store.queueTasks().slice(0, 40).map((task) => ({ id: task.id, kind: task.kind, priority: task.priority, status: task.status, attempts: task.attempts, claimedAt: task.claimedAt, ownerId: task.ownerId ? `${task.ownerId.slice(0, 12)}…` : null, updatedAt: task.updatedAt })),
+    queue: store.queueTasks().slice(0, 40).map((task) => ({ id: task.id, kind: task.kind, priority: task.priority, status: task.status, attempts: task.attempts, claimedAt: task.claimedAt, ownerId: task.ownerId ? `${task.ownerId.slice(0, 12)}…` : null, goalId: task.goalId, parentTaskId: task.parentTaskId, updatedAt: task.updatedAt })),
     experiments: experiments.slice(0, 40).map((entry) => {
       const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as Record<string, unknown> : {};
       return { id: entry.id, status: payload.status, hypothesisId: payload.hypothesisId, executor: (payload.resources as Record<string, unknown> | undefined)?.executor, createdAt: entry.createdAt };
@@ -64,7 +64,7 @@ function render(d){
  document.getElementById('stages').innerHTML=(d.stages||[]).map(s=>row(esc(s.stage)+' · '+esc(s.activePhase||'ready'),status(s.status)+' '+esc(s.completed)+'/'+esc(s.total))).join('')||empty;
  document.getElementById('phases').innerHTML=(d.phases||[]).map(p=>row(esc(p.name||p.id),status(p.status))).join('')||empty;
  document.getElementById('agents').innerHTML=(d.agents||[]).map(a=>row(esc(a.role),status(a.status)+(a.leaseId?' · '+esc(a.leaseId)+' · '+age(a.heartbeatAt):'')+(a.budgetSeconds!==null&&a.budgetSeconds!==undefined?' · '+Math.round(a.usedSeconds||0)+'/'+Math.round(a.budgetSeconds)+'s':''))).join('')||empty;
- document.getElementById('queue').innerHTML=(d.queue||[]).map(q=>row(esc(q.kind)+' · '+esc(q.id),status(q.status)+' · '+(q.ownerId?esc(q.ownerId):'unclaimed')+' · '+esc(q.attempts)+' attempt'+(q.attempts===1?'':'s'))).join('')||empty;
+ document.getElementById('queue').innerHTML=(d.queue||[]).map(q=>row(esc(q.kind)+' · '+esc(q.id),status(q.status)+' · '+(q.ownerId?esc(q.ownerId):'unclaimed')+' · '+esc(q.attempts)+' attempt'+(q.attempts===1?'':'s')+(q.goalId?' · goal '+esc(q.goalId):''))).join('')||empty;
  const ex=(d.experiments||[]).slice(0,20).map(e=>row('experiment '+e.id,status(e.status))).join(''); const ru=(d.runs||[]).slice(0,20).map(r=>row('run '+r.id,status(r.status))).join(''); document.getElementById('work').innerHTML=ex+ru||empty;
  document.getElementById('events').textContent=(d.events||[]).map(e=>new Date(e.createdAt).toLocaleTimeString()+'  '+e.type).join('\n')||'Nothing recorded yet.';
 }
