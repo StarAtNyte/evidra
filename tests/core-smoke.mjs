@@ -7822,7 +7822,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     store.recordAgentActivity({ role: "model researcher", taskId: "dashboard-task", kind: "progress", message: "inspecting evidence" });
     store.saveAgentSession({ role: "model researcher", scopeKey: "goal-dashboard", provider: "codex", model: "gpt", threadId: "thread-dashboard", taskId: "dashboard-task" });
     store.enqueueTask({ id: "dashboard-parent", kind: "research.cycle", priority: 10, payload: {} });
-    store.enqueueTask({ id: "dashboard-child", kind: "research.review", priority: 8, payload: {}, parentTaskId: "dashboard-parent", dependsOn: ["dashboard-parent"] });
+    store.enqueueTask({ id: "dashboard-child", kind: "research.review", priority: 8, payload: {}, parentTaskId: "dashboard-parent", dependsOn: ["dashboard-parent"], requiredCapabilities: ["critic"] });
     const snapshot = dashboardSnapshot(store, root);
     store.close();
     assert.equal(snapshot.counts.events, undefined);
@@ -7838,6 +7838,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.ok(snapshot.organization.some((entry) => entry.role === "research director"));
     assert.deepEqual(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.dependsOn, ["dashboard-parent"]);
     assert.equal(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.parentTaskId, "dashboard-parent");
+    assert.deepEqual(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.requiredCapabilities, ["critic"]);
     assert.equal(snapshot.tools[0].status, "disabled");
     assert.match(dashboardHtml(), /EVIDRA<\/span> \/ DASHBOARD/);
     assert.match(dashboardHtml(), /\/api\/status/);
@@ -7845,6 +7846,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.match(dashboardHtml(), /playbook/);
     assert.match(dashboardHtml(), /replace\(\/\[/);
     assert.match(dashboardHtml(), /Read-only local view/);
+    assert.match(dashboardHtml(), /requires /);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
