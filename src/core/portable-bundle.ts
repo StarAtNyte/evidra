@@ -51,6 +51,7 @@ export function createPortableBundle(store: ResearchStore, root: string): Record
     type: PORTABLE_BUNDLE_TYPE,
     schemaVersion: PORTABLE_BUNDLE_SCHEMA_VERSION,
     exportedAt: new Date().toISOString(),
+    workspaceId: store.workspaceId(),
     project: store.project() ?? null,
     campaign: store.campaign() ?? null,
     scheduler: store.schedulerState(),
@@ -91,6 +92,7 @@ export function validatePortableBundle(value: unknown, root: string): PortableBu
   if (object.type !== PORTABLE_BUNDLE_TYPE) errors.push(`unsupported bundle type: ${String(object.type ?? "missing")}`);
   if (object.schemaVersion !== PORTABLE_BUNDLE_SCHEMA_VERSION) errors.push(`unsupported schema version: ${String(object.schemaVersion ?? "missing")}`);
   if (!object.exportedAt || typeof object.exportedAt !== "string" || !Number.isFinite(Date.parse(object.exportedAt))) errors.push("exportedAt must be an ISO timestamp");
+  if (object.workspaceId !== undefined && (typeof object.workspaceId !== "string" || !/^ws_[0-9a-f-]{36}$/.test(object.workspaceId))) errors.push("workspaceId must be a valid Evidra workspace identity when present");
   for (const field of ["phaseGoals", "hypotheses", "decisions", "claims", "sources", "experiments", "runs", "artifacts", "queue", "routines", "agentLanes", "events"]) {
     if (!Array.isArray(object[field])) errors.push(`${field} must be an array`);
   }

@@ -34,6 +34,7 @@ export function dashboardSnapshot(store: ResearchStore, root?: string): Record<s
   const agentBudget = campaignStartedAt ? agentBudgetLedger(agentEvents, campaignStartedAt, typeof (campaign?.runtime as { agentTokenBudget?: unknown } | undefined)?.agentTokenBudget === "number" ? (campaign?.runtime as { agentTokenBudget: number }).agentTokenBudget : null) : agentBudgetLedger([], "", null);
   const snapshot = {
     generatedAt: new Date().toISOString(),
+    workspaceId: store.workspaceId(),
     project: store.project() ?? null,
     campaign: campaign ?? null,
     scheduler,

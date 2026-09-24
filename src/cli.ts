@@ -561,6 +561,7 @@ program.command("status").action(() => {
   } else {
     console.log(`Project       ${project.name}`);
     console.log(`Workspace     ${project.competitionId}`);
+    console.log(`Workspace ID  ${store.workspaceId()}`);
     console.log(`Events        ${store.eventCount()}`);
     const integrity = store.verifyEventChain();
     console.log(`Integrity     ${integrity.status.toUpperCase()}${integrity.legacy ? ` (${integrity.legacy} legacy)` : ""}`);

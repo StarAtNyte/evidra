@@ -428,6 +428,11 @@ export class ResearchStore {
         config_json TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS workspace_identity (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        workspace_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
@@ -727,6 +732,7 @@ export class ResearchStore {
         updated_at TEXT NOT NULL
       );
     `);
+    this.db.prepare("INSERT OR IGNORE INTO workspace_identity (id, workspace_id, created_at) VALUES (1, ?, ?)").run(`ws_${randomUUID()}`, new Date().toISOString());
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_experiments_created_at ON experiments(created_at);
       CREATE INDEX IF NOT EXISTS idx_runs_updated_at ON runs(updated_at);
@@ -795,6 +801,13 @@ export class ResearchStore {
 
   close(): void {
     this.db.close();
+  }
+
+  /** Stable, non-secret identity for this durable workspace/control plane. */
+  workspaceId(): string {
+    const row = this.db.prepare("SELECT workspace_id AS workspaceId FROM workspace_identity WHERE id = 1").get() as { workspaceId: string } | undefined;
+    if (!row?.workspaceId) throw new Error("Workspace identity is missing from the control plane.");
+    return row.workspaceId;
   }
 
   /** Create a consistent SQLite backup while keeping the live store open. */

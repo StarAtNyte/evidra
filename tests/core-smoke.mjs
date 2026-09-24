@@ -354,6 +354,8 @@ test("durable research state and queue survive store reopen", () => {
   try {
     const db = join(root, ".sota", "database.sqlite");
     const first = new ResearchStore(db);
+    const workspaceId = first.workspaceId();
+    assert.match(workspaceId, /^ws_[0-9a-f-]{36}$/);
     first.createProject({ id: "p1", name: "Smoke", competitionId: "local", config: {} });
     first.saveCampaign({ goal: "test", budgetMinutes: 2, status: "running" });
     first.updateAgentLane({ role: "research director", status: "running", provider: "local", model: "test", task: "smoke" });
@@ -380,6 +382,7 @@ test("durable research state and queue survive store reopen", () => {
     assert.equal(first.queueTasks().find((task) => task.id === "task-external")?.ownerId, null);
     first.close();
     const reopened = new ResearchStore(db);
+    assert.equal(reopened.workspaceId(), workspaceId);
     assert.equal(reopened.project()?.id, "p1");
     assert.equal(reopened.campaign()?.goal, "test");
     assert.equal(reopened.agentLanes().find((lane) => lane.role === "research director")?.status, "running");
@@ -387,6 +390,17 @@ test("durable research state and queue survive store reopen", () => {
     assert.equal(reopened.queueTasks().find((task) => task.id === "task-1")?.goalId, "goal-1");
     assert.equal(reopened.queueTasks().find((task) => task.id === "task-1")?.parentTaskId, "task-parent");
     reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("workspace control planes receive distinct durable identities", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-isolation-"));
+  try {
+    const first = new ResearchStore(join(root, "one.sqlite"));
+    const second = new ResearchStore(join(root, "two.sqlite"));
+    assert.notEqual(first.workspaceId(), second.workspaceId());
+    first.close();
+    second.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -4629,6 +4643,8 @@ test("portable bundles are redacted metadata snapshots with artifact references"
     const bundle = createPortableBundle(store, root);
     assert.equal(bundle.type, PORTABLE_BUNDLE_TYPE);
     assert.equal(bundle.schemaVersion, 1);
+    assert.equal(bundle.workspaceId, store.workspaceId());
+    assert.equal(validatePortableBundle(bundle, root).valid, true);
     assert.equal(bundle.integrity.status === "valid" || bundle.integrity.status === "legacy", true);
     assert.match(JSON.stringify(bundle), /REDACTED/);
     assert.doesNotMatch(JSON.stringify(bundle), /super-secret-value/);
@@ -8420,6 +8436,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     store.enqueueTask({ id: "dashboard-parent", kind: "research.cycle", priority: 10, payload: {} });
     store.enqueueTask({ id: "dashboard-child", kind: "research.review", priority: 8, payload: {}, parentTaskId: "dashboard-parent", dependsOn: ["dashboard-parent"], requiredCapabilities: ["critic"] });
     const snapshot = dashboardSnapshot(store, root);
+    assert.equal(snapshot.workspaceId, store.workspaceId());
     store.close();
     assert.equal(snapshot.counts.events, undefined);
     const serialized = JSON.stringify(snapshot);
