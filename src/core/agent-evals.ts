@@ -8,6 +8,9 @@ export type AgentRoleReview = {
   processPasses: number;
   processWarnings: number;
   processFailures: number;
+  playbookPasses: number;
+  playbookPartials: number;
+  playbookBlocks: number;
   score: number;
   recommendation: "trusted" | "needs-review" | "insufficient-data";
 };
@@ -24,7 +27,7 @@ function object(value: unknown): Record<string, unknown> {
  * conservative and only uses durable lane evidence and trajectory quality.
  */
 export function evaluateAgentRoles(trajectories: Trajectory[]): AgentRoleReview[] {
-  const buckets = new Map<string, { assignments: number; completed: number; failed: number; confidence: number; evidenceAnchors: number; processPasses: number; processWarnings: number; processFailures: number }>();
+  const buckets = new Map<string, { assignments: number; completed: number; failed: number; confidence: number; evidenceAnchors: number; processPasses: number; processWarnings: number; processFailures: number; playbookPasses: number; playbookPartials: number; playbookBlocks: number }>();
   for (const trajectory of trajectories.slice(-128)) {
     const payload = object(trajectory.payload);
     const quality = object(trajectory.quality);
@@ -33,13 +36,20 @@ export function evaluateAgentRoles(trajectories: Trajectory[]): AgentRoleReview[
     for (const raw of reports) {
       const report = object(raw);
       const role = typeof report.role === "string" && report.role.trim() ? report.role.trim() : "unknown";
-      const bucket = buckets.get(role) ?? { assignments: 0, completed: 0, failed: 0, confidence: 0, evidenceAnchors: 0, processPasses: 0, processWarnings: 0, processFailures: 0 };
+      const bucket = buckets.get(role) ?? { assignments: 0, completed: 0, failed: 0, confidence: 0, evidenceAnchors: 0, processPasses: 0, processWarnings: 0, processFailures: 0, playbookPasses: 0, playbookPartials: 0, playbookBlocks: 0 };
       bucket.assignments += 1;
       if (report.status === "failed") bucket.failed += 1;
       else bucket.completed += 1;
       if (typeof report.confidence === "number" && Number.isFinite(report.confidence)) bucket.confidence += Math.max(0, Math.min(1, report.confidence));
       const evidence = Array.isArray(report.verifiedEvidenceIds) ? report.verifiedEvidenceIds : Array.isArray(report.evidence) ? report.evidence : [];
       bucket.evidenceAnchors += evidence.filter((item) => typeof item === "string" && item.trim()).length;
+      const checks = Array.isArray(report.playbookChecks) ? report.playbookChecks : [];
+      for (const check of checks) {
+        const status = object(check).status;
+        if (status === "pass") bucket.playbookPasses += 1;
+        else if (status === "partial") bucket.playbookPartials += 1;
+        else if (status === "blocked") bucket.playbookBlocks += 1;
+      }
       if (overall === "PASS") bucket.processPasses += 1;
       else if (overall === "FAIL") bucket.processFailures += 1;
       else if (overall === "WARN") bucket.processWarnings += 1;

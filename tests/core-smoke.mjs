@@ -639,7 +639,7 @@ test("agent organization gives every lane a responsibility and reporting line", 
 
 test("agent reviews learn from durable lane evidence without claiming metric attribution", () => {
   const reviews = evaluateAgentRoles([
-    { payload: { laneReports: [{ role: "validation scientist", status: "completed", confidence: 0.9, verifiedEvidenceIds: ["run-1", "source-1"] }] }, quality: { overall: "PASS" } },
+    { payload: { laneReports: [{ role: "validation scientist", status: "completed", confidence: 0.9, verifiedEvidenceIds: ["run-1", "source-1"], playbookChecks: [{ step: "metric", status: "pass" }, { step: "replication", status: "blocked" }] }] }, quality: { overall: "PASS" } },
     { payload: { laneReports: [{ role: "validation scientist", status: "completed", confidence: 0.8, verifiedEvidenceIds: ["run-2"] }] }, quality: { overall: "PASS" } },
     { payload: { laneReports: [{ role: "model researcher", status: "failed", confidence: 0.2, evidence: [] }] }, quality: { overall: "FAIL" } },
   ]);
@@ -647,6 +647,8 @@ test("agent reviews learn from durable lane evidence without claiming metric att
   assert.equal(reviews[0].recommendation, "trusted");
   assert.equal(reviews.find((review) => review.role === "model researcher")?.recommendation, "insufficient-data");
   assert.equal(reviews.find((review) => review.role === "validation scientist")?.evidenceAnchors, 3);
+  assert.equal(reviews.find((review) => review.role === "validation scientist")?.playbookPasses, 1);
+  assert.equal(reviews.find((review) => review.role === "validation scientist")?.playbookBlocks, 1);
 });
 
 test("Codex sandbox preserves read-only role boundaries", () => {
@@ -3704,6 +3706,13 @@ test("role reviews become bounded specialist coaching instructions", () => {
   assert.match(trusted, /Preserve its evidence discipline/);
   const newRole = lanePrompt("method researcher", "find a method");
   assert.match(newRole, /insufficient prior evidence/);
+});
+
+test("lane reports expose bounded self-reported playbook checks without making them evidence", () => {
+  const report = ResearchLaneReportSchema.parse({ role: "data detective", summary: "checked", findings: [], recommendations: [], uncertainties: [], discriminatingTests: [], evidence: [], confidence: 0.5 });
+  assert.deepEqual(report.playbookChecks, []);
+  const withCheck = ResearchLaneReportSchema.parse({ ...report, playbookChecks: [{ step: "check leakage", status: "partial", evidence: ["workspace.search"] }] });
+  assert.equal(withCheck.playbookChecks[0].status, "partial");
 });
 
 test("role memory stays private, bounded, and explicitly historical", () => {

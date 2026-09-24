@@ -41,6 +41,7 @@ export const ResearchLaneReportSchema = z.object({
   discriminatingTests: z.array(z.string()).max(8).default([]),
   evidence: z.array(z.string()).max(12),
   evidenceSourceIds: z.array(z.string().min(1)).max(8).default([]),
+  playbookChecks: z.array(z.object({ step: z.string().min(1), status: z.enum(["pass", "partial", "blocked"]), evidence: z.array(z.string()).max(4).default([]) })).max(8).default([]),
   confidence: z.number().min(0).max(1),
 });
 
@@ -112,7 +113,7 @@ export function normalizeResearchSemanticAudit(audit: z.infer<typeof ResearchSem
 const RESEARCH_LANE_OUTPUT_SCHEMA = JSON.stringify({
   type: "object",
   additionalProperties: false,
-  required: ["role", "summary", "findings", "recommendations", "uncertainties", "discriminatingTests", "evidence", "evidenceSourceIds", "confidence"],
+    required: ["role", "summary", "findings", "recommendations", "uncertainties", "discriminatingTests", "evidence", "evidenceSourceIds", "playbookChecks", "confidence"],
   properties: {
     role: { type: "string" },
     summary: { type: "string" },
@@ -122,6 +123,7 @@ const RESEARCH_LANE_OUTPUT_SCHEMA = JSON.stringify({
     discriminatingTests: { type: "array", maxItems: 8, items: { type: "string" } },
     evidence: { type: "array", maxItems: 12, items: { type: "string" } },
     evidenceSourceIds: { type: "array", maxItems: 8, items: { type: "string" } },
+    playbookChecks: { type: "array", maxItems: 8, items: { type: "object", additionalProperties: false, required: ["step", "status", "evidence"], properties: { step: { type: "string" }, status: { type: "string", enum: ["pass", "partial", "blocked"] }, evidence: { type: "array", maxItems: 4, items: { type: "string" } } } } },
     confidence: { type: "number", minimum: 0, maximum: 1 },
   },
 });
@@ -209,7 +211,7 @@ export interface ResearchLanesOptions {
   laneFocus?: string;
   laneRotation?: number;
   /** Durable role reviews used to schedule a bounded coaching attempt. */
-  roleReviews?: ReadonlyArray<Pick<AgentRoleReview, "role" | "recommendation" | "assignments" | "score" | "processFailures" | "evidenceAnchors">>;
+  roleReviews?: ReadonlyArray<Pick<AgentRoleReview, "role" | "recommendation" | "assignments" | "score" | "processFailures" | "evidenceAnchors" | "playbookBlocks">>;
   onProgress?: (message: string) => void;
   onProcess?: (control: ProcessControl) => void;
   isCancelled?: () => boolean;
@@ -310,7 +312,7 @@ export interface ResearchLaneSelectionOptions {
   /** Rotate otherwise equivalent specialists across autonomous cycles. */
   rotation?: number;
   /** Prior durable reviews can schedule a bounded coaching attempt. */
-  roleReviews?: ReadonlyArray<Pick<AgentRoleReview, "role" | "recommendation" | "assignments" | "score" | "processFailures" | "evidenceAnchors">>;
+  roleReviews?: ReadonlyArray<Pick<AgentRoleReview, "role" | "recommendation" | "assignments" | "score" | "processFailures" | "evidenceAnchors" | "playbookBlocks">>;
 }
 
 export function selectResearchLaneRoles(objective: string, requested: number, options: ResearchLaneSelectionOptions = {}): ResearchLaneRole[] {
@@ -439,7 +441,7 @@ function parseJson(output: unknown): unknown {
 export function lanePrompt(
   role: ResearchLaneRole,
   objective: string,
-  review?: Pick<AgentRoleReview, "recommendation" | "assignments" | "score" | "processFailures" | "evidenceAnchors">,
+  review?: Pick<AgentRoleReview, "recommendation" | "assignments" | "score" | "processFailures" | "evidenceAnchors" | "playbookBlocks">,
 ): string {
   const contract = agentRoleContract(role);
   const focus = role === "data detective"
@@ -454,15 +456,15 @@ export function lanePrompt(
           ? "Investigate the domain, definitions, assumptions, relevant literature, competing explanations, and unresolved questions."
           : "Investigate alternative methods, mechanisms, procedures, and implementation paths; propose falsifiable comparisons.";
   const coaching = review?.recommendation === "needs-review"
-    ? `Role coaching signal: this role has ${review.assignments} prior assignment(s), score ${(review.score * 100).toFixed(0)}%, ${review.processFailures} process failure(s), and ${review.evidenceAnchors} evidence anchor(s). Change the route from prior work: ground every material finding in a durable observation, expose unresolved checks, and propose a concrete falsification test before recommending action.`
+    ? `Role coaching signal: this role has ${review.assignments} prior assignment(s), score ${(review.score * 100).toFixed(0)}%, ${review.processFailures} process failure(s), ${review.playbookBlocks} blocked playbook step(s), and ${review.evidenceAnchors} evidence anchor(s). Change the route from prior work: ground every material finding in a durable observation, expose unresolved checks, and propose a concrete falsification test before recommending action.`
     : review?.recommendation === "trusted"
       ? `Role review signal: this role has remained reliable across ${review.assignments} assignment(s). Preserve its evidence discipline, but still independently verify every new claim.`
       : "Role review signal: insufficient prior evidence; establish a clean, explicit baseline for this assignment.";
   const playbook = contract.playbook.map((step, index) => `${index + 1}. ${step}`).join("\n");
   return `${focus}\n\nRole contract: report to ${contract.parentRole ?? "the operator"}; authority=${contract.authority}; responsibility=${contract.responsibility}.\nOperating playbook:\n${playbook}\n${coaching}\n\nObjective: ${objective}\n\n` +
     "You are an independent Evidra research lane. Use the supplied workspace and evidence context; run only read-only inspection when tools are available. Do not edit files, submit anything, or claim measurements you did not observe. Return ONLY JSON with this shape: " +
-    '{"role":"...","summary":"...","findings":["..."],"recommendations":["..."],"uncertainties":["..."],"discriminatingTests":["cheapest observation or experiment that would distinguish competing explanations"],"evidence":["command, artifact, or source supporting each important statement"],"evidenceSourceIds":["exact durable source IDs for literature-derived evidence"],"confidence":0.0}. ' +
-    "Recommendations must be testable and should state what would falsify them. For every material uncertainty or disagreement, propose a concrete discriminating test. A bounded prior-peer board may be present in the context: use it to challenge, extend, or explicitly reject earlier findings, but never treat it as stronger than primary evidence.";
+    '{"role":"...","summary":"...","findings":["..."],"recommendations":["..."],"uncertainties":["..."],"discriminatingTests":["cheapest observation or experiment that would distinguish competing explanations"],"evidence":["command, artifact, or source supporting each important statement"],"evidenceSourceIds":["exact durable source IDs for literature-derived evidence"],"playbookChecks":[{"step":"exact checklist step","status":"pass|partial|blocked","evidence":["observation supporting this process status"]}],"confidence":0.0}. ' +
+    "Recommendations must be testable and should state what would falsify them. For every material uncertainty or disagreement, propose a concrete discriminating test. Report one playbookChecks entry per assigned checklist step; these are self-reported process telemetry, not proof. A bounded prior-peer board may be present in the context: use it to challenge, extend, or explicitly reject earlier findings, but never treat it as stronger than primary evidence.";
 }
 
 /**
@@ -812,7 +814,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
   leaseStore.close();
   if (!lease.acquired) {
     const message = `Lane is already active; refusing duplicate work (${lease.reason ?? "live lease"}).`;
-    return { role, summary: "Lane was not started because another worker owns its lease.", findings: [], recommendations: [], uncertainties: [message], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0, status: "failed", error: message };
+    return { role, summary: "Lane was not started because another worker owns its lease.", findings: [], recommendations: [], uncertainties: [message], discriminatingTests: [], evidence: [], evidenceSourceIds: [], playbookChecks: [], confidence: 0, status: "failed", error: message };
   }
   const laneTaskId = `task_lane_${role.replace(/[^a-z0-9]+/gi, "-")}_${leaseId.slice(-12)}`;
   let ticket: ReturnType<ResearchStore["claimTask"]>;
@@ -830,14 +832,14 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     failed.releaseAgentLane(role, leaseId, "failed", `lane ticket setup failed: ${message}`);
     if (failed.queueTasks().some((task) => task.id === laneTaskId)) failed.updateTask(laneTaskId, "failed", { error: message, ticketSetupFailed: true });
     failed.close();
-    return { role, summary: "Lane was not started because its durable ticket could not be created.", findings: [], recommendations: [], uncertainties: [message], discriminatingTests: ["retry lane ticket setup after the state store is writable"], evidence: [], evidenceSourceIds: [], confidence: 0, status: "failed", error: message };
+    return { role, summary: "Lane was not started because its durable ticket could not be created.", findings: [], recommendations: [], uncertainties: [message], discriminatingTests: ["retry lane ticket setup after the state store is writable"], evidence: [], evidenceSourceIds: [], playbookChecks: [], confidence: 0, status: "failed", error: message };
   }
   if (!ticket) {
     const failed = new ResearchStore(options.storePath);
     failed.releaseAgentLane(role, leaseId, "failed", "lane ticket could not be claimed");
     failed.updateTask(laneTaskId, "failed", { error: "lane ticket could not be claimed" });
     failed.close();
-    return { role, summary: "Lane was not started because its durable ticket could not be claimed.", findings: [], recommendations: [], uncertainties: ["durable lane ticket claim failed"], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0, status: "failed", error: "durable lane ticket claim failed" };
+    return { role, summary: "Lane was not started because its durable ticket could not be claimed.", findings: [], recommendations: [], uncertainties: ["durable lane ticket claim failed"], discriminatingTests: [], evidence: [], evidenceSourceIds: [], playbookChecks: [], confidence: 0, status: "failed", error: "durable lane ticket claim failed" };
   }
   const heartbeat = setInterval(() => {
     try {
@@ -979,7 +981,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     return { ...report, verifiedEvidenceIds };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const report: ResearchLaneReport = { role, summary: "Lane failed before producing a validated report.", findings: [], recommendations: [], uncertainties: [message], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0, status: "failed", error: message };
+    const report: ResearchLaneReport = { role, summary: "Lane failed before producing a validated report.", findings: [], recommendations: [], uncertainties: [message], discriminatingTests: [], evidence: [], evidenceSourceIds: [], playbookChecks: [], confidence: 0, status: "failed", error: message };
     saveLaneEvent(options.storePath, role, report);
     const failed = new ResearchStore(options.storePath);
     failed.releaseAgentLane(role, leaseId, "failed", message);
