@@ -2657,6 +2657,14 @@ event.command("serve")
           }
           if (typeof parsed.type !== "string") throw new Error("request JSON requires a string 'type'");
           const payload = parseExternalEventPayload(JSON.stringify(parsed.payload ?? {}));
+          if (workerTokens.size && parsed.type === "external.agent.heartbeat") {
+            const heartbeatWorkerId = typeof payload.leaseId === "string" ? payload.leaseId.trim() : "";
+            if (!heartbeatWorkerId || headerWorkerId !== heartbeatWorkerId || !secretMatches(workerTokens.get(heartbeatWorkerId), headerWorkerToken)) {
+              response.writeHead(401, headers);
+              response.end(JSON.stringify({ error: "heartbeat worker identity does not match authenticated scoped worker" }));
+              return;
+            }
+          }
           const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : request.headers["idempotency-key"];
           const result = recordExternalEvent(parsed.type, payload, typeof parsed.source === "string" ? parsed.source : "http", typeof idempotencyKey === "string" ? idempotencyKey : undefined, workerCapabilities);
           response.writeHead(result.heartbeatAccepted === false ? 409 : 202, headers);
