@@ -1618,6 +1618,16 @@ export class ResearchStore {
     return JSON.parse(row.capabilities_json || "[]") as string[];
   }
 
+  /** Queue execution requires a fresh heartbeat tied to an admitted role. */
+  externalWorkerAdmission(workerId: string, maxAgeMs = 120_000): { allowed: boolean; role?: string; reason?: string } {
+    const row = this.db.prepare("SELECT role, status, last_heartbeat_at FROM external_workers WHERE worker_id = ?").get(workerId) as { role: string; status: string; last_heartbeat_at: string } | undefined;
+    if (!row) return { allowed: false, reason: "worker has no accepted heartbeat" };
+    if (!['running', 'idle'].includes(row.status)) return { allowed: false, role: row.role, reason: `worker heartbeat status is ${row.status}` };
+    if (!Number.isFinite(Date.parse(row.last_heartbeat_at)) || Date.now() - Date.parse(row.last_heartbeat_at) > Math.max(1_000, maxAgeMs)) return { allowed: false, role: row.role, reason: "worker heartbeat is stale" };
+    if (!this.agentRoleAdmitted(row.role)) return { allowed: false, role: row.role, reason: `role '${row.role}' is not admitted` };
+    return { allowed: true, role: row.role };
+  }
+
   agentPause(role: string): { role: string; paused: boolean; terminated: boolean; reason: string | null; updatedAt: string } | undefined {
     const row = this.db.prepare("SELECT role, paused, terminated, reason, updated_at FROM agent_controls WHERE role = ?").get(role) as { role: string; paused: number; terminated: number; reason: string | null; updated_at: string } | undefined;
     return row ? { role: row.role, paused: row.paused === 1, terminated: row.terminated === 1, reason: row.reason, updatedAt: row.updated_at } : undefined;

@@ -4450,9 +4450,11 @@ test("authenticated external agent heartbeats preserve lease ownership", () => {
     assert.deepEqual(store.externalWorkers()[0]?.capabilities, ["python"]);
     assert.deepEqual(store.externalWorkerCapabilities("worker-a"), ["python"]);
     assert.equal(store.externalWorkerCapabilities("missing-worker"), undefined);
+    assert.equal(store.externalWorkerAdmission("worker-a").allowed, true);
     assert.equal(store.agentLanes().find((lane) => lane.role === "model researcher")?.status, "idle");
     assert.equal(store.recordExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "blocked", capabilities: ["python"] }).accepted, true);
     assert.equal(store.externalWorkerCapabilities("worker-a"), undefined);
+    assert.equal(store.externalWorkerAdmission("missing-worker").allowed, false);
     const unapproved = store.recordExternalAgentHeartbeat({ role: "external geologist", leaseId: "worker-custom", provider: "codex", model: "gpt-test", status: "running", capabilities: ["python"] });
     assert.equal(unapproved.accepted, false);
     assert.match(unapproved.reason ?? "", /explicit operator admission/);
@@ -8316,6 +8318,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
   let child;
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.setAgentRoleAdmission("remote lane", true, "test worker registration");
     store.enqueueTask({ id: "bridge-task", kind: "research.lane", priority: 4, payload: { objective: "external worker smoke" } });
     store.close();
     child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "event", "serve", "--port", String(port), "--token", token, "--worker-tokens", "worker-a=worker-secret,worker-b=worker-b-secret", "--worker-scopes", "worker-a=research.lane,worker-b=research.review", "--worker-capabilities", "worker-a=python|gpu.cuda,worker-b=python"], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });

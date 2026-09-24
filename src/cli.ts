@@ -2617,6 +2617,13 @@ event.command("serve")
             const permitsKind = (kind: string): boolean => !workerAllowedKinds || workerAllowedKinds.includes(kind);
             const store = new ResearchStore(statePath);
             if (taskPath === "/tasks/claim") {
+              const admission = store.externalWorkerAdmission(workerId);
+              if (!admission.allowed) {
+                store.close();
+                response.writeHead(403, headers);
+                response.end(JSON.stringify({ error: "worker admission required", reason: admission.reason }));
+                return;
+              }
               const queueControl = store.queueControl();
               if (queueControl.paused) {
                 store.close();
