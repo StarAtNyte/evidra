@@ -668,6 +668,9 @@ test("custom agent roles enter the approval inbox before execution", () => {
     assert.match(pending?.next ?? "", /agents approve external geologist/);
     store.setAgentRoleAdmission("external geologist", true, "test approval");
     assert.equal(approvalInbox(store).some((item) => item.kind === "agent-role" && item.id === "external geologist"), false);
+    store.rejectAgentRoleAdmission("external geologist", "test rejection");
+    assert.equal(agentOrganization(store).find((entry) => entry.role === "external geologist")?.admission, "rejected");
+    assert.equal(store.recordExternalAgentHeartbeat({ role: "external geologist", leaseId: "rejected-worker", provider: "remote", model: "bench", status: "running" }).accepted, false);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -313,6 +313,7 @@ Implemented today:
 - unified approval inbox: pending/rejected queue tasks appear alongside experiment, submission, recovery, and external-action approvals in `/approvals` and the dashboard;
 - role-hire approvals: custom roles in `review` appear in the same inbox with an actionable `/agents approve <role>` transition, then disappear only after durable admission is recorded;
 - inbox actions: custom role hires can also be approved in place with `evidra approvals approve agent-role <role>` or `/approvals approve agent-role <role>`;
+- explicit rejection: operators can permanently decline a pending custom role with `evidra approvals reject agent-role <role>` or `/approvals reject agent-role <role>`; rejected roles remain visible as `rejected` but do not repeatedly re-enter the pending inbox;
 - portable governance state: role pause, termination, and admission controls are included in redacted bundle metadata so backup/transfer preserves the execution boundary;
 - operator attention inbox: `/status`, the TUI status view, and the dashboard consolidate blocked goals, stale workers, failed or dependency-blocked tasks, paused dispatch, and approvals into one bounded, read-only intervention list;
 - unified control-plane health: the same read model reports idle/healthy/degraded/blocked campaign state, controller liveness, active work, running/stale agents, and the reason autonomy should continue or stop across CLI, TUI, and dashboard;

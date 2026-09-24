@@ -344,7 +344,7 @@ export interface ExternalWorkerHealth {
   provider: string;
   model: string;
   status: "running" | "idle" | "blocked" | "failed";
-  admission: "approved" | "review";
+  admission: "approved" | "review" | "rejected";
   capabilities: string[];
   task: string | null;
   lastHeartbeatAt: string;
@@ -600,6 +600,7 @@ export class ResearchStore {
         paused INTEGER NOT NULL DEFAULT 0,
         terminated INTEGER NOT NULL DEFAULT 0,
         admitted INTEGER NOT NULL DEFAULT 0,
+        admission_status TEXT NOT NULL DEFAULT 'review',
         reason TEXT,
         updated_at TEXT NOT NULL
       );
@@ -755,6 +756,7 @@ export class ResearchStore {
     try { this.db.exec("ALTER TABLE agent_directives ADD COLUMN source_role TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_controls ADD COLUMN terminated INTEGER NOT NULL DEFAULT 0"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_controls ADD COLUMN admitted INTEGER NOT NULL DEFAULT 0"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE agent_controls ADD COLUMN admission_status TEXT NOT NULL DEFAULT 'review'"); } catch { /* already migrated */ }
     this.db.prepare(`
       INSERT OR IGNORE INTO event_chain_state (id, head_hash, event_count)
       VALUES (1, (SELECT event_hash FROM events ORDER BY id DESC LIMIT 1), (SELECT COUNT(*) FROM events))
@@ -1553,12 +1555,16 @@ export class ResearchStore {
   }
 
   /** Built-in roles are trusted by default; custom/external roles need explicit admission. */
-  agentRoleAdmitted(role: string): boolean {
+  agentRoleAdmissionStatus(role: string): "approved" | "review" | "rejected" {
     const normalized = role.trim();
-    if (!normalized) return false;
-    if (isBuiltInAgentRole(normalized)) return true;
-    const row = this.db.prepare("SELECT admitted FROM agent_controls WHERE role = ?").get(normalized) as { admitted: number } | undefined;
-    return row?.admitted === 1;
+    if (!normalized || isBuiltInAgentRole(normalized)) return "approved";
+    const row = this.db.prepare("SELECT admitted, admission_status FROM agent_controls WHERE role = ?").get(normalized) as { admitted: number; admission_status: string } | undefined;
+    if (row?.admitted === 1) return "approved";
+    return row?.admission_status === "rejected" ? "rejected" : "review";
+  }
+
+  agentRoleAdmitted(role: string): boolean {
+    return this.agentRoleAdmissionStatus(role) === "approved";
   }
 
   setAgentRoleAdmission(role: string, admitted: boolean, reason = "operator request"): void {
@@ -1566,8 +1572,17 @@ export class ResearchStore {
     if (!normalized) throw new Error("Agent role is required.");
     if (isBuiltInAgentRole(normalized)) throw new Error(`Built-in role '${normalized}' is approved by contract; use pause or terminate to control it.`);
     const now = new Date().toISOString();
-    this.db.prepare(`INSERT INTO agent_controls (role, paused, terminated, admitted, reason, updated_at) VALUES (?, 0, 0, ?, ?, ?) ON CONFLICT(role) DO UPDATE SET admitted = excluded.admitted, reason = excluded.reason, updated_at = excluded.updated_at`).run(normalized, admitted ? 1 : 0, reason.slice(0, 500), now);
+    this.db.prepare(`INSERT INTO agent_controls (role, paused, terminated, admitted, admission_status, reason, updated_at) VALUES (?, 0, 0, ?, ?, ?, ?) ON CONFLICT(role) DO UPDATE SET admitted = excluded.admitted, admission_status = excluded.admission_status, reason = excluded.reason, updated_at = excluded.updated_at`).run(normalized, admitted ? 1 : 0, admitted ? "approved" : "review", reason.slice(0, 500), now);
     this.appendEvent(admitted ? "agent.role.admitted" : "agent.role.admission.revoked", { role: normalized, reason: reason.slice(0, 500) });
+  }
+
+  rejectAgentRoleAdmission(role: string, reason = "operator rejected role"): void {
+    const normalized = role.trim();
+    if (!normalized) throw new Error("Agent role is required.");
+    if (isBuiltInAgentRole(normalized)) throw new Error(`Built-in role '${normalized}' is approved by contract; use pause or terminate to control it.`);
+    const now = new Date().toISOString();
+    this.db.prepare(`INSERT INTO agent_controls (role, paused, terminated, admitted, admission_status, reason, updated_at) VALUES (?, 0, 0, 0, 'rejected', ?, ?) ON CONFLICT(role) DO UPDATE SET admitted = 0, admission_status = 'rejected', reason = excluded.reason, updated_at = excluded.updated_at`).run(normalized, reason.slice(0, 500), now);
+    this.appendEvent("agent.role.admission.rejected", { role: normalized, reason: reason.slice(0, 500) });
   }
 
   /** Accept a heartbeat from an authenticated external worker without allowing lease takeover. */
@@ -1609,7 +1624,7 @@ export class ResearchStore {
   externalWorkers(limit = 64): ExternalWorkerHealth[] {
     const bounded = Math.max(1, Math.min(256, Math.floor(limit)));
     const rows = this.db.prepare("SELECT worker_id, role, provider, model, status, capabilities_json, task, last_heartbeat_at, updated_at FROM external_workers ORDER BY last_heartbeat_at DESC LIMIT ?").all(bounded) as Array<{ worker_id: string; role: string; provider: string; model: string; status: string; capabilities_json: string; task: string | null; last_heartbeat_at: string; updated_at: string }>;
-    return rows.map((row) => ({ workerId: row.worker_id, role: row.role, provider: row.provider, model: row.model, status: row.status as ExternalWorkerHealth["status"], admission: this.agentRoleAdmitted(row.role) ? "approved" as const : "review" as const, capabilities: JSON.parse(row.capabilities_json || "[]") as string[], task: row.task, lastHeartbeatAt: row.last_heartbeat_at, health: Number.isFinite(Date.parse(row.last_heartbeat_at)) && Date.now() - Date.parse(row.last_heartbeat_at) <= 120_000 ? "healthy" as const : "stale" as const, updatedAt: row.updated_at }));
+    return rows.map((row) => ({ workerId: row.worker_id, role: row.role, provider: row.provider, model: row.model, status: row.status as ExternalWorkerHealth["status"], admission: this.agentRoleAdmissionStatus(row.role), capabilities: JSON.parse(row.capabilities_json || "[]") as string[], task: row.task, lastHeartbeatAt: row.last_heartbeat_at, health: Number.isFinite(Date.parse(row.last_heartbeat_at)) && Date.now() - Date.parse(row.last_heartbeat_at) <= 120_000 ? "healthy" as const : "stale" as const, updatedAt: row.updated_at }));
   }
 
   /** Use only a fresh heartbeat when a remote worker omits capabilities at claim time. */

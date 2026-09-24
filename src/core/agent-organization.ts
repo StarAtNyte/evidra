@@ -12,7 +12,7 @@ export type AgentRoleContract = {
 };
 
 export type AgentLaneHealth = "healthy" | "stale" | "idle" | "unstarted";
-export type AgentRoleAdmission = "approved" | "review";
+export type AgentRoleAdmission = "approved" | "review" | "rejected";
 
 /** Keep operator health semantics identical across CLI, dashboard, and inbox. */
 export function agentLaneHealth(status: string, heartbeatAt: string | null, now = Date.now()): AgentLaneHealth {
@@ -77,7 +77,7 @@ export function agentOrganization(store: ResearchStore): Array<AgentRoleContract
   const customRoles = [...lanes.keys()].filter((role) => !known.has(role)).sort((left, right) => left.localeCompare(right));
   return [...builtIn, ...customRoles.map((role) => {
     const lane = lanes.get(role)!;
-    return { ...agentRoleContract(role), admission: (store.agentRoleAdmitted(role) ? "approved" : "review") as AgentRoleAdmission, status: lane.status, health: agentLaneHealth(lane.status, lane.heartbeatAt), heartbeatAt: lane.heartbeatAt, task: lane.task, budgetSeconds: lane.budgetSeconds, usedSeconds: lane.usedSeconds, leaseId: lane.leaseId };
+    return { ...agentRoleContract(role), admission: store.agentRoleAdmissionStatus(role), status: lane.status, health: agentLaneHealth(lane.status, lane.heartbeatAt), heartbeatAt: lane.heartbeatAt, task: lane.task, budgetSeconds: lane.budgetSeconds, usedSeconds: lane.usedSeconds, leaseId: lane.leaseId };
   })];
 }
 

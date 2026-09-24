@@ -253,11 +253,11 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/event": [["/event emit ", "Emit an external wake-up event"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
-  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents dispatch", "Show the latest lane dispatch plan"], ["/agents evaluate", "Evaluate roles and generate coaching"], ["/agents evaluate apply", "Apply coaching as durable role directives"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents recover", "Reclaim expired internal leases and tickets"], ["/agents approve ", "Approve a custom role for external execution"], ["/agents revoke ", "Revoke custom-role execution admission"], ["/agents cancel ", "Cancel a pending specialist directive"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents terminate ", "Terminate a specialist until revived"], ["/agents revive ", "Revive a terminated specialist"], ["/agents restart ", "Reset a failed or blocked specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
+  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents dispatch", "Show the latest lane dispatch plan"], ["/agents evaluate", "Evaluate roles and generate coaching"], ["/agents evaluate apply", "Apply coaching as durable role directives"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents recover", "Reclaim expired internal leases and tickets"], ["/agents approve ", "Approve a custom role for external execution"], ["/agents reject ", "Reject a custom role from execution"], ["/agents revoke ", "Revoke custom-role execution admission"], ["/agents cancel ", "Cancel a pending specialist directive"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents terminate ", "Terminate a specialist until revived"], ["/agents revive ", "Revive a terminated specialist"], ["/agents restart ", "Reset a failed or blocked specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
   "/limits": [["/limits auto", "Use local fallback, then wait"], ["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Require local fallback"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
-  "/approvals": [["/approvals", "Show pending operator approvals"], ["/approvals approve agent-role ", "Approve a custom role from the inbox"]],
+  "/approvals": [["/approvals", "Show pending operator approvals"], ["/approvals approve agent-role ", "Approve a custom role from the inbox"], ["/approvals reject agent-role ", "Reject a custom role from the inbox"]],
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue status ", "Filter queue by label"], ["/queue priority ", "Reprioritize queued work"], ["/queue labels ", "Classify queued work"], ["/queue pause-task ", "Suspend one queue task"], ["/queue resume-task ", "Resume one paused queue task"], ["/queue pause", "Stop new queue claims"], ["/queue resume", "Resume new queue claims"], ["/queue approve ", "Approve a pending queue task"], ["/queue reject ", "Reject a queue task"], ["/queue history ", "Inspect the full task lifecycle"], ["/queue checkpoint ", "Inspect redacted resumable state"], ["/queue activity ", "Inspect task handoff notes"], ["/queue usage", "Show external worker usage"], ["/queue usage ", "Show one task's usage"], ["/queue assign ", "Assign or clear a task worker"], ["/queue budget ", "Set or clear a task token ceiling"], ["/queue cost-budget ", "Set or clear a task USD ceiling"], ["/queue deadline ", "Set or clear a task wall-clock deadline"], ["/queue contract ", "Set or clear task proof requirements"], ["/queue cancel ", "Cancel queued or running work"], ["/queue note ", "Add an operator handoff note"], ["/queue recover", "Requeue stale tasks"], ["/queue recover ", "Resume a failed task with a changed route"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/clear": [["/clear", "Clear the current conversation"]],
@@ -3768,13 +3768,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Recovered ${roles.length} stale agent lease(s), ${tickets.length} stale specialist ticket(s), and ${directives.length} stale directive(s).${roles.length || tickets.length || directives.length ? `\nRoles      ${roles.join(", ") || "none"}\nTickets    ${tickets.join(", ") || "none"}\nDirectives ${directives.join(", ") || "none"}` : ""}`);
       return;
     }
-    const admissionMatch = request.match(/^\/agents\s+(approve|revoke)\s+(.+)$/i);
+    const admissionMatch = request.match(/^\/agents\s+(approve|revoke|reject)\s+(.+)$/i);
     if (admissionMatch) {
       const role = admissionMatch[2].trim();
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      store.setAgentRoleAdmission(role, admissionMatch[1].toLowerCase() === "approve", `operator TUI ${admissionMatch[1].toLowerCase()} request`);
+      if (admissionMatch[1].toLowerCase() === "reject") store.rejectAgentRoleAdmission(role, "operator TUI reject request");
+      else store.setAgentRoleAdmission(role, admissionMatch[1].toLowerCase() === "approve", `operator TUI ${admissionMatch[1].toLowerCase()} request`);
       store.close();
-      append("assistant", admissionMatch[1].toLowerCase() === "approve" ? `Approved ${role} for external execution.` : `Revoked external execution admission for ${role}.`);
+      append("assistant", admissionMatch[1].toLowerCase() === "approve" ? `Approved ${role} for external execution.` : admissionMatch[1].toLowerCase() === "reject" ? `Rejected ${role} for external execution.` : `Revoked external execution admission for ${role}.`);
       return;
     }
     const messageAgentMatch = request.match(/^\/agents\s+message\s+(.+?)\s+--\s+(.+)$/i);
@@ -3960,13 +3961,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Contract · ${adapter.config.name}\n${report.checks.map((check) => `  ${check.passed ? "✓" : "✗"} ${check.name}: ${check.detail}`).join("\n")}`);
       return;
     }
-    const approveInboxMatch = request.match(/^\/approvals\s+approve\s+agent-role\s+(.+)$/i);
-    if (approveInboxMatch) {
-      const role = approveInboxMatch[1].trim();
+    const roleInboxMatch = request.match(/^\/approvals\s+(approve|reject)\s+agent-role\s+(.+)$/i);
+    if (roleInboxMatch) {
+      const role = roleInboxMatch[2].trim();
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      store.setAgentRoleAdmission(role, true, "operator TUI approval inbox");
+      if (roleInboxMatch[1].toLowerCase() === "reject") store.rejectAgentRoleAdmission(role, "operator TUI rejection inbox");
+      else store.setAgentRoleAdmission(role, true, "operator TUI approval inbox");
       store.close();
-      append("assistant", `Approved agent role ${role}.`);
+      append("assistant", roleInboxMatch[1].toLowerCase() === "reject" ? `Rejected agent role ${role}.` : `Approved agent role ${role}.`);
       return;
     }
     if (request === "/approvals" || request === "/approvals status") {

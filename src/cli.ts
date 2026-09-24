@@ -954,13 +954,14 @@ agents.command("recover").description("Reclaim internal agent leases and special
   store.close();
   console.log(`Recovered ${roles.length} stale agent lease(s), ${tickets.length} stale specialist ticket(s), and ${directives.length} stale directive(s).${roles.length || tickets.length || directives.length ? `\nRoles      ${roles.join(", ") || "none"}\nTickets    ${tickets.join(", ") || "none"}\nDirectives ${directives.join(", ") || "none"}` : ""}`);
 });
-for (const action of ["approve", "revoke"] as const) {
+for (const action of ["approve", "revoke", "reject"] as const) {
   agents.command(`${action} <role...>`).description(`${action === "approve" ? "Approve" : "Revoke"} external execution for a custom role`).action((roleParts: string[]) => {
     const role = roleParts.join(" ").trim();
     const store = new ResearchStore(statePath);
-    store.setAgentRoleAdmission(role, action === "approve", `operator CLI ${action} request`);
+    if (action === "reject") store.rejectAgentRoleAdmission(role, "operator CLI reject request");
+    else store.setAgentRoleAdmission(role, action === "approve", `operator CLI ${action} request`);
     store.close();
-    console.log(action === "approve" ? `Approved ${role}.` : `Revoked admission for ${role}.`);
+    console.log(action === "approve" ? `Approved ${role}.` : action === "reject" ? `Rejected ${role}.` : `Revoked admission for ${role}.`);
   });
 }
 agents.command("message <role> <message>").description("Queue a durable directive for one specialist role").action((role: string, message: string) => {
@@ -2468,13 +2469,14 @@ const showApprovals = (options: { json?: boolean }): void => {
 };
 approvals.option("--json", "emit machine-readable approval items").action(showApprovals);
 approvals.command("status").option("--json", "emit machine-readable approval items").action(showApprovals);
-approvals.command("approve <kind> <id...>").description("Approve a supported item directly from the operator inbox").action((kind: string, idParts: string[]) => {
+for (const action of ["approve", "reject"] as const) approvals.command(`${action} <kind> <id...>`).description(`${action[0].toUpperCase()}${action.slice(1)} a supported item directly from the operator inbox`).action((kind: string, idParts: string[]) => {
   const id = idParts.join(" ").trim();
   const store = new ResearchStore(statePath);
   if (kind !== "agent-role") { store.close(); throw new Error(`Inbox item '${kind}' must be approved with its dedicated command.`); }
-  store.setAgentRoleAdmission(id, true, "operator approval inbox");
+  if (action === "reject") store.rejectAgentRoleAdmission(id, "operator rejection inbox");
+  else store.setAgentRoleAdmission(id, true, "operator approval inbox");
   store.close();
-  console.log(`Approved agent role ${id}.`);
+  console.log(action === "reject" ? `Rejected agent role ${id}.` : `Approved agent role ${id}.`);
 });
 program.addCommand(approvals);
 

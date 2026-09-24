@@ -11,7 +11,7 @@ export type CampaignOrganizationPhase = {
 };
 
 export type CampaignOrganizationRole = AgentRoleContract & {
-  admission: "approved" | "review";
+  admission: "approved" | "review" | "rejected";
   status: string;
   health: string;
   task: string | null;
