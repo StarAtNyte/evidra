@@ -1039,12 +1039,42 @@ export class ResearchStore {
     return rows.map((row) => ({ role: row.role, status: row.status, provider: row.provider, model: row.model, task: row.task, error: row.error, heartbeatAt: row.heartbeat_at, leaseId: row.lease_id, startedAt: row.started_at, budgetSeconds: row.budget_seconds, usedSeconds: row.used_seconds, usageCalls: row.usage_calls, updatedAt: row.updated_at }));
   }
 
+  private dependencyCycle(taskId: string, dependencies: string[]): string[] | undefined {
+    const visiting = new Set<string>();
+    const visited = new Set<string>();
+    const dependenciesFor = (id: string): string[] => {
+      if (id === taskId) return dependencies;
+      const row = this.db.prepare("SELECT depends_on_json FROM work_queue WHERE id = ?").get(id) as { depends_on_json: string } | undefined;
+      if (!row) return [];
+      try {
+        const parsed = JSON.parse(row.depends_on_json || "[]");
+        return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : [];
+      } catch { return []; }
+    };
+    const visit = (id: string, path: string[]): string[] | undefined => {
+      if (visiting.has(id)) return [...path, id];
+      if (visited.has(id)) return undefined;
+      visiting.add(id);
+      for (const dependency of dependenciesFor(id)) {
+        const cycle = visit(dependency, [...path, id]);
+        if (cycle) return cycle;
+      }
+      visiting.delete(id);
+      visited.add(id);
+      return undefined;
+    };
+    return visit(taskId, []);
+  }
+
   enqueueTask(task: { id: string; kind: string; priority: number; payload: unknown; availableAt?: string; goalId?: string | null; parentTaskId?: string | null; dependsOn?: string[] }): void {
     const now = new Date().toISOString();
+    const dependsOn = [...new Set((task.dependsOn ?? []).filter((id) => id.trim()))];
+    const cycle = this.dependencyCycle(task.id, dependsOn);
+    if (cycle) throw new Error(`Queue task '${task.id}' creates a dependency cycle: ${cycle.join(" -> ")}`);
     this.db.prepare(`
       INSERT OR IGNORE INTO work_queue (id, kind, priority, status, payload_json, attempts, available_at, claimed_at, owner_id, goal_id, parent_task_id, depends_on_json, updated_at)
       VALUES (?, ?, ?, 'queued', ?, 0, ?, NULL, NULL, ?, ?, ?, ?)
-    `).run(task.id, task.kind, task.priority, safeJson(task.payload), task.availableAt ?? now, task.goalId ?? null, task.parentTaskId ?? null, safeJson([...new Set((task.dependsOn ?? []).filter((id) => id.trim()))]), now);
+    `).run(task.id, task.kind, task.priority, safeJson(task.payload), task.availableAt ?? now, task.goalId ?? null, task.parentTaskId ?? null, safeJson(dependsOn), now);
     this.appendEvent("queue.enqueued", task);
   }
 

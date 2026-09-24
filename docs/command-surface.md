@@ -54,6 +54,8 @@ the task it claimed. Queue records also preserve optional goal and parent-task
 links, so recovery and dashboard inspection retain the reason a job exists.
 Tasks may also declare prerequisites; the scheduler leaves them queued until
 all dependency IDs have completed, and treats missing dependencies as blocked.
+Cycles are rejected when a task is enqueued, so a malformed decomposition
+cannot silently consume campaign time.
 
 For long campaigns, bound each specialist independently:
 

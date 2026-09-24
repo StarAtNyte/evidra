@@ -3178,6 +3178,17 @@ test("queue dependencies prevent work from running before prerequisites", () => 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue dependency cycles are rejected before they deadlock the scheduler", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-cycle-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "cycle-a", kind: "cycle", priority: 1, payload: {}, dependsOn: ["cycle-b"] });
+    assert.throws(() => store.enqueueTask({ id: "cycle-b", kind: "cycle", priority: 1, payload: {}, dependsOn: ["cycle-a"] }), /dependency cycle/);
+    assert.equal(store.queueTasks().length, 1);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("stale queue recovery stops retrying a task after its attempt budget", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-stale-queue-limit-"));
   const dbPath = join(root, ".sota", "database.sqlite");
