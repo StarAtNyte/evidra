@@ -3689,6 +3689,21 @@ test("task deadlines prevent expired claims and can be cleared before checkout",
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("remote worker boundaries enforce deadlines without a controller poll", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-deadline-boundary-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "remote-deadline", kind: "research.lane", priority: 1, deadlineAt: new Date(Date.now() + 50).toISOString(), payload: {} });
+    assert.equal(store.claimTask("remote-deadline", undefined, "worker-a")?.id, "remote-deadline");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(store.heartbeatTask("remote-deadline", "worker-a"), false);
+    assert.equal(store.recordQueueUsage({ taskId: "remote-deadline", actorId: "worker-a", inputTokens: 1, outputTokens: 1 }), false);
+    assert.equal(store.completeClaimedTask("remote-deadline", "worker-a", "completed"), false);
+    assert.equal(store.queueTasks().find((task) => task.id === "remote-deadline")?.status, "cancelled");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue status JSON exposes exact budget and usage state", async () => {
   const { spawn } = await import("node:child_process");
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-status-json-"));

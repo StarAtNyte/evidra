@@ -1717,6 +1717,13 @@ export class ResearchStore {
     return Number.isFinite(deadline) && deadline > now;
   }
 
+  private taskDeadlineExpired(id: string, now = Date.now()): boolean {
+    const row = this.db.prepare("SELECT deadline_at FROM work_queue WHERE id = ?").get(id) as { deadline_at: string | null } | undefined;
+    if (!row?.deadline_at) return false;
+    const deadline = Date.parse(row.deadline_at);
+    return Number.isFinite(deadline) && deadline <= now;
+  }
+
   /** Explain why a queued task can or cannot be checked out. */
   taskReadiness(id: string): { ready: boolean; missing: string[]; pending: string[]; failed: string[] } | undefined {
     const row = this.db.prepare("SELECT depends_on_json FROM work_queue WHERE id = ?").get(id) as { depends_on_json: string } | undefined;
@@ -1872,6 +1879,10 @@ export class ResearchStore {
     if (!taskId || !actorId || inputTokens < 0 || outputTokens < 0 || inputTokens > 100_000_000 || outputTokens > 100_000_000 || (costUsd !== null && (!Number.isFinite(costUsd) || costUsd < 0 || costUsd > 1_000_000)) || (input.idempotencyKey !== undefined && !idempotencyKey)) return false;
     const task = this.db.prepare("SELECT id FROM work_queue WHERE id = ?").get(taskId) as { id: string } | undefined;
     if (!task) return false;
+    if (this.taskDeadlineExpired(taskId)) {
+      this.cancelTask(taskId, "task wall-clock deadline exceeded", "deadline");
+      return false;
+    }
     if (idempotencyKey) {
       try {
         const existing = this.db.prepare("SELECT payload_json FROM events WHERE type = 'queue.usage' AND json_extract(payload_json, '$.taskId') = ? AND json_extract(payload_json, '$.idempotencyKey') = ? LIMIT 1").get(taskId, idempotencyKey) as { payload_json: string } | undefined;
@@ -1969,6 +1980,10 @@ export class ResearchStore {
 
   /** Refresh a live claim so stale-task recovery cannot duplicate a healthy worker. */
   heartbeatTask(id: string, ownerId?: string): boolean {
+    if (this.taskDeadlineExpired(id)) {
+      this.cancelTask(id, "task wall-clock deadline exceeded", "deadline");
+      return false;
+    }
     const now = new Date().toISOString();
     const result = this.db.prepare("UPDATE work_queue SET claimed_at = ?, updated_at = ? WHERE id = ? AND status = 'running' AND (owner_id = ? OR (? IS NULL AND owner_id IS NULL))").run(now, now, id, ownerId ?? null, ownerId ?? null);
     return result.changes === 1;
@@ -1976,6 +1991,10 @@ export class ResearchStore {
 
   /** Complete a queue task only when the caller still owns its live claim. */
   completeClaimedTask(id: string, ownerId: string, status: Extract<QueueTaskStatus, "completed" | "failed" | "cancelled">, payload?: unknown): boolean {
+    if (this.taskDeadlineExpired(id)) {
+      this.cancelTask(id, "task wall-clock deadline exceeded", "deadline");
+      return false;
+    }
     const now = new Date().toISOString();
     const result = this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ?").run(status, payload === undefined ? null : safeJson(payload), now, id, ownerId);
     if (result.changes !== 1) return false;
@@ -1985,6 +2004,10 @@ export class ResearchStore {
 
   /** Requeue only the live claim that reported the failure; an operator cancellation wins races. */
   retryClaimedTask(id: string, ownerId: string, payload: unknown, availableAt: string): boolean {
+    if (this.taskDeadlineExpired(id)) {
+      this.cancelTask(id, "task wall-clock deadline exceeded", "deadline");
+      return false;
+    }
     const now = new Date().toISOString();
     const result = this.db.prepare("UPDATE work_queue SET status = 'queued', payload_json = ?, available_at = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ?").run(safeJson(payload), availableAt, now, id, ownerId);
     if (result.changes !== 1) return false;
