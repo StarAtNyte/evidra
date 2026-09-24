@@ -120,6 +120,7 @@ function validateRoutine(routine: Pick<ResearchRoutine, "name" | "goal" | "mode"
   if (!["local", "container", "modal", "slurm"].includes(routine.executor)) throw new Error("Routine executor must be local, container, modal, or slurm.");
   if (!Number.isInteger(routine.lanes) || routine.lanes < 1 || routine.lanes > 6) throw new Error("Routine lanes must be an integer from 1 to 6.");
   if (routine.triggerEvent !== undefined && routine.triggerEvent !== null && !/^[a-zA-Z0-9_.:-]{1,120}$/.test(routine.triggerEvent)) throw new Error("Routine trigger event must be a simple event type such as research.agent_budget.exhausted.");
+  if (routine.triggerEvent?.startsWith("routine.")) throw new Error("Routine triggers cannot subscribe to routine lifecycle events; this would permit self-triggering loops.");
 }
 
 export type ControllerAction = "pause" | "resume" | "stop";

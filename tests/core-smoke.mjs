@@ -3471,6 +3471,7 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     });
     assert.equal(routine.status, "active");
     assert.equal(routine.triggerEvent, "research.test");
+    assert.throws(() => store.createRoutine({ ...routine, id: "routine-loop", triggerEvent: "routine.created" }), /self-triggering loops/);
     assert.deepEqual(store.triggerRoutines("research.test", "2020-01-01T00:00:00.000Z"), []);
     const triggerAt = new Date(Date.now() + 1_000).toISOString();
     assert.deepEqual(store.triggerRoutines("research.test", triggerAt), [routine.id]);
