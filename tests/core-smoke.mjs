@@ -928,6 +928,9 @@ test("custom role contract revisions can be inspected and rolled back", () => {
     assert.equal(store.agentRoleAdmissionStatus("review specialist"), "review");
     assert.equal(store.eventsByType("agent.role.contract.rollback").length, 1);
     assert.throws(() => store.restoreAgentRoleContract("review specialist", 99), /No contract revision 99/);
+    store.setAgentRoleContract({ role: "cycle parent", parentRole: "research director", responsibility: "coordinate review", authority: "coordinate", reviewRequired: true, playbook: ["coordinate"] });
+    store.setAgentRoleContract({ role: "research specialist", parentRole: "cycle parent", responsibility: "research", authority: "investigate", reviewRequired: true, playbook: ["inspect"] });
+    assert.throws(() => store.setAgentRoleContract({ role: "cycle parent", parentRole: "research specialist", responsibility: "coordinate review", authority: "coordinate", reviewRequired: true, playbook: ["coordinate"] }), /cycle/);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

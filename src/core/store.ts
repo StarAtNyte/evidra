@@ -1650,6 +1650,13 @@ export class ResearchStore {
     if (!role || !responsibility || !["coordinate", "investigate", "validate", "execute", "repair"].includes(authority) || !playbook.length) throw new Error("Custom role contracts require a role, responsibility, supported authority, and at least one playbook step.");
     if (isBuiltInAgentRole(role)) throw new Error(`Built-in role '${role}' is defined by the Evidra contract and cannot be overwritten.`);
     if (parentRole === role) throw new Error("A role cannot report to itself.");
+    const visited = new Set<string>([role]);
+    let ancestor = parentRole;
+    while (ancestor) {
+      if (visited.has(ancestor)) throw new Error(`Role contract reporting line contains a cycle at '${ancestor}'.`);
+      visited.add(ancestor);
+      ancestor = this.agentRoleContract(ancestor)?.parentRole ?? null;
+    }
     const updatedAt = new Date().toISOString();
     const contract: PersistedAgentRoleContract = { role, parentRole, responsibility, authority, reviewRequired: input.reviewRequired !== false, playbook, updatedAt };
     this.db.prepare(`INSERT INTO agent_controls (role, paused, terminated, admitted, admission_status, contract_json, reason, updated_at) VALUES (?, 0, 0, 0, 'review', ?, ?, ?) ON CONFLICT(role) DO UPDATE SET contract_json = excluded.contract_json, reason = excluded.reason, updated_at = excluded.updated_at`).run(role, JSON.stringify(contract), reason.trim().slice(0, 500) || "operator contract update", updatedAt);
