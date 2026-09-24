@@ -359,9 +359,9 @@ test("durable research state and queue survive store reopen", () => {
     assert.equal(reopened.project()?.id, "p1");
     assert.equal(reopened.campaign()?.goal, "test");
     assert.equal(reopened.agentLanes().find((lane) => lane.role === "research director")?.status, "running");
-    assert.equal(reopened.queueTasks()[0].status, "completed");
-    assert.equal(reopened.queueTasks()[0].goalId, "goal-1");
-    assert.equal(reopened.queueTasks()[0].parentTaskId, "task-parent");
+    assert.equal(reopened.queueTasks().find((task) => task.id === "task-1")?.status, "completed");
+    assert.equal(reopened.queueTasks().find((task) => task.id === "task-1")?.goalId, "goal-1");
+    assert.equal(reopened.queueTasks().find((task) => task.id === "task-1")?.parentTaskId, "task-parent");
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

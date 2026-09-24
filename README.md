@@ -312,7 +312,9 @@ Implemented today:
 - external agent heartbeats: authenticated workers can emit `external.agent.heartbeat` with a role, lease, provider, model, and status; Evidra updates durable health only for the owning lease and rejects fresh-lease impersonation, allowing heterogeneous agents to be monitored without granting them controller authority;
 - external queue workers: the authenticated listener also exposes owner-checked `/tasks/claim`, `/tasks/heartbeat`, and `/tasks/complete` endpoints, so outside runtimes can execute durable Evidra tasks while dependencies, retries, and audit events remain controller-owned;
 
-External worker loop:
+External worker loop. For least privilege, start the bridge with
+`--task-kinds research.lane` (or another explicit queue family) when the
+external runtime should not see every controller task:
 
 ```bash
 BASE=http://127.0.0.1:4311

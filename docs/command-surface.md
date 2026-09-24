@@ -116,6 +116,8 @@ payload is stored as a redacted wake-up signal rather than research evidence:
 evidra event emit external.github.push --payload '{"branch":"main"}' --idempotency-key push-123
 /event emit external.ci.completed {"run":"1234","status":"success"}
 evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN"
+# Restrict an external worker bridge to one queue family:
+evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" --task-kinds research.lane
 ```
 
 `event serve` accepts `POST /events` with `{ "type": "external.ci.completed",

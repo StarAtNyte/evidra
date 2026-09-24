@@ -2236,12 +2236,16 @@ event.command("serve")
   .option("--port <port>", "HTTP port", "4311")
   .option("--host <host>", "bind address; loopback is the default", "127.0.0.1")
   .option("--token <token>", "Bearer token; required for non-loopback hosts", process.env.EVIDRA_EVENT_TOKEN)
+  .option("--task-kinds <kinds>", "comma-separated queue kinds allowed to external workers; unset means all kinds")
   .description("Run an authenticated local webhook listener for external events")
-  .action(async (options: { port: string; host: string; token?: string }) => {
+  .action(async (options: { port: string; host: string; token?: string; taskKinds?: string }) => {
     const port = Number.parseInt(options.port, 10);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Event server port must be an integer between 1 and 65535.");
     const loopback = options.host === "127.0.0.1" || options.host === "localhost" || options.host === "::1";
     if (!loopback && !options.token?.trim()) throw new Error("A token is required when the event server is not bound to loopback.");
+    const parsedTaskKinds = options.taskKinds?.split(",").map((kind) => kind.trim()).filter(Boolean);
+    const allowedTaskKinds = parsedTaskKinds?.length ? parsedTaskKinds : undefined;
+    if (allowedTaskKinds?.some((kind) => kind.length > 120)) throw new Error("External worker task kinds must be at most 120 characters each.");
     const server = createServer((request, response) => {
       const headers = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" };
       if (options.token?.trim() && request.headers.authorization !== `Bearer ${options.token.trim()}`) { response.writeHead(401, headers); response.end(JSON.stringify({ error: "invalid bearer token" })); return; }
@@ -2274,7 +2278,8 @@ event.command("serve")
             if (taskPath === "/tasks/claim") {
               const kinds = parsed.kinds === undefined ? undefined : Array.isArray(parsed.kinds) && parsed.kinds.length <= 16 && parsed.kinds.every((kind) => typeof kind === "string" && kind.length <= 120) ? parsed.kinds as string[] : undefined;
               if (parsed.kinds !== undefined && !kinds) throw new Error("kinds must be an array of at most 16 strings.");
-              const task = store.claimNextTask(kinds, workerId);
+              if (allowedTaskKinds && kinds?.some((kind) => !allowedTaskKinds.includes(kind))) throw new Error("Requested task kind is outside this worker bridge's allowed scope.");
+              const task = store.claimNextTask(kinds ?? allowedTaskKinds, workerId);
               store.close();
               response.writeHead(200, headers);
               response.end(JSON.stringify({ ok: true, task: task ?? null }));
@@ -2290,6 +2295,9 @@ event.command("serve")
               return;
             }
             if (!(typeof parsed.status === "string" && ["completed", "failed", "cancelled"].includes(parsed.status))) throw new Error("Task completion status must be completed, failed, or cancelled.");
+            const currentTask = store.queueTasks().find((task) => task.id === taskId);
+            if (!currentTask) throw new Error(`Unknown task '${taskId}'.`);
+            if (allowedTaskKinds && !allowedTaskKinds.includes(currentTask.kind)) throw new Error("Task is outside this worker bridge's allowed scope.");
             const taskPayload = parsed.payload === undefined ? undefined : parseExternalEventPayload(JSON.stringify(parsed.payload));
             const accepted = store.completeClaimedTask(taskId, workerId, parsed.status as "completed" | "failed" | "cancelled", taskPayload);
             store.close();
