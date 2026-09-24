@@ -860,6 +860,17 @@ for (const action of ["pause", "resume"] as const) {
     store.close();
   });
 }
+agents.command("restart <role>").description("Reset a failed, blocked, or idle role for the next safe allocation").action((role: string) => {
+  const store = new ResearchStore(statePath);
+  const lane = store.agentLanes().find((entry) => entry.role === role);
+  if (!lane) { store.close(); throw new Error(`Unknown agent role '${role}'.`); }
+  if (lane.status === "running") { store.close(); throw new Error(`Role '${role}' is still running. Interrupt or pause the campaign before restarting it.`); }
+  store.setAgentPause(role, false, "operator restart request");
+  store.updateAgentLane({ role, status: "idle", provider: lane.provider, model: lane.model, task: null, error: null, leaseId: null });
+  store.appendEvent("research.agent.restarted", { role, previousStatus: lane.status, reason: "operator CLI request" });
+  store.close();
+  console.log(`Role ${role} reset and available for the next safe allocation.`);
+});
 agents.command("message <role> <message>").description("Queue a durable directive for one specialist role").action((role: string, message: string) => {
   const store = new ResearchStore(statePath);
   const directive = store.enqueueAgentDirective(role, message);

@@ -379,6 +379,7 @@ Implemented today:
 - project-local runtime guidance: an optional bounded `EVIDRA.md` or `.evidra/instructions.md` is injected as hashed operator context for research lanes and directors, explicitly separated from evidence and unable to override deterministic gates;
 - role-specific skills: `.evidra/roles/<role>.md` adds bounded, hashed instructions to one specialist’s prompt (for example `validation-scientist.md`) without changing permissions, validation gates, or evidence status;
 - explicit agent evaluation: `evidra agents evaluate` or `/agents evaluate` scores observed role trajectories and persists bounded preserve/coach/observe interventions; add `--json` for integrations;
+- safe role recovery: `evidra agents restart <role>` or `/agents restart <role>` resets failed, blocked, or idle roles for a future allocation while refusing to mutate a live worker;
 - the same typed failure pressure is applied to capability routing in both the CLI and TUI, increasing verification demand and constraining fan-out consistently across interfaces;
 - retryable research-lane transport and timeout failures select an untried configured provider/model route before repeating a route, while single-route setups retain bounded retries and preserve the original failure as evidence;
 - director synthesis receives the same route pool and applies the same bounded untried-route recovery, avoiding a full-cycle replay on a failed model;

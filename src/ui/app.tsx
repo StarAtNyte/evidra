@@ -246,7 +246,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/event": [["/event emit ", "Emit an external wake-up event"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
-  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents dispatch", "Show the latest lane dispatch plan"], ["/agents evaluate", "Evaluate roles and generate coaching"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
+  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents dispatch", "Show the latest lane dispatch plan"], ["/agents evaluate", "Evaluate roles and generate coaching"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents restart ", "Reset a failed or blocked specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
   "/limits": [["/limits auto", "Use local fallback, then wait"], ["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Require local fallback"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
@@ -3710,6 +3710,20 @@ export function App({ root }: { root: string }): React.JSX.Element {
       store.setAgentPause(role, pauseAgentMatch[1].toLowerCase() === "pause", "operator TUI request");
       append("assistant", `${pauseAgentMatch[1].toLowerCase() === "pause" ? "Pause requested" : "Pause cleared"} for ${role}. ${pauseAgentMatch[1].toLowerCase() === "pause" ? "A running lane will stop at its next safe boundary; future allocations remain blocked until resumed." : "Future allocations may use this role again."}`);
       store.close();
+      return;
+    }
+    const restartAgentMatch = request.match(/^\/agents\s+restart\s+(.+)$/i);
+    if (restartAgentMatch) {
+      const role = restartAgentMatch[1].trim();
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const lane = store.agentLanes().find((entry) => entry.role === role);
+      if (!lane) { store.close(); append("assistant", `Unknown agent role '${role}'.`); return; }
+      if (lane.status === "running") { store.close(); append("assistant", `Role '${role}' is still running. Interrupt or pause the campaign before restarting it.`); return; }
+      store.setAgentPause(role, false, "operator TUI restart request");
+      store.updateAgentLane({ role, status: "idle", provider: lane.provider, model: lane.model, task: null, error: null, leaseId: null });
+      store.appendEvent("research.agent.restarted", { role, previousStatus: lane.status, reason: "operator TUI request" });
+      store.close();
+      append("assistant", `Role ${role} reset and available for the next safe allocation.`);
       return;
     }
     const directivesAgentMatch = request.match(/^\/agents\s+directives(?:\s+(.+))?$/i);
