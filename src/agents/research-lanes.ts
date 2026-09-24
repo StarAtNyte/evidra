@@ -634,7 +634,7 @@ function openReviewTicket(options: ResearchLanesOptions, role: string, objective
   if (!claimed) throw new Error(`Research ${role} review ticket could not be claimed.`);
   const heartbeat = setInterval(() => {
     const live = new ResearchStore(options.storePath);
-    live.heartbeatTask(id, ownerId);
+    live.heartbeatTask(id, ownerId, claimed.claimToken ?? undefined);
     live.close();
   }, 15_000);
   heartbeat.unref?.();
@@ -903,7 +903,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     try {
       const store = new ResearchStore(options.storePath);
       store.heartbeatAgentLane(role, leaseId);
-      store.heartbeatTask(laneTaskId, leaseId);
+      store.heartbeatTask(laneTaskId, leaseId, ticket.claimToken ?? undefined);
       store.close();
     } catch { /* telemetry must not turn a valid lane into a failure */ }
   }, 15_000);

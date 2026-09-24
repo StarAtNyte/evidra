@@ -1265,7 +1265,7 @@ benchmark.command("retest")
       throw new Error(`Stored harness retest protocol has insufficient independent coverage:\n${retestCoverage.issues.map((issue) => `- ${issue}`).join("\n")}`);
     }
     const benchmarkWorkspace = options.workspace ? resolve(options.workspace) : root;
-    const heartbeat = setInterval(() => { retestStore.heartbeatTask(taskId); }, 30_000);
+    const heartbeat = setInterval(() => { retestStore.heartbeatTask(taskId, claimed.ownerId ?? undefined, claimed.claimToken ?? undefined); }, 30_000);
     try {
       const targetComponentIds = [...new Set(arms.filter((arm) => arm.harness === challenger).flatMap((arm) => arm.componentIds ?? []))];
       const changePresence = assessHarnessChangePresence(payload.baselineComponents, inventoryHarnessComponents(benchmarkWorkspace), targetComponentIds);
@@ -3700,13 +3700,14 @@ research
       const cycleTaskId = `task_research_cycle_${cycle}_${randomUUID()}`;
       const cycleOwnerId = `controller-cycle-${randomUUID()}`;
       store.enqueueTask({ id: cycleTaskId, kind: "research.cycle", priority: 10, goalId: phaseGoal?.id ?? null, payload: { cycle, objective: campaign.goal, ownerId: cycleOwnerId } });
-      if (!store.claimTask(cycleTaskId, ["research.cycle"], cycleOwnerId)) {
+      const cycleTicket = store.claimTask(cycleTaskId, ["research.cycle"], cycleOwnerId);
+      if (!cycleTicket) {
         store.close();
         throw new Error(`Research cycle ticket '${cycleTaskId}' could not be claimed.`);
       }
       const cycleHeartbeat = setInterval(() => {
         const heartbeatStore = new ResearchStore(statePath);
-        heartbeatStore.heartbeatTask(cycleTaskId, cycleOwnerId);
+        heartbeatStore.heartbeatTask(cycleTaskId, cycleOwnerId, cycleTicket.claimToken ?? undefined);
         heartbeatStore.close();
       }, 15_000);
       cycleHeartbeat.unref?.();
