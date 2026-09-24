@@ -10,6 +10,7 @@ export interface QueueWorkerOptions {
   retryDelayMs?: (task: QueuedTask, error: unknown) => number;
   pollIntervalMs?: number;
   kinds?: string[];
+  workerId?: string;
 }
 
 export type QueueHandler = (task: QueuedTask, signal: AbortSignal) => Promise<unknown>;
@@ -23,7 +24,7 @@ export class QueueWorker {
   private readonly pollIntervalMs: number;
   private readonly retryDelayMs: (task: QueuedTask, error: unknown) => number;
   private readonly kinds?: string[];
-  private readonly workerId = `queue-worker-${randomUUID()}`;
+  private readonly workerId: string;
   private readonly active = new Set<Promise<void>>();
   private readonly abortController = new AbortController();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -37,6 +38,7 @@ export class QueueWorker {
     this.pollIntervalMs = Math.max(50, options.pollIntervalMs ?? 1_000);
     this.retryDelayMs = options.retryDelayMs ?? ((task) => Math.min(60_000, 1_000 * 2 ** Math.max(0, task.attempts - 1)));
     this.kinds = options.kinds?.length ? [...options.kinds] : undefined;
+    this.workerId = options.workerId?.trim() || `queue-worker-${randomUUID()}`;
   }
 
   async runOnce(): Promise<void> {

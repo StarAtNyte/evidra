@@ -60,6 +60,7 @@ export interface QueuedTask {
   availableAt: string;
   claimedAt: string | null;
   ownerId: string | null;
+  assigneeId: string | null;
   goalId: string | null;
   parentTaskId: string | null;
   dependsOn: string[];
@@ -460,6 +461,7 @@ export class ResearchStore {
         owner_id TEXT,
         goal_id TEXT,
         parent_task_id TEXT,
+        assignee_id TEXT,
         depends_on_json TEXT NOT NULL DEFAULT '[]',
         updated_at TEXT NOT NULL
       );
@@ -546,6 +548,7 @@ export class ResearchStore {
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN owner_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN goal_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN parent_task_id TEXT"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE work_queue ADD COLUMN assignee_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN started_at TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN budget_seconds REAL"); } catch { /* already migrated */ }
@@ -1459,15 +1462,15 @@ export class ResearchStore {
     return visit(taskId, []);
   }
 
-  enqueueTask(task: { id: string; kind: string; priority: number; payload: unknown; availableAt?: string; goalId?: string | null; parentTaskId?: string | null; dependsOn?: string[] }): void {
+  enqueueTask(task: { id: string; kind: string; priority: number; payload: unknown; availableAt?: string; assigneeId?: string | null; goalId?: string | null; parentTaskId?: string | null; dependsOn?: string[] }): void {
     const now = new Date().toISOString();
     const dependsOn = [...new Set((task.dependsOn ?? []).filter((id) => id.trim()))];
     const cycle = this.dependencyCycle(task.id, dependsOn);
     if (cycle) throw new Error(`Queue task '${task.id}' creates a dependency cycle: ${cycle.join(" -> ")}`);
     this.db.prepare(`
-      INSERT OR IGNORE INTO work_queue (id, kind, priority, status, payload_json, attempts, available_at, claimed_at, owner_id, goal_id, parent_task_id, depends_on_json, updated_at)
-      VALUES (?, ?, ?, 'queued', ?, 0, ?, NULL, NULL, ?, ?, ?, ?)
-    `).run(task.id, task.kind, task.priority, safeJson(task.payload), task.availableAt ?? now, task.goalId ?? null, task.parentTaskId ?? null, safeJson(dependsOn), now);
+      INSERT OR IGNORE INTO work_queue (id, kind, priority, status, payload_json, attempts, available_at, claimed_at, owner_id, assignee_id, goal_id, parent_task_id, depends_on_json, updated_at)
+      VALUES (?, ?, ?, 'queued', ?, 0, ?, NULL, NULL, ?, ?, ?, ?, ?)
+    `).run(task.id, task.kind, task.priority, safeJson(task.payload), task.availableAt ?? now, task.assigneeId ?? null, task.goalId ?? null, task.parentTaskId ?? null, safeJson(dependsOn), now);
     this.appendEvent("queue.enqueued", task);
   }
 
@@ -1632,8 +1635,8 @@ export class ResearchStore {
       ? this.db.prepare("SELECT * FROM work_queue WHERE status = ? ORDER BY (priority + MIN(3.0, MAX(0.0, (julianday(?) - julianday(available_at)) * 24.0))) DESC, available_at ASC").all(status, now)
       : status
       ? this.db.prepare("SELECT * FROM work_queue WHERE status = ? ORDER BY priority DESC, available_at ASC").all(status)
-      : this.db.prepare("SELECT * FROM work_queue ORDER BY updated_at DESC").all()) as Array<{ id: string; kind: string; priority: number; status: string; payload_json: string; attempts: number; available_at: string; claimed_at: string | null; owner_id: string | null; goal_id: string | null; parent_task_id: string | null; depends_on_json: string; updated_at: string }>;
-    return rows.map((row) => ({ id: row.id, kind: row.kind, priority: row.priority, status: row.status, payload: JSON.parse(row.payload_json), attempts: row.attempts, availableAt: row.available_at, claimedAt: row.claimed_at, ownerId: row.owner_id, goalId: row.goal_id, parentTaskId: row.parent_task_id, dependsOn: JSON.parse(row.depends_on_json || "[]") as string[], updatedAt: row.updated_at }));
+      : this.db.prepare("SELECT * FROM work_queue ORDER BY updated_at DESC").all()) as Array<{ id: string; kind: string; priority: number; status: string; payload_json: string; attempts: number; available_at: string; claimed_at: string | null; owner_id: string | null; assignee_id: string | null; goal_id: string | null; parent_task_id: string | null; depends_on_json: string; updated_at: string }>;
+    return rows.map((row) => ({ id: row.id, kind: row.kind, priority: row.priority, status: row.status, payload: JSON.parse(row.payload_json), attempts: row.attempts, availableAt: row.available_at, claimedAt: row.claimed_at, ownerId: row.owner_id, assigneeId: row.assignee_id, goalId: row.goal_id, parentTaskId: row.parent_task_id, dependsOn: JSON.parse(row.depends_on_json || "[]") as string[], updatedAt: row.updated_at }));
   }
 
   /** Resolve a bounded parent-task chain for audit, display, and recovery. */
@@ -1693,10 +1696,12 @@ export class ResearchStore {
       // boost. One point per hour, capped at three, prevents a steady stream
       // of newer high-priority tickets from starving durable background work.
       const order = "(priority + MIN(3.0, MAX(0.0, (julianday(?) - julianday(available_at)) * 24.0))) DESC, available_at ASC";
+      const assignment = ownerId ? " AND (assignee_id IS NULL OR assignee_id = ?)" : " AND assignee_id IS NULL";
       const query = kinds?.length
-        ? `SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ? AND kind IN (${kinds.map(() => "?").join(",")}) ORDER BY ${order} LIMIT 1`
-        : `SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ? ORDER BY ${order} LIMIT 1`;
-      const rows = (kinds?.length ? this.db.prepare(query.replace("LIMIT 1", "")).all(now, ...kinds, now) : this.db.prepare(query.replace("LIMIT 1", "")).all(now, now)) as Array<{ id: string }>;
+        ? `SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ?${assignment} AND kind IN (${kinds.map(() => "?").join(",")}) ORDER BY ${order} LIMIT 1`
+        : `SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ?${assignment} ORDER BY ${order} LIMIT 1`;
+      const params = ownerId ? (kinds?.length ? [now, ownerId, ...kinds, now] : [now, ownerId, now]) : (kinds?.length ? [now, ...kinds, now] : [now, now]);
+      const rows = this.db.prepare(query.replace("LIMIT 1", "")).all(...params) as Array<{ id: string }>;
       const row = rows.find((candidate) => this.taskDependenciesReady(candidate.id));
       if (!row) return undefined;
       this.db.prepare("UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, owner_id = ?, updated_at = ? WHERE id = ? AND status = 'queued'").run(now, ownerId ?? null, now, row.id);
@@ -1712,9 +1717,10 @@ export class ResearchStore {
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
       const kindClause = kinds?.length ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
+      const assignmentClause = ownerId ? " AND (assignee_id IS NULL OR assignee_id = ?)" : " AND assignee_id IS NULL";
       if (!this.taskDependenciesReady(id)) return undefined;
-      const result = this.db.prepare(`UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, owner_id = ?, updated_at = ? WHERE id = ? AND status = 'queued' AND available_at <= ?${kindClause}`)
-        .run(now, ownerId ?? null, now, id, now, ...(kinds ?? []));
+      const result = this.db.prepare(`UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, owner_id = ?, updated_at = ? WHERE id = ? AND status = 'queued' AND available_at <= ?${assignmentClause}${kindClause}`)
+        .run(now, ownerId ?? null, now, id, now, ...(ownerId ? [ownerId] : []), ...(kinds ?? []));
       if (result.changes !== 1) return undefined;
       return this.queueTasks().find((task) => task.id === id);
     });
@@ -1727,6 +1733,16 @@ export class ResearchStore {
     const now = new Date().toISOString();
     this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), owner_id = CASE WHEN ? IN ('completed', 'failed', 'cancelled') THEN NULL ELSE owner_id END, updated_at = ? WHERE id = ?").run(status, payload === undefined ? null : safeJson(payload), status, now, id);
     this.appendEvent(`queue.${status}`, { id, payload });
+  }
+
+  /** Assign or unassign queued work without changing its live claim owner. */
+  assignTask(id: string, assigneeId: string | null): boolean {
+    const normalized = assigneeId?.trim() || null;
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE work_queue SET assignee_id = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'failed')").run(normalized, now, id);
+    if (result.changes !== 1) return false;
+    this.appendEvent("queue.assigned", { id, assigneeId: normalized });
+    return true;
   }
 
   /** Refresh a live claim so stale-task recovery cannot duplicate a healthy worker. */

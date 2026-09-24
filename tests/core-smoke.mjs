@@ -3519,6 +3519,36 @@ test("queue heartbeats are owned by the claiming worker", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("assigned queue work is claimable only by its designated worker", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-assignment-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "assigned", kind: "research.lane", priority: 1, assigneeId: "worker-a", payload: {} });
+    store.enqueueTask({ id: "open", kind: "research.lane", priority: 1, payload: {} });
+    assert.equal(store.claimNextTask(["research.lane"], "worker-b")?.id, "open");
+    assert.equal(store.claimNextTask(["research.lane"], "worker-a")?.id, "assigned");
+    assert.equal(store.queueTasks().find((task) => task.id === "assigned")?.assigneeId, "worker-a");
+    store.close();
+    const reopened = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    assert.equal(reopened.queueTasks().find((task) => task.id === "assigned")?.assigneeId, "worker-a");
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("queue assignment can be changed only for recoverable work", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-reassign-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "reassign", kind: "research.lane", priority: 1, assigneeId: "worker-a", payload: {} });
+    assert.equal(store.assignTask("reassign", "worker-b"), true);
+    assert.equal(store.queueTasks().find((task) => task.id === "reassign")?.assigneeId, "worker-b");
+    assert.equal(store.claimNextTask(undefined, "worker-a")?.id, undefined);
+    assert.equal(store.claimNextTask(undefined, "worker-b")?.id, "reassign");
+    assert.equal(store.assignTask("reassign", "worker-c"), false);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue dependencies prevent work from running before prerequisites", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-dependencies-"));
   try {

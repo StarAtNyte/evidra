@@ -168,6 +168,13 @@ POST /tasks/complete  {"workerId":"agent-17","taskId":"task-123","status":"compl
 
 Claim, heartbeat, and completion all enforce the queue owner. A stale or foreign
 worker receives a conflict response and cannot overwrite another worker’s task.
+Tasks may also be pre-assigned to a worker with `assigneeId`; an assigned task is
+invisible to other workers at claim time, while unassigned tasks remain shared.
+The assignment is durable and is separate from the live claim owner, so a
+crashed assigned worker can be recovered and explicitly reassigned without
+silently handing the task to a different worker. Operators can use
+`evidra queue assign <task-id> <worker-id>` or omit the worker ID to clear the
+assignment; live claims cannot be changed underneath a running worker.
 For scoped identity, configure `--worker-tokens 'agent-17=secret'` (or
 `EVIDRA_WORKER_TOKENS`). Task calls must include `X-Evidra-Worker-Id`,
 `X-Evidra-Worker-Token`, and the same `workerId` in the JSON body.

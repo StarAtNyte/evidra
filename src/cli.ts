@@ -2242,10 +2242,17 @@ queue.command("status").option("--json", "emit machine-readable queue state").ac
     const lineage = store.taskLineage(task.id);
     const brokenLineage = lineage && (lineage.cycle || lineage.truncated || lineage.missingParentIds.length) ? ` · broken-lineage${lineage.missingParentIds.length ? ` missing:${lineage.missingParentIds.join(",")}` : ""}` : "";
     const aging = task.effectivePriority > task.priority ? ` (aged ${task.effectivePriority})` : "";
-    return `${task.status} ${task.id} · ${task.kind} · priority ${task.priority}${aging} · attempts ${task.attempts}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${brokenLineage}${blocked}`;
+    return `${task.status} ${task.id} · ${task.kind} · priority ${task.priority}${aging} · attempts ${task.attempts}${task.assigneeId ? ` · assigned ${task.assigneeId}` : ""}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${brokenLineage}${blocked}`;
   }).join("\n") : "Research queue is empty.");
   if (recoveries.length) console.log(`\nRecovery actions\n${recoveries.slice().reverse().slice(0, 8).map((entry) => { const value = entry && typeof entry === "object" ? entry as Record<string, unknown> : {}; return `  ${String(value.taskId ?? "task")} · ${String(value.failureClass ?? "unknown")} · ${String(value.route ?? "change_route")} · ${String(value.action ?? "inspect failure")}`; }).join("\n")}`);
   store.close();
+});
+queue.command("assign <id> [workerId]").description("Assign queued work to one worker, or clear the assignment with no workerId").action((id: string, workerId?: string) => {
+  const store = new ResearchStore(statePath);
+  const assigned = store.assignTask(id, workerId ?? null);
+  store.close();
+  if (!assigned) throw new Error(`Task '${id}' is missing or not queued/failed; only recoverable work can be assigned.`);
+  console.log(workerId ? `Assigned ${id} to ${workerId}.` : `Cleared assignment for ${id}.`);
 });
 queue.command("recover [id]").option("--route <route>", "materially changed execution route").option("--note <note>", "why this route is different").action((id: string | undefined, options: { route?: string; note?: string }) => {
   const store = new ResearchStore(statePath);
