@@ -56,6 +56,7 @@ export type CampaignOrganization = {
     misalignedLive: string[];
     unbudgetedLive: string[];
     foreignCampaignLive: string[];
+    legacyCampaignLive: string[];
   };
 };
 
@@ -119,11 +120,12 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
   // A goal can be intentionally resumed, but a fresh campaign with the same
   // objective must not inherit the previous run's queue usage or budget.
   // Tasks created before campaign identity was introduced remain visible as
-  // legacy work; new tasks are strictly scoped by their run identity.
+  // legacy work, but are never counted as current-run work once a campaign
+  // has an explicit identity.
   const taskBelongsToCampaign = (task: { payload: unknown }): boolean => {
     if (!campaignStartedAt) return true;
     const taskStartedAt = taskCampaignStartedAt(task);
-    return taskStartedAt === null || taskStartedAt === campaignStartedAt;
+    return taskStartedAt === campaignStartedAt;
   };
   const campaignTasks = tasks.filter(taskBelongsToCampaign);
   const campaignGoals = goals.filter(belongsToCampaign);
@@ -181,6 +183,7 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
     const taskStartedAt = taskCampaignStartedAt(task);
     return taskStartedAt !== null && taskStartedAt !== campaignStartedAt;
   });
+  const legacyCampaignLive = tasks.filter((task) => campaignStartedAt !== null && ["queued", "running"].includes(task.status) && taskCampaignStartedAt(task) === null);
   const activeQueue = alignedTasks.filter((task) => task.status === "running" || task.status === "assigned").length;
   const queuedQueue = alignedTasks.filter((task) => task.status === "queued").length;
   const blockedQueue = alignedTasks.filter((task) => task.status === "blocked" || task.approvalStatus === "pending").length;
@@ -209,6 +212,7 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
       misalignedLive: liveTasks.filter((task) => Boolean(task.goalId) && !phaseById.has(task.goalId!)).map((task) => task.id).slice(0, 64),
       unbudgetedLive: liveTasks.filter((task) => task.tokenBudget === null && task.costBudgetUsd === null).map((task) => task.id).slice(0, 64),
       foreignCampaignLive: foreignCampaignLive.map((task) => task.id).slice(0, 64),
+      legacyCampaignLive: legacyCampaignLive.map((task) => task.id).slice(0, 64),
     },
   };
 }
@@ -225,7 +229,7 @@ export function formatCampaignOrganization(map: CampaignOrganization): string {
     `  progress: ${map.progress.completedPhases}/${map.progress.totalPhases} phases · ${(map.progress.ratio * 100).toFixed(0)}% · ${map.progress.status}${map.progress.activePhase ? ` · active ${map.progress.activePhase}` : ""}`,
     `  work: ${map.totals.activeQueue} active · ${map.totals.queuedQueue} queued · ${map.totals.completedQueue} done · ${map.totals.queue} aligned${map.totals.unscopedQueue ? ` · ${map.totals.unscopedQueue} unscoped` : ""}${map.totals.blockedQueue ? ` · ${map.totals.blockedQueue} blocked` : ""}${map.totals.failedQueue ? ` · ${map.totals.failedQueue} failed` : ""}`,
     `  usage: ${map.totals.usage.inputTokens + map.totals.usage.outputTokens} tokens · $${map.totals.usage.costUsd.toFixed(4)}${map.totals.budget.tokenUtilization !== null ? ` · token budget ${(map.totals.budget.tokenUtilization * 100).toFixed(0)}%` : ""}${map.totals.budget.costUtilization !== null ? ` · cost budget ${(map.totals.budget.costUtilization * 100).toFixed(0)}%` : ""}`,
-    `  accountability: ${map.accountability.unassignedRunning.length} ownerless running · ${map.accountability.unscopedLive.length} unscoped · ${map.accountability.misalignedLive.length} mis-scoped · ${map.accountability.unbudgetedLive.length} unbudgeted${map.accountability.foreignCampaignLive.length ? ` · ${map.accountability.foreignCampaignLive.length} foreign campaign` : ""}`,
+    `  accountability: ${map.accountability.unassignedRunning.length} ownerless running · ${map.accountability.unscopedLive.length} unscoped · ${map.accountability.misalignedLive.length} mis-scoped · ${map.accountability.unbudgetedLive.length} unbudgeted${map.accountability.foreignCampaignLive.length ? ` · ${map.accountability.foreignCampaignLive.length} foreign campaign` : ""}${map.accountability.legacyCampaignLive.length ? ` · ${map.accountability.legacyCampaignLive.length} legacy campaign` : ""}`,
     "",
     "Phase ownership",
     ...(phaseLines.length ? phaseLines : ["  No phase goals recorded."]),

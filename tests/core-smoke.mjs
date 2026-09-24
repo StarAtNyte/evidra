@@ -999,6 +999,7 @@ test("campaign run identity isolates queue usage and hard-stop cancellation", ()
     store.enqueueTask({ id: "current-running", kind: "research.lane", priority: 1, goalId: "phase-current", payload: { campaignStartedAt: currentRun, role: "current lane" }, tokenBudget: 100, costBudgetUsd: 1 });
     store.enqueueTask({ id: "old-queued", kind: "research.lane", priority: 1, goalId: "phase-current", payload: { campaignStartedAt: oldRun, role: "old queued" } });
     store.enqueueTask({ id: "current-queued", kind: "research.lane", priority: 1, goalId: "phase-current", payload: { campaignStartedAt: currentRun, role: "current queued" } });
+    store.enqueueTask({ id: "legacy-queued", kind: "research.lane", priority: 1, goalId: "phase-current", payload: { role: "legacy queued" } });
     const oldClaim = store.claimTask("old-completed", undefined, "old-worker");
     assert.ok(oldClaim);
     assert.equal(store.recordQueueUsage({ taskId: "old-completed", actorId: "old-worker", claimToken: oldClaim?.claimToken, inputTokens: 90, outputTokens: 10, costUsd: 0.9 }), true);
@@ -1011,6 +1012,8 @@ test("campaign run identity isolates queue usage and hard-stop cancellation", ()
     assert.equal(map.totals.usage.outputTokens, 1);
     assert.equal(map.accountability.foreignCampaignLive.includes("old-queued"), true);
     assert.equal(map.accountability.foreignCampaignLive.includes("current-queued"), false);
+    assert.equal(map.accountability.legacyCampaignLive.includes("legacy-queued"), true);
+    assert.equal(map.totals.queue, 2);
     assert.deepEqual(store.cancelQueuedTasksForCampaign(currentRun), ["current-queued"]);
     assert.equal(store.queueTasks().find((task) => task.id === "old-queued")?.status, "queued");
     assert.equal(store.queueTasks().find((task) => task.id === "current-queued")?.status, "cancelled");
