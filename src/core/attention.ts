@@ -53,6 +53,12 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
   for (const lane of store.agentLanes().filter((entry) => entry.status === "blocked" || entry.status === "failed").slice(0, 24)) {
     items.push({ id: `agent:${lane.role}`, severity: "critical", kind: "agent", summary: `${lane.role} · ${lane.status}${lane.error ? ` · ${lane.error.slice(0, 160)}` : ""}`, next: "/agents status" });
   }
+  for (const lane of store.agentLanes().filter((entry) => entry.status === "running").slice(0, 24)) {
+    const heartbeat = lane.heartbeatAt ? Date.parse(lane.heartbeatAt) : Number.NaN;
+    if (!Number.isFinite(heartbeat) || Date.now() - heartbeat > 120_000) {
+      items.push({ id: `agent-stale:${lane.role}`, severity: "critical", kind: "agent-stale", summary: `${lane.role} · running without a fresh heartbeat`, next: "/agents status" });
+    }
+  }
   for (const worker of store.externalWorkers(64).filter((entry) => entry.health === "stale" && entry.status === "running").slice(0, 24)) {
     items.push({ id: `worker:${worker.workerId}`, severity: "critical", kind: "worker-stale", summary: `${worker.workerId} · ${worker.role} · heartbeat stale`, next: "/agents status" });
   }

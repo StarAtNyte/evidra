@@ -11,6 +11,15 @@ export type AgentRoleContract = {
   playbook: readonly string[];
 };
 
+export type AgentLaneHealth = "healthy" | "stale" | "idle" | "unstarted";
+
+/** Keep operator health semantics identical across CLI, dashboard, and inbox. */
+export function agentLaneHealth(status: string, heartbeatAt: string | null, now = Date.now()): AgentLaneHealth {
+  if (status !== "running") return status === "idle" ? "idle" : "unstarted";
+  const heartbeat = heartbeatAt ? Date.parse(heartbeatAt) : Number.NaN;
+  return Number.isFinite(heartbeat) && now - heartbeat <= 120_000 ? "healthy" : "stale";
+}
+
 /** A small, domain-neutral org chart for research and challenge campaigns. */
 export const AGENT_ROLE_CONTRACTS: readonly AgentRoleContract[] = [
   { role: "research director", parentRole: null, responsibility: "maintain the ultimate objective, allocate work, and decide the next evidence-backed action", authority: "coordinate", playbook: ["state the active goal and phase", "allocate independent work with a reason", "choose only evidence-backed next actions", "stop or pause when a durable gate requires it"] },
@@ -52,17 +61,17 @@ export function agentToolPermission(role: string, toolName: string): { allowed: 
   return { allowed: false, reason: `Role '${role}' (${contract.authority}) is not authorized to use '${toolName}'; the research director must perform or explicitly route this action.` };
 }
 
-export function agentOrganization(store: ResearchStore): Array<AgentRoleContract & { status: string; task: string | null; budgetSeconds: number | null; usedSeconds: number; leaseId: string | null }> {
+export function agentOrganization(store: ResearchStore): Array<AgentRoleContract & { status: string; health: AgentLaneHealth; heartbeatAt: string | null; task: string | null; budgetSeconds: number | null; usedSeconds: number; leaseId: string | null }> {
   const lanes = new Map(store.agentLanes().map((lane) => [lane.role, lane]));
   const builtIn = AGENT_ROLE_CONTRACTS.map((contract) => {
     const lane = lanes.get(contract.role);
-    return { ...contract, reviewRequired: contract.reviewRequired === true, status: lane?.status ?? "unstarted", task: lane?.task ?? null, budgetSeconds: lane?.budgetSeconds ?? null, usedSeconds: lane?.usedSeconds ?? 0, leaseId: lane?.leaseId ?? null };
+    return { ...contract, reviewRequired: contract.reviewRequired === true, status: lane?.status ?? "unstarted", health: lane ? agentLaneHealth(lane.status, lane.heartbeatAt) : "unstarted" as const, heartbeatAt: lane?.heartbeatAt ?? null, task: lane?.task ?? null, budgetSeconds: lane?.budgetSeconds ?? null, usedSeconds: lane?.usedSeconds ?? 0, leaseId: lane?.leaseId ?? null };
   });
   const known = new Set(AGENT_ROLE_CONTRACTS.map((contract) => contract.role));
   const customRoles = [...lanes.keys()].filter((role) => !known.has(role)).sort((left, right) => left.localeCompare(right));
   return [...builtIn, ...customRoles.map((role) => {
     const lane = lanes.get(role)!;
-    return { ...agentRoleContract(role), status: lane.status, task: lane.task, budgetSeconds: lane.budgetSeconds, usedSeconds: lane.usedSeconds, leaseId: lane.leaseId };
+    return { ...agentRoleContract(role), status: lane.status, health: agentLaneHealth(lane.status, lane.heartbeatAt), heartbeatAt: lane.heartbeatAt, task: lane.task, budgetSeconds: lane.budgetSeconds, usedSeconds: lane.usedSeconds, leaseId: lane.leaseId };
   })];
 }
 

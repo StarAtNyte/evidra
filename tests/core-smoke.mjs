@@ -13,7 +13,7 @@ import { ResearchStore, queueEffectivePriority } from "../dist/core/store.js";
 import { approvalInbox } from "../dist/core/approvals.js";
 import { operatorAttention } from "../dist/core/attention.js";
 import { goalAlignment, pauseForGoalAlignment } from "../dist/core/goal-alignment.js";
-import { agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
+import { agentLaneHealth, agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "../dist/core/agent-evals.js";
 import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "../dist/core/external-events.js";
 import { createPortableBundle, PORTABLE_BUNDLE_TYPE, validatePortableBundle } from "../dist/core/portable-bundle.js";
@@ -385,6 +385,27 @@ test("durable research state and queue survive store reopen", () => {
     assert.equal(reopened.queueTasks().find((task) => task.id === "task-1")?.status, "completed");
     assert.equal(reopened.queueTasks().find((task) => task.id === "task-1")?.goalId, "goal-1");
     assert.equal(reopened.queueTasks().find((task) => task.id === "task-1")?.parentTaskId, "task-parent");
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("internal agent heartbeat health is shared with operator attention", () => {
+  const now = Date.parse("2026-09-25T00:00:00.000Z");
+  assert.equal(agentLaneHealth("running", "2026-09-24T23:59:30.000Z", now), "healthy");
+  assert.equal(agentLaneHealth("running", "2026-09-24T23:57:00.000Z", now), "stale");
+  assert.equal(agentLaneHealth("idle", null, now), "idle");
+  const root = mkdtempSync(join(tmpdir(), "evidra-attention-heartbeat-"));
+  try {
+    const db = join(root, "state.sqlite");
+    const store = new ResearchStore(db);
+    store.updateAgentLane({ role: "method researcher", status: "running", provider: "local", model: "test", task: "stale probe" });
+    store.close();
+    const raw = new Database(db);
+    raw.prepare("UPDATE agent_lanes SET heartbeat_at = ? WHERE role = ?").run("2020-01-01T00:00:00.000Z", "method researcher");
+    raw.close();
+    const reopened = new ResearchStore(db);
+    const attention = operatorAttention(reopened);
+    assert.ok(attention.items.some((item) => item.id === "agent-stale:method researcher"));
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
