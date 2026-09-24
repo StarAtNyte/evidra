@@ -4445,6 +4445,7 @@ test("authenticated external agent heartbeats preserve lease ownership", () => {
     assert.equal(store.recordExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "running", task: "inspect methods", capabilities: ["python", "gpu.cuda"] }).accepted, true);
     assert.deepEqual(store.externalWorkers()[0]?.capabilities, ["gpu.cuda", "python"]);
     assert.equal(store.externalWorkers()[0]?.health, "healthy");
+    assert.equal(store.externalWorkers()[0]?.admission, "approved");
     assert.equal(store.recordExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-b", provider: "bash", model: "external", status: "running" }).accepted, false);
     assert.equal(store.recordExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "idle", capabilities: ["python"] }).accepted, true);
     assert.deepEqual(store.externalWorkers()[0]?.capabilities, ["python"]);
@@ -4461,6 +4462,7 @@ test("authenticated external agent heartbeats preserve lease ownership", () => {
     assert.throws(() => store.setAgentRoleAdmission("model researcher", false), /approved by contract/);
     store.setAgentRoleAdmission("external geologist", true, "test approval");
     assert.equal(store.recordExternalAgentHeartbeat({ role: "external geologist", leaseId: "worker-custom", provider: "codex", model: "gpt-test", status: "running", capabilities: ["python"] }).accepted, true);
+    assert.equal(store.externalWorkers().find((worker) => worker.role === "external geologist")?.admission, "approved");
     assert.ok(store.eventsByType("agent.external_heartbeat.rejected").length >= 1);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
