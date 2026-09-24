@@ -1376,7 +1376,16 @@ export class ResearchStore {
     const normalizedRole = role.trim().slice(0, 120);
     const normalizedMessage = message.trim().slice(0, 1_000);
     if (!normalizedRole || !normalizedMessage) throw new Error("Directive outcome requires a role and message.");
-    if (!this.db.prepare("SELECT id FROM agent_directives WHERE id = ?").get(directiveId)) throw new Error(`Directive #${directiveId} does not exist.`);
+    const directive = this.db.prepare("SELECT role, applied_at, cancelled_at FROM agent_directives WHERE id = ?").get(directiveId) as { role: string; applied_at: string | null; cancelled_at: string | null } | undefined;
+    if (!directive) throw new Error(`Directive #${directiveId} does not exist.`);
+    if (directive.role !== normalizedRole) throw new Error(`Directive #${directiveId} belongs to '${directive.role}', not '${normalizedRole}'.`);
+    if (!directive.applied_at) throw new Error(`Directive #${directiveId} has not been applied at a safe boundary.`);
+    if (directive.cancelled_at) throw new Error(`Directive #${directiveId} was cancelled and cannot receive an outcome.`);
+    const existing = this.agentDirectiveOutcomes(256).find((outcome) => outcome.directiveId === directiveId);
+    if (existing) {
+      if (existing.role === normalizedRole && existing.status === status && existing.message === normalizedMessage) return;
+      throw new Error(`Directive #${directiveId} already has a terminal ${existing.status} outcome.`);
+    }
     this.appendEvent("agent.directive.outcome", { directiveId, role: normalizedRole, status, message: normalizedMessage });
   }
 

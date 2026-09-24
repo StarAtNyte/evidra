@@ -781,6 +781,8 @@ test("agent organization gives every lane a responsibility and reporting line", 
     store.recordAgentDirectiveOutcome(directive.id, "validation scientist", "completed", "split rechecked; no leakage found");
     assert.equal(store.agentDirectiveOutcomes()[0]?.directiveId, directive.id);
     assert.equal(store.agentDirectiveOutcomes()[0]?.status, "completed");
+    store.recordAgentDirectiveOutcome(directive.id, "validation scientist", "completed", "split rechecked; no leakage found");
+    assert.throws(() => store.recordAgentDirectiveOutcome(directive.id, "model researcher", "completed", "spoofed"), /belongs to/);
     const scoped = store.enqueueAgentDirective("validation scientist", "only apply to phase alpha", "phase-alpha");
     assert.equal(scoped.scopeKey, "phase-alpha");
     assert.equal(store.pendingAgentDirectives("validation scientist", "phase-beta").length, 0);
