@@ -8015,7 +8015,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal((await budgetUsageResponse.json()).error, "task token budget exhausted");
     const budgetHeartbeatResponse = await post("/tasks/heartbeat", { workerId: "worker-a", taskId: budgetTask.id, claimToken: budgetTask.claimToken }, token, "worker-a", "worker-secret");
     assert.equal(budgetHeartbeatResponse.status, 409);
-    assert.equal((await budgetHeartbeatResponse.json()).cancellation.reason, "task token budget exhausted");
+    assert.equal((await budgetHeartbeatResponse.json()).cancellation.reason, "task token or USD budget exhausted");
     const releaseStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     releaseStore.enqueueTask({ id: "bridge-release", kind: "research.lane", priority: 3, payload: {} });
     releaseStore.close();

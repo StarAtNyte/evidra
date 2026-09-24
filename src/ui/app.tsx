@@ -4192,6 +4192,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", "Usage: /queue recover <task-id> --route <changed-route> [--note <reason>]");
       } else {
         const tasks = store.queueTasks();
+        const queueControl = store.queueControl();
         const recoveries = store.eventsByType("queue.recovery_required", 8).slice().reverse();
         const queueText = tasks.length ? `Research queue\n${tasks.slice(0, 24).map((task) => {
           const readiness = store.taskReadiness(task.id);
@@ -4204,13 +4205,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const outputTokens = totals?.outputTokens ?? usage.reduce((sum, entry) => sum + entry.outputTokens, 0);
           const costUsd = totals?.costUsd ?? usage.reduce((sum, entry) => sum + (entry.costUsd ?? 0), 0);
           const usageSummary = inputTokens + outputTokens > 0 ? `usage ${inputTokens + outputTokens} tokens${costUsd > 0 ? ` · $${costUsd.toFixed(4)}` : ""}` : "";
-          const budgetSummary = task.tokenBudget === null ? "" : `budget ${inputTokens + outputTokens}/${task.tokenBudget}${inputTokens + outputTokens >= task.tokenBudget ? " exhausted" : ""}`;
+          const budgetSummary = task.tokenBudget === null && task.costBudgetUsd === null ? "" : `budget ${[task.tokenBudget === null ? "" : `${inputTokens + outputTokens}/${task.tokenBudget} tokens`, task.costBudgetUsd === null ? "" : `$${costUsd.toFixed(4)}/$${task.costBudgetUsd.toFixed(4)}`].filter(Boolean).join(" · ")}${store.queueUsageState(task.id)?.exhausted ? " exhausted" : ""}`;
           const deadlineSummary = task.deadlineAt ? `deadline ${task.deadlineAt}${Date.parse(task.deadlineAt) <= Date.now() ? " expired" : ""}` : "";
           const lineage = [taskRole ? `role ${taskRole}` : "", task.parentTaskId ? `parent ${task.parentTaskId}` : "", task.goalId ? `goal ${task.goalId}` : "", task.dependsOn.length ? `depends ${task.dependsOn.join(",")}` : "", task.assigneeId ? `assigned ${task.assigneeId}` : "", task.ownerId ? `owner ${task.ownerId}` : "", budgetSummary, deadlineSummary, usageSummary, latestActivity ? `last ${latestActivity.kind}: ${latestActivity.message.slice(0, 120)}` : ""].filter(Boolean).join(" · ");
           const aging = queueEffectivePriority(task) > task.priority ? ` (aged ${queueEffectivePriority(task)})` : "";
           return `${task.status === "running" ? "●" : task.status === "queued" ? "○" : task.status === "completed" ? "✓" : "✗"} ${task.id} · ${task.kind} · priority ${task.priority}${aging} · attempts ${task.attempts}${lineage ? `\n  ${lineage}` : ""}${blocked}`;
         }).join("\n")}` : "Research queue is empty.";
-        append("assistant", `${queueText}${recoveries.length ? `\n\nRecovery actions\n${recoveries.map((event) => { const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {}; return `  ${String(payload.taskId ?? "task")} · ${String(payload.failureClass ?? "unknown")} · ${String(payload.route ?? "change_route")} · ${String(payload.action ?? "inspect failure")}`; }).join("\n")}` : ""}`);
+        append("assistant", `${queueControl.paused ? `Queue paused${queueControl.reason ? `: ${queueControl.reason}` : ""}\n\n` : ""}${queueText}${recoveries.length ? `\n\nRecovery actions\n${recoveries.map((event) => { const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {}; return `  ${String(payload.taskId ?? "task")} · ${String(payload.failureClass ?? "unknown")} · ${String(payload.route ?? "change_route")} · ${String(payload.action ?? "inspect failure")}`; }).join("\n")}` : ""}`);
       }
       store.close();
       return;

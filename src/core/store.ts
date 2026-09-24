@@ -2140,7 +2140,7 @@ export class ResearchStore {
     const usageState = this.queueUsageState(taskId);
     const currentStatus = this.db.prepare("SELECT status FROM work_queue WHERE id = ?").get(taskId) as { status: string } | undefined;
     if (usageState?.exhausted && currentStatus?.status === "running") {
-      this.cancelTask(taskId, "task token budget exhausted", "budget");
+      this.cancelTask(taskId, "task token or USD budget exhausted", "budget");
     }
     return true;
   }
