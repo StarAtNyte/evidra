@@ -2698,7 +2698,9 @@ event.command("serve")
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
       const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
-      const bearerAuthenticated = !eventToken || request.headers.authorization === `Bearer ${eventToken}`;
+      const authorization = typeof request.headers.authorization === "string" ? request.headers.authorization : "";
+      const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
+      const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
       if ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated)) { response.writeHead(401, headers); response.end(JSON.stringify({ error: workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
