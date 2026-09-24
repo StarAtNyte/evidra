@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { appendFileSync, cpSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { dirname, join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
@@ -2228,6 +2228,12 @@ function parseWorkerTokenMap(raw: string | undefined): Map<string, string> {
   }
   return tokens;
 }
+function secretMatches(expected: string | undefined, actual: string): boolean {
+  if (expected === undefined) return false;
+  const expectedBytes = Buffer.from(expected, "utf8");
+  const actualBytes = Buffer.from(actual, "utf8");
+  return expectedBytes.length === actualBytes.length && timingSafeEqual(expectedBytes, actualBytes);
+}
 function recordExternalEvent(type: string, payload: Record<string, unknown>, source: string, idempotencyKey?: string): { triggered: string[]; deduplicated: boolean; heartbeatAccepted?: boolean } {
   const eventType = validateExternalEventType(type);
   const heartbeat = eventType === "external.agent.heartbeat" ? parseExternalAgentHeartbeat(payload) : undefined;
@@ -2277,7 +2283,7 @@ event.command("serve")
       const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/complete"].includes(request.url ?? "") ? request.url : undefined;
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
-      const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && workerTokens.get(headerWorkerId) === headerWorkerToken);
+      const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
       const bearerAuthenticated = !options.token?.trim() || request.headers.authorization === `Bearer ${options.token.trim()}`;
       if ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated)) { response.writeHead(401, headers); response.end(JSON.stringify({ error: workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
