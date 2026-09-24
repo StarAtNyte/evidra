@@ -2285,6 +2285,18 @@ function parseWorkerTokenMap(raw: string | undefined): Map<string, string> {
   }
   return tokens;
 }
+function parseWorkerScopeMap(raw: string | undefined): Map<string, string[]> {
+  const scopes = new Map<string, string[]>();
+  for (const entry of (raw ?? "").split(",").map((value) => value.trim()).filter(Boolean)) {
+    const separator = entry.indexOf("=");
+    const workerId = separator >= 0 ? entry.slice(0, separator).trim() : "";
+    const kinds = separator >= 0 ? entry.slice(separator + 1).split("|").map((value) => value.trim()).filter(Boolean) : [];
+    if (!workerId || workerId.length > 200 || !kinds.length || kinds.length > 32 || kinds.some((kind) => kind.length > 120 || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(kind))) throw new Error("Worker scopes must use worker-id=kind|kind entries with bounded task kinds.");
+    if (scopes.has(workerId)) throw new Error(`Duplicate worker scope entry for '${workerId}'.`);
+    scopes.set(workerId, [...new Set(kinds)]);
+  }
+  return scopes;
+}
 function secretMatches(expected: string | undefined, actual: string): boolean {
   if (expected === undefined) return false;
   const expectedBytes = Buffer.from(expected, "utf8");
@@ -2325,8 +2337,9 @@ event.command("serve")
   .option("--token <token>", "Bearer token; required for non-loopback hosts", process.env.EVIDRA_EVENT_TOKEN)
   .option("--task-kinds <kinds>", "comma-separated queue kinds allowed to external workers; unset means all kinds")
   .option("--worker-tokens <mapping>", "scoped worker credentials as worker-id=secret,...", process.env.EVIDRA_WORKER_TOKENS)
+  .option("--worker-scopes <mapping>", "per-worker task scopes as worker-id=kind|kind,...", process.env.EVIDRA_WORKER_SCOPES)
   .description("Run an authenticated local webhook listener for external events")
-  .action(async (options: { port: string; host: string; token?: string; taskKinds?: string; workerTokens?: string }) => {
+  .action(async (options: { port: string; host: string; token?: string; taskKinds?: string; workerTokens?: string; workerScopes?: string }) => {
     const port = Number.parseInt(options.port, 10);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Event server port must be an integer between 1 and 65535.");
     const loopback = options.host === "127.0.0.1" || options.host === "localhost" || options.host === "::1";
@@ -2335,6 +2348,7 @@ event.command("serve")
     const allowedTaskKinds = parsedTaskKinds?.length ? parsedTaskKinds : undefined;
     if (allowedTaskKinds?.some((kind) => kind.length > 120)) throw new Error("External worker task kinds must be at most 120 characters each.");
     const workerTokens = parseWorkerTokenMap(options.workerTokens);
+    const workerScopes = parseWorkerScopeMap(options.workerScopes);
     const server = createServer((request, response) => {
       const headers = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" };
       const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/complete"].includes(request.url ?? "") ? request.url : undefined;
@@ -2372,12 +2386,21 @@ event.command("serve")
               response.end(JSON.stringify({ error: "task workerId does not match authenticated scoped worker" }));
               return;
             }
+            if (workerScopes.size && !workerScopes.has(workerId)) {
+              response.writeHead(403, headers);
+              response.end(JSON.stringify({ error: "worker has no assigned task scope" }));
+              return;
+            }
+            const workerAllowedKinds = workerScopes.get(workerId);
+            const permitsKind = (kind: string): boolean => !workerAllowedKinds || workerAllowedKinds.includes(kind);
             const store = new ResearchStore(statePath);
             if (taskPath === "/tasks/claim") {
               const kinds = parsed.kinds === undefined ? undefined : Array.isArray(parsed.kinds) && parsed.kinds.length <= 16 && parsed.kinds.every((kind) => typeof kind === "string" && kind.length <= 120) ? parsed.kinds as string[] : undefined;
               if (parsed.kinds !== undefined && !kinds) throw new Error("kinds must be an array of at most 16 strings.");
               if (allowedTaskKinds && kinds?.some((kind) => !allowedTaskKinds.includes(kind))) throw new Error("Requested task kind is outside this worker bridge's allowed scope.");
-              const task = store.claimNextTask(kinds ?? allowedTaskKinds, workerId);
+              if (kinds?.some((kind) => !permitsKind(kind))) { store.close(); throw new Error("Requested task kind is outside this worker's assigned scope."); }
+              const scopedKinds = workerAllowedKinds ? (allowedTaskKinds ? workerAllowedKinds.filter((kind) => allowedTaskKinds.includes(kind)) : workerAllowedKinds) : allowedTaskKinds;
+              const task = store.claimNextTask(kinds ?? scopedKinds, workerId);
               store.close();
               response.writeHead(200, headers);
               response.end(JSON.stringify({ ok: true, task: task ?? null }));
@@ -2386,6 +2409,13 @@ event.command("serve")
             const taskId = typeof parsed.taskId === "string" ? parsed.taskId.trim() : "";
             if (!taskId || taskId.length > 200) throw new Error("Task requests require a taskId of 1–200 characters.");
             if (taskPath === "/tasks/heartbeat") {
+              const currentTask = store.queueTasks().find((task) => task.id === taskId);
+              if (!currentTask || !permitsKind(currentTask.kind)) {
+                store.close();
+                response.writeHead(403, headers);
+                response.end(JSON.stringify({ error: "task is outside this worker's assigned scope" }));
+                return;
+              }
               const accepted = store.heartbeatTask(taskId, workerId);
               store.close();
               response.writeHead(accepted ? 200 : 409, headers);
@@ -2396,6 +2426,12 @@ event.command("serve")
             const currentTask = store.queueTasks().find((task) => task.id === taskId);
             if (!currentTask) throw new Error(`Unknown task '${taskId}'.`);
             if (allowedTaskKinds && !allowedTaskKinds.includes(currentTask.kind)) throw new Error("Task is outside this worker bridge's allowed scope.");
+            if (!permitsKind(currentTask.kind)) {
+              store.close();
+              response.writeHead(403, headers);
+              response.end(JSON.stringify({ error: "task is outside this worker's assigned scope" }));
+              return;
+            }
             const taskPayload = parsed.payload === undefined ? undefined : parseExternalEventPayload(JSON.stringify(parsed.payload));
             const accepted = store.completeClaimedTask(taskId, workerId, parsed.status as "completed" | "failed" | "cancelled", taskPayload);
             store.close();

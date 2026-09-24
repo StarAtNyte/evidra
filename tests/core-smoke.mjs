@@ -7513,7 +7513,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.enqueueTask({ id: "bridge-task", kind: "research.lane", priority: 4, payload: { objective: "external worker smoke" } });
     store.close();
-    child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "event", "serve", "--port", String(port), "--token", token, "--worker-tokens", "worker-a=worker-secret,worker-b=worker-b-secret"], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+    child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "event", "serve", "--port", String(port), "--token", token, "--worker-tokens", "worker-a=worker-secret,worker-b=worker-b-secret", "--worker-scopes", "worker-a=research.lane,worker-b=research.review"], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
     await new Promise((resolve, reject) => {
       let output = "";
       const timer = setTimeout(() => reject(new Error(`event server did not start: ${output}`)), 5000);
@@ -7529,8 +7529,8 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(task.id, "bridge-task");
     assert.equal((await post("/tasks/heartbeat", { workerId: "worker-b", taskId: task.id }, token, "worker-a", "worker-secret")).status, 401);
     assert.equal((await post("/tasks/heartbeat", { workerId: "worker-a", taskId: task.id }, token, "worker-a", "wrong-secret")).status, 401);
-    assert.equal((await post("/tasks/heartbeat", { workerId: "worker-b", taskId: task.id }, token, "worker-b", "worker-b-secret")).status, 409);
-    assert.equal((await post("/tasks/complete", { workerId: "worker-b", taskId: task.id, status: "completed", payload: { result: "spoofed" } }, token, "worker-b", "worker-b-secret")).status, 409);
+    assert.equal((await post("/tasks/heartbeat", { workerId: "worker-b", taskId: task.id }, token, "worker-b", "worker-b-secret")).status, 403);
+    assert.equal((await post("/tasks/complete", { workerId: "worker-b", taskId: task.id, status: "completed", payload: { result: "spoofed" } }, token, "worker-b", "worker-b-secret")).status, 403);
     assert.equal((await post("/tasks/complete", { workerId: "worker-a", taskId: task.id, status: "completed", payload: { result: "verified" } }, token, "worker-a", "worker-secret")).status, 200);
     const reopened = new ResearchStore(join(root, ".sota", "database.sqlite"));
     assert.equal(reopened.queueTasks().find((entry) => entry.id === task.id)?.status, "completed");

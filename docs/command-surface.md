@@ -128,6 +128,19 @@ evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" --task-kinds resear
   --worker-tokens 'agent-17=replace-with-a-secret'
 ```
 
+Use `--worker-scopes` (or `EVIDRA_WORKER_SCOPES`) to apply queue-family
+least-privilege per worker. The mapping format is
+`worker-id=kind|kind,worker-id=kind`; unset scopes preserve the global bridge
+behavior. A scoped worker cannot claim, heartbeat, or complete a task outside
+its assigned kinds.
+
+```bash
+evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" \
+  --task-kinds research.lane,research.review \
+  --worker-tokens 'lane-1=lane-secret,review-1=review-secret' \
+  --worker-scopes 'lane-1=research.lane,review-1=research.review'
+```
+
 `event serve` accepts `POST /events` with `{ "type": "external.ci.completed",
 "payload": { ... }, "source": "ci", "idempotencyKey": "run-123" }`. It binds
 to loopback by default; a non-loopback bind requires a bearer token

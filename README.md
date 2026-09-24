@@ -313,6 +313,7 @@ Implemented today:
 - external agent heartbeats: authenticated workers can emit `external.agent.heartbeat` with a role, lease, provider, model, and status; Evidra updates durable health only for the owning lease and rejects fresh-lease impersonation, allowing heterogeneous agents to be monitored without granting them controller authority;
 - external queue workers: the authenticated listener also exposes owner-checked `/tasks/claim`, `/tasks/heartbeat`, and `/tasks/complete` endpoints, so outside runtimes can execute durable Evidra tasks while dependencies, retries, and audit events remain controller-owned;
 - scoped worker identity: `--worker-tokens worker-id=secret,...` (or `EVIDRA_WORKER_TOKENS`) gives each external worker its own credential and requires its authenticated header identity to match the claimed task, instead of trusting a shared body-level worker ID;
+- per-worker task scopes: `--worker-scopes worker-id=kind|kind,...` (or `EVIDRA_WORKER_SCOPES`) restricts each authenticated worker to its assigned queue families; workers cannot claim, heartbeat, or complete tasks outside that scope. If omitted, the bridge retains its global `--task-kinds` behavior;
 
 External worker loop. For least privilege, start the bridge with
 `--task-kinds research.lane` (or another explicit queue family) when the
@@ -332,6 +333,17 @@ curl -fsS -H "$AUTH" "${WORKER_HEADERS[@]}" -H 'content-type: application/json' 
   -d "{\"workerId\":\"$WORKER_ID\",\"taskId\":\"$TASK_ID\"}" "$BASE/tasks/heartbeat"
 curl -fsS -H "$AUTH" "${WORKER_HEADERS[@]}" -H 'content-type: application/json' \
   -d "{\"workerId\":\"$WORKER_ID\",\"taskId\":\"$TASK_ID\",\"status\":\"completed\",\"payload\":{\"summary\":\"done\"}}" "$BASE/tasks/complete"
+```
+
+For multiple workers, add independent credentials and scopes. A worker with no
+matching scope receives `403` for task operations, while the controller still
+owns queue state and retry policy:
+
+```bash
+evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" \
+  --task-kinds research.lane,research.review \
+  --worker-tokens 'lane-1=lane-secret,review-1=review-secret' \
+  --worker-scopes 'lane-1=research.lane,review-1=research.review'
 ```
 - routine trigger coalescing: events arriving while a campaign is running become one durable pending wake-up and launch immediately after completion, preventing both lost updates and concurrent duplicate campaigns;
 - portable research bundles: `evidra export` captures secret-redacted goals, claims, sources, decisions, runs, artifact checksums, routines, specialist sessions, pause controls, directives, and recent events without copying datasets or credentials; the receiving workspace must revalidate before trusting the imported context;
