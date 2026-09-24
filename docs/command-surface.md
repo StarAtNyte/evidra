@@ -375,6 +375,7 @@ Roles are director, domain researcher, method researcher, data detective, valida
 /report challenge             Generate the challenge progress report
 /report final                 Generate final provenance and model card
 /export                       Export a portable research bundle
+/bundle validate <path>       Validate a bundle without importing evidence
 ```
 
 ## Providers and configuration

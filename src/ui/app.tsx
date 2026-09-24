@@ -3,12 +3,12 @@ import { requiresProviderSetup } from "./onboarding.js";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import MultilineInput from "./multiline-input.js";
 import { dirname, join, relative, resolve } from "node:path";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { ResearchStore } from "../core/store.js";
 import { approvalInbox } from "../core/approvals.js";
 import { loadProjectGuidance } from "../core/project-guidance.js";
 import { externalEventPayload, parseExternalEventPayload, validateExternalEventType } from "../core/external-events.js";
-import { createPortableBundle } from "../core/portable-bundle.js";
+import { createPortableBundle, validatePortableBundle } from "../core/portable-bundle.js";
 import { formatGoalAlignment, goalAlignment, pauseForGoalAlignment } from "../core/goal-alignment.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "../core/agent-evals.js";
 import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
@@ -240,6 +240,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/guidance": [["/guidance", "Inspect project runtime guidance and hash"]],
   "/goals": [["/goals", "Show goal criteria, evidence, and stage progress"]],
+  "/bundle": [["/bundle validate ", "Validate a portable bundle"]],
   "/event": [["/event emit ", "Emit an external wake-up event"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
@@ -4036,6 +4037,18 @@ export function App({ root }: { root: string }): React.JSX.Element {
       store.appendEvent("bundle.exported", { path: relative(root, path), schemaVersion: bundle.schemaVersion, counts: bundle.counts });
       store.close();
       append("assistant", `Portable bundle exported\n  path: ${path}\n  type: ${bundle.type}\n  schema: ${bundle.schemaVersion}\n  note: metadata and checksums only; rerun validation before trusting it elsewhere.`);
+      return;
+    }
+    if (request.startsWith("/bundle validate ")) {
+      const requested = request.slice("/bundle validate ".length).trim();
+      if (!requested) { append("assistant", "Usage: /bundle validate <path>"); return; }
+      try {
+        const bundlePath = resolve(root, requested);
+        const stats = statSync(bundlePath);
+        if (stats.size > 64 * 1024 * 1024) throw new Error("Bundle file exceeds the 64 MiB validation limit.");
+        const report = validatePortableBundle(JSON.parse(readFileSync(bundlePath, "utf8")), root);
+        append("assistant", `Bundle ${report.valid ? "VALID" : "INVALID"}\n  path: ${bundlePath}\n  counts: ${Object.entries(report.counts).map(([key, value]) => `${key}=${value}`).join(" · ")}${report.errors.length ? `\n\nErrors\n${report.errors.map((error) => `- ${error}`).join("\n")}` : ""}${report.warnings.length ? `\n\nWarnings\n${report.warnings.map((warning) => `- ${warning}`).join("\n")}` : ""}`);
+      } catch (error) { appendError(error); }
       return;
     }
     if (request === "/report" || request === "/report research" || request === "/report challenge" || request === "/report final") {

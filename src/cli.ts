@@ -116,7 +116,7 @@ import { formatGoalAlignment, goalAlignment } from "./core/goal-alignment.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "./core/agent-evals.js";
 import { agentOrganization } from "./core/agent-organization.js";
 import { externalEventPayload, parseExternalEventPayload, validateExternalEventType } from "./core/external-events.js";
-import { createPortableBundle } from "./core/portable-bundle.js";
+import { createPortableBundle, validatePortableBundle } from "./core/portable-bundle.js";
 
 const PHASE_GATE_EVENT_TYPES = [
   "research.observation", "project.created", "baseline.completed", "data.audit.completed", "data.audit.accepted",
@@ -631,6 +631,23 @@ program.command("export")
     store.close();
     console.log(`Portable bundle exported\n  path: ${output}\n  type: ${bundle.type}\n  schema: ${bundle.schemaVersion}`);
   });
+
+const bundle = new Command("bundle").description("Validate portable research bundles without importing evidence");
+bundle.command("validate <path>")
+  .option("--json", "emit machine-readable validation")
+  .description("Check bundle schema, redaction, and artifact references")
+  .action((path: string, options: { json?: boolean }) => {
+    const bundlePath = resolve(root, path);
+    const stats = statSync(bundlePath);
+    if (stats.size > 64 * 1024 * 1024) throw new Error("Bundle file exceeds the 64 MiB validation limit.");
+    let parsed: unknown;
+    try { parsed = JSON.parse(readFileSync(bundlePath, "utf8")); } catch (error) { throw new Error(`Unable to parse bundle JSON: ${error instanceof Error ? error.message : String(error)}`); }
+    const report = validatePortableBundle(parsed, root);
+    if (options.json) console.log(JSON.stringify({ path: bundlePath, ...report }, null, 2));
+    else console.log(`Bundle ${report.valid ? "VALID" : "INVALID"}\nPath       ${bundlePath}\nCounts     ${Object.entries(report.counts).map(([key, value]) => `${key}=${value}`).join(" · ")}${report.errors.length ? `\nErrors\n${report.errors.map((error) => `- ${error}`).join("\n")}` : ""}${report.warnings.length ? `\nWarnings\n${report.warnings.map((warning) => `- ${warning}`).join("\n")}` : ""}`);
+    if (!report.valid) process.exitCode = 1;
+  });
+program.addCommand(bundle);
 
 program.command("backup")
   .argument("[destination]", "workspace-relative SQLite backup path")

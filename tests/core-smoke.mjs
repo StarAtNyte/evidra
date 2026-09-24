@@ -15,7 +15,7 @@ import { goalAlignment, pauseForGoalAlignment } from "../dist/core/goal-alignmen
 import { agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "../dist/core/agent-evals.js";
 import { externalEventPayload, parseExternalEventPayload, validateExternalEventType } from "../dist/core/external-events.js";
-import { createPortableBundle, PORTABLE_BUNDLE_TYPE } from "../dist/core/portable-bundle.js";
+import { createPortableBundle, PORTABLE_BUNDLE_TYPE, validatePortableBundle } from "../dist/core/portable-bundle.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaimRecords, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
@@ -3560,6 +3560,20 @@ test("portable bundles are redacted metadata snapshots with artifact references"
     assert.ok(Array.isArray(bundle.events));
     assert.ok(Array.isArray(bundle.limitations));
     store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("portable bundle validation rejects unsafe paths and unredacted credentials", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-bundle-validation-"));
+  try {
+    const base = { type: PORTABLE_BUNDLE_TYPE, schemaVersion: 1, exportedAt: new Date().toISOString(), artifacts: [], phaseGoals: [], hypotheses: [], decisions: [], claims: [], sources: [], experiments: [], runs: [], queue: [], routines: [], agentLanes: [], events: [] };
+    assert.equal(validatePortableBundle(base, root).valid, true);
+    const unsafe = validatePortableBundle({ ...base, artifacts: [{ path: "../outside.bin" }] }, root);
+    assert.equal(unsafe.valid, false);
+    assert.match(unsafe.errors.join("\n"), /escapes workspace/);
+    const secret = validatePortableBundle({ ...base, note: "sk-super-secret-value-1234567890" }, root);
+    assert.equal(secret.valid, false);
+    assert.match(secret.errors.join("\n"), /unredacted credential/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
