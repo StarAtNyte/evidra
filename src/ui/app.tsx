@@ -34,7 +34,8 @@ import { evaluateSubmissionPolicy } from "../core/submission-policy.js";
 import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "../core/ensemble.js";
 import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
 import { auditData, dataAuditFingerprint } from "../core/data-audit.js";
-import { executeResearchTool } from "../core/tools.js";
+import { availableResearchTools, executeResearchTool } from "../core/tools.js";
+import { loadExternalResearchTools } from "../core/external-tools.js";
 import { projectVerifiedSubtaskState } from "../core/subtask-state.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { canonicalSourceUrl, retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
@@ -155,6 +156,7 @@ const COMMANDS = [
   ["/submission", "Prepare and validate a submission bundle"],
   ["/approvals", "Show the operator approval inbox"],
   ["/queue", "Show durable research work queue"],
+  ["/tools", "Show available research tools and project adapters"],
   ["/sessions", "List saved terminal sessions"],
   ["/clear", "Clear the current conversation"],
   ["/new", "Start a fresh terminal session"],
@@ -241,6 +243,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/evidence": [["/evidence audit", "Audit claim provenance and completion blockers"], ["/evidence analyze", "Analyze prediction errors and worst groups"]],
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/guidance": [["/guidance", "Inspect project runtime guidance and hash"]],
+  "/tools": [["/tools", "Show built-in and project research adapters"]],
   "/goals": [["/goals", "Show goal criteria, evidence, and stage progress"]],
   "/bundle": [["/bundle validate ", "Validate a portable bundle"]],
   "/event": [["/event emit ", "Emit an external wake-up event"]],
@@ -321,6 +324,7 @@ function help(): string {
     "/memory [recent|search]      Search durable evidence memory",
     "/data audit                 Audit challenge files and duplicates",
     "/validation [inspect|generate] Show validation policy",
+    "/tools                      Show built-in and project research adapters",
     "/agents                     Show research-agent health",
     "/limits [auto|wait|fallback|stop] Choose provider-limit behavior",
     "/compute [local|container|modal|slurm|status] Select the experiment execution target",
@@ -2934,6 +2938,12 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (request === "/guidance") {
       const guidance = loadProjectGuidance(root);
       append("assistant", guidance ? `Project guidance\n  files: ${guidance.paths.join(", ")}\n  hash: ${guidance.contentHash}\n  truncated: ${guidance.truncated ? "yes" : "no"}\n\n${guidance.text}` : "No project guidance found. Add EVIDRA.md or .evidra/instructions.md.");
+      return;
+    }
+    if (request === "/tools") {
+      const manifest = loadExternalResearchTools(root);
+      const tools = availableResearchTools(root);
+      append("assistant", `Research tools\n  manifest: ${manifest.path ?? "none"}${manifest.warnings.length ? `\n  warnings: ${manifest.warnings.length}` : ""}\n\n${tools.map((tool) => `  ${tool.name} · ${tool.readOnly ? "read-only" : "mutating"}${tool.cacheable === false ? " · live" : " · cacheable"}\n    ${tool.description}`).join("\n")}`);
       return;
     }
     if (request === "/goals") {

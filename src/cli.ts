@@ -39,7 +39,8 @@ import { auditResearchDecision, downgradeUnauditedDecision } from "./core/decisi
 import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateValidationAcceptance } from "./core/validation-engine.js";
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { processFailureResult, runProcess } from "./core/process.js";
-import { executeResearchTool } from "./core/tools.js";
+import { availableResearchTools, executeResearchTool } from "./core/tools.js";
+import { loadExternalResearchTools } from "./core/external-tools.js";
 import { projectVerifiedSubtaskState } from "./core/subtask-state.js";
 import { classifyProcessFailure, executorFor, mergeEvaluatorResult, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "./core/executors.js";
 import { sha256File } from "./core/evidence.js";
@@ -614,6 +615,20 @@ program.command("guidance")
     const guidance = loadProjectGuidance(root);
     if (options.json) console.log(JSON.stringify(guidance ?? { paths: [], text: "", contentHash: null, truncated: false }, null, 2));
     else console.log(guidance ? `Project guidance\nFiles       ${guidance.paths.join(", ")}\nHash        ${guidance.contentHash}\nTruncated   ${guidance.truncated ? "yes" : "no"}\n\n${guidance.text}` : "No project guidance found. Add EVIDRA.md or .evidra/instructions.md.");
+  });
+
+program.command("tools")
+  .option("--json", "emit the project tool registry as JSON")
+  .description("Inspect built-in and explicitly granted project research tools")
+  .action((options: { json?: boolean }) => {
+    const manifest = loadExternalResearchTools(root);
+    const tools = availableResearchTools(root).map((tool) => ({ name: tool.name, description: tool.description, readOnly: tool.readOnly, cacheable: tool.cacheable !== false, input: tool.input }));
+    if (options.json) console.log(JSON.stringify({ tools, manifest: manifest.path, warnings: manifest.warnings }, null, 2));
+    else {
+      console.log(`Research tools\nManifest    ${manifest.path ?? "none"}`);
+      if (manifest.warnings.length) console.log(`Warnings\n${manifest.warnings.map((warning) => `  ! ${warning}`).join("\n")}`);
+      console.log(`\n${tools.map((tool) => `  ${tool.name.padEnd(28)} ${tool.readOnly ? "read-only" : "mutating"}${tool.cacheable ? " · cacheable" : ""}\n    ${tool.description}`).join("\n")}`);
+    }
   });
 
 program.command("export")
