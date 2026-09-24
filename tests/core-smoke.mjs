@@ -3677,12 +3677,14 @@ test("task deadlines prevent expired claims and can be cleared before checkout",
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.enqueueTask({ id: "deadline-task", kind: "research.lane", priority: 1, deadlineAt: new Date(Date.now() - 1_000).toISOString(), payload: {} });
-    assert.equal(store.claimNextTask(undefined, "worker-a"), undefined);
     assert.equal(store.setTaskDeadline("deadline-task", new Date(Date.now() + 60_000).toISOString()), true);
     assert.equal(store.claimNextTask(undefined, "worker-a")?.id, "deadline-task");
     assert.equal(store.setTaskDeadline("deadline-task", null), false);
     assert.throws(() => store.enqueueTask({ id: "bad-deadline", kind: "research.lane", priority: 1, deadlineAt: "not-a-date", payload: {} }), /deadline/);
     assert.equal(store.eventsByType("queue.deadline.updated").length, 1);
+    store.enqueueTask({ id: "expired-queued", kind: "research.lane", priority: 1, deadlineAt: new Date(Date.now() - 1_000).toISOString(), payload: {} });
+    assert.equal(store.claimNextTask(undefined, "worker-a"), undefined);
+    assert.equal(store.queueTasks().find((task) => task.id === "expired-queued")?.status, "cancelled");
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

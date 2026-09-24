@@ -1738,6 +1738,7 @@ export class ResearchStore {
   }
 
   claimNextTask(kinds?: string[], ownerId?: string): QueuedTask | undefined {
+    this.expireDeadlineTasks();
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
       // Preserve explicit priority while giving long-waiting work a bounded
@@ -1762,6 +1763,7 @@ export class ResearchStore {
 
   /** Atomically claim one known task, preserving queue ownership across controllers. */
   claimTask(id: string, kinds?: string[], ownerId?: string): QueuedTask | undefined {
+    this.expireDeadlineTasks();
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
       const kindClause = kinds?.length ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
@@ -2015,6 +2017,17 @@ export class ResearchStore {
     return true;
   }
 
+  /** Materialize expired queued/running deadlines so restart recovery cannot strand them. */
+  expireDeadlineTasks(now = new Date()): string[] {
+    const rows = this.db.prepare("SELECT id FROM work_queue WHERE status IN ('queued', 'running') AND deadline_at IS NOT NULL AND deadline_at <= ?").all(now.toISOString()) as Array<{ id: string }>;
+    const expired: string[] = [];
+    for (const row of rows) {
+      if (!this.cancelTask(row.id, "task wall-clock deadline exceeded", "deadline")) continue;
+      expired.push(row.id);
+    }
+    return expired;
+  }
+
   /** Cancel queued work belonging to a campaign that hit its hard token ceiling. */
   cancelQueuedTasksForCampaign(campaignStartedAt: string, reason = "campaign agent-token budget exhausted"): string[] {
     const startedAt = campaignStartedAt.trim();
@@ -2065,6 +2078,7 @@ export class ResearchStore {
   }
 
   requeueStaleTasks(maxAgeMs = 15 * 60_000, maxAttempts = 3): number {
+    this.expireDeadlineTasks();
     const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
     const limit = Math.max(1, Math.floor(maxAttempts));
     const now = new Date().toISOString();
