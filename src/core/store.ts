@@ -96,6 +96,8 @@ export interface QueueUsage {
   inputTokens: number;
   outputTokens: number;
   costUsd: number | null;
+  provider: string | null;
+  model: string | null;
   createdAt: string;
 }
 
@@ -1801,16 +1803,18 @@ export class ResearchStore {
   }
 
   /** Record bounded provider-neutral usage reported by a queue worker. */
-  recordQueueUsage(input: { taskId: string; actorId: string; inputTokens?: number; outputTokens?: number; costUsd?: number | null }): boolean {
+  recordQueueUsage(input: { taskId: string; actorId: string; inputTokens?: number; outputTokens?: number; costUsd?: number | null; provider?: string | null; model?: string | null }): boolean {
     const taskId = input.taskId.trim().slice(0, 200);
     const actorId = input.actorId.trim().slice(0, 200);
     const inputTokens = Number.isFinite(input.inputTokens) ? Math.floor(input.inputTokens ?? 0) : -1;
     const outputTokens = Number.isFinite(input.outputTokens) ? Math.floor(input.outputTokens ?? 0) : -1;
     const costUsd = input.costUsd === null || input.costUsd === undefined ? null : Number(input.costUsd);
+    const provider = input.provider?.trim().slice(0, 80) || null;
+    const model = input.model?.trim().slice(0, 160) || null;
     if (!taskId || !actorId || inputTokens < 0 || outputTokens < 0 || inputTokens > 100_000_000 || outputTokens > 100_000_000 || (costUsd !== null && (!Number.isFinite(costUsd) || costUsd < 0 || costUsd > 1_000_000))) return false;
     const task = this.db.prepare("SELECT id FROM work_queue WHERE id = ?").get(taskId) as { id: string } | undefined;
     if (!task) return false;
-    this.appendEvent("queue.usage", { taskId, actorId, inputTokens, outputTokens, ...(costUsd === null ? {} : { costUsd }) });
+    this.appendEvent("queue.usage", { taskId, actorId, inputTokens, outputTokens, ...(costUsd === null ? {} : { costUsd }), ...(provider === null ? {} : { provider }), ...(model === null ? {} : { model }) });
     return true;
   }
 
@@ -1823,8 +1827,10 @@ export class ResearchStore {
       const inputTokens = Number(payload.inputTokens);
       const outputTokens = Number(payload.outputTokens);
       const costUsd = payload.costUsd === undefined ? null : Number(payload.costUsd);
+      const provider = typeof payload.provider === "string" ? payload.provider : null;
+      const model = typeof payload.model === "string" ? payload.model : null;
       if (!id || !actorId || !Number.isInteger(inputTokens) || inputTokens < 0 || !Number.isInteger(outputTokens) || outputTokens < 0 || (costUsd !== null && !Number.isFinite(costUsd)) || (taskId && taskId !== id)) return [];
-      return [{ taskId: id, actorId, inputTokens, outputTokens, costUsd, createdAt: event.createdAt }];
+      return [{ taskId: id, actorId, inputTokens, outputTokens, costUsd, provider, model, createdAt: event.createdAt }];
     }).slice(-Math.max(1, Math.min(512, Math.floor(limit))));
   }
 

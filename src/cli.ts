@@ -2269,7 +2269,7 @@ queue.command("usage [id]").option("--limit <count>", "number of usage records",
   const inputTokens = usage.reduce((sum, entry) => sum + entry.inputTokens, 0);
   const outputTokens = usage.reduce((sum, entry) => sum + entry.outputTokens, 0);
   const costUsd = usage.reduce((sum, entry) => sum + (entry.costUsd ?? 0), 0);
-  console.log(`${id ? `Task ${id}` : "Queue usage"}\nRecords      ${usage.length}\nInput tokens ${inputTokens}\nOutput tokens ${outputTokens}\nCost         $${costUsd.toFixed(6)}${usage.length ? `\n\n${usage.map((entry) => `${entry.createdAt}  ${entry.actorId} · ${entry.inputTokens}+${entry.outputTokens} tokens${entry.costUsd === null ? "" : ` · $${entry.costUsd.toFixed(6)}`}`).join("\n")}` : ""}`);
+  console.log(`${id ? `Task ${id}` : "Queue usage"}\nRecords      ${usage.length}\nInput tokens ${inputTokens}\nOutput tokens ${outputTokens}\nCost         $${costUsd.toFixed(6)}${usage.length ? `\n\n${usage.map((entry) => `${entry.createdAt}  ${entry.actorId}${entry.provider ? ` · ${entry.provider}/${entry.model ?? "?"}` : ""} · ${entry.inputTokens}+${entry.outputTokens} tokens${entry.costUsd === null ? "" : ` · $${entry.costUsd.toFixed(6)}`}`).join("\n")}` : ""}`);
 });
 queue.command("recover [id]").option("--route <route>", "materially changed execution route").option("--note <note>", "why this route is different").action((id: string | undefined, options: { route?: string; note?: string }) => {
   const store = new ResearchStore(statePath);
@@ -2401,7 +2401,7 @@ event.command("serve")
       request.on("end", () => {
         if (rejected) return;
         try {
-          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown; idempotencyKey?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown };
+          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown; idempotencyKey?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
           if (taskPath) {
             const workerId = typeof parsed.workerId === "string" ? parsed.workerId.trim() : "";
             if (!workerId || workerId.length > 200) throw new Error("Task requests require a workerId of 1–200 characters.");
@@ -2483,7 +2483,7 @@ event.command("serve")
                 response.end(JSON.stringify({ error: "worker does not own a live claim for this task" }));
                 return;
               }
-              const recorded = store.recordQueueUsage({ taskId, actorId: workerId, inputTokens: typeof parsed.inputTokens === "number" ? parsed.inputTokens : 0, outputTokens: typeof parsed.outputTokens === "number" ? parsed.outputTokens : 0, costUsd: parsed.costUsd === null ? null : typeof parsed.costUsd === "number" ? parsed.costUsd : undefined });
+              const recorded = store.recordQueueUsage({ taskId, actorId: workerId, inputTokens: typeof parsed.inputTokens === "number" ? parsed.inputTokens : 0, outputTokens: typeof parsed.outputTokens === "number" ? parsed.outputTokens : 0, costUsd: parsed.costUsd === null ? null : typeof parsed.costUsd === "number" ? parsed.costUsd : undefined, provider: typeof parsed.provider === "string" ? parsed.provider : undefined, model: typeof parsed.model === "string" ? parsed.model : undefined });
               store.close();
               if (!recorded) throw new Error("Task usage requires non-negative bounded token counts and an optional non-negative cost.");
               response.writeHead(200, headers);
