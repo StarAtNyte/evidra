@@ -2,7 +2,7 @@ import type { ResearchStore } from "./store.js";
 import { externalToolStatus, loadExternalResearchTools } from "./external-tools.js";
 
 export type ApprovalInboxItem = {
-  kind: "experiment" | "submission" | "external-action" | "external-tool" | "phase-goal" | "queue-recovery";
+  kind: "experiment" | "submission" | "external-action" | "external-tool" | "phase-goal" | "queue-recovery" | "queue-task";
   id: string;
   status: string;
   next: string;
@@ -77,6 +77,16 @@ export function approvalInbox(store: ResearchStore, root?: string): ApprovalInbo
     const route = typeof entry.payload.route === "string" ? entry.payload.route : entry.type.endsWith(".stale") ? "restart_worker" : "change_route";
     const action = typeof entry.payload.action === "string" ? entry.payload.action : "inspect failure";
     items.push({ kind: "queue-recovery", id: taskId, status: "pending", next: `/queue recover ${taskId} --route ${route}`, detail: `${typeof entry.payload.failureClass === "string" ? entry.payload.failureClass : "unknown"} · ${action}` });
+  }
+  for (const task of queueById.values()) {
+    if (!["queued", "failed"].includes(task.status) || !["pending", "rejected"].includes(task.approvalStatus)) continue;
+    items.push({
+      kind: "queue-task",
+      id: task.id,
+      status: task.approvalStatus,
+      next: `/queue approve ${task.id}`,
+      detail: `${task.kind}${task.approvalReason ? ` · ${task.approvalReason}` : ""}`,
+    });
   }
   return items;
 }

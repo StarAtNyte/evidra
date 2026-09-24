@@ -620,6 +620,7 @@ test("approval inbox unifies pending work without mutating any gate", () => {
     store.enqueueTask({ id: "recover-1", kind: "research.lane", priority: 1, payload: {} });
     store.updateTask("recover-1", "failed", { error: "sandbox failed", recovery: { failureClass: "sandbox", route: "alternate_executor", action: "use a verified executor" } });
     store.appendEvent("queue.recovery_required", { taskId: "recover-1", failureClass: "sandbox", route: "alternate_executor", action: "use a verified executor" });
+    store.enqueueTask({ id: "approval-1", kind: "research.review", priority: 2, requiresApproval: true, approvalReason: "review the evidence" , payload: {} });
     const items = approvalInbox(store);
     assert.deepEqual(items.map((item) => [item.kind, item.id, item.status]), [
       ["phase-goal", "phase-1", "blocked"],
@@ -627,6 +628,7 @@ test("approval inbox unifies pending work without mutating any gate", () => {
       ["submission", "bundle-1", "pending"],
       ["external-action", "submission:bundle-1", "in_flight"],
       ["queue-recovery", "recover-1", "pending"],
+      ["queue-task", "approval-1", "pending"],
     ]);
     assert.equal(store.externalAction("submission:bundle-1")?.status, "in_flight");
     store.close();
