@@ -58,6 +58,8 @@ external evaluator.
 
 ## Latest repository state
 
+- The Paperclip-inspired campaign organization projection is now durable and shared across the dashboard, CLI, and TUI. `evidra organization --json` and `/organization` expose the mission, active campaign phases, reporting lines, queue ownership, specialist directives, and bounded accountability signals. The projection respects deterministic campaign/mode goal-set identity: foreign phases are not presented as current work, and live work is separately classified as ownerless, unscoped, mis-scoped, or unbudgeted. Mis-scoped work is critical operator attention; ordinary missing ownership or task budgets remain warnings so intentionally scheduler-owned work is not blocked.
+
 - Latest pushed state: `origin/master` at the latest handoff commit (verify with `git log`).
 - Competition manifests now support typed `researchChannels` for rules,
   discussions, leaderboards, documentation, papers, and repositories. CLI/TUI

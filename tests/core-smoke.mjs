@@ -8238,6 +8238,8 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.equal(Array.isArray(snapshot.stages), true);
     assert.equal(snapshot.stages.length, 3);
     assert.equal(Array.isArray(snapshot.organization), true);
+    assert.equal(snapshot.organizationMap?.mode, "research");
+    assert.ok(Array.isArray(snapshot.organizationMap?.accountability?.unbudgetedLive));
     assert.equal(snapshot.queueControl?.paused, false);
     assert.ok(snapshot.attention && typeof snapshot.attention.total === "number");
     assert.equal(snapshot.agentReviewHistory.length, 1);
@@ -8259,6 +8261,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.match(dashboardHtml(), /Read-only local view/);
     assert.match(dashboardHtml(), /requires /);
     assert.match(dashboardHtml(), /handoff outcomes/);
+    assert.match(dashboardHtml(), /organization-map/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
