@@ -3267,7 +3267,7 @@ test("governance benchmark covers role boundaries and scoped handoffs", () => {
   const report = runGovernanceBenchmark();
   assert.equal(report.failed, 0);
   assert.equal(report.score, 1);
-  assert.equal(report.probes.length, 6);
+  assert.equal(report.probes.length, 7);
 });
 
 test("review tickets recover through the same heartbeat boundary as lane tickets", () => {

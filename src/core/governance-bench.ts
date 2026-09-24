@@ -71,6 +71,11 @@ export function runGovernanceBenchmark(): GovernanceBenchmarkReport {
     const recovered = store.recoverFailedTask("governance-recovery", "local_repair", "repair the sandbox first");
     const resolvedRecovery = !approvalInbox(store).some((item) => item.kind === "queue-recovery" && item.id === "governance-recovery");
     check("recovery-approval-boundary", "Terminal work produces an approval item and cannot resume without a changed route.", Boolean(pendingRecovery) && sameRouteRejected && recovered.status === "queued" && resolvedRecovery, { pendingRecovery, sameRouteRejected, recovered: recovered.status, resolvedRecovery });
+    store.enqueueTask({ id: "stale-worker", kind: "research.lane", priority: 1, payload: { role: "model researcher" } });
+    store.updateTask("stale-worker", "failed", { stale: true, error: "lane ticket heartbeat expired" });
+    store.appendEvent("queue.lane.stale", { id: "stale-worker", role: "model researcher", error: "lane ticket heartbeat expired" });
+    const staleApproval = approvalInbox(store).find((item) => item.kind === "queue-recovery" && item.id === "stale-worker");
+    check("stale-worker-watchdog", "Orphaned specialist tickets become explicit operator recovery work.", staleApproval?.next === "/queue recover stale-worker --route restart_worker", { staleApproval });
     store.close();
   } finally {
     rmSync(root, { recursive: true, force: true });
