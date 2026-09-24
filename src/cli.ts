@@ -3013,9 +3013,9 @@ event.command("serve")
           }
           if (typeof parsed.type !== "string") throw new Error("request JSON requires a string 'type'");
           const payload = parseExternalEventPayload(JSON.stringify(parsed.payload ?? {}));
-          if (workerTokens.size && parsed.type === "external.agent.heartbeat") {
+          if (parsed.type === "external.agent.heartbeat") {
             const heartbeatWorkerId = typeof payload.leaseId === "string" ? payload.leaseId.trim() : "";
-            if (!heartbeatWorkerId || headerWorkerId !== heartbeatWorkerId || !secretMatches(workerTokens.get(heartbeatWorkerId), headerWorkerToken)) {
+            if (workerTokens.size && (!heartbeatWorkerId || headerWorkerId !== heartbeatWorkerId || !secretMatches(workerTokens.get(heartbeatWorkerId), headerWorkerToken))) {
               response.writeHead(401, headers);
               response.end(JSON.stringify({ error: "heartbeat worker identity does not match authenticated scoped worker" }));
               return;

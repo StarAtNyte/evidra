@@ -8549,6 +8549,8 @@ test("authenticated external queue worker endpoints enforce ownership end to end
       child.once("error", (error) => { clearTimeout(timer); reject(error); });
     });
     const post = (path, body, auth = token, scopedWorkerId, scopedWorkerToken) => fetch(`http://127.0.0.1:${port}${path}`, { method: "POST", headers: { "content-type": "application/json", ...(auth ? { authorization: `Bearer ${auth}` } : {}), ...(scopedWorkerId ? { "x-evidra-worker-id": scopedWorkerId, "x-evidra-worker-token": scopedWorkerToken } : {}) }, body: JSON.stringify(body) });
+    const missingWorkspaceHeartbeat = await post("/events", { type: "external.agent.heartbeat", payload: { role: "remote lane", leaseId: "worker-a", provider: "codex", model: "gpt-test", status: "idle", capabilities: ["python"] } }, token, "worker-a", "worker-secret");
+    assert.equal(missingWorkspaceHeartbeat.status, 403);
     const unauthorizedHeartbeat = await post("/events", { type: "external.agent.heartbeat", payload: { workspaceId, role: "remote lane", leaseId: "worker-a", provider: "codex", model: "gpt-test", status: "idle", capabilities: ["python", "gpu.cuda"] } }, token, "worker-b", "worker-b-secret");
     assert.equal(unauthorizedHeartbeat.status, 401);
     const heartbeatResponse = await post("/events", { type: "external.agent.heartbeat", payload: { workspaceId, role: "remote lane", leaseId: "worker-a", provider: "codex", model: "gpt-test", status: "idle", capabilities: ["python", "gpu.cuda"] } }, token, "worker-a", "worker-secret");
