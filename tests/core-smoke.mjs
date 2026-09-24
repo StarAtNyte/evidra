@@ -8195,6 +8195,9 @@ test("dashboard read model is bounded and secret-redacted", () => {
     store.appendEvent("test.dashboard", { token: "sk-test-dashboard-secret-value", command: ["tool", "--token", "secret-value"] });
     store.appendEvent("research.agent.reviewed", { objective: "dashboard review objective", source: "test", reviews: [], interventions: [{ role: "model researcher", action: "coach", priority: "high", reason: "blocked playbook step" }] });
     store.recordAgentActivity({ role: "model researcher", taskId: "dashboard-task", kind: "progress", message: "inspecting evidence" });
+    const dashboardDirective = store.enqueueAgentDirective("model researcher", "inspect the result", null, "research director");
+    store.consumeAgentDirectives("model researcher");
+    store.recordAgentDirectiveOutcome(dashboardDirective.id, "model researcher", "completed", "result inspected");
     store.saveAgentSession({ role: "model researcher", scopeKey: "goal-dashboard", provider: "codex", model: "gpt", threadId: "thread-dashboard", taskId: "dashboard-task" });
     store.enqueueTask({ id: "dashboard-parent", kind: "research.cycle", priority: 10, payload: {} });
     store.enqueueTask({ id: "dashboard-child", kind: "research.review", priority: 8, payload: {}, parentTaskId: "dashboard-parent", dependsOn: ["dashboard-parent"], requiredCapabilities: ["critic"] });
@@ -8217,6 +8220,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.deepEqual(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.dependsOn, ["dashboard-parent"]);
     assert.equal(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.parentTaskId, "dashboard-parent");
     assert.deepEqual(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.requiredCapabilities, ["critic"]);
+    assert.equal(snapshot.agentDirectiveOutcomes[0]?.directiveId, dashboardDirective.id);
     assert.equal(snapshot.tools[0].status, "disabled");
     assert.match(dashboardHtml(), /EVIDRA<\/span> \/ DASHBOARD/);
     assert.match(dashboardHtml(), /\/api\/status/);
@@ -8225,6 +8229,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.match(dashboardHtml(), /replace\(\/\[/);
     assert.match(dashboardHtml(), /Read-only local view/);
     assert.match(dashboardHtml(), /requires /);
+    assert.match(dashboardHtml(), /handoff outcomes/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
