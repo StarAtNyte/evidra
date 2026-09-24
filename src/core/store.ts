@@ -274,6 +274,18 @@ export interface ControllerLease {
   updatedAt: string;
 }
 
+export interface ExternalWorkerHealth {
+  workerId: string;
+  role: string;
+  provider: string;
+  model: string;
+  status: "running" | "idle" | "blocked" | "failed";
+  capabilities: string[];
+  task: string | null;
+  lastHeartbeatAt: string;
+  updatedAt: string;
+}
+
 export type ExternalActionStatus = "in_flight" | "completed" | "unknown" | "retryable";
 export interface ExternalActionIntent {
   id: string;
@@ -504,6 +516,17 @@ export class ResearchStore {
         budget_seconds REAL,
         used_seconds REAL NOT NULL DEFAULT 0,
         usage_calls INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS external_workers (
+        worker_id TEXT PRIMARY KEY,
+        role TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        status TEXT NOT NULL,
+        capabilities_json TEXT NOT NULL DEFAULT '[]',
+        task TEXT,
+        last_heartbeat_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS agent_controls (
@@ -1319,7 +1342,7 @@ export class ResearchStore {
   }
 
   /** Accept a heartbeat from an authenticated external worker without allowing lease takeover. */
-  recordExternalAgentHeartbeat(input: { role: string; leaseId: string; provider: string; model: string; status: "running" | "idle" | "blocked" | "failed"; task?: string | null; budgetSeconds?: number | null }): { accepted: boolean; reason?: string } {
+  recordExternalAgentHeartbeat(input: { role: string; leaseId: string; provider: string; model: string; status: "running" | "idle" | "blocked" | "failed"; task?: string | null; budgetSeconds?: number | null; capabilities?: string[] }): { accepted: boolean; reason?: string } {
     const existing = this.db.prepare("SELECT status, lease_id, heartbeat_at FROM agent_lanes WHERE role = ?").get(input.role) as { status: string; lease_id: string | null; heartbeat_at: string | null } | undefined;
     if (existing?.status === "running" && existing.lease_id && existing.lease_id !== input.leaseId && existing.heartbeat_at && Date.now() - Date.parse(existing.heartbeat_at) <= 60_000) {
       const reason = `lane is leased by ${existing.lease_id}`;
@@ -1336,8 +1359,23 @@ export class ResearchStore {
         this.updateAgentLane({ role: input.role, status: input.status, provider: input.provider, model: input.model, task: input.task ?? null, error: input.status === "failed" ? (input.task ?? "external worker reported failure") : null, budgetSeconds: input.budgetSeconds });
       }
     }
+    const now = new Date().toISOString();
+    const capabilities = [...new Set((input.capabilities ?? []).map((capability) => capability.trim().toLowerCase()))].sort();
+    this.db.prepare(`
+      INSERT INTO external_workers (worker_id, role, provider, model, status, capabilities_json, task, last_heartbeat_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(worker_id) DO UPDATE SET role = excluded.role, provider = excluded.provider, model = excluded.model,
+        status = excluded.status, capabilities_json = excluded.capabilities_json, task = excluded.task,
+        last_heartbeat_at = excluded.last_heartbeat_at, updated_at = excluded.updated_at
+    `).run(input.leaseId, input.role, input.provider, input.model, input.status, safeJson(capabilities), input.task ?? null, now, now);
     this.appendEvent("agent.external_heartbeat.accepted", { role: input.role, leaseId: input.leaseId, provider: input.provider, model: input.model, status: input.status });
     return { accepted: true };
+  }
+
+  externalWorkers(limit = 64): ExternalWorkerHealth[] {
+    const bounded = Math.max(1, Math.min(256, Math.floor(limit)));
+    const rows = this.db.prepare("SELECT worker_id, role, provider, model, status, capabilities_json, task, last_heartbeat_at, updated_at FROM external_workers ORDER BY last_heartbeat_at DESC LIMIT ?").all(bounded) as Array<{ worker_id: string; role: string; provider: string; model: string; status: string; capabilities_json: string; task: string | null; last_heartbeat_at: string; updated_at: string }>;
+    return rows.map((row) => ({ workerId: row.worker_id, role: row.role, provider: row.provider, model: row.model, status: row.status as ExternalWorkerHealth["status"], capabilities: JSON.parse(row.capabilities_json || "[]") as string[], task: row.task, lastHeartbeatAt: row.last_heartbeat_at, updatedAt: row.updated_at }));
   }
 
   agentPause(role: string): { role: string; paused: boolean; terminated: boolean; reason: string | null; updatedAt: string } | undefined {

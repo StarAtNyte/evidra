@@ -188,6 +188,11 @@ least-privilege per worker. The mapping format is
 behavior. A scoped worker cannot claim, heartbeat, or complete a task outside
 its assigned kinds.
 
+Workers may also include `capabilities` in external agent heartbeats. Evidra
+stores the latest bounded capability and liveness snapshot for each lease and
+shows it in the dashboard. This is operational health, not research evidence;
+stale worker capability reports must never satisfy an experiment gate.
+
 Tasks can also declare provider-neutral `requiredCapabilities` such as
 `gpu.cuda`, `python`, `modal`, or `geospatial`. A worker includes a
 `capabilities` array in `/tasks/claim`; Evidra dispatches only tasks whose full

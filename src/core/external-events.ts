@@ -36,6 +36,7 @@ export interface ExternalAgentHeartbeat {
   status: "running" | "idle" | "blocked" | "failed";
   task?: string | null;
   budgetSeconds?: number | null;
+  capabilities: string[];
 }
 
 /** Validate the narrow external-agent health contract before touching leases. */
@@ -51,5 +52,7 @@ export function parseExternalAgentHeartbeat(payload: Record<string, unknown>): E
   if (!(typeof status === "string" && ["running", "idle", "blocked", "failed"].includes(status))) throw new Error("External agent heartbeat status must be running, idle, blocked, or failed.");
   if (payload.task !== undefined && payload.task !== null && (typeof payload.task !== "string" || payload.task.length > 2_000)) throw new Error("External agent heartbeat task must be at most 2,000 characters.");
   if (payload.budgetSeconds !== undefined && payload.budgetSeconds !== null && (typeof payload.budgetSeconds !== "number" || !Number.isFinite(payload.budgetSeconds) || payload.budgetSeconds <= 0)) throw new Error("External agent heartbeat budgetSeconds must be positive.");
-  return { role, leaseId, provider, model, status: status as ExternalAgentHeartbeat["status"], task: typeof payload.task === "string" ? payload.task : null, budgetSeconds: typeof payload.budgetSeconds === "number" ? payload.budgetSeconds : null };
+  const capabilities = payload.capabilities === undefined ? [] : Array.isArray(payload.capabilities) && payload.capabilities.length <= 32 && payload.capabilities.every((entry) => typeof entry === "string" && /^[a-zA-Z0-9_.:-]{1,120}$/.test(entry.trim())) ? [...new Set((payload.capabilities as string[]).map((entry) => entry.trim().toLowerCase()))].sort() : undefined;
+  if (!capabilities) throw new Error("External agent heartbeat capabilities must be an array of at most 32 simple names.");
+  return { role, leaseId, provider, model, status: status as ExternalAgentHeartbeat["status"], task: typeof payload.task === "string" ? payload.task : null, budgetSeconds: typeof payload.budgetSeconds === "number" ? payload.budgetSeconds : null, capabilities };
 }
