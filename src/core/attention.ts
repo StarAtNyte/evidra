@@ -59,6 +59,8 @@ export function controlPlaneHealth(store: ResearchStore): ControlPlaneHealth {
     return !Number.isFinite(heartbeat) || Date.now() - heartbeat > 120_000;
   }).length;
   const alignment = goalAlignment(store);
+  const organizationBudget = campaignOrganization(store).totals.budget;
+  const organizationBudgetUtilization = Math.max(organizationBudget.tokenUtilization ?? 0, organizationBudget.costUtilization ?? 0);
   const failedTasks = tasks.filter((task) => task.status === "failed").length;
   const blockedAgents = lanes.filter((lane) => lane.status === "blocked" || lane.status === "failed").length;
   let status: ControlPlaneHealth["status"] = "healthy";
@@ -69,6 +71,12 @@ export function controlPlaneHealth(store: ResearchStore): ControlPlaneHealth {
   } else if (alignment.status === "blocked") {
     status = "blocked";
     reason = "Goal alignment is blocked; autonomous allocation must stop.";
+  } else if (campaign === "running" && organizationBudgetUtilization >= 1 && (organizationBudget.tokenBudget !== null || organizationBudget.costBudgetUsd !== null)) {
+    status = "blocked";
+    reason = `Campaign queue budget is exhausted (${Math.round(organizationBudgetUtilization * 100)}% utilization).`;
+  } else if (campaign === "running" && organizationBudgetUtilization >= 0.8 && (organizationBudget.tokenBudget !== null || organizationBudget.costBudgetUsd !== null)) {
+    status = "degraded";
+    reason = `Campaign queue budget is ${Math.round(organizationBudgetUtilization * 100)}% utilized.`;
   } else if (staleAgents > 0 || (campaign === "running" && controller !== "running")) {
     status = "blocked";
     reason = staleAgents > 0 ? `${staleAgents} running agent(s) have stale heartbeats.` : "A running campaign has no live controller lease.";

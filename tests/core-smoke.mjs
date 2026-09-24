@@ -944,7 +944,11 @@ test("campaign organization maps goals, reporting lines, and aligned queue work"
     assert.equal(map.totals.usage.costUsd, 0.02);
     assert.equal(map.totals.budget.tokenBudget, 1_000);
     assert.equal(map.totals.budget.costBudgetUsd, 0.5);
-    assert.equal(operatorAttention(store).items.find((item) => item.id === "accountability:budget-utilization")?.severity, "warning");
+    store.cancelTask("orphan-task", "test cleanup");
+    store.cancelTask("unscoped-task", "test cleanup");
+    const budgetAttention = operatorAttention(store);
+    assert.equal(budgetAttention.items.find((item) => item.id === "accountability:budget-utilization")?.severity, "warning");
+    assert.equal(budgetAttention.health.status, "degraded");
     assert.equal(map.totals.queue, 1);
     assert.equal(map.totals.unscopedQueue, 1);
     assert.equal(map.roles.find((role) => role.role === "validation scientist")?.activeQueue, 1);
