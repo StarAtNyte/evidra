@@ -709,10 +709,23 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     return { role, summary: "Lane was not started because another worker owns its lease.", findings: [], recommendations: [], uncertainties: [message], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0, status: "failed", error: message };
   }
   const laneTaskId = `task_lane_${role.replace(/[^a-z0-9]+/gi, "-")}_${leaseId.slice(-12)}`;
-  const ticketStore = new ResearchStore(options.storePath);
-  ticketStore.enqueueTask({ id: laneTaskId, kind: "research.lane", priority: 6, goalId: options.goalId ?? null, payload: { role, objective, leaseId, provider: laneRoute.provider, model: laneRoute.model } });
-  const ticket = ticketStore.claimTask(laneTaskId, ["research.lane"], leaseId);
-  ticketStore.close();
+  let ticket: ReturnType<ResearchStore["claimTask"]>;
+  try {
+    const ticketStore = new ResearchStore(options.storePath);
+    try {
+      ticketStore.enqueueTask({ id: laneTaskId, kind: "research.lane", priority: 6, goalId: options.goalId ?? null, payload: { role, objective, leaseId, provider: laneRoute.provider, model: laneRoute.model } });
+      ticket = ticketStore.claimTask(laneTaskId, ["research.lane"], leaseId);
+    } finally {
+      ticketStore.close();
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const failed = new ResearchStore(options.storePath);
+    failed.releaseAgentLane(role, leaseId, "failed", `lane ticket setup failed: ${message}`);
+    if (failed.queueTasks().some((task) => task.id === laneTaskId)) failed.updateTask(laneTaskId, "failed", { error: message, ticketSetupFailed: true });
+    failed.close();
+    return { role, summary: "Lane was not started because its durable ticket could not be created.", findings: [], recommendations: [], uncertainties: [message], discriminatingTests: ["retry lane ticket setup after the state store is writable"], evidence: [], evidenceSourceIds: [], confidence: 0, status: "failed", error: message };
+  }
   if (!ticket) {
     const failed = new ResearchStore(options.storePath);
     failed.releaseAgentLane(role, leaseId, "failed", "lane ticket could not be claimed");
