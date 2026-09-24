@@ -73,6 +73,7 @@ evidra queue cost-budget <id> <usd|0>
 evidra queue pause --reason "maintenance"
 evidra queue resume
 evidra queue priority <id> <value>
+evidra queue labels <id> research,gpu
 evidra queue pause-task <id> --reason "inspect before continuing"
 evidra queue resume-task <id>
 evidra queue approve <id> [--note "reviewed"]

@@ -2252,7 +2252,7 @@ queue.command("status").option("--json", "emit machine-readable queue state").ac
     const approval = task.approvalStatus === "none" || task.approvalStatus === "approved" ? "" : ` · approval ${task.approvalStatus}${task.approvalReason ? `: ${task.approvalReason}` : ""}`;
     const budget = task.tokenBudget === null && task.costBudgetUsd === null ? "" : (() => { const usage = store.queueUsageState(task.id); const token = task.tokenBudget === null ? "" : `tokens ${usage?.usedTokens ?? 0}/${task.tokenBudget}`; const cost = task.costBudgetUsd === null ? "" : `cost $${(usage?.usedCostUsd ?? 0).toFixed(6)}/$${task.costBudgetUsd.toFixed(6)}`; return ` · budget ${[token, cost].filter(Boolean).join(" · ")}${usage?.exhausted ? " exhausted" : ""}`; })();
     const deadline = task.deadlineAt ? ` · deadline ${task.deadlineAt}${Date.parse(task.deadlineAt) <= Date.now() ? " expired" : ""}` : "";
-    return `${task.status} ${task.id} · ${task.kind} · priority ${task.priority}${aging} · attempts ${task.attempts}${task.assigneeId ? ` · assigned ${task.assigneeId}` : ""}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.requiredCapabilities.length ? ` · requires ${task.requiredCapabilities.join(",")}` : ""}${approval}${budget}${deadline}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${brokenLineage}${blocked}`;
+    return `${task.status} ${task.id} · ${task.kind} · priority ${task.priority}${aging} · attempts ${task.attempts}${task.labels.length ? ` · labels ${task.labels.join(",")}` : ""}${task.assigneeId ? ` · assigned ${task.assigneeId}` : ""}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.requiredCapabilities.length ? ` · requires ${task.requiredCapabilities.join(",")}` : ""}${approval}${budget}${deadline}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${brokenLineage}${blocked}`;
   }).join("\n") : "Research queue is empty."}`);
   if (recoveries.length) console.log(`\nRecovery actions\n${recoveries.slice().reverse().slice(0, 8).map((entry) => { const value = entry && typeof entry === "object" ? entry as Record<string, unknown> : {}; return `  ${String(value.taskId ?? "task")} · ${String(value.failureClass ?? "unknown")} · ${String(value.route ?? "change_route")} · ${String(value.action ?? "inspect failure")}`; }).join("\n")}`);
   store.close();
@@ -2271,6 +2271,14 @@ queue.command("priority <id> <value>").description("Set priority for queued, pau
     if (!store.setTaskPriority(id, priority)) throw new Error("task is missing, running, or terminal");
   } finally { store.close(); }
   console.log(`Set priority for ${id} to ${priority}.`);
+});
+queue.command("labels <id> <labels>").description("Replace labels for queued, paused, or failed work; use none to clear").action((id: string, rawLabels: string) => {
+  const labels = /^none$/i.test(rawLabels) ? [] : rawLabels.split(",").map((label) => label.trim()).filter(Boolean);
+  const store = new ResearchStore(statePath);
+  try {
+    if (!store.setTaskLabels(id, labels)) throw new Error("task is missing, running, or terminal");
+  } finally { store.close(); }
+  console.log(labels.length ? `Set labels for ${id}: ${labels.join(", ")}.` : `Cleared labels for ${id}.`);
 });
 queue.command("cancel <id>").option("--reason <reason>", "why the work is being cancelled", "operator cancelled task").description("Cancel queued or running work durably").action((id: string, options: { reason: string }) => {
   const store = new ResearchStore(statePath);

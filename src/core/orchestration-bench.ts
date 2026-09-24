@@ -113,6 +113,12 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     check("priority-control", "Operators can redirect queued work without mutating a live claim.", priorityUpdated && priorityClaim?.priority === 9 && !livePriorityUpdate, { priorityUpdated, claimedPriority: priorityClaim?.priority, livePriorityUpdate });
     if (priorityClaim) store.updateTask("priority-control", "completed");
 
+    store.enqueueTask({ id: "label-control", kind: "governed", priority: 1, labels: ["GPU", "validation"], payload: {} });
+    const labelsUpdated = store.setTaskLabels("label-control", ["review", "gpu"]);
+    const labelTask = store.queueTasks().find((task) => task.id === "label-control");
+    check("label-control", "Task classifications are normalized and durable before dispatch.", labelsUpdated && labelTask?.labels.join(",") === "gpu,review", { labelsUpdated, labels: labelTask?.labels });
+    store.updateTask("label-control", "completed");
+
     store.enqueueTask({ id: "budget-stop", kind: "governed", priority: 1, tokenBudget: 2, payload: {} });
     const budgetClaim = store.claimTask("budget-stop", ["governed"], "worker-a");
     const budgetRecorded = budgetClaim ? store.recordQueueUsage({ taskId: "budget-stop", actorId: "worker-a", inputTokens: 1, outputTokens: 1, claimToken: budgetClaim.claimToken ?? undefined }) : false;
