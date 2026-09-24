@@ -3615,6 +3615,24 @@ test("task token budgets use the complete usage ledger beyond display history li
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("operator cancellation wins races with late worker completion and retry", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-cancel-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "cancel-running", kind: "research.lane", priority: 1, payload: { attempt: 1 } });
+    const claimed = store.claimNextTask(undefined, "worker-a");
+    assert.equal(claimed?.id, "cancel-running");
+    assert.equal(store.cancelTask("cancel-running", "operator changed direction"), true);
+    assert.equal(store.completeClaimedTask("cancel-running", "worker-a", "completed", { late: true }), false);
+    assert.equal(store.retryClaimedTask("cancel-running", "worker-a", { late: true }, new Date().toISOString()), false);
+    const task = store.queueTasks().find((entry) => entry.id === "cancel-running");
+    assert.equal(task?.status, "cancelled");
+    assert.equal(task?.payload.cancellation.reason, "operator changed direction");
+    assert.equal(store.cancelTask("cancel-running"), false);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue dependencies prevent work from running before prerequisites", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-dependencies-"));
   try {

@@ -1903,10 +1903,38 @@ export class ResearchStore {
     return true;
   }
 
+  /** Requeue only the live claim that reported the failure; an operator cancellation wins races. */
+  retryClaimedTask(id: string, ownerId: string, payload: unknown, availableAt: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE work_queue SET status = 'queued', payload_json = ?, available_at = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ?").run(safeJson(payload), availableAt, now, id, ownerId);
+    if (result.changes !== 1) return false;
+    this.appendEvent("queue.retry_scheduled", { id, availableAt, payload });
+    return true;
+  }
+
+  /** Backward-compatible controller retry for callers that already own queue state. */
   retryTask(id: string, payload: unknown, availableAt: string): void {
     const now = new Date().toISOString();
     this.db.prepare("UPDATE work_queue SET status = 'queued', payload_json = ?, available_at = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ?").run(safeJson(payload), availableAt, now, id);
     this.appendEvent("queue.retry_scheduled", { id, availableAt, payload });
+  }
+
+  /** Cancel queued or running work durably; late worker completion cannot overwrite it. */
+  cancelTask(id: string, reason = "operator cancelled task"): boolean {
+    const normalizedReason = reason.trim().slice(0, 400) || "operator cancelled task";
+    const now = new Date().toISOString();
+    const current = this.db.prepare("SELECT status, kind, owner_id, payload_json FROM work_queue WHERE id = ?").get(id) as { status: QueueTaskStatus; kind: string; owner_id: string | null; payload_json: string } | undefined;
+    if (!current || !["queued", "running"].includes(current.status)) return false;
+    let payload: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(current.payload_json);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) payload = parsed as Record<string, unknown>;
+    } catch { /* preserve cancellation even when an old payload is malformed */ }
+    const cancellation = { reason: normalizedReason, cancelledAt: now };
+    const result = this.db.prepare("UPDATE work_queue SET status = 'cancelled', payload_json = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')").run(safeJson({ ...payload, cancellation }), now, id);
+    if (result.changes !== 1) return false;
+    this.appendEvent("queue.cancelled", { id, kind: current.kind, priorStatus: current.status, priorOwnerId: current.owner_id, reason: normalizedReason, cancelledAt: now, source: "operator" });
+    return true;
   }
 
   /** Cancel queued work belonging to a campaign that hit its hard token ceiling. */

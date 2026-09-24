@@ -2255,6 +2255,13 @@ queue.command("assign <id> [workerId]").description("Assign queued work to one w
   if (!assigned) throw new Error(`Task '${id}' is missing or not queued/failed; only recoverable work can be assigned.`);
   console.log(workerId ? `Assigned ${id} to ${workerId}.` : `Cleared assignment for ${id}.`);
 });
+queue.command("cancel <id>").option("--reason <reason>", "why the work is being cancelled", "operator cancelled task").description("Cancel queued or running work durably").action((id: string, options: { reason: string }) => {
+  const store = new ResearchStore(statePath);
+  const cancelled = store.cancelTask(id, options.reason);
+  store.close();
+  if (!cancelled) throw new Error(`Task '${id}' is missing or already terminal; only queued/running work can be cancelled.`);
+  console.log(`Cancelled ${id}.`);
+});
 queue.command("activity <id>").option("--limit <count>", "number of task updates", "32").action((id: string, options: { limit: string }) => {
   const store = new ResearchStore(statePath);
   const limit = Math.max(1, Math.min(128, Number.parseInt(options.limit, 10) || 32));

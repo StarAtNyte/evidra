@@ -64,6 +64,8 @@ Inspect dependency readiness directly:
 ```text
 evidra queue status             Human-readable ownership and blocking reasons
 evidra queue status --json      Machine-readable readiness for automation
+evidra queue cancel <id> --reason "operator decision"
+                                Cancel queued or running work durably
 evidra queue recover <id> --route <route>
                                 Resume one failed task after declaring a changed route
 ```
