@@ -299,7 +299,7 @@ export interface AgentDirective {
   appliedAt: string | null;
   cancelledAt: string | null;
 }
-export type AgentDirectiveOutcomeStatus = "completed" | "failed" | "rejected";
+export type AgentDirectiveOutcomeStatus = "acknowledged" | "completed" | "failed" | "rejected";
 export interface AgentDirectiveOutcome {
   directiveId: number;
   role: string;
@@ -1366,7 +1366,10 @@ export class ResearchStore {
       const mark = this.db.prepare("UPDATE agent_directives SET applied_at = ? WHERE id = ? AND applied_at IS NULL");
       return rows.flatMap((row) => mark.run(now, row.id).changes === 1 ? [{ id: row.id, sourceRole: row.source_role, role: row.role, message: row.message, scopeKey: row.scope_key, createdAt: row.created_at, appliedAt: now, cancelledAt: row.cancelled_at }] : []);
     })() as AgentDirective[];
-    if (transaction.length) this.appendEvent("agent.directive.applied", { role, scopeKey: normalizedScope, ids: transaction.map((item) => item.id) });
+    if (transaction.length) {
+      this.appendEvent("agent.directive.applied", { role, scopeKey: normalizedScope, ids: transaction.map((item) => item.id) });
+      for (const directive of transaction) this.recordAgentDirectiveOutcome(directive.id, role, "acknowledged", "Delivered at a safe agent boundary.");
+    }
     return transaction;
   }
 
@@ -1384,7 +1387,7 @@ export class ResearchStore {
     const existing = this.agentDirectiveOutcomes(256).find((outcome) => outcome.directiveId === directiveId);
     if (existing) {
       if (existing.role === normalizedRole && existing.status === status && existing.message === normalizedMessage) return;
-      throw new Error(`Directive #${directiveId} already has a terminal ${existing.status} outcome.`);
+      if (existing.status !== "acknowledged" || status === "acknowledged") throw new Error(`Directive #${directiveId} already has a terminal ${existing.status} outcome.`);
     }
     this.appendEvent("agent.directive.outcome", { directiveId, role: normalizedRole, status, message: normalizedMessage });
   }
@@ -1393,7 +1396,7 @@ export class ResearchStore {
     const latest = new Map<number, AgentDirectiveOutcome>();
     for (const event of this.eventsByType("agent.directive.outcome", Math.max(1, Math.min(256, limit * 2)))) {
       const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
-      if (!Number.isInteger(payload.directiveId) || typeof payload.role !== "string" || typeof payload.status !== "string" || !["completed", "failed", "rejected"].includes(payload.status) || typeof payload.message !== "string") continue;
+      if (!Number.isInteger(payload.directiveId) || typeof payload.role !== "string" || typeof payload.status !== "string" || !["acknowledged", "completed", "failed", "rejected"].includes(payload.status) || typeof payload.message !== "string") continue;
       latest.set(payload.directiveId as number, { directiveId: payload.directiveId as number, role: payload.role, status: payload.status as AgentDirectiveOutcomeStatus, message: payload.message, createdAt: event.createdAt });
     }
     return [...latest.values()].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)).slice(0, Math.max(1, Math.min(256, limit)));
