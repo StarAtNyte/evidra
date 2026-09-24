@@ -105,6 +105,12 @@ tool selection and rejected at execution time; quarantining records why the
 adapter was withheld so a later campaign can repair or re-enable it
 deliberately.
 
+Once an adapter has an explicit lifecycle decision, its state records the
+manifest fingerprint that was reviewed. Editing that adapter’s command,
+permissions, or contract automatically quarantines it until an operator runs
+`evidra tools enable <name>` again. This prevents a trusted adapter name from
+silently acquiring new behavior.
+
 Portable exports include adapter declarations and lifecycle state, but never
 copy adapter source code, datasets, credentials, or worker output. A receiving
 workspace must validate the bundle and deliberately re-enable quarantined

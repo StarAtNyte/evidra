@@ -23,7 +23,7 @@ export type ExternalResearchTool = {
 
 export type ExternalToolLoadResult = { tools: ExternalResearchTool[]; warnings: string[]; path: string | null; contentHash: string | null };
 export type ExternalToolStatus = "enabled" | "disabled" | "quarantined";
-export type ExternalToolState = { status: ExternalToolStatus; reason?: string; changedAt: string };
+export type ExternalToolState = { status: ExternalToolStatus; reason?: string; changedAt: string; manifestHash?: string };
 export type ExternalToolStateMap = Record<string, ExternalToolState>;
 
 function boundedString(value: unknown, max: number): string | undefined {
@@ -91,26 +91,30 @@ export function loadExternalToolState(root: string): ExternalToolStateMap {
       const value = entry as Record<string, unknown>;
       const status = value.status;
       if (status !== "enabled" && status !== "disabled" && status !== "quarantined") continue;
-      state[name] = { status, ...(typeof value.reason === "string" && value.reason.trim() ? { reason: value.reason.slice(0, 500) } : {}), changedAt: typeof value.changedAt === "string" ? value.changedAt : new Date(0).toISOString() };
+      state[name] = { status, ...(typeof value.reason === "string" && value.reason.trim() ? { reason: value.reason.slice(0, 500) } : {}), changedAt: typeof value.changedAt === "string" ? value.changedAt : new Date(0).toISOString(), ...(typeof value.manifestHash === "string" && /^sha256:[a-f0-9]{64}$/.test(value.manifestHash) ? { manifestHash: value.manifestHash } : {}) };
     }
     return state;
   } catch { return {}; }
 }
 
 export function externalToolStatus(root: string, name: string): ExternalToolState {
-  return loadExternalToolState(root)[name] ?? { status: "enabled", changedAt: new Date(0).toISOString() };
+  const manifest = loadExternalResearchTools(root);
+  const state = loadExternalToolState(root)[name] ?? { status: "enabled" as const, changedAt: new Date(0).toISOString() };
+  if (state.manifestHash && manifest.contentHash && state.manifestHash !== manifest.contentHash) {
+    return { ...state, status: "quarantined", reason: "adapter manifest changed since its last operator approval" };
+  }
+  return state;
 }
 
 export function activeExternalResearchTools(root: string): ExternalResearchTool[] {
-  const state = loadExternalToolState(root);
-  return loadExternalResearchTools(root).tools.filter((tool) => (state[tool.name]?.status ?? "enabled") === "enabled");
+  return loadExternalResearchTools(root).tools.filter((tool) => externalToolStatus(root, tool.name).status === "enabled");
 }
 
 export function setExternalToolStatus(root: string, name: string, status: ExternalToolStatus, reason?: string): ExternalToolState {
-  const manifest = loadExternalResearchTools(root).tools;
-  if (!manifest.some((tool) => tool.name === name)) throw new Error(`Unknown external tool '${name}'.`);
+  const manifest = loadExternalResearchTools(root);
+  if (!manifest.tools.some((tool) => tool.name === name)) throw new Error(`Unknown external tool '${name}'.`);
   const state = loadExternalToolState(root);
-  const next = { status, ...(reason?.trim() ? { reason: reason.trim().slice(0, 500) } : {}), changedAt: new Date().toISOString() } satisfies ExternalToolState;
+  const next = { status, ...(reason?.trim() ? { reason: reason.trim().slice(0, 500) } : {}), changedAt: new Date().toISOString(), ...(manifest.contentHash ? { manifestHash: manifest.contentHash } : {}) } satisfies ExternalToolState;
   state[name] = next;
   const path = resolve(root, TOOL_STATE_PATH);
   mkdirSync(resolve(root, ".sota"), { recursive: true });

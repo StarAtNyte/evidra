@@ -3845,6 +3845,13 @@ test("research tool registry exposes safe workspace tools", async () => {
     const adapterEvent = adapterEventStore.eventsByType("research.tool.completed").find((event) => event.payload.name === "external.echo");
     assert.match(adapterEvent?.payload.manifestHash, /^sha256:[a-f0-9]{64}$/);
     adapterEventStore.close();
+    setExternalToolStatus(root, "external.echo", "enabled");
+    writeFileSync(join(root, ".evidra", "tools.json"), JSON.stringify({ tools: [{ name: "external.echo", description: "Echo adapter arguments after a manifest change", command: [process.execPath, "adapter.mjs"], roles: ["domain researcher"], readOnly: true, input: { value: "value to echo" } }] }));
+    assert.equal(externalToolStatus(root, "external.echo").status, "quarantined");
+    assert.match(externalToolStatus(root, "external.echo").reason, /manifest changed/);
+    assert.equal(availableResearchTools(root).some((tool) => tool.name === "external.echo"), false);
+    setExternalToolStatus(root, "external.echo", "enabled");
+    assert.equal(availableResearchTools(root).some((tool) => tool.name === "external.echo"), true);
     const adapterDenied = await executeResearchTool({ name: "external.echo", arguments: { value: "hello" } }, { root, storePath: db, autonomy: "safe", role: "benchmark specialist" });
     assert.equal(adapterDenied.ok, false);
     assert.equal(adapterDenied.trust, "permission_boundary");
@@ -3865,7 +3872,7 @@ test("research tool registry exposes safe workspace tools", async () => {
     toolApprovalStore.close();
     setExternalToolStatus(root, "external.echo", "enabled");
     const lifecycleStore = new ResearchStore(db);
-    assert.equal(lifecycleStore.eventsByType("research.external_tool.lifecycle_changed").length, 4);
+    assert.equal(lifecycleStore.eventsByType("research.external_tool.lifecycle_changed").length, 6);
     lifecycleStore.close();
     assert.equal(existsSync(join(root, "reports")), false);
     const predictionA = join(root, "pred-a.json");
