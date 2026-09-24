@@ -454,6 +454,7 @@ restarts. Inspect it through the TUI or CLI:
 /queue activity <id>     Inspect durable worker handoff notes
 /queue usage [id]        Show provider-neutral worker token/cost usage
 /queue assign <id> [worker]  Assign a task or clear its assignment
+/queue contract <id> <json|none>  Set or clear completion proof requirements
 /queue note <id> <text>  Add an operator handoff note to a task
 /routine list             Show durable recurring campaigns
 /routine create           Create one interactively in the TUI

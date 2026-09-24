@@ -3370,6 +3370,21 @@ test("queue completion contracts are validated before work is claimable", () => 
   }
 });
 
+test("operators can revise completion contracts only before a task is claimed", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-contract-operator-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.enqueueTask({ id: "operator-contract", kind: "research.lane", priority: 1, payload: {} });
+    assert.equal(store.setTaskCompletionContract("operator-contract", { requiredPayloadKeys: ["summary"] }), true);
+    assert.equal(store.queueTasks().find((task) => task.id === "operator-contract")?.payload.completionContract.requiredPayloadKeys[0], "summary");
+    assert.equal(store.claimTask("operator-contract", ["research.lane"], "worker-a")?.id, "operator-contract");
+    assert.equal(store.setTaskCompletionContract("operator-contract", null), false);
+    assert.equal(store.eventsByType("queue.completion_contract.updated").length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("governance benchmark covers role boundaries and scoped handoffs", () => {
   const report = runGovernanceBenchmark();
   assert.equal(report.failed, 0);

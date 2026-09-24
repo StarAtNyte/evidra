@@ -72,6 +72,8 @@ evidra queue budget <id> <tokens|0>
                                 Set a queued/failed task ceiling; 0 clears it
 evidra queue deadline <id> <duration|timestamp|none>
                                 Set a wall-clock deadline (`30m`, `4h`, `2d`)
+evidra queue contract <id> <json|none>
+                                Require payload/evidence/activity proof before completion
 evidra queue recover <id> --route <route>
                                 Resume one failed task after declaring a changed route
 ```

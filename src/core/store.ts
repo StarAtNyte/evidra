@@ -1855,6 +1855,23 @@ export class ResearchStore {
     return true;
   }
 
+  /** Attach, replace, or clear proof requirements before a task is claimed. */
+  setTaskCompletionContract(id: string, contract: QueueCompletionContract | null): boolean {
+    const current = this.queueTasks().find((task) => task.id === id);
+    if (!current || !["queued", "failed"].includes(current.status)) return false;
+    const payload = current.payload && typeof current.payload === "object" && !Array.isArray(current.payload)
+      ? { ...(current.payload as Record<string, unknown>) }
+      : {};
+    if (contract === null) delete payload.completionContract;
+    else payload.completionContract = contract;
+    validateQueueCompletionContract(payload);
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE work_queue SET payload_json = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'failed')").run(safeJson(payload), now, id);
+    if (result.changes !== 1) return false;
+    this.appendEvent("queue.completion_contract.updated", { id, contract });
+    return true;
+  }
+
   /** Record bounded, redacted progress that travels with a queue ticket. */
   recordQueueActivity(input: { taskId: string; actorId: string; kind: QueueActivityKind; message: string; metadata?: unknown }): boolean {
     const taskId = input.taskId.trim().slice(0, 200);

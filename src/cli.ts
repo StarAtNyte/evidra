@@ -2283,6 +2283,18 @@ queue.command("deadline <id> <timestamp>").description("Set a queued/failed task
   if (!updated) throw new Error(`Task '${id}' is missing or not queued/failed; live work cannot be re-deadlined.`);
   console.log(value === null ? `Cleared deadline for ${id}.` : `Set deadline for ${id} to ${new Date(value).toISOString()}.`);
 });
+queue.command("contract <id> <json>").description("Set or clear a queued/failed completion contract; use none to clear it").action((id: string, json: string) => {
+  let contract = null;
+  if (!/^none$/i.test(json)) {
+    try { contract = JSON.parse(json); } catch { throw new Error("Completion contract must be valid JSON or none."); }
+    if (!contract || typeof contract !== "object" || Array.isArray(contract)) throw new Error("Completion contract must be a JSON object or none.");
+  }
+  const store = new ResearchStore(statePath);
+  try {
+    if (!store.setTaskCompletionContract(id, contract as import("./core/store.js").QueueCompletionContract | null)) throw new Error("task is missing or not queued/failed");
+  } finally { store.close(); }
+  console.log(contract === null ? `Cleared completion contract for ${id}.` : `Updated completion contract for ${id}.`);
+});
 queue.command("activity <id>").option("--limit <count>", "number of task updates", "32").action((id: string, options: { limit: string }) => {
   const store = new ResearchStore(statePath);
   const limit = Math.max(1, Math.min(128, Number.parseInt(options.limit, 10) || 32));
