@@ -246,7 +246,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/event": [["/event emit ", "Emit an external wake-up event"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
-  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents dispatch", "Show the latest lane dispatch plan"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
+  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents dispatch", "Show the latest lane dispatch plan"], ["/agents evaluate", "Evaluate roles and generate coaching"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
   "/limits": [["/limits auto", "Use local fallback, then wait"], ["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Require local fallback"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
@@ -3758,6 +3758,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const list = (key: string): string[] => Array.isArray(payload[key]) ? payload[key].filter((item): item is string => typeof item === "string") : [];
       const roleBudgets = Array.isArray(payload.roleBudgets) ? payload.roleBudgets.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object")).map((entry) => `    ${typeof entry.role === "string" ? entry.role : "role"}: ${typeof entry.usedTokens === "number" ? entry.usedTokens : "?"}/${typeof entry.budgetTokens === "number" ? entry.budgetTokens : "?"} · ${typeof entry.status === "string" ? entry.status : "unknown"}`).join("\n") : "";
       append("assistant", `Latest lane dispatch · ${event.createdAt}\n  objective: ${typeof payload.objective === "string" ? payload.objective : "(unknown)"}\n  candidates: ${list("candidates").join(", ") || "none"}\n  launched: ${list("dispatched").join(", ") || "none"}\n  paused: ${list("paused").join(", ") || "none"}\n  budget-exhausted: ${list("roleTokenBudgetExhausted").join(", ") || "none"}\n  concurrency: ${typeof payload.concurrency === "number" ? payload.concurrency : "?"} · ${typeof payload.executionMode === "string" ? payload.executionMode : "unknown"}${roleBudgets ? `\n  role budgets:\n${roleBudgets}` : ""}`);
+      return;
+    }
+    if (request === "/agents evaluate") {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const reviews = evaluateAgentRoles(store.trajectories(128));
+      const interventions = agentRoleInterventions(reviews);
+      store.appendEvent("research.agent.reviewed", { reviews, interventions, source: "operator-tui" });
+      store.close();
+      append("assistant", reviews.length
+        ? `Role evaluation\n${reviews.map((review) => `  ${review.role} · ${review.recommendation} · score ${(review.score * 100).toFixed(0)}% · ${review.assignments} assignment(s)`).join("\n")}\n\nInterventions\n${interventions.map((intervention) => `  ${intervention.role} → ${intervention.action} · ${intervention.priority}\n    ${intervention.reason}`).join("\n")}`
+        : "No specialist trajectories recorded; role evaluation needs completed research lanes.");
       return;
     }
     if (request === "/agents" || request === "/agents status" || request === "/agents limits") {

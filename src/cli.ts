@@ -839,6 +839,19 @@ const agents = program.command("agents")
     store.close();
   });
 
+agents.command("evaluate").description("Evaluate specialist roles and persist bounded coaching interventions").option("--json", "emit machine-readable reviews").action((options: { json?: boolean }) => {
+  const store = new ResearchStore(statePath);
+  const reviews = evaluateAgentRoles(store.trajectoryHistory());
+  const interventions = agentRoleInterventions(reviews);
+  store.appendEvent("research.agent.reviewed", { reviews, interventions, source: "operator-cli" });
+  store.close();
+  if (options.json) { console.log(JSON.stringify({ reviews, interventions }, null, 2)); return; }
+  console.log(reviews.length
+    ? reviews.map((review) => `${review.role} · ${review.recommendation} · score ${(review.score * 100).toFixed(0)}% · ${review.assignments} assignment(s) · ${review.evidenceAnchors} evidence anchor(s)`).join("\n")
+    : "No specialist trajectories recorded; role evaluation needs completed research lanes.");
+  if (interventions.length) console.log(`\nInterventions\n${interventions.map((intervention) => `  ${intervention.role} → ${intervention.action} · ${intervention.priority} · ${intervention.reason}`).join("\n")}`);
+});
+
 for (const action of ["pause", "resume"] as const) {
   agents.command(`${action} <role>`).description(`${action === "pause" ? "Pause" : "Resume"} one specialist role at a safe boundary`).action((role: string) => {
     const store = new ResearchStore(statePath);
