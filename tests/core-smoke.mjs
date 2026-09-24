@@ -3554,6 +3554,20 @@ test("queue assignment can be changed only for recoverable work", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("task activity history is filtered before the bounded per-task read", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-activity-filter-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "target", kind: "research.lane", priority: 1, payload: {} });
+    store.enqueueTask({ id: "noise", kind: "research.lane", priority: 1, payload: {} });
+    store.recordQueueActivity({ taskId: "target", actorId: "worker-a", kind: "progress", message: "target-first" });
+    for (let index = 0; index < 40; index += 1) store.recordQueueActivity({ taskId: "noise", actorId: "worker-b", kind: "progress", message: `noise-${index}` });
+    store.recordQueueActivity({ taskId: "target", actorId: "worker-a", kind: "handoff", message: "target-latest" });
+    assert.deepEqual(store.queueActivities("target", 2).map((entry) => entry.message), ["target-first", "target-latest"]);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue dependencies prevent work from running before prerequisites", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-dependencies-"));
   try {

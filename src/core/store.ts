@@ -1767,15 +1767,28 @@ export class ResearchStore {
   }
 
   queueActivities(taskId?: string, limit = 32): QueueActivity[] {
-    const events = this.eventsByType("queue.activity", Math.max(1, Math.min(128, Math.floor(limit))));
-    return events.flatMap((event) => {
-      const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    const boundedLimit = Math.max(1, Math.min(128, Math.floor(limit)));
+    let rows: Array<{ payload_json: string; created_at: string }>;
+    try {
+      rows = taskId
+        ? this.db.prepare("SELECT payload_json, created_at FROM events WHERE type = 'queue.activity' AND json_extract(payload_json, '$.taskId') = ? ORDER BY id DESC LIMIT ?").all(taskId, boundedLimit) as Array<{ payload_json: string; created_at: string }>
+        : this.db.prepare("SELECT payload_json, created_at FROM events WHERE type = 'queue.activity' ORDER BY id DESC LIMIT ?").all(boundedLimit) as Array<{ payload_json: string; created_at: string }>;
+    } catch {
+      // Older SQLite builds may lack JSON1; retain correctness with the
+      // bounded event-family fallback rather than making activity unavailable.
+      const events = this.eventsByType("queue.activity");
+      rows = events.slice(taskId ? 0 : Math.max(0, events.length - boundedLimit)).filter((event) => !taskId || (event.payload && typeof event.payload === "object" && (event.payload as Record<string, unknown>).taskId === taskId)).slice(-boundedLimit).reverse().map((event) => ({ payload_json: JSON.stringify(event.payload), created_at: event.createdAt }));
+    }
+    return rows.reverse().flatMap((row) => {
+      let raw: unknown;
+      try { raw = JSON.parse(row.payload_json); } catch { return []; }
+      const payload = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
       const id = typeof payload.taskId === "string" ? payload.taskId : "";
       const actorId = typeof payload.actorId === "string" ? payload.actorId : "";
       const kind = payload.kind;
       const message = typeof payload.message === "string" ? payload.message : "";
       if (!id || !actorId || !message || !["started", "progress", "blocked", "handoff", "completed", "failed"].includes(String(kind)) || (taskId && id !== taskId)) return [];
-      return [{ taskId: id, actorId, kind: kind as QueueActivityKind, message, metadata: payload.metadata ?? null, createdAt: event.createdAt }];
+      return [{ taskId: id, actorId, kind: kind as QueueActivityKind, message, metadata: payload.metadata ?? null, createdAt: row.created_at }];
     });
   }
 
