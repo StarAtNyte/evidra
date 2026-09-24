@@ -930,7 +930,12 @@ test("campaign organization maps goals, reporting lines, and aligned queue work"
     assert.deepEqual({ completed: map.progress.completedPhases, total: map.progress.totalPhases, status: map.progress.status, activePhase: map.progress.activePhase }, { completed: 0, total: 1, status: "active", activePhase: "validation" });
     assert.equal(map.progress.stages.find((stage) => stage.stage === "discover")?.activePhase, "validation");
     assert.equal(map.phases[0]?.queue.active, 1);
+    assert.equal(map.phases[0]?.queue.queued, 0);
+    assert.equal(map.phases[0]?.queue.completed, 0);
+    assert.equal(map.phases[0]?.queue.failed, 0);
     assert.equal(map.totals.activeQueue, 1);
+    assert.equal(map.totals.queuedQueue, 0);
+    assert.equal(map.totals.completedQueue, 0);
     assert.equal(map.totals.queue, 1);
     assert.equal(map.roles.find((role) => role.role === "validation scientist")?.activeQueue, 1);
     assert.deepEqual(map.accountability.unassignedRunning, []);

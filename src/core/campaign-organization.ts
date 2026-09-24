@@ -8,7 +8,7 @@ export type CampaignOrganizationPhase = {
   phase: string;
   status: string;
   objective: string | null;
-  queue: { total: number; active: number; blocked: number };
+  queue: { total: number; queued: number; active: number; blocked: number; completed: number; failed: number };
 };
 
 export type CampaignOrganizationRole = AgentRoleContract & {
@@ -39,8 +39,11 @@ export type CampaignOrganization = {
     phases: number;
     roles: number;
     queue: number;
+    queuedQueue: number;
     activeQueue: number;
     blockedQueue: number;
+    completedQueue: number;
+    failedQueue: number;
   };
   accountability: {
     unassignedRunning: string[];
@@ -93,8 +96,11 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
       objective: text(payload.objective),
       queue: {
         total: phaseTasks.length,
+        queued: phaseTasks.filter((task) => task.status === "queued").length,
         active: phaseTasks.filter((task) => task.status === "running" || task.status === "assigned").length,
         blocked: phaseTasks.filter((task) => task.status === "blocked" || task.approvalStatus === "pending").length,
+        completed: phaseTasks.filter((task) => task.status === "completed").length,
+        failed: phaseTasks.filter((task) => task.status === "failed" || task.status === "cancelled").length,
       },
     } satisfies CampaignOrganizationPhase;
   });
@@ -126,7 +132,10 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
   const alignedTasks = tasks.filter((task) => !task.goalId || phaseById.has(task.goalId));
   const liveTasks = tasks.filter((task) => task.status === "queued" || task.status === "running");
   const activeQueue = alignedTasks.filter((task) => task.status === "running" || task.status === "assigned").length;
+  const queuedQueue = alignedTasks.filter((task) => task.status === "queued").length;
   const blockedQueue = alignedTasks.filter((task) => task.status === "blocked" || task.approvalStatus === "pending").length;
+  const completedQueue = alignedTasks.filter((task) => task.status === "completed").length;
+  const failedQueue = alignedTasks.filter((task) => task.status === "failed" || task.status === "cancelled").length;
   return {
     goal: text(campaign?.goal),
     mode,
@@ -142,7 +151,7 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
     },
     phases: phaseRows,
     roles: organization,
-    totals: { phases: phaseRows.length, roles: organization.length, queue: alignedTasks.length, activeQueue, blockedQueue },
+    totals: { phases: phaseRows.length, roles: organization.length, queue: alignedTasks.length, queuedQueue, activeQueue, blockedQueue, completedQueue, failedQueue },
     accountability: {
       unassignedRunning: liveTasks.filter((task) => task.status === "running" && !task.assigneeId && !task.ownerId && !taskRole(task)).map((task) => task.id).slice(0, 64),
       unscopedLive: liveTasks.filter((task) => !task.goalId).map((task) => task.id).slice(0, 64),
@@ -153,7 +162,7 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
 }
 
 export function formatCampaignOrganization(map: CampaignOrganization): string {
-  const phaseLines = map.phases.map((phase) => `  ${phase.status.padEnd(9)} ${phase.phase} · ${phase.id} · ${phase.queue.active} active / ${phase.queue.total} queued${phase.queue.blocked ? ` · ${phase.queue.blocked} blocked` : ""}${phase.objective ? `\n    ${phase.objective}` : ""}`);
+  const phaseLines = map.phases.map((phase) => `  ${phase.status.padEnd(9)} ${phase.phase} · ${phase.id} · ${phase.queue.active} active / ${phase.queue.queued} queued / ${phase.queue.completed} done${phase.queue.blocked ? ` · ${phase.queue.blocked} blocked` : ""}${phase.queue.failed ? ` · ${phase.queue.failed} failed` : ""}${phase.objective ? `\n    ${phase.objective}` : ""}`);
   const roleLines = map.roles
     .filter((role) => role.parentRole === null || role.status !== "unstarted" || role.pendingDirectives > 0 || role.activeQueue > 0)
     .map((role) => `  ${role.status.padEnd(9)} ${role.role} → ${role.parentRole ?? "operator"} · ${role.admission} · ${role.health}${role.activeQueue ? ` · ${role.activeQueue} active` : ""}${role.pendingDirectives ? ` · ${role.pendingDirectives} directives` : ""}${role.task ? `\n    ${role.task}` : ""}`);
@@ -162,7 +171,7 @@ export function formatCampaignOrganization(map: CampaignOrganization): string {
     `  mission: ${map.goal ?? "not initialized"}`,
     `  mode: ${map.mode} · status: ${map.status}`,
     `  progress: ${map.progress.completedPhases}/${map.progress.totalPhases} phases · ${(map.progress.ratio * 100).toFixed(0)}% · ${map.progress.status}${map.progress.activePhase ? ` · active ${map.progress.activePhase}` : ""}`,
-    `  work: ${map.totals.activeQueue} active · ${map.totals.queue} aligned${map.totals.blockedQueue ? ` · ${map.totals.blockedQueue} blocked` : ""}`,
+    `  work: ${map.totals.activeQueue} active · ${map.totals.queuedQueue} queued · ${map.totals.completedQueue} done · ${map.totals.queue} aligned${map.totals.blockedQueue ? ` · ${map.totals.blockedQueue} blocked` : ""}${map.totals.failedQueue ? ` · ${map.totals.failedQueue} failed` : ""}`,
     `  accountability: ${map.accountability.unassignedRunning.length} ownerless running · ${map.accountability.unscopedLive.length} unscoped · ${map.accountability.misalignedLive.length} mis-scoped · ${map.accountability.unbudgetedLive.length} unbudgeted`,
     "",
     "Phase ownership",
