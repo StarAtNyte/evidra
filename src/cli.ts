@@ -2694,6 +2694,13 @@ event.command("serve")
     const workerCapabilities = parseWorkerCapabilityMap(options.workerCapabilities);
     const server = createServer((request, response) => {
       const headers = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" };
+      request.setTimeout(35_000, () => {
+        if (!response.writableEnded) {
+          response.writeHead(408, headers);
+          response.end(JSON.stringify({ error: "request timed out" }));
+        }
+        request.destroy();
+      });
       const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/delegate", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release"].includes(request.url ?? "") ? request.url : undefined;
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
@@ -3081,6 +3088,12 @@ event.command("serve")
         }
       });
     });
+    // The listener is an integration boundary, not a general-purpose HTTP
+    // server. Keep incomplete clients from consuming a controller connection
+    // forever, while allowing the bounded JSON handler enough time to finish.
+    server.headersTimeout = 10_000;
+    server.requestTimeout = 35_000;
+    server.keepAliveTimeout = 5_000;
     await new Promise<void>((resolveListen, rejectListen) => {
       server.once("error", rejectListen);
       server.listen(port, options.host, () => { server.removeListener("error", rejectListen); console.log(`Evidra event listener: http://${options.host}:${port}/events`); resolveListen(); });

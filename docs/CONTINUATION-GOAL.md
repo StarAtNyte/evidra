@@ -68,6 +68,7 @@ external evaluator.
 - Role admission is included in portable bundle control metadata, so moving or backing up a project cannot silently turn an approved external role back into an untracked execution path.
 - Portable control metadata also preserves explicit `rejected` versus pending `review`, preventing a declined role from resurfacing as a new hire request after transfer.
 - Specialist handoffs now have crash-safe lifecycle recovery: an acknowledged directive is not treated as completed, stale acknowledgements are tied to recipient heartbeat health, `/agents recover` resolves them with an auditable failed outcome, and the autonomous CLI/TUI/lane allocation boundary performs the same bounded recovery before new work is allocated. Retrying requires a changed route and preserves the original failure reason.
+- Event-server bearer authentication now supports permission-checked file-backed secrets, uses constant-time comparison, and bounds headers, request bodies, request duration, and keep-alive sockets so external integrations cannot stall the controller indefinitely.
 
 - Latest pushed state: `origin/master` at the latest handoff commit (verify with `git log`).
 - Competition manifests now support typed `researchChannels` for rules,
