@@ -9,6 +9,7 @@ export type CampaignOrganizationPhase = {
   status: string;
   objective: string | null;
   queue: { total: number; queued: number; active: number; blocked: number; completed: number; failed: number };
+  usage: { inputTokens: number; outputTokens: number; costUsd: number };
 };
 
 export type CampaignOrganizationRole = AgentRoleContract & {
@@ -45,6 +46,7 @@ export type CampaignOrganization = {
     blockedQueue: number;
     completedQueue: number;
     failedQueue: number;
+    usage: { inputTokens: number; outputTokens: number; costUsd: number };
   };
   accountability: {
     unassignedRunning: string[];
@@ -90,6 +92,10 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
   const phaseRows = campaignGoals.slice(0, 24).map((entry) => {
     const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as Record<string, unknown> : {};
     const phaseTasks = tasks.filter((task) => task.goalId === entry.id);
+    const usage = phaseTasks.reduce((total, task) => {
+      const current = store.queueUsageTotals(task.id);
+      return { inputTokens: total.inputTokens + (current?.inputTokens ?? 0), outputTokens: total.outputTokens + (current?.outputTokens ?? 0), costUsd: total.costUsd + (current?.costUsd ?? 0) };
+    }, { inputTokens: 0, outputTokens: 0, costUsd: 0 });
     return {
       id: entry.id,
       phase: entry.phase,
@@ -103,6 +109,7 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
         completed: phaseTasks.filter((task) => task.status === "completed").length,
         failed: phaseTasks.filter((task) => task.status === "failed" || task.status === "cancelled").length,
       },
+      usage,
     } satisfies CampaignOrganizationPhase;
   });
   const stageProgress = researchStageProgress(campaignGoals.map((entry) => ({
@@ -137,6 +144,10 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
   const blockedQueue = alignedTasks.filter((task) => task.status === "blocked" || task.approvalStatus === "pending").length;
   const completedQueue = alignedTasks.filter((task) => task.status === "completed").length;
   const failedQueue = alignedTasks.filter((task) => task.status === "failed" || task.status === "cancelled").length;
+  const usage = alignedTasks.reduce((total, task) => {
+    const current = store.queueUsageTotals(task.id);
+    return { inputTokens: total.inputTokens + (current?.inputTokens ?? 0), outputTokens: total.outputTokens + (current?.outputTokens ?? 0), costUsd: total.costUsd + (current?.costUsd ?? 0) };
+  }, { inputTokens: 0, outputTokens: 0, costUsd: 0 });
   return {
     goal: text(campaign?.goal),
     mode,
@@ -152,7 +163,7 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
     },
     phases: phaseRows,
     roles: organization,
-    totals: { phases: phaseRows.length, roles: organization.length, queue: alignedTasks.length, unscopedQueue: tasks.filter((task) => !task.goalId).length, queuedQueue, activeQueue, blockedQueue, completedQueue, failedQueue },
+    totals: { phases: phaseRows.length, roles: organization.length, queue: alignedTasks.length, unscopedQueue: tasks.filter((task) => !task.goalId).length, queuedQueue, activeQueue, blockedQueue, completedQueue, failedQueue, usage },
     accountability: {
       unassignedRunning: liveTasks.filter((task) => task.status === "running" && !task.assigneeId && !task.ownerId && !taskRole(task)).map((task) => task.id).slice(0, 64),
       unscopedLive: liveTasks.filter((task) => !task.goalId).map((task) => task.id).slice(0, 64),
@@ -173,6 +184,7 @@ export function formatCampaignOrganization(map: CampaignOrganization): string {
     `  mode: ${map.mode} · status: ${map.status}`,
     `  progress: ${map.progress.completedPhases}/${map.progress.totalPhases} phases · ${(map.progress.ratio * 100).toFixed(0)}% · ${map.progress.status}${map.progress.activePhase ? ` · active ${map.progress.activePhase}` : ""}`,
     `  work: ${map.totals.activeQueue} active · ${map.totals.queuedQueue} queued · ${map.totals.completedQueue} done · ${map.totals.queue} aligned${map.totals.unscopedQueue ? ` · ${map.totals.unscopedQueue} unscoped` : ""}${map.totals.blockedQueue ? ` · ${map.totals.blockedQueue} blocked` : ""}${map.totals.failedQueue ? ` · ${map.totals.failedQueue} failed` : ""}`,
+    `  usage: ${map.totals.usage.inputTokens + map.totals.usage.outputTokens} tokens · $${map.totals.usage.costUsd.toFixed(4)}`,
     `  accountability: ${map.accountability.unassignedRunning.length} ownerless running · ${map.accountability.unscopedLive.length} unscoped · ${map.accountability.misalignedLive.length} mis-scoped · ${map.accountability.unbudgetedLive.length} unbudgeted`,
     "",
     "Phase ownership",
