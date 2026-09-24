@@ -3585,6 +3585,22 @@ test("task usage history is filtered before the bounded per-task read", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("task token budgets stop exhausted queue work from being claimed", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-token-budget-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "budgeted", kind: "research.lane", priority: 1, tokenBudget: 10, payload: {} });
+    assert.equal(store.queueTasks().find((task) => task.id === "budgeted")?.tokenBudget, 10);
+    assert.equal(store.queueUsageState("budgeted")?.exhausted, false);
+    assert.equal(store.recordQueueUsage({ taskId: "budgeted", actorId: "worker-a", inputTokens: 6, outputTokens: 4, provider: "codex", model: "gpt-test" }), true);
+    assert.deepEqual(store.queueUsageState("budgeted"), { usedTokens: 10, budgetTokens: 10, remainingTokens: 0, exhausted: true });
+    assert.equal(store.claimNextTask(undefined, "worker-a")?.id, undefined);
+    assert.equal(store.claimTask("budgeted", undefined, "worker-a"), undefined);
+    assert.throws(() => store.enqueueTask({ id: "invalid-budget", kind: "research.lane", priority: 1, tokenBudget: 0, payload: {} }), /tokenBudget/);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue dependencies prevent work from running before prerequisites", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-dependencies-"));
   try {

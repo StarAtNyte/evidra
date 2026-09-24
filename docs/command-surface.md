@@ -184,6 +184,10 @@ Workers can also report bounded token, provider, model, and cost usage through `
 Inspect aggregate attribution with `evidra queue usage [task-id]`; usage is
 accounting telemetry, not a claim that a provider's billing was independently
 verified.
+Queue tasks may declare an optional `tokenBudget`. Once reported input plus
+output tokens reach that ceiling, the task is marked exhausted in queue status,
+dashboard state, and the usage response, and it cannot be claimed again until
+an operator creates or repairs the task with a new budget.
 If an assigned worker goes stale, the task is requeued but remains assigned and
 appears in `/approvals`; clear or replace that assignment explicitly before a
 different worker can claim it.
