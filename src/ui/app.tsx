@@ -3603,7 +3603,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const attributedTokens = campaign ? campaignAgentTokens(store.eventsByType("research.agent.usage"), campaign.startedAt) : 0;
       store.close();
       append("assistant", `Research agents\n  codex: ${codex || "not authenticated"}\n  local: ${local}\n  concurrency: 1 active director lane\n\n${lanes.length ? lanes.map((lane) => `  ${lane.status === "running" ? "●" : lane.status === "failed" ? "✗" : lane.status === "blocked" ? "!" : "○"} ${lane.role} · ${lane.status} · ${lane.provider}/${lane.model}${lane.task ? `\n    ${lane.task.slice(0, 120)}` : ""}`).join("\n") : "  No lanes initialized; start /research to initialize the project."}`);
-      if (roleReviews.length) append("assistant", `Role reviews\n${roleReviews.slice(0, 12).map((review) => `  ${review.role} · ${review.recommendation} · score ${(review.score * 100).toFixed(0)}% · ${review.assignments} assignment(s)`).join("\n")}`);
+      if (roleReviews.length) append("assistant", `Role reviews\n${roleReviews.slice(0, 12).map((review) => `  ${review.role} · ${review.recommendation} · score ${(review.score * 100).toFixed(0)}% · ${review.assignments} assignment(s) · checks ${review.playbookPasses} pass/${review.playbookPartials} partial/${review.playbookBlocks} blocked`).join("\n")}`);
       if (campaign?.runtime?.agentTokenBudget) append("assistant", `Campaign agent budget\n  attributed: ${attributedTokens}\n  ceiling: ${campaign.runtime.agentTokenBudget}\n  remaining: ${Math.max(0, campaign.runtime.agentTokenBudget - attributedTokens)}`);
       return;
     }
@@ -3836,7 +3836,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", tasks.length ? `Research queue\n${tasks.slice(0, 24).map((task) => {
           const readiness = store.taskReadiness(task.id);
           const blocked = readiness && !readiness.ready ? ` · blocked ${[...readiness.missing.map((id) => `missing:${id}`), ...readiness.pending.map((id) => `waiting:${id}`), ...readiness.failed.map((id) => `failed:${id}`)].join(",")}` : "";
-          const lineage = [task.parentTaskId ? `parent ${task.parentTaskId}` : "", task.goalId ? `goal ${task.goalId}` : "", task.dependsOn.length ? `depends ${task.dependsOn.join(",")}` : "", task.ownerId ? `owner ${task.ownerId}` : ""].filter(Boolean).join(" · ");
+          const taskRole = task.payload && typeof task.payload === "object" && !Array.isArray(task.payload) && typeof (task.payload as { role?: unknown }).role === "string" ? (task.payload as { role: string }).role : "";
+          const lineage = [taskRole ? `role ${taskRole}` : "", task.parentTaskId ? `parent ${task.parentTaskId}` : "", task.goalId ? `goal ${task.goalId}` : "", task.dependsOn.length ? `depends ${task.dependsOn.join(",")}` : "", task.ownerId ? `owner ${task.ownerId}` : ""].filter(Boolean).join(" · ");
           return `${task.status === "running" ? "●" : task.status === "queued" ? "○" : task.status === "completed" ? "✓" : "✗"} ${task.id} · ${task.kind} · priority ${task.priority} · attempts ${task.attempts}${lineage ? `\n  ${lineage}` : ""}${blocked}`;
         }).join("\n")}` : "Research queue is empty.");
       }
