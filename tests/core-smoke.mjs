@@ -309,9 +309,11 @@ test("durable research state and queue survive store reopen", () => {
     first.createProject({ id: "p1", name: "Smoke", competitionId: "local", config: {} });
     first.saveCampaign({ goal: "test", budgetMinutes: 2, status: "running" });
     first.updateAgentLane({ role: "research director", status: "running", provider: "local", model: "test", task: "smoke" });
-    assert.equal(first.acquireAgentLane({ role: "model researcher", leaseId: "worker-a", provider: "local", model: "test", task: "lease" }).acquired, true);
+    assert.equal(first.acquireAgentLane({ role: "model researcher", leaseId: "worker-a", provider: "local", model: "test", task: "lease", budgetSeconds: 30 }).acquired, true);
     assert.equal(first.acquireAgentLane({ role: "model researcher", leaseId: "worker-b", provider: "local", model: "test", task: "duplicate" }).acquired, false);
     assert.equal(first.heartbeatAgentLane("model researcher", "worker-a"), true);
+    assert.equal(first.recordAgentLaneUsage("model researcher", "worker-a", 3), true);
+    assert.equal(first.agentLaneBudget("model researcher", "worker-a")?.remainingSeconds, 27);
     assert.equal(first.releaseAgentLane("model researcher", "worker-a"), true);
     first.enqueueTask({ id: "task-1", kind: "research.cycle", priority: 4, payload: { smoke: true } });
     assert.equal(first.claimNextTask()?.id, "task-1");
@@ -1094,6 +1096,7 @@ test("durable campaign runtime settings are validated before resume", () => {
     fallbackModel: "qwen3.6:27b",
     thinking: "high",
     lanes: 4,
+    laneBudgetMinutes: 20,
     autonomy: "fast",
     limitPolicy: "auto",
     executor: "modal",
@@ -1101,6 +1104,7 @@ test("durable campaign runtime settings are validated before resume", () => {
   assert.deepEqual(readCampaignRuntime({ runtime: { ...runtime } }), runtime);
   assert.equal(readCampaignRuntime({ runtime: { ...runtime, lanes: 0 } }), undefined);
   assert.equal(readCampaignRuntime({ runtime: { ...runtime, provider: "unknown" } }), undefined);
+  assert.equal(readCampaignRuntime({ runtime: { ...runtime, laneBudgetMinutes: 0 } }), undefined);
   assert.equal(readCampaignRuntime({ goal: "legacy campaign" }), undefined);
   assert.equal(campaignRuntimeFingerprint(runtime), campaignRuntimeFingerprint({ ...runtime }));
   assert.notEqual(campaignRuntimeFingerprint(runtime), campaignRuntimeFingerprint({ ...runtime, autonomy: "yolo" }));

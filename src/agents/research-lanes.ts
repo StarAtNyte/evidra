@@ -195,6 +195,8 @@ export interface ResearchLanesOptions {
   maxParallel?: number;
   /** Total specialists in the wave-based team; defaults to the available role pool outside safe mode. */
   laneTeamSize?: number;
+  /** Optional hard wall-clock budget for one specialist lease. */
+  laneBudgetMs?: number;
   /** Collaboration scheduler. Non-safe teams default to asynchronous completion-driven hand-offs. */
   executionMode?: "waves" | "asynchronous";
   autonomy?: AutonomyLevel;
@@ -683,7 +685,7 @@ export async function runResearchSemanticAuditor(
 async function runLane(role: ResearchLaneRole, objective: string, context: Record<string, unknown>, options: ResearchLanesOptions, laneRoute: ResearchLaneRoute): Promise<ResearchLaneReport> {
   const leaseId = `${role.replace(/[^a-z0-9]+/gi, "-")}-${randomUUID()}`;
   const leaseStore = new ResearchStore(options.storePath);
-  const lease = leaseStore.acquireAgentLane({ role, leaseId, provider: laneRoute.provider, model: laneRoute.model, task: objective });
+  const lease = leaseStore.acquireAgentLane({ role, leaseId, provider: laneRoute.provider, model: laneRoute.model, task: objective, budgetSeconds: options.laneBudgetMs && options.laneBudgetMs > 0 ? options.laneBudgetMs / 1_000 : null });
   leaseStore.close();
   if (!lease.acquired) {
     const message = `Lane is already active; refusing duplicate work (${lease.reason ?? "live lease"}).`;
@@ -698,12 +700,19 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
   }, 15_000);
   heartbeat.unref();
   options.onProgress?.(`Research lane · ${role} · investigating...`);
+  const ensureLaneBudget = (): void => {
+    const store = new ResearchStore(options.storePath);
+    const budget = store.agentLaneBudget(role, leaseId);
+    store.close();
+    if (budget?.bounded && (budget.remainingSeconds ?? 0) <= 0) throw new Error(`Lane budget exhausted for ${role}; preserving partial evidence and changing route.`);
+  };
   try {
     const toolResults: ResearchToolResult[] = [];
     if (options.executeTool) {
       const calls = laneToolCalls(role, objective);
       let retrievedSourceCount = 0;
       for (let callIndex = 0; callIndex < calls.length; callIndex += 1) {
+        ensureLaneBudget();
         const call = calls[callIndex];
         if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
         options.onProgress?.(`Research lane · ${role} · ${call.name}...`);
@@ -746,10 +755,12 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     let lastError: unknown;
     const attemptedRoutes = new Set<string>();
     for (let attempt = 1; attempt <= 3 && !parsed; attempt += 1) {
+      ensureLaneBudget();
       if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
       attemptedRoutes.add(laneRouteKey({ provider, model }));
       try {
         const bounded = boundResearchContext({ ...context, laneToolResults: toolResults });
+        const modelStartedAt = Date.now();
         const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective), context: bounded.context, outputSchema: RESEARCH_LANE_OUTPUT_SCHEMA }, {
           provider,
           model,
@@ -763,6 +774,9 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
           onActivity: options.onActivity,
           onAssistant: options.onAssistant,
         }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
+        const usageStore = new ResearchStore(options.storePath);
+        usageStore.recordAgentLaneUsage(role, leaseId, (Date.now() - modelStartedAt) / 1_000);
+        usageStore.close();
         options.onUsage?.(result.usage, result.provider, result.model ?? model, role);
         parsed = { ...ResearchLaneReportSchema.parse(parseJson(result.output)), provider: result.provider, model: result.model ?? model };
       } catch (error) {

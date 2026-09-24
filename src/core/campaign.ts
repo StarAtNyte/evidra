@@ -54,6 +54,8 @@ export interface CampaignRuntimeConfig {
   fallbackModel?: string;
   thinking: string;
   lanes: number;
+  /** Optional hard wall-clock budget per specialist lane. */
+  laneBudgetMinutes?: number;
   autonomy: "safe" | "fast" | "yolo";
   limitPolicy: "auto" | "wait" | "fallback" | "stop";
   executor: ExperimentExecutorKind;
@@ -76,6 +78,7 @@ export function campaignRuntimeFingerprint(runtime: CampaignRuntimeConfig): stri
     ...(runtime.fallbackModel ? { fallbackModel: runtime.fallbackModel } : {}),
     thinking: runtime.thinking,
     lanes: runtime.lanes,
+    ...(runtime.laneBudgetMinutes !== undefined ? { laneBudgetMinutes: runtime.laneBudgetMinutes } : {}),
     autonomy: runtime.autonomy,
     limitPolicy: runtime.limitPolicy,
     executor: runtime.executor,
@@ -93,6 +96,7 @@ export function readCampaignRuntime(value: unknown): CampaignRuntimeConfig | und
   if (typeof candidate.model !== "string" || !candidate.model) return undefined;
   if (typeof candidate.thinking !== "string" || !candidate.thinking) return undefined;
   if (typeof candidate.lanes !== "number" || !Number.isInteger(candidate.lanes) || candidate.lanes < 1 || candidate.lanes > 6) return undefined;
+  if (candidate.laneBudgetMinutes !== undefined && (typeof candidate.laneBudgetMinutes !== "number" || !Number.isFinite(candidate.laneBudgetMinutes) || candidate.laneBudgetMinutes <= 0)) return undefined;
   if (!( ["safe", "fast", "yolo"] as const).includes(candidate.autonomy as "safe" | "fast" | "yolo")) return undefined;
   if (!( ["auto", "wait", "fallback", "stop"] as const).includes(candidate.limitPolicy as "auto" | "wait" | "fallback" | "stop")) return undefined;
   if (!( ["local", "container", "modal", "slurm"] as const).includes(candidate.executor as ExperimentExecutorKind)) return undefined;
@@ -103,6 +107,7 @@ export function readCampaignRuntime(value: unknown): CampaignRuntimeConfig | und
     ...(typeof candidate.fallbackModel === "string" && candidate.fallbackModel ? { fallbackModel: candidate.fallbackModel } : {}),
     thinking: candidate.thinking,
     lanes: candidate.lanes,
+    ...(candidate.laneBudgetMinutes !== undefined ? { laneBudgetMinutes: candidate.laneBudgetMinutes } : {}),
     autonomy: candidate.autonomy as CampaignRuntimeConfig["autonomy"],
     limitPolicy: candidate.limitPolicy as CampaignRuntimeConfig["limitPolicy"],
     executor: candidate.executor as CampaignRuntimeConfig["executor"],

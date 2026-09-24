@@ -52,6 +52,18 @@ marks only expired leases as blocked and can recover them; live lanes remain
 untouched. Queue tasks use the same ownership rule: a worker can heartbeat only
 the task it claimed.
 
+For long campaigns, bound each specialist independently:
+
+```text
+evidra research --lane-budget 20m --lanes 4 --budget 4h
+evidra challenge start --lane-budget 30m --lanes 3
+```
+
+The lane budget is a wall-clock cap for one leased specialist, not a claim
+about provider billing. Evidra records elapsed usage and calls, stops the lane
+before another provider turn after exhaustion, and preserves its partial
+evidence for recovery or a different route.
+
 ```text
 /research start               Start autonomous research setup
 /research pause               Pause active research workers
