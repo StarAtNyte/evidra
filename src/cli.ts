@@ -2450,9 +2450,13 @@ event.command("serve")
                 return;
               }
               const accepted = store.heartbeatTask(taskId, workerId);
+              const status = store.queueTasks().find((task) => task.id === taskId);
+              const cancellation = status?.payload && typeof status.payload === "object" && !Array.isArray(status.payload) && (status.payload as Record<string, unknown>).cancellation && typeof (status.payload as Record<string, unknown>).cancellation === "object"
+                ? (status.payload as Record<string, unknown>).cancellation
+                : undefined;
               store.close();
               response.writeHead(accepted ? 200 : 409, headers);
-              response.end(JSON.stringify({ ok: accepted, taskId }));
+              response.end(JSON.stringify({ ok: accepted, taskId, status: status?.status ?? null, ...(cancellation ? { cancellation } : {}) }));
               return;
             }
             if (taskPath === "/tasks/activity") {

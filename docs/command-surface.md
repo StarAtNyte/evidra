@@ -172,6 +172,9 @@ POST /tasks/complete  {"workerId":"agent-17","taskId":"task-123","status":"compl
 
 Claim, heartbeat, and completion all enforce the queue owner. A stale or foreign
 worker receives a conflict response and cannot overwrite another worker’s task.
+If an operator cancels a live task, the next heartbeat returns `409` with
+`status: "cancelled"` and the durable cancellation reason; workers should stop
+their local work instead of retrying or completing that ticket.
 Tasks may also be pre-assigned to a worker with `assigneeId`; an assigned task is
 invisible to other workers at claim time, while unassigned tasks remain shared.
 The assignment is durable and is separate from the live claim owner, so a
