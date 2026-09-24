@@ -43,6 +43,11 @@ function text(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function taskRole(task: { payload: unknown }): string | null {
+  const payload = task.payload && typeof task.payload === "object" ? task.payload as { role?: unknown } : {};
+  return text(payload.role);
+}
+
 function campaignMode(store: ResearchStore): "research" | "challenge" {
   const campaign = store.campaign() as { runtime?: { mode?: unknown } } | undefined;
   if (campaign?.runtime?.mode === "challenge") return "challenge";
@@ -84,7 +89,7 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
   });
   const organization = agentOrganization(store).slice(0, 32).map((role) => {
     const activeQueue = tasks.filter((task) => task.status === "running" || task.status === "assigned")
-      .filter((task) => task.assigneeId === role.role || task.ownerId === role.role).length;
+      .filter((task) => task.assigneeId === role.role || task.ownerId === role.role || taskRole(task) === role.role).length;
     return {
       ...role,
       task: role.task,
@@ -106,7 +111,7 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
     roles: organization,
     totals: { phases: phaseRows.length, roles: organization.length, queue: alignedTasks.length, activeQueue, blockedQueue },
     accountability: {
-      unassignedRunning: liveTasks.filter((task) => task.status === "running" && !task.assigneeId && !task.ownerId).map((task) => task.id).slice(0, 64),
+      unassignedRunning: liveTasks.filter((task) => task.status === "running" && !task.assigneeId && !task.ownerId && !taskRole(task)).map((task) => task.id).slice(0, 64),
       unscopedLive: liveTasks.filter((task) => !task.goalId).map((task) => task.id).slice(0, 64),
       misalignedLive: liveTasks.filter((task) => Boolean(task.goalId) && !phaseById.has(task.goalId!)).map((task) => task.id).slice(0, 64),
       unbudgetedLive: liveTasks.filter((task) => task.tokenBudget === null && task.costBudgetUsd === null).map((task) => task.id).slice(0, 64),

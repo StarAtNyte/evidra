@@ -819,9 +819,9 @@ test("campaign organization maps goals, reporting lines, and aligned queue work"
     store.savePhaseGoal({ id: "phase-validation", phase: "validation", status: "active", payload: { id: "phase-validation", phase: "validation", status: "active", objective: "verify the candidate" } });
     store.savePhaseGoal({ id: "foreign-phase", phase: "hypothesis", status: "active", payload: { id: "foreign-phase", phase: "hypothesis", status: "active", goalSetId: "old-campaign" } });
     store.updateAgentLane({ role: "validation scientist", status: "running", provider: "local", model: "bench", task: "verify the candidate" });
-    store.enqueueTask({ id: "validation-task", kind: "research.cycle", priority: 1, payload: {}, goalId: "phase-validation", assigneeId: "validation scientist" });
+    store.enqueueTask({ id: "validation-task", kind: "research.cycle", priority: 1, payload: { role: "validation scientist" }, goalId: "phase-validation" });
     store.enqueueTask({ id: "orphan-task", kind: "research.cycle", priority: 1, payload: {}, goalId: "foreign-phase" });
-    assert.ok(store.claimTask("validation-task", undefined, "validation scientist"));
+    assert.ok(store.claimTask("validation-task", undefined, "worker-validation-1"));
     const map = campaignOrganization(store);
     assert.equal(map.goal, "improve the measured outcome");
     assert.equal(map.mode, "challenge");
