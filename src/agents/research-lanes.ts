@@ -12,7 +12,7 @@ import { boundResearchContext } from "../core/context-budget.js";
 import type { LaneFinding } from "../core/cross-pollination.js";
 import { agentRoleContract } from "../core/agent-organization.js";
 import type { AgentRoleReview } from "../core/agent-evals.js";
-import { campaignRoleAgentTokens } from "../core/usage.js";
+import { campaignRoleAgentTokens, roleBudgetLedger } from "../core/usage.js";
 
 export const RESEARCH_LANE_ROLES = [
   "data detective",
@@ -1104,12 +1104,16 @@ export async function runResearchLanes(objective: string, context: Record<string
   if (pausedRoles.size) options.onProgress?.(`Research lanes · skipped operator-paused roles: ${[...pausedRoles].join(", ")}`);
   if (exhaustedRoles.size) options.onProgress?.(`Research lanes · skipped role-token-budget roles: ${[...exhaustedRoles].join(", ")}`);
   const dispatchStore = new ResearchStore(options.storePath);
+  const roleBudgets = options.campaignStartedAt
+    ? roleBudgetLedger(roleUsageEvents, options.campaignStartedAt, options.roleTokenBudgets)
+    : [];
   dispatchStore.appendEvent("research.lane.dispatch_planned", {
     objective: objective.slice(0, 1_000),
     candidates: candidateRoles,
     dispatched: roles,
     paused: [...pausedRoles],
     roleTokenBudgetExhausted: [...exhaustedRoles],
+    roleBudgets,
     concurrency,
     executionMode: options.executionMode ?? (options.autonomy === "safe" ? "waves" : "asynchronous"),
     campaignStartedAt: options.campaignStartedAt ?? null,

@@ -857,14 +857,16 @@ agents.command("directives [role]").description("Show durable specialist handoff
   else console.log(directives.map((directive) => `${directive.appliedAt ? "applied" : "pending"}  #${directive.id}  ${directive.role}  ${directive.createdAt}${directive.scopeKey ? `  scope:${directive.scopeKey}` : "  global"}\n  ${directive.message}${directive.appliedAt ? `\n  applied: ${directive.appliedAt}` : ""}`).join("\n"));
   store.close();
 });
-agents.command("dispatch").description("Show the latest durable research-lane dispatch plan").action(() => {
+agents.command("dispatch").description("Show the latest durable research-lane dispatch plan").option("--json", "emit the dispatch plan as JSON").action((options: { json?: boolean }) => {
   const store = new ResearchStore(statePath);
   const event = store.eventsByType("research.lane.dispatch_planned", 1).at(-1);
   store.close();
   if (!event) { console.log("No research lane dispatch plan recorded."); return; }
   const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+  if (options.json) { console.log(JSON.stringify({ createdAt: event.createdAt, ...payload }, null, 2)); return; }
   const list = (key: string): string[] => Array.isArray(payload[key]) ? payload[key].filter((item): item is string => typeof item === "string") : [];
-  console.log(`Latest dispatch · ${event.createdAt}\nObjective  ${typeof payload.objective === "string" ? payload.objective : "(unknown)"}\nCandidates ${list("candidates").join(", ") || "none"}\nLaunched   ${list("dispatched").join(", ") || "none"}\nPaused     ${list("paused").join(", ") || "none"}\nBudgeted out ${list("roleTokenBudgetExhausted").join(", ") || "none"}\nConcurrency ${typeof payload.concurrency === "number" ? payload.concurrency : "?"} · ${typeof payload.executionMode === "string" ? payload.executionMode : "unknown"}`);
+  const roleBudgets = Array.isArray(payload.roleBudgets) ? payload.roleBudgets.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object")).map((entry) => `  ${typeof entry.role === "string" ? entry.role : "role"} · ${typeof entry.usedTokens === "number" ? entry.usedTokens : "?"}/${typeof entry.budgetTokens === "number" ? entry.budgetTokens : "?"} tokens · ${typeof entry.status === "string" ? entry.status : "unknown"}`).join("\n") : "";
+  console.log(`Latest dispatch · ${event.createdAt}\nObjective  ${typeof payload.objective === "string" ? payload.objective : "(unknown)"}\nCandidates ${list("candidates").join(", ") || "none"}\nLaunched   ${list("dispatched").join(", ") || "none"}\nPaused     ${list("paused").join(", ") || "none"}\nBudgeted out ${list("roleTokenBudgetExhausted").join(", ") || "none"}\nConcurrency ${typeof payload.concurrency === "number" ? payload.concurrency : "?"} · ${typeof payload.executionMode === "string" ? payload.executionMode : "unknown"}${roleBudgets ? `\nRole budgets\n${roleBudgets}` : ""}`);
 });
 agents.command("reviews").description("Show durable role review and intervention history").action(() => {
   const store = new ResearchStore(statePath);
