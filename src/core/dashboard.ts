@@ -4,6 +4,7 @@ import { PhaseGoalSchema } from "./types.js";
 import { approvalInbox } from "./approvals.js";
 import { goalAlignment } from "./goal-alignment.js";
 import { agentOrganization } from "./agent-organization.js";
+import { evaluateAgentRoles } from "./agent-evals.js";
 import type { ResearchStore } from "./store.js";
 
 /** Build a bounded, secret-redacted read model for the local dashboard. */
@@ -34,6 +35,7 @@ export function dashboardSnapshot(store: ResearchStore): Record<string, unknown>
     phases,
     agents: store.agentLanes().slice(0, 24).map((agent) => ({ ...agent, leaseId: agent.leaseId ? `${agent.leaseId.slice(0, 12)}…` : null })),
     organization: agentOrganization(store),
+    agentReviews: evaluateAgentRoles(store.trajectoryHistory()),
     routines: store.routines().slice(0, 24).map((routine) => ({ id: routine.id, name: routine.name, mode: routine.mode, status: routine.status, nextRunAt: routine.nextRunAt, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult, lastError: routine.lastError, runCount: routine.runCount, leaseId: routine.leaseId ? `${routine.leaseId.slice(0, 12)}…` : null, recentRuns: store.routineRuns(routine.id).slice(0, 3).map((run) => ({ status: run.status, startedAt: run.startedAt, finishedAt: run.finishedAt, exitCode: run.exitCode, error: run.error })) })),
     approvals: approvalInbox(store).slice(0, 48),
     alignment: goalAlignment(store),
@@ -72,7 +74,7 @@ function render(d){
  const al=d.alignment||{}; document.getElementById('campaign').innerHTML+=(al.status?row('Alignment',status(al.status)+' · '+esc(Math.round((al.score||0)*100))+'%'):'')+(al.checks||[]).filter(x=>x.status!=='pass').map(x=>row(esc(x.id),status(x.status)+' · '+esc(x.detail))).join('');
  document.getElementById('stages').innerHTML=(d.stages||[]).map(s=>row(esc(s.stage)+' · '+esc(s.activePhase||'ready'),status(s.status)+' '+esc(s.completed)+'/'+esc(s.total))).join('')||empty;
  document.getElementById('phases').innerHTML=(d.phases||[]).map(p=>row(esc(p.name||p.id),status(p.status))).join('')||empty;
- document.getElementById('agents').innerHTML=(d.organization||d.agents||[]).map(a=>row(esc(a.role)+' · '+esc(a.parentRole||'operator'),status(a.status)+(a.task?' · '+esc(a.task):'')+(a.budgetSeconds!==null&&a.budgetSeconds!==undefined?' · '+Math.round(a.usedSeconds||0)+'/'+Math.round(a.budgetSeconds)+'s':''))).join('')||empty;
+ const reviews=new Map((d.agentReviews||[]).map(x=>[x.role,x])); document.getElementById('agents').innerHTML=(d.organization||d.agents||[]).map(a=>{const review=reviews.get(a.role);return row(esc(a.role)+' · '+esc(a.parentRole||'operator'),status(a.status)+(review?' · review '+esc(review.recommendation)+' '+Math.round((review.score||0)*100)+'%':'')+(a.task?' · '+esc(a.task):'')+(a.budgetSeconds!==null&&a.budgetSeconds!==undefined?' · '+Math.round(a.usedSeconds||0)+'/'+Math.round(a.budgetSeconds)+'s':''))}).join('')||empty;
  document.getElementById('routines').innerHTML=(d.routines||[]).map(r=>row(esc(r.name)+' · '+esc(r.mode),status(r.status)+' · next '+esc(r.nextRunAt)+' · '+esc(r.runCount)+' run'+(r.runCount===1?'':'s')+(r.lastResult?' · last '+esc(r.lastResult):'')+(r.lastError?' · '+esc(r.lastError):'')+(r.recentRuns?.length?' · history '+r.recentRuns.map(x=>esc(x.status)).join(' → '):''))).join('')||empty;
  document.getElementById('approvals').innerHTML=(d.approvals||[]).map(a=>row(esc(a.kind)+' · '+esc(a.id),status(a.status)+' · '+esc(a.detail)+' · next '+esc(a.next))).join('')||empty;
  document.getElementById('queue').innerHTML=(d.queue||[]).map(q=>row(esc(q.kind)+' · '+esc(q.id),status(q.status)+' · '+(q.ownerId?esc(q.ownerId):'unclaimed')+' · '+esc(q.attempts)+' attempt'+(q.attempts===1?'':'s')+(q.goalId?' · goal '+esc(q.goalId):'')+readiness(q))).join('')||empty;

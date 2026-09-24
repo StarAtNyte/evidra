@@ -110,6 +110,7 @@ import { selectRatchetReference } from "./core/ratchet.js";
 import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.js";
 import { approvalInbox } from "./core/approvals.js";
 import { formatGoalAlignment, goalAlignment } from "./core/goal-alignment.js";
+import { evaluateAgentRoles } from "./core/agent-evals.js";
 
 const PHASE_GATE_EVENT_TYPES = [
   "research.observation", "project.created", "baseline.completed", "data.audit.completed", "data.audit.accepted",
@@ -2649,6 +2650,7 @@ research
         ? `Harness-evolution evidence from matched benchmark runs (diagnostic, not workspace task evidence): ${JSON.stringify(harnessBenchmarkEvidence).slice(0, 8_000)}. Prioritize these checksummed, falsifiable interventions and remeasure them under the same protocol: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}${harnessChangeHistory.length ? `\n\nPrior harness-change decisions (historical guidance, not task evidence): ${JSON.stringify(harnessChangeHistory).slice(0, 6_000)}` : ""}${harnessAdaptationAgenda ? `\n\nLocked adaptive retest agenda (must be addressed before claiming a win): ${JSON.stringify(harnessAdaptationAgenda).slice(0, 8_000)}` : ""}${queuedHarnessRetest ? `\n\nDurable retest task queued for controller execution: ${queuedHarnessRetest.id}. It is not proof; select or reject it through the normal experiment and validation gates.` : ""}`
         : `No matched harness benchmark evidence is recorded yet; preserve failure telemetry for the first comparison. The harness action space is inventory-backed; use these candidate intervention contracts when a failure is observed: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}`;
       const recentTrajectories = store.trajectories(20);
+      const agentRoleReviews = evaluateAgentRoles(recentTrajectories);
       const latestTrajectoryAt = recentTrajectories[0]?.createdAt;
       const unreconciledTraceRecovery = durableEvents.some((event) => event.type === "research.trace.recovered" && (!latestTrajectoryAt || event.createdAt > latestTrajectoryAt));
       const recentQuality = recentTrajectories.map((entry) => qualityFeedback(entry.quality));
@@ -3042,6 +3044,7 @@ research
             literatureBenchmarkEvidence,
             openCriticConstraint,
             peerLaneBoard,
+            agentRoleReviews,
           }, {
             provider: options.provider as "codex" | "local",
             model: selectedModel,
@@ -3090,6 +3093,7 @@ research
                 researchMemory,
                 peerLaneBoard: crossPollination,
                 priorLaneReports: laneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
+                agentRoleReviews,
               },
               {
                 provider: options.provider as "codex" | "local",

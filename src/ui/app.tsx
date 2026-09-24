@@ -7,6 +7,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, write
 import { ResearchStore } from "../core/store.js";
 import { approvalInbox } from "../core/approvals.js";
 import { formatGoalAlignment, goalAlignment } from "../core/goal-alignment.js";
+import { evaluateAgentRoles } from "../core/agent-evals.js";
 import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
@@ -1022,6 +1023,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }));
     const peerLaneBoard = boundedPeerBoard(recentEvents);
     const recentTrajectories = store.trajectories(50);
+    const agentRoleReviews = evaluateAgentRoles(recentTrajectories);
     const latestTrajectoryAt = recentTrajectories[0]?.createdAt;
     const unreconciledTraceRecovery = store.eventsByType("research.trace.recovered", 20).some((event) => !latestTrajectoryAt || event.createdAt > latestTrajectoryAt);
     const recentFailureCount = recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
@@ -1147,6 +1149,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         evidenceConflicts,
         researchMemory,
         peerLaneBoard,
+        agentRoleReviews,
       }, {
         provider: config.provider,
         model: config.model,

@@ -402,6 +402,12 @@ route after failure. These are responsibility contracts, not cosmetic labels:
 lane prompts receive their reporting line and authority boundary so a specialist
 cannot silently redefine the campaign objective.
 
+The dashboard also shows role reviews learned from completed trajectories. They
+combine completion, evidence anchors, confidence, and process quality into a
+bounded `trusted`, `needs-review`, or `insufficient-data` signal. This is used
+as context for later lane decisions, while final task metrics remain attributed
+to the complete validated campaign.
+
 For a browser view of the active workspace, run `evidra dashboard --port 4310`
 and open `http://127.0.0.1:4310`. It is read-only, localhost-bound, and polls
 the same durable state used by the TUI.
