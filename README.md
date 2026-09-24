@@ -311,6 +311,7 @@ Implemented today:
 - checkpoint observability: `evidra queue checkpoint <id>` (or `/queue checkpoint <id>`) reports whether a task can resume, its safe stage/key summary, byte size, hash, and update time without printing checkpoint contents; the read-only dashboard exposes the same redacted metadata;
 - durable queue approval gates: enqueue work with `requiresApproval`, then release it with `evidra queue approve <id>` (or `/queue approve`); rejected/pending tasks remain visible but cannot be claimed until explicitly approved;
 - unified approval inbox: pending/rejected queue tasks appear alongside experiment, submission, recovery, and external-action approvals in `/approvals` and the dashboard;
+- operator attention inbox: `/status`, the TUI status view, and the dashboard consolidate blocked goals, stale workers, failed or dependency-blocked tasks, paused dispatch, and approvals into one bounded, read-only intervention list;
 - remote claim diagnostics: external workers receive bounded approval blockers when no eligible task can be claimed, making operator-gated queues explainable without exposing unrelated task payloads;
 - typed exhausted-queue recovery: authentication, dependency, sandbox, data, resource, timeout, and route failures produce auditable next actions instead of dead-end errors;
 - ownership-aware queue checkout: each worker gets a durable identity, only the claimant can heartbeat a task, and stale claims are safely reclaimable;

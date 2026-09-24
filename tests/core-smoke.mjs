@@ -11,6 +11,7 @@ import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../di
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore, queueEffectivePriority } from "../dist/core/store.js";
 import { approvalInbox } from "../dist/core/approvals.js";
+import { operatorAttention } from "../dist/core/attention.js";
 import { goalAlignment, pauseForGoalAlignment } from "../dist/core/goal-alignment.js";
 import { agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "../dist/core/agent-evals.js";
@@ -631,6 +632,26 @@ test("approval inbox unifies pending work without mutating any gate", () => {
       ["queue-task", "approval-1", "pending"],
     ]);
     assert.equal(store.externalAction("submission:bundle-1")?.status, "in_flight");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("operator attention consolidates durable intervention signals", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-operator-attention-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.savePhaseGoal({ id: "blocked-phase", phase: "validation", status: "blocked", payload: { title: "Validate result" } });
+    store.enqueueTask({ id: "waiting-task", kind: "research.review", priority: 1, dependsOn: ["missing-task"], payload: {} });
+    store.updateAgentLane({ role: "critic", status: "blocked", provider: "local", model: "test", task: "missing evidence", error: "replication required" });
+    store.setQueuePaused(true, "operator inspection");
+    const attention = operatorAttention(store);
+    assert.ok(attention.total >= 3);
+    assert.ok(attention.critical >= 2);
+    assert.ok(attention.items.some((item) => item.kind === "phase-goal" && item.next === "/resume"));
+    assert.ok(attention.items.some((item) => item.kind === "queue-blocked" && item.id === "queue-blocked:waiting-task"));
+    assert.ok(attention.items.some((item) => item.kind === "agent" && item.id === "agent:critic"));
+    assert.ok(attention.items.some((item) => item.kind === "queue-control"));
+    assert.ok(attention.items.length <= 64);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -8079,6 +8100,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.equal(snapshot.stages.length, 3);
     assert.equal(Array.isArray(snapshot.organization), true);
     assert.equal(snapshot.queueControl?.paused, false);
+    assert.ok(snapshot.attention && typeof snapshot.attention.total === "number");
     assert.equal(snapshot.agentReviewHistory.length, 1);
     assert.equal(snapshot.agentReviewHistory[0].interventions[0].action, "coach");
     assert.equal(snapshot.agentActivity[0].message, "inspecting evidence");

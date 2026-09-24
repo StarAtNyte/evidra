@@ -114,6 +114,7 @@ import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.j
 import { approvalInbox } from "./core/approvals.js";
 import { loadProjectGuidance } from "./core/project-guidance.js";
 import { formatGoalAlignment, goalAlignment } from "./core/goal-alignment.js";
+import { operatorAttention } from "./core/attention.js";
 import { agentCoachingDirective, agentRoleInterventions, evaluateAgentRoles } from "./core/agent-evals.js";
 import { agentOrganization } from "./core/agent-organization.js";
 import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "./core/external-events.js";
@@ -573,6 +574,8 @@ program.command("status").action(() => {
     const lease = store.liveControllerLease();
     const running = store.experiments().filter((entry) => (entry.payload as { status?: unknown }).status === "running");
     if (!lease && running.length) console.log(`Stale experiments ${running.length} (no live controller; run research/challenge to recover safely)`);
+    const attention = operatorAttention(store, root);
+    console.log(`Attention     ${attention.total} total · ${attention.critical} critical · ${attention.warning} warning${attention.total ? `\n              ${attention.items.slice(0, 6).map((item) => `${item.severity} ${item.summary} → ${item.next}`).join("\n              ")}` : ""}`);
   }
   store.close();
 });

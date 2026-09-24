@@ -11,6 +11,7 @@ import { externalEventPayload, parseExternalEventPayload, validateExternalEventT
 import { createPortableBundle, validatePortableBundle } from "../core/portable-bundle.js";
 import { roleBudgetLedger } from "../core/usage.js";
 import { formatGoalAlignment, goalAlignment, pauseForGoalAlignment } from "../core/goal-alignment.js";
+import { operatorAttention } from "../core/attention.js";
 import { agentCoachingDirective, agentRoleInterventions, evaluateAgentRoles } from "../core/agent-evals.js";
 import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
@@ -3367,8 +3368,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const integrity = store.verifyEventChain();
       const eventCount = store.eventCount();
       const alignment = goalAlignment(store);
+      const attention = operatorAttention(store, root);
       const gpuUsed = observedGpuHours(store.runAttempts(), store.experiments(), store.hypotheses()); const gpuReserved = store.reservedComputeGpuHours();
-      append("assistant", project ? `Project: ${project.name}\nWorkspace: ${project.competitionId}\nMode: ${statusMode}\nAutonomy: ${config.autonomy}\nEvents: ${eventCount}\nIntegrity: ${integrity.status.toUpperCase()}${integrity.legacy ? ` (${integrity.legacy} legacy)` : ""}\n${formatGoalAlignment(alignment)}${campaign ? `\nCampaign: ${campaign.status}\nGoal: ${campaign.goal}\nBudget: ${campaign.budgetMinutes} minutes\nGPU committed: ${(gpuUsed + gpuReserved).toFixed(3)} / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed - gpuReserved).toFixed(3)} available)` : ""}\nStop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\nProvider retry: ${campaign.nextAttemptAt}` : ""}` : ""}` : "No Evidra project initialized. Start with /research to configure an autonomous campaign.");
+      append("assistant", project ? `Project: ${project.name}\nWorkspace: ${project.competitionId}\nMode: ${statusMode}\nAutonomy: ${config.autonomy}\nEvents: ${eventCount}\nIntegrity: ${integrity.status.toUpperCase()}${integrity.legacy ? ` (${integrity.legacy} legacy)` : ""}\n${formatGoalAlignment(alignment)}\nAttention: ${attention.total} total · ${attention.critical} critical · ${attention.warning} warning${attention.total ? `\n${attention.items.slice(0, 6).map((item) => `  ${item.severity} · ${item.summary} → ${item.next}`).join("\n")}` : ""}${campaign ? `\nCampaign: ${campaign.status}\nGoal: ${campaign.goal}\nBudget: ${campaign.budgetMinutes} minutes\nGPU committed: ${(gpuUsed + gpuReserved).toFixed(3)} / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed - gpuReserved).toFixed(3)} available)` : ""}\nStop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\nProvider retry: ${campaign.nextAttemptAt}` : ""}` : ""}` : "No Evidra project initialized. Start with /research to configure an autonomous campaign.");
       store.close();
       return;
     }
