@@ -2554,8 +2554,23 @@ event.command("serve")
               return;
             }
             const taskPayload = parsed.payload === undefined ? undefined : parseExternalEventPayload(JSON.stringify(parsed.payload));
+            const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey.trim().slice(0, 200) : "";
+            if (parsed.idempotencyKey !== undefined && !idempotencyKey) throw new Error("idempotencyKey must be a non-empty string.");
+            if (idempotencyKey) {
+              const prior = store.eventsByType(`queue.${parsed.status}`).find((event) => {
+                const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+                return payload.id === taskId && payload.ownerId === workerId && payload.idempotencyKey === idempotencyKey;
+              });
+              if (prior) {
+                const currentStatus = store.queueTasks().find((task) => task.id === taskId)?.status ?? null;
+                store.close();
+                response.writeHead(200, headers);
+                response.end(JSON.stringify({ ok: true, idempotent: true, taskId, status: parsed.status, currentStatus }));
+                return;
+              }
+            }
             const completionAudit = parsed.status === "completed" ? store.taskCompletionAudit(taskId, taskPayload) : { valid: true, missing: [] as string[] };
-            const accepted = store.completeClaimedTask(taskId, workerId, parsed.status as "completed" | "failed" | "cancelled", taskPayload);
+            const accepted = store.completeClaimedTask(taskId, workerId, parsed.status as "completed" | "failed" | "cancelled", taskPayload, idempotencyKey || undefined);
             const currentStatus = store.queueTasks().find((task) => task.id === taskId)?.status ?? null;
             store.close();
             response.writeHead(accepted ? 200 : 409, headers);

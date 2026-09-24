@@ -495,6 +495,7 @@ evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" \
 - terminal queue records retain the original task specification under `_task` and worker output under `completion`, keeping objectives and proof contracts inspectable after execution;
 - authenticated external workers receive structured missing-proof details on rejected `/tasks/complete` calls, making remote contract repair actionable instead of opaque;
 - external completion responses include authoritative `currentStatus`, allowing workers to reconcile a lost response without duplicating terminal work;
+- external completion requests accept an optional `idempotencyKey`; safe retries of an acknowledged terminal transition return success without creating a second transition;
 - a deterministic agent-governance benchmark (`evidra benchmark governance`) covering role-contract completeness, tool authority boundaries, pause/resume controls, scoped handoff isolation, durable handoff auditability, and recovery approval boundaries;
 - durable external-action intents that reserve submissions before invocation, refuse restart-time replay, and require explicit `evidra submission reconcile <bundle> --status submitted|not-submitted` after an ambiguous crash;
 - integrity-bound campaign runtime policy: resume verifies provider, model, thinking effort, lanes, autonomy, usage-limit policy, and executor before continuing;

@@ -2090,7 +2090,7 @@ export class ResearchStore {
   }
 
   /** Complete a queue task only when the caller still owns its live claim. */
-  completeClaimedTask(id: string, ownerId: string, status: Extract<QueueTaskStatus, "completed" | "failed" | "cancelled">, payload?: unknown): boolean {
+  completeClaimedTask(id: string, ownerId: string, status: Extract<QueueTaskStatus, "completed" | "failed" | "cancelled">, payload?: unknown, idempotencyKey?: string): boolean {
     if (this.taskDeadlineExpired(id)) {
       this.cancelTask(id, "task wall-clock deadline exceeded", "deadline");
       return false;
@@ -2107,7 +2107,8 @@ export class ResearchStore {
     const now = new Date().toISOString();
     const result = this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ?").run(status, payload === undefined ? null : safeJson(preserveQueuePayload(current?.payload, payload)), now, id, ownerId);
     if (result.changes !== 1) return false;
-    this.appendEvent(`queue.${status}`, { id, ownerId, payload });
+    const normalizedKey = idempotencyKey?.trim().slice(0, 200) || undefined;
+    this.appendEvent(`queue.${status}`, { id, ownerId, payload, ...(normalizedKey ? { idempotencyKey: normalizedKey } : {}) });
     return true;
   }
 

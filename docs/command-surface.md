@@ -102,7 +102,9 @@ Authenticated external workers receive the same missing-proof list in the
 `409` response from `/tasks/complete`, allowing them to repair the result at
 the next completion attempt. Every completion response also includes the
 authoritative `currentStatus`, so a retry after a lost response can recognize
-that the task already reached its terminal state.
+that the task already reached its terminal state. External workers may also
+send a unique `idempotencyKey`; repeating the same completion with that key is
+acknowledged with `200` and `idempotent: true`.
 
 Queued work reports `missing`, `waiting`, or `failed` prerequisites. This makes
 the scheduler explainable to an operator and gives recovery controllers a

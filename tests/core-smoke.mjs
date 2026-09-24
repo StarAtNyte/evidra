@@ -7906,10 +7906,13 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const rejectedBody = await rejectedCompletion.json();
     assert.equal(rejectedBody.error, "completion proof rejected");
     assert.deepEqual(rejectedBody.missing, ["payload:summary"]);
-    assert.equal((await post("/tasks/complete", { workerId: "worker-a", taskId: contractTask.id, status: "completed", payload: { summary: "verified" } }, token, "worker-a", "worker-secret")).status, 200);
-    const duplicateCompletion = await post("/tasks/complete", { workerId: "worker-a", taskId: contractTask.id, status: "completed", payload: { summary: "verified" } }, token, "worker-a", "worker-secret");
-    assert.equal(duplicateCompletion.status, 409);
-    assert.equal((await duplicateCompletion.json()).currentStatus, "completed");
+    assert.equal((await post("/tasks/complete", { workerId: "worker-a", taskId: contractTask.id, status: "completed", payload: { summary: "verified" }, idempotencyKey: "contract-complete-1" }, token, "worker-a", "worker-secret")).status, 200);
+    const duplicateCompletion = await post("/tasks/complete", { workerId: "worker-a", taskId: contractTask.id, status: "completed", payload: { summary: "verified" }, idempotencyKey: "contract-complete-1" }, token, "worker-a", "worker-secret");
+    assert.equal(duplicateCompletion.status, 200);
+    assert.equal((await duplicateCompletion.json()).idempotent, true);
+    const conflictingDuplicate = await post("/tasks/complete", { workerId: "worker-a", taskId: contractTask.id, status: "completed", payload: { summary: "verified" }, idempotencyKey: "contract-complete-2" }, token, "worker-a", "worker-secret");
+    assert.equal(conflictingDuplicate.status, 409);
+    assert.equal((await conflictingDuplicate.json()).currentStatus, "completed");
     const reopened = new ResearchStore(join(root, ".sota", "database.sqlite"));
     assert.equal(reopened.queueTasks().find((entry) => entry.id === task.id)?.status, "completed");
     assert.equal(reopened.queueTasks().find((entry) => entry.id === contractTask.id)?.status, "completed");
