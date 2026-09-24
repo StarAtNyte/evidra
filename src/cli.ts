@@ -918,7 +918,7 @@ const agents = program.command("agents")
     if (options.json) {
       console.log(JSON.stringify(output, null, 2));
     } else {
-      const roleLines = organization.map((agent) => `${agent.control?.terminated ? "terminated" : agent.control?.paused ? "paused" : agent.status.padEnd(8)} ${agent.role} · ${agent.admission} · health ${agent.health} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.pendingDirectives ? ` · ${agent.pendingDirectives} directive(s)` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`);
+      const roleLines = organization.map((agent) => `${agent.control?.terminated ? "terminated" : agent.control?.paused ? "paused" : agent.status.padEnd(8)} ${agent.role} · ${agent.admission} · ${agent.authority} · tools ${agent.toolAllowlist?.join(",") ?? "defaults"} · health ${agent.health} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.pendingDirectives ? ` · ${agent.pendingDirectives} directive(s)` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`);
       const workerLines = output.externalWorkers.map((worker) => `external ${worker.status.padEnd(7)} ${worker.workerId} · ${worker.provider}/${worker.model} · ${worker.admission} · ${worker.health}${worker.capabilities.length ? ` · ${worker.capabilities.join(",")}` : ""}`);
       console.log([...roleLines, ...(workerLines.length ? ["External workers", ...workerLines] : [])].join("\n") || "No agent roles recorded.");
       console.log(`\nResumable sessions  ${sessions.length}`);
@@ -976,7 +976,7 @@ agents.command("contract-history <role>")
     const history = store.agentRoleContractHistory(role);
     store.close();
     if (options.json) { console.log(JSON.stringify(history, null, 2)); return; }
-    console.log(history.length ? history.map((entry) => `r${entry.revision} · ${entry.createdAt} · ${entry.contract.authority} · ${entry.contract.responsibility}\n  reports to ${entry.contract.parentRole ?? "operator"}\n  playbook: ${entry.contract.playbook.join(" | ")}`).join("\n") : `No contract history for '${role}'.`);
+    console.log(history.length ? history.map((entry) => `r${entry.revision} · ${entry.createdAt} · ${entry.contract.authority} · ${entry.contract.responsibility}\n  reports to ${entry.contract.parentRole ?? "operator"}\n  tools: ${entry.contract.toolAllowlist?.join(", ") ?? "authority defaults"}\n  playbook: ${entry.contract.playbook.join(" | ")}`).join("\n") : `No contract history for '${role}'.`);
   });
 
 agents.command("contract-rollback <role> <revision>")

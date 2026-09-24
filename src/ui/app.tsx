@@ -3800,7 +3800,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const history = store.agentRoleContractHistory(contractHistoryMatch[1].trim());
       store.close();
-      append("assistant", history.length ? history.map((entry) => `r${entry.revision} · ${entry.createdAt} · ${entry.contract.authority} · ${entry.contract.responsibility}\n  reports to ${entry.contract.parentRole ?? "operator"}\n  playbook: ${entry.contract.playbook.join(" | ")}`).join("\n") : `No contract history for '${contractHistoryMatch[1].trim()}'.`);
+      append("assistant", history.length ? history.map((entry) => `r${entry.revision} · ${entry.createdAt} · ${entry.contract.authority} · ${entry.contract.responsibility}\n  reports to ${entry.contract.parentRole ?? "operator"}\n  tools: ${entry.contract.toolAllowlist?.join(", ") ?? "authority defaults"}\n  playbook: ${entry.contract.playbook.join(" | ")}`).join("\n") : `No contract history for '${contractHistoryMatch[1].trim()}'.`);
       return;
     }
     const contractRollbackMatch = request.match(/^\/agents\s+contract-rollback\s+(.+?)\s+(\d+)$/i);

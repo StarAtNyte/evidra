@@ -99,5 +99,5 @@ export function agentOrganization(store: ResearchStore): Array<AgentRoleContract
 
 export function formatAgentRoleContract(role: string): string {
   const contract = agentRoleContract(role);
-  return `${contract.role} · reports to ${contract.parentRole ?? "operator"} · ${contract.authority}\nResponsibility: ${contract.responsibility}`;
+  return `${contract.role} · reports to ${contract.parentRole ?? "operator"} · ${contract.authority}\nTools: ${contract.toolAllowlist?.join(", ") ?? "authority defaults"}\nResponsibility: ${contract.responsibility}`;
 }
