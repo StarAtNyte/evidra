@@ -3642,6 +3642,20 @@ test("task token budgets use the complete usage ledger beyond display history li
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queued task token budgets can be revised without changing a live claim", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-budget-update-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "budget-update", kind: "research.lane", priority: 1, tokenBudget: 10, payload: {} });
+    assert.equal(store.setTaskTokenBudget("budget-update", 20), true);
+    assert.equal(store.queueTasks().find((task) => task.id === "budget-update")?.tokenBudget, 20);
+    assert.equal(store.claimNextTask(undefined, "worker-a")?.id, "budget-update");
+    assert.equal(store.setTaskTokenBudget("budget-update", 40), false);
+    assert.equal(store.eventsByType("queue.budget.updated").length, 1);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("operator cancellation wins races with late worker completion and retry", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-cancel-"));
   try {

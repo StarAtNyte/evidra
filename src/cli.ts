@@ -2262,6 +2262,15 @@ queue.command("cancel <id>").option("--reason <reason>", "why the work is being 
   if (!cancelled) throw new Error(`Task '${id}' is missing or already terminal; only queued/running work can be cancelled.`);
   console.log(`Cancelled ${id}.`);
 });
+queue.command("budget <id> <tokens>").description("Set a queued/failed task token ceiling; use 0 or unlimited to clear it").action((id: string, tokens: string) => {
+  const value = /^(?:0|unlimited)$/i.test(tokens) ? null : Number(tokens);
+  if (value !== null && (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0)) throw new Error("Task token budget must be a positive integer, 0, or unlimited.");
+  const store = new ResearchStore(statePath);
+  const updated = store.setTaskTokenBudget(id, value);
+  store.close();
+  if (!updated) throw new Error(`Task '${id}' is missing or not queued/failed; live work cannot be re-budgeted.`);
+  console.log(value === null ? `Cleared token budget for ${id}.` : `Set token budget for ${id} to ${value} tokens.`);
+});
 queue.command("activity <id>").option("--limit <count>", "number of task updates", "32").action((id: string, options: { limit: string }) => {
   const store = new ResearchStore(statePath);
   const limit = Math.max(1, Math.min(128, Number.parseInt(options.limit, 10) || 32));

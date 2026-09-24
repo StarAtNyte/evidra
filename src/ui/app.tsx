@@ -254,7 +254,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
   "/approvals": [["/approvals", "Show pending operator approvals"]],
-  "/queue": [["/queue status", "Show queued and running tasks"], ["/queue activity ", "Inspect task handoff notes"], ["/queue usage", "Show external worker usage"], ["/queue usage ", "Show one task's usage"], ["/queue assign ", "Assign or clear a task worker"], ["/queue cancel ", "Cancel queued or running work"], ["/queue note ", "Add an operator handoff note"], ["/queue recover", "Requeue stale tasks"], ["/queue recover ", "Resume a failed task with a changed route"]],
+  "/queue": [["/queue status", "Show queued and running tasks"], ["/queue activity ", "Inspect task handoff notes"], ["/queue usage", "Show external worker usage"], ["/queue usage ", "Show one task's usage"], ["/queue assign ", "Assign or clear a task worker"], ["/queue budget ", "Set or clear a task token ceiling"], ["/queue cancel ", "Cancel queued or running work"], ["/queue note ", "Add an operator handoff note"], ["/queue recover", "Requeue stale tasks"], ["/queue recover ", "Resume a failed task with a changed route"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/clear": [["/clear", "Clear the current conversation"]],
   "/new": [["/new", "Start a fresh terminal session"]],
@@ -331,7 +331,7 @@ function help(): string {
     "/doctor                     Diagnose local dependencies",
     "!<shell command>            Run a shell command in the project workspace",
     "/submission [prepare|validate|approve|submit|poll|record] Manage safe bundles and external scores",
-    "/queue [status|activity|assign|cancel|note|recover] Show, steer, or recover durable tasks",
+    "/queue [status|activity|assign|budget|cancel|note|recover] Show, steer, or recover durable tasks",
     "/sessions                   List saved terminal sessions",
     "/resume [session-id]        Explicitly resume a saved session",
     "/ensemble [candidates|diversity|propose|validate|promote|reject] Analyze prediction artifacts",
@@ -4100,12 +4100,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
     }
-    if (request === "/queue" || request === "/queue status" || request === "/queue usage" || request.startsWith("/queue usage ") || request === "/queue recover" || request.startsWith("/queue recover ") || request.startsWith("/queue activity ") || request.startsWith("/queue assign ") || request.startsWith("/queue cancel ") || request.startsWith("/queue note ")) {
+    if (request === "/queue" || request === "/queue status" || request === "/queue usage" || request.startsWith("/queue usage ") || request === "/queue recover" || request.startsWith("/queue recover ") || request.startsWith("/queue activity ") || request.startsWith("/queue assign ") || request.startsWith("/queue budget ") || request.startsWith("/queue cancel ") || request.startsWith("/queue note ")) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const recoveryMatch = request.match(/^\/queue recover\s+(\S+)\s+--route\s+(\S+)(?:\s+--note\s+(.+))?$/);
       const activityMatch = request.match(/^\/queue activity\s+(\S+)$/);
       const usageMatch = request.match(/^\/queue usage(?:\s+(\S+))?$/);
       const assignMatch = request.match(/^\/queue assign\s+(\S+)(?:\s+(\S+))?$/);
+      const budgetMatch = request.match(/^\/queue budget\s+(\S+)\s+(\S+)$/);
       const cancelMatch = request.match(/^\/queue cancel\s+(\S+)(?:\s+--reason\s+(.+))?$/);
       const noteMatch = request.match(/^\/queue note\s+(\S+)\s+(.+)$/);
       if (activityMatch) {
@@ -4123,6 +4124,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
           if (!store.assignTask(assignMatch[1], assignMatch[2] ?? null)) throw new Error("task is missing or not queued/failed");
           append("assistant", assignMatch[2] ? `Assigned ${assignMatch[1]} to ${assignMatch[2]}.` : `Cleared assignment for ${assignMatch[1]}.`);
         } catch (error) { append("assistant", `Queue assignment failed: ${error instanceof Error ? error.message : String(error)}`); }
+      } else if (budgetMatch) {
+        const value = /^(?:0|unlimited)$/i.test(budgetMatch[2]) ? null : Number(budgetMatch[2]);
+        try {
+          if (value !== null && (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0)) throw new Error("budget must be a positive integer, 0, or unlimited");
+          if (!store.setTaskTokenBudget(budgetMatch[1], value)) throw new Error("task is missing or not queued/failed");
+          append("assistant", value === null ? `Cleared token budget for ${budgetMatch[1]}.` : `Set token budget for ${budgetMatch[1]} to ${value} tokens.`);
+        } catch (error) { append("assistant", `Queue budget update failed: ${error instanceof Error ? error.message : String(error)}`); }
       } else if (noteMatch) {
         const recorded = store.recordQueueActivity({ taskId: noteMatch[1], actorId: "operator", kind: "handoff", message: noteMatch[2] });
         append("assistant", recorded ? `Added an operator handoff note to ${noteMatch[1]}.` : `Unable to add a note to ${noteMatch[1]}.`);

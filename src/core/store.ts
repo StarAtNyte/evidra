@@ -75,6 +75,13 @@ export function queueEffectivePriority(task: Pick<QueuedTask, "priority" | "avai
   return Math.round((task.priority + Math.min(3, ageHours)) * 1000) / 1000;
 }
 
+function normalizeQueueTokenBudget(value: number | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const normalized = Math.floor(value);
+  if (!Number.isFinite(normalized) || normalized <= 0 || normalized > 100_000_000_000) throw new Error("Queue task tokenBudget must be a positive bounded integer.");
+  return normalized;
+}
+
 export interface QueuedTaskLineage {
   taskIds: string[];
   goalIds: string[];
@@ -1487,8 +1494,7 @@ export class ResearchStore {
   enqueueTask(task: { id: string; kind: string; priority: number; payload: unknown; availableAt?: string; assigneeId?: string | null; tokenBudget?: number | null; goalId?: string | null; parentTaskId?: string | null; dependsOn?: string[] }): void {
     const now = new Date().toISOString();
     const dependsOn = [...new Set((task.dependsOn ?? []).filter((id) => id.trim()))];
-    const tokenBudget = task.tokenBudget === null || task.tokenBudget === undefined ? null : Math.floor(task.tokenBudget);
-    if (tokenBudget !== null && (!Number.isFinite(tokenBudget) || tokenBudget <= 0 || tokenBudget > 100_000_000_000)) throw new Error("Queue task tokenBudget must be a positive bounded integer.");
+    const tokenBudget = normalizeQueueTokenBudget(task.tokenBudget);
     const cycle = this.dependencyCycle(task.id, dependsOn);
     if (cycle) throw new Error(`Queue task '${task.id}' creates a dependency cycle: ${cycle.join(" -> ")}`);
     this.db.prepare(`
@@ -1767,6 +1773,18 @@ export class ResearchStore {
     const result = this.db.prepare("UPDATE work_queue SET assignee_id = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'failed')").run(normalized, now, id);
     if (result.changes !== 1) return false;
     this.appendEvent("queue.assigned", { id, assigneeId: normalized });
+    return true;
+  }
+
+  /** Set or clear a task token ceiling without mutating a live claim. */
+  setTaskTokenBudget(id: string, tokenBudget: number | null): boolean {
+    const normalizedBudget = normalizeQueueTokenBudget(tokenBudget);
+    const current = this.db.prepare("SELECT status, token_budget FROM work_queue WHERE id = ?").get(id) as { status: QueueTaskStatus; token_budget: number | null } | undefined;
+    if (!current || !["queued", "failed"].includes(current.status)) return false;
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE work_queue SET token_budget = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'failed')").run(normalizedBudget, now, id);
+    if (result.changes !== 1) return false;
+    this.appendEvent("queue.budget.updated", { id, priorBudget: current.token_budget, tokenBudget: normalizedBudget, status: current.status });
     return true;
   }
 
