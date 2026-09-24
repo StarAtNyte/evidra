@@ -61,7 +61,7 @@ function phasePlanFingerprint(payload: unknown): string {
   return createHash("sha256").update(JSON.stringify(canonicalValue(phasePlanProjection(payload)))).digest("hex").slice(0, 20);
 }
 
-export type QueueTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type QueueTaskStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
 export type QueueApprovalStatus = "none" | "pending" | "approved" | "rejected";
 export interface QueuedTask {
   id: string;
