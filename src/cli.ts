@@ -2556,9 +2556,10 @@ event.command("serve")
             const taskPayload = parsed.payload === undefined ? undefined : parseExternalEventPayload(JSON.stringify(parsed.payload));
             const completionAudit = parsed.status === "completed" ? store.taskCompletionAudit(taskId, taskPayload) : { valid: true, missing: [] as string[] };
             const accepted = store.completeClaimedTask(taskId, workerId, parsed.status as "completed" | "failed" | "cancelled", taskPayload);
+            const currentStatus = store.queueTasks().find((task) => task.id === taskId)?.status ?? null;
             store.close();
             response.writeHead(accepted ? 200 : 409, headers);
-            response.end(JSON.stringify({ ok: accepted, taskId, status: parsed.status, ...(!accepted && !completionAudit.valid ? { error: "completion proof rejected", missing: completionAudit.missing } : {}) }));
+            response.end(JSON.stringify({ ok: accepted, taskId, status: parsed.status, currentStatus, ...(!accepted && !completionAudit.valid ? { error: "completion proof rejected", missing: completionAudit.missing } : {}) }));
             return;
           }
           if (typeof parsed.type !== "string") throw new Error("request JSON requires a string 'type'");
