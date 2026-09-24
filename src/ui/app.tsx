@@ -1150,6 +1150,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         researchMemory,
         peerLaneBoard,
         agentRoleReviews,
+        goalId: phaseGoal?.id ?? null,
       }, {
         provider: config.provider,
         model: config.model,
@@ -1205,6 +1206,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
             peerLaneBoard: crossPollination,
             priorLaneReports: initialLaneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
             agentRoleReviews,
+            goalId: phaseGoal?.id ?? null,
           },
           {
             provider: config.provider,

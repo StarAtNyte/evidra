@@ -3045,6 +3045,7 @@ research
             openCriticConstraint,
             peerLaneBoard,
             agentRoleReviews,
+            goalId: phaseGoal?.id ?? null,
           }, {
             provider: options.provider as "codex" | "local",
             model: selectedModel,
@@ -3094,6 +3095,7 @@ research
                 peerLaneBoard: crossPollination,
                 priorLaneReports: laneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
                 agentRoleReviews,
+                goalId: phaseGoal?.id ?? null,
               },
               {
                 provider: options.provider as "codex" | "local",

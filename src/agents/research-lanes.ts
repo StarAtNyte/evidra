@@ -199,6 +199,8 @@ export interface ResearchLanesOptions {
   laneTeamSize?: number;
   /** Optional hard wall-clock budget for one specialist lease. */
   laneBudgetMs?: number;
+  /** Durable phase goal carried by the specialist ticket. */
+  goalId?: string | null;
   /** Collaboration scheduler. Non-safe teams default to asynchronous completion-driven hand-offs. */
   executionMode?: "waves" | "asynchronous";
   autonomy?: AutonomyLevel;
@@ -706,10 +708,23 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     const message = `Lane is already active; refusing duplicate work (${lease.reason ?? "live lease"}).`;
     return { role, summary: "Lane was not started because another worker owns its lease.", findings: [], recommendations: [], uncertainties: [message], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0, status: "failed", error: message };
   }
+  const laneTaskId = `task_lane_${role.replace(/[^a-z0-9]+/gi, "-")}_${leaseId.slice(-12)}`;
+  const ticketStore = new ResearchStore(options.storePath);
+  ticketStore.enqueueTask({ id: laneTaskId, kind: "research.lane", priority: 6, goalId: options.goalId ?? null, payload: { role, objective, leaseId, provider: laneRoute.provider, model: laneRoute.model } });
+  const ticket = ticketStore.claimTask(laneTaskId, ["research.lane"], leaseId);
+  ticketStore.close();
+  if (!ticket) {
+    const failed = new ResearchStore(options.storePath);
+    failed.releaseAgentLane(role, leaseId, "failed", "lane ticket could not be claimed");
+    failed.updateTask(laneTaskId, "failed", { error: "lane ticket could not be claimed" });
+    failed.close();
+    return { role, summary: "Lane was not started because its durable ticket could not be claimed.", findings: [], recommendations: [], uncertainties: ["durable lane ticket claim failed"], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0, status: "failed", error: "durable lane ticket claim failed" };
+  }
   const heartbeat = setInterval(() => {
     try {
       const store = new ResearchStore(options.storePath);
       store.heartbeatAgentLane(role, leaseId);
+      store.heartbeatTask(laneTaskId, leaseId);
       store.close();
     } catch { /* telemetry must not turn a valid lane into a failure */ }
   }, 15_000);
@@ -839,6 +854,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     const verifiedEvidenceIds = saveLaneEvent(options.storePath, role, report);
     const completed = new ResearchStore(options.storePath);
     completed.releaseAgentLane(role, leaseId, "idle");
+    completed.updateTask(laneTaskId, "completed", { role, status: "completed", evidenceIds: verifiedEvidenceIds });
     completed.close();
     return { ...report, verifiedEvidenceIds };
   } catch (error) {
@@ -847,6 +863,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     saveLaneEvent(options.storePath, role, report);
     const failed = new ResearchStore(options.storePath);
     failed.releaseAgentLane(role, leaseId, "failed", message);
+    failed.updateTask(laneTaskId, "failed", { role, status: "failed", error: message });
     failed.close();
     return report;
   } finally {

@@ -3622,6 +3622,7 @@ test("research lane teams share only cacheable observations within one invocatio
     const laneUsage = usageStore.agentLanes().filter((lane) => lane.usedSeconds > 0);
     assert.equal(laneUsage.length, 2);
     assert.ok(laneUsage.every((lane) => lane.usageCalls >= 1));
+    assert.equal(usageStore.queueTasks("completed").filter((task) => task.kind === "research.lane").length, 2);
     usageStore.close();
   } finally {
     if (previousHost === undefined) delete process.env.OLLAMA_HOST;
