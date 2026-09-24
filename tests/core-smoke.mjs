@@ -3794,6 +3794,10 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.match(reportDenied.error, /inspection tools only/);
     const specialistObservation = await executeResearchTool({ name: "workspace.files" }, { root, storePath: db, autonomy: "fast", role: "domain researcher" });
     assert.equal(specialistObservation.ok, true);
+    const auditStore = new ResearchStore(db);
+    assert.equal(auditStore.eventsByType("research.tool.completed").at(-1)?.payload.actor, "domain researcher");
+    assert.equal(auditStore.eventsByType("research.tool.completed").at(-1)?.payload.autonomy, "fast");
+    auditStore.close();
     const specialistDenied = await executeResearchTool({ name: "report.generate", arguments: { kind: "research" } }, { root, storePath: db, autonomy: "fast", role: "domain researcher" });
     assert.equal(specialistDenied.ok, false);
     assert.equal(specialistDenied.trust, "permission_boundary");

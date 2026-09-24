@@ -112,6 +112,8 @@ function recordToolEvent(context: ResearchToolContext, result: ResearchToolResul
     const output = result.output === undefined ? undefined : redactSecrets(JSON.stringify(result.output).slice(0, 8_000));
     store.appendEvent(result.ok ? "research.tool.completed" : "research.tool.failed", {
       name: result.name,
+      actor: context.role ?? "controller",
+      autonomy: context.autonomy,
       ok: result.ok,
       trust: result.trust,
       securityWarnings: result.securityWarnings,
