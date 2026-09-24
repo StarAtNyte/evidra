@@ -49,6 +49,7 @@ export interface QueuedTask {
   ownerId: string | null;
   goalId: string | null;
   parentTaskId: string | null;
+  dependsOn: string[];
   updatedAt: string;
 }
 
@@ -304,6 +305,7 @@ export class ResearchStore {
         owner_id TEXT,
         goal_id TEXT,
         parent_task_id TEXT,
+        depends_on_json TEXT NOT NULL DEFAULT '[]',
         updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS sessions (
@@ -371,6 +373,7 @@ export class ResearchStore {
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN owner_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN goal_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN parent_task_id TEXT"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE work_queue ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN started_at TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN budget_seconds REAL"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN used_seconds REAL NOT NULL DEFAULT 0"); } catch { /* already migrated */ }
@@ -1036,20 +1039,31 @@ export class ResearchStore {
     return rows.map((row) => ({ role: row.role, status: row.status, provider: row.provider, model: row.model, task: row.task, error: row.error, heartbeatAt: row.heartbeat_at, leaseId: row.lease_id, startedAt: row.started_at, budgetSeconds: row.budget_seconds, usedSeconds: row.used_seconds, usageCalls: row.usage_calls, updatedAt: row.updated_at }));
   }
 
-  enqueueTask(task: { id: string; kind: string; priority: number; payload: unknown; availableAt?: string; goalId?: string | null; parentTaskId?: string | null }): void {
+  enqueueTask(task: { id: string; kind: string; priority: number; payload: unknown; availableAt?: string; goalId?: string | null; parentTaskId?: string | null; dependsOn?: string[] }): void {
     const now = new Date().toISOString();
     this.db.prepare(`
-      INSERT OR IGNORE INTO work_queue (id, kind, priority, status, payload_json, attempts, available_at, claimed_at, owner_id, goal_id, parent_task_id, updated_at)
-      VALUES (?, ?, ?, 'queued', ?, 0, ?, NULL, NULL, ?, ?, ?)
-    `).run(task.id, task.kind, task.priority, safeJson(task.payload), task.availableAt ?? now, task.goalId ?? null, task.parentTaskId ?? null, now);
+      INSERT OR IGNORE INTO work_queue (id, kind, priority, status, payload_json, attempts, available_at, claimed_at, owner_id, goal_id, parent_task_id, depends_on_json, updated_at)
+      VALUES (?, ?, ?, 'queued', ?, 0, ?, NULL, NULL, ?, ?, ?, ?)
+    `).run(task.id, task.kind, task.priority, safeJson(task.payload), task.availableAt ?? now, task.goalId ?? null, task.parentTaskId ?? null, safeJson([...new Set((task.dependsOn ?? []).filter((id) => id.trim()))]), now);
     this.appendEvent("queue.enqueued", task);
   }
 
   queueTasks(status?: QueueTaskStatus): QueuedTask[] {
     const rows = (status
       ? this.db.prepare("SELECT * FROM work_queue WHERE status = ? ORDER BY priority DESC, available_at ASC").all(status)
-      : this.db.prepare("SELECT * FROM work_queue ORDER BY updated_at DESC").all()) as Array<{ id: string; kind: string; priority: number; status: string; payload_json: string; attempts: number; available_at: string; claimed_at: string | null; owner_id: string | null; goal_id: string | null; parent_task_id: string | null; updated_at: string }>;
-    return rows.map((row) => ({ id: row.id, kind: row.kind, priority: row.priority, status: row.status, payload: JSON.parse(row.payload_json), attempts: row.attempts, availableAt: row.available_at, claimedAt: row.claimed_at, ownerId: row.owner_id, goalId: row.goal_id, parentTaskId: row.parent_task_id, updatedAt: row.updated_at }));
+      : this.db.prepare("SELECT * FROM work_queue ORDER BY updated_at DESC").all()) as Array<{ id: string; kind: string; priority: number; status: string; payload_json: string; attempts: number; available_at: string; claimed_at: string | null; owner_id: string | null; goal_id: string | null; parent_task_id: string | null; depends_on_json: string; updated_at: string }>;
+    return rows.map((row) => ({ id: row.id, kind: row.kind, priority: row.priority, status: row.status, payload: JSON.parse(row.payload_json), attempts: row.attempts, availableAt: row.available_at, claimedAt: row.claimed_at, ownerId: row.owner_id, goalId: row.goal_id, parentTaskId: row.parent_task_id, dependsOn: JSON.parse(row.depends_on_json || "[]") as string[], updatedAt: row.updated_at }));
+  }
+
+  private taskDependenciesReady(id: string): boolean {
+    const row = this.db.prepare("SELECT depends_on_json FROM work_queue WHERE id = ?").get(id) as { depends_on_json: string } | undefined;
+    if (!row) return false;
+    let dependencies: string[];
+    try { dependencies = JSON.parse(row.depends_on_json || "[]") as string[]; } catch { return false; }
+    return Array.isArray(dependencies) && dependencies.every((dependency) => {
+      const status = this.db.prepare("SELECT status FROM work_queue WHERE id = ?").get(dependency) as { status: string } | undefined;
+      return status?.status === "completed";
+    });
   }
 
   claimNextTask(kinds?: string[], ownerId?: string): QueuedTask | undefined {
@@ -1058,7 +1072,8 @@ export class ResearchStore {
       const query = kinds?.length
         ? `SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ? AND kind IN (${kinds.map(() => "?").join(",")}) ORDER BY priority DESC, available_at ASC LIMIT 1`
         : "SELECT id FROM work_queue WHERE status = 'queued' AND available_at <= ? ORDER BY priority DESC, available_at ASC LIMIT 1";
-      const row = (kinds?.length ? this.db.prepare(query).get(now, ...kinds) : this.db.prepare(query).get(now)) as { id: string } | undefined;
+      const rows = (kinds?.length ? this.db.prepare(query.replace("LIMIT 1", "")).all(now, ...kinds) : this.db.prepare(query.replace("LIMIT 1", "")).all(now)) as Array<{ id: string }>;
+      const row = rows.find((candidate) => this.taskDependenciesReady(candidate.id));
       if (!row) return undefined;
       this.db.prepare("UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, owner_id = ?, updated_at = ? WHERE id = ? AND status = 'queued'").run(now, ownerId ?? null, now, row.id);
       return this.queueTasks().find((task) => task.id === row.id);
@@ -1073,6 +1088,7 @@ export class ResearchStore {
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
       const kindClause = kinds?.length ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
+      if (!this.taskDependenciesReady(id)) return undefined;
       const result = this.db.prepare(`UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, owner_id = ?, updated_at = ? WHERE id = ? AND status = 'queued' AND available_at <= ?${kindClause}`)
         .run(now, ownerId ?? null, now, id, now, ...(kinds ?? []));
       if (result.changes !== 1) return undefined;

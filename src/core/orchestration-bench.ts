@@ -49,6 +49,14 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     const wrongTaskHeartbeat = store.heartbeatTask("bench-task", "worker-b");
     const rightTaskHeartbeat = store.heartbeatTask("bench-task", "worker-a");
     check("queue-heartbeat-ownership", "Only the queue claimant can refresh a running task.", claimed?.ownerId === "worker-a" && claimed.goalId === "goal-bench" && claimed.parentTaskId === "task-parent" && !wrongTaskHeartbeat && rightTaskHeartbeat, { claimedOwner: claimed?.ownerId, goalId: claimed?.goalId, parentTaskId: claimed?.parentTaskId, wrongTaskHeartbeat, rightTaskHeartbeat });
+    store.updateTask("bench-task", "completed");
+    store.enqueueTask({ id: "dependent", kind: "dependent", priority: 2, payload: {}, dependsOn: ["prerequisite"] });
+    const blockedBeforeParent = store.claimNextTask(undefined, "worker-a");
+    store.enqueueTask({ id: "prerequisite", kind: "prerequisite", priority: 1, payload: {} });
+    const prerequisite = store.claimNextTask(undefined, "worker-a");
+    store.updateTask("prerequisite", "completed");
+    const dependent = store.claimNextTask(undefined, "worker-a");
+    check("dependency-ordering", "A queued task waits for every prerequisite to complete.", !blockedBeforeParent && prerequisite?.id === "prerequisite" && dependent?.id === "dependent", { blockedBeforeParent: blockedBeforeParent?.id, prerequisite: prerequisite?.id, dependent: dependent?.id });
 
     store.releaseAgentLane("model researcher", "worker-a");
     const stale = store.acquireAgentLane({ role: "validation scientist", leaseId: "worker-stale", provider: "local", model: "bench" });

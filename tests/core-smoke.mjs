@@ -3027,7 +3027,7 @@ test("orchestration benchmark covers worker ownership and recovery", () => {
   const report = runOrchestrationBenchmark();
   assert.equal(report.failed, 0);
   assert.equal(report.score, 1);
-  assert.equal(report.probes.length, 5);
+  assert.equal(report.probes.length, 6);
 });
 
 test("research lanes use bounded role-specific workspace observations", () => {
@@ -3159,6 +3159,21 @@ test("queue heartbeats are owned by the claiming worker", () => {
     assert.equal(store.claimNextTask(undefined, "worker-a")?.ownerId, "worker-a");
     assert.equal(store.heartbeatTask("owned", "worker-b"), false);
     assert.equal(store.heartbeatTask("owned", "worker-a"), true);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("queue dependencies prevent work from running before prerequisites", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-dependencies-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "child", kind: "child", priority: 2, payload: {}, dependsOn: ["parent"] });
+    assert.equal(store.claimNextTask()?.id, undefined);
+    store.enqueueTask({ id: "parent", kind: "parent", priority: 1, payload: {} });
+    assert.equal(store.claimNextTask()?.id, "parent");
+    store.updateTask("parent", "completed");
+    assert.equal(store.claimNextTask()?.id, "child");
+    assert.deepEqual(store.queueTasks().find((task) => task.id === "child")?.dependsOn, ["parent"]);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

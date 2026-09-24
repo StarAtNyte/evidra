@@ -52,6 +52,8 @@ marks only expired leases as blocked and can recover them; live lanes remain
 untouched. Queue tasks use the same ownership rule: a worker can heartbeat only
 the task it claimed. Queue records also preserve optional goal and parent-task
 links, so recovery and dashboard inspection retain the reason a job exists.
+Tasks may also declare prerequisites; the scheduler leaves them queued until
+all dependency IDs have completed, and treats missing dependencies as blocked.
 
 For long campaigns, bound each specialist independently:
 
