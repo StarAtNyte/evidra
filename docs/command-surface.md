@@ -232,6 +232,10 @@ Source retrieval records URL, retrieval time, content hash, license, claims, and
 /agents cancel <run>         Cancel a running agent task
 ```
 
+TUI directives sent while a campaign is active are automatically scoped to its current
+phase goal. Directives sent through the headless CLI are global by design; the inbox shows
+the scope so this distinction is never implicit.
+
 Roles are director, domain researcher, method researcher, data detective, validation scientist, model researcher, ensemble scientist, reproducibility engineer, experiment engineer, critic, and repair agent.
 
 ## Data and validation

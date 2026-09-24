@@ -3595,8 +3595,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const messageAgentMatch = request.match(/^\/agents\s+message\s+(.+?)\s+--\s+(.+)$/i);
     if (messageAgentMatch) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      const directive = store.enqueueAgentDirective(messageAgentMatch[1], messageAgentMatch[2]);
-      append("assistant", `Directive queued for ${directive.role} · delivered at its next safe boundary.`);
+      const campaign = store.campaign() as ResearchCampaign | undefined;
+      const goalSet = campaign?.goal ? phaseGoalSetId(campaign.goal, configRef.current.mode) : undefined;
+      const phaseGoal = goalSet ? activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), configRef.current.mode, goalSet)) : undefined;
+      const directive = store.enqueueAgentDirective(messageAgentMatch[1], messageAgentMatch[2], phaseGoal?.id ?? null);
+      append("assistant", `Directive queued for ${directive.role} · delivered at its next safe boundary${directive.scopeKey ? ` · scope ${directive.scopeKey}` : " · global scope"}.`);
       store.close();
       return;
     }
@@ -3615,7 +3618,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const directives = store.agentDirectives(directivesAgentMatch[1]?.trim());
       store.close();
       append("assistant", directives.length
-        ? `Agent directives${directivesAgentMatch[1] ? ` · ${directivesAgentMatch[1].trim()}` : ""}\n${directives.map((directive) => `  ${directive.appliedAt ? "✓" : "○"} #${directive.id} · ${directive.role} · ${directive.createdAt}\n    ${directive.message}${directive.appliedAt ? `\n    applied: ${directive.appliedAt}` : ""}`).join("\n")}`
+        ? `Agent directives${directivesAgentMatch[1] ? ` · ${directivesAgentMatch[1].trim()}` : ""}\n${directives.map((directive) => `  ${directive.appliedAt ? "✓" : "○"} #${directive.id} · ${directive.role} · ${directive.createdAt} · ${directive.scopeKey ? `scope ${directive.scopeKey}` : "global"}\n    ${directive.message}${directive.appliedAt ? `\n    applied: ${directive.appliedAt}` : ""}`).join("\n")}`
         : `No directives recorded${directivesAgentMatch[1] ? ` for ${directivesAgentMatch[1].trim()}` : ""}.`);
       return;
     }

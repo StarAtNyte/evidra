@@ -881,7 +881,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     const directives: string[] = [];
     const consumeDirectives = (): void => {
       const store = new ResearchStore(options.storePath);
-      const received = store.consumeAgentDirectives(role);
+      const received = store.consumeAgentDirectives(role, 4, options.goalId ?? null);
       store.close();
       if (received.length) {
         directives.push(...received.map((directive) => directive.message));

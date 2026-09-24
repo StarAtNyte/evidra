@@ -117,6 +117,8 @@ export interface AgentDirective {
   id: number;
   role: string;
   message: string;
+  /** Null means an operator-wide directive; otherwise it is limited to one phase/goal scope. */
+  scopeKey: string | null;
   createdAt: string;
   appliedAt: string | null;
 }
@@ -424,6 +426,7 @@ export class ResearchStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         role TEXT NOT NULL,
         message TEXT NOT NULL,
+        scope_key TEXT,
         created_at TEXT NOT NULL,
         applied_at TEXT
       );
@@ -473,6 +476,7 @@ export class ResearchStore {
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN budget_seconds REAL"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN used_seconds REAL NOT NULL DEFAULT 0"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN usage_calls INTEGER NOT NULL DEFAULT 0"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE agent_directives ADD COLUMN scope_key TEXT"); } catch { /* already migrated */ }
     this.db.prepare(`
       INSERT OR IGNORE INTO event_chain_state (id, head_hash, event_count)
       VALUES (1, (SELECT event_hash FROM events ORDER BY id DESC LIMIT 1), (SELECT COUNT(*) FROM events))
@@ -971,38 +975,40 @@ export class ResearchStore {
     return consumed;
   }
 
-  enqueueAgentDirective(role: string, message: string): AgentDirective {
+  enqueueAgentDirective(role: string, message: string, scopeKey: string | null = null): AgentDirective {
     const normalizedRole = role.trim();
     const normalizedMessage = message.trim();
     if (!normalizedRole || !normalizedMessage) throw new Error("Agent role and directive message are required.");
     const createdAt = new Date().toISOString();
-    const result = this.db.prepare("INSERT INTO agent_directives (role, message, created_at, applied_at) VALUES (?, ?, ?, NULL)").run(normalizedRole, normalizedMessage.slice(0, 4_000), createdAt);
-    const directive = { id: Number(result.lastInsertRowid), role: normalizedRole, message: normalizedMessage.slice(0, 4_000), createdAt, appliedAt: null } satisfies AgentDirective;
+    const normalizedScope = scopeKey?.trim() || null;
+    const result = this.db.prepare("INSERT INTO agent_directives (role, message, scope_key, created_at, applied_at) VALUES (?, ?, ?, ?, NULL)").run(normalizedRole, normalizedMessage.slice(0, 4_000), normalizedScope, createdAt);
+    const directive = { id: Number(result.lastInsertRowid), role: normalizedRole, message: normalizedMessage.slice(0, 4_000), scopeKey: normalizedScope, createdAt, appliedAt: null } satisfies AgentDirective;
     this.appendEvent("agent.directive.queued", directive);
     return directive;
   }
 
-  consumeAgentDirectives(role: string, limit = 4): AgentDirective[] {
+  consumeAgentDirectives(role: string, limit = 4, scopeKey: string | null = null): AgentDirective[] {
     const now = new Date().toISOString();
+    const normalizedScope = scopeKey?.trim() || null;
     const transaction = this.db.transaction(() => {
-      const rows = this.db.prepare("SELECT id, role, message, created_at, applied_at FROM agent_directives WHERE role = ? AND applied_at IS NULL ORDER BY id ASC LIMIT ?").all(role, Math.max(1, Math.min(16, limit))) as Array<{ id: number; role: string; message: string; created_at: string; applied_at: string | null }>;
+      const rows = this.db.prepare("SELECT id, role, message, scope_key, created_at, applied_at FROM agent_directives WHERE role = ? AND applied_at IS NULL AND (scope_key IS NULL OR scope_key = ?) ORDER BY id ASC LIMIT ?").all(role, normalizedScope, Math.max(1, Math.min(16, limit))) as Array<{ id: number; role: string; message: string; scope_key: string | null; created_at: string; applied_at: string | null }>;
       const mark = this.db.prepare("UPDATE agent_directives SET applied_at = ? WHERE id = ? AND applied_at IS NULL");
-      return rows.flatMap((row) => mark.run(now, row.id).changes === 1 ? [{ id: row.id, role: row.role, message: row.message, createdAt: row.created_at, appliedAt: now }] : []);
+      return rows.flatMap((row) => mark.run(now, row.id).changes === 1 ? [{ id: row.id, role: row.role, message: row.message, scopeKey: row.scope_key, createdAt: row.created_at, appliedAt: now }] : []);
     })() as AgentDirective[];
-    if (transaction.length) this.appendEvent("agent.directive.applied", { role, ids: transaction.map((item) => item.id) });
+    if (transaction.length) this.appendEvent("agent.directive.applied", { role, scopeKey: normalizedScope, ids: transaction.map((item) => item.id) });
     return transaction;
   }
 
-  pendingAgentDirectives(role?: string): AgentDirective[] {
-    return this.agentDirectives(role).filter((directive) => directive.appliedAt === null);
+  pendingAgentDirectives(role?: string, scopeKey?: string | null): AgentDirective[] {
+    return this.agentDirectives(role).filter((directive) => directive.appliedAt === null && (scopeKey === undefined || directive.scopeKey === null || directive.scopeKey === (scopeKey?.trim() || null)));
   }
 
   /** Read the durable specialist inbox, including already-applied handoffs. */
   agentDirectives(role?: string, limit = 32): AgentDirective[] {
     const rows = (role
-      ? this.db.prepare("SELECT id, role, message, created_at, applied_at FROM agent_directives WHERE role = ? ORDER BY id DESC LIMIT ?").all(role, Math.max(1, Math.min(128, limit)))
-      : this.db.prepare("SELECT id, role, message, created_at, applied_at FROM agent_directives ORDER BY id DESC LIMIT ?").all(Math.max(1, Math.min(128, limit)))) as Array<{ id: number; role: string; message: string; created_at: string; applied_at: string | null }>;
-    return rows.map((row) => ({ id: row.id, role: row.role, message: row.message, createdAt: row.created_at, appliedAt: row.applied_at })).reverse();
+      ? this.db.prepare("SELECT id, role, message, scope_key, created_at, applied_at FROM agent_directives WHERE role = ? ORDER BY id DESC LIMIT ?").all(role, Math.max(1, Math.min(128, limit)))
+      : this.db.prepare("SELECT id, role, message, scope_key, created_at, applied_at FROM agent_directives ORDER BY id DESC LIMIT ?").all(Math.max(1, Math.min(128, limit)))) as Array<{ id: number; role: string; message: string; scope_key: string | null; created_at: string; applied_at: string | null }>;
+    return rows.map((row) => ({ id: row.id, role: row.role, message: row.message, scopeKey: row.scope_key, createdAt: row.created_at, appliedAt: row.applied_at })).reverse();
   }
 
   releaseControllerLease(controllerId: string, status: "released" | "stale" = "released"): boolean {

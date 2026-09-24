@@ -771,7 +771,7 @@ agents.command("directives [role]").description("Show durable specialist handoff
   const store = new ResearchStore(statePath);
   const directives = store.agentDirectives(role);
   if (!directives.length) console.log(role ? `No directives recorded for ${role}.` : "No specialist directives recorded.");
-  else console.log(directives.map((directive) => `${directive.appliedAt ? "applied" : "pending"}  #${directive.id}  ${directive.role}  ${directive.createdAt}\n  ${directive.message}${directive.appliedAt ? `\n  applied: ${directive.appliedAt}` : ""}`).join("\n"));
+  else console.log(directives.map((directive) => `${directive.appliedAt ? "applied" : "pending"}  #${directive.id}  ${directive.role}  ${directive.createdAt}${directive.scopeKey ? `  scope:${directive.scopeKey}` : "  global"}\n  ${directive.message}${directive.appliedAt ? `\n  applied: ${directive.appliedAt}` : ""}`).join("\n"));
   store.close();
 });
 
