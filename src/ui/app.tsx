@@ -254,7 +254,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
   "/approvals": [["/approvals", "Show pending operator approvals"]],
-  "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"], ["/queue recover ", "Resume a failed task with a changed route"]],
+  "/queue": [["/queue status", "Show queued and running tasks"], ["/queue activity ", "Inspect task handoff notes"], ["/queue assign ", "Assign or clear a task worker"], ["/queue note ", "Add an operator handoff note"], ["/queue recover", "Requeue stale tasks"], ["/queue recover ", "Resume a failed task with a changed route"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/clear": [["/clear", "Clear the current conversation"]],
   "/new": [["/new", "Start a fresh terminal session"]],
@@ -331,7 +331,7 @@ function help(): string {
     "/doctor                     Diagnose local dependencies",
     "!<shell command>            Run a shell command in the project workspace",
     "/submission [prepare|validate|approve|submit|poll|record] Manage safe bundles and external scores",
-    "/queue [status|recover]      Show or recover durable tasks",
+    "/queue [status|activity|assign|note|recover] Show, steer, or recover durable tasks",
     "/sessions                   List saved terminal sessions",
     "/resume [session-id]        Explicitly resume a saved session",
     "/ensemble [candidates|diversity|propose|validate|promote|reject] Analyze prediction artifacts",
@@ -4100,10 +4100,24 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
     }
-    if (request === "/queue" || request === "/queue status" || request === "/queue recover" || request.startsWith("/queue recover ")) {
+    if (request === "/queue" || request === "/queue status" || request === "/queue recover" || request.startsWith("/queue recover ") || request.startsWith("/queue activity ") || request.startsWith("/queue assign ") || request.startsWith("/queue note ")) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const recoveryMatch = request.match(/^\/queue recover\s+(\S+)\s+--route\s+(\S+)(?:\s+--note\s+(.+))?$/);
-      if (recoveryMatch) {
+      const activityMatch = request.match(/^\/queue activity\s+(\S+)$/);
+      const assignMatch = request.match(/^\/queue assign\s+(\S+)(?:\s+(\S+))?$/);
+      const noteMatch = request.match(/^\/queue note\s+(\S+)\s+(.+)$/);
+      if (activityMatch) {
+        const activity = store.queueActivities(activityMatch[1], 32);
+        append("assistant", activity.length ? activity.map((entry) => `${entry.createdAt}  ${entry.kind.padEnd(9)} ${entry.actorId}\n  ${entry.message}`).join("\n") : `No activity recorded for ${activityMatch[1]}.`);
+      } else if (assignMatch) {
+        try {
+          if (!store.assignTask(assignMatch[1], assignMatch[2] ?? null)) throw new Error("task is missing or not queued/failed");
+          append("assistant", assignMatch[2] ? `Assigned ${assignMatch[1]} to ${assignMatch[2]}.` : `Cleared assignment for ${assignMatch[1]}.`);
+        } catch (error) { append("assistant", `Queue assignment failed: ${error instanceof Error ? error.message : String(error)}`); }
+      } else if (noteMatch) {
+        const recorded = store.recordQueueActivity({ taskId: noteMatch[1], actorId: "operator", kind: "handoff", message: noteMatch[2] });
+        append("assistant", recorded ? `Added an operator handoff note to ${noteMatch[1]}.` : `Unable to add a note to ${noteMatch[1]}.`);
+      } else if (recoveryMatch) {
         try {
           const task = store.recoverFailedTask(recoveryMatch[1], recoveryMatch[2], recoveryMatch[3]);
           append("assistant", `Recovered ${task.id} with route '${recoveryMatch[2]}'. Attempts reset; the task is queued.`);

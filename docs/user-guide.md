@@ -451,6 +451,9 @@ restarts. Inspect it through the TUI or CLI:
 /approvals               Unified operator approval inbox
 /queue status            Queued, running, stale, and failed tasks with readiness reasons
 /queue status --json     Machine-readable queue ownership and dependency readiness
+/queue activity <id>     Inspect durable worker handoff notes
+/queue assign <id> [worker]  Assign a task or clear its assignment
+/queue note <id> <text>  Add an operator handoff note to a task
 /routine list             Show durable recurring campaigns
 /routine create           Create one interactively in the TUI
 /routine history <id>     Show completed, failed, and abandoned attempts
