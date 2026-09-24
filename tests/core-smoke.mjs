@@ -658,6 +658,20 @@ test("approval inbox unifies pending work without mutating any gate", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("custom agent roles enter the approval inbox before execution", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-role-approval-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.updateAgentLane({ role: "external geologist", status: "idle", provider: "remote", model: "bench", task: "inspect geology" });
+    const pending = approvalInbox(store).find((item) => item.kind === "agent-role" && item.id === "external geologist");
+    assert.equal(pending?.status, "review");
+    assert.match(pending?.next ?? "", /agents approve external geologist/);
+    store.setAgentRoleAdmission("external geologist", true, "test approval");
+    assert.equal(approvalInbox(store).some((item) => item.kind === "agent-role" && item.id === "external geologist"), false);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("operator attention consolidates durable intervention signals", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-operator-attention-"));
   try {

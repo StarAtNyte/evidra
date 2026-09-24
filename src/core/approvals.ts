@@ -1,8 +1,9 @@
 import type { ResearchStore } from "./store.js";
+import { agentOrganization } from "./agent-organization.js";
 import { externalToolStatus, loadExternalResearchTools } from "./external-tools.js";
 
 export type ApprovalInboxItem = {
-  kind: "experiment" | "submission" | "external-action" | "external-tool" | "phase-goal" | "queue-recovery" | "queue-task";
+  kind: "experiment" | "submission" | "external-action" | "external-tool" | "phase-goal" | "agent-role" | "queue-recovery" | "queue-task";
   id: string;
   status: string;
   next: string;
@@ -29,6 +30,9 @@ export function approvalInbox(store: ResearchStore, root?: string): ApprovalInbo
       const payload = goal.payload as { title?: unknown; objective?: unknown };
       items.push({ kind: "phase-goal", id: goal.id, status: "blocked", next: "/resume", detail: `${typeof payload.title === "string" ? payload.title : goal.phase}${typeof payload.objective === "string" ? ` · ${payload.objective}` : ""}` });
     }
+  }
+  for (const role of agentOrganization(store).filter((entry) => entry.admission === "review")) {
+    items.push({ kind: "agent-role", id: role.role, status: "review", next: `/agents approve ${role.role}`, detail: `${role.authority} · ${role.responsibility}` });
   }
   for (const experiment of store.experiments()) {
     const payload = experiment.payload as { status?: unknown; hypothesisId?: unknown };
