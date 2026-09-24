@@ -79,13 +79,22 @@ export class QueueWorker {
     const taskAbortController = new AbortController();
     const abortFromWorker = (): void => taskAbortController.abort();
     this.abortController.signal.addEventListener("abort", abortFromWorker, { once: true });
-    const heartbeat = setInterval(() => { this.store.heartbeatTask(task.id, this.workerId, task.claimToken ?? undefined); }, this.heartbeatMs);
+    let leaseLost = false;
+    const activity = (kind: "started" | "progress" | "blocked" | "handoff" | "completed" | "failed", message: string, metadata?: unknown): boolean => this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind, message, metadata, claimToken: task.claimToken ?? undefined });
+    const heartbeat = setInterval(() => {
+      if (leaseLost) return;
+      if (!this.store.heartbeatTask(task.id, this.workerId, task.claimToken ?? undefined)) {
+        leaseLost = true;
+        activity("blocked", "Queue lease was lost; aborting the stale worker.");
+        this.store.appendEvent("queue.lease_lost", { taskId: task.id, actorId: this.workerId, reason: "claim heartbeat rejected" });
+        taskAbortController.abort();
+      }
+    }, this.heartbeatMs);
     const cancellationPoll = setInterval(() => {
       const current = this.store.queueTasks().find((entry) => entry.id === task.id);
       if (current?.deadlineAt && Date.parse(current.deadlineAt) <= Date.now()) this.store.cancelTask(task.id, "task wall-clock deadline exceeded", "deadline");
       if (!current || current.status === "cancelled" || current.status !== "running" || current.ownerId !== this.workerId) taskAbortController.abort();
     }, this.heartbeatMs);
-    const activity = (kind: "started" | "progress" | "blocked" | "handoff" | "completed" | "failed", message: string, metadata?: unknown): boolean => this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind, message, metadata, claimToken: task.claimToken ?? undefined });
     activity("started", `Started ${task.kind} attempt ${task.attempts}`);
     try {
       const result = await this.handler(task, taskAbortController.signal);

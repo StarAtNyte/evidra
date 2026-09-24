@@ -4037,6 +4037,31 @@ test("queue heartbeats are owned by the claiming worker", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue worker aborts immediately when its lease is lost", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-lease-loss-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "lease-loss", kind: "research.lane", priority: 1, payload: {} });
+    let observedAbort = false;
+    const worker = new QueueWorker(store, async (_task, signal) => {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, 5_000);
+        signal.addEventListener("abort", () => { clearTimeout(timer); observedAbort = true; reject(new Error("lease lost")); }, { once: true });
+      });
+    }, { workerId: "lease-owner", heartbeatMs: 250, pollIntervalMs: 50, staleAfterMs: 2_000 });
+    const running = worker.runOnce();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const claimed = store.queueTasks().find((task) => task.id === "lease-loss");
+    assert.equal(store.completeClaimedTask("lease-loss", "lease-owner", "completed", { result: "reclaimed" }, undefined, claimed?.claimToken ?? undefined), true);
+    await running;
+    assert.equal(observedAbort, true);
+    assert.equal(store.queueTasks().find((task) => task.id === "lease-loss")?.status, "completed");
+    assert.equal(store.eventsByType("queue.lease_lost").some((event) => event.payload.taskId === "lease-loss"), true);
+    await worker.stop();
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue cancellation aborts a cooperative local worker and preserves cancelled state", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-worker-cancel-"));
   try {
