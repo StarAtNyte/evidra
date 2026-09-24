@@ -1033,6 +1033,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     // against a campaign whose objective/phase graph is still ambiguous.
     store.staleLaneTickets();
     store.staleAgentLanes();
+    const recoveredDirectives = store.recoverStaleAgentDirectives();
+    if (recoveredDirectives.length) setProgress(`Research recovery · resolved stale directives ${recoveredDirectives.join(", ")}`);
     const alignment = campaign ? goalAlignment(store) : undefined;
     if (alignment?.status === "blocked") {
       pauseForGoalAlignment(store, alignment, "tui-autonomous-cycle");

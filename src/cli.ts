@@ -3584,6 +3584,8 @@ research
       // ambiguous campaign lineage is not. Pause before allocating any agent.
       store.staleLaneTickets();
       store.staleAgentLanes();
+      const recoveredDirectives = store.recoverStaleAgentDirectives();
+      if (recoveredDirectives.length) console.log(`Research recovery · resolved stale directives ${recoveredDirectives.join(", ")}`);
       const alignment = campaign ? goalAlignment(store) : undefined;
       if (alignment?.status === "blocked") {
         pauseForGoalAlignment(store, alignment, "cli-autonomous-cycle");

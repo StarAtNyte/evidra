@@ -1113,9 +1113,11 @@ export async function runResearchLanes(objective: string, context: Record<string
   const recoveryStore = new ResearchStore(options.storePath);
   const staleTickets = recoveryStore.staleLaneTickets();
   const staleRoles = recoveryStore.staleAgentLanes();
+  const staleDirectives = recoveryStore.recoverStaleAgentDirectives();
   recoveryStore.close();
   if (staleTickets.length) options.onProgress?.(`Research lanes · closed stale tickets: ${staleTickets.length}`);
   if (staleRoles.length) options.onProgress?.(`Research lanes · recovered stale leases: ${staleRoles.join(", ")}`);
+  if (staleDirectives.length) options.onProgress?.(`Research lanes · recovered stale directives: ${staleDirectives.join(", ")}`);
   // A Codex pool may become local after entitlement exhaustion. Size the
   // initial pool for the most constrained route that can actually serve it,
   // otherwise several lanes can switch to one Ollama process at once.
