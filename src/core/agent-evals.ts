@@ -23,6 +23,16 @@ export type AgentRoleIntervention = {
   reason: string;
 };
 
+export type AgentCoachingOutcome = {
+  role: string;
+  directiveIds: number[];
+  beforeScore: number | null;
+  afterScore: number;
+  delta: number | null;
+  verdict: "improved" | "regressed" | "unchanged" | "insufficient-data";
+  evidenceAt: string;
+};
+
 type Trajectory = { payload: unknown; quality: unknown };
 type ReviewBucket = {
   assignments: number;
@@ -161,5 +171,40 @@ export function applyAgentCoaching(store: ResearchStore, reviews: readonly Agent
   if (!hasNewEvidence) return [];
   return interventions
     .map((intervention) => store.enqueueAgentDirectiveOnce(intervention.role, agentCoachingDirective(intervention), null, "agent evaluator").id);
+}
+
+/**
+ * Measure the next observed role review against the review that caused the
+ * latest coaching handoff. This is process feedback, not causal attribution:
+ * it records whether the role's durable quality signal moved after coaching.
+ */
+export function evaluateAgentCoachingProgress(store: ResearchStore, reviews: readonly AgentRoleReview[], evidenceAt?: string): AgentCoachingOutcome[] {
+  if (!evidenceAt) return [];
+  const applied = store.eventsByType("research.agent.coaching.applied", 32).at(-1);
+  if (!applied || Date.parse(evidenceAt) <= Date.parse(applied.createdAt)) return [];
+  const alreadyEvaluated = store.eventsByType("research.agent.coaching.evaluated", 64).some((event) => {
+    const payload = object(event.payload);
+    return payload.evidenceAt === evidenceAt;
+  });
+  if (alreadyEvaluated) return [];
+  const appliedPayload = object(applied.payload);
+  const roles = Array.isArray(appliedPayload.roles)
+    ? appliedPayload.roles.filter((role): role is string => typeof role === "string" && Boolean(role.trim())).slice(0, 32)
+    : [];
+  if (!roles.length) return [];
+  const priorReviewEvent = store.eventsByType("research.agent.reviewed", 64).slice().reverse().find((event) => event.createdAt <= applied.createdAt);
+  const priorPayload = priorReviewEvent ? object(priorReviewEvent.payload) : {};
+  const priorReviews = Array.isArray(priorPayload.reviews) ? priorPayload.reviews.filter((review): review is Record<string, unknown> => Boolean(review && typeof review === "object" && !Array.isArray(review))) : [];
+  const priorByRole = new Map(priorReviews.flatMap((review) => typeof review.role === "string" && typeof review.score === "number" && Number.isFinite(review.score) ? [[review.role, review.score] as const] : []));
+  const currentByRole = new Map(reviews.map((review) => [review.role, review]));
+  const directiveIds = Array.isArray(appliedPayload.directiveIds) ? appliedPayload.directiveIds.filter((id): id is number => typeof id === "number") : [];
+  return roles.flatMap((role) => {
+    const current = currentByRole.get(role);
+    if (!current) return [];
+    const beforeScore = priorByRole.get(role) ?? null;
+    const delta = beforeScore === null ? null : Math.round((current.score - beforeScore) * 1000) / 1000;
+    const verdict = delta === null ? "insufficient-data" : delta > 0.02 ? "improved" : delta < -0.02 ? "regressed" : "unchanged";
+    return [{ role, directiveIds, beforeScore, afterScore: current.score, delta, verdict, evidenceAt } satisfies AgentCoachingOutcome];
+  });
 }
 import type { ResearchStore } from "./store.js";

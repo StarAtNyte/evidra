@@ -61,6 +61,14 @@ export function dashboardSnapshot(store: ResearchStore, root?: string): Record<s
           : [],
       };
     }),
+    agentCoachingHistory: store.eventsByType("research.agent.coaching.evaluated", 12).map((event) => {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+      return {
+        createdAt: event.createdAt,
+        evidenceAt: typeof payload.evidenceAt === "string" ? payload.evidenceAt : null,
+        outcomes: Array.isArray(payload.outcomes) ? payload.outcomes.slice(0, 24) : [],
+      };
+    }),
     agentActivity: store.agentActivities({ limit: 32 }).map((activity) => ({ role: activity.role, taskId: activity.taskId, kind: activity.kind, message: activity.message, createdAt: activity.createdAt })),
     agentSessions: store.agentSessions(24).map((session) => ({ role: session.role, scopeKey: session.scopeKey, provider: session.provider, model: session.model, threadId: `${session.threadId.slice(0, 12)}…`, taskId: session.taskId, updatedAt: session.updatedAt })),
     agentUsage: summarizeAgentUsageBy(agentEvents).slice(0, 24),
@@ -119,6 +127,7 @@ function render(d){
  const handoffOutcomes=(d.agentDirectiveOutcomes||[]).slice(0,8).map(o=>'<div class="sub">#'+esc(o.directiveId)+' · '+esc(o.role)+' · '+status(o.status)+' · '+esc(o.message)+' · '+esc(o.createdAt)+'</div>').join(''); if(handoffOutcomes) document.getElementById('agents').innerHTML+='<div class="sub">handoff outcomes</div>'+handoffOutcomes;
  document.getElementById('agent-cost').innerHTML=(d.agentUsageByScope||[]).map(s=>row(esc(s.taskId||'unattributed')+(s.goalId?' · '+esc(s.goalId):''),esc((s.inputTokens||0)+(s.outputTokens||0))+' tokens · '+esc(s.calls)+' calls')).join('')||empty;
  const reviewHistory=(d.agentReviewHistory||[]).slice().reverse().slice(0,6).map(h=>'<div class="sub">review '+esc(h.createdAt)+' · '+esc(h.source||'controller')+(h.objective?' · '+esc(h.objective):'')+'<br>'+((h.interventions||[]).map(i=>esc((i.role||'role')+' → '+(i.action||'observe')+' · '+(i.priority||'normal'))).join(' · ')||'no interventions')+(h.coachingDirectiveIds?.length?' · coaching '+h.coachingDirectiveIds.map(id=>'#'+esc(id)).join(', '):'')+'</div>').join('')||empty; const reviewHistoryEl=document.getElementById('agent-review-history')||document.getElementById('agents'); if(reviewHistoryEl) reviewHistoryEl.innerHTML+=(reviewHistory?' <div class="sub">review history</div>'+reviewHistory:'');
+ const coachingHistory=(d.agentCoachingHistory||[]).slice().reverse().slice(0,6).map(h=>'<div class="sub">coaching evaluation '+esc(h.createdAt)+(h.evidenceAt?' · evidence '+esc(h.evidenceAt):'')+'<br>'+((h.outcomes||[]).map(o=>esc((o.role||'role')+' · '+(o.verdict||'unknown')+(typeof o.delta==='number'?' · Δ '+(o.delta>=0?'+':'')+o.delta.toFixed(3):'')+' · directive '+((o.directiveIds||[]).map(id=>'#'+id).join(', ')||'none'))).join(' · ')||'no outcomes')+'</div>').join(''); if(reviewHistoryEl) reviewHistoryEl.innerHTML+=(coachingHistory?' <div class="sub">coaching outcomes</div>'+coachingHistory:'');
  const activity=(d.agentActivity||[]).slice().reverse().slice(0,8).map(a=>'<div class="sub">'+esc(a.kind)+' · '+esc(a.role)+' · '+esc(a.message)+' · '+esc(a.createdAt)+'</div>').join(''); if(reviewHistoryEl) reviewHistoryEl.innerHTML+=(activity?' <div class="sub">recent work activity</div>'+activity:'');
  const sessions=(d.agentSessions||[]).slice(0,6).map(s=>'<div class="sub">session · '+esc(s.role)+' · '+esc(s.provider)+'/'+esc(s.model)+' · '+esc(s.scopeKey)+' · '+esc(s.threadId)+'</div>').join(''); if(reviewHistoryEl) reviewHistoryEl.innerHTML+=(sessions?' <div class="sub">resumable provider sessions</div>'+sessions:'');
  document.getElementById('routines').innerHTML=(d.routines||[]).map(r=>row(esc(r.name)+' · '+esc(r.mode),status(r.status)+' · next '+esc(r.nextRunAt)+' · trigger '+esc(r.triggerEvent||'none')+(r.pendingTriggers?' · pending '+esc(r.pendingTriggers):'')+(r.lastTriggerAt?' · triggered '+esc(r.lastTriggerAt):'')+' · '+esc(r.runCount)+' run'+(r.runCount===1?'':'s')+(r.lastResult?' · last '+esc(r.lastResult):'')+(r.lastError?' · '+esc(r.lastError):'')+(r.recentRuns?.length?' · history '+r.recentRuns.map(x=>esc(x.status)).join(' → '):''))).join('')||empty;

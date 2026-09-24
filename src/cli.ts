@@ -115,7 +115,7 @@ import { approvalInbox } from "./core/approvals.js";
 import { loadProjectGuidance } from "./core/project-guidance.js";
 import { formatGoalAlignment, goalAlignment } from "./core/goal-alignment.js";
 import { operatorAttention } from "./core/attention.js";
-import { agentCoachingDirective, agentRoleInterventions, applyAgentCoaching, evaluateAgentRoles } from "./core/agent-evals.js";
+import { agentCoachingDirective, agentRoleInterventions, applyAgentCoaching, evaluateAgentCoachingProgress, evaluateAgentRoles } from "./core/agent-evals.js";
 import { agentOrganization } from "./core/agent-organization.js";
 import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "./core/external-events.js";
 import { createPortableBundle, validatePortableBundle } from "./core/portable-bundle.js";
@@ -1001,6 +1001,7 @@ agents.command("dispatch").description("Show the latest durable research-lane di
 agents.command("reviews").description("Show durable role review and intervention history").action(() => {
   const store = new ResearchStore(statePath);
   const history = store.eventsByType("research.agent.reviewed", 12).slice().reverse();
+  const coachingHistory = store.eventsByType("research.agent.coaching.evaluated", 12).slice().reverse();
   if (!history.length) {
     console.log("No role reviews recorded.");
   } else {
@@ -1013,6 +1014,13 @@ agents.command("reviews").description("Show durable role review and intervention
       const coachingDirectiveIds = Array.isArray(payload.coachingDirectiveIds) ? payload.coachingDirectiveIds.filter((id): id is number => typeof id === "number") : [];
       return `${event.createdAt} · ${source}${objective}\n${actions || "  no interventions"}${coachingDirectiveIds.length ? `\n  coaching directives: ${coachingDirectiveIds.map((id) => `#${id}`).join(", ")}` : ""}`;
     }).join("\n"));
+  }
+  if (coachingHistory.length) {
+    console.log(`\nCoaching outcomes\n${coachingHistory.map((event) => {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+      const outcomes = Array.isArray(payload.outcomes) ? payload.outcomes.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object")) : [];
+      return `${event.createdAt} · evidence ${typeof payload.evidenceAt === "string" ? payload.evidenceAt : "unknown"}\n${outcomes.map((item) => `  ${typeof item.role === "string" ? item.role : "role"} · ${typeof item.verdict === "string" ? item.verdict : "unknown"}${typeof item.delta === "number" ? ` · Δ ${item.delta >= 0 ? "+" : ""}${item.delta.toFixed(3)}` : ""} · directives ${Array.isArray(item.directiveIds) ? item.directiveIds.map((id) => `#${id}`).join(", ") || "none" : "none"}`).join("\n") || "  no outcomes"}`;
+    }).join("\n")}`);
   }
   store.close();
 });
@@ -3711,8 +3719,10 @@ research
       const latestTrajectoryAt = recentTrajectories[0]?.createdAt;
       const agentInterventions = agentRoleInterventions(agentRoleReviews);
       const coachingDirectiveIds = applyAgentCoaching(store, agentRoleReviews, latestTrajectoryAt);
+      const coachingOutcomes = evaluateAgentCoachingProgress(store, agentRoleReviews, latestTrajectoryAt);
       store.appendEvent("research.agent.reviewed", { objective, reviews: agentRoleReviews, interventions: agentInterventions, coachingDirectiveIds, source: "cli" });
       if (coachingDirectiveIds.length) store.appendEvent("research.agent.coaching.applied", { directiveIds: coachingDirectiveIds, roles: agentInterventions.filter((intervention) => intervention.action === "coach").map((intervention) => intervention.role), source: "autonomous-controller" });
+      if (coachingOutcomes.length) store.appendEvent("research.agent.coaching.evaluated", { objective, evidenceAt: latestTrajectoryAt, outcomes: coachingOutcomes, source: "autonomous-controller" });
       const unreconciledTraceRecovery = durableEvents.some((event) => event.type === "research.trace.recovered" && (!latestTrajectoryAt || event.createdAt > latestTrajectoryAt));
       const recentQuality = recentTrajectories.map((entry) => qualityFeedback(entry.quality));
       const recentRuns = store.runs().slice(0, 20);

@@ -15,7 +15,7 @@ import { controlPlaneHealth, operatorAttention } from "../dist/core/attention.js
 import { goalAlignment, pauseForGoalAlignment } from "../dist/core/goal-alignment.js";
 import { agentLaneHealth, agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
 import { campaignOrganization, formatCampaignOrganization } from "../dist/core/campaign-organization.js";
-import { agentRoleInterventions, applyAgentCoaching, evaluateAgentRoles } from "../dist/core/agent-evals.js";
+import { agentRoleInterventions, applyAgentCoaching, evaluateAgentCoachingProgress, evaluateAgentRoles } from "../dist/core/agent-evals.js";
 import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "../dist/core/external-events.js";
 import { createPortableBundle, PORTABLE_BUNDLE_TYPE, validatePortableBundle } from "../dist/core/portable-bundle.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../dist/core/submissions.js";
@@ -908,6 +908,20 @@ test("autonomous role coaching is durable and does not duplicate within one evid
     store.appendEvent("research.agent.coaching.applied", { directiveIds: first, roles: ["validation scientist"], source: "test" });
     assert.deepEqual(applyAgentCoaching(store, reviews, "2026-09-25T00:00:00.000Z"), first);
     assert.equal(store.pendingAgentDirectives("validation scientist").length, 1);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("coaching progress compares the next role review and remains idempotent", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-agent-coaching-progress-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.appendEvent("research.agent.reviewed", { reviews: [{ role: "validation scientist", score: 0.4 }], interventions: [{ role: "validation scientist", action: "coach" }], source: "test" });
+    store.appendEvent("research.agent.coaching.applied", { directiveIds: [7], roles: ["validation scientist"], source: "test" });
+    const improved = evaluateAgentCoachingProgress(store, [{ role: "validation scientist", assignments: 3, completed: 3, failed: 0, confidence: 0.8, evidenceAnchors: 3, processPasses: 3, processWarnings: 0, processFailures: 0, playbookPasses: 3, playbookPartials: 0, playbookBlocks: 0, playbookRate: 1, score: 0.5, recommendation: "needs-review" }], "2026-09-25T00:01:00.000Z");
+    assert.deepEqual(improved[0], { role: "validation scientist", directiveIds: [7], beforeScore: 0.4, afterScore: 0.5, delta: 0.1, verdict: "improved", evidenceAt: "2026-09-25T00:01:00.000Z" });
+    store.appendEvent("research.agent.coaching.evaluated", { evidenceAt: "2026-09-25T00:01:00.000Z", outcomes: improved });
+    assert.deepEqual(evaluateAgentCoachingProgress(store, [{ role: "validation scientist", assignments: 3, completed: 3, failed: 0, confidence: 0.8, evidenceAnchors: 3, processPasses: 3, processWarnings: 0, processFailures: 0, playbookPasses: 3, playbookPartials: 0, playbookBlocks: 0, playbookRate: 1, score: 0.5, recommendation: "needs-review" }], "2026-09-25T00:01:00.000Z"), []);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -8297,6 +8311,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.appendEvent("test.dashboard", { token: "sk-test-dashboard-secret-value", command: ["tool", "--token", "secret-value"] });
     store.appendEvent("research.agent.reviewed", { objective: "dashboard review objective", source: "test", reviews: [], interventions: [{ role: "model researcher", action: "coach", priority: "high", reason: "blocked playbook step" }], coachingDirectiveIds: [42] });
+    store.appendEvent("research.agent.coaching.evaluated", { evidenceAt: "2026-09-25T00:01:00.000Z", outcomes: [{ role: "model researcher", verdict: "improved", delta: 0.1, directiveIds: [42] }] });
     store.recordAgentActivity({ role: "model researcher", taskId: "dashboard-task", kind: "progress", message: "inspecting evidence" });
     const dashboardDirective = store.enqueueAgentDirective("model researcher", "inspect the result", null, "research director");
     store.consumeAgentDirectives("model researcher");
@@ -8319,6 +8334,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.equal(snapshot.agentReviewHistory.length, 1);
     assert.equal(snapshot.agentReviewHistory[0].interventions[0].action, "coach");
     assert.deepEqual(snapshot.agentReviewHistory[0].coachingDirectiveIds, [42]);
+    assert.equal(snapshot.agentCoachingHistory[0].outcomes[0].verdict, "improved");
     assert.ok(Array.isArray(snapshot.agentDirectives));
     assert.equal(snapshot.agentActivity[0].message, "inspecting evidence");
     assert.equal(snapshot.agentSessions[0].threadId, "thread-dashb…");

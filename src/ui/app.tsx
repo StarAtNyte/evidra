@@ -13,7 +13,7 @@ import { campaignOrganization, formatCampaignOrganization } from "../core/campai
 import { roleBudgetLedger } from "../core/usage.js";
 import { formatGoalAlignment, goalAlignment, pauseForGoalAlignment } from "../core/goal-alignment.js";
 import { operatorAttention } from "../core/attention.js";
-import { agentCoachingDirective, agentRoleInterventions, applyAgentCoaching, evaluateAgentRoles } from "../core/agent-evals.js";
+import { agentCoachingDirective, agentRoleInterventions, applyAgentCoaching, evaluateAgentCoachingProgress, evaluateAgentRoles } from "../core/agent-evals.js";
 import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
 import { QueueWorker } from "../core/queue-worker.js";
@@ -1078,8 +1078,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const latestTrajectoryAt = recentTrajectories[0]?.createdAt;
     const agentInterventions = agentRoleInterventions(agentRoleReviews);
     const coachingDirectiveIds = applyAgentCoaching(store, agentRoleReviews, latestTrajectoryAt);
+    const coachingOutcomes = evaluateAgentCoachingProgress(store, agentRoleReviews, latestTrajectoryAt);
     store.appendEvent("research.agent.reviewed", { objective, reviews: agentRoleReviews, interventions: agentInterventions, coachingDirectiveIds, source: "tui" });
     if (coachingDirectiveIds.length) store.appendEvent("research.agent.coaching.applied", { directiveIds: coachingDirectiveIds, roles: agentInterventions.filter((intervention) => intervention.action === "coach").map((intervention) => intervention.role), source: "autonomous-controller" });
+    if (coachingOutcomes.length) store.appendEvent("research.agent.coaching.evaluated", { objective, evidenceAt: latestTrajectoryAt, outcomes: coachingOutcomes, source: "autonomous-controller" });
     const unreconciledTraceRecovery = store.eventsByType("research.trace.recovered", 20).some((event) => !latestTrajectoryAt || event.createdAt > latestTrajectoryAt);
     const recentFailureCount = recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
     const recentQuality = recentTrajectories.slice(0, 20).map((entry) => qualityFeedback(entry.quality));
@@ -3851,9 +3853,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (request === "/agents reviews") {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const history = store.eventsByType("research.agent.reviewed", 12).slice().reverse();
+      const coachingHistory = store.eventsByType("research.agent.coaching.evaluated", 12).slice().reverse();
       store.close();
       append("assistant", history.length
-        ? `Role review history\n${history.map((event) => { const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {}; const interventions = Array.isArray(payload.interventions) ? payload.interventions.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object")) : []; const coachingDirectiveIds = Array.isArray(payload.coachingDirectiveIds) ? payload.coachingDirectiveIds.filter((id): id is number => typeof id === "number") : []; return `  ${event.createdAt} · ${typeof payload.source === "string" ? payload.source : "controller"}${typeof payload.objective === "string" ? ` · ${payload.objective.slice(0, 120)}` : ""}\n${interventions.map((item) => `    ${typeof item.role === "string" ? item.role : "role"} → ${typeof item.action === "string" ? item.action : "observe"} · ${typeof item.priority === "string" ? item.priority : "normal"}`).join("\n") || "    no interventions"}${coachingDirectiveIds.length ? `\n    coaching directives: ${coachingDirectiveIds.map((id) => `#${id}`).join(", ")}` : ""}`; }).join("\n")}`
+        ? `Role review history\n${history.map((event) => { const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {}; const interventions = Array.isArray(payload.interventions) ? payload.interventions.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object")) : []; const coachingDirectiveIds = Array.isArray(payload.coachingDirectiveIds) ? payload.coachingDirectiveIds.filter((id): id is number => typeof id === "number") : []; return `  ${event.createdAt} · ${typeof payload.source === "string" ? payload.source : "controller"}${typeof payload.objective === "string" ? ` · ${payload.objective.slice(0, 120)}` : ""}\n${interventions.map((item) => `    ${typeof item.role === "string" ? item.role : "role"} → ${typeof item.action === "string" ? item.action : "observe"} · ${typeof item.priority === "string" ? item.priority : "normal"}`).join("\n") || "    no interventions"}${coachingDirectiveIds.length ? `\n    coaching directives: ${coachingDirectiveIds.map((id) => `#${id}`).join(", ")}` : ""}`; }).join("\n")}${coachingHistory.length ? `\n\nCoaching outcomes\n${coachingHistory.map((event) => { const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {}; const outcomes = Array.isArray(payload.outcomes) ? payload.outcomes.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object")) : []; return `${event.createdAt} · evidence ${typeof payload.evidenceAt === "string" ? payload.evidenceAt : "unknown"}\n${outcomes.map((item) => `    ${typeof item.role === "string" ? item.role : "role"} · ${typeof item.verdict === "string" ? item.verdict : "unknown"}${typeof item.delta === "number" ? ` · Δ ${item.delta >= 0 ? "+" : ""}${item.delta.toFixed(3)}` : ""}`).join("\n") || "    no outcomes"}`; }).join("\n")}` : ""}`
         : "No role reviews recorded.");
       return;
     }
