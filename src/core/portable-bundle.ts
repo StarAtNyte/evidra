@@ -77,6 +77,21 @@ export function validatePortableBundle(value: unknown, root: string): PortableBu
   }
   if (object.externalTools !== undefined && !Array.isArray(object.externalTools)) errors.push("externalTools must be an array when present");
   if (object.externalToolState !== undefined && (!object.externalToolState || typeof object.externalToolState !== "object" || Array.isArray(object.externalToolState))) errors.push("externalToolState must be an object when present");
+  if (object.externalToolManifestHash !== undefined && object.externalToolManifestHash !== null && (typeof object.externalToolManifestHash !== "string" || !/^sha256:[a-f0-9]{64}$/.test(object.externalToolManifestHash))) errors.push("externalToolManifestHash must be a SHA-256 fingerprint when present");
+  if (Array.isArray(object.externalTools)) {
+    for (const entry of object.externalTools) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) { errors.push("external tool entry must be an object"); continue; }
+      const tool = entry as Record<string, unknown>;
+      if (typeof tool.name !== "string" || !/^external\.[a-z0-9][a-z0-9._-]{1,78}$/.test(tool.name)) errors.push("external tool name is invalid");
+      if (typeof tool.description !== "string" || !tool.description.trim()) errors.push(`external tool ${String(tool.name ?? "unknown")} is missing a description`);
+      if (!Array.isArray(tool.command) || !tool.command.length || tool.command.length > 32 || !tool.command.every((part) => typeof part === "string" && part.length > 0 && part.length <= 400)) errors.push(`external tool ${String(tool.name ?? "unknown")} has an invalid argv command`);
+    }
+  }
+  if (object.externalToolState && typeof object.externalToolState === "object" && !Array.isArray(object.externalToolState)) {
+    for (const [name, entry] of Object.entries(object.externalToolState as Record<string, unknown>)) {
+      if (!/^external\.[a-z0-9][a-z0-9._-]{1,78}$/.test(name) || !entry || typeof entry !== "object" || Array.isArray(entry) || !["enabled", "disabled", "quarantined"].includes((entry as Record<string, unknown>).status as string)) errors.push(`external tool state is invalid for ${name}`);
+    }
+  }
   const artifacts = Array.isArray(object.artifacts) ? object.artifacts : [];
   for (const entry of artifacts) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) { errors.push("artifact entry must be an object"); continue; }

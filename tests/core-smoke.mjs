@@ -3718,6 +3718,9 @@ test("portable bundle validation rejects unsafe paths and unredacted credentials
     const secret = validatePortableBundle({ ...base, note: "sk-super-secret-value-1234567890" }, root);
     assert.equal(secret.valid, false);
     assert.match(secret.errors.join("\n"), /unredacted credential/);
+    const invalidAdapter = validatePortableBundle({ ...base, externalToolManifestHash: "not-a-hash", externalTools: [{ name: "external.bad", description: "bad", command: "node" }] }, root);
+    assert.equal(invalidAdapter.valid, false);
+    assert.match(invalidAdapter.errors.join("\n"), /ManifestHash|argv command/i);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
