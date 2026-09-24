@@ -68,6 +68,11 @@ Queued work reports `missing`, `waiting`, or `failed` prerequisites. This makes
 the scheduler explainable to an operator and gives recovery controllers a
 stable reason instead of treating every unclaimed task as ready.
 
+When a task exhausts its bounded retries, the queue records a typed recovery
+action instead of only a terminal error. Actions include reauthentication,
+repair, refreshing data, reducing resources, using an alternate executor, or
+changing route. `queue status --json` returns these actions under `recoveries`.
+
 For recurring work, define a durable routine. A routine stores the goal,
 provider route, autonomy policy, campaign budget, interval, last result, and a
 runner lease. It can be driven by cron or another scheduler without launching

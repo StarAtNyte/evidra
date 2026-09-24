@@ -2044,8 +2044,9 @@ queue.command("status").option("--json", "emit machine-readable queue state").ac
   const store = new ResearchStore(statePath);
   const tasks = store.queueTasks();
   const rows = tasks.map((task) => ({ ...task, readiness: store.taskReadiness(task.id) }));
+  const recoveries = store.eventsByType("queue.recovery_required", 24).map((event) => event.payload);
   if (options.json) {
-    console.log(JSON.stringify(rows, null, 2));
+    console.log(JSON.stringify({ tasks: rows, recoveries }, null, 2));
     store.close();
     return;
   }
@@ -2058,6 +2059,7 @@ queue.command("status").option("--json", "emit machine-readable queue state").ac
     ].join(",")}` : "";
     return `${task.status} ${task.id} · ${task.kind} · priority ${task.priority} · attempts ${task.attempts}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${blocked}`;
   }).join("\n") : "Research queue is empty.");
+  if (recoveries.length) console.log(`\nRecovery actions\n${recoveries.slice().reverse().slice(0, 8).map((entry) => { const value = entry && typeof entry === "object" ? entry as Record<string, unknown> : {}; return `  ${String(value.taskId ?? "task")} · ${String(value.failureClass ?? "unknown")} · ${String(value.route ?? "change_route")} · ${String(value.action ?? "inspect failure")}`; }).join("\n")}`);
   store.close();
 });
 queue.command("recover").action(() => {

@@ -1,4 +1,5 @@
 import { ResearchStore, type QueuedTask } from "./store.js";
+import { queueRecoveryAction } from "./queue-recovery.js";
 import { randomUUID } from "node:crypto";
 
 export interface QueueWorkerOptions {
@@ -81,7 +82,10 @@ export class QueueWorker {
         const delay = Math.max(0, this.retryDelayMs(task, error));
         this.store.retryTask(task.id, { ...(typeof task.payload === "object" && task.payload ? task.payload : {}), lastError: error instanceof Error ? error.message : String(error) }, new Date(Date.now() + delay).toISOString());
       } else {
-        this.store.updateTask(task.id, "failed", { error: error instanceof Error ? error.message : String(error), attempts: task.attempts });
+        const message = error instanceof Error ? error.message : String(error);
+        const recovery = queueRecoveryAction(error);
+        this.store.updateTask(task.id, "failed", { error: message, attempts: task.attempts, recovery });
+        this.store.appendEvent("queue.recovery_required", { taskId: task.id, kind: task.kind, attempts: task.attempts, error: message, ...recovery });
       }
     } finally {
       clearInterval(heartbeat);

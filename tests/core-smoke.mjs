@@ -26,6 +26,7 @@ import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
 import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInspection, guardWorkspaceCommand } from "../dist/core/permissions.js";
 import { QueueWorker } from "../dist/core/queue-worker.js";
+import { queueRecoveryAction } from "../dist/core/queue-recovery.js";
 import { executeResearchTool, normalizeResearchToolResult, RESEARCH_TOOLS, selectResearchTools, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { normalizeResearchDecisionPayload, runResearchDirector } from "../dist/agents/research-director.js";
 import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
@@ -3331,6 +3332,27 @@ test("durable queue worker bounds concurrency and retries failures", async () =>
     assert.equal(maximum, 1);
     assert.equal(store.queueTasks("completed").length, 2);
     assert.equal(attempts.get("one"), 2);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("queue recovery classifies failures and records a route-changing action", async () => {
+  assert.equal(queueRecoveryAction(new Error("request timed out" )).route, "reduce_resources");
+  assert.equal(queueRecoveryAction(new Error("bwrap: network namespace denied")).route, "alternate_executor");
+  assert.equal(queueRecoveryAction(new Error("authentication token expired")).route, "reauthenticate");
+  assert.equal(queueRecoveryAction(new Error("unexpected provider failure")).route, "change_route");
+
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-recovery-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "recover-me", kind: "smoke", priority: 1, payload: {} });
+    const worker = new QueueWorker(store, async () => { throw new Error("CUDA out of memory"); }, { maxAttempts: 1, retryDelayMs: () => 0 });
+    await worker.runOnce();
+    const task = store.queueTasks("failed").find((entry) => entry.id === "recover-me");
+    assert.equal(task?.payload?.recovery?.route, "reduce_resources");
+    const event = store.eventsByType("queue.recovery_required")[0];
+    assert.equal(event?.payload.route, "reduce_resources");
+    assert.equal(event?.payload.mustChangeRoute, true);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

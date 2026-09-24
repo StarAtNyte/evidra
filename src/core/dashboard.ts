@@ -58,6 +58,10 @@ export function dashboardSnapshot(store: ResearchStore): Record<string, unknown>
     approvals: approvalInbox(store).slice(0, 48),
     alignment: goalAlignment(store),
     queue: store.queueTasks().slice(0, 40).map((task) => ({ id: task.id, kind: task.kind, priority: task.priority, status: task.status, attempts: task.attempts, claimedAt: task.claimedAt, ownerId: task.ownerId ? `${task.ownerId.slice(0, 12)}…` : null, goalId: task.goalId, parentTaskId: task.parentTaskId, dependsOn: task.dependsOn, readiness: store.taskReadiness(task.id), updatedAt: task.updatedAt })),
+    queueRecovery: store.eventsByType("queue.recovery_required", 24).map((event) => {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+      return { taskId: typeof payload.taskId === "string" ? payload.taskId : null, failureClass: payload.failureClass ?? "unknown", route: payload.route ?? "change_route", action: payload.action ?? "inspect failure", createdAt: event.createdAt };
+    }),
     experiments: experiments.slice(0, 40).map((entry) => {
       const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as Record<string, unknown> : {};
       return { id: entry.id, status: payload.status, hypothesisId: payload.hypothesisId, executor: (payload.resources as Record<string, unknown> | undefined)?.executor, createdAt: entry.createdAt };
@@ -97,7 +101,7 @@ function render(d){
  const sessions=(d.agentSessions||[]).slice(0,6).map(s=>'<div class="sub">session · '+esc(s.role)+' · '+esc(s.provider)+'/'+esc(s.model)+' · '+esc(s.scopeKey)+' · '+esc(s.threadId)+'</div>').join(''); if(reviewHistoryEl) reviewHistoryEl.innerHTML+=(sessions?' <div class="sub">resumable provider sessions</div>'+sessions:'');
  document.getElementById('routines').innerHTML=(d.routines||[]).map(r=>row(esc(r.name)+' · '+esc(r.mode),status(r.status)+' · next '+esc(r.nextRunAt)+' · '+esc(r.runCount)+' run'+(r.runCount===1?'':'s')+(r.lastResult?' · last '+esc(r.lastResult):'')+(r.lastError?' · '+esc(r.lastError):'')+(r.recentRuns?.length?' · history '+r.recentRuns.map(x=>esc(x.status)).join(' → '):''))).join('')||empty;
  document.getElementById('approvals').innerHTML=(d.approvals||[]).map(a=>row(esc(a.kind)+' · '+esc(a.id),status(a.status)+' · '+esc(a.detail)+' · next '+esc(a.next))).join('')||empty;
- document.getElementById('queue').innerHTML=(d.queue||[]).map(q=>row(esc(q.kind)+' · '+esc(q.id),status(q.status)+' · '+(q.ownerId?esc(q.ownerId):'unclaimed')+' · '+esc(q.attempts)+' attempt'+(q.attempts===1?'':'s')+(q.parentTaskId?' · parent '+esc(q.parentTaskId):'')+(q.goalId?' · goal '+esc(q.goalId):'')+((q.dependsOn||[]).length?' · depends '+q.dependsOn.map(esc).join(','): '')+readiness(q))).join('')||empty;
+ document.getElementById('queue').innerHTML=(d.queue||[]).map(q=>row(esc(q.kind)+' · '+esc(q.id),status(q.status)+' · '+(q.ownerId?esc(q.ownerId):'unclaimed')+' · '+esc(q.attempts)+' attempt'+(q.attempts===1?'':'s')+(q.parentTaskId?' · parent '+esc(q.parentTaskId):'')+(q.goalId?' · goal '+esc(q.goalId):'')+((q.dependsOn||[]).length?' · depends '+q.dependsOn.map(esc).join(','): '')+readiness(q))).join('')||empty; const recoveries=(d.queueRecovery||[]).slice().reverse().slice(0,6).map(r=>'<div class="sub">recovery · '+esc(r.taskId||'task')+' · '+esc(r.failureClass)+' · '+esc(r.route)+' · '+esc(r.action)+'</div>').join(''); if(recoveries) document.getElementById('queue').innerHTML+='<div class="sub">recovery actions</div>'+recoveries;
  const ex=(d.experiments||[]).slice(0,20).map(e=>row('experiment '+e.id,status(e.status))).join(''); const ru=(d.runs||[]).slice(0,20).map(r=>row('run '+r.id,status(r.status))).join(''); document.getElementById('work').innerHTML=ex+ru||empty;
  document.getElementById('events').textContent=(d.events||[]).map(e=>new Date(e.createdAt).toLocaleTimeString()+'  '+e.type).join('\n')||'Nothing recorded yet.';
 }

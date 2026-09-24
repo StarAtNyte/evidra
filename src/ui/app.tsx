@@ -3893,13 +3893,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", `Requeued ${count} stale task${count === 1 ? "" : "s"}.`);
       } else {
         const tasks = store.queueTasks();
-        append("assistant", tasks.length ? `Research queue\n${tasks.slice(0, 24).map((task) => {
+        const recoveries = store.eventsByType("queue.recovery_required", 8).slice().reverse();
+        const queueText = tasks.length ? `Research queue\n${tasks.slice(0, 24).map((task) => {
           const readiness = store.taskReadiness(task.id);
           const blocked = readiness && !readiness.ready ? ` · blocked ${[...readiness.missing.map((id) => `missing:${id}`), ...readiness.pending.map((id) => `waiting:${id}`), ...readiness.failed.map((id) => `failed:${id}`)].join(",")}` : "";
           const taskRole = task.payload && typeof task.payload === "object" && !Array.isArray(task.payload) && typeof (task.payload as { role?: unknown }).role === "string" ? (task.payload as { role: string }).role : "";
           const lineage = [taskRole ? `role ${taskRole}` : "", task.parentTaskId ? `parent ${task.parentTaskId}` : "", task.goalId ? `goal ${task.goalId}` : "", task.dependsOn.length ? `depends ${task.dependsOn.join(",")}` : "", task.ownerId ? `owner ${task.ownerId}` : ""].filter(Boolean).join(" · ");
           return `${task.status === "running" ? "●" : task.status === "queued" ? "○" : task.status === "completed" ? "✓" : "✗"} ${task.id} · ${task.kind} · priority ${task.priority} · attempts ${task.attempts}${lineage ? `\n  ${lineage}` : ""}${blocked}`;
-        }).join("\n")}` : "Research queue is empty.");
+        }).join("\n")}` : "Research queue is empty.";
+        append("assistant", `${queueText}${recoveries.length ? `\n\nRecovery actions\n${recoveries.map((event) => { const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {}; return `  ${String(payload.taskId ?? "task")} · ${String(payload.failureClass ?? "unknown")} · ${String(payload.route ?? "change_route")} · ${String(payload.action ?? "inspect failure")}`; }).join("\n")}` : ""}`);
       }
       store.close();
       return;
