@@ -4456,6 +4456,7 @@ test("authenticated external agent heartbeats preserve lease ownership", () => {
     const unapproved = store.recordExternalAgentHeartbeat({ role: "external geologist", leaseId: "worker-custom", provider: "codex", model: "gpt-test", status: "running", capabilities: ["python"] });
     assert.equal(unapproved.accepted, false);
     assert.match(unapproved.reason ?? "", /explicit operator admission/);
+    assert.throws(() => store.setAgentRoleAdmission("model researcher", false), /approved by contract/);
     store.setAgentRoleAdmission("external geologist", true, "test approval");
     assert.equal(store.recordExternalAgentHeartbeat({ role: "external geologist", leaseId: "worker-custom", provider: "codex", model: "gpt-test", status: "running", capabilities: ["python"] }).accepted, true);
     assert.ok(store.eventsByType("agent.external_heartbeat.rejected").length >= 1);

@@ -1563,6 +1563,7 @@ export class ResearchStore {
   setAgentRoleAdmission(role: string, admitted: boolean, reason = "operator request"): void {
     const normalized = role.trim();
     if (!normalized) throw new Error("Agent role is required.");
+    if (isBuiltInAgentRole(normalized)) throw new Error(`Built-in role '${normalized}' is approved by contract; use pause or terminate to control it.`);
     const now = new Date().toISOString();
     this.db.prepare(`INSERT INTO agent_controls (role, paused, terminated, admitted, reason, updated_at) VALUES (?, 0, 0, ?, ?, ?) ON CONFLICT(role) DO UPDATE SET admitted = excluded.admitted, reason = excluded.reason, updated_at = excluded.updated_at`).run(normalized, admitted ? 1 : 0, reason.slice(0, 500), now);
     this.appendEvent(admitted ? "agent.role.admitted" : "agent.role.admission.revoked", { role: normalized, reason: reason.slice(0, 500) });
