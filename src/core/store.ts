@@ -213,6 +213,10 @@ export interface QueueUsage {
 }
 
 export type RoutineStatus = "active" | "paused" | "running" | "failed";
+export interface RoutineTriggerContext {
+  eventType: string;
+  eventCreatedAt: string;
+}
 export interface ResearchRoutine {
   id: string;
   name: string;
@@ -234,6 +238,8 @@ export interface ResearchRoutine {
   lastTriggerAt?: string | null;
   /** Coalesced wake-up waiting for the current run to finish. */
   pendingTriggers?: number;
+  /** The newest durable event that caused or is waiting to cause a run. */
+  pendingTriggerEvent?: RoutineTriggerContext | null;
   status: RoutineStatus;
   nextRunAt: string;
   lastRunAt: string | null;
@@ -1786,7 +1792,7 @@ export class ResearchStore {
       intervalSeconds: routine.intervalSeconds, stopCondition: routine.stopCondition, provider: routine.provider,
       model: routine.model, thinking: routine.thinking, autonomy: routine.autonomy, limitPolicy: routine.limitPolicy,
       executor: routine.executor, lanes: routine.lanes, maxRuns: routine.maxRuns ?? null, triggerEvent: routine.triggerEvent ?? null, lastTriggerAt: routine.lastTriggerAt ?? null, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult,
-      lastError: routine.lastError, runCount: routine.runCount, pendingTriggers: Math.max(0, Math.min(1, routine.pendingTriggers ?? 0)),
+      lastError: routine.lastError, runCount: routine.runCount, pendingTriggers: Math.max(0, Math.min(1, routine.pendingTriggers ?? 0)), pendingTriggerEvent: routine.pendingTriggerEvent ?? null,
     };
     this.db.prepare(`
       INSERT INTO research_routines (id, payload_json, status, next_run_at, lease_id, lease_expires_at, created_at, updated_at)
@@ -1810,6 +1816,7 @@ export class ResearchStore {
       runCount: 0,
       maxRuns: input.maxRuns ?? null,
       pendingTriggers: 0,
+      pendingTriggerEvent: null,
       triggerEvent: input.triggerEvent ?? null,
       lastTriggerAt: input.triggerEvent ? now : null,
       leaseId: null,
@@ -1830,7 +1837,7 @@ export class ResearchStore {
       if (routine.lastTriggerAt && Date.parse(routine.lastTriggerAt) >= Date.parse(eventCreatedAt)) continue;
       const now = new Date().toISOString();
       const queued = routine.status === "running";
-      const updated: ResearchRoutine = { ...routine, nextRunAt: queued ? routine.nextRunAt : now, lastTriggerAt: eventCreatedAt, pendingTriggers: queued ? 1 : routine.pendingTriggers ?? 0, updatedAt: now };
+      const updated: ResearchRoutine = { ...routine, nextRunAt: queued ? routine.nextRunAt : now, lastTriggerAt: eventCreatedAt, pendingTriggers: queued ? 1 : routine.pendingTriggers ?? 0, pendingTriggerEvent: { eventType, eventCreatedAt }, updatedAt: now };
       this.saveRoutine(updated);
       this.appendEvent(queued ? "routine.trigger_queued" : "routine.triggered", { id: routine.id, eventType, eventCreatedAt, coalesced: queued });
       triggered.push(routine.id);
@@ -1874,7 +1881,7 @@ export class ResearchStore {
     const pendingTrigger = (current.pendingTriggers ?? 0) > 0;
     const nextRunAt = pendingTrigger ? now.toISOString() : new Date(now.getTime() + current.intervalSeconds * 1000).toISOString();
     this.db.prepare("UPDATE research_routine_runs SET status = ?, finished_at = ?, exit_code = ?, error = ? WHERE id = (SELECT id FROM research_routine_runs WHERE routine_id = ? AND owner_id = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1)").run(result, now.toISOString(), exitCode ?? (result === "completed" ? 0 : 1), error ?? null, id, ownerId);
-    const updated: ResearchRoutine = { ...current, status: "active", nextRunAt, pendingTriggers: pendingTrigger ? 0 : current.pendingTriggers ?? 0, lastRunAt: now.toISOString(), lastResult: result, lastError: error ?? null, runCount: current.runCount + 1, leaseId: null, leaseExpiresAt: null, updatedAt: now.toISOString() };
+    const updated: ResearchRoutine = { ...current, status: "active", nextRunAt, pendingTriggers: pendingTrigger ? 0 : current.pendingTriggers ?? 0, pendingTriggerEvent: pendingTrigger ? current.pendingTriggerEvent : null, lastRunAt: now.toISOString(), lastResult: result, lastError: error ?? null, runCount: current.runCount + 1, leaseId: null, leaseExpiresAt: null, updatedAt: now.toISOString() };
     this.saveRoutine(updated);
     this.appendEvent(`routine.${result}`, { id, runCount: updated.runCount, nextRunAt, pendingTrigger, error: error ?? null });
     return this.routine(id) ?? updated;

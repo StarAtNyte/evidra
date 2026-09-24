@@ -4250,6 +4250,7 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     assert.deepEqual(store.triggerRoutines("research.test", triggerAt), [routine.id]);
     assert.deepEqual(store.triggerRoutines("research.test", triggerAt), []);
     assert.equal(store.routine(routine.id)?.lastTriggerAt, triggerAt);
+    assert.deepEqual(store.routine(routine.id)?.pendingTriggerEvent, { eventType: "research.test", eventCreatedAt: triggerAt });
     assert.equal(store.claimRoutine("routine-demo", "runner-a", 60_000)?.leaseId, "runner-a");
     assert.equal(store.claimRoutine("routine-demo", "runner-b"), undefined);
     const finished = store.finishRoutine("routine-demo", "runner-a", "completed");
@@ -4262,8 +4263,13 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     assert.equal(store.recentEvents(4).some((event) => event.type === "routine.claimed" && event.payload?.forced === true), true);
     assert.deepEqual(store.triggerRoutines("research.test", new Date(Date.now() + 2_000).toISOString()), [routine.id]);
     assert.equal(store.routine("routine-demo")?.pendingTriggers, 1);
+    assert.equal(store.routine("routine-demo")?.pendingTriggerEvent?.eventType, "research.test");
     const forcedFinished = store.finishRoutine("routine-demo", "runner-force", "completed");
     assert.equal(forcedFinished.pendingTriggers, 0);
+    assert.equal(forcedFinished.pendingTriggerEvent?.eventType, "research.test");
+    assert.equal(store.claimRoutine("routine-demo", "runner-followup", 60_000, new Date(), true)?.status, "running");
+    const followupFinished = store.finishRoutine("routine-demo", "runner-followup", "completed");
+    assert.equal(followupFinished.pendingTriggerEvent, null);
     assert.ok(Date.parse(forcedFinished.nextRunAt) <= Date.now() + 1_000);
     assert.equal(store.recentEvents(8).some((event) => event.type === "routine.trigger_queued"), true);
     const capped = store.createRoutine({ ...routine, id: "routine-capped", maxRuns: 1, triggerEvent: null });

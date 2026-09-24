@@ -3008,7 +3008,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const routines = store.routines();
         store.close();
         append("assistant", routines.length
-          ? `Research routines\n${routines.map((entry) => `  ${entry.status} · ${entry.name} · ${entry.id}\n    ${entry.mode} · next ${entry.nextRunAt} · every ${entry.intervalSeconds}s · trigger ${entry.triggerEvent ?? "none"}${entry.pendingTriggers ? ` · pending ${entry.pendingTriggers}` : ""} · runs ${entry.runCount}${entry.maxRuns !== null ? `/${entry.maxRuns}` : ""}${entry.lastResult ? ` · last ${entry.lastResult}` : ""}`).join("\n")}`
+          ? `Research routines\n${routines.map((entry) => `  ${entry.status} · ${entry.name} · ${entry.id}\n    ${entry.mode} · next ${entry.nextRunAt} · every ${entry.intervalSeconds}s · trigger ${entry.triggerEvent ?? "none"}${entry.pendingTriggers ? ` · pending ${entry.pendingTriggers}` : ""}${entry.pendingTriggerEvent ? ` · event ${entry.pendingTriggerEvent.eventType} @ ${entry.pendingTriggerEvent.eventCreatedAt}` : ""} · runs ${entry.runCount}${entry.maxRuns !== null ? `/${entry.maxRuns}` : ""}${entry.lastResult ? ` · last ${entry.lastResult}` : ""}`).join("\n")}`
           : "No recurring routines configured. Create one with `evidra routine create --name ... --goal ...`, then use /routine run <id>.");
         return;
       }

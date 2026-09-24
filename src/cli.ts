@@ -2910,7 +2910,7 @@ routine.command("list").option("--json", "emit machine-readable routines").actio
   store.recoverStaleRoutines();
   const routines = store.routines();
   if (options.json) console.log(JSON.stringify(routines, null, 2));
-  else console.log(routines.length ? routines.map((entry) => `${entry.status} ${entry.id} · ${entry.name} · ${entry.mode} · next ${entry.nextRunAt} · every ${entry.intervalSeconds}s · trigger ${entry.triggerEvent ?? "none"}${entry.pendingTriggers ? ` · pending ${entry.pendingTriggers}` : ""} · runs ${entry.runCount}${entry.maxRuns !== null ? `/${entry.maxRuns}` : ""}${entry.lastResult ? ` · last ${entry.lastResult}` : ""}${entry.lastError ? ` · error ${entry.lastError}` : ""}`).join("\n") : "No routines configured.");
+  else console.log(routines.length ? routines.map((entry) => `${entry.status} ${entry.id} · ${entry.name} · ${entry.mode} · next ${entry.nextRunAt} · every ${entry.intervalSeconds}s · trigger ${entry.triggerEvent ?? "none"}${entry.pendingTriggers ? ` · pending ${entry.pendingTriggers}` : ""}${entry.pendingTriggerEvent ? ` · event ${entry.pendingTriggerEvent.eventType} @ ${entry.pendingTriggerEvent.eventCreatedAt}` : ""} · runs ${entry.runCount}${entry.maxRuns !== null ? `/${entry.maxRuns}` : ""}${entry.lastResult ? ` · last ${entry.lastResult}` : ""}${entry.lastError ? ` · error ${entry.lastError}` : ""}`).join("\n") : "No routines configured.");
   store.close();
 });
 routine.command("history <id>").option("--json", "emit machine-readable run history").description("Show durable attempts for a routine").action((id: string, options: { json?: boolean }) => {
