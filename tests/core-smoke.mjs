@@ -8576,7 +8576,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const workspaceId = store.workspaceId();
     store.setAgentRoleAdmission("remote lane", true, "test worker registration");
-    store.enqueueTask({ id: "bridge-task", kind: "research.lane", priority: 4, payload: { objective: "external worker smoke" } });
+    store.enqueueTask({ id: "bridge-task", kind: "research.lane", priority: 4, payload: { objective: "external worker smoke", campaignStartedAt: "bridge-campaign" } });
     store.close();
     child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "event", "serve", "--port", String(port), "--token", token, "--worker-tokens", "worker-a=worker-secret,worker-b=worker-b-secret", "--worker-scopes", "worker-a=research.lane,worker-b=research.review", "--worker-capabilities", "worker-a=python|gpu.cuda,worker-b=python"], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
     await new Promise((resolve, reject) => {
@@ -8618,11 +8618,13 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const delegatedBody = await delegated.json();
     assert.equal(delegatedBody.task.parentTaskId, task.id);
     assert.equal(delegatedBody.task.goalId, null);
+    assert.equal(delegatedBody.task.payload.campaignStartedAt, "bridge-campaign");
     assert.deepEqual(delegatedBody.task.labels, ["delegated"]);
     const duplicateDelegation = await post("/tasks/delegate", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, child: { id: "bridge-child", kind: "research.lane", priority: 2, payload: { objective: "independent follow-up" }, requiredCapabilities: ["delegated.research"], labels: ["delegated"] } }, token, "worker-a", "worker-secret");
     assert.equal(duplicateDelegation.status, 200);
     assert.equal((await duplicateDelegation.json()).idempotent, true);
     assert.equal((await post("/tasks/delegate", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, child: { id: "bridge-child", kind: "research.lane", priority: 9, payload: { objective: "different work" } } }, token, "worker-a", "worker-secret")).status, 409);
+    assert.equal((await post("/tasks/delegate", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, child: { id: "bridge-escape", kind: "research.lane", priority: 2, payload: { campaignStartedAt: "another-campaign" } } }, token, "worker-a", "worker-secret")).status, 400);
     assert.equal((await post("/tasks/delegate", { workerId: "worker-b", taskId: task.id, claimToken: task.claimToken, child: { id: "bridge-child-b", kind: "research.review", priority: 2, payload: {} } }, token, "worker-b", "worker-b-secret")).status, 403);
     assert.equal((await post("/tasks/activity", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, kind: "progress", message: "inspected evidence" }, token, "worker-a", "worker-secret")).status, 200);
     assert.equal((await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, inputTokens: 12, outputTokens: 4, costUsd: 0.01, provider: "codex", model: "gpt-test", idempotencyKey: "turn-1" }, token, "worker-a", "worker-secret")).status, 200);

@@ -2797,7 +2797,16 @@ event.command("serve")
               if (!Array.isArray(capabilities) || capabilities.length > 32 || capabilities.some((entry) => typeof entry !== "string" || !/^[a-zA-Z0-9_.:-]{1,120}$/.test(entry.trim()))) throw new Error("Delegated task requiredCapabilities must contain at most 32 simple names.");
               const labels = child.labels === undefined ? [] : child.labels;
               if (!Array.isArray(labels) || labels.length > 24 || labels.some((entry) => typeof entry !== "string" || !/^[a-zA-Z0-9_.:-]{1,64}$/.test(entry.trim()))) throw new Error("Delegated task labels must contain at most 24 simple names.");
-              const payload = child.payload === undefined ? {} : parseExternalEventPayload(JSON.stringify(child.payload));
+              const rawPayload = child.payload === undefined ? {} : parseExternalEventPayload(JSON.stringify(child.payload));
+              const parentPayload = parent.payload && typeof parent.payload === "object" && !Array.isArray(parent.payload) ? parent.payload as Record<string, unknown> : {};
+              const parentCampaign = parentPayload.campaign && typeof parentPayload.campaign === "object" && !Array.isArray(parentPayload.campaign) ? parentPayload.campaign as Record<string, unknown> : {};
+              const parentCampaignStartedAt = typeof parentPayload.campaignStartedAt === "string"
+                ? parentPayload.campaignStartedAt
+                : typeof parentCampaign.startedAt === "string" ? parentCampaign.startedAt : undefined;
+              const childPayload = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload) ? rawPayload as Record<string, unknown> : {};
+              const childCampaignStartedAt = typeof childPayload.campaignStartedAt === "string" ? childPayload.campaignStartedAt : undefined;
+              if (parentCampaignStartedAt && childCampaignStartedAt && childCampaignStartedAt !== parentCampaignStartedAt) throw new Error("Delegated work cannot escape its parent campaign run.");
+              const payload = { ...childPayload, ...(parentCampaignStartedAt ? { campaignStartedAt: parentCampaignStartedAt } : {}) };
               const normalizedCapabilities = [...new Set((capabilities as string[]).map((entry) => entry.trim().toLowerCase()))].sort();
               const normalizedLabels = [...new Set((labels as string[]).map((entry) => entry.trim().toLowerCase()))].sort();
               const childTokenBudget = typeof child.tokenBudget === "number" ? child.tokenBudget : null;
