@@ -14,6 +14,7 @@ import { approvalInbox } from "../dist/core/approvals.js";
 import { controlPlaneHealth, operatorAttention } from "../dist/core/attention.js";
 import { goalAlignment, pauseForGoalAlignment } from "../dist/core/goal-alignment.js";
 import { agentLaneHealth, agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
+import { campaignOrganization } from "../dist/core/campaign-organization.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "../dist/core/agent-evals.js";
 import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "../dist/core/external-events.js";
 import { createPortableBundle, PORTABLE_BUNDLE_TYPE, validatePortableBundle } from "../dist/core/portable-bundle.js";
@@ -801,6 +802,27 @@ test("agent organization gives every lane a responsibility and reporting line", 
     assert.equal(store.enqueueAgentDirectiveOnce("validation scientist", "retain this pending handoff", "phase-delta").id, longLived.id);
     const alternateSource = store.enqueueAgentDirectiveOnce("validation scientist", "retain this pending handoff", "phase-delta", "critic");
     assert.notEqual(alternateSource.id, longLived.id);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("campaign organization maps goals, reporting lines, and aligned queue work", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-campaign-map-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.saveCampaign({ goal: "improve the measured outcome", status: "running", runtime: { mode: "challenge" } });
+    store.savePhaseGoal({ id: "phase-validation", phase: "validation", status: "active", payload: { id: "phase-validation", phase: "validation", status: "active", objective: "verify the candidate" } });
+    store.updateAgentLane({ role: "validation scientist", status: "running", provider: "local", model: "bench", task: "verify the candidate" });
+    store.enqueueTask({ id: "validation-task", kind: "research.cycle", priority: 1, payload: {}, goalId: "phase-validation", assigneeId: "validation scientist" });
+    store.enqueueTask({ id: "orphan-task", kind: "research.cycle", priority: 1, payload: {}, goalId: "foreign-phase" });
+    assert.ok(store.claimTask("validation-task", undefined, "validation scientist"));
+    const map = campaignOrganization(store);
+    assert.equal(map.goal, "improve the measured outcome");
+    assert.equal(map.mode, "challenge");
+    assert.equal(map.phases[0]?.queue.active, 1);
+    assert.equal(map.totals.activeQueue, 1);
+    assert.equal(map.totals.queue, 1);
+    assert.equal(map.roles.find((role) => role.role === "validation scientist")?.activeQueue, 1);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
