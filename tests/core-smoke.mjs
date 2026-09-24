@@ -3421,6 +3421,10 @@ test("phase goal sets isolate separate objectives within one mode", () => {
   assert.equal(phaseGoalsForMode([...first, ...second], "research", firstSet).length, first.length);
   assert.equal(phaseGoalsForMode([...first, ...second], "research", secondSet).length, second.length);
   assert.notEqual(first[0].id, second[0].id);
+  const runA = phaseGoalSetId("study optimizer stability", "research", "2026-09-25T00:00:00.000Z");
+  const runB = phaseGoalSetId("study optimizer stability", "research", "2026-09-25T01:00:00.000Z");
+  assert.notEqual(runA, runB);
+  assert.notEqual(definePhaseGoals("study optimizer stability", "research", runA)[0].id, definePhaseGoals("study optimizer stability", "research", runB)[0].id);
 });
 
 test("phase evidence excludes records from before the objective goal set", () => {

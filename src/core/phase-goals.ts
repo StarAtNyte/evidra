@@ -72,9 +72,10 @@ export function researchStageProgress(goals: readonly Pick<PhaseGoal, "phase" | 
 }
 
 /** Create a short deterministic identity for one mode/objective goal set. */
-export function phaseGoalSetId(ultimateGoal: string, mode: "research" | "challenge"): string {
+export function phaseGoalSetId(ultimateGoal: string, mode: "research" | "challenge", campaignStartedAt?: string): string {
   let hash = 2166136261;
-  for (const character of `${mode}\u0000${ultimateGoal.trim().replace(/\s+/g, " ").toLowerCase()}`) {
+  const runSuffix = campaignStartedAt?.trim() ? `\u0000${campaignStartedAt.trim()}` : "";
+  for (const character of `${mode}\u0000${ultimateGoal.trim().replace(/\s+/g, " ").toLowerCase()}${runSuffix}`) {
     hash ^= character.charCodeAt(0);
     hash = Math.imul(hash, 16777619);
   }
@@ -160,9 +161,8 @@ export const PHASE_GOAL_EVENT_TYPES = [
   "experiment.gates.updated", "experiment.validation.assessed", "research.ablation.plan", "research.ablation.evidence",
 ] as const;
 
-export function definePhaseGoals(ultimateGoal: string, mode: "research" | "challenge"): PhaseGoal[] {
+export function definePhaseGoals(ultimateGoal: string, mode: "research" | "challenge", goalSetId = phaseGoalSetId(ultimateGoal, mode)): PhaseGoal[] {
   const now = new Date().toISOString();
-  const goalSetId = phaseGoalSetId(ultimateGoal, mode);
   return PHASES.map((template, index) => {
     const researchBaseline = mode === "research" && template.phase === "baseline";
     const phase = researchBaseline

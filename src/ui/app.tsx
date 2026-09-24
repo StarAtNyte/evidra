@@ -94,7 +94,7 @@ type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "me
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
 type WorkbenchMode = "research" | "challenge";
 type AutonomyLevel = "safe" | "fast" | "yolo";
-type ResearchCampaign = { goal: string; budgetMinutes: number; gpuBudgetHours?: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean; currentCycle?: number; currentStep?: string; checkpointedAt?: string; runtime?: CampaignRuntimeConfig & { fingerprint: string }; runtimeFingerprint?: string };
+type ResearchCampaign = { goal: string; goalSetId?: string; budgetMinutes: number; gpuBudgetHours?: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean; currentCycle?: number; currentStep?: string; checkpointedAt?: string; runtime?: CampaignRuntimeConfig & { fingerprint: string }; runtimeFingerprint?: string };
 type LimitPolicy = "auto" | "wait" | "fallback" | "stop";
 type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; limitPolicy: LimitPolicy; fallbackModel: string; experimentExecutor: ExperimentExecutorKind; campaign?: ResearchCampaign; codexThreadId?: string };
 
@@ -1022,10 +1022,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     // identity. Keep one durable phase graph for the immutable ultimate goal
     // so failures retry the active phase instead of spawning a new graph.
     const ultimateGoal = campaign?.goal ?? objective;
-    const goalSet = phaseGoalSetId(ultimateGoal, mode);
+    const goalSet = campaign?.goalSetId ?? phaseGoalSetId(ultimateGoal, mode);
     const persistedGoals = store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));
     if (!phaseGoalsForMode(persistedGoals, mode, goalSet).length) {
-      for (const goal of definePhaseGoals(ultimateGoal, mode)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
+      for (const goal of definePhaseGoals(ultimateGoal, mode, goalSet)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
     }
     const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, goalSet));
     // Recover abandoned workers before judging lineage. A live task that has
@@ -2560,7 +2560,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setSetupDraft((current) => ({ ...current, budgetMinutes })); setSetupStep("stop");
         append("assistant", researchSetupPrompt("stop")); return;
       }
-        const campaign: ResearchCampaign = { goal: setupDraft.goal ?? "Advance the research project", budgetMinutes: setupDraft.budgetMinutes ?? 240, stopCondition: request, startedAt: new Date().toISOString(), status: "running", autoExecuteExperiments: true };
+        const startedAt = new Date().toISOString();
+        const goal = setupDraft.goal ?? "Advance the research project";
+        const campaign: ResearchCampaign = { goal, goalSetId: phaseGoalSetId(goal, configRef.current.mode, startedAt), budgetMinutes: setupDraft.budgetMinutes ?? 240, stopCondition: request, startedAt, status: "running", autoExecuteExperiments: true };
       ensureActiveProject(); persistCampaign(campaign); setConfig((current) => ({ ...current, campaign })); setSetupStep(null); setSetupDraft({});
       append("assistant", `Autonomous research started\n  Goal: ${campaign.goal}\n  Budget: ${campaign.budgetMinutes} minutes\n  Stop: ${campaign.stopCondition}\n\nResearch plan\n${RESEARCH_PLAN}\n\nI will define the detailed phase goals, inspect evidence, run permitted checks, and continue until the condition or budget is reached.`);
       setBusy(true); setProgress("Starting autonomous research...");
@@ -3428,7 +3430,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
             storeWithLink.close();
           }
         }
-        const campaign: ResearchCampaign = { goal, budgetMinutes: 240, stopCondition: "stop when the evaluator-backed score is materially improved and the result survives independent replication", startedAt: new Date().toISOString(), status: "running", autoExecuteExperiments: true };
+        const startedAt = new Date().toISOString();
+        const campaign: ResearchCampaign = { goal, goalSetId: phaseGoalSetId(goal, configRef.current.mode, startedAt), budgetMinutes: 240, stopCondition: "stop when the evaluator-backed score is materially improved and the result survives independent replication", startedAt, status: "running", autoExecuteExperiments: true };
         persistCampaign(campaign);
         setConfig((current) => ({ ...current, campaign }));
         append("assistant", `Challenge campaign started\n  goal: ${goal}\n  sources ingested: ${ingested.length}\n  mode: challenge\n  execution: baseline → research lanes → critic → isolated implementation → experiment → replication\n  autonomous experiments: enabled (external submission remains approval-gated)`);

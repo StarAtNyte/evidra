@@ -44,14 +44,17 @@ export function pauseForGoalAlignment(store: ResearchStore, report: GoalAlignmen
   });
 }
 
-function campaignGoal(store: ResearchStore): { goal: string | null; running: boolean; mode: "research" | "challenge" } {
+function campaignGoal(store: ResearchStore): { goal: string | null; goalSetId: string | null; running: boolean; mode: "research" | "challenge" } {
   const campaign = store.campaign();
-  if (!campaign || typeof campaign !== "object") return { goal: null, running: false, mode: "research" };
-  const value = campaign as { goal?: unknown; status?: unknown; runtime?: { mode?: unknown } };
+  if (!campaign || typeof campaign !== "object") return { goal: null, goalSetId: null, running: false, mode: "research" };
+  const value = campaign as { goal?: unknown; goalSetId?: unknown; status?: unknown; runtime?: { mode?: unknown } };
+  const goal = typeof value.goal === "string" && value.goal.trim() ? value.goal.trim() : null;
+  const mode = value.runtime?.mode === "challenge" ? "challenge" : "research";
   return {
-    goal: typeof value.goal === "string" && value.goal.trim() ? value.goal.trim() : null,
+    goal,
+    goalSetId: typeof value.goalSetId === "string" && value.goalSetId.trim() ? value.goalSetId.trim() : goal ? phaseGoalSetId(goal, mode) : null,
     running: value.status === "running",
-    mode: value.runtime?.mode === "challenge" ? "challenge" : "research",
+    mode,
   };
 }
 
@@ -59,7 +62,7 @@ function campaignGoal(store: ResearchStore): { goal: string | null; running: boo
 export function goalAlignment(store: ResearchStore): GoalAlignmentReport {
   const campaign = campaignGoal(store);
   const phases = store.phaseGoals();
-  const activeGoalSetId = campaign.goal ? phaseGoalSetId(campaign.goal, campaign.mode) : null;
+  const activeGoalSetId = campaign.goalSetId;
   const belongsToActiveCampaign = (phase: { payload: unknown }): boolean => {
     if (activeGoalSetId === null) return true;
     const payload = phase.payload && typeof phase.payload === "object" ? phase.payload as { goalSetId?: unknown } : {};

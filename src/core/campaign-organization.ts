@@ -100,13 +100,13 @@ function usageAndBudget(store: ResearchStore, tasks: ReturnType<ResearchStore["q
  * This is a projection only: it never changes scheduling, permissions, or gates.
  */
 export function campaignOrganization(store: ResearchStore): CampaignOrganization {
-  const campaign = store.campaign() as { goal?: unknown; status?: unknown; startedAt?: unknown; runtime?: { mode?: unknown } } | undefined;
+  const campaign = store.campaign() as { goal?: unknown; goalSetId?: unknown; status?: unknown; startedAt?: unknown; runtime?: { mode?: unknown } } | undefined;
   const tasks = store.queueTasks();
   const goals = store.phaseGoals();
   const mode = campaignMode(store);
   const campaignGoal = text(campaign?.goal);
   const campaignStartedAt = text(campaign?.startedAt);
-  const activeGoalSetId = campaignGoal ? phaseGoalSetId(campaignGoal, mode) : null;
+  const activeGoalSetId = typeof campaign?.goalSetId === "string" && campaign.goalSetId.trim() ? campaign.goalSetId.trim() : campaignGoal ? phaseGoalSetId(campaignGoal, mode) : null;
   const belongsToCampaign = (entry: { payload: unknown }): boolean => {
     if (activeGoalSetId === null) return true;
     const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { goalSetId?: unknown } : {};
