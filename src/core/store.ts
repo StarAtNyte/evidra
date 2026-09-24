@@ -1608,6 +1608,38 @@ export class ResearchStore {
     });
   }
 
+  agentRoleContractHistory(role: string, limit = 32): Array<{ revision: number; contract: PersistedAgentRoleContract; createdAt: string }> {
+    const normalized = role.trim();
+    if (!normalized) return [];
+    const events = this.eventsByType("agent.role.contract.updated", Math.max(1, Math.min(256, Math.floor(limit) * 4)));
+    return events.flatMap((event) => {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+      if (payload.role !== normalized || !payload.contract || typeof payload.contract !== "object" || Array.isArray(payload.contract)) return [];
+      const raw = payload.contract as Partial<PersistedAgentRoleContract>;
+      if (raw.role !== normalized || typeof raw.responsibility !== "string" || !["coordinate", "investigate", "validate", "execute", "repair"].includes(String(raw.authority)) || !Array.isArray(raw.playbook)) return [];
+      const contract: PersistedAgentRoleContract = {
+        role: normalized,
+        parentRole: typeof raw.parentRole === "string" && raw.parentRole.trim() ? raw.parentRole.trim() : null,
+        responsibility: raw.responsibility,
+        authority: raw.authority as PersistedAgentRoleContract["authority"],
+        reviewRequired: raw.reviewRequired !== false,
+        playbook: raw.playbook.filter((step): step is string => typeof step === "string" && Boolean(step.trim())).map((step) => step.trim()).slice(0, 16),
+        updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : event.createdAt,
+      };
+      return [{ revision: 0, contract, createdAt: event.createdAt }];
+    }).reverse().slice(0, Math.max(1, Math.min(128, Math.floor(limit)))).map((entry, index) => ({ ...entry, revision: index + 1 }));
+  }
+
+  restoreAgentRoleContract(role: string, revision: number, reason = "operator contract rollback"): PersistedAgentRoleContract {
+    if (!Number.isInteger(revision) || revision < 1) throw new Error("Contract revision must be a positive integer.");
+    const target = this.agentRoleContractHistory(role, Math.max(revision, 32)).find((entry) => entry.revision === revision);
+    if (!target) throw new Error(`No contract revision ${revision} exists for '${role}'.`);
+    const { updatedAt: _updatedAt, ...contractInput } = target.contract;
+    const restored = this.setAgentRoleContract(contractInput, `${reason}; restored revision ${revision}`);
+    this.appendEvent("agent.role.contract.rollback", { role: role.trim(), restoredRevision: revision, contract: restored, reason });
+    return restored;
+  }
+
   /** Persist the operating contract for a custom role; built-ins remain code-defined. */
   setAgentRoleContract(input: Omit<PersistedAgentRoleContract, "updatedAt">, reason = "operator contract update"): PersistedAgentRoleContract {
     const role = input.role.trim().slice(0, 160);

@@ -913,6 +913,25 @@ test("campaign organization maps goals, reporting lines, and aligned queue work"
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("custom role contract revisions can be inspected and rolled back", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-role-rollback-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.setAgentRoleContract({ role: "review specialist", parentRole: "critic", responsibility: "inspect evidence", authority: "validate", reviewRequired: true, playbook: ["inspect claims"] });
+    store.setAgentRoleContract({ role: "review specialist", parentRole: "critic", responsibility: "inspect evidence and contradictions", authority: "validate", reviewRequired: true, playbook: ["inspect claims", "challenge conflicts"] });
+    const history = store.agentRoleContractHistory("review specialist");
+    assert.equal(history[0].revision, 1);
+    assert.equal(history[0].contract.responsibility, "inspect evidence and contradictions");
+    assert.equal(history[1].revision, 2);
+    const restored = store.restoreAgentRoleContract("review specialist", 2);
+    assert.equal(restored.responsibility, "inspect evidence");
+    assert.equal(store.agentRoleAdmissionStatus("review specialist"), "review");
+    assert.equal(store.eventsByType("agent.role.contract.rollback").length, 1);
+    assert.throws(() => store.restoreAgentRoleContract("review specialist", 99), /No contract revision 99/);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("agent reviews learn from durable lane evidence without claiming metric attribution", () => {
   const reviews = evaluateAgentRoles([
     { payload: { laneReports: [{ role: "validation scientist", status: "completed", confidence: 0.9, verifiedEvidenceIds: ["run-1", "source-1"], playbookChecks: [{ step: "metric", status: "pass" }, { step: "replication", status: "blocked" }] }] }, quality: { overall: "PASS" } },

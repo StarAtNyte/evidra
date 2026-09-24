@@ -253,7 +253,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/event": [["/event emit ", "Emit an external wake-up event"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
-  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents dispatch", "Show the latest lane dispatch plan"], ["/agents evaluate", "Evaluate roles and generate coaching"], ["/agents evaluate apply", "Apply coaching as durable role directives"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents recover", "Reclaim expired internal leases and tickets"], ["/agents contract ", "Define a durable custom role contract"], ["/agents approve ", "Approve a custom role for external execution"], ["/agents reject ", "Reject a custom role from execution"], ["/agents revoke ", "Revoke custom-role execution admission"], ["/agents cancel ", "Cancel a pending specialist directive"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents terminate ", "Terminate a specialist until revived"], ["/agents revive ", "Revive a terminated specialist"], ["/agents restart ", "Reset a failed or blocked specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
+  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents dispatch", "Show the latest lane dispatch plan"], ["/agents evaluate", "Evaluate roles and generate coaching"], ["/agents evaluate apply", "Apply coaching as durable role directives"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents recover", "Reclaim expired internal leases and tickets"], ["/agents contract ", "Define a durable custom role contract"], ["/agents contract-history ", "Inspect role contract revisions"], ["/agents contract-rollback ", "Restore a prior role contract revision"], ["/agents approve ", "Approve a custom role for external execution"], ["/agents reject ", "Reject a custom role from execution"], ["/agents revoke ", "Revoke custom-role execution admission"], ["/agents cancel ", "Cancel a pending specialist directive"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents terminate ", "Terminate a specialist until revived"], ["/agents revive ", "Revive a terminated specialist"], ["/agents restart ", "Reset a failed or blocked specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
   "/limits": [["/limits auto", "Use local fallback, then wait"], ["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Require local fallback"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
@@ -3792,6 +3792,25 @@ export function App({ root }: { root: string }): React.JSX.Element {
       } finally {
         store.close();
       }
+      return;
+    }
+    const contractHistoryMatch = request.match(/^\/agents\s+contract-history\s+(.+)$/i);
+    if (contractHistoryMatch) {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const history = store.agentRoleContractHistory(contractHistoryMatch[1].trim());
+      store.close();
+      append("assistant", history.length ? history.map((entry) => `r${entry.revision} · ${entry.createdAt} · ${entry.contract.authority} · ${entry.contract.responsibility}\n  reports to ${entry.contract.parentRole ?? "operator"}\n  playbook: ${entry.contract.playbook.join(" | ")}`).join("\n") : `No contract history for '${contractHistoryMatch[1].trim()}'.`);
+      return;
+    }
+    const contractRollbackMatch = request.match(/^\/agents\s+contract-rollback\s+(.+?)\s+(\d+)$/i);
+    if (contractRollbackMatch) {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      try {
+        const revision = Number.parseInt(contractRollbackMatch[2], 10);
+        const contract = store.restoreAgentRoleContract(contractRollbackMatch[1].trim(), revision);
+        append("assistant", `Restored ${contract.role} to revision ${revision}. The rollback is recorded as a new contract revision and does not elevate admission.`);
+      } catch (error) { appendError(error); }
+      finally { store.close(); }
       return;
     }
     const admissionMatch = request.match(/^\/agents\s+(approve|revoke|reject)\s+(.+)$/i);

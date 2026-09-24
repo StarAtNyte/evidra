@@ -966,6 +966,27 @@ agents.command("contract <role>")
     console.log(`Contract saved for ${contract.role}\nReports to  ${contract.parentRole ?? "operator"}\nAuthority   ${contract.authority}\nAdmission   ${contract.reviewRequired ? "review required" : "trusted by contract"}\nResponsibility ${contract.responsibility}\nPlaybook\n${contract.playbook.map((step, index) => `  ${index + 1}. ${step}`).join("\n")}`);
   });
 
+agents.command("contract-history <role>")
+  .option("--json", "emit machine-readable revisions")
+  .description("Inspect revisioned custom role contracts")
+  .action((role: string, options: { json?: boolean }) => {
+    const store = new ResearchStore(statePath);
+    const history = store.agentRoleContractHistory(role);
+    store.close();
+    if (options.json) { console.log(JSON.stringify(history, null, 2)); return; }
+    console.log(history.length ? history.map((entry) => `r${entry.revision} · ${entry.createdAt} · ${entry.contract.authority} · ${entry.contract.responsibility}\n  reports to ${entry.contract.parentRole ?? "operator"}\n  playbook: ${entry.contract.playbook.join(" | ")}`).join("\n") : `No contract history for '${role}'.`);
+  });
+
+agents.command("contract-rollback <role> <revision>")
+  .description("Restore a prior custom role contract revision without deleting audit history")
+  .action((role: string, revisionText: string) => {
+    const store = new ResearchStore(statePath);
+    const revision = Number.parseInt(revisionText, 10);
+    const contract = store.restoreAgentRoleContract(role, revision);
+    store.close();
+    console.log(`Restored ${contract.role} to revision ${revision}. The rollback is recorded as a new contract revision and does not elevate admission.`);
+  });
+
 for (const action of ["pause", "resume"] as const) {
   agents.command(`${action} <role>`).description(`${action === "pause" ? "Pause" : "Resume"} one specialist role at a safe boundary`).action((role: string) => {
     const store = new ResearchStore(statePath);
