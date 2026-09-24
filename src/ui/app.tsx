@@ -70,7 +70,7 @@ import { recordBaselineEvidence } from "../core/baseline.js";
 import { redactSecrets } from "../core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "../core/claim-audit.js";
-import { summarizeAgentUsage, summarizeUsage } from "../core/usage.js";
+import { summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "../core/usage.js";
 import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "../core/literature-bench.js";
 import { parseAutoResearchBenchEvaluation } from "../core/autoresearch-bench.js";
 import { assessResearchDecisionRubric } from "../core/research-rubric.js";
@@ -3115,13 +3115,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (request === "/usage") {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const counts = store.counts(); const events = store.eventCount(); const state = store.schedulerState(); const campaign = store.campaign() as ResearchCampaign | undefined; const usage = summarizeUsage(store.runs(), store.experiments()); const gpuUsed = observedGpuHours(store.runAttempts(), store.experiments(), store.hypotheses()); const gpuReserved = store.reservedComputeGpuHours();
-      const agentUsage = summarizeAgentUsage(store.eventsByType("research.agent.usage"));
+      const agentEvents = store.eventsByType("research.agent.usage");
+      const agentUsage = summarizeAgentUsage(agentEvents);
+      const agentRoutes = summarizeAgentUsageBy(agentEvents);
       store.close();
       const elapsed = campaign ? campaignElapsedMinutes(campaign) : 0;
       const executorUsage = Object.entries(usage.byExecutor).map(([executor, bucket]) => `  ${executor}: ${bucket.runs} runs · ${bucket.wallMinutes.toFixed(1)}m · ${bucket.gpuWallHours.toFixed(3)} GPU-h`).join("\n");
       append("assistant", `Usage\n  provider: ${config.provider}\n  model: ${config.model}\n  thinking: ${config.reasoningEffort}\n  scheduler: ${state.status}\n  events: ${events}\n  hypotheses: ${counts.hypotheses} · claims: ${counts.claims} · decisions: ${counts.decisions}\n  experiments: ${counts.experiments} · runs: ${counts.runs} · attempts: ${counts.attempts} · artifacts: ${counts.artifacts}\n  run wall time: ${usage.wallMinutes.toFixed(1)} minutes\n  GPU-tagged wall time: ${usage.gpuWallHours.toFixed(3)} hours\n  GPU reserved: ${gpuReserved.toFixed(3)} hours${executorUsage ? `\n${executorUsage}` : ""}\n${campaign ? `\nCampaign\n  status: ${campaign.status}\n  elapsed: ${elapsed.toFixed(1)} / ${campaign.budgetMinutes} minutes\n  remaining: ${Math.max(0, campaign.budgetMinutes - elapsed).toFixed(1)} minutes\n  GPU committed: ${(gpuUsed + gpuReserved).toFixed(3)} / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed - gpuReserved).toFixed(3)} available)` : ""}\n  goal: ${campaign.goal}\n  stop: ${campaign.stopCondition}${campaign.nextAttemptAt ? `\n  provider retry: ${campaign.nextAttemptAt}` : ""}` : "\nNo autonomous campaign configured. Start one with /research."}`);
       append("assistant", `Agent usage\n  calls: ${agentUsage.calls}\n  tokens: ${agentUsage.inputTokens + agentUsage.outputTokens} (${agentUsage.inputTokens} in / ${agentUsage.outputTokens} out)`);
       append("assistant", `Codex accounting\n  cached input: ${agentUsage.cachedInputTokens}\n  cache written: ${agentUsage.cacheWriteInputTokens}\n  reasoning output: ${agentUsage.reasoningOutputTokens}`);
+      if (agentRoutes.length) append("assistant", `Agent routes\n${agentRoutes.map((bucket) => `  ${bucket.role} · ${bucket.provider}/${bucket.model} · ${bucket.calls} calls · ${bucket.inputTokens + bucket.outputTokens} tokens`).join("\n")}`);
       return;
     }
     if (request === "/telemetry export") {

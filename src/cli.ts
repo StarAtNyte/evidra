@@ -56,7 +56,7 @@ import { observedGpuHours } from "./core/compute-budget.js";
 import { enforceClaimTermination, enforceGoalTermination } from "./core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds, type ClaimAuditReport } from "./core/claim-audit.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "./core/error-analysis.js";
-import { summarizeAgentUsage, summarizeUsage } from "./core/usage.js";
+import { summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "./core/usage.js";
 import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "./core/ensemble.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
@@ -726,7 +726,9 @@ program.command("usage").description("Show research, experiment, and campaign us
   const counts = store.counts();
   const project = store.project();
   const usage = summarizeUsage(store.runs(), store.experiments());
-  const agentUsage = summarizeAgentUsage(store.eventsByType("research.agent.usage"));
+  const agentEvents = store.eventsByType("research.agent.usage");
+  const agentUsage = summarizeAgentUsage(agentEvents);
+  const agentRoutes = summarizeAgentUsageBy(agentEvents);
   console.log(`Project       ${project?.name ?? "not initialized"}`);
   console.log(`Events        ${store.eventCount()}`);
   console.log(`Hypotheses    ${counts.hypotheses}`);
@@ -741,6 +743,7 @@ program.command("usage").description("Show research, experiment, and campaign us
   console.log(`Agent calls   ${agentUsage.calls}`);
   console.log(`Agent tokens  ${agentUsage.inputTokens + agentUsage.outputTokens} (${agentUsage.inputTokens} in / ${agentUsage.outputTokens} out)`);
   console.log(`Agent cache   ${agentUsage.cachedInputTokens} cached input · ${agentUsage.cacheWriteInputTokens} cache written · ${agentUsage.reasoningOutputTokens} reasoning output`);
+  if (agentRoutes.length) console.log(`Agent routes\n${agentRoutes.map((bucket) => `  ${bucket.role} · ${bucket.provider}/${bucket.model} · ${bucket.calls} calls · ${bucket.inputTokens + bucket.outputTokens} tokens`).join("\n")}`);
   console.log(`GPU-tagged    ${usage.gpuWallHours.toFixed(3)} hours`);
   console.log(`GPU reserved  ${store.reservedComputeGpuHours().toFixed(3)} hours`);
   for (const [executor, bucket] of Object.entries(usage.byExecutor)) console.log(`  ${executor.padEnd(11)} ${bucket.runs} runs · ${bucket.wallMinutes.toFixed(1)}m · ${bucket.gpuWallHours.toFixed(3)} GPU-h`);

@@ -75,7 +75,7 @@ import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperi
 import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, createLaneToolExecutor, laneHandoffBoard, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneTeamSize, researchLiteratureQueries, runResearchLanes, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
-import { summarizeAgentUsage, summarizeUsage } from "../dist/core/usage.js";
+import { summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { assessForecast, summarizeForecastAssessments } from "../dist/core/forecast-calibration.js";
@@ -4132,6 +4132,18 @@ test("shared agent usage aggregation ignores malformed and negative counters", (
     { payload: { inputTokens: -9, outputTokens: "bad", cachedInputTokens: 1 } },
     { payload: null },
   ]), { calls: 3, inputTokens: 10, outputTokens: 5, cachedInputTokens: 4, cacheWriteInputTokens: 7, reasoningOutputTokens: 2 });
+});
+
+test("agent usage preserves role and route attribution", () => {
+  const buckets = summarizeAgentUsageBy([
+    { payload: { role: "critic", provider: "codex", model: "gpt-5.6-luna", inputTokens: 10, outputTokens: 5 } },
+    { payload: { role: "critic", provider: "codex", model: "gpt-5.6-luna", inputTokens: 4, outputTokens: 1 } },
+    { payload: { role: "domain researcher", provider: "local", model: "qwen", inputTokens: 100, outputTokens: 2 } },
+  ]);
+  assert.deepEqual(buckets.map((bucket) => [bucket.role, bucket.provider, bucket.model, bucket.calls, bucket.inputTokens + bucket.outputTokens]), [
+    ["domain researcher", "local", "qwen", 1, 102],
+    ["critic", "codex", "gpt-5.6-luna", 2, 20],
+  ]);
 });
 
 test("Codex model responses normalize reasoning-effort objects", () => {

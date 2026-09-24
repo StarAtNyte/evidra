@@ -27,20 +27,47 @@ export interface AgentUsageSummary {
   reasoningOutputTokens: number;
 }
 
-/** Aggregate provider usage events consistently across CLI, TUI, and reports. */
-export function summarizeAgentUsage(events: Array<{ payload: unknown }>): AgentUsageSummary {
-  const total: AgentUsageSummary = { calls: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, reasoningOutputTokens: 0 };
+export interface AgentUsageBucket extends AgentUsageSummary {
+  role: string;
+  provider: string;
+  model: string;
+}
+
+function usageNumber(payload: Record<string, unknown>, key: string): number {
+  return typeof payload[key] === "number" && Number.isFinite(payload[key]) && (payload[key] as number) >= 0 ? payload[key] as number : 0;
+}
+
+/** Keep provider/model/role attribution instead of collapsing all agent cost into one total. */
+export function summarizeAgentUsageBy(events: Array<{ payload: unknown }>): AgentUsageBucket[] {
+  const buckets = new Map<string, AgentUsageBucket>();
   for (const event of events) {
     const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
-    const number = (key: string): number => typeof payload[key] === "number" && Number.isFinite(payload[key]) && (payload[key] as number) >= 0 ? payload[key] as number : 0;
-    total.calls += 1;
-    total.inputTokens += number("inputTokens");
-    total.outputTokens += number("outputTokens");
-    total.cachedInputTokens += number("cachedInputTokens");
-    total.cacheWriteInputTokens += number("cacheWriteInputTokens");
-    total.reasoningOutputTokens += number("reasoningOutputTokens");
+    const role = typeof payload.role === "string" && payload.role.trim() ? payload.role.trim() : "unknown";
+    const provider = typeof payload.provider === "string" && payload.provider.trim() ? payload.provider.trim() : "unknown";
+    const model = typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : "unknown";
+    const key = `${role}\u0000${provider}\u0000${model}`;
+    const bucket = buckets.get(key) ?? { role, provider, model, calls: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, reasoningOutputTokens: 0 };
+    bucket.calls += 1;
+    bucket.inputTokens += usageNumber(payload, "inputTokens");
+    bucket.outputTokens += usageNumber(payload, "outputTokens");
+    bucket.cachedInputTokens += usageNumber(payload, "cachedInputTokens");
+    bucket.cacheWriteInputTokens += usageNumber(payload, "cacheWriteInputTokens");
+    bucket.reasoningOutputTokens += usageNumber(payload, "reasoningOutputTokens");
+    buckets.set(key, bucket);
   }
-  return total;
+  return [...buckets.values()].sort((left, right) => (right.inputTokens + right.outputTokens) - (left.inputTokens + left.outputTokens) || left.role.localeCompare(right.role));
+}
+
+/** Aggregate provider usage events consistently across CLI, TUI, and reports. */
+export function summarizeAgentUsage(events: Array<{ payload: unknown }>): AgentUsageSummary {
+  return summarizeAgentUsageBy(events).reduce<AgentUsageSummary>((total, bucket) => ({
+    calls: total.calls + bucket.calls,
+    inputTokens: total.inputTokens + bucket.inputTokens,
+    outputTokens: total.outputTokens + bucket.outputTokens,
+    cachedInputTokens: total.cachedInputTokens + bucket.cachedInputTokens,
+    cacheWriteInputTokens: total.cacheWriteInputTokens + bucket.cacheWriteInputTokens,
+    reasoningOutputTokens: total.reasoningOutputTokens + bucket.reasoningOutputTokens,
+  }), { calls: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, reasoningOutputTokens: 0 });
 }
 
 /** Aggregate durable run provenance without pretending wall time equals billed cost. */

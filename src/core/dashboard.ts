@@ -5,6 +5,7 @@ import { approvalInbox } from "./approvals.js";
 import { goalAlignment } from "./goal-alignment.js";
 import { agentOrganization } from "./agent-organization.js";
 import { evaluateAgentRoles } from "./agent-evals.js";
+import { summarizeAgentUsageBy } from "./usage.js";
 import type { ResearchStore } from "./store.js";
 
 /** Build a bounded, secret-redacted read model for the local dashboard. */
@@ -36,6 +37,7 @@ export function dashboardSnapshot(store: ResearchStore): Record<string, unknown>
     agents: store.agentLanes().slice(0, 24).map((agent) => ({ ...agent, leaseId: agent.leaseId ? `${agent.leaseId.slice(0, 12)}…` : null })),
     organization: agentOrganization(store),
     agentReviews: evaluateAgentRoles(store.trajectoryHistory()),
+    agentUsage: summarizeAgentUsageBy(store.eventsByType("research.agent.usage")).slice(0, 24),
     routines: store.routines().slice(0, 24).map((routine) => ({ id: routine.id, name: routine.name, mode: routine.mode, status: routine.status, nextRunAt: routine.nextRunAt, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult, lastError: routine.lastError, runCount: routine.runCount, leaseId: routine.leaseId ? `${routine.leaseId.slice(0, 12)}…` : null, recentRuns: store.routineRuns(routine.id).slice(0, 3).map((run) => ({ status: run.status, startedAt: run.startedAt, finishedAt: run.finishedAt, exitCode: run.exitCode, error: run.error })) })),
     approvals: approvalInbox(store).slice(0, 48),
     alignment: goalAlignment(store),
