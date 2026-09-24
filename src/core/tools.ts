@@ -294,15 +294,18 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       const lifecycle = externalToolStatus(context.root, external.name);
       if (lifecycle.status !== "enabled") throw new Error(`External tool '${external.name}' is ${lifecycle.status}${lifecycle.reason ? `: ${lifecycle.reason}` : "."}`);
     }
+    let persistedContract: import("./store.js").PersistedAgentRoleContract | undefined;
+    let admittedRole = false;
     if (context.role) {
+      const admissionStore = new ResearchStore(context.storePath);
+      admittedRole = admissionStore.agentRoleAdmitted(context.role);
+      persistedContract = admissionStore.agentRoleContract(context.role);
+      admissionStore.close();
       if (external) {
         if (!external.roles.includes(context.role)) throw new Error(`Permission boundary: external tool '${call.name}' has no grant for role '${context.role}'.`);
+        if (persistedContract?.toolAllowlist && !persistedContract.toolAllowlist.includes(call.name)) throw new Error(`Permission boundary: role '${context.role}' is restricted to its contract tool allowlist; '${call.name}' is not admitted.`);
       } else {
-        const admissionStore = new ResearchStore(context.storePath);
-        const admitted = admissionStore.agentRoleAdmitted(context.role);
-        const persistedContract = admissionStore.agentRoleContract(context.role);
-        admissionStore.close();
-        const permission = agentToolPermission(context.role, call.name, admitted, persistedContract);
+        const permission = agentToolPermission(context.role, call.name, admittedRole, persistedContract);
         if (!permission.allowed) throw new Error(`Permission boundary: ${permission.reason}`);
       }
     }

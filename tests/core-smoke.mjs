@@ -4822,7 +4822,11 @@ test("research tool registry exposes safe workspace tools", async () => {
     const adapterPath = join(root, "adapter.mjs");
     writeFileSync(adapterPath, "const args = JSON.parse(process.env.EVIDRA_TOOL_ARGS_JSON || '{}'); process.stdout.write(JSON.stringify({ echoed: args }));\n");
     mkdirSync(join(root, ".evidra"), { recursive: true });
-    writeFileSync(join(root, ".evidra", "tools.json"), JSON.stringify({ tools: [{ name: "external.echo", description: "Echo adapter arguments", command: [process.execPath, "adapter.mjs"], roles: ["domain researcher"], readOnly: true, input: { value: "value to echo" } }] }));
+    writeFileSync(join(root, ".evidra", "tools.json"), JSON.stringify({ tools: [{ name: "external.echo", description: "Echo adapter arguments", command: [process.execPath, "adapter.mjs"], roles: ["domain researcher", "scoped researcher"], readOnly: true, input: { value: "value to echo" } }] }));
+    const scopedRoleStore = new ResearchStore(db);
+    scopedRoleStore.setAgentRoleContract({ role: "scoped researcher", parentRole: "research director", responsibility: "inspect only approved workspace files", authority: "investigate", reviewRequired: true, toolAllowlist: ["workspace.files"] , playbook: ["inspect the workspace"] });
+    scopedRoleStore.setAgentRoleAdmission("scoped researcher", true, "external adapter test");
+    scopedRoleStore.close();
     const loadedAdapters = loadExternalResearchTools(root);
     assert.equal(loadedAdapters.tools[0].name, "external.echo");
     assert.equal(availableResearchTools(root).some((tool) => tool.name === "external.echo"), true);
@@ -4830,6 +4834,10 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.equal(adapter.ok, true);
     assert.equal(adapter.trust, "untrusted_content");
     assert.equal(adapter.output.value.echoed.value, "hello");
+    const externalScopeDenied = await executeResearchTool({ name: "external.echo", arguments: { value: "blocked by contract" } }, { root, storePath: db, autonomy: "safe", role: "scoped researcher" });
+    assert.equal(externalScopeDenied.ok, false);
+    assert.equal(externalScopeDenied.trust, "permission_boundary");
+    assert.match(externalScopeDenied.error, /tool allowlist/);
     const adapterEventStore = new ResearchStore(db);
     const adapterEvent = adapterEventStore.eventsByType("research.tool.completed").find((event) => event.payload.name === "external.echo");
     assert.match(adapterEvent?.payload.manifestHash, /^sha256:[a-f0-9]{64}$/);
