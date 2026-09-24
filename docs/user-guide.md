@@ -376,6 +376,9 @@ restarts. Inspect it through the TUI or CLI:
 /evidence audit          Claim completion blockers
 /queue status            Queued, running, stale, and failed tasks with readiness reasons
 /queue status --json     Machine-readable queue ownership and dependency readiness
+/routine list             Show durable recurring campaigns
+/routine run <id>         Run a due routine once
+/routine recover          Recover expired routine leases
 /report research        Research graph report
 /report challenge       Challenge progress report
 /report final           Provenance and model-card report

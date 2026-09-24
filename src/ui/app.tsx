@@ -208,6 +208,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/loop": [["/loop status", "Show loop state"], ["/loop once", "Run one research cycle"], ["/loop start", "Start autonomous loop"], ["/loop pause", "Pause loop"], ["/loop stop", "Stop loop"]],
   "/steer": [["/steer ", "Guide the active campaign at the next safe boundary"]],
   "/scheduler": [["/scheduler start", "Start scheduling"], ["/scheduler pause", "Pause scheduling"], ["/scheduler drain", "Finish active work only"]],
+  "/routine": [["/routine list", "Show recurring research routines"], ["/routine recover", "Recover stale routine leases"], ["/routine run ", "Run a due routine"], ["/routine pause ", "Pause a routine"], ["/routine resume ", "Resume a routine"]],
   "/thinking": REASONING_LEVELS.map((level) => [`/thinking ${level}`, `Thinking effort: ${level}`] as const),
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
@@ -2737,6 +2738,49 @@ export function App({ root }: { root: string }): React.JSX.Element {
         loopTimer.current = setInterval(() => { void runAutonomousCycle(); }, 60_000);
         append("assistant", "Autonomous loop started. It will evaluate the next decision every 60 seconds. Use /loop pause or /loop stop to halt it.");
       }
+      return;
+    }
+    if (request === "/routine" || request.startsWith("/routine ")) {
+      const [, action = "list", id] = request.split(/\s+/);
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      if (action === "list" || action === "status") {
+        store.recoverStaleRoutines();
+        const routines = store.routines();
+        store.close();
+        append("assistant", routines.length
+          ? `Research routines\n${routines.map((entry) => `  ${entry.status} · ${entry.name} · ${entry.id}\n    ${entry.mode} · next ${entry.nextRunAt} · every ${entry.intervalSeconds}s · runs ${entry.runCount}${entry.lastResult ? ` · last ${entry.lastResult}` : ""}`).join("\n")}`
+          : "No recurring routines configured. Create one with `evidra routine create --name ... --goal ...`, then use /routine run <id>.");
+        return;
+      }
+      if (action === "recover") {
+        const recovered = store.recoverStaleRoutines();
+        store.close();
+        append("assistant", recovered.length ? `Recovered stale routine leases: ${recovered.join(", ")}` : "No stale routine leases found.");
+        return;
+      }
+      if ((action === "pause" || action === "resume") && id) {
+        const entry = store.setRoutineStatus(id, action === "pause" ? "paused" : "active");
+        store.close();
+        append("assistant", `Routine ${entry.name} ${action}d.`);
+        return;
+      }
+      if (action === "run" && id) {
+        store.close();
+        const script = process.argv[1];
+        if (!script) { append("assistant", "Unable to locate the Evidra CLI entrypoint."); return; }
+        setBusy(true); setProgress(`Routine ${id} · claiming scheduled campaign...`);
+        try {
+          const result = await runProcess([process.execPath, script, "routine", "run", id], root, 7 * 24 * 60 * 60_000, (stream, chunk) => {
+            const line = chunk.replace(/\s+/g, " ").trim();
+            if (line) setProgress(`Routine ${id} · ${stream}: ${line.slice(-140)}`);
+          }, registerProcess);
+          appendTool(`Routine ${id} finished with exit code ${result.exitCode}.\n${result.stdout.trim().slice(-3000) || result.stderr.trim().slice(-3000) || "(no output)"}`);
+        } catch (error) { appendError(error); }
+        finally { activeProcess.current = null; setBusy(false); setProgress(""); }
+        return;
+      }
+      store.close();
+      append("assistant", "Use /routine list, /routine run <id>, /routine pause <id>, /routine resume <id>, or /routine recover.");
       return;
     }
     if (request === "/hero" || request === "/hero status") {

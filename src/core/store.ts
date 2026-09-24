@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { EvidenceClaimSchema } from "./types.js";
 import { compareClaims } from "./claim-consistency.js";
 import { redactCommand, redactStructured } from "./redaction.js";
@@ -50,6 +50,34 @@ export interface QueuedTask {
   goalId: string | null;
   parentTaskId: string | null;
   dependsOn: string[];
+  updatedAt: string;
+}
+
+export type RoutineStatus = "active" | "paused" | "running" | "failed";
+export interface ResearchRoutine {
+  id: string;
+  name: string;
+  mode: "research" | "challenge";
+  goal: string;
+  budgetMinutes: number;
+  intervalSeconds: number;
+  stopCondition: string;
+  provider: "codex" | "local";
+  model: string;
+  thinking: string;
+  autonomy: "safe" | "fast" | "yolo";
+  limitPolicy: "auto" | "wait" | "fallback" | "stop";
+  executor: "local" | "container" | "modal" | "slurm";
+  lanes: number;
+  status: RoutineStatus;
+  nextRunAt: string;
+  lastRunAt: string | null;
+  lastResult: "completed" | "failed" | null;
+  lastError: string | null;
+  runCount: number;
+  leaseId: string | null;
+  leaseExpiresAt: string | null;
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -269,6 +297,16 @@ export class ResearchStore {
         payload_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS research_routines (
+        id TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        next_run_at TEXT NOT NULL,
+        lease_id TEXT,
+        lease_expires_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS agent_lanes (
         role TEXT PRIMARY KEY,
         status TEXT NOT NULL,
@@ -360,6 +398,7 @@ export class ResearchStore {
       CREATE INDEX IF NOT EXISTS idx_trajectories_updated_at ON trajectories(updated_at);
       CREATE INDEX IF NOT EXISTS idx_attempts_experiment_id ON run_attempts(experiment_id);
       CREATE INDEX IF NOT EXISTS idx_harness_changes_updated_at ON harness_changes(updated_at);
+      CREATE INDEX IF NOT EXISTS idx_research_routines_due ON research_routines(status, next_run_at);
     `);
     // Existing stores predate event integrity. Keep them readable and mark their
     // history as legacy; all newly appended events are chained and verifiable.
@@ -1076,6 +1115,106 @@ export class ResearchStore {
       VALUES (?, ?, ?, 'queued', ?, 0, ?, NULL, NULL, ?, ?, ?, ?)
     `).run(task.id, task.kind, task.priority, safeJson(task.payload), task.availableAt ?? now, task.goalId ?? null, task.parentTaskId ?? null, safeJson(dependsOn), now);
     this.appendEvent("queue.enqueued", task);
+  }
+
+  private routineFromRow(row: { id: string; payload_json: string; status: string; next_run_at: string; lease_id: string | null; lease_expires_at: string | null; created_at: string; updated_at: string }): ResearchRoutine {
+    const payload = JSON.parse(row.payload_json) as Omit<ResearchRoutine, "id" | "status" | "nextRunAt" | "leaseId" | "leaseExpiresAt" | "createdAt" | "updatedAt">;
+    return { ...payload, id: row.id, status: row.status as RoutineStatus, nextRunAt: row.next_run_at, leaseId: row.lease_id, leaseExpiresAt: row.lease_expires_at, createdAt: row.created_at, updatedAt: row.updated_at };
+  }
+
+  routines(): ResearchRoutine[] {
+    const rows = this.db.prepare("SELECT * FROM research_routines ORDER BY status ASC, next_run_at ASC, created_at ASC").all() as Array<{ id: string; payload_json: string; status: string; next_run_at: string; lease_id: string | null; lease_expires_at: string | null; created_at: string; updated_at: string }>;
+    return rows.map((row) => this.routineFromRow(row));
+  }
+
+  routine(id: string): ResearchRoutine | undefined {
+    const row = this.db.prepare("SELECT * FROM research_routines WHERE id = ?").get(id) as { id: string; payload_json: string; status: string; next_run_at: string; lease_id: string | null; lease_expires_at: string | null; created_at: string; updated_at: string } | undefined;
+    return row ? this.routineFromRow(row) : undefined;
+  }
+
+  saveRoutine(routine: ResearchRoutine): void {
+    const updatedAt = new Date().toISOString();
+    const payload = {
+      name: routine.name, mode: routine.mode, goal: routine.goal, budgetMinutes: routine.budgetMinutes,
+      intervalSeconds: routine.intervalSeconds, stopCondition: routine.stopCondition, provider: routine.provider,
+      model: routine.model, thinking: routine.thinking, autonomy: routine.autonomy, limitPolicy: routine.limitPolicy,
+      executor: routine.executor, lanes: routine.lanes, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult,
+      lastError: routine.lastError, runCount: routine.runCount,
+    };
+    this.db.prepare(`
+      INSERT INTO research_routines (id, payload_json, status, next_run_at, lease_id, lease_expires_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET payload_json = excluded.payload_json, status = excluded.status,
+        next_run_at = excluded.next_run_at, lease_id = excluded.lease_id, lease_expires_at = excluded.lease_expires_at,
+        updated_at = excluded.updated_at
+    `).run(routine.id, safeJson(payload), routine.status, routine.nextRunAt, routine.leaseId, routine.leaseExpiresAt, routine.createdAt, updatedAt);
+  }
+
+  createRoutine(input: Omit<ResearchRoutine, "id" | "status" | "nextRunAt" | "lastRunAt" | "lastResult" | "lastError" | "runCount" | "leaseId" | "leaseExpiresAt" | "createdAt" | "updatedAt"> & { id?: string; nextRunAt?: string }): ResearchRoutine {
+    const now = new Date().toISOString();
+    const routine: ResearchRoutine = {
+      ...input,
+      id: input.id ?? `routine_${randomUUID()}`,
+      status: "active",
+      nextRunAt: input.nextRunAt ?? now,
+      lastRunAt: null,
+      lastResult: null,
+      lastError: null,
+      runCount: 0,
+      leaseId: null,
+      leaseExpiresAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.saveRoutine(routine);
+    this.appendEvent("routine.created", { id: routine.id, name: routine.name, mode: routine.mode, intervalSeconds: routine.intervalSeconds });
+    return routine;
+  }
+
+  claimRoutine(id: string, ownerId: string, leaseMs = 7 * 24 * 60 * 60_000, now = new Date()): ResearchRoutine | undefined {
+    const claimed = this.db.transaction(() => {
+      const row = this.db.prepare("SELECT * FROM research_routines WHERE id = ?").get(id) as { id: string; payload_json: string; status: string; next_run_at: string; lease_id: string | null; lease_expires_at: string | null; created_at: string; updated_at: string } | undefined;
+      if (!row) return undefined;
+      const due = Date.parse(row.next_run_at) <= now.getTime();
+      const leaseExpired = !row.lease_expires_at || Date.parse(row.lease_expires_at) <= now.getTime();
+      if (!due || (row.status !== "active" && !(row.status === "running" && leaseExpired))) return undefined;
+      const expires = new Date(now.getTime() + leaseMs).toISOString();
+      this.db.prepare("UPDATE research_routines SET status = 'running', lease_id = ?, lease_expires_at = ?, updated_at = ? WHERE id = ?").run(ownerId, expires, now.toISOString(), id);
+      return this.routine(id);
+    })();
+    if (claimed) this.appendEvent("routine.claimed", { id, ownerId, leaseExpiresAt: claimed.leaseExpiresAt });
+    return claimed;
+  }
+
+  finishRoutine(id: string, ownerId: string, result: "completed" | "failed", error?: string): ResearchRoutine {
+    const current = this.routine(id);
+    if (!current) throw new Error(`Unknown routine '${id}'.`);
+    if (current.status !== "running" || current.leaseId !== ownerId) throw new Error(`Routine '${id}' is not owned by this runner.`);
+    const now = new Date();
+    const nextRunAt = new Date(now.getTime() + current.intervalSeconds * 1000).toISOString();
+    const updated: ResearchRoutine = { ...current, status: "active", nextRunAt, lastRunAt: now.toISOString(), lastResult: result, lastError: error ?? null, runCount: current.runCount + 1, leaseId: null, leaseExpiresAt: null, updatedAt: now.toISOString() };
+    this.saveRoutine(updated);
+    this.appendEvent(`routine.${result}`, { id, runCount: updated.runCount, nextRunAt, error: error ?? null });
+    return this.routine(id) ?? updated;
+  }
+
+  setRoutineStatus(id: string, status: Exclude<RoutineStatus, "running">): ResearchRoutine {
+    const current = this.routine(id);
+    if (!current) throw new Error(`Unknown routine '${id}'.`);
+    if (current.status === "running") throw new Error(`Routine '${id}' is running; interrupt its campaign before changing routine state.`);
+    const updated: ResearchRoutine = { ...current, status, leaseId: null, leaseExpiresAt: null, updatedAt: new Date().toISOString() };
+    this.saveRoutine(updated);
+    this.appendEvent(`routine.${status}`, { id });
+    return this.routine(id) ?? updated;
+  }
+
+  recoverStaleRoutines(now = new Date()): string[] {
+    const rows = this.db.prepare("SELECT id FROM research_routines WHERE status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?").all(now.toISOString()) as Array<{ id: string }>;
+    if (!rows.length) return [];
+    this.db.prepare("UPDATE research_routines SET status = 'active', lease_id = NULL, lease_expires_at = NULL, updated_at = ? WHERE status = 'running' AND lease_expires_at <= ?").run(now.toISOString(), now.toISOString());
+    const ids = rows.map((row) => row.id);
+    this.appendEvent("routine.stale_recovered", { ids });
+    return ids;
   }
 
   queueTasks(status?: QueueTaskStatus): QueuedTask[] {

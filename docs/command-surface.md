@@ -68,6 +68,24 @@ Queued work reports `missing`, `waiting`, or `failed` prerequisites. This makes
 the scheduler explainable to an operator and gives recovery controllers a
 stable reason instead of treating every unclaimed task as ready.
 
+For recurring work, define a durable routine. A routine stores the goal,
+provider route, autonomy policy, campaign budget, interval, last result, and a
+runner lease. It can be driven by cron or another scheduler without launching
+duplicate campaigns:
+
+```text
+evidra routine create --name nightly-literature --goal "find and test robust improvements" --every 1d --budget 4h
+evidra routine list --json
+evidra routine run <routine-id>
+evidra routine pause <routine-id>
+evidra routine resume <routine-id>
+evidra routine recover
+```
+
+`routine run` executes the same research controller used by the TUI and
+advances the next run only after the child campaign exits. Expired runner
+leases are recoverable, so a machine restart does not strand a routine.
+
 For long campaigns, bound each specialist independently:
 
 ```text

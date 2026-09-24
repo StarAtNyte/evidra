@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { appendFileSync, cpSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { dirname, join, relative, resolve } from "node:path";
 import { ResearchStore } from "./core/store.js";
@@ -1941,6 +1942,82 @@ queue.command("recover").action(() => {
   store.close();
 });
 program.addCommand(queue);
+
+const routine = new Command("routine").description("Manage durable recurring research and challenge campaigns");
+routine.command("list").option("--json", "emit machine-readable routines").action((options: { json?: boolean }) => {
+  const store = new ResearchStore(statePath);
+  store.recoverStaleRoutines();
+  const routines = store.routines();
+  if (options.json) console.log(JSON.stringify(routines, null, 2));
+  else console.log(routines.length ? routines.map((entry) => `${entry.status} ${entry.id} · ${entry.name} · ${entry.mode} · next ${entry.nextRunAt} · every ${entry.intervalSeconds}s · runs ${entry.runCount}${entry.lastResult ? ` · last ${entry.lastResult}` : ""}${entry.lastError ? ` · error ${entry.lastError}` : ""}`).join("\n") : "No routines configured.");
+  store.close();
+});
+routine.command("create")
+  .requiredOption("--name <name>", "routine display name")
+  .requiredOption("--goal <goal>", "research or challenge goal")
+  .option("--mode <mode>", "research or challenge", "research")
+  .option("--every <duration>", "interval between runs, e.g. 6h or 1d", "1d")
+  .option("--budget <duration>", "campaign budget per run", "4h")
+  .option("--stop <condition>", "stopping condition", "stop when the stated goal has sufficient reproducible evidence")
+  .option("--provider <provider>", "codex or local", "codex")
+  .option("--model <model>", "provider model", DEFAULT_CODEX_MODEL)
+  .option("--thinking <effort>", "reasoning effort", "medium")
+  .option("--autonomy <level>", "safe, fast, or yolo", "safe")
+  .option("--limit-policy <policy>", "auto, wait, fallback, or stop", "auto")
+  .option("--executor <executor>", "local, container, modal, or slurm", "local")
+  .option("--lanes <count>", "maximum concurrent research lanes", "3")
+  .action((options: { name: string; goal: string; mode: string; every: string; budget: string; stop: string; provider: string; model: string; thinking: string; autonomy: string; limitPolicy: string; executor: string; lanes: string }) => {
+    if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Routine mode must be 'research' or 'challenge'.");
+    if (options.provider !== "codex" && options.provider !== "local") throw new Error("Routine provider must be 'codex' or 'local'.");
+    if (!["safe", "fast", "yolo"].includes(options.autonomy)) throw new Error("Routine autonomy must be 'safe', 'fast', or 'yolo'.");
+    if (!["auto", "wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Routine limit policy must be 'auto', 'wait', 'fallback', or 'stop'.");
+    if (!["local", "container", "modal", "slurm"].includes(options.executor)) throw new Error("Routine executor must be local, container, modal, or slurm.");
+    const lanes = Number.parseInt(options.lanes, 10);
+    if (!Number.isInteger(lanes) || lanes < 1 || lanes > 6) throw new Error("Routine lanes must be an integer from 1 to 6.");
+    const store = new ResearchStore(statePath);
+    const entry = store.createRoutine({ name: options.name.trim(), mode: options.mode as "research" | "challenge", goal: options.goal.trim(), budgetMinutes: durationMinutes(options.budget), intervalSeconds: durationMinutes(options.every) * 60, stopCondition: options.stop.trim(), provider: options.provider as "codex" | "local", model: options.model, thinking: options.thinking, autonomy: options.autonomy as "safe" | "fast" | "yolo", limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", executor: options.executor as "local" | "container" | "modal" | "slurm", lanes });
+    store.close();
+    console.log(`Routine created: ${entry.id}\nNext run: ${entry.nextRunAt}\nUse evidra routine run ${entry.id} or schedule it from cron.`);
+  });
+for (const action of ["pause", "resume"] as const) {
+  routine.command(`${action} <id>`).description(`${action[0].toUpperCase()}${action.slice(1)} a recurring routine`).action((id: string) => {
+    const store = new ResearchStore(statePath);
+    const status = action === "pause" ? "paused" : "active";
+    const entry = store.setRoutineStatus(id, status);
+    store.close();
+    console.log(`Routine ${entry.id} ${action}d.`);
+  });
+}
+routine.command("recover").description("Recover routines whose runner lease expired").action(() => {
+  const store = new ResearchStore(statePath);
+  const recovered = store.recoverStaleRoutines();
+  store.close();
+  console.log(recovered.length ? `Recovered ${recovered.length} stale routine(s): ${recovered.join(", ")}` : "No stale routines found.");
+});
+routine.command("run <id>").description("Run one due routine and persist its next scheduled run").action(async (id: string) => {
+  const script = process.argv[1];
+  if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
+  const store = new ResearchStore(statePath);
+  store.recoverStaleRoutines();
+  const ownerId = `routine-runner-${process.pid}-${randomUUID()}`;
+  const entry = store.claimRoutine(id, ownerId);
+  if (!entry) { store.close(); throw new Error(`Routine '${id}' is not due, paused, missing, or already owned.`); }
+  store.close();
+  const args = ["research", "--mode", entry.mode, "--goal", entry.goal, "--budget", `${entry.budgetMinutes}m`, "--stop", entry.stopCondition, "--provider", entry.provider, "--model", entry.model, "--thinking", entry.thinking, "--autonomy", entry.autonomy, "--limit-policy", entry.limitPolicy, "--executor", entry.executor, "--lanes", String(entry.lanes)];
+  try {
+    const result = await runProcess([process.execPath, script, ...args], root, Math.max(7 * 24 * 60 * 60_000, entry.budgetMinutes * 60_000 + 10 * 60_000), streamProcessOutput);
+    const finishStore = new ResearchStore(statePath);
+    finishStore.finishRoutine(id, ownerId, result.exitCode === 0 ? "completed" : "failed", result.exitCode === 0 ? undefined : `campaign exited with code ${result.exitCode}: ${result.stderr.trim().slice(-1000)}`);
+    finishStore.close();
+    if (result.exitCode !== 0) process.exitCode = result.exitCode;
+  } catch (error) {
+    const finishStore = new ResearchStore(statePath);
+    finishStore.finishRoutine(id, ownerId, "failed", error instanceof Error ? error.message : String(error));
+    finishStore.close();
+    throw error;
+  }
+});
+program.addCommand(routine);
 
 const integrity = new Command("integrity").description("Verify durable Evidra state integrity");
 integrity.command("events").description("Verify the tamper-evident event chain").option("--json", "emit machine-readable output").action((options: { json?: boolean }) => {

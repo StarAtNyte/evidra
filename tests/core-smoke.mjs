@@ -3192,6 +3192,30 @@ test("queue dependency cycles are rejected before they deadlock the scheduler", 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("durable routines claim, finish, and recover without duplicate runners", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-routine-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const routine = store.createRoutine({
+      id: "routine-demo", name: "Demo routine", mode: "research", goal: "measure a reproducible improvement",
+      budgetMinutes: 10, intervalSeconds: 60, stopCondition: "stop after replication", provider: "codex",
+      model: "gpt-test", thinking: "medium", autonomy: "safe", limitPolicy: "auto", executor: "local", lanes: 1,
+    });
+    assert.equal(routine.status, "active");
+    assert.equal(store.claimRoutine("routine-demo", "runner-a", 60_000)?.leaseId, "runner-a");
+    assert.equal(store.claimRoutine("routine-demo", "runner-b"), undefined);
+    const finished = store.finishRoutine("routine-demo", "runner-a", "completed");
+    assert.equal(finished.runCount, 1);
+    assert.equal(finished.lastResult, "completed");
+    assert.equal(store.claimRoutine("routine-demo", "runner-c"), undefined);
+    const stale = store.createRoutine({ ...routine, id: "routine-stale" });
+    assert.equal(store.claimRoutine(stale.id, "runner-stale", -1)?.status, "running");
+    assert.deepEqual(store.recoverStaleRoutines(), [stale.id]);
+    assert.equal(store.routine(stale.id)?.status, "active");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("stale queue recovery stops retrying a task after its attempt budget", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-stale-queue-limit-"));
   const dbPath = join(root, ".sota", "database.sqlite");
