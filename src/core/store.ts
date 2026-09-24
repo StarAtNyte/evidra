@@ -2494,6 +2494,8 @@ export class ResearchStore {
     const candidateIds = [id, ...this.taskDescendantIds(id)];
     const cancelled: Array<{ id: string; kind: string; status: QueueTaskStatus; ownerId: string | null; parentTaskId: string | null }> = [];
     const parentCancelled = this.db.transaction(() => {
+      const root = this.db.prepare("SELECT status FROM work_queue WHERE id = ?").get(id) as { status: QueueTaskStatus } | undefined;
+      if (!root || !["queued", "running"].includes(root.status)) return false;
       for (const candidateId of candidateIds) {
         const current = this.db.prepare("SELECT status, kind, owner_id, parent_task_id, payload_json FROM work_queue WHERE id = ?").get(candidateId) as { status: QueueTaskStatus; kind: string; owner_id: string | null; parent_task_id: string | null; payload_json: string } | undefined;
         if (!current || !["queued", "running"].includes(current.status)) continue;

@@ -4068,6 +4068,17 @@ test("cancelling a coordinator cascades to unfinished delegated descendants", ()
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("cancellation refuses missing roots without touching orphaned descendants", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-cancel-orphan-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.enqueueTask({ id: "orphan-child", kind: "research.lane", priority: 1, parentTaskId: "missing-root", payload: {} });
+    assert.equal(store.cancelTask("missing-root", "operator stop"), false);
+    assert.equal(store.queueTasks().find((task) => task.id === "orphan-child")?.status, "queued");
+    assert.equal(store.eventsByType("queue.cancelled").length, 0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue dependencies prevent work from running before prerequisites", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-dependencies-"));
   try {
