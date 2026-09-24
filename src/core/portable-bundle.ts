@@ -29,8 +29,10 @@ export function portableAgentContracts(value: unknown): PortableAgentContract[] 
     const responsibility = typeof contract.responsibility === "string" ? contract.responsibility.trim().slice(0, 1_000) : "";
     const authority = contract.authority;
     const playbook = Array.isArray(contract.playbook) ? [...new Set(contract.playbook.filter((step): step is string => typeof step === "string" && Boolean(step.trim())).map((step) => step.trim().slice(0, 300)))].slice(0, 16) : [];
+    const toolAllowlist = contract.toolAllowlist === undefined ? undefined : Array.isArray(contract.toolAllowlist) ? [...new Set(contract.toolAllowlist.filter((tool): tool is string => typeof tool === "string" && /^[a-zA-Z0-9_.:-]{1,120}$/.test(tool.trim())).map((tool) => tool.trim().toLowerCase()))].slice(0, 32) : [];
     if (!role || !responsibility || !["coordinate", "investigate", "validate", "execute", "repair"].includes(String(authority)) || !playbook.length) return [];
-    return [{ role, parentRole: typeof contract.parentRole === "string" && contract.parentRole.trim() ? contract.parentRole.trim().slice(0, 160) : null, responsibility, authority: authority as PortableAgentContract["authority"], reviewRequired: true, playbook }];
+    if (contract.toolAllowlist !== undefined && !toolAllowlist?.length) return [];
+    return [{ role, parentRole: typeof contract.parentRole === "string" && contract.parentRole.trim() ? contract.parentRole.trim().slice(0, 160) : null, responsibility, authority: authority as PortableAgentContract["authority"], reviewRequired: true, playbook, ...(toolAllowlist ? { toolAllowlist } : {}) }];
   });
 }
 
@@ -104,6 +106,7 @@ export function validatePortableBundle(value: unknown, root: string): PortableBu
       if (typeof contract.responsibility !== "string" || !contract.responsibility.trim()) errors.push(`agent contract ${String(contract.role ?? "unknown")} is missing responsibility`);
       if (!["coordinate", "investigate", "validate", "execute", "repair"].includes(String(contract.authority))) errors.push(`agent contract ${String(contract.role ?? "unknown")} has an invalid authority`);
       if (!Array.isArray(contract.playbook) || contract.playbook.length === 0 || contract.playbook.some((step) => typeof step !== "string" || !step.trim())) errors.push(`agent contract ${String(contract.role ?? "unknown")} has an invalid playbook`);
+      if (contract.toolAllowlist !== undefined && (!Array.isArray(contract.toolAllowlist) || contract.toolAllowlist.length === 0 || contract.toolAllowlist.length > 32 || contract.toolAllowlist.some((tool) => typeof tool !== "string" || !/^[a-zA-Z0-9_.:-]{1,120}$/.test(tool.trim())))) errors.push(`agent contract ${String(contract.role ?? "unknown")} has an invalid tool allowlist`);
     }
   }
   if (object.externalTools !== undefined && !Array.isArray(object.externalTools)) errors.push("externalTools must be an array when present");

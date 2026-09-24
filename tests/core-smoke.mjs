@@ -13,7 +13,7 @@ import { ResearchStore, queueEffectivePriority } from "../dist/core/store.js";
 import { approvalInbox } from "../dist/core/approvals.js";
 import { controlPlaneHealth, operatorAttention } from "../dist/core/attention.js";
 import { goalAlignment, pauseForGoalAlignment } from "../dist/core/goal-alignment.js";
-import { agentLaneHealth, agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
+import { agentLaneHealth, agentRoleContract, agentOrganization, agentToolPermission } from "../dist/core/agent-organization.js";
 import { campaignOrganization, formatCampaignOrganization } from "../dist/core/campaign-organization.js";
 import { agentRoleInterventions, applyAgentCoaching, evaluateAgentCoachingProgress, evaluateAgentRoles } from "../dist/core/agent-evals.js";
 import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "../dist/core/external-events.js";
@@ -860,6 +860,7 @@ test("custom role contracts persist, shape the organization, and survive reopen"
       responsibility: "audit spatial coverage and propose leakage-safe geographic tests",
       authority: "validate",
       reviewRequired: true,
+      toolAllowlist: ["workspace.files", "data.audit"],
       playbook: ["inspect coordinate provenance", "test spatial split stability", "report unresolved geographic confounds"],
     }, "test contract");
     const restoredOrganization = agentOrganization(store).find((entry) => entry.role === "geospatial specialist");
@@ -869,6 +870,9 @@ test("custom role contracts persist, shape the organization, and survive reopen"
     const saved = store.agentRoleContract("geospatial specialist");
     assert.equal(saved?.parentRole, "validation scientist");
     assert.equal(saved?.authority, "validate");
+    assert.deepEqual(saved?.toolAllowlist, ["workspace.files", "data.audit"]);
+    assert.equal(agentToolPermission("geospatial specialist", "workspace.files", true, saved).allowed, true);
+    assert.equal(agentToolPermission("geospatial specialist", "source.search", true, saved).allowed, false);
     assert.deepEqual(saved?.playbook, ["inspect coordinate provenance", "test spatial split stability", "report unresolved geographic confounds"]);
     const organization = agentOrganization(store).find((entry) => entry.role === "geospatial specialist");
     assert.equal(organization?.parentRole, "validation scientist");

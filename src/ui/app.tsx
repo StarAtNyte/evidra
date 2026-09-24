@@ -3773,20 +3773,21 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Recovered ${roles.length} stale agent lease(s), ${tickets.length} stale specialist ticket(s), and ${directives.length} stale directive(s).${roles.length || tickets.length || directives.length ? `\nRoles      ${roles.join(", ") || "none"}\nTickets    ${tickets.join(", ") || "none"}\nDirectives ${directives.join(", ") || "none"}` : ""}`);
       return;
     }
-    const contractAgentMatch = request.match(/^\/agents\s+contract\s+(.+?)\s+--responsibility\s+(.+?)\s+--authority\s+(coordinate|investigate|validate|execute|repair)\s+--playbook\s+(.+?)(?:\s+--parent\s+(.+?))?(\s+--trusted)?$/i);
+    const contractAgentMatch = request.match(/^\/agents\s+contract\s+(.+?)\s+--responsibility\s+(.+?)\s+--authority\s+(coordinate|investigate|validate|execute|repair)\s+--playbook\s+(.+?)(?:\s+--tools\s+(.+?))?(?:\s+--parent\s+(.+?))?(\s+--trusted)?$/i);
     if (contractAgentMatch) {
       const role = contractAgentMatch[1].trim();
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       try {
         const contract = store.setAgentRoleContract({
           role,
-          parentRole: contractAgentMatch[5]?.trim() || "research director",
+          parentRole: contractAgentMatch[6]?.trim() || "research director",
           responsibility: contractAgentMatch[2].trim(),
           authority: contractAgentMatch[3].toLowerCase() as "coordinate" | "investigate" | "validate" | "execute" | "repair",
-          reviewRequired: !Boolean(contractAgentMatch[6]),
+          reviewRequired: !Boolean(contractAgentMatch[7]),
           playbook: contractAgentMatch[4].split("|").map((step) => step.trim()),
+          ...(contractAgentMatch[5] ? { toolAllowlist: contractAgentMatch[5].split(",").map((tool) => tool.trim()).filter(Boolean) } : {}),
         });
-        append("assistant", `Contract saved for ${contract.role}\nReports to  ${contract.parentRole ?? "operator"}\nAuthority   ${contract.authority}\nAdmission   ${contract.reviewRequired ? "review required" : "trusted by contract"}\nPlaybook\n${contract.playbook.map((step, index) => `  ${index + 1}. ${step}`).join("\n")}`);
+        append("assistant", `Contract saved for ${contract.role}\nReports to  ${contract.parentRole ?? "operator"}\nAuthority   ${contract.authority}\nAdmission   ${contract.reviewRequired ? "review required" : "trusted by contract"}\nTools       ${contract.toolAllowlist?.join(", ") ?? "authority defaults"}\nPlaybook\n${contract.playbook.map((step, index) => `  ${index + 1}. ${step}`).join("\n")}`);
       } catch (error) {
         append("assistant", error instanceof Error ? error.message : String(error));
       } finally {

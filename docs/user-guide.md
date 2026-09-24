@@ -523,6 +523,20 @@ heartbeat, cancellation, and evidence gates. A custom role with
 available. Imported contracts always return to review, so portability cannot
 silently grant a new worker execution authority.
 
+For narrower BYO-agent permissions, add `--tools` when defining a contract:
+
+```bash
+evidra agents contract "geospatial specialist" \
+  --responsibility "audit spatial coverage" \
+  --authority validate \
+  --playbook "inspect coordinates|test geographic splits" \
+  --tools workspace.files,data.audit
+```
+
+The allowlist is enforced at the tool boundary, survives contract rollback,
+and is revalidated when imported from a portable bundle. Omitting it preserves
+the role's authority-based defaults for backward compatibility.
+
 Role memory is recency-aware: the next lane prompt receives the newest bounded
 historical observations first, while still labeling them as context rather
 than evidence. This prevents obsolete failures or methods from dominating a

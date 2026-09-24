@@ -9,6 +9,8 @@ export type AgentRoleContract = {
   reviewRequired?: boolean;
   /** Reusable operating checklist injected into the agent's bounded context. */
   playbook: readonly string[];
+  /** Optional least-privilege tool scope for custom or external roles. */
+  toolAllowlist?: readonly string[];
 };
 
 export type AgentLaneHealth = "healthy" | "stale" | "idle" | "unstarted";
@@ -49,6 +51,7 @@ export function agentRoleContract(role: string, persisted?: PersistedAgentRoleCo
     authority: persisted.authority,
     reviewRequired: persisted.reviewRequired,
     playbook: persisted.playbook,
+    ...(persisted.toolAllowlist ? { toolAllowlist: persisted.toolAllowlist } : {}),
   } : {
     role,
     parentRole: "research director",
@@ -67,6 +70,7 @@ export function agentToolPermission(role: string, toolName: string, admitted = f
     "source.retrieve", "competition.observe", "source.search", "web.search",
     "repository.search", "data.audit", "artifact.audit", "prediction.analyze",
   ]);
+  if (contract.toolAllowlist && !contract.toolAllowlist.includes(toolName)) return { allowed: false, reason: `Role '${role}' is restricted to its contract tool allowlist; '${toolName}' is not admitted.` };
   if (observationTools.has(toolName)) return { allowed: true };
   if (toolName === "shell.exec" && (["data detective", "model researcher", "ensemble scientist", "validation scientist", "reproducibility engineer", "experiment engineer", "repair agent"].includes(role) || ["execute", "repair"].includes(contract.authority))) return { allowed: true };
   if (toolName === "ensemble.analyze" && (["model researcher", "ensemble scientist", "validation scientist", "reproducibility engineer", "critic", "semantic auditor"].includes(role) || ["validate", "execute", "repair"].includes(contract.authority))) return { allowed: true };

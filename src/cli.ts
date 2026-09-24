@@ -950,8 +950,9 @@ agents.command("contract <role>")
   .requiredOption("--authority <authority>", "coordinate, investigate, validate, execute, or repair")
   .requiredOption("--playbook <steps>", "pipe-separated operating steps")
   .option("--parent <role>", "reporting parent", "research director")
+  .option("--tools <tools>", "optional comma-separated least-privilege tool allowlist")
   .option("--trusted", "allow handoffs without custom-role admission")
-  .action((role: string, options: { responsibility: string; authority: string; playbook: string; parent: string; trusted?: boolean }) => {
+  .action((role: string, options: { responsibility: string; authority: string; playbook: string; parent: string; tools?: string; trusted?: boolean }) => {
     const authority = options.authority as "coordinate" | "investigate" | "validate" | "execute" | "repair";
     const store = new ResearchStore(statePath);
     const contract = store.setAgentRoleContract({
@@ -961,9 +962,10 @@ agents.command("contract <role>")
       authority,
       reviewRequired: !options.trusted,
       playbook: options.playbook.split("|").map((step) => step.trim()),
+      ...(options.tools ? { toolAllowlist: options.tools.split(",").map((tool) => tool.trim()).filter(Boolean) } : {}),
     });
     store.close();
-    console.log(`Contract saved for ${contract.role}\nReports to  ${contract.parentRole ?? "operator"}\nAuthority   ${contract.authority}\nAdmission   ${contract.reviewRequired ? "review required" : "trusted by contract"}\nResponsibility ${contract.responsibility}\nPlaybook\n${contract.playbook.map((step, index) => `  ${index + 1}. ${step}`).join("\n")}`);
+    console.log(`Contract saved for ${contract.role}\nReports to  ${contract.parentRole ?? "operator"}\nAuthority   ${contract.authority}\nAdmission   ${contract.reviewRequired ? "review required" : "trusted by contract"}\nTools       ${contract.toolAllowlist?.join(", ") ?? "authority defaults"}\nResponsibility ${contract.responsibility}\nPlaybook\n${contract.playbook.map((step, index) => `  ${index + 1}. ${step}`).join("\n")}`);
   });
 
 agents.command("contract-history <role>")
