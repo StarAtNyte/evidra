@@ -11,6 +11,7 @@ export type CampaignOrganizationPhase = {
 };
 
 export type CampaignOrganizationRole = AgentRoleContract & {
+  admission: "approved" | "review";
   status: string;
   health: string;
   task: string | null;
@@ -123,7 +124,7 @@ export function formatCampaignOrganization(map: CampaignOrganization): string {
   const phaseLines = map.phases.map((phase) => `  ${phase.status.padEnd(9)} ${phase.phase} · ${phase.id} · ${phase.queue.active} active / ${phase.queue.total} queued${phase.queue.blocked ? ` · ${phase.queue.blocked} blocked` : ""}${phase.objective ? `\n    ${phase.objective}` : ""}`);
   const roleLines = map.roles
     .filter((role) => role.parentRole === null || role.status !== "unstarted" || role.pendingDirectives > 0 || role.activeQueue > 0)
-    .map((role) => `  ${role.status.padEnd(9)} ${role.role} → ${role.parentRole ?? "operator"} · ${role.health}${role.activeQueue ? ` · ${role.activeQueue} active` : ""}${role.pendingDirectives ? ` · ${role.pendingDirectives} directives` : ""}${role.task ? `\n    ${role.task}` : ""}`);
+    .map((role) => `  ${role.status.padEnd(9)} ${role.role} → ${role.parentRole ?? "operator"} · ${role.admission} · ${role.health}${role.activeQueue ? ` · ${role.activeQueue} active` : ""}${role.pendingDirectives ? ` · ${role.pendingDirectives} directives` : ""}${role.task ? `\n    ${role.task}` : ""}`);
   return [
     "Campaign organization",
     `  mission: ${map.goal ?? "not initialized"}`,

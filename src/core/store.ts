@@ -1629,6 +1629,11 @@ export class ResearchStore {
 
   /** Atomically assign a lane to one worker. A live lease prevents duplicate specialist work. */
   acquireAgentLane(input: { role: string; leaseId: string; provider: string; model: string; task?: string | null; budgetSeconds?: number | null; staleAfterMs?: number }): { acquired: boolean; leaseId?: string; reason?: string } {
+    if (!this.agentRoleAdmitted(input.role)) {
+      const reason = `role '${input.role}' requires explicit operator admission before execution`;
+      this.appendEvent("agent.lane.rejected", { role: input.role, leaseId: input.leaseId, reason });
+      return { acquired: false, reason };
+    }
     const now = new Date().toISOString();
     const staleAfterMs = Math.max(1_000, input.staleAfterMs ?? 60_000);
     const result = this.db.transaction(() => {
@@ -1651,6 +1656,10 @@ export class ResearchStore {
 
   /** Refresh only the holder's lease; stale workers cannot resurrect a replaced lane. */
   heartbeatAgentLane(role: string, leaseId: string): boolean {
+    if (!this.agentRoleAdmitted(role)) {
+      this.appendEvent("agent.lane.heartbeat_rejected", { role, leaseId, reason: "role admission revoked" });
+      return false;
+    }
     const now = new Date().toISOString();
     const result = this.db.prepare("UPDATE agent_lanes SET heartbeat_at = ?, updated_at = ? WHERE role = ? AND status = 'running' AND lease_id = ? AND NOT EXISTS (SELECT 1 FROM agent_controls WHERE role = ? AND terminated = 1)").run(now, now, role, leaseId, role);
     return result.changes === 1;
