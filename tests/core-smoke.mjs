@@ -3851,6 +3851,8 @@ test("stale assigned queue work creates an explicit reassignment approval", () =
     const approval = approvalInbox(reopened).find((item) => item.id === "stale-assigned");
     assert.equal(approval?.next, "/queue assign stale-assigned");
     assert.match(approval?.detail ?? "", /dead-worker/);
+    assert.equal(reopened.assignTask("stale-assigned", null), true);
+    assert.equal(approvalInbox(reopened).some((item) => item.id === "stale-assigned"), false);
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

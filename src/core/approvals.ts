@@ -17,6 +17,7 @@ export type ApprovalInboxItem = {
 export function approvalInbox(store: ResearchStore, root?: string): ApprovalInboxItem[] {
   const items: ApprovalInboxItem[] = [];
   const recoveryEvents = store.eventsByTypes(["queue.recovery_required", "queue.recovery_scheduled", "queue.lane.stale", "queue.review.stale", "queue.task.stale_requeued"]);
+  const queueById = new Map(store.queueTasks().map((task) => [task.id, task]));
   const latestRecovery = new Map<string, { type: string; payload: Record<string, unknown> }>();
   for (const event of recoveryEvents) {
     const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
@@ -67,6 +68,8 @@ export function approvalInbox(store: ResearchStore, root?: string): ApprovalInbo
   }
   for (const [taskId, entry] of latestRecovery) {
     if (entry.type === "queue.task.stale_requeued" && entry.payload.assigneeId) {
+      const current = queueById.get(taskId);
+      if (!current || current.status !== "queued" || current.assigneeId !== entry.payload.assigneeId) continue;
       items.push({ kind: "queue-recovery", id: taskId, status: "pending", next: `/queue assign ${taskId}`, detail: `assigned worker ${String(entry.payload.assigneeId)} went stale; clear or replace the assignment before another worker can claim it` });
       continue;
     }
