@@ -10,6 +10,7 @@ export interface QueueWorkerOptions {
   retryDelayMs?: (task: QueuedTask, error: unknown) => number;
   pollIntervalMs?: number;
   kinds?: string[];
+  capabilities?: string[];
   workerId?: string;
 }
 
@@ -24,6 +25,7 @@ export class QueueWorker {
   private readonly pollIntervalMs: number;
   private readonly retryDelayMs: (task: QueuedTask, error: unknown) => number;
   private readonly kinds?: string[];
+  private readonly capabilities?: string[];
   private readonly workerId: string;
   private readonly active = new Set<Promise<void>>();
   private readonly abortController = new AbortController();
@@ -38,6 +40,7 @@ export class QueueWorker {
     this.pollIntervalMs = Math.max(50, options.pollIntervalMs ?? 1_000);
     this.retryDelayMs = options.retryDelayMs ?? ((task) => Math.min(60_000, 1_000 * 2 ** Math.max(0, task.attempts - 1)));
     this.kinds = options.kinds?.length ? [...options.kinds] : undefined;
+    this.capabilities = options.capabilities?.length ? [...options.capabilities] : undefined;
     this.workerId = options.workerId?.trim() || `queue-worker-${randomUUID()}`;
   }
 
@@ -46,7 +49,7 @@ export class QueueWorker {
     do {
       this.store.requeueStaleTasks(this.staleAfterMs, this.maxAttempts);
       while (!this.stopping && this.active.size < this.concurrency) {
-        const task = this.store.claimNextTask(this.kinds, this.workerId);
+        const task = this.store.claimNextTask(this.kinds, this.workerId, this.capabilities);
         if (!task) break;
         const job = this.execute(task);
         this.active.add(job);

@@ -3878,6 +3878,19 @@ test("queue dependencies prevent work from running before prerequisites", () => 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("capability-aware workers only claim tasks they can execute", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-capabilities-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "gpu-task", kind: "experiment", priority: 4, payload: {}, requiredCapabilities: ["gpu.cuda", "python"] });
+    store.enqueueTask({ id: "plain-task", kind: "research", priority: 1, payload: {} });
+    assert.equal(store.claimNextTask(undefined, "cpu-worker", ["python"])?.id, "plain-task");
+    assert.equal(store.claimNextTask(undefined, "gpu-worker", ["python", "gpu.cuda"])?.id, "gpu-task");
+    assert.deepEqual(store.queueTasks().find((task) => task.id === "gpu-task")?.requiredCapabilities, ["gpu.cuda", "python"]);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue lineage resolves parent goals and detects broken chains", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-lineage-"));
   try {

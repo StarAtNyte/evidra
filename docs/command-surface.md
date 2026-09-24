@@ -188,6 +188,13 @@ least-privilege per worker. The mapping format is
 behavior. A scoped worker cannot claim, heartbeat, or complete a task outside
 its assigned kinds.
 
+Tasks can also declare provider-neutral `requiredCapabilities` such as
+`gpu.cuda`, `python`, `modal`, or `geospatial`. A worker includes a
+`capabilities` array in `/tasks/claim`; Evidra dispatches only tasks whose full
+capability set is covered. This lets one campaign mix local CPU workers, GPU
+workers, remote executors, and domain specialists without hard-coding a
+provider into the research director.
+
 ```bash
 evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" \
   --task-kinds research.lane,research.review \

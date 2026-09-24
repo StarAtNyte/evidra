@@ -2452,7 +2452,7 @@ event.command("serve")
       request.on("end", () => {
         if (rejected) return;
         try {
-          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
+          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
           if (taskPath) {
             const workerId = typeof parsed.workerId === "string" ? parsed.workerId.trim() : "";
             if (!workerId || workerId.length > 200) throw new Error("Task requests require a workerId of 1–200 characters.");
@@ -2472,10 +2472,12 @@ event.command("serve")
             if (taskPath === "/tasks/claim") {
               const kinds = parsed.kinds === undefined ? undefined : Array.isArray(parsed.kinds) && parsed.kinds.length <= 16 && parsed.kinds.every((kind) => typeof kind === "string" && kind.length <= 120) ? parsed.kinds as string[] : undefined;
               if (parsed.kinds !== undefined && !kinds) throw new Error("kinds must be an array of at most 16 strings.");
+              const capabilities = parsed.capabilities === undefined ? undefined : Array.isArray(parsed.capabilities) && parsed.capabilities.length <= 32 && parsed.capabilities.every((capability) => typeof capability === "string" && /^[a-zA-Z0-9_.:-]{1,120}$/.test(capability.trim())) ? [...new Set((parsed.capabilities as string[]).map((capability) => capability.trim().toLowerCase()))] : undefined;
+              if (parsed.capabilities !== undefined && !capabilities) throw new Error("capabilities must be an array of at most 32 simple names.");
               if (allowedTaskKinds && kinds?.some((kind) => !allowedTaskKinds.includes(kind))) throw new Error("Requested task kind is outside this worker bridge's allowed scope.");
               if (kinds?.some((kind) => !permitsKind(kind))) { store.close(); throw new Error("Requested task kind is outside this worker's assigned scope."); }
               const scopedKinds = workerAllowedKinds ? (allowedTaskKinds ? workerAllowedKinds.filter((kind) => allowedTaskKinds.includes(kind)) : workerAllowedKinds) : allowedTaskKinds;
-              const task = store.claimNextTask(kinds ?? scopedKinds, workerId);
+              const task = store.claimNextTask(kinds ?? scopedKinds, workerId, capabilities);
               store.close();
               response.writeHead(200, headers);
               response.end(JSON.stringify({ ok: true, task: task ?? null }));
