@@ -111,7 +111,12 @@ payload is stored as a redacted wake-up signal rather than research evidence:
 ```text
 evidra event emit external.github.push --payload '{"branch":"main"}'
 /event emit external.ci.completed {"run":"1234","status":"success"}
+evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN"
 ```
+
+`event serve` accepts `POST /events` with `{ "type": "external.ci.completed",
+"payload": { ... }, "source": "ci" }`. It binds to loopback by default; a
+non-loopback bind requires a bearer token (`Authorization: Bearer ...`).
 
 Configure a routine with `--on-event external.github.push` (or the equivalent
 TUI routine flow). The event is hash-chained, wakes matching active routines,

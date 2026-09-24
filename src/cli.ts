@@ -2130,6 +2130,15 @@ approvals.command("status").option("--json", "emit machine-readable approval ite
 program.addCommand(approvals);
 
 const event = new Command("event").description("Emit safe external wake-up events for integrations");
+function recordExternalEvent(type: string, payload: Record<string, unknown>, source: string): string[] {
+  const eventType = validateExternalEventType(type);
+  const store = new ResearchStore(statePath);
+  store.appendEvent(eventType, externalEventPayload(payload, source.trim().slice(0, 80) || "cli"));
+  const eventRecord = store.recentEvents(1)[0];
+  const triggered = eventRecord ? store.triggerRoutines(eventType, eventRecord.createdAt) : [];
+  store.close();
+  return triggered;
+}
 event.command("emit <type>")
   .option("--payload <json>", "JSON object delivered as an external trigger payload", "{}")
   .option("--source <source>", "origin label for the event", "cli")
@@ -2137,12 +2146,50 @@ event.command("emit <type>")
   .action((type: string, options: { payload: string; source: string }) => {
     const eventType = validateExternalEventType(type);
     const payload = parseExternalEventPayload(options.payload);
-    const store = new ResearchStore(statePath);
-    store.appendEvent(eventType, externalEventPayload(payload, options.source.trim() || "cli"));
-    const eventRecord = store.recentEvents(1)[0];
-    const triggered = eventRecord ? store.triggerRoutines(eventType, eventRecord.createdAt) : [];
-    store.close();
+    const triggered = recordExternalEvent(eventType, payload, options.source);
     console.log(`Emitted ${eventType}${triggered.length ? `\nTriggered routines: ${triggered.join(", ")}` : "\nNo matching active routines."}`);
+  });
+event.command("serve")
+  .option("--port <port>", "HTTP port", "4311")
+  .option("--host <host>", "bind address; loopback is the default", "127.0.0.1")
+  .option("--token <token>", "Bearer token; required for non-loopback hosts", process.env.EVIDRA_EVENT_TOKEN)
+  .description("Run an authenticated local webhook listener for external events")
+  .action(async (options: { port: string; host: string; token?: string }) => {
+    const port = Number.parseInt(options.port, 10);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Event server port must be an integer between 1 and 65535.");
+    const loopback = options.host === "127.0.0.1" || options.host === "localhost" || options.host === "::1";
+    if (!loopback && !options.token?.trim()) throw new Error("A token is required when the event server is not bound to loopback.");
+    const server = createServer((request, response) => {
+      const headers = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" };
+      if (request.method !== "POST" || request.url !== "/events") { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events is the only supported endpoint" })); return; }
+      if (options.token?.trim() && request.headers.authorization !== `Bearer ${options.token.trim()}`) { response.writeHead(401, headers); response.end(JSON.stringify({ error: "invalid bearer token" })); return; }
+      let body = "";
+      let rejected = false;
+      request.setEncoding("utf8");
+      request.on("data", (chunk: string) => {
+        if (rejected) return;
+        body += chunk;
+        if (Buffer.byteLength(body, "utf8") > 64_000) { rejected = true; response.writeHead(413, headers); response.end(JSON.stringify({ error: "request body too large" })); request.destroy(); }
+      });
+      request.on("end", () => {
+        if (rejected) return;
+        try {
+          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown };
+          if (typeof parsed.type !== "string") throw new Error("request JSON requires a string 'type'");
+          const payload = parseExternalEventPayload(JSON.stringify(parsed.payload ?? {}));
+          const triggered = recordExternalEvent(parsed.type, payload, typeof parsed.source === "string" ? parsed.source : "http");
+          response.writeHead(202, headers);
+          response.end(JSON.stringify({ ok: true, type: parsed.type, triggered }));
+        } catch (error) {
+          response.writeHead(400, headers);
+          response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+        }
+      });
+    });
+    await new Promise<void>((resolveListen, rejectListen) => {
+      server.once("error", rejectListen);
+      server.listen(port, options.host, () => { server.removeListener("error", rejectListen); console.log(`Evidra event listener: http://${options.host}:${port}/events`); resolveListen(); });
+    });
   });
 program.addCommand(event);
 
