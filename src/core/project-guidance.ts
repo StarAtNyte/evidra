@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 export interface ProjectGuidance {
@@ -12,6 +12,19 @@ export interface ProjectGuidance {
 const GUIDANCE_FILES = ["EVIDRA.md", ".evidra/instructions.md"] as const;
 const MAX_GUIDANCE_BYTES = 16_000;
 
+function sharedSkillFiles(workspace: string): string[] {
+  const directory = join(workspace, ".evidra", "skills");
+  if (!existsSync(directory)) return [];
+  try {
+    return readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".md"))
+      .map((entry) => `.evidra/skills/${entry.name}`)
+      .sort((left, right) => left.localeCompare(right));
+  } catch {
+    return [];
+  }
+}
+
 /** Load explicit operator guidance without confusing it with observed evidence. */
 export function loadProjectGuidance(root: string, role?: string): ProjectGuidance | undefined {
   const workspace = resolve(root);
@@ -19,7 +32,7 @@ export function loadProjectGuidance(root: string, role?: string): ProjectGuidanc
   const paths: string[] = [];
   let truncated = false;
   const roleSlug = role?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  const guidanceFiles = roleSlug ? [...GUIDANCE_FILES, `.evidra/roles/${roleSlug}.md`] : GUIDANCE_FILES;
+  const guidanceFiles = [...GUIDANCE_FILES, ...sharedSkillFiles(workspace), ...(roleSlug ? [`.evidra/roles/${roleSlug}.md`] : [])];
   for (const relativePath of guidanceFiles) {
     const path = join(workspace, relativePath);
     if (!existsSync(path) || !lstatSync(path).isFile()) continue;

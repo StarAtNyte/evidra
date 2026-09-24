@@ -248,6 +248,21 @@ test("project runtime guidance is bounded, hashed, and separated from evidence",
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("shared project skills are discovered deterministically and remain bounded guidance", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-shared-skills-"));
+  try {
+    mkdirSync(join(root, ".evidra", "skills"), { recursive: true });
+    writeFileSync(join(root, ".evidra", "skills", "z-replication.md"), "Replicate promising signals independently.");
+    writeFileSync(join(root, ".evidra", "skills", "a-provenance.md"), "Record checksums before interpreting artifacts.");
+    writeFileSync(join(root, ".evidra", "skills", "ignore.txt"), "not a skill");
+    const guidance = loadProjectGuidance(root, "validation scientist");
+    assert.deepEqual(guidance?.paths, [".evidra/skills/a-provenance.md", ".evidra/skills/z-replication.md"]);
+    assert.ok((guidance?.text.indexOf("a-provenance") ?? -1) < (guidance?.text.indexOf("z-replication") ?? -1));
+    assert.equal(guidance?.truncated, false);
+    assert.equal(guidance?.contentHash.length, 64);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("strict Codex research output normalizes nullable optional fields", () => {
   const payload = normalizeResearchDecisionPayload({ selectedHypothesis: null, hypotheses: [{ expectedOutcome: null, sourceAdaptation: { sourceTitle: "paper", section: null, repository: null, originalSetting: "setting", competitionDifference: "difference", expectedFailureModes: ["failure"] } }] });
   assert.equal(payload.hypotheses[0].expectedOutcome, undefined);
