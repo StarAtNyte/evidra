@@ -2225,7 +2225,10 @@ const queue = new Command("queue").description("Inspect the durable research wor
 queue.command("status").option("--json", "emit machine-readable queue state").action((options: { json?: boolean }) => {
   const store = new ResearchStore(statePath);
   const tasks = store.queueTasks();
-  const rows = tasks.map((task) => ({ ...task, effectivePriority: queueEffectivePriority(task), readiness: store.taskReadiness(task.id), usageState: store.queueUsageState(task.id), usageTotals: store.queueUsageTotals(task.id) }));
+  const rows = tasks.map((task) => {
+    const { claimToken: _claimToken, ...publicTask } = task;
+    return { ...publicTask, effectivePriority: queueEffectivePriority(task), readiness: store.taskReadiness(task.id), usageState: store.queueUsageState(task.id), usageTotals: store.queueUsageTotals(task.id) };
+  });
   const recoveries = store.eventsByType("queue.recovery_required", 24).map((event) => event.payload);
   if (options.json) {
     console.log(JSON.stringify({ tasks: rows, recoveries }, null, 2));
@@ -2449,7 +2452,7 @@ event.command("serve")
       request.on("end", () => {
         if (rejected) return;
         try {
-          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown; idempotencyKey?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
+          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
           if (taskPath) {
             const workerId = typeof parsed.workerId === "string" ? parsed.workerId.trim() : "";
             if (!workerId || workerId.length > 200) throw new Error("Task requests require a workerId of 1–200 characters.");
@@ -2480,6 +2483,7 @@ event.command("serve")
             }
             const taskId = typeof parsed.taskId === "string" ? parsed.taskId.trim() : "";
             if (!taskId || taskId.length > 200) throw new Error("Task requests require a taskId of 1–200 characters.");
+            const claimToken = typeof parsed.claimToken === "string" ? parsed.claimToken.trim().slice(0, 200) : "";
             if (taskPath === "/tasks/heartbeat") {
               const currentTask = store.queueTasks().find((task) => task.id === taskId);
               if (!currentTask || !permitsKind(currentTask.kind)) {
@@ -2488,7 +2492,13 @@ event.command("serve")
                 response.end(JSON.stringify({ error: "task is outside this worker's assigned scope" }));
                 return;
               }
-              const accepted = store.heartbeatTask(taskId, workerId);
+              if (currentTask.claimToken && !claimToken) {
+                store.close();
+                response.writeHead(409, headers);
+                response.end(JSON.stringify({ error: "claimToken is required for this task lease" }));
+                return;
+              }
+              const accepted = store.heartbeatTask(taskId, workerId, claimToken || undefined);
               const status = store.queueTasks().find((task) => task.id === taskId);
               const cancellation = status?.payload && typeof status.payload === "object" && !Array.isArray(status.payload) && (status.payload as Record<string, unknown>).cancellation && typeof (status.payload as Record<string, unknown>).cancellation === "object"
                 ? (status.payload as Record<string, unknown>).cancellation
@@ -2554,6 +2564,7 @@ event.command("serve")
               return;
             }
             const taskPayload = parsed.payload === undefined ? undefined : parseExternalEventPayload(JSON.stringify(parsed.payload));
+            if (currentTask.claimToken && !claimToken) throw new Error("claimToken is required for this task lease.");
             const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey.trim().slice(0, 200) : "";
             if (parsed.idempotencyKey !== undefined && !idempotencyKey) throw new Error("idempotencyKey must be a non-empty string.");
             if (idempotencyKey) {
@@ -2570,7 +2581,7 @@ event.command("serve")
               }
             }
             const completionAudit = parsed.status === "completed" ? store.taskCompletionAudit(taskId, taskPayload) : { valid: true, missing: [] as string[] };
-            const accepted = store.completeClaimedTask(taskId, workerId, parsed.status as "completed" | "failed" | "cancelled", taskPayload, idempotencyKey || undefined);
+            const accepted = store.completeClaimedTask(taskId, workerId, parsed.status as "completed" | "failed" | "cancelled", taskPayload, idempotencyKey || undefined, claimToken || undefined);
             const currentStatus = store.queueTasks().find((task) => task.id === taskId)?.status ?? null;
             store.close();
             response.writeHead(accepted ? 200 : 409, headers);

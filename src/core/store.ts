@@ -71,6 +71,7 @@ export interface QueuedTask {
   attempts: number;
   availableAt: string;
   claimedAt: string | null;
+  claimToken: string | null;
   ownerId: string | null;
   assigneeId: string | null;
   tokenBudget: number | null;
@@ -531,6 +532,7 @@ export class ResearchStore {
         attempts INTEGER NOT NULL DEFAULT 0,
         available_at TEXT NOT NULL,
         claimed_at TEXT,
+        claim_token TEXT,
         owner_id TEXT,
         goal_id TEXT,
         parent_task_id TEXT,
@@ -621,6 +623,7 @@ export class ResearchStore {
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN heartbeat_at TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN lease_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN owner_id TEXT"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE work_queue ADD COLUMN claim_token TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN goal_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN parent_task_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN assignee_id TEXT"); } catch { /* already migrated */ }
@@ -1415,7 +1418,7 @@ export class ResearchStore {
       try { payload = JSON.parse(row.payload_json) as Record<string, unknown>; } catch { /* preserve a bounded recovery record */ }
       const label = row.kind === "research.review" ? "review" : "lane";
       const error = `${label} ticket heartbeat expired; controller recovery required`;
-      this.db.prepare("UPDATE work_queue SET status = 'failed', payload_json = ?, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running'")
+      this.db.prepare("UPDATE work_queue SET status = 'failed', payload_json = ?, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running'")
         .run(safeJson({ ...payload, stale: true, error, recoveredAt: now }), now, row.id);
       this.appendEvent(`queue.${label}.stale`, { id: row.id, role: payload.role, ownerId: payload.ownerId, leaseId: payload.leaseId, error });
     }
@@ -1720,8 +1723,8 @@ export class ResearchStore {
       ? this.db.prepare("SELECT * FROM work_queue WHERE status = ? ORDER BY (priority + MIN(3.0, MAX(0.0, (julianday(?) - julianday(available_at)) * 24.0))) DESC, available_at ASC").all(status, now)
       : status
       ? this.db.prepare("SELECT * FROM work_queue WHERE status = ? ORDER BY priority DESC, available_at ASC").all(status)
-      : this.db.prepare("SELECT * FROM work_queue ORDER BY updated_at DESC").all()) as Array<{ id: string; kind: string; priority: number; status: string; payload_json: string; attempts: number; available_at: string; claimed_at: string | null; owner_id: string | null; assignee_id: string | null; token_budget: number | null; deadline_at: string | null; goal_id: string | null; parent_task_id: string | null; depends_on_json: string; updated_at: string }>;
-    return rows.map((row) => ({ id: row.id, kind: row.kind, priority: row.priority, status: row.status, payload: JSON.parse(row.payload_json), attempts: row.attempts, availableAt: row.available_at, claimedAt: row.claimed_at, ownerId: row.owner_id, assigneeId: row.assignee_id, tokenBudget: row.token_budget === null ? null : Math.max(0, Number(row.token_budget)), deadlineAt: row.deadline_at, goalId: row.goal_id, parentTaskId: row.parent_task_id, dependsOn: JSON.parse(row.depends_on_json || "[]") as string[], updatedAt: row.updated_at }));
+      : this.db.prepare("SELECT * FROM work_queue ORDER BY updated_at DESC").all()) as Array<{ id: string; kind: string; priority: number; status: string; payload_json: string; attempts: number; available_at: string; claimed_at: string | null; claim_token: string | null; owner_id: string | null; assignee_id: string | null; token_budget: number | null; deadline_at: string | null; goal_id: string | null; parent_task_id: string | null; depends_on_json: string; updated_at: string }>;
+    return rows.map((row) => ({ id: row.id, kind: row.kind, priority: row.priority, status: row.status, payload: JSON.parse(row.payload_json), attempts: row.attempts, availableAt: row.available_at, claimedAt: row.claimed_at, claimToken: row.claim_token, ownerId: row.owner_id, assigneeId: row.assignee_id, tokenBudget: row.token_budget === null ? null : Math.max(0, Number(row.token_budget)), deadlineAt: row.deadline_at, goalId: row.goal_id, parentTaskId: row.parent_task_id, dependsOn: JSON.parse(row.depends_on_json || "[]") as string[], updatedAt: row.updated_at }));
   }
 
   /** Resolve a bounded parent-task chain for audit, display, and recovery. */
@@ -1804,7 +1807,8 @@ export class ResearchStore {
       const rows = this.db.prepare(query.replace("LIMIT 1", "")).all(...params) as Array<{ id: string }>;
       const row = rows.find((candidate) => this.taskDependenciesReady(candidate.id) && this.taskDeadlineReady(candidate.id, Date.parse(now)) && this.queueUsageState(candidate.id)?.exhausted !== true);
       if (!row) return undefined;
-      this.db.prepare("UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, owner_id = ?, updated_at = ? WHERE id = ? AND status = 'queued'").run(now, ownerId ?? null, now, row.id);
+      const claimToken = randomUUID();
+      this.db.prepare("UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, claim_token = ?, owner_id = ?, updated_at = ? WHERE id = ? AND status = 'queued'").run(now, claimToken, ownerId ?? null, now, row.id);
       return this.queueTasks().find((task) => task.id === row.id);
     });
     const task = transaction();
@@ -1822,8 +1826,9 @@ export class ResearchStore {
       if (this.queueUsageState(id)?.exhausted === true) return undefined;
       if (!this.taskDeadlineReady(id, Date.parse(now))) return undefined;
       if (!this.taskDependenciesReady(id)) return undefined;
-      const result = this.db.prepare(`UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, owner_id = ?, updated_at = ? WHERE id = ? AND status = 'queued' AND available_at <= ?${assignmentClause}${kindClause}`)
-        .run(now, ownerId ?? null, now, id, now, ...(ownerId ? [ownerId] : []), ...(kinds ?? []));
+      const claimToken = randomUUID();
+      const result = this.db.prepare(`UPDATE work_queue SET status = 'running', attempts = attempts + 1, claimed_at = ?, claim_token = ?, owner_id = ?, updated_at = ? WHERE id = ? AND status = 'queued' AND available_at <= ?${assignmentClause}${kindClause}`)
+        .run(now, claimToken, ownerId ?? null, now, id, now, ...(ownerId ? [ownerId] : []), ...(kinds ?? []));
       if (result.changes !== 1) return undefined;
       return this.queueTasks().find((task) => task.id === id);
     });
@@ -1834,7 +1839,7 @@ export class ResearchStore {
 
   updateTask(id: string, status: QueueTaskStatus, payload?: unknown): void {
     const now = new Date().toISOString();
-    this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), owner_id = CASE WHEN ? IN ('completed', 'failed', 'cancelled') THEN NULL ELSE owner_id END, updated_at = ? WHERE id = ?").run(status, payload === undefined ? null : safeJson(payload), status, now, id);
+    this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), owner_id = CASE WHEN ? IN ('completed', 'failed', 'cancelled') THEN NULL ELSE owner_id END, claim_token = CASE WHEN ? IN ('completed', 'failed', 'cancelled') THEN NULL ELSE claim_token END, updated_at = ? WHERE id = ?").run(status, payload === undefined ? null : safeJson(payload), status, status, now, id);
     this.appendEvent(`queue.${status}`, { id, payload });
   }
 
@@ -2079,18 +2084,20 @@ export class ResearchStore {
   }
 
   /** Refresh a live claim so stale-task recovery cannot duplicate a healthy worker. */
-  heartbeatTask(id: string, ownerId?: string): boolean {
+  heartbeatTask(id: string, ownerId?: string, claimToken?: string): boolean {
     if (this.taskDeadlineExpired(id)) {
       this.cancelTask(id, "task wall-clock deadline exceeded", "deadline");
       return false;
     }
     const now = new Date().toISOString();
-    const result = this.db.prepare("UPDATE work_queue SET claimed_at = ?, updated_at = ? WHERE id = ? AND status = 'running' AND (owner_id = ? OR (? IS NULL AND owner_id IS NULL))").run(now, now, id, ownerId ?? null, ownerId ?? null);
+    const result = claimToken
+      ? this.db.prepare("UPDATE work_queue SET claimed_at = ?, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ? AND claim_token = ?").run(now, now, id, ownerId ?? null, claimToken)
+      : this.db.prepare("UPDATE work_queue SET claimed_at = ?, updated_at = ? WHERE id = ? AND status = 'running' AND (owner_id = ? OR (? IS NULL AND owner_id IS NULL))").run(now, now, id, ownerId ?? null, ownerId ?? null);
     return result.changes === 1;
   }
 
   /** Complete a queue task only when the caller still owns its live claim. */
-  completeClaimedTask(id: string, ownerId: string, status: Extract<QueueTaskStatus, "completed" | "failed" | "cancelled">, payload?: unknown, idempotencyKey?: string): boolean {
+  completeClaimedTask(id: string, ownerId: string, status: Extract<QueueTaskStatus, "completed" | "failed" | "cancelled">, payload?: unknown, idempotencyKey?: string, claimToken?: string): boolean {
     if (this.taskDeadlineExpired(id)) {
       this.cancelTask(id, "task wall-clock deadline exceeded", "deadline");
       return false;
@@ -2105,7 +2112,9 @@ export class ResearchStore {
     }
     const current = this.queueTasks().find((task) => task.id === id);
     const now = new Date().toISOString();
-    const result = this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ?").run(status, payload === undefined ? null : safeJson(preserveQueuePayload(current?.payload, payload)), now, id, ownerId);
+    const result = claimToken
+      ? this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ? AND claim_token = ?").run(status, payload === undefined ? null : safeJson(preserveQueuePayload(current?.payload, payload)), now, id, ownerId, claimToken)
+      : this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ?").run(status, payload === undefined ? null : safeJson(preserveQueuePayload(current?.payload, payload)), now, id, ownerId);
     if (result.changes !== 1) return false;
     const normalizedKey = idempotencyKey?.trim().slice(0, 200) || undefined;
     this.appendEvent(`queue.${status}`, { id, ownerId, payload, ...(normalizedKey ? { idempotencyKey: normalizedKey } : {}) });
@@ -2113,13 +2122,15 @@ export class ResearchStore {
   }
 
   /** Requeue only the live claim that reported the failure; an operator cancellation wins races. */
-  retryClaimedTask(id: string, ownerId: string, payload: unknown, availableAt: string): boolean {
+  retryClaimedTask(id: string, ownerId: string, payload: unknown, availableAt: string, claimToken?: string): boolean {
     if (this.taskDeadlineExpired(id)) {
       this.cancelTask(id, "task wall-clock deadline exceeded", "deadline");
       return false;
     }
     const now = new Date().toISOString();
-    const result = this.db.prepare("UPDATE work_queue SET status = 'queued', payload_json = ?, available_at = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ?").run(safeJson(payload), availableAt, now, id, ownerId);
+    const result = claimToken
+      ? this.db.prepare("UPDATE work_queue SET status = 'queued', payload_json = ?, available_at = ?, claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ? AND claim_token = ?").run(safeJson(payload), availableAt, now, id, ownerId, claimToken)
+      : this.db.prepare("UPDATE work_queue SET status = 'queued', payload_json = ?, available_at = ?, claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ?").run(safeJson(payload), availableAt, now, id, ownerId);
     if (result.changes !== 1) return false;
     this.appendEvent("queue.retry_scheduled", { id, availableAt, payload });
     return true;
@@ -2128,7 +2139,7 @@ export class ResearchStore {
   /** Backward-compatible controller retry for callers that already own queue state. */
   retryTask(id: string, payload: unknown, availableAt: string): void {
     const now = new Date().toISOString();
-    this.db.prepare("UPDATE work_queue SET status = 'queued', payload_json = ?, available_at = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ?").run(safeJson(payload), availableAt, now, id);
+    this.db.prepare("UPDATE work_queue SET status = 'queued', payload_json = ?, available_at = ?, claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ?").run(safeJson(payload), availableAt, now, id);
     this.appendEvent("queue.retry_scheduled", { id, availableAt, payload });
   }
 
@@ -2144,7 +2155,7 @@ export class ResearchStore {
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) payload = parsed as Record<string, unknown>;
     } catch { /* preserve cancellation even when an old payload is malformed */ }
     const cancellation = { reason: normalizedReason, cancelledAt: now };
-    const result = this.db.prepare("UPDATE work_queue SET status = 'cancelled', payload_json = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')").run(safeJson({ ...payload, cancellation }), now, id);
+    const result = this.db.prepare("UPDATE work_queue SET status = 'cancelled', payload_json = ?, claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')").run(safeJson({ ...payload, cancellation }), now, id);
     if (result.changes !== 1) return false;
     this.appendEvent("queue.cancelled", { id, kind: current.kind, priorStatus: current.status, priorOwnerId: current.owner_id, reason: normalizedReason, cancelledAt: now, source: source.trim().slice(0, 80) || "operator" });
     return true;
@@ -2183,7 +2194,7 @@ export class ResearchStore {
       if (campaign?.startedAt !== startedAt) continue;
       const cancellation = { reason: reason.trim().slice(0, 240) || "campaign budget exhausted", cancelledAt: now };
       const nextPayload = { ...payload, cancellation };
-      const result = this.db.prepare("UPDATE work_queue SET status = 'cancelled', payload_json = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'queued'").run(safeJson(nextPayload), now, row.id);
+      const result = this.db.prepare("UPDATE work_queue SET status = 'cancelled', payload_json = ?, claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'queued'").run(safeJson(nextPayload), now, row.id);
       if (result.changes !== 1) continue;
       cancelled.push(row.id);
       this.appendEvent("queue.cancelled", { id: row.id, kind: row.kind, reason: cancellation.reason, source: "campaign-budget" });
@@ -2205,7 +2216,7 @@ export class ResearchStore {
     const recovery = { route: normalizedRoute, note: note.trim().slice(0, 400) || "operator-selected recovery route", recoveredAt: new Date().toISOString(), priorAttempts: current.attempts };
     const nextPayload = { ...payload, recoveryHistory: [...history, recovery], recovery };
     const now = new Date().toISOString();
-    this.db.prepare("UPDATE work_queue SET status = 'queued', attempts = 0, payload_json = ?, available_at = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'failed'").run(safeJson(nextPayload), now, now, id);
+    this.db.prepare("UPDATE work_queue SET status = 'queued', attempts = 0, payload_json = ?, available_at = ?, claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'failed'").run(safeJson(nextPayload), now, now, id);
     this.appendEvent("queue.recovery_scheduled", { taskId: id, ...recovery });
     return this.queueTasks().find((task) => task.id === id) ?? { ...current, status: "queued", attempts: 0, payload: nextPayload, availableAt: now, claimedAt: null, ownerId: null, updatedAt: now };
   }
@@ -2218,7 +2229,7 @@ export class ResearchStore {
     const exhaustedRecovery: Array<{ taskId: string; kind: string; attempts: number; recovery: ReturnType<typeof queueRecoveryAction> }> = [];
     const result = this.db.transaction(() => {
       const staleRows = this.db.prepare("SELECT id, kind, owner_id, assignee_id FROM work_queue WHERE status = 'running' AND updated_at < ? AND attempts < ?").all(cutoff, limit) as Array<{ id: string; kind: string; owner_id: string | null; assignee_id: string | null }>;
-      const requeued = this.db.prepare("UPDATE work_queue SET status = 'queued', claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE status = 'running' AND updated_at < ? AND attempts < ?").run(now, cutoff, limit).changes;
+      const requeued = this.db.prepare("UPDATE work_queue SET status = 'queued', claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE status = 'running' AND updated_at < ? AND attempts < ?").run(now, cutoff, limit).changes;
       const exhaustedRows = this.db.prepare("SELECT id, kind, payload_json, attempts FROM work_queue WHERE status = 'running' AND updated_at < ? AND attempts >= ?").all(cutoff, limit) as Array<{ id: string; kind: string; payload_json: string; attempts: number }>;
       for (const row of exhaustedRows) {
         let payload: Record<string, unknown> = {};
@@ -2228,7 +2239,7 @@ export class ResearchStore {
         } catch { /* Preserve the queue record even if an older payload was malformed. */ }
         const recovery = queueRecoveryAction(new Error("stale task timeout exceeded bounded attempts"));
         exhaustedRecovery.push({ taskId: row.id, kind: row.kind, attempts: row.attempts, recovery });
-        this.db.prepare("UPDATE work_queue SET status = 'failed', payload_json = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ?").run(safeJson({ ...payload, error: "stale task exceeded bounded attempts", attempts: row.attempts, failedAt: now, recovery }), now, row.id);
+        this.db.prepare("UPDATE work_queue SET status = 'failed', payload_json = ?, claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ?").run(safeJson({ ...payload, error: "stale task exceeded bounded attempts", attempts: row.attempts, failedAt: now, recovery }), now, row.id);
       }
       const exhausted = exhaustedRows.length;
       return { requeued, exhausted, staleRows };

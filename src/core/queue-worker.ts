@@ -76,7 +76,7 @@ export class QueueWorker {
     const taskAbortController = new AbortController();
     const abortFromWorker = (): void => taskAbortController.abort();
     this.abortController.signal.addEventListener("abort", abortFromWorker, { once: true });
-    const heartbeat = setInterval(() => { this.store.heartbeatTask(task.id, this.workerId); }, this.heartbeatMs);
+    const heartbeat = setInterval(() => { this.store.heartbeatTask(task.id, this.workerId, task.claimToken ?? undefined); }, this.heartbeatMs);
     const cancellationPoll = setInterval(() => {
       const current = this.store.queueTasks().find((entry) => entry.id === task.id);
       if (current?.deadlineAt && Date.parse(current.deadlineAt) <= Date.now()) this.store.cancelTask(task.id, "task wall-clock deadline exceeded", "deadline");
@@ -86,7 +86,7 @@ export class QueueWorker {
     try {
       const result = await this.handler(task, taskAbortController.signal);
       const completionPayload = { result };
-      if (this.store.completeClaimedTask(task.id, this.workerId, "completed", completionPayload)) {
+      if (this.store.completeClaimedTask(task.id, this.workerId, "completed", completionPayload, undefined, task.claimToken ?? undefined)) {
         this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "completed", message: "Task completed" });
       } else {
         // A completion contract can reject an otherwise successful handler.
@@ -98,11 +98,11 @@ export class QueueWorker {
           const message = `Completion proof missing: ${audit.missing.join(", ")}`;
           if (task.attempts < this.maxAttempts) {
             const delay = Math.max(0, this.retryDelayMs(task, new Error(message)));
-            const retried = this.store.retryClaimedTask(task.id, this.workerId, { ...(typeof task.payload === "object" && task.payload ? task.payload : {}), lastError: message }, new Date(Date.now() + delay).toISOString());
+            const retried = this.store.retryClaimedTask(task.id, this.workerId, { ...(typeof task.payload === "object" && task.payload ? task.payload : {}), lastError: message }, new Date(Date.now() + delay).toISOString(), task.claimToken ?? undefined);
             if (retried) this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "progress", message: `Retry scheduled after rejected completion: ${message}`, metadata: { delayMs: delay, missing: audit.missing } });
           } else {
             const recovery = queueRecoveryAction(new Error(message));
-            if (this.store.completeClaimedTask(task.id, this.workerId, "failed", { ...(typeof task.payload === "object" && task.payload ? task.payload : {}), error: message, attempts: task.attempts, recovery })) {
+            if (this.store.completeClaimedTask(task.id, this.workerId, "failed", { ...(typeof task.payload === "object" && task.payload ? task.payload : {}), error: message, attempts: task.attempts, recovery }, undefined, task.claimToken ?? undefined)) {
               this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "failed", message, metadata: recovery });
               this.store.appendEvent("queue.recovery_required", { taskId: task.id, kind: task.kind, attempts: task.attempts, error: message, ...recovery });
             }
@@ -115,17 +115,17 @@ export class QueueWorker {
       if (current?.status === "cancelled") {
         this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "blocked", message: `Cancellation observed: ${message}` });
       } else if (this.stopping || this.abortController.signal.aborted) {
-        if (this.store.completeClaimedTask(task.id, this.workerId, "cancelled", { error: error instanceof Error ? error.message : String(error) })) {
+        if (this.store.completeClaimedTask(task.id, this.workerId, "cancelled", { error: error instanceof Error ? error.message : String(error) }, undefined, task.claimToken ?? undefined)) {
           this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "blocked", message: `Task cancelled: ${message}` });
         }
       } else if (task.attempts < this.maxAttempts) {
         const delay = Math.max(0, this.retryDelayMs(task, error));
-        const retried = this.store.retryClaimedTask(task.id, this.workerId, { ...(typeof task.payload === "object" && task.payload ? task.payload : {}), lastError: error instanceof Error ? error.message : String(error) }, new Date(Date.now() + delay).toISOString());
+        const retried = this.store.retryClaimedTask(task.id, this.workerId, { ...(typeof task.payload === "object" && task.payload ? task.payload : {}), lastError: error instanceof Error ? error.message : String(error) }, new Date(Date.now() + delay).toISOString(), task.claimToken ?? undefined);
         if (retried) this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "progress", message: `Retry scheduled after failure: ${message}`, metadata: { delayMs: delay } });
       } else {
         const recovery = queueRecoveryAction(error);
         const payload = task.payload && typeof task.payload === "object" && !Array.isArray(task.payload) ? task.payload as Record<string, unknown> : {};
-        if (this.store.completeClaimedTask(task.id, this.workerId, "failed", { ...payload, error: message, attempts: task.attempts, recovery })) {
+        if (this.store.completeClaimedTask(task.id, this.workerId, "failed", { ...payload, error: message, attempts: task.attempts, recovery }, undefined, task.claimToken ?? undefined)) {
           this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "failed", message: `Task failed: ${message}`, metadata: recovery });
           this.store.appendEvent("queue.recovery_required", { taskId: task.id, kind: task.kind, attempts: task.attempts, error: message, ...recovery });
         }

@@ -3404,6 +3404,28 @@ test("queue insertion is idempotent and makes duplicate scheduling observable", 
   }
 });
 
+test("reclaimed queue leases fence stale workers with a new claim token", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-fencing-"));
+  try {
+    const dbPath = join(root, "state.sqlite");
+    const store = new ResearchStore(dbPath);
+    store.enqueueTask({ id: "fenced-task", kind: "research.lane", priority: 1, payload: {} });
+    const first = store.claimTask("fenced-task", ["research.lane"], "same-worker");
+    assert.ok(first?.claimToken);
+    const raw = new Database(dbPath);
+    raw.prepare("UPDATE work_queue SET updated_at = ? WHERE id = ?").run(new Date(Date.now() - 60_000).toISOString(), "fenced-task");
+    raw.close();
+    assert.equal(store.requeueStaleTasks(1_000, 3), 1);
+    const second = store.claimTask("fenced-task", ["research.lane"], "same-worker");
+    assert.ok(second?.claimToken);
+    assert.notEqual(first?.claimToken, second?.claimToken);
+    assert.equal(store.completeClaimedTask("fenced-task", "same-worker", "completed", { stale: true }, undefined, first?.claimToken), false);
+    assert.equal(store.completeClaimedTask("fenced-task", "same-worker", "completed", { fresh: true }, undefined, second?.claimToken), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("governance benchmark covers role boundaries and scoped handoffs", () => {
   const report = runGovernanceBenchmark();
   assert.equal(report.failed, 0);
@@ -3791,6 +3813,7 @@ test("queue status JSON exposes exact budget and usage state", async () => {
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.enqueueTask({ id: "status-budget", kind: "research.lane", priority: 1, tokenBudget: 20, payload: {} });
+    assert.ok(store.claimTask("status-budget", ["research.lane"], "worker-a")?.claimToken);
     store.recordQueueUsage({ taskId: "status-budget", actorId: "worker-a", inputTokens: 8, outputTokens: 7 });
     store.close();
     const result = await new Promise((resolve) => {
@@ -3803,6 +3826,7 @@ test("queue status JSON exposes exact budget and usage state", async () => {
     });
     assert.equal(result.code, 0, result.stderr);
     const task = JSON.parse(result.stdout).tasks.find((entry) => entry.id === "status-budget");
+    assert.equal(Object.hasOwn(task, "claimToken"), false);
     assert.deepEqual(task.usageState, { usedTokens: 15, budgetTokens: 20, remainingTokens: 5, exhausted: false });
     assert.deepEqual(task.usageTotals, { inputTokens: 8, outputTokens: 7, costUsd: 0 });
     const usageResult = await new Promise((resolve) => {
@@ -7866,9 +7890,9 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(claimed.status, 200);
     const task = (await claimed.json()).task;
     assert.equal(task.id, "bridge-task");
-    assert.equal((await post("/tasks/activity", { workerId: "worker-a", taskId: task.id, kind: "progress", message: "inspected evidence" }, token, "worker-a", "worker-secret")).status, 200);
-    assert.equal((await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, inputTokens: 12, outputTokens: 4, costUsd: 0.01, provider: "codex", model: "gpt-test", idempotencyKey: "turn-1" }, token, "worker-a", "worker-secret")).status, 200);
-    assert.equal((await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, inputTokens: 12, outputTokens: 4, costUsd: 0.01, provider: "codex", model: "gpt-test", idempotencyKey: "turn-1" }, token, "worker-a", "worker-secret")).status, 200);
+    assert.equal((await post("/tasks/activity", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, kind: "progress", message: "inspected evidence" }, token, "worker-a", "worker-secret")).status, 200);
+    assert.equal((await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, inputTokens: 12, outputTokens: 4, costUsd: 0.01, provider: "codex", model: "gpt-test", idempotencyKey: "turn-1" }, token, "worker-a", "worker-secret")).status, 200);
+    assert.equal((await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, inputTokens: 12, outputTokens: 4, costUsd: 0.01, provider: "codex", model: "gpt-test", idempotencyKey: "turn-1" }, token, "worker-a", "worker-secret")).status, 200);
     const usageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     assert.deepEqual(usageStore.queueUsageTotals(task.id), { inputTokens: 12, outputTokens: 4, costUsd: 0.01 });
     usageStore.close();
@@ -7880,7 +7904,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const operatorStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     assert.equal(operatorStore.cancelTask(cancellationTask.id, "operator changed direction"), true);
     operatorStore.close();
-    const cancelledHeartbeat = await post("/tasks/heartbeat", { workerId: "worker-a", taskId: cancellationTask.id }, token, "worker-a", "worker-secret");
+    const cancelledHeartbeat = await post("/tasks/heartbeat", { workerId: "worker-a", taskId: cancellationTask.id, claimToken: cancellationTask.claimToken }, token, "worker-a", "worker-secret");
     assert.equal(cancelledHeartbeat.status, 409);
     const cancelledHeartbeatBody = await cancelledHeartbeat.json();
     assert.equal(cancelledHeartbeatBody.ok, false);
@@ -7888,29 +7912,29 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(cancelledHeartbeatBody.status, "cancelled");
     assert.equal(cancelledHeartbeatBody.cancellation.reason, "operator changed direction");
     assert.match(cancelledHeartbeatBody.cancellation.cancelledAt, /T/);
-    assert.equal((await post("/tasks/activity", { workerId: "worker-b", taskId: task.id, kind: "progress", message: "spoofed" }, token, "worker-b", "worker-b-secret")).status, 403);
-    assert.equal((await post("/tasks/heartbeat", { workerId: "worker-b", taskId: task.id }, token, "worker-a", "worker-secret")).status, 401);
-    assert.equal((await post("/tasks/heartbeat", { workerId: "worker-a", taskId: task.id }, token, "worker-a", "wrong-secret")).status, 401);
-    assert.equal((await post("/tasks/heartbeat", { workerId: "worker-b", taskId: task.id }, token, "worker-b", "worker-b-secret")).status, 403);
-    assert.equal((await post("/tasks/complete", { workerId: "worker-b", taskId: task.id, status: "completed", payload: { result: "spoofed" } }, token, "worker-b", "worker-b-secret")).status, 403);
-    assert.equal((await post("/tasks/complete", { workerId: "worker-a", taskId: task.id, status: "completed", payload: { result: "verified" } }, token, "worker-a", "worker-secret")).status, 200);
+    assert.equal((await post("/tasks/activity", { workerId: "worker-b", taskId: task.id, claimToken: task.claimToken, kind: "progress", message: "spoofed" }, token, "worker-b", "worker-b-secret")).status, 403);
+    assert.equal((await post("/tasks/heartbeat", { workerId: "worker-b", taskId: task.id, claimToken: task.claimToken }, token, "worker-a", "worker-secret")).status, 401);
+    assert.equal((await post("/tasks/heartbeat", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken }, token, "worker-a", "wrong-secret")).status, 401);
+    assert.equal((await post("/tasks/heartbeat", { workerId: "worker-b", taskId: task.id, claimToken: task.claimToken }, token, "worker-b", "worker-b-secret")).status, 403);
+    assert.equal((await post("/tasks/complete", { workerId: "worker-b", taskId: task.id, claimToken: task.claimToken, status: "completed", payload: { result: "spoofed" } }, token, "worker-b", "worker-b-secret")).status, 403);
+    assert.equal((await post("/tasks/complete", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, status: "completed", payload: { result: "verified" } }, token, "worker-a", "worker-secret")).status, 200);
     const contractStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     contractStore.enqueueTask({ id: "bridge-contracted", kind: "research.lane", priority: 3, payload: { completionContract: { requiredPayloadKeys: ["summary"], requiredActivityKinds: ["progress"] } } });
     contractStore.close();
     const claimedContract = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"] }, token, "worker-a", "worker-secret");
     const contractTask = (await claimedContract.json()).task;
     assert.equal(contractTask.id, "bridge-contracted");
-    assert.equal((await post("/tasks/activity", { workerId: "worker-a", taskId: contractTask.id, kind: "progress", message: "checked remote proof" }, token, "worker-a", "worker-secret")).status, 200);
-    const rejectedCompletion = await post("/tasks/complete", { workerId: "worker-a", taskId: contractTask.id, status: "completed", payload: {} }, token, "worker-a", "worker-secret");
+    assert.equal((await post("/tasks/activity", { workerId: "worker-a", taskId: contractTask.id, claimToken: contractTask.claimToken, kind: "progress", message: "checked remote proof" }, token, "worker-a", "worker-secret")).status, 200);
+    const rejectedCompletion = await post("/tasks/complete", { workerId: "worker-a", taskId: contractTask.id, claimToken: contractTask.claimToken, status: "completed", payload: {} }, token, "worker-a", "worker-secret");
     assert.equal(rejectedCompletion.status, 409);
     const rejectedBody = await rejectedCompletion.json();
     assert.equal(rejectedBody.error, "completion proof rejected");
     assert.deepEqual(rejectedBody.missing, ["payload:summary"]);
-    assert.equal((await post("/tasks/complete", { workerId: "worker-a", taskId: contractTask.id, status: "completed", payload: { summary: "verified" }, idempotencyKey: "contract-complete-1" }, token, "worker-a", "worker-secret")).status, 200);
-    const duplicateCompletion = await post("/tasks/complete", { workerId: "worker-a", taskId: contractTask.id, status: "completed", payload: { summary: "verified" }, idempotencyKey: "contract-complete-1" }, token, "worker-a", "worker-secret");
+    assert.equal((await post("/tasks/complete", { workerId: "worker-a", taskId: contractTask.id, claimToken: contractTask.claimToken, status: "completed", payload: { summary: "verified" }, idempotencyKey: "contract-complete-1" }, token, "worker-a", "worker-secret")).status, 200);
+    const duplicateCompletion = await post("/tasks/complete", { workerId: "worker-a", taskId: contractTask.id, claimToken: contractTask.claimToken, status: "completed", payload: { summary: "verified" }, idempotencyKey: "contract-complete-1" }, token, "worker-a", "worker-secret");
     assert.equal(duplicateCompletion.status, 200);
     assert.equal((await duplicateCompletion.json()).idempotent, true);
-    const conflictingDuplicate = await post("/tasks/complete", { workerId: "worker-a", taskId: contractTask.id, status: "completed", payload: { summary: "verified" }, idempotencyKey: "contract-complete-2" }, token, "worker-a", "worker-secret");
+    const conflictingDuplicate = await post("/tasks/complete", { workerId: "worker-a", taskId: contractTask.id, claimToken: contractTask.claimToken, status: "completed", payload: { summary: "verified" }, idempotencyKey: "contract-complete-2" }, token, "worker-a", "worker-secret");
     assert.equal(conflictingDuplicate.status, 409);
     assert.equal((await conflictingDuplicate.json()).currentStatus, "completed");
     const reopened = new ResearchStore(join(root, ".sota", "database.sqlite"));
