@@ -78,7 +78,9 @@ export function evaluateAgentRoles(trajectories: Trajectory[]): AgentRoleReview[
       confidence: Math.round(confidence * 1000) / 1000,
       playbookRate: Math.round(playbookRate * 1000) / 1000,
       score,
-      recommendation: bucket.assignments < 2 ? "insufficient-data" : score >= 0.7 && bucket.processFailures === 0 && bucket.playbookBlocks === 0 ? "trusted" : "needs-review",
+      // A role cannot become trusted from self-reported process quality alone:
+      // at least one durable evidence anchor per assignment is required.
+      recommendation: bucket.assignments < 2 ? "insufficient-data" : score >= 0.7 && bucket.evidenceAnchors >= bucket.assignments && bucket.processFailures === 0 && bucket.playbookBlocks === 0 ? "trusted" : "needs-review",
     } satisfies AgentRoleReview;
   }).sort((left, right) => right.score - left.score || left.role.localeCompare(right.role));
 }

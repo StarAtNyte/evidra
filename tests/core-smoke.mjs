@@ -730,6 +730,7 @@ test("agent reviews learn from durable lane evidence without claiming metric att
     { payload: { laneReports: [{ role: "validation scientist", status: "completed", confidence: 0.9, verifiedEvidenceIds: ["run-1", "source-1"], playbookChecks: [{ step: "metric", status: "pass" }, { step: "replication", status: "blocked" }] }] }, quality: { overall: "PASS" } },
     { payload: { laneReports: [{ role: "validation scientist", status: "completed", confidence: 0.8, verifiedEvidenceIds: ["run-2"] }] }, quality: { overall: "PASS" } },
     { payload: { laneReports: [{ role: "model researcher", status: "failed", confidence: 0.2, evidence: [] }] }, quality: { overall: "FAIL" } },
+    { payload: { laneReports: [{ role: "unsupported", status: "completed", confidence: 1 }, { role: "unsupported", status: "completed", confidence: 1 }] }, quality: { overall: "PASS" } },
   ]);
   assert.equal(reviews[0].role, "validation scientist");
   assert.equal(reviews[0].recommendation, "needs-review");
@@ -739,6 +740,7 @@ test("agent reviews learn from durable lane evidence without claiming metric att
   assert.equal(reviews.find((review) => review.role === "validation scientist")?.playbookBlocks, 1);
   assert.equal(reviews.find((review) => review.role === "validation scientist")?.playbookRate, 0.5);
   assert.equal(agentRoleInterventions(reviews).find((intervention) => intervention.role === "validation scientist")?.action, "coach");
+  assert.equal(reviews.find((review) => review.role === "unsupported")?.recommendation, "needs-review");
 });
 
 test("agent activity journal survives reopen and filters by specialist task", () => {

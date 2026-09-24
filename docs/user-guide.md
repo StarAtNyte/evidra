@@ -492,6 +492,11 @@ selection gives it a bounded coaching seat on the next team. This is not an
 unlimited retry: the normal concurrency, time budget, route-change, evidence,
 and termination gates still apply.
 
+Trust promotion is evidence-gated: a role must have at least one durable
+evidence anchor per assignment in addition to passing its process and playbook
+checks. Clean self-reported process telemetry cannot promote an ungrounded
+role.
+
 Each lane also reports bounded `pass`, `partial`, or `blocked` statuses for its
 role playbook steps. These are self-reported process telemetry: they feed role
 reviews and coaching, but never count as scientific evidence without an
