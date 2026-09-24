@@ -806,7 +806,7 @@ const agents = program.command("agents")
   .option("--json", "emit machine-readable agent health")
   .action((options: { json?: boolean }) => {
     const store = new ResearchStore(statePath);
-    const campaign = store.campaign() as { runtime?: { agentTokenBudget?: unknown }; startedAt?: unknown } | undefined;
+    const campaign = store.campaign() as { runtime?: { agentTokenBudget?: unknown; roleTokenBudgets?: Record<string, number> }; startedAt?: unknown } | undefined;
     const reviews = evaluateAgentRoles(store.trajectoryHistory());
     const reviewByRole = new Map(reviews.map((review) => [review.role, review]));
     const pauseByRole = new Map(store.agentPauses().map((control) => [control.role, control]));
@@ -817,20 +817,23 @@ const agents = program.command("agents")
       pendingDirectives: store.pendingAgentDirectives(agent.role).length,
     }));
     const sessions = store.agentSessions();
+    const usageEvents = store.eventsByType("research.agent.usage");
     const output = {
       campaign: campaign ?? null,
       organization,
-      routes: summarizeAgentUsageBy(store.eventsByType("research.agent.usage")),
+      routes: summarizeAgentUsageBy(usageEvents),
       sessions,
       budget: campaign?.startedAt && typeof campaign.runtime?.agentTokenBudget === "number"
-        ? agentBudgetLedger(store.eventsByType("research.agent.usage"), String(campaign.startedAt), campaign.runtime.agentTokenBudget)
+        ? agentBudgetLedger(usageEvents, String(campaign.startedAt), campaign.runtime.agentTokenBudget)
         : agentBudgetLedger([], "", null),
+      roleBudgets: campaign?.startedAt ? roleBudgetLedger(usageEvents, String(campaign.startedAt), campaign.runtime?.roleTokenBudgets) : [],
     };
     if (options.json) {
       console.log(JSON.stringify(output, null, 2));
     } else {
       console.log(organization.map((agent) => `${agent.control?.paused ? "paused" : agent.status.padEnd(8)} ${agent.role} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.pendingDirectives ? ` · ${agent.pendingDirectives} directive(s)` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`).join("\n") || "No agent roles recorded.");
       console.log(`\nResumable sessions  ${sessions.length}`);
+      if (output.roleBudgets.length) console.log(`\nRole budgets\n${output.roleBudgets.map((entry) => `  ${entry.role} · ${entry.usedTokens}/${entry.budgetTokens} tokens · ${entry.status}`).join("\n")}`);
       if (output.routes.length) console.log(`\nRoutes\n${output.routes.map((route) => `  ${route.role} · ${route.provider}/${route.model} · ${route.calls} calls · ${route.inputTokens + route.outputTokens} tokens`).join("\n")}`);
     }
     store.close();
