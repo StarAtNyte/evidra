@@ -2369,6 +2369,13 @@ queue.command("contract <id> <json>").description("Set or clear a queued/failed 
   } finally { store.close(); }
   console.log(contract === null ? `Cleared completion contract for ${id}.` : `Updated completion contract for ${id}.`);
 });
+queue.command("history <id>").option("--limit <count>", "number of lifecycle events", "64").option("--json", "emit machine-readable history").description("Show the durable lifecycle of one queue task").action((id: string, options: { limit: string; json?: boolean }) => {
+  const store = new ResearchStore(statePath);
+  const history = store.queueHistory(id, Number.parseInt(options.limit, 10));
+  store.close();
+  if (options.json) console.log(JSON.stringify(history, null, 2));
+  else console.log(history.length ? history.map((entry) => `${entry.createdAt}  ${entry.type}`).join("\n") : `No lifecycle history recorded for ${id}.`);
+});
 queue.command("activity <id>").option("--limit <count>", "number of task updates", "32").action((id: string, options: { limit: string }) => {
   const store = new ResearchStore(statePath);
   const limit = Math.max(1, Math.min(128, Number.parseInt(options.limit, 10) || 32));

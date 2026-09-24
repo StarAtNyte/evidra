@@ -174,6 +174,11 @@ export interface QueueActivity {
   metadata: unknown;
   createdAt: string;
 }
+export interface QueueHistoryEntry {
+  type: string;
+  payload: unknown;
+  createdAt: string;
+}
 export interface QueueUsage {
   taskId: string;
   actorId: string;
@@ -2127,6 +2132,24 @@ export class ResearchStore {
       if (!id || !actorId || !message || !["started", "progress", "blocked", "handoff", "completed", "failed"].includes(String(kind)) || (taskId && id !== taskId)) return [];
       return [{ taskId: id, actorId, kind: kind as QueueActivityKind, message, metadata: payload.metadata ?? null, createdAt: row.created_at }];
     });
+  }
+
+  /** Return the bounded lifecycle stream for one queue ticket, not just worker notes. */
+  queueHistory(taskId: string, limit = 64): QueueHistoryEntry[] {
+    const id = taskId.trim();
+    if (!id) return [];
+    const boundedLimit = Math.max(1, Math.min(128, Math.floor(limit)));
+    const rows = this.db.prepare("SELECT type, payload_json, created_at FROM events WHERE type LIKE 'queue.%' ORDER BY id DESC LIMIT 2048").all() as Array<{ type: string; payload_json: string; created_at: string }>;
+    const matching: QueueHistoryEntry[] = [];
+    for (const row of rows) {
+      let payload: unknown;
+      try { payload = JSON.parse(row.payload_json); } catch { continue; }
+      const record = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
+      if (record.id !== id && record.taskId !== id) continue;
+      matching.push({ type: row.type, payload: redactStructured(payload), createdAt: row.created_at });
+      if (matching.length >= boundedLimit) break;
+    }
+    return matching.reverse();
   }
 
   /**

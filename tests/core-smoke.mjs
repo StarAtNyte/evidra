@@ -3900,6 +3900,25 @@ test("queue labels are durable, normalized, and protected during a live claim", 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue history reconstructs one ticket lifecycle without leaking other tasks", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-task-history-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "history-target", kind: "research.lane", priority: 1, payload: {} });
+    store.enqueueTask({ id: "history-other", kind: "research.lane", priority: 1, payload: {} });
+    store.setTaskPriority("history-target", 4);
+    store.setTaskLabels("history-target", ["review"]);
+    store.pauseTask("history-target", "inspect");
+    const history = store.queueHistory("history-target");
+    assert.ok(history.some((entry) => entry.type === "queue.enqueued"));
+    assert.ok(history.some((entry) => entry.type === "queue.priority.updated"));
+    assert.ok(history.some((entry) => entry.type === "queue.labels.updated"));
+    assert.ok(history.some((entry) => entry.type === "queue.task.paused"));
+    assert.equal(history.some((entry) => JSON.stringify(entry.payload).includes("history-other")), false);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue approval gates persist and release work only after explicit approval", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-approval-"));
   try {

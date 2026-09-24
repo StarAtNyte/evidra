@@ -306,6 +306,7 @@ Implemented today:
 - operator reprioritization: `evidra queue priority <id> <value>` (or `/queue priority <id> <value>`) redirects queued, paused, or failed work without mutating an active claim;
 - durable work labels: `evidra queue labels <id> research,gpu` (or `/queue labels ...`) classifies queue tickets for operator triage and dashboard inspection without weakening typed task capabilities;
 - label-filtered triage: `evidra queue status --label <label>` (or `/queue status <label>`) narrows the live work view without changing queue state;
+- task lifecycle history: `evidra queue history <id>` (or `/queue history <id>`) reconstructs bounded queue events for audit and recovery without exposing unrelated tickets;
 - durable queue approval gates: enqueue work with `requiresApproval`, then release it with `evidra queue approve <id>` (or `/queue approve`); rejected/pending tasks remain visible but cannot be claimed until explicitly approved;
 - unified approval inbox: pending/rejected queue tasks appear alongside experiment, submission, recovery, and external-action approvals in `/approvals` and the dashboard;
 - remote claim diagnostics: external workers receive bounded approval blockers when no eligible task can be claimed, making operator-gated queues explainable without exposing unrelated task payloads;
