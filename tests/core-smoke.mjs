@@ -825,7 +825,8 @@ test("campaign organization maps goals, reporting lines, and aligned queue work"
     assert.equal(map.totals.queue, 1);
     assert.equal(map.roles.find((role) => role.role === "validation scientist")?.activeQueue, 1);
     assert.deepEqual(map.accountability.unassignedRunning, []);
-    assert.deepEqual(map.accountability.unscopedLive, ["orphan-task"]);
+    assert.deepEqual(map.accountability.unscopedLive, []);
+    assert.deepEqual(map.accountability.misalignedLive, ["orphan-task"]);
     assert.deepEqual(map.accountability.unbudgetedLive.sort(), ["orphan-task", "validation-task"]);
     assert.match(formatCampaignOrganization(map), /Phase ownership/);
     assert.match(formatCampaignOrganization(map), /validation scientist/);

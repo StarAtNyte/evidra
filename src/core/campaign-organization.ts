@@ -34,6 +34,7 @@ export type CampaignOrganization = {
   accountability: {
     unassignedRunning: string[];
     unscopedLive: string[];
+    misalignedLive: string[];
     unbudgetedLive: string[];
   };
 };
@@ -106,7 +107,8 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
     totals: { phases: phaseRows.length, roles: organization.length, queue: alignedTasks.length, activeQueue, blockedQueue },
     accountability: {
       unassignedRunning: liveTasks.filter((task) => task.status === "running" && !task.assigneeId && !task.ownerId).map((task) => task.id).slice(0, 64),
-      unscopedLive: liveTasks.filter((task) => !task.goalId || !phaseById.has(task.goalId)).map((task) => task.id).slice(0, 64),
+      unscopedLive: liveTasks.filter((task) => !task.goalId).map((task) => task.id).slice(0, 64),
+      misalignedLive: liveTasks.filter((task) => Boolean(task.goalId) && !phaseById.has(task.goalId!)).map((task) => task.id).slice(0, 64),
       unbudgetedLive: liveTasks.filter((task) => task.tokenBudget === null && task.costBudgetUsd === null).map((task) => task.id).slice(0, 64),
     },
   };
@@ -122,7 +124,7 @@ export function formatCampaignOrganization(map: CampaignOrganization): string {
     `  mission: ${map.goal ?? "not initialized"}`,
     `  mode: ${map.mode} · status: ${map.status}`,
     `  work: ${map.totals.activeQueue} active · ${map.totals.queue} aligned${map.totals.blockedQueue ? ` · ${map.totals.blockedQueue} blocked` : ""}`,
-    `  accountability: ${map.accountability.unassignedRunning.length} ownerless running · ${map.accountability.unscopedLive.length} unscoped · ${map.accountability.unbudgetedLive.length} unbudgeted`,
+    `  accountability: ${map.accountability.unassignedRunning.length} ownerless running · ${map.accountability.unscopedLive.length} unscoped · ${map.accountability.misalignedLive.length} mis-scoped · ${map.accountability.unbudgetedLive.length} unbudgeted`,
     "",
     "Phase ownership",
     ...(phaseLines.length ? phaseLines : ["  No phase goals recorded."]),
