@@ -10,7 +10,7 @@ import type { AutonomyLevel } from "../core/permissions.js";
 import { availableResearchTools, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
 import { boundResearchContext } from "../core/context-budget.js";
 import type { LaneFinding } from "../core/cross-pollination.js";
-import { agentRoleContract } from "../core/agent-organization.js";
+import { agentRoleContract, type AgentRoleContract } from "../core/agent-organization.js";
 import type { AgentRoleReview } from "../core/agent-evals.js";
 import { campaignRoleAgentTokens, roleBudgetLedger, type AgentUsageAttribution } from "../core/usage.js";
 import { loadProjectGuidance, type ProjectGuidance } from "../core/project-guidance.js";
@@ -468,8 +468,9 @@ export function lanePrompt(
   review?: Pick<AgentRoleReview, "recommendation" | "assignments" | "score" | "processFailures" | "evidenceAnchors" | "playbookBlocks">,
   directives: string[] = [],
   roleGuidance?: ProjectGuidanceText,
+  persistedContract?: AgentRoleContract,
 ): string {
-  const contract = agentRoleContract(role);
+  const contract = persistedContract ?? agentRoleContract(role);
   const focus = role === "data detective"
     ? "Inspect data provenance, duplicates, leakage, distributions, hidden groups, and train/test shift."
     : role === "validation scientist"
@@ -1023,12 +1024,15 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         const review = options.roleReviews?.find((candidate) => candidate.role === role);
         consumeDirectives();
         const roleGuidance = loadProjectGuidance(options.cwd, role);
+        const contractStore = new ResearchStore(options.storePath);
+        const persistedContract = contractStore.agentRoleContract(role);
+        contractStore.close();
         if (roleGuidance) {
           const guidanceStore = new ResearchStore(options.storePath);
           guidanceStore.appendEvent("research.role_guidance.loaded", { role, paths: roleGuidance.paths, contentHash: roleGuidance.contentHash, truncated: roleGuidance.truncated });
           guidanceStore.close();
         }
-        const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective, review, directives.slice(-4), roleGuidance), context: { ...bounded.context, ...(directives.length ? { agentDirectives: directives.slice(-4) } : {}) }, outputSchema: RESEARCH_LANE_OUTPUT_SCHEMA }, {
+        const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective, review, directives.slice(-4), roleGuidance, persistedContract ? agentRoleContract(role, persistedContract) : undefined), context: { ...bounded.context, ...(directives.length ? { agentDirectives: directives.slice(-4) } : {}) }, outputSchema: RESEARCH_LANE_OUTPUT_SCHEMA }, {
           provider,
           model,
           ...(provider === "codex" && model === laneRoute.model && resumableThreadId ? { threadId: resumableThreadId } : {}),

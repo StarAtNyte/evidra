@@ -300,6 +300,15 @@ export interface AgentDirective {
   appliedAt: string | null;
   cancelledAt: string | null;
 }
+export interface PersistedAgentRoleContract {
+  role: string;
+  parentRole: string | null;
+  responsibility: string;
+  authority: "coordinate" | "investigate" | "validate" | "execute" | "repair";
+  reviewRequired: boolean;
+  playbook: string[];
+  updatedAt: string;
+}
 export type AgentDirectiveOutcomeStatus = "acknowledged" | "completed" | "failed" | "rejected";
 export interface AgentDirectiveOutcome {
   directiveId: number;
@@ -601,6 +610,7 @@ export class ResearchStore {
         terminated INTEGER NOT NULL DEFAULT 0,
         admitted INTEGER NOT NULL DEFAULT 0,
         admission_status TEXT NOT NULL DEFAULT 'review',
+        contract_json TEXT,
         reason TEXT,
         updated_at TEXT NOT NULL
       );
@@ -757,6 +767,7 @@ export class ResearchStore {
     try { this.db.exec("ALTER TABLE agent_controls ADD COLUMN terminated INTEGER NOT NULL DEFAULT 0"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_controls ADD COLUMN admitted INTEGER NOT NULL DEFAULT 0"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_controls ADD COLUMN admission_status TEXT NOT NULL DEFAULT 'review'"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE agent_controls ADD COLUMN contract_json TEXT"); } catch { /* already migrated */ }
     this.db.prepare(`
       INSERT OR IGNORE INTO event_chain_state (id, head_hash, event_count)
       VALUES (1, (SELECT event_hash FROM events ORDER BY id DESC LIMIT 1), (SELECT COUNT(*) FROM events))
@@ -1565,6 +1576,45 @@ export class ResearchStore {
 
   agentRoleAdmitted(role: string): boolean {
     return this.agentRoleAdmissionStatus(role) === "approved";
+  }
+
+  agentRoleContract(role: string): PersistedAgentRoleContract | undefined {
+    const normalized = role.trim();
+    if (!normalized) return undefined;
+    const row = this.db.prepare("SELECT contract_json, updated_at FROM agent_controls WHERE role = ?").get(normalized) as { contract_json: string | null; updated_at: string } | undefined;
+    if (!row?.contract_json) return undefined;
+    try {
+      const parsed = JSON.parse(row.contract_json) as Partial<PersistedAgentRoleContract>;
+      if (parsed.role !== normalized || typeof parsed.responsibility !== "string" || !["coordinate", "investigate", "validate", "execute", "repair"].includes(String(parsed.authority)) || !Array.isArray(parsed.playbook)) return undefined;
+      return {
+        role: normalized,
+        parentRole: typeof parsed.parentRole === "string" && parsed.parentRole.trim() ? parsed.parentRole.trim() : null,
+        responsibility: parsed.responsibility,
+        authority: parsed.authority as PersistedAgentRoleContract["authority"],
+        reviewRequired: parsed.reviewRequired !== false,
+        playbook: parsed.playbook.filter((step): step is string => typeof step === "string" && Boolean(step.trim())).map((step) => step.trim()).slice(0, 16),
+        updatedAt: row.updated_at,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Persist the operating contract for a custom role; built-ins remain code-defined. */
+  setAgentRoleContract(input: Omit<PersistedAgentRoleContract, "updatedAt">, reason = "operator contract update"): PersistedAgentRoleContract {
+    const role = input.role.trim().slice(0, 160);
+    const parentRole = input.parentRole?.trim().slice(0, 160) || null;
+    const responsibility = input.responsibility.trim().slice(0, 1_000);
+    const authority = input.authority;
+    const playbook = [...new Set(input.playbook.map((step) => step.trim().slice(0, 300)).filter(Boolean))].slice(0, 16);
+    if (!role || !responsibility || !["coordinate", "investigate", "validate", "execute", "repair"].includes(authority) || !playbook.length) throw new Error("Custom role contracts require a role, responsibility, supported authority, and at least one playbook step.");
+    if (isBuiltInAgentRole(role)) throw new Error(`Built-in role '${role}' is defined by the Evidra contract and cannot be overwritten.`);
+    if (parentRole === role) throw new Error("A role cannot report to itself.");
+    const updatedAt = new Date().toISOString();
+    const contract: PersistedAgentRoleContract = { role, parentRole, responsibility, authority, reviewRequired: input.reviewRequired !== false, playbook, updatedAt };
+    this.db.prepare(`INSERT INTO agent_controls (role, paused, terminated, admitted, admission_status, contract_json, reason, updated_at) VALUES (?, 0, 0, 0, 'review', ?, ?, ?) ON CONFLICT(role) DO UPDATE SET contract_json = excluded.contract_json, reason = excluded.reason, updated_at = excluded.updated_at`).run(role, JSON.stringify(contract), reason.trim().slice(0, 500) || "operator contract update", updatedAt);
+    this.appendEvent("agent.role.contract.updated", { role, contract, reason: reason.trim().slice(0, 500) || "operator contract update" });
+    return contract;
   }
 
   setAgentRoleAdmission(role: string, admitted: boolean, reason = "operator request"): void {

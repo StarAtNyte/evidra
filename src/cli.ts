@@ -915,6 +915,28 @@ agents.command("evaluate").description("Evaluate specialist roles and persist bo
   if (applied.length) console.log(`\nApplied ${applied.length} coaching directive(s); they will be delivered at the next safe role boundary.`);
 });
 
+agents.command("contract <role>")
+  .description("Define or update a durable contract for a custom specialist role")
+  .requiredOption("--responsibility <text>", "what this role owns")
+  .requiredOption("--authority <authority>", "coordinate, investigate, validate, execute, or repair")
+  .requiredOption("--playbook <steps>", "pipe-separated operating steps")
+  .option("--parent <role>", "reporting parent", "research director")
+  .option("--trusted", "allow handoffs without custom-role admission")
+  .action((role: string, options: { responsibility: string; authority: string; playbook: string; parent: string; trusted?: boolean }) => {
+    const authority = options.authority as "coordinate" | "investigate" | "validate" | "execute" | "repair";
+    const store = new ResearchStore(statePath);
+    const contract = store.setAgentRoleContract({
+      role,
+      parentRole: options.parent,
+      responsibility: options.responsibility,
+      authority,
+      reviewRequired: !options.trusted,
+      playbook: options.playbook.split("|").map((step) => step.trim()),
+    });
+    store.close();
+    console.log(`Contract saved for ${contract.role}\nReports to  ${contract.parentRole ?? "operator"}\nAuthority   ${contract.authority}\nAdmission   ${contract.reviewRequired ? "review required" : "trusted by contract"}\nResponsibility ${contract.responsibility}\nPlaybook\n${contract.playbook.map((step, index) => `  ${index + 1}. ${step}`).join("\n")}`);
+  });
+
 for (const action of ["pause", "resume"] as const) {
   agents.command(`${action} <role>`).description(`${action === "pause" ? "Pause" : "Resume"} one specialist role at a safe boundary`).action((role: string) => {
     const store = new ResearchStore(statePath);

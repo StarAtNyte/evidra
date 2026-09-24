@@ -849,6 +849,42 @@ test("agent organization gives every lane a responsibility and reporting line", 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("custom role contracts persist, shape the organization, and survive reopen", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-role-contract-"));
+  const db = join(root, "state.sqlite");
+  try {
+    const store = new ResearchStore(db);
+    store.setAgentRoleContract({
+      role: "geospatial specialist",
+      parentRole: "validation scientist",
+      responsibility: "audit spatial coverage and propose leakage-safe geographic tests",
+      authority: "validate",
+      reviewRequired: true,
+      playbook: ["inspect coordinate provenance", "test spatial split stability", "report unresolved geographic confounds"],
+    }, "test contract");
+    store.updateAgentLane({ role: "geospatial specialist", status: "idle", provider: "remote", model: "bench", task: "spatial audit" });
+    const saved = store.agentRoleContract("geospatial specialist");
+    assert.equal(saved?.parentRole, "validation scientist");
+    assert.equal(saved?.authority, "validate");
+    assert.deepEqual(saved?.playbook, ["inspect coordinate provenance", "test spatial split stability", "report unresolved geographic confounds"]);
+    const organization = agentOrganization(store).find((entry) => entry.role === "geospatial specialist");
+    assert.equal(organization?.parentRole, "validation scientist");
+    assert.equal(organization?.responsibility, "audit spatial coverage and propose leakage-safe geographic tests");
+    assert.deepEqual(organization?.playbook, saved?.playbook);
+    store.close();
+    const reopened = new ResearchStore(db);
+    assert.equal(reopened.agentRoleContract("geospatial specialist")?.parentRole, "validation scientist");
+    assert.equal(reopened.eventsByType("agent.role.contract.updated").length, 1);
+    assert.throws(() => reopened.setAgentRoleContract({ role: "validation scientist", parentRole: "research director", responsibility: "overwrite", authority: "validate", reviewRequired: false, playbook: ["step"] }), /cannot be overwritten/i);
+    reopened.close();
+    const trusted = new ResearchStore(db);
+    trusted.setAgentRoleContract({ role: "trusted specialist", parentRole: "research director", responsibility: "coordinate a bounded specialist handoff", authority: "coordinate", reviewRequired: false, playbook: ["state the handoff scope"] });
+    trusted.close();
+    const trustedHandoff = await executeResearchTool({ name: "agent.handoff", arguments: { role: "validation scientist", message: "trusted contract handoff" } }, { root, storePath: db, autonomy: "fast", role: "trusted specialist" });
+    assert.equal(trustedHandoff.ok, true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("campaign organization maps goals, reporting lines, and aligned queue work", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-campaign-map-"));
   try {

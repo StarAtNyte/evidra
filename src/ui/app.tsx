@@ -253,7 +253,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/event": [["/event emit ", "Emit an external wake-up event"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
-  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents dispatch", "Show the latest lane dispatch plan"], ["/agents evaluate", "Evaluate roles and generate coaching"], ["/agents evaluate apply", "Apply coaching as durable role directives"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents recover", "Reclaim expired internal leases and tickets"], ["/agents approve ", "Approve a custom role for external execution"], ["/agents reject ", "Reject a custom role from execution"], ["/agents revoke ", "Revoke custom-role execution admission"], ["/agents cancel ", "Cancel a pending specialist directive"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents terminate ", "Terminate a specialist until revived"], ["/agents revive ", "Revive a terminated specialist"], ["/agents restart ", "Reset a failed or blocked specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
+  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents dispatch", "Show the latest lane dispatch plan"], ["/agents evaluate", "Evaluate roles and generate coaching"], ["/agents evaluate apply", "Apply coaching as durable role directives"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents sessions", "Show resumable provider sessions"], ["/agents directives", "Inspect specialist handoffs"], ["/agents recover", "Reclaim expired internal leases and tickets"], ["/agents contract ", "Define a durable custom role contract"], ["/agents approve ", "Approve a custom role for external execution"], ["/agents reject ", "Reject a custom role from execution"], ["/agents revoke ", "Revoke custom-role execution admission"], ["/agents cancel ", "Cancel a pending specialist directive"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents terminate ", "Terminate a specialist until revived"], ["/agents revive ", "Revive a terminated specialist"], ["/agents restart ", "Reset a failed or blocked specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
   "/limits": [["/limits auto", "Use local fallback, then wait"], ["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Require local fallback"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
@@ -3771,6 +3771,27 @@ export function App({ root }: { root: string }): React.JSX.Element {
       if (tickets.length || roles.length || directives.length) store.appendEvent("research.agent.recovery.completed", { tickets, roles, directives, source: "operator-tui" });
       store.close();
       append("assistant", `Recovered ${roles.length} stale agent lease(s), ${tickets.length} stale specialist ticket(s), and ${directives.length} stale directive(s).${roles.length || tickets.length || directives.length ? `\nRoles      ${roles.join(", ") || "none"}\nTickets    ${tickets.join(", ") || "none"}\nDirectives ${directives.join(", ") || "none"}` : ""}`);
+      return;
+    }
+    const contractAgentMatch = request.match(/^\/agents\s+contract\s+(.+?)\s+--responsibility\s+(.+?)\s+--authority\s+(coordinate|investigate|validate|execute|repair)\s+--playbook\s+(.+?)(?:\s+--parent\s+(.+?))?(\s+--trusted)?$/i);
+    if (contractAgentMatch) {
+      const role = contractAgentMatch[1].trim();
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      try {
+        const contract = store.setAgentRoleContract({
+          role,
+          parentRole: contractAgentMatch[5]?.trim() || "research director",
+          responsibility: contractAgentMatch[2].trim(),
+          authority: contractAgentMatch[3].toLowerCase() as "coordinate" | "investigate" | "validate" | "execute" | "repair",
+          reviewRequired: !Boolean(contractAgentMatch[6]),
+          playbook: contractAgentMatch[4].split("|").map((step) => step.trim()),
+        });
+        append("assistant", `Contract saved for ${contract.role}\nReports to  ${contract.parentRole ?? "operator"}\nAuthority   ${contract.authority}\nAdmission   ${contract.reviewRequired ? "review required" : "trusted by contract"}\nPlaybook\n${contract.playbook.map((step, index) => `  ${index + 1}. ${step}`).join("\n")}`);
+      } catch (error) {
+        append("assistant", error instanceof Error ? error.message : String(error));
+      } finally {
+        store.close();
+      }
       return;
     }
     const admissionMatch = request.match(/^\/agents\s+(approve|revoke|reject)\s+(.+)$/i);

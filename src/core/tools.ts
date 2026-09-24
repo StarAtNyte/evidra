@@ -300,8 +300,9 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       } else {
         const admissionStore = new ResearchStore(context.storePath);
         const admitted = admissionStore.agentRoleAdmitted(context.role);
+        const persistedContract = admissionStore.agentRoleContract(context.role);
         admissionStore.close();
-        const permission = agentToolPermission(context.role, call.name, admitted);
+        const permission = agentToolPermission(context.role, call.name, admitted, persistedContract);
         if (!permission.allowed) throw new Error(`Permission boundary: ${permission.reason}`);
       }
     }

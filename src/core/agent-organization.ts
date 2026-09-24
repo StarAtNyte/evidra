@@ -1,4 +1,4 @@
-import type { ResearchStore } from "./store.js";
+import type { PersistedAgentRoleContract, ResearchStore } from "./store.js";
 
 export type AgentRoleContract = {
   role: string;
@@ -41,20 +41,27 @@ export const AGENT_ROLE_CONTRACTS: readonly AgentRoleContract[] = [
   { role: "semantic auditor", parentRole: "critic", responsibility: "independently assess whether conclusions follow from durable evidence", authority: "validate", playbook: ["reinspect current workspace evidence", "trace each conclusion to an exact anchor", "check every acceptance criterion", "reject conclusions with unresolved required checks"] },
 ] as const;
 
-export function agentRoleContract(role: string): AgentRoleContract {
-  return AGENT_ROLE_CONTRACTS.find((contract) => contract.role === role) ?? {
+export function agentRoleContract(role: string, persisted?: PersistedAgentRoleContract): AgentRoleContract {
+  return AGENT_ROLE_CONTRACTS.find((contract) => contract.role === role) ?? (persisted ? {
+    role: persisted.role,
+    parentRole: persisted.parentRole,
+    responsibility: persisted.responsibility,
+    authority: persisted.authority,
+    reviewRequired: persisted.reviewRequired,
+    playbook: persisted.playbook,
+  } : {
     role,
     parentRole: "research director",
     responsibility: "unclassified work; requires explicit operator review before expansion",
     authority: "investigate",
     reviewRequired: true,
     playbook: ["clarify the assigned scope", "inspect current evidence", "state uncertainty", "propose a falsifiable next check"],
-  };
+  });
 }
 
 /** Enforce specialist authority at the tool boundary, not only in prompts. */
-export function agentToolPermission(role: string, toolName: string, admitted = false): { allowed: boolean; reason?: string } {
-  const contract = agentRoleContract(role);
+export function agentToolPermission(role: string, toolName: string, admitted = false, persisted?: PersistedAgentRoleContract): { allowed: boolean; reason?: string } {
+  const contract = agentRoleContract(role, persisted);
   const observationTools = new Set([
     "workspace.files", "workspace.search", "workspace.read", "git.status", "git.diff",
     "source.retrieve", "competition.observe", "source.search", "web.search",
@@ -77,7 +84,7 @@ export function agentOrganization(store: ResearchStore): Array<AgentRoleContract
   const customRoles = [...lanes.keys()].filter((role) => !known.has(role)).sort((left, right) => left.localeCompare(right));
   return [...builtIn, ...customRoles.map((role) => {
     const lane = lanes.get(role)!;
-    return { ...agentRoleContract(role), admission: store.agentRoleAdmissionStatus(role), status: lane.status, health: agentLaneHealth(lane.status, lane.heartbeatAt), heartbeatAt: lane.heartbeatAt, task: lane.task, budgetSeconds: lane.budgetSeconds, usedSeconds: lane.usedSeconds, leaseId: lane.leaseId };
+    return { ...agentRoleContract(role, store.agentRoleContract(role)), admission: store.agentRoleAdmissionStatus(role), status: lane.status, health: agentLaneHealth(lane.status, lane.heartbeatAt), heartbeatAt: lane.heartbeatAt, task: lane.task, budgetSeconds: lane.budgetSeconds, usedSeconds: lane.usedSeconds, leaseId: lane.leaseId };
   })];
 }
 
