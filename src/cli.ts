@@ -3714,6 +3714,18 @@ research
         store.close();
         throw new Error(`Autonomous campaign paused before agent allocation.\n${message}`);
       }
+      const organizationBudget = campaignOrganization(store).totals.budget;
+      const organizationBudgetUtilization = Math.max(organizationBudget.tokenUtilization ?? 0, organizationBudget.costUtilization ?? 0);
+      if (organizationBudgetUtilization >= 1 && (organizationBudget.tokenBudget !== null || organizationBudget.costBudgetUsd !== null)) {
+        campaign = pauseCampaign(campaign);
+        store.saveCampaign(campaign);
+        const cancelledTasks = store.cancelQueuedTasksForCampaign(campaign.startedAt);
+        store.setSchedulerState({ status: "paused", mode, currentStep: "queue-budget-exhausted" });
+        store.appendEvent("research.queue_budget.exhausted", { campaignStartedAt: campaign.startedAt, utilization: organizationBudgetUtilization, budget: organizationBudget, cancelledTasks, action: "pause-before-agent-allocation" });
+        store.close();
+        console.log(`Campaign queue budget exhausted (${Math.round(organizationBudgetUtilization * 100)}%); paused before agent allocation. Cancelled ${cancelledTasks.length} queued task(s).`);
+        break campaignLoop;
+      }
       const agentTokenBudget = campaign.runtime.agentTokenBudget ?? 0;
       if (agentTokenBudget > 0) {
         const agentTokens = campaignAgentTokens(store.eventsByType("research.agent.usage"), campaign.startedAt);
