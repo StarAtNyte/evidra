@@ -225,6 +225,8 @@ Source retrieval records URL, retrieval time, content hash, license, claims, and
 /agents message <role> <msg> Send a directed instruction
 /agents restart <role>       Restart a disposable or stale lane
 /agents limits                Show concurrency and model limits
+/agents pause <role>          Pause a role at its next safe boundary
+/agents resume <role>         Resume a paused role
 /agents cancel <run>         Cancel a running agent task
 ```
 

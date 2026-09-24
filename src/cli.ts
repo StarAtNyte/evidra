@@ -724,7 +724,7 @@ for (const action of ["status", "pause", "resume", "stop"] as const) {
 }
 program.addCommand(controller);
 
-program.command("agents")
+const agents = program.command("agents")
   .description("Show durable agent organization, leases, and role health")
   .option("--json", "emit machine-readable agent health")
   .action((options: { json?: boolean }) => {
@@ -732,9 +732,11 @@ program.command("agents")
     const campaign = store.campaign() as { runtime?: { agentTokenBudget?: unknown }; startedAt?: unknown } | undefined;
     const reviews = evaluateAgentRoles(store.trajectoryHistory());
     const reviewByRole = new Map(reviews.map((review) => [review.role, review]));
+    const pauseByRole = new Map(store.agentPauses().map((control) => [control.role, control]));
     const organization = agentOrganization(store).map((agent) => ({
       ...agent,
       review: reviewByRole.get(agent.role) ?? null,
+      control: pauseByRole.get(agent.role) ?? null,
     }));
     const output = {
       campaign: campaign ?? null,
@@ -744,11 +746,20 @@ program.command("agents")
     if (options.json) {
       console.log(JSON.stringify(output, null, 2));
     } else {
-      console.log(organization.map((agent) => `${agent.status.padEnd(8)} ${agent.role} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`).join("\n") || "No agent roles recorded.");
+      console.log(organization.map((agent) => `${agent.control?.paused ? "paused" : agent.status.padEnd(8)} ${agent.role} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`).join("\n") || "No agent roles recorded.");
       if (output.routes.length) console.log(`\nRoutes\n${output.routes.map((route) => `  ${route.role} · ${route.provider}/${route.model} · ${route.calls} calls · ${route.inputTokens + route.outputTokens} tokens`).join("\n")}`);
     }
     store.close();
   });
+
+for (const action of ["pause", "resume"] as const) {
+  agents.command(`${action} <role>`).description(`${action === "pause" ? "Pause" : "Resume"} one specialist role at a safe boundary`).action((role: string) => {
+    const store = new ResearchStore(statePath);
+    store.setAgentPause(role, action === "pause", `operator CLI request`);
+    console.log(`${action === "pause" ? "Pause requested" : "Pause cleared"} for ${role}.`);
+    store.close();
+  });
+}
 
 program.command("usage").description("Show research, experiment, and campaign usage").action(() => {
   const store = new ResearchStore(statePath);

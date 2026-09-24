@@ -235,7 +235,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
-  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"]],
+  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"]],
   "/limits": [["/limits auto", "Use local fallback, then wait"], ["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Require local fallback"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
@@ -3592,17 +3592,27 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", runs.length ? runs.slice(0, 20).map((run) => `${run.id} · ${run.status} · experiment ${run.experimentId}`).join("\n") : "No runs recorded.");
       return;
     }
+    const pauseAgentMatch = request.match(/^\/agents\s+(pause|resume)\s+(.+)$/i);
+    if (pauseAgentMatch) {
+      const role = pauseAgentMatch[2].trim();
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      store.setAgentPause(role, pauseAgentMatch[1].toLowerCase() === "pause", "operator TUI request");
+      append("assistant", `${pauseAgentMatch[1].toLowerCase() === "pause" ? "Pause requested" : "Pause cleared"} for ${role}. ${pauseAgentMatch[1].toLowerCase() === "pause" ? "A running lane will stop at its next safe boundary; future allocations remain blocked until resumed." : "Future allocations may use this role again."}`);
+      store.close();
+      return;
+    }
     if (request === "/agents" || request === "/agents status" || request === "/agents limits") {
       const codex = codexLoginStatus();
       let local = "unavailable";
       try { const models = await listLocalModels(); local = models.length ? `${models.length} model(s): ${models.map((model) => model.id).join(", ")}` : "connected, no models"; } catch (error) { local = error instanceof Error ? error.message : String(error); }
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const lanes = store.agentLanes();
+      const pauses = new Map(store.agentPauses().map((control) => [control.role, control]));
       const campaign = store.campaign() as ResearchCampaign | undefined;
       const roleReviews = evaluateAgentRoles(store.trajectories(128));
       const attributedTokens = campaign ? campaignAgentTokens(store.eventsByType("research.agent.usage"), campaign.startedAt) : 0;
       store.close();
-      append("assistant", `Research agents\n  codex: ${codex || "not authenticated"}\n  local: ${local}\n  concurrency: 1 active director lane\n\n${lanes.length ? lanes.map((lane) => `  ${lane.status === "running" ? "●" : lane.status === "failed" ? "✗" : lane.status === "blocked" ? "!" : "○"} ${lane.role} · ${lane.status} · ${lane.provider}/${lane.model}${lane.task ? `\n    ${lane.task.slice(0, 120)}` : ""}`).join("\n") : "  No lanes initialized; start /research to initialize the project."}`);
+      append("assistant", `Research agents\n  codex: ${codex || "not authenticated"}\n  local: ${local}\n  concurrency: 1 active director lane\n\n${lanes.length ? lanes.map((lane) => { const pause = pauses.get(lane.role); return `  ${pause?.paused ? "Ⅱ" : lane.status === "running" ? "●" : lane.status === "failed" ? "✗" : lane.status === "blocked" ? "!" : "○"} ${lane.role} · ${pause?.paused ? "paused" : lane.status} · ${lane.provider}/${lane.model}${pause?.reason ? ` · ${pause.reason}` : ""}${lane.task ? `\n    ${lane.task.slice(0, 120)}` : ""}`; }).join("\n") : "  No lanes initialized; start /research to initialize the project."}`);
       if (roleReviews.length) append("assistant", `Role reviews\n${roleReviews.slice(0, 12).map((review) => `  ${review.role} · ${review.recommendation} · score ${(review.score * 100).toFixed(0)}% · ${review.assignments} assignment(s) · checks ${review.playbookPasses} pass/${review.playbookPartials} partial/${review.playbookBlocks} blocked`).join("\n")}`);
       if (campaign?.runtime?.agentTokenBudget) append("assistant", `Campaign agent budget\n  attributed: ${attributedTokens}\n  ceiling: ${campaign.runtime.agentTokenBudget}\n  remaining: ${Math.max(0, campaign.runtime.agentTokenBudget - attributedTokens)}`);
       return;

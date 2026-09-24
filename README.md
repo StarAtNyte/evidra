@@ -309,6 +309,7 @@ Implemented today:
 - durable routines: recurring research or challenge campaigns persist their goal, route, interval, budget, last result, run history, and runner lease; the native routine daemon polls and executes due work without duplicate controllers;
 - TUI-first routine authoring: `/routine create` guides the operator through a reusable goal, cadence, and per-run budget while inheriting the selected provider policy;
 - unified approval inbox: `/approvals` and the dashboard collect pending experiment approvals, prepared submissions, and unresolved external actions without bypassing any existing gate;
+- individual-agent governance: `/agents pause <role>` and `/agents resume <role>` persist a role-level control; active lanes stop at the next safe boundary while other specialists continue, and future allocation remains blocked until the role is resumed;
 - goal-alignment audit: `/status` and the dashboard verify that running campaigns have an objective and active phase, that live queue work resolves to phase goals, and that leased lanes have assigned work;
 - campaign lineage isolation: goal alignment also rejects live work from a different deterministic objective/mode goal set, preventing resumed or concurrent research campaigns from silently sharing queue ownership;
 - atomic research-lane leases with heartbeats, duplicate-specialist protection, and restart-time stale-lane recovery;

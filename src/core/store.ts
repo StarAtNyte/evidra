@@ -357,6 +357,12 @@ export class ResearchStore {
         usage_calls INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS agent_controls (
+        role TEXT PRIMARY KEY,
+        paused INTEGER NOT NULL DEFAULT 0,
+        reason TEXT,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS submissions (
         id TEXT PRIMARY KEY,
         experiment_id TEXT NOT NULL,
@@ -966,12 +972,33 @@ export class ResearchStore {
     `).run(lane.role, lane.status, lane.provider, lane.model, lane.task ?? null, lane.error ?? null, lane.status === "running" ? updatedAt : null, lane.leaseId ?? null, lane.status === "running" ? updatedAt : null, lane.budgetSeconds ?? null, updatedAt);
   }
 
+  /** Persist operator control separately from transient worker status. */
+  setAgentPause(role: string, paused: boolean, reason = "operator request"): void {
+    const normalized = role.trim();
+    if (!normalized) throw new Error("Agent role is required.");
+    const now = new Date().toISOString();
+    this.db.prepare(`INSERT INTO agent_controls (role, paused, reason, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(role) DO UPDATE SET paused = excluded.paused, reason = excluded.reason, updated_at = excluded.updated_at`).run(normalized, paused ? 1 : 0, paused ? reason.slice(0, 500) : null, now);
+    this.appendEvent(paused ? "agent.pause.requested" : "agent.pause.cleared", { role: normalized, reason: paused ? reason.slice(0, 500) : undefined });
+  }
+
+  agentPause(role: string): { role: string; paused: boolean; reason: string | null; updatedAt: string } | undefined {
+    const row = this.db.prepare("SELECT role, paused, reason, updated_at FROM agent_controls WHERE role = ?").get(role) as { role: string; paused: number; reason: string | null; updated_at: string } | undefined;
+    return row ? { role: row.role, paused: row.paused === 1, reason: row.reason, updatedAt: row.updated_at } : undefined;
+  }
+
+  agentPauses(): Array<{ role: string; paused: boolean; reason: string | null; updatedAt: string }> {
+    const rows = this.db.prepare("SELECT role, paused, reason, updated_at FROM agent_controls ORDER BY role ASC").all() as Array<{ role: string; paused: number; reason: string | null; updated_at: string }>;
+    return rows.map((row) => ({ role: row.role, paused: row.paused === 1, reason: row.reason, updatedAt: row.updated_at }));
+  }
+
   /** Atomically assign a lane to one worker. A live lease prevents duplicate specialist work. */
   acquireAgentLane(input: { role: string; leaseId: string; provider: string; model: string; task?: string | null; budgetSeconds?: number | null; staleAfterMs?: number }): { acquired: boolean; leaseId?: string; reason?: string } {
     const now = new Date().toISOString();
     const staleAfterMs = Math.max(1_000, input.staleAfterMs ?? 60_000);
     const result = this.db.transaction(() => {
       const existing = this.db.prepare("SELECT status, lease_id, heartbeat_at FROM agent_lanes WHERE role = ?").get(input.role) as { status: string; lease_id: string | null; heartbeat_at: string | null } | undefined;
+      const control = this.db.prepare("SELECT paused, reason FROM agent_controls WHERE role = ?").get(input.role) as { paused: number; reason: string | null } | undefined;
+      if (control?.paused === 1) return { acquired: false, reason: `lane is paused by operator${control.reason ? `: ${control.reason}` : ""}` };
       if (existing?.status === "running" && existing.lease_id && existing.lease_id !== input.leaseId && existing.heartbeat_at && Date.now() - Date.parse(existing.heartbeat_at) <= staleAfterMs) {
         return { acquired: false, reason: `lane is leased by ${existing.lease_id}` };
       }

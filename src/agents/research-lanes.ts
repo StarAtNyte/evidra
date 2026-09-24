@@ -853,6 +853,11 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
   options.onProgress?.(`Research lane · ${role} · investigating...`);
   const ensureLaneBudget = (): void => {
     const store = new ResearchStore(options.storePath);
+    const control = store.agentPause(role);
+    if (control?.paused) {
+      store.close();
+      throw new Error(`Agent lane paused by operator${control.reason ? `: ${control.reason}` : ""}.`);
+    }
     const budget = store.agentLaneBudget(role, leaseId);
     store.close();
     if (budget?.bounded && (budget.remainingSeconds ?? 0) <= 0) throw new Error(`Lane budget exhausted for ${role}; preserving partial evidence and changing route.`);

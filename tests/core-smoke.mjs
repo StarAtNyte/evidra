@@ -633,6 +633,12 @@ test("agent organization gives every lane a responsibility and reporting line", 
     assert.equal(org.find((entry) => entry.role === "validation scientist")?.status, "running");
     assert.ok(org.every((entry) => entry.responsibility.length > 0));
     assert.ok(org.every((entry) => entry.playbook.length >= 3));
+    store.setAgentPause("validation scientist", true, "operator test");
+    assert.equal(store.agentPause("validation scientist")?.paused, true);
+    assert.equal(store.acquireAgentLane({ role: "validation scientist", leaseId: "paused-worker", provider: "local", model: "bench", task: "must not start" }).acquired, false);
+    store.setAgentPause("validation scientist", false);
+    assert.equal(store.acquireAgentLane({ role: "validation scientist", leaseId: "resumed-worker", provider: "local", model: "bench", task: "can start" }).acquired, true);
+    store.releaseAgentLane("validation scientist", "resumed-worker");
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
