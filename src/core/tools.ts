@@ -17,6 +17,7 @@ import { sha256File } from "./evidence.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "./error-analysis.js";
 import { diversityReport, loadPredictionVector, safePredictionPath } from "./ensemble.js";
 import { extractCompetitionInsights } from "./competition-insights.js";
+import { agentToolPermission } from "./agent-organization.js";
 
 const SOURCE_FRONTIER_EVENT_TYPES = [
   "research.source.search.completed",
@@ -31,6 +32,8 @@ export interface ResearchToolContext {
   competition?: CompetitionConfig;
   onProgress?: (message: string) => void;
   onProcess?: (control: ProcessControl) => void;
+  /** Specialist identity. Omitted means the controller is invoking the tool. */
+  role?: string;
 }
 
 export interface ResearchToolCall {
@@ -264,6 +267,10 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
   try {
     const spec = RESEARCH_TOOLS.find((tool) => tool.name === call.name);
     if (!spec) throw new Error(`Unknown research tool: ${call.name}`);
+    if (context.role) {
+      const permission = agentToolPermission(context.role, call.name);
+      if (!permission.allowed) throw new Error(`Permission boundary: ${permission.reason}`);
+    }
     if (context.autonomy === "safe" && !spec.readOnly) {
       throw new Error(`SAFE mode permits inspection tools only; '${call.name}' requires fast or yolo autonomy.`);
     }

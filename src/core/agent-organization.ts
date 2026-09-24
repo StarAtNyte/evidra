@@ -32,6 +32,20 @@ export function agentRoleContract(role: string): AgentRoleContract {
   };
 }
 
+/** Enforce specialist authority at the tool boundary, not only in prompts. */
+export function agentToolPermission(role: string, toolName: string): { allowed: boolean; reason?: string } {
+  const contract = agentRoleContract(role);
+  const observationTools = new Set([
+    "workspace.files", "workspace.search", "workspace.read", "git.status", "git.diff",
+    "source.retrieve", "competition.observe", "source.search", "web.search",
+    "repository.search", "data.audit", "artifact.audit", "prediction.analyze",
+  ]);
+  if (observationTools.has(toolName)) return { allowed: true };
+  if (toolName === "shell.exec" && ["data detective", "model researcher", "ensemble scientist", "validation scientist", "reproducibility engineer", "experiment engineer", "repair agent"].includes(role)) return { allowed: true };
+  if (toolName === "ensemble.analyze" && ["model researcher", "ensemble scientist", "validation scientist", "reproducibility engineer", "critic", "semantic auditor"].includes(role)) return { allowed: true };
+  return { allowed: false, reason: `Role '${role}' (${contract.authority}) is not authorized to use '${toolName}'; the research director must perform or explicitly route this action.` };
+}
+
 export function agentOrganization(store: ResearchStore): Array<AgentRoleContract & { status: string; task: string | null; budgetSeconds: number | null; usedSeconds: number; leaseId: string | null }> {
   const lanes = new Map(store.agentLanes().map((lane) => [lane.role, lane]));
   return AGENT_ROLE_CONTRACTS.map((contract) => {

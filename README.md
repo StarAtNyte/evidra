@@ -313,6 +313,7 @@ Implemented today:
 - campaign lineage isolation: goal alignment also rejects live work from a different deterministic objective/mode goal set, preventing resumed or concurrent research campaigns from silently sharing queue ownership;
 - atomic research-lane leases with heartbeats, duplicate-specialist protection, and restart-time stale-lane recovery;
 - explicit agent organization: director, specialist, validation, execution, critic, auditor, and repair roles have durable reporting lines, authority boundaries, and responsibility contracts visible in the dashboard and injected into lane prompts;
+- enforceable delegation boundaries: specialist identity follows every lane tool call; read-only evidence tools are shared safely, while controller-owned actions such as report and validation-policy generation are rejected at the tool boundary and recorded as permission events;
 - role performance reviews: durable lane reports are scored for completion, evidence density, confidence, and process quality; the review is fed into the next research context and never pretends to attribute the final task metric to one agent;
 - bounded coaching allocation: roles with sufficient `needs-review` evidence are deliberately scheduled for a controlled follow-up attempt, while trusted roles continue to rotate and resource ceilings remain authoritative;
 - detached process groups so Escape stops child workers as well as the parent;

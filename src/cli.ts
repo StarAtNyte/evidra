@@ -226,10 +226,11 @@ function streamProcessOutput(stream: "stdout" | "stderr", chunk: string): void {
   (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
 }
 
-const researchToolExecutor = (competition: ReturnType<typeof activeCompetition>, autonomy: AutonomyLevel = "safe") => (call: Parameters<typeof executeResearchTool>[0]) => executeResearchTool(call, {
+const researchToolExecutor = (competition: ReturnType<typeof activeCompetition>, autonomy: AutonomyLevel = "safe") => (call: Parameters<typeof executeResearchTool>[0], role?: string) => executeResearchTool(call, {
   root,
   storePath: statePath,
   autonomy,
+  role,
   competition: competition.config,
   onProgress: (message) => console.log(`· ${message}`),
 });

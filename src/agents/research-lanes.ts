@@ -213,7 +213,7 @@ export interface ResearchLanesOptions {
   onProgress?: (message: string) => void;
   onProcess?: (control: ProcessControl) => void;
   isCancelled?: () => boolean;
-  executeTool?: (call: ResearchToolCall) => Promise<ResearchToolResult>;
+  executeTool?: (call: ResearchToolCall, role?: string) => Promise<ResearchToolResult>;
   onToolCall?: (source: string, call: ResearchToolCall) => string;
   onToolResult?: (source: string, callId: string, result: ResearchToolResult) => void;
   onActivity?: (source: string, activity: string) => void;
@@ -395,12 +395,15 @@ export function researchLaneTeamSize(
 }
 
 /** Coalesce successful read-only lane observations without memoizing failures. */
-export function createLaneToolExecutor(executeTool: (call: ResearchToolCall) => Promise<ResearchToolResult>): (call: ResearchToolCall) => Promise<ResearchToolResult> {
+export function createLaneToolExecutor(executeTool: (call: ResearchToolCall, role?: string) => Promise<ResearchToolResult>): (call: ResearchToolCall, role?: string) => Promise<ResearchToolResult> {
   const cache = new Map<string, Promise<ResearchToolResult>>();
-  return async (call: ResearchToolCall): Promise<ResearchToolResult> => {
+  return async (call: ResearchToolCall, role?: string): Promise<ResearchToolResult> => {
     const spec = RESEARCH_TOOLS.find((candidate) => candidate.name === call.name);
     const cacheable = spec?.readOnly === true && spec.cacheable !== false;
-    if (!cacheable) return executeTool(call);
+    if (!cacheable) return executeTool(call, role);
+    // Read-only observations are safe to share across specialists; the role
+    // boundary is checked before the first execution and the result contains
+    // no authority-bearing capability.
     const key = JSON.stringify([call.name, call.arguments ?? {}]);
     const inFlight = cache.get(key);
     if (inFlight) {
@@ -409,7 +412,7 @@ export function createLaneToolExecutor(executeTool: (call: ResearchToolCall) => 
       // cache hit. Re-enter the executor so a sibling gets its own attempt.
       if (result.ok) return { ...result, cached: true };
     }
-    const pending = executeTool(call);
+    const pending = executeTool(call, role);
     cache.set(key, pending);
     try {
       const result = await pending;
@@ -686,7 +689,7 @@ export async function runResearchSemanticAuditor(
     const directEvidence: ResearchToolResult[] = [];
     if (options.executeTool) {
       const inspect = async (call: ResearchToolCall): Promise<ResearchToolResult> => {
-        const result = normalizeResearchToolResult(await options.executeTool!(call));
+        const result = normalizeResearchToolResult(await options.executeTool!(call, role));
         directEvidence.push(result);
         return result;
       };
@@ -829,7 +832,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         for (let attempt = 1; attempt <= 2; attempt += 1) {
           const toolStartedAt = Date.now();
           try {
-            result = boundLaneToolResult(await options.executeTool(call));
+            result = boundLaneToolResult(await options.executeTool(call, role));
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             result = { name: call.name, ok: false, error: errorMessage, trust: toolFailureTrust(errorMessage) };

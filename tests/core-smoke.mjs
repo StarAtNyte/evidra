@@ -3417,6 +3417,12 @@ test("research tool registry exposes safe workspace tools", async () => {
     const reportDenied = await executeResearchTool({ name: "report.generate", arguments: { kind: "research" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(reportDenied.ok, false);
     assert.match(reportDenied.error, /inspection tools only/);
+    const specialistObservation = await executeResearchTool({ name: "workspace.files" }, { root, storePath: db, autonomy: "fast", role: "domain researcher" });
+    assert.equal(specialistObservation.ok, true);
+    const specialistDenied = await executeResearchTool({ name: "report.generate", arguments: { kind: "research" } }, { root, storePath: db, autonomy: "fast", role: "domain researcher" });
+    assert.equal(specialistDenied.ok, false);
+    assert.equal(specialistDenied.trust, "permission_boundary");
+    assert.match(specialistDenied.error, /not authorized/);
     const sourceBoundary = await executeResearchTool({ name: "source.retrieve", arguments: { url: "http://127.0.0.1:9/private" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(sourceBoundary.ok, false);
     assert.equal(sourceBoundary.trust, "permission_boundary");

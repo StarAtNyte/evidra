@@ -1194,10 +1194,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         onProgress: setProgress,
         onProcess: registerProcess,
         isCancelled: () => interruptedProcess.current,
-        executeTool: (call) => executeResearchTool(call, {
+        executeTool: (call, role) => executeResearchTool(call, {
           root,
           storePath: join(root, ".sota", "database.sqlite"),
           autonomy: config.autonomy,
+          role,
           competition: adapter.config,
           onProgress: setProgress,
           onProcess: registerProcess,
@@ -1325,10 +1326,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         autonomy: config.autonomy,
         goalId: phaseGoal?.id ?? null,
         parentTaskId: parentTaskId ?? null,
-        executeTool: (call) => executeResearchTool(call, {
+        executeTool: (call, role) => executeResearchTool(call, {
           root,
           storePath: join(root, ".sota", "database.sqlite"),
           autonomy: config.autonomy,
+          role,
           competition: adapter.config,
           onProgress: setProgress,
           onProcess: registerProcess,
@@ -1358,10 +1360,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         autonomy: config.autonomy,
         goalId: phaseGoal?.id ?? null,
         parentTaskId: parentTaskId ?? null,
-        executeTool: (call) => executeResearchTool(call, {
+        executeTool: (call, role) => executeResearchTool(call, {
           root,
           storePath: join(root, ".sota", "database.sqlite"),
           autonomy: config.autonomy,
+          role,
           competition: adapter.config,
           onProgress: setProgress,
           onProcess: registerProcess,
