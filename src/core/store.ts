@@ -1823,11 +1823,22 @@ export class ResearchStore {
     if (!task) return false;
     if (idempotencyKey) {
       try {
-        const existing = this.db.prepare("SELECT 1 AS present FROM events WHERE type = 'queue.usage' AND json_extract(payload_json, '$.taskId') = ? AND json_extract(payload_json, '$.idempotencyKey') = ? LIMIT 1").get(taskId, idempotencyKey) as { present: number } | undefined;
-        if (existing) return true;
+        const existing = this.db.prepare("SELECT payload_json FROM events WHERE type = 'queue.usage' AND json_extract(payload_json, '$.taskId') = ? AND json_extract(payload_json, '$.idempotencyKey') = ? LIMIT 1").get(taskId, idempotencyKey) as { payload_json: string } | undefined;
+        if (existing) {
+          let payload: Record<string, unknown> = {};
+          try { payload = JSON.parse(existing.payload_json) as Record<string, unknown>; } catch { /* fall through to conflict */ }
+          const same = payload.actorId === actorId && payload.inputTokens === inputTokens && payload.outputTokens === outputTokens && (payload.costUsd ?? null) === costUsd && (payload.provider ?? null) === provider && (payload.model ?? null) === model;
+          if (!same) this.appendEvent("queue.usage.idempotency_conflict", { taskId, actorId, idempotencyKey });
+          return same;
+        }
       } catch {
-        const existing = this.eventsByType("queue.usage").some((event) => event.payload && typeof event.payload === "object" && (event.payload as Record<string, unknown>).taskId === taskId && (event.payload as Record<string, unknown>).idempotencyKey === idempotencyKey);
-        if (existing) return true;
+        const existing = this.eventsByType("queue.usage").find((event) => event.payload && typeof event.payload === "object" && (event.payload as Record<string, unknown>).taskId === taskId && (event.payload as Record<string, unknown>).idempotencyKey === idempotencyKey);
+        if (existing) {
+          const payload = existing.payload as Record<string, unknown>;
+          const same = payload.actorId === actorId && payload.inputTokens === inputTokens && payload.outputTokens === outputTokens && (payload.costUsd ?? null) === costUsd && (payload.provider ?? null) === provider && (payload.model ?? null) === model;
+          if (!same) this.appendEvent("queue.usage.idempotency_conflict", { taskId, actorId, idempotencyKey });
+          return same;
+        }
       }
     }
     this.appendEvent("queue.usage", { taskId, actorId, inputTokens, outputTokens, ...(costUsd === null ? {} : { costUsd }), ...(provider === null ? {} : { provider }), ...(model === null ? {} : { model }), ...(idempotencyKey === null ? {} : { idempotencyKey }) });

@@ -3596,6 +3596,9 @@ test("task token budgets stop exhausted queue work from being claimed", () => {
     assert.deepEqual(store.queueUsageState("budgeted"), { usedTokens: 10, budgetTokens: 10, remainingTokens: 0, exhausted: true });
     assert.equal(store.claimNextTask(undefined, "worker-a")?.id, undefined);
     assert.equal(store.claimTask("budgeted", undefined, "worker-a"), undefined);
+    assert.equal(store.recordQueueUsage({ taskId: "budgeted", actorId: "worker-a", inputTokens: 1, outputTokens: 1, idempotencyKey: "conflict" }), true);
+    assert.equal(store.recordQueueUsage({ taskId: "budgeted", actorId: "worker-a", inputTokens: 9, outputTokens: 9, idempotencyKey: "conflict" }), false);
+    assert.equal(store.eventsByType("queue.usage.idempotency_conflict").length, 1);
     assert.throws(() => store.enqueueTask({ id: "invalid-budget", kind: "research.lane", priority: 1, tokenBudget: 0, payload: {} }), /tokenBudget/);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }

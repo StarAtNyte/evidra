@@ -319,6 +319,7 @@ Implemented today:
 - durable task cancellation: `evidra queue cancel <id>` (or `/queue cancel`) atomically cancels queued/running work, records the reason, and prevents a late local or external worker completion from resurrecting the ticket;
 - cooperative remote cancellation: the next authenticated worker heartbeat returns a structured `409` cancellation response, allowing external runtimes to stop promptly instead of discovering cancellation only at completion;
 - idempotent external usage: `/tasks/usage` accepts a stable per-turn `idempotencyKey`, so transport retries do not duplicate token or cost accounting;
+- conflicting usage-key reuse is rejected and journaled instead of silently accepting a different token/cost payload;
 - operator reassignment: `evidra queue assign <task-id> <worker-id>` routes queued or recovered work explicitly; omit the worker ID to return it to the shared pool. Live claims cannot be reassigned underneath a running worker;
 - stale assignment recovery: when a leased task times out, Evidra preserves its assignment and places an explicit reassignment item in `/approvals`, preventing a dead worker from silently losing or transferring work;
 - scoped worker identity: `--worker-tokens worker-id=secret,...` (or `EVIDRA_WORKER_TOKENS`) gives each external worker its own credential and requires its authenticated header identity to match the claimed task, instead of trusting a shared body-level worker ID;

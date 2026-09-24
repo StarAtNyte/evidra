@@ -188,6 +188,8 @@ the notes are redacted, hash-chained, and included in the dashboard read model.
 Workers can also report bounded token, provider, model, and cost usage through `/tasks/usage`.
 Include a stable `idempotencyKey` for each provider turn; retrying the same key
 is accepted without duplicating the immutable usage event or inflating budgets.
+Reusing a key with different accounting fields is rejected and recorded as an
+idempotency conflict rather than silently changing the ledger.
 Inspect aggregate attribution with `evidra queue usage [task-id]`; usage is
 accounting telemetry, not a claim that a provider's billing was independently
 verified.
