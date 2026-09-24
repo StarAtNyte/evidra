@@ -541,6 +541,7 @@ test("external action intents prevent restart-time replay and support explicit r
     first.close();
     const reopened = new ResearchStore(db);
     assert.equal(reopened.externalAction("submission:one")?.status, "in_flight");
+    assert.deepEqual(reopened.externalActions("in_flight").map((entry) => entry.id), ["submission:one"]);
     assert.equal(reopened.beginExternalAction({ id: "submission:one", kind: "competition_submission", fingerprint: "fp-1" }).status, "in_flight");
     assert.equal(reopened.reconcileExternalAction("submission:one", "retryable", { operatorStatus: "not-submitted" }), true);
     assert.equal(reopened.beginExternalAction({ id: "submission:one", kind: "competition_submission", fingerprint: "fp-1" }).status, "in_flight");

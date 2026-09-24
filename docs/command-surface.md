@@ -198,6 +198,7 @@ The initial adapter is `whestbench`. Future adapters include Kaggle, AIcrowd, ma
 /sources adapt <id>           Create an adaptation record for this challenge
 /memory search <query>        Search prior claims, decisions, and experiment notes
 /memory recent               Show recent evidence and decisions
+/approvals                    Show the operator approval inbox
 ```
 
 Source retrieval records URL, retrieval time, content hash, license, claims, and the difference between the source setting and the current challenge.

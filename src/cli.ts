@@ -1943,6 +1943,33 @@ queue.command("recover").action(() => {
 });
 program.addCommand(queue);
 
+type ApprovalInboxItem = { kind: "experiment" | "submission" | "external-action"; id: string; status: string; next: string; detail: string };
+function approvalInbox(store: ResearchStore): ApprovalInboxItem[] {
+  const items: ApprovalInboxItem[] = [];
+  for (const experiment of store.experiments()) {
+    const payload = experiment.payload as { status?: unknown; hypothesisId?: unknown };
+    if (payload.status === "proposed") items.push({ kind: "experiment", id: experiment.id, status: "pending", next: `/experiment run ${experiment.id}`, detail: `proposal${typeof payload.hypothesisId === "string" ? ` · hypothesis ${payload.hypothesisId}` : ""}` });
+  }
+  for (const submission of store.submissions()) {
+    if (submission.status === "prepared") items.push({ kind: "submission", id: submission.id, status: "pending", next: `/submission approve ${submission.id}`, detail: `experiment ${submission.experimentId}` });
+  }
+  for (const intent of store.externalActions()) {
+    if (intent.status === "unknown" || intent.status === "in_flight") items.push({ kind: "external-action", id: intent.id, status: intent.status, next: intent.kind === "competition_submission" ? `/submission reconcile ${String((intent.payload as { bundle?: unknown }).bundle ?? intent.id)} --status submitted|not-submitted` : "reconcile the recorded external action", detail: intent.kind });
+  }
+  return items;
+}
+const approvals = new Command("approvals").description("Show the auditable operator approval inbox");
+const showApprovals = (options: { json?: boolean }): void => {
+  const store = new ResearchStore(statePath);
+  const items = approvalInbox(store);
+  if (options.json) console.log(JSON.stringify(items, null, 2));
+  else console.log(items.length ? items.map((item) => `${item.status} ${item.kind} ${item.id} · ${item.detail}\n  next: ${item.next}`).join("\n") : "Approval inbox is clear.");
+  store.close();
+};
+approvals.option("--json", "emit machine-readable approval items").action(showApprovals);
+approvals.command("status").option("--json", "emit machine-readable approval items").action(showApprovals);
+program.addCommand(approvals);
+
 const routine = new Command("routine").description("Manage durable recurring research and challenge campaigns");
 routine.command("list").option("--json", "emit machine-readable routines").action((options: { json?: boolean }) => {
   const store = new ResearchStore(statePath);

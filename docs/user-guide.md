@@ -374,6 +374,7 @@ restarts. Inspect it through the TUI or CLI:
 /sources channels        Typed discussion and leaderboard insights
 /memory recent           Recent evidence and decisions
 /evidence audit          Claim completion blockers
+/approvals               Unified operator approval inbox
 /queue status            Queued, running, stale, and failed tasks with readiness reasons
 /queue status --json     Machine-readable queue ownership and dependency readiness
 /routine list             Show durable recurring campaigns

@@ -144,6 +144,7 @@ const COMMANDS = [
   ["/fallback", "Select the local model used after Codex exhaustion"],
   ["/compute", "Show execution and compute health"],
   ["/submission", "Prepare and validate a submission bundle"],
+  ["/approvals", "Show the operator approval inbox"],
   ["/queue", "Show durable research work queue"],
   ["/sessions", "List saved terminal sessions"],
   ["/clear", "Clear the current conversation"],
@@ -234,6 +235,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/limits": [["/limits auto", "Use local fallback, then wait"], ["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Require local fallback"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
+  "/approvals": [["/approvals", "Show pending operator approvals"]],
   "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/clear": [["/clear", "Clear the current conversation"]],
@@ -3565,6 +3567,23 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const adapter = activeAdapter();
       const report = validateCompetitionContract(adapter.config, adapter.workspacePath(root));
       append("assistant", `Contract · ${adapter.config.name}\n${report.checks.map((check) => `  ${check.passed ? "✓" : "✗"} ${check.name}: ${check.detail}`).join("\n")}`);
+      return;
+    }
+    if (request === "/approvals" || request === "/approvals status") {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const items: string[] = [];
+      for (const experiment of store.experiments()) {
+        const payload = experiment.payload as { status?: unknown; hypothesisId?: unknown };
+        if (payload.status === "proposed") items.push(`pending experiment ${experiment.id}\n  next: /experiment run ${experiment.id}`);
+      }
+      for (const submission of store.submissions()) {
+        if (submission.status === "prepared") items.push(`pending submission ${submission.id} · experiment ${submission.experimentId}\n  next: /submission approve ${submission.id}`);
+      }
+      for (const intent of store.externalActions()) {
+        if (intent.status === "unknown" || intent.status === "in_flight") items.push(`${intent.status} external action ${intent.id} · ${intent.kind}\n  reconcile before retrying`);
+      }
+      store.close();
+      append("assistant", items.length ? `Approval inbox\n${items.map((item) => `• ${item}`).join("\n")}` : "Approval inbox is clear.");
       return;
     }
     if (request === "/submission" || request === "/submission status" || request === "/submission distribution" || request.startsWith("/submission prepare") || request.startsWith("/submission validate") || request.startsWith("/submission approve") || request.startsWith("/submission submit") || request.startsWith("/submission poll") || request.startsWith("/submission record")) {

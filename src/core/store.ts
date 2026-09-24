@@ -1043,6 +1043,13 @@ export class ResearchStore {
     return row ? { id: row.id, kind: row.kind, fingerprint: row.fingerprint, status: row.status, payload: JSON.parse(row.payload_json), createdAt: row.created_at, updatedAt: row.updated_at } : undefined;
   }
 
+  externalActions(status?: ExternalActionStatus): ExternalActionIntent[] {
+    const rows = (status
+      ? this.db.prepare("SELECT id, kind, fingerprint, status, payload_json, created_at, updated_at FROM external_action_intents WHERE status = ? ORDER BY updated_at DESC").all(status)
+      : this.db.prepare("SELECT id, kind, fingerprint, status, payload_json, created_at, updated_at FROM external_action_intents ORDER BY updated_at DESC").all()) as Array<{ id: string; kind: string; fingerprint: string; status: ExternalActionStatus; payload_json: string; created_at: string; updated_at: string }>;
+    return rows.map((row) => ({ id: row.id, kind: row.kind, fingerprint: row.fingerprint, status: row.status, payload: JSON.parse(row.payload_json), createdAt: row.created_at, updatedAt: row.updated_at }));
+  }
+
   /**
    * Atomically reserve an external action before invoking an outside system.
    * An in-flight action is intentionally not replayable: a crash may have
