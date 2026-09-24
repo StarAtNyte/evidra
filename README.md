@@ -312,6 +312,7 @@ Implemented today:
 - safe external wake-ups: `evidra event emit external.<source>.<event>`, `/event emit`, and the authenticated loopback `evidra event serve` endpoint accept bounded, redacted integration payloads, hash-chain them as non-evidence signals, deduplicate webhook retries with durable idempotency keys, and wake matching routines from CI, webhooks, schedulers, or competition monitors;
 - external agent heartbeats: authenticated workers can emit `external.agent.heartbeat` with a role, lease, provider, model, and status; Evidra updates durable health only for the owning lease and rejects fresh-lease impersonation, allowing heterogeneous agents to be monitored without granting them controller authority;
 - external queue workers: the authenticated listener also exposes owner-checked `/tasks/claim`, `/tasks/heartbeat`, and `/tasks/complete` endpoints, so outside runtimes can execute durable Evidra tasks while dependencies, retries, and audit events remain controller-owned;
+- scoped worker identity: `--worker-tokens worker-id=secret,...` (or `EVIDRA_WORKER_TOKENS`) gives each external worker its own credential and requires its authenticated header identity to match the claimed task, instead of trusting a shared body-level worker ID;
 
 External worker loop. For least privilege, start the bridge with
 `--task-kinds research.lane` (or another explicit queue family) when the

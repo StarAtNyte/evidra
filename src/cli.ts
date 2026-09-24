@@ -2207,6 +2207,18 @@ approvals.command("status").option("--json", "emit machine-readable approval ite
 program.addCommand(approvals);
 
 const event = new Command("event").description("Emit safe external wake-up events for integrations");
+function parseWorkerTokenMap(raw: string | undefined): Map<string, string> {
+  const tokens = new Map<string, string>();
+  for (const entry of (raw ?? "").split(",").map((value) => value.trim()).filter(Boolean)) {
+    const separator = entry.indexOf("=");
+    const workerId = separator >= 0 ? entry.slice(0, separator).trim() : "";
+    const token = separator >= 0 ? entry.slice(separator + 1).trim() : "";
+    if (!workerId || workerId.length > 200 || !token || token.length > 500) throw new Error("Worker tokens must use worker-id=secret entries with bounded lengths.");
+    if (tokens.has(workerId)) throw new Error(`Duplicate worker token entry for '${workerId}'.`);
+    tokens.set(workerId, token);
+  }
+  return tokens;
+}
 function recordExternalEvent(type: string, payload: Record<string, unknown>, source: string, idempotencyKey?: string): { triggered: string[]; deduplicated: boolean; heartbeatAccepted?: boolean } {
   const eventType = validateExternalEventType(type);
   const heartbeat = eventType === "external.agent.heartbeat" ? parseExternalAgentHeartbeat(payload) : undefined;
@@ -2240,8 +2252,9 @@ event.command("serve")
   .option("--host <host>", "bind address; loopback is the default", "127.0.0.1")
   .option("--token <token>", "Bearer token; required for non-loopback hosts", process.env.EVIDRA_EVENT_TOKEN)
   .option("--task-kinds <kinds>", "comma-separated queue kinds allowed to external workers; unset means all kinds")
+  .option("--worker-tokens <mapping>", "scoped worker credentials as worker-id=secret,...", process.env.EVIDRA_WORKER_TOKENS)
   .description("Run an authenticated local webhook listener for external events")
-  .action(async (options: { port: string; host: string; token?: string; taskKinds?: string }) => {
+  .action(async (options: { port: string; host: string; token?: string; taskKinds?: string; workerTokens?: string }) => {
     const port = Number.parseInt(options.port, 10);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Event server port must be an integer between 1 and 65535.");
     const loopback = options.host === "127.0.0.1" || options.host === "localhost" || options.host === "::1";
@@ -2249,9 +2262,15 @@ event.command("serve")
     const parsedTaskKinds = options.taskKinds?.split(",").map((kind) => kind.trim()).filter(Boolean);
     const allowedTaskKinds = parsedTaskKinds?.length ? parsedTaskKinds : undefined;
     if (allowedTaskKinds?.some((kind) => kind.length > 120)) throw new Error("External worker task kinds must be at most 120 characters each.");
+    const workerTokens = parseWorkerTokenMap(options.workerTokens);
     const server = createServer((request, response) => {
       const headers = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" };
-      if (options.token?.trim() && request.headers.authorization !== `Bearer ${options.token.trim()}`) { response.writeHead(401, headers); response.end(JSON.stringify({ error: "invalid bearer token" })); return; }
+      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/complete"].includes(request.url ?? "") ? request.url : undefined;
+      const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
+      const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
+      const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && workerTokens.get(headerWorkerId) === headerWorkerToken);
+      const bearerAuthenticated = !options.token?.trim() || request.headers.authorization === `Bearer ${options.token.trim()}`;
+      if ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated)) { response.writeHead(401, headers); response.end(JSON.stringify({ error: workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
@@ -2260,7 +2279,6 @@ event.command("serve")
         response.end(JSON.stringify({ ok: integrity.status !== "invalid", integrity }));
         return;
       }
-      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/complete"].includes(request.url ?? "") ? request.url : undefined;
       if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/complete, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
@@ -2277,6 +2295,11 @@ event.command("serve")
           if (taskPath) {
             const workerId = typeof parsed.workerId === "string" ? parsed.workerId.trim() : "";
             if (!workerId || workerId.length > 200) throw new Error("Task requests require a workerId of 1–200 characters.");
+            if (workerTokens.size && (headerWorkerId !== workerId || !scopedWorkerAuthenticated)) {
+              response.writeHead(401, headers);
+              response.end(JSON.stringify({ error: "task workerId does not match authenticated scoped worker" }));
+              return;
+            }
             const store = new ResearchStore(statePath);
             if (taskPath === "/tasks/claim") {
               const kinds = parsed.kinds === undefined ? undefined : Array.isArray(parsed.kinds) && parsed.kinds.length <= 16 && parsed.kinds.every((kind) => typeof kind === "string" && kind.length <= 120) ? parsed.kinds as string[] : undefined;

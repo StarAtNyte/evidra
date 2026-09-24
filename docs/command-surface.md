@@ -118,6 +118,9 @@ evidra event emit external.github.push --payload '{"branch":"main"}' --idempoten
 evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN"
 # Restrict an external worker bridge to one queue family:
 evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" --task-kinds research.lane
+# Optional per-worker credentials:
+evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" --task-kinds research.lane \
+  --worker-tokens 'agent-17=replace-with-a-secret'
 ```
 
 `event serve` accepts `POST /events` with `{ "type": "external.ci.completed",
@@ -147,6 +150,9 @@ POST /tasks/complete  {"workerId":"agent-17","taskId":"task-123","status":"compl
 
 Claim, heartbeat, and completion all enforce the queue owner. A stale or foreign
 worker receives a conflict response and cannot overwrite another worker’s task.
+For scoped identity, configure `--worker-tokens 'agent-17=secret'` (or
+`EVIDRA_WORKER_TOKENS`). Task calls must include `X-Evidra-Worker-Id`,
+`X-Evidra-Worker-Token`, and the same `workerId` in the JSON body.
 
 Configure a routine with `--on-event external.github.push` (or the equivalent
 TUI routine flow). The event is hash-chained, wakes matching active routines,
