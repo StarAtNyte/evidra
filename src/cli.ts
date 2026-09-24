@@ -118,7 +118,7 @@ import { operatorAttention } from "./core/attention.js";
 import { agentCoachingDirective, agentRoleInterventions, applyAgentCoaching, evaluateAgentCoachingProgress, evaluateAgentRoles } from "./core/agent-evals.js";
 import { agentOrganization } from "./core/agent-organization.js";
 import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "./core/external-events.js";
-import { createPortableBundle, validatePortableBundle } from "./core/portable-bundle.js";
+import { createPortableBundle, portableAgentContracts, validatePortableBundle } from "./core/portable-bundle.js";
 import { campaignOrganization, formatCampaignOrganization } from "./core/campaign-organization.js";
 
 const PHASE_GATE_EVENT_TYPES = [
@@ -690,6 +690,35 @@ program.command("export")
   });
 
 const bundle = new Command("bundle").description("Validate portable research bundles without importing evidence");
+bundle.command("import <path>")
+  .option("--replace", "replace existing custom role contracts")
+  .description("Import only secret-free agent contracts; evidence and runtime state remain untouched")
+  .action((path: string, options: { replace?: boolean }) => {
+    const bundlePath = resolve(root, path);
+    const stats = statSync(bundlePath);
+    if (stats.size > 64 * 1024 * 1024) throw new Error("Bundle file exceeds the 64 MiB import limit.");
+    let parsed: unknown;
+    try { parsed = JSON.parse(readFileSync(bundlePath, "utf8")); } catch (error) { throw new Error(`Unable to parse bundle JSON: ${error instanceof Error ? error.message : String(error)}`); }
+    const validation = validatePortableBundle(parsed, root);
+    if (!validation.valid) throw new Error(`Bundle is invalid:\n${validation.errors.map((error) => `- ${error}`).join("\n")}`);
+    const contracts = portableAgentContracts(parsed);
+    const store = new ResearchStore(statePath);
+    const imported: string[] = [];
+    const skipped: string[] = [];
+    try {
+      for (const contract of contracts) {
+        if (store.agentRoleContract(contract.role) && !options.replace) { skipped.push(contract.role); continue; }
+        // Imports intentionally force reviewRequired=true. Existing admission
+        // state is never elevated by a portable bundle.
+        store.setAgentRoleContract(contract, `portable bundle import: ${relative(root, bundlePath)}`);
+        imported.push(contract.role);
+      }
+      store.appendEvent("bundle.organization.imported", { path: relative(root, bundlePath), imported, skipped, privilegeElevation: false });
+    } finally {
+      store.close();
+    }
+    console.log(`Organization contracts imported\n  imported: ${imported.length}${imported.length ? ` · ${imported.join(", ")}` : ""}\n  skipped: ${skipped.length}${skipped.length ? ` · ${skipped.join(", ")}` : ""}\n  privilege elevation: none`);
+  });
 bundle.command("validate <path>")
   .option("--json", "emit machine-readable validation")
   .description("Check bundle schema, redaction, and artifact references")

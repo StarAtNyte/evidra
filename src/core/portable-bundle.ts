@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { isSensitiveWorkspacePath, redactStructured, redactSecrets } from "./redaction.js";
 import { PhaseGoalSchema } from "./types.js";
-import type { ResearchStore } from "./store.js";
+import type { PersistedAgentRoleContract, ResearchStore } from "./store.js";
 import { loadExternalResearchTools, loadExternalToolState } from "./external-tools.js";
 
 export const PORTABLE_BUNDLE_TYPE = "evidra.research.bundle";
@@ -14,6 +14,25 @@ export type PortableBundleValidation = {
   warnings: string[];
   counts: Record<string, number>;
 };
+
+export type PortableAgentContract = Omit<PersistedAgentRoleContract, "updatedAt">;
+
+/** Extract only organization configuration; evidence and runtime state never enter this import path. */
+export function portableAgentContracts(value: unknown): PortableAgentContract[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const entries = (value as Record<string, unknown>).agentContracts;
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((entry): PortableAgentContract[] => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const contract = entry as Record<string, unknown>;
+    const role = typeof contract.role === "string" ? contract.role.trim().slice(0, 160) : "";
+    const responsibility = typeof contract.responsibility === "string" ? contract.responsibility.trim().slice(0, 1_000) : "";
+    const authority = contract.authority;
+    const playbook = Array.isArray(contract.playbook) ? [...new Set(contract.playbook.filter((step): step is string => typeof step === "string" && Boolean(step.trim())).map((step) => step.trim().slice(0, 300)))].slice(0, 16) : [];
+    if (!role || !responsibility || !["coordinate", "investigate", "validate", "execute", "repair"].includes(String(authority)) || !playbook.length) return [];
+    return [{ role, parentRole: typeof contract.parentRole === "string" && contract.parentRole.trim() ? contract.parentRole.trim().slice(0, 160) : null, responsibility, authority: authority as PortableAgentContract["authority"], reviewRequired: true, playbook }];
+  });
+}
 
 /**
  * Build a secret-redacted, metadata-only snapshot that can travel with a

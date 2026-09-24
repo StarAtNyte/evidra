@@ -8,7 +8,7 @@ import { ResearchStore, queueEffectivePriority } from "../core/store.js";
 import { approvalInbox } from "../core/approvals.js";
 import { loadProjectGuidance } from "../core/project-guidance.js";
 import { externalEventPayload, parseExternalEventPayload, validateExternalEventType } from "../core/external-events.js";
-import { createPortableBundle, validatePortableBundle } from "../core/portable-bundle.js";
+import { createPortableBundle, portableAgentContracts, validatePortableBundle } from "../core/portable-bundle.js";
 import { campaignOrganization, formatCampaignOrganization } from "../core/campaign-organization.js";
 import { roleBudgetLedger } from "../core/usage.js";
 import { formatGoalAlignment, goalAlignment, pauseForGoalAlignment } from "../core/goal-alignment.js";
@@ -249,7 +249,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/tools": [["/tools", "Show built-in and project research adapters"], ["/tools health", "Probe zero-argument adapters"], ["/tools enable ", "Enable a project adapter"], ["/tools disable ", "Disable a project adapter"], ["/tools quarantine ", "Quarantine a project adapter"]],
   "/goals": [["/goals", "Show goal criteria, evidence, and stage progress"]],
   "/organization": [["/organization", "Show campaign ownership and reporting lines"], ["/org", "Show campaign ownership and reporting lines"]],
-  "/bundle": [["/bundle validate ", "Validate a portable bundle"]],
+  "/bundle": [["/bundle validate ", "Validate a portable bundle"], ["/bundle import ", "Import review-gated agent contracts"]],
   "/event": [["/event emit ", "Emit an external wake-up event"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
@@ -4409,6 +4409,31 @@ export function App({ root }: { root: string }): React.JSX.Element {
         if (stats.size > 64 * 1024 * 1024) throw new Error("Bundle file exceeds the 64 MiB validation limit.");
         const report = validatePortableBundle(JSON.parse(readFileSync(bundlePath, "utf8")), root);
         append("assistant", `Bundle ${report.valid ? "VALID" : "INVALID"}\n  path: ${bundlePath}\n  counts: ${Object.entries(report.counts).map(([key, value]) => `${key}=${value}`).join(" · ")}${report.errors.length ? `\n\nErrors\n${report.errors.map((error) => `- ${error}`).join("\n")}` : ""}${report.warnings.length ? `\n\nWarnings\n${report.warnings.map((warning) => `- ${warning}`).join("\n")}` : ""}`);
+      } catch (error) { appendError(error); }
+      return;
+    }
+    if (request.startsWith("/bundle import ")) {
+      const requested = request.slice("/bundle import ".length).trim();
+      if (!requested) { append("assistant", "Usage: /bundle import <path>"); return; }
+      try {
+        const bundlePath = resolve(root, requested);
+        const stats = statSync(bundlePath);
+        if (stats.size > 64 * 1024 * 1024) throw new Error("Bundle file exceeds the 64 MiB import limit.");
+        const parsed = JSON.parse(readFileSync(bundlePath, "utf8")) as unknown;
+        const report = validatePortableBundle(parsed, root);
+        if (!report.valid) throw new Error(`Bundle is invalid:\n${report.errors.map((error) => `- ${error}`).join("\n")}`);
+        const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        const imported: string[] = [];
+        const skipped: string[] = [];
+        try {
+          for (const contract of portableAgentContracts(parsed)) {
+            if (store.agentRoleContract(contract.role)) { skipped.push(contract.role); continue; }
+            store.setAgentRoleContract(contract, `portable bundle import: ${relative(root, bundlePath)}`);
+            imported.push(contract.role);
+          }
+          store.appendEvent("bundle.organization.imported", { path: relative(root, bundlePath), imported, skipped, privilegeElevation: false });
+        } finally { store.close(); }
+        append("assistant", `Organization contracts imported\n  imported: ${imported.length}${imported.length ? ` · ${imported.join(", ")}` : ""}\n  skipped: ${skipped.length}${skipped.length ? ` · ${skipped.join(", ")}` : ""}\n  privilege elevation: none`);
       } catch (error) { appendError(error); }
       return;
     }

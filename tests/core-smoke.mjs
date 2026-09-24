@@ -17,7 +17,7 @@ import { agentLaneHealth, agentRoleContract, agentOrganization } from "../dist/c
 import { campaignOrganization, formatCampaignOrganization } from "../dist/core/campaign-organization.js";
 import { agentRoleInterventions, applyAgentCoaching, evaluateAgentCoachingProgress, evaluateAgentRoles } from "../dist/core/agent-evals.js";
 import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "../dist/core/external-events.js";
-import { createPortableBundle, PORTABLE_BUNDLE_TYPE, validatePortableBundle } from "../dist/core/portable-bundle.js";
+import { createPortableBundle, portableAgentContracts, PORTABLE_BUNDLE_TYPE, validatePortableBundle } from "../dist/core/portable-bundle.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaimRecords, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
@@ -4597,6 +4597,7 @@ test("portable bundles are redacted metadata snapshots with artifact references"
     assert.equal(bundle.agentControls[0].admitted, true);
     assert.equal(bundle.agentControls.find((control) => control.role === "external rejected role")?.admissionStatus, "rejected");
     assert.equal(bundle.agentContracts.find((contract) => contract.role === "external bundle role")?.responsibility, "validate portable bundle metadata");
+    assert.equal(portableAgentContracts(bundle)[0]?.reviewRequired, true);
     assert.ok(Array.isArray(bundle.agentSessions));
     assert.ok(Array.isArray(bundle.agentDirectives));
     assert.equal(bundle.agentDirectives[0].sourceRole, "research director");
@@ -4616,6 +4617,7 @@ test("portable bundle validation rejects unsafe paths and unredacted credentials
     assert.equal(validatePortableBundle({ ...base, agentControls: [], agentContracts: [], agentSessions: [], agentDirectives: [] }, root).valid, true);
     assert.equal(validatePortableBundle({ ...base, agentContracts: [{ role: "reviewer", parentRole: "research director", responsibility: "check evidence", authority: "validate", playbook: ["inspect"] }] }, root).valid, true);
     assert.equal(validatePortableBundle({ ...base, agentContracts: [{ role: "reviewer", parentRole: "research director", responsibility: "", authority: "validate", playbook: [] }] }, root).valid, false);
+    assert.deepEqual(portableAgentContracts({ agentContracts: [{ role: "reviewer", parentRole: "research director", responsibility: "check evidence", authority: "validate", reviewRequired: false, playbook: ["inspect"] }] }), [{ role: "reviewer", parentRole: "research director", responsibility: "check evidence", authority: "validate", reviewRequired: true, playbook: ["inspect"] }]);
     const unsafe = validatePortableBundle({ ...base, artifacts: [{ path: "../outside.bin" }] }, root);
     assert.equal(unsafe.valid, false);
     assert.match(unsafe.errors.join("\n"), /escapes workspace/);
