@@ -91,6 +91,21 @@ export interface ResearchRoutineRun {
   error: string | null;
 }
 
+function validateRoutine(routine: Pick<ResearchRoutine, "name" | "goal" | "mode" | "budgetMinutes" | "intervalSeconds" | "provider" | "model" | "thinking" | "autonomy" | "limitPolicy" | "executor" | "lanes">): void {
+  if (!routine.name.trim()) throw new Error("Routine name must not be empty.");
+  if (!routine.goal.trim()) throw new Error("Routine goal must not be empty.");
+  if (!Number.isFinite(routine.budgetMinutes) || routine.budgetMinutes <= 0) throw new Error("Routine budget must be positive.");
+  if (!Number.isFinite(routine.intervalSeconds) || routine.intervalSeconds < 60) throw new Error("Routine interval must be at least 1 minute.");
+  if (!["research", "challenge"].includes(routine.mode)) throw new Error("Routine mode must be 'research' or 'challenge'.");
+  if (!["codex", "local"].includes(routine.provider)) throw new Error("Routine provider must be 'codex' or 'local'.");
+  if (!routine.model.trim()) throw new Error("Routine model must not be empty.");
+  if (!routine.thinking.trim()) throw new Error("Routine thinking effort must not be empty.");
+  if (!["safe", "fast", "yolo"].includes(routine.autonomy)) throw new Error("Routine autonomy must be safe, fast, or yolo.");
+  if (!["auto", "wait", "fallback", "stop"].includes(routine.limitPolicy)) throw new Error("Routine limit policy must be auto, wait, fallback, or stop.");
+  if (!["local", "container", "modal", "slurm"].includes(routine.executor)) throw new Error("Routine executor must be local, container, modal, or slurm.");
+  if (!Number.isInteger(routine.lanes) || routine.lanes < 1 || routine.lanes > 6) throw new Error("Routine lanes must be an integer from 1 to 6.");
+}
+
 export type ControllerAction = "pause" | "resume" | "stop";
 export interface ControllerSteer {
   id: number;
@@ -1168,6 +1183,7 @@ export class ResearchStore {
   }
 
   saveRoutine(routine: ResearchRoutine): void {
+    validateRoutine(routine);
     const updatedAt = new Date().toISOString();
     const payload = {
       name: routine.name, mode: routine.mode, goal: routine.goal, budgetMinutes: routine.budgetMinutes,

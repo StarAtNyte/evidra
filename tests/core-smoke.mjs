@@ -3216,6 +3216,10 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
   const root = mkdtempSync(join(tmpdir(), "evidra-routine-"));
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    assert.throws(() => store.createRoutine({
+      id: "invalid", name: "", mode: "research", goal: "goal", budgetMinutes: 1, intervalSeconds: 30,
+      stopCondition: "stop", provider: "codex", model: "model", thinking: "medium", autonomy: "safe", limitPolicy: "auto", executor: "local", lanes: 1,
+    }), /name must not be empty/);
     const routine = store.createRoutine({
       id: "routine-demo", name: "Demo routine", mode: "research", goal: "measure a reproducible improvement",
       budgetMinutes: 10, intervalSeconds: 60, stopCondition: "stop after replication", provider: "codex",
