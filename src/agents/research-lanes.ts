@@ -1030,11 +1030,14 @@ export async function runResearchLanes(objective: string, context: Record<string
     || Boolean(options.fallbackLocalModel && (options.limitPolicy === "auto" || options.limitPolicy === "fallback"));
   const concurrency = researchLaneConcurrency({ autonomy: options.autonomy, provider: mayUseLocalFallback ? "local" : options.provider, requested: options.maxParallel });
   const teamSize = researchLaneTeamSize(objective, concurrency, options);
-  const roles = selectResearchLaneRoles(objective, teamSize, { focus: options.laneFocus, rotation: options.laneRotation, roleReviews: options.roleReviews });
-  const routes = assignResearchLaneRoutes(roles, options);
+  const candidateRoles = selectResearchLaneRoles(objective, teamSize, { focus: options.laneFocus, rotation: options.laneRotation, roleReviews: options.roleReviews });
   const memoryStore = new ResearchStore(options.storePath);
+  const pausedRoles = new Set(memoryStore.agentPauses().filter((control) => control.paused).map((control) => control.role));
+  const roles = candidateRoles.filter((role) => !pausedRoles.has(role));
+  if (pausedRoles.size) options.onProgress?.(`Research lanes · skipped operator-paused roles: ${[...pausedRoles].join(", ")}`);
   const historicalTrajectories = memoryStore.trajectories(128);
   memoryStore.close();
+  const routes = assignResearchLaneRoutes(roles, options);
   const roleMemory = new Map(roles.map((role) => [role, roleMemoryFromTrajectories(historicalTrajectories, role)]));
   // Share only immutable read-only observations within this invocation. The
   // promise map also collapses simultaneous identical calls from parallel
