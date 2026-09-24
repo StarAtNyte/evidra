@@ -529,6 +529,48 @@ function saveLaneEvent(storePath: string, role: string, report: ResearchLaneRepo
   return verifiedEvidenceIds;
 }
 
+type ReviewTicket = {
+  id: string;
+  ownerId: string;
+  finish: (status: "completed" | "failed", payload: Record<string, unknown>) => void;
+};
+
+/** Give governance agents the same durable ownership semantics as research lanes. */
+function openReviewTicket(options: ResearchLanesOptions, role: string, objective: string): ReviewTicket {
+  const id = `task_research_review_${role.replace(/[^a-z0-9]+/gi, "-")}_${randomUUID()}`;
+  const ownerId = `review-${role.replace(/[^a-z0-9]+/gi, "-")}-${randomUUID()}`;
+  const ticketStore = new ResearchStore(options.storePath);
+  ticketStore.enqueueTask({
+    id,
+    kind: "research.review",
+    priority: 8,
+    goalId: options.goalId ?? null,
+    payload: { role, objective, ownerId },
+  });
+  const claimed = ticketStore.claimTask(id, ["research.review"], ownerId);
+  ticketStore.close();
+  if (!claimed) throw new Error(`Research ${role} review ticket could not be claimed.`);
+  const heartbeat = setInterval(() => {
+    const live = new ResearchStore(options.storePath);
+    live.heartbeatTask(id, ownerId);
+    live.close();
+  }, 15_000);
+  heartbeat.unref?.();
+  let finished = false;
+  return {
+    id,
+    ownerId,
+    finish: (status, payload) => {
+      if (finished) return;
+      finished = true;
+      clearInterval(heartbeat);
+      const completed = new ResearchStore(options.storePath);
+      completed.updateTask(id, status, { ...payload, role, ownerId });
+      completed.close();
+    },
+  };
+}
+
 /** Run an adversarial review after independent lanes have reported. */
 export async function runResearchCritic(
   objective: string,
@@ -536,9 +578,11 @@ export async function runResearchCritic(
   laneReports: ResearchLaneReport[],
   options: ResearchLanesOptions,
 ): Promise<ResearchReview> {
+  let reviewTicket: ReviewTicket | undefined;
   const store = new ResearchStore(options.storePath);
   store.updateAgentLane({ role: "critic", status: "running", provider: options.provider, model: options.model, task: objective, error: null });
   store.close();
+  reviewTicket = openReviewTicket(options, "critic", objective);
   options.onProgress?.("Research critic · checking assumptions and disagreement...");
   const prompt = `${objective}\n\nYou are Evidra's independent critic. Review the proposed decision and independent lane reports below. Look for unsupported claims, leakage, invalid comparisons, missing controls, overconfident conclusions, and cheaper falsification tests. Do not rewrite the decision or invent measurements. Return ONLY JSON: {"verdict":"proceed|revise|reject","summary":"...","objections":["..."],"requiredChecks":["..."],"evidence":["copy an exact evidence anchor from the lane reports or durable observation context"],"independentReplication":true,"confidence":0.0}. A proceed verdict is valid only when evidence contains at least one exact anchor from the supplied reports and requiredChecks is empty.\n\nDecision:\n${JSON.stringify(decision)}\n\nLane reports:\n${JSON.stringify(laneReports)}`;
   try {
@@ -602,6 +646,7 @@ export async function runResearchCritic(
     completed.saveClaim({ id: claimId, payload: { id: claimId, statement: `[critic:${review.verdict}] ${review.summary}`, scope: "research decision review", confidence: review.confidence, sourceType: "review", sourceId: claimId, status: "active", objections: review.objections, requiredChecks: review.requiredChecks, evidence: review.evidence, servedProvider: result.provider, servedModel: result.model ?? options.model } });
     completed.updateAgentLane({ role: "critic", status: "idle", provider: result.provider, model: result.model ?? model, task: null, error: null });
     completed.close();
+    reviewTicket.finish("completed", { verdict: review.verdict, confidence: review.confidence });
     return review;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -609,6 +654,7 @@ export async function runResearchCritic(
     failed.appendEvent("research.critic.failed", { objective, error: message });
     failed.updateAgentLane({ role: "critic", status: "failed", provider: options.provider, model: options.model, task: objective, error: message });
     failed.close();
+    reviewTicket?.finish("failed", { error: message });
     return { verdict: "revise", summary: "Independent critic did not complete; do not promote this direction without manual review.", objections: [message], requiredChecks: ["rerun the independent critic"], evidence: [], independentReplication: true, confidence: 0, status: "failed", error: message };
   }
 }
@@ -627,9 +673,11 @@ export async function runResearchSemanticAuditor(
   acceptanceCriteria: Array<{ id: string; description: string; required?: boolean }> = [],
 ): Promise<ResearchSemanticAudit> {
   const role = "semantic auditor";
+  let reviewTicket: ReviewTicket | undefined;
   const store = new ResearchStore(options.storePath);
   store.updateAgentLane({ role, status: "running", provider: options.provider, model: options.model, task: objective, error: null });
   store.close();
+  reviewTicket = openReviewTicket(options, role, objective);
   options.onProgress?.("Research auditor · independently checking evidence and method...");
   try {
     const directEvidence: ResearchToolResult[] = [];
@@ -688,6 +736,7 @@ export async function runResearchSemanticAuditor(
     completed.appendEvent("research.semantic_audit.completed", { objective, audit, requestedProvider: options.provider, requestedModel: options.model, servedProvider: result.provider, servedModel: result.model ?? model });
     completed.updateAgentLane({ role, status: "idle", provider: result.provider, model: result.model ?? model, task: null, error: null });
     completed.close();
+    reviewTicket.finish("completed", { verdict: audit.verdict, confidence: audit.confidence });
     return audit;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -695,6 +744,7 @@ export async function runResearchSemanticAuditor(
     failed.appendEvent("research.semantic_audit.failed", { objective, error: message });
     failed.updateAgentLane({ role, status: "failed", provider: options.provider, model: options.model, task: objective, error: message });
     failed.close();
+    reviewTicket?.finish("failed", { error: message });
     return { verdict: "revise", summary: "Semantic auditor did not complete; preserve the decision for another audit.", findings: [message], requiredChecks: ["rerun semantic auditor"], evidence: [], criteria: [], confidence: 0, status: "failed", error: message };
   }
 }

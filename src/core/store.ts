@@ -1031,19 +1031,20 @@ export class ResearchStore {
     return stale.map((row) => row.role);
   }
 
-  /** Close orphaned specialist tickets after their owning worker stops heartbeating. */
+  /** Close orphaned specialist/review tickets after their owning worker stops heartbeating. */
   staleLaneTickets(staleAfterMs = 60_000): string[] {
     const cutoff = Date.now() - Math.max(1_000, staleAfterMs);
-    const rows = this.db.prepare("SELECT id, payload_json, claimed_at FROM work_queue WHERE kind = 'research.lane' AND status = 'running'").all() as Array<{ id: string; payload_json: string; claimed_at: string | null }>;
+    const rows = this.db.prepare("SELECT id, kind, payload_json, claimed_at FROM work_queue WHERE kind IN ('research.lane', 'research.review') AND status = 'running'").all() as Array<{ id: string; kind: string; payload_json: string; claimed_at: string | null }>;
     const stale = rows.filter((row) => !row.claimed_at || Date.parse(row.claimed_at) < cutoff);
     const now = new Date().toISOString();
     for (const row of stale) {
       let payload: Record<string, unknown> = {};
       try { payload = JSON.parse(row.payload_json) as Record<string, unknown>; } catch { /* preserve a bounded recovery record */ }
-      const error = "lane ticket heartbeat expired; controller recovery required";
+      const label = row.kind === "research.review" ? "review" : "lane";
+      const error = `${label} ticket heartbeat expired; controller recovery required`;
       this.db.prepare("UPDATE work_queue SET status = 'failed', payload_json = ?, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running'")
         .run(safeJson({ ...payload, stale: true, error, recoveredAt: now }), now, row.id);
-      this.appendEvent("queue.lane.stale", { id: row.id, role: payload.role, leaseId: payload.leaseId, error });
+      this.appendEvent(`queue.${label}.stale`, { id: row.id, role: payload.role, ownerId: payload.ownerId, leaseId: payload.leaseId, error });
     }
     return stale.map((row) => row.id);
   }

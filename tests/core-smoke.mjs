@@ -3127,6 +3127,25 @@ test("orchestration benchmark covers worker ownership and recovery", () => {
   assert.equal(report.probes.length, 6);
 });
 
+test("review tickets recover through the same heartbeat boundary as lane tickets", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-review-ticket-"));
+  try {
+    const dbPath = join(root, "state.sqlite");
+    const store = new ResearchStore(dbPath);
+    store.enqueueTask({ id: "review-ticket", kind: "research.review", priority: 8, payload: { role: "critic", ownerId: "reviewer-1" } });
+    assert.ok(store.claimTask("review-ticket", ["research.review"], "reviewer-1"));
+    store.close();
+    const raw = new Database(dbPath);
+    raw.prepare("UPDATE work_queue SET claimed_at = ? WHERE id = ?").run(new Date(Date.now() - 10_000).toISOString(), "review-ticket");
+    raw.close();
+    const reopened = new ResearchStore(dbPath);
+    assert.deepEqual(reopened.staleLaneTickets(1_000), ["review-ticket"]);
+    assert.equal(reopened.queueTasks().find((task) => task.id === "review-ticket")?.status, "failed");
+    assert.equal(reopened.eventsByType("queue.review.stale").length, 1);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("research lanes use bounded role-specific workspace observations", () => {
   const dataCalls = laneToolCalls("data detective");
   const validationCalls = laneToolCalls("validation scientist");
