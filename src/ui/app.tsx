@@ -240,7 +240,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
   "/approvals": [["/approvals", "Show pending operator approvals"]],
-  "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"]],
+  "/queue": [["/queue status", "Show queued and running tasks"], ["/queue recover", "Requeue stale tasks"], ["/queue recover ", "Resume a failed task with a changed route"]],
   "/sessions": [["/sessions", "List recent saved sessions"]],
   "/clear": [["/clear", "Clear the current conversation"]],
   "/new": [["/new", "Start a fresh terminal session"]],
@@ -3886,11 +3886,21 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
     }
-    if (request === "/queue" || request === "/queue status" || request === "/queue recover") {
+    if (request === "/queue" || request === "/queue status" || request === "/queue recover" || request.startsWith("/queue recover ")) {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      if (request === "/queue recover") {
+      const recoveryMatch = request.match(/^\/queue recover\s+(\S+)\s+--route\s+(\S+)(?:\s+--note\s+(.+))?$/);
+      if (recoveryMatch) {
+        try {
+          const task = store.recoverFailedTask(recoveryMatch[1], recoveryMatch[2], recoveryMatch[3]);
+          append("assistant", `Recovered ${task.id} with route '${recoveryMatch[2]}'. Attempts reset; the task is queued.`);
+        } catch (error) {
+          append("assistant", `Queue recovery failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } else if (request === "/queue recover") {
         const count = store.requeueStaleTasks();
         append("assistant", `Requeued ${count} stale task${count === 1 ? "" : "s"}.`);
+      } else if (request.startsWith("/queue recover ")) {
+        append("assistant", "Usage: /queue recover <task-id> --route <changed-route> [--note <reason>]");
       } else {
         const tasks = store.queueTasks();
         const recoveries = store.eventsByType("queue.recovery_required", 8).slice().reverse();
