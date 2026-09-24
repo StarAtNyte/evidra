@@ -1039,10 +1039,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const paused = pauseCampaign(campaign);
         Object.assign(campaign, paused);
         store.saveCampaign(paused);
+        const cancelledTasks = store.cancelQueuedTasksForCampaign(campaign.startedAt);
         store.setSchedulerState({ status: "paused", mode, currentStep: "agent-token-budget" });
-        store.appendEvent("research.agent_budget.exhausted", { campaignStartedAt: campaign.startedAt, usedTokens: agentTokens, budgetTokens: agentTokenBudget, action: "pause-before-agent-allocation" });
+        store.appendEvent("research.agent_budget.exhausted", { campaignStartedAt: campaign.startedAt, usedTokens: agentTokens, budgetTokens: agentTokenBudget, cancelledTasks, action: "pause-before-agent-allocation" });
         store.close();
-        throw new Error(`Autonomous campaign paused: agent token budget exhausted (${agentTokens}/${agentTokenBudget}).`);
+        throw new Error(`Autonomous campaign paused: agent token budget exhausted (${agentTokens}/${agentTokenBudget}); cancelled ${cancelledTasks.length} queued campaign task(s).`);
       }
     }
     const recentEvents = store.recentEvents(20);

@@ -3499,6 +3499,24 @@ test("queue dependency cycles are rejected before they deadlock the scheduler", 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("campaign budget cancellation stops only matching queued work and records why", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-budget-queue-cancel-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const startedAt = "2026-09-24T10:00:00.000Z";
+    store.enqueueTask({ id: "same-campaign", kind: "research.cycle", priority: 1, payload: { campaign: { startedAt } } });
+    store.enqueueTask({ id: "other-campaign", kind: "research.cycle", priority: 1, payload: { campaign: { startedAt: "2026-09-24T11:00:00.000Z" } } });
+    store.enqueueTask({ id: "unscoped", kind: "maintenance", priority: 1, payload: {} });
+    assert.deepEqual(store.cancelQueuedTasksForCampaign(startedAt), ["same-campaign"]);
+    assert.equal(store.queueTasks().find((task) => task.id === "same-campaign")?.status, "cancelled");
+    assert.equal(store.queueTasks().find((task) => task.id === "same-campaign")?.payload.cancellation.reason, "campaign agent-token budget exhausted");
+    assert.equal(store.queueTasks().find((task) => task.id === "other-campaign")?.status, "queued");
+    assert.equal(store.queueTasks().find((task) => task.id === "unscoped")?.status, "queued");
+    assert.equal(store.eventsByType("queue.cancelled").length, 1);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("durable routines claim, finish, and recover without duplicate runners", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-routine-"));
   try {

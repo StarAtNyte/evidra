@@ -3028,10 +3028,11 @@ research
         if (agentTokens >= agentTokenBudget) {
           campaign = pauseCampaign(campaign);
           store.saveCampaign(campaign);
+          const cancelledTasks = store.cancelQueuedTasksForCampaign(campaign.startedAt);
           store.setSchedulerState({ status: "paused", mode, currentStep: "agent-token-budget" });
-          store.appendEvent("research.agent_budget.exhausted", { campaignStartedAt: campaign.startedAt, usedTokens: agentTokens, budgetTokens: agentTokenBudget, action: "pause-before-agent-allocation" });
+          store.appendEvent("research.agent_budget.exhausted", { campaignStartedAt: campaign.startedAt, usedTokens: agentTokens, budgetTokens: agentTokenBudget, cancelledTasks, action: "pause-before-agent-allocation" });
           store.close();
-          console.log(`Agent token budget exhausted (${agentTokens}/${agentTokenBudget}); campaign paused before agent allocation.`);
+          console.log(`Agent token budget exhausted (${agentTokens}/${agentTokenBudget}); campaign paused before agent allocation. Cancelled ${cancelledTasks.length} queued campaign task(s).`);
           break campaignLoop;
         }
       }

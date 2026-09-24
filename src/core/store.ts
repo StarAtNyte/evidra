@@ -1691,6 +1691,36 @@ export class ResearchStore {
     this.appendEvent("queue.retry_scheduled", { id, availableAt, payload });
   }
 
+  /** Cancel queued work belonging to a campaign that hit its hard token ceiling. */
+  cancelQueuedTasksForCampaign(campaignStartedAt: string, reason = "campaign agent-token budget exhausted"): string[] {
+    const startedAt = campaignStartedAt.trim();
+    if (!startedAt) throw new Error("A campaign start timestamp is required to cancel queued work.");
+    const now = new Date().toISOString();
+    const cancelled: string[] = [];
+    const rows = this.db.prepare("SELECT id, kind, payload_json FROM work_queue WHERE status = 'queued'").all() as Array<{ id: string; kind: string; payload_json: string }>;
+    for (const row of rows) {
+      let payload: Record<string, unknown>;
+      try {
+        const parsed = JSON.parse(row.payload_json);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+        payload = parsed as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const campaign = payload.campaign && typeof payload.campaign === "object" && !Array.isArray(payload.campaign)
+        ? payload.campaign as Record<string, unknown>
+        : undefined;
+      if (campaign?.startedAt !== startedAt) continue;
+      const cancellation = { reason: reason.trim().slice(0, 240) || "campaign budget exhausted", cancelledAt: now };
+      const nextPayload = { ...payload, cancellation };
+      const result = this.db.prepare("UPDATE work_queue SET status = 'cancelled', payload_json = ?, claimed_at = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'queued'").run(safeJson(nextPayload), now, row.id);
+      if (result.changes !== 1) continue;
+      cancelled.push(row.id);
+      this.appendEvent("queue.cancelled", { id: row.id, kind: row.kind, reason: cancellation.reason, source: "campaign-budget" });
+    }
+    return cancelled;
+  }
+
   /** Resume one exhausted task only after an operator declares a changed route. */
   recoverFailedTask(id: string, route: string, note = "operator-selected recovery route"): QueuedTask {
     const normalizedRoute = route.trim().slice(0, 120);
