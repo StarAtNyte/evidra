@@ -82,7 +82,8 @@ export class QueueWorker {
       if (current?.deadlineAt && Date.parse(current.deadlineAt) <= Date.now()) this.store.cancelTask(task.id, "task wall-clock deadline exceeded", "deadline");
       if (!current || current.status === "cancelled" || current.status !== "running" || current.ownerId !== this.workerId) taskAbortController.abort();
     }, this.heartbeatMs);
-    this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "started", message: `Started ${task.kind} attempt ${task.attempts}` });
+    const activity = (kind: "started" | "progress" | "blocked" | "handoff" | "completed" | "failed", message: string, metadata?: unknown): boolean => this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind, message, metadata, claimToken: task.claimToken ?? undefined });
+    activity("started", `Started ${task.kind} attempt ${task.attempts}`);
     try {
       const result = await this.handler(task, taskAbortController.signal);
       const completionPayload = { result };

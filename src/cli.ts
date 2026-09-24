@@ -2522,10 +2522,16 @@ event.command("serve")
                 response.end(JSON.stringify({ error: "worker does not own a live claim for this task" }));
                 return;
               }
+              if (currentTask.claimToken && !claimToken) {
+                store.close();
+                response.writeHead(409, headers);
+                response.end(JSON.stringify({ error: "claimToken is required for this task lease" }));
+                return;
+              }
               const activityKind = parsed.kind;
               const message = typeof parsed.message === "string" ? parsed.message : "";
               if (!(typeof activityKind === "string" && ["started", "progress", "blocked", "handoff", "completed", "failed"].includes(activityKind)) || !message.trim()) throw new Error("Task activity requires a valid kind and non-empty message.");
-              const recorded = store.recordQueueActivity({ taskId, actorId: workerId, kind: activityKind as import("./core/store.js").QueueActivityKind, message, metadata: parsed.metadata === undefined ? undefined : parseExternalEventPayload(JSON.stringify(parsed.metadata)) });
+              const recorded = store.recordQueueActivity({ taskId, actorId: workerId, claimToken: claimToken || undefined, kind: activityKind as import("./core/store.js").QueueActivityKind, message, metadata: parsed.metadata === undefined ? undefined : parseExternalEventPayload(JSON.stringify(parsed.metadata)) });
               store.close();
               response.writeHead(recorded ? 200 : 409, headers);
               response.end(JSON.stringify({ ok: recorded, taskId }));
@@ -2545,7 +2551,13 @@ event.command("serve")
                 response.end(JSON.stringify({ error: "worker does not own a live claim for this task" }));
                 return;
               }
-              const recorded = store.recordQueueUsage({ taskId, actorId: workerId, inputTokens: typeof parsed.inputTokens === "number" ? parsed.inputTokens : 0, outputTokens: typeof parsed.outputTokens === "number" ? parsed.outputTokens : 0, costUsd: parsed.costUsd === null ? null : typeof parsed.costUsd === "number" ? parsed.costUsd : undefined, provider: typeof parsed.provider === "string" ? parsed.provider : undefined, model: typeof parsed.model === "string" ? parsed.model : undefined, idempotencyKey: typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : undefined });
+              if (currentTask.claimToken && !claimToken) {
+                store.close();
+                response.writeHead(409, headers);
+                response.end(JSON.stringify({ error: "claimToken is required for this task lease" }));
+                return;
+              }
+              const recorded = store.recordQueueUsage({ taskId, actorId: workerId, claimToken: claimToken || undefined, inputTokens: typeof parsed.inputTokens === "number" ? parsed.inputTokens : 0, outputTokens: typeof parsed.outputTokens === "number" ? parsed.outputTokens : 0, costUsd: parsed.costUsd === null ? null : typeof parsed.costUsd === "number" ? parsed.costUsd : undefined, provider: typeof parsed.provider === "string" ? parsed.provider : undefined, model: typeof parsed.model === "string" ? parsed.model : undefined, idempotencyKey: typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : undefined });
               const usage = recorded ? store.queueUsageState(taskId) : undefined;
               store.close();
               if (!recorded) throw new Error("Task usage requires non-negative bounded token counts and an optional non-negative cost.");

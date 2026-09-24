@@ -1895,13 +1895,17 @@ export class ResearchStore {
   }
 
   /** Record bounded, redacted progress that travels with a queue ticket. */
-  recordQueueActivity(input: { taskId: string; actorId: string; kind: QueueActivityKind; message: string; metadata?: unknown }): boolean {
+  recordQueueActivity(input: { taskId: string; actorId: string; kind: QueueActivityKind; message: string; metadata?: unknown; claimToken?: string }): boolean {
     const taskId = input.taskId.trim().slice(0, 200);
     const actorId = input.actorId.trim().slice(0, 200);
     const message = redactStructured(input.message.trim().slice(0, 2_000));
     if (!taskId || !actorId || !message || !["started", "progress", "blocked", "handoff", "completed", "failed"].includes(input.kind)) return false;
     const task = this.db.prepare("SELECT id FROM work_queue WHERE id = ?").get(taskId) as { id: string } | undefined;
     if (!task) return false;
+    if (input.claimToken) {
+      const claim = this.db.prepare("SELECT status, owner_id, claim_token FROM work_queue WHERE id = ?").get(taskId) as { status: string; owner_id: string | null; claim_token: string | null } | undefined;
+      if (!claim || claim.status !== "running" || claim.owner_id !== actorId || claim.claim_token !== input.claimToken) return false;
+    }
     this.appendEvent("queue.activity", { taskId, actorId, kind: input.kind, message, ...(input.metadata === undefined ? {} : { metadata: input.metadata }) });
     return true;
   }
@@ -1972,7 +1976,7 @@ export class ResearchStore {
   }
 
   /** Record bounded provider-neutral usage reported by a queue worker. */
-  recordQueueUsage(input: { taskId: string; actorId: string; inputTokens?: number; outputTokens?: number; costUsd?: number | null; provider?: string | null; model?: string | null; idempotencyKey?: string | null }): boolean {
+  recordQueueUsage(input: { taskId: string; actorId: string; inputTokens?: number; outputTokens?: number; costUsd?: number | null; provider?: string | null; model?: string | null; idempotencyKey?: string | null; claimToken?: string }): boolean {
     const taskId = input.taskId.trim().slice(0, 200);
     const actorId = input.actorId.trim().slice(0, 200);
     const inputTokens = Number.isFinite(input.inputTokens) ? Math.floor(input.inputTokens ?? 0) : -1;
@@ -1984,6 +1988,10 @@ export class ResearchStore {
     if (!taskId || !actorId || inputTokens < 0 || outputTokens < 0 || inputTokens > 100_000_000 || outputTokens > 100_000_000 || (costUsd !== null && (!Number.isFinite(costUsd) || costUsd < 0 || costUsd > 1_000_000)) || (input.idempotencyKey !== undefined && !idempotencyKey)) return false;
     const task = this.db.prepare("SELECT id FROM work_queue WHERE id = ?").get(taskId) as { id: string } | undefined;
     if (!task) return false;
+    if (input.claimToken) {
+      const claim = this.db.prepare("SELECT status, owner_id, claim_token FROM work_queue WHERE id = ?").get(taskId) as { status: string; owner_id: string | null; claim_token: string | null } | undefined;
+      if (!claim || claim.status !== "running" || claim.owner_id !== actorId || claim.claim_token !== input.claimToken) return false;
+    }
     if (this.taskDeadlineExpired(taskId)) {
       this.cancelTask(taskId, "task wall-clock deadline exceeded", "deadline");
       return false;

@@ -93,7 +93,9 @@ Queue tasks can also carry an optional `completionContract` in their payload:
 Each claim also receives a unique `claimToken`. Authenticated remote workers
 must send it with heartbeat and completion requests; a reclaimed lease gets a
 new token, fencing stale processes even when they restart with the same worker
-ID. Tokens are intentionally excluded from queue status and dashboard output.
+ID. Activity and usage reports are fenced by the same token, so stale workers
+cannot add progress or consume budget after recovery. Tokens are intentionally
+excluded from queue status and dashboard output.
 
 For contracted work, a worker's `completed` transition is accepted only when
 all declared payload fields are present, evidence references resolve in the
