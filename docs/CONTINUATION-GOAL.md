@@ -65,6 +65,7 @@ external evaluator.
 - The approval inbox can execute that role transition directly through `approvals approve agent-role <role>` or `/approvals approve agent-role <role>`; unsupported item kinds remain behind their dedicated gates.
 - Role admission now distinguishes `review`, `approved`, and explicit `rejected` states. Rejection is durable, blocks execution, and removes the role from pending approvals until an operator deliberately reopens it.
 - Role admission is included in portable bundle control metadata, so moving or backing up a project cannot silently turn an approved external role back into an untracked execution path.
+- Portable control metadata also preserves explicit `rejected` versus pending `review`, preventing a declined role from resurfacing as a new hire request after transfer.
 - Specialist handoffs now have crash-safe lifecycle recovery: an acknowledged directive is not treated as completed, stale acknowledgements are tied to recipient heartbeat health, `/agents recover` resolves them with an auditable failed outcome, and the autonomous CLI/TUI/lane allocation boundary performs the same bounded recovery before new work is allocated. Retrying requires a changed route and preserves the original failure reason.
 
 - Latest pushed state: `origin/master` at the latest handoff commit (verify with `git log`).
