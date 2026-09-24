@@ -3735,7 +3735,7 @@ test("task token budgets stop exhausted queue work from being claimed", () => {
     assert.equal(store.queueTasks().find((task) => task.id === "budgeted")?.tokenBudget, 10);
     assert.equal(store.queueUsageState("budgeted")?.exhausted, false);
     assert.equal(store.recordQueueUsage({ taskId: "budgeted", actorId: "worker-a", inputTokens: 6, outputTokens: 4, provider: "codex", model: "gpt-test" }), true);
-    assert.deepEqual(store.queueUsageState("budgeted"), { usedTokens: 10, budgetTokens: 10, remainingTokens: 0, exhausted: true });
+    assert.deepEqual(store.queueUsageState("budgeted"), { usedTokens: 10, budgetTokens: 10, remainingTokens: 0, usedCostUsd: 0, budgetCostUsd: null, remainingCostUsd: null, exhausted: true });
     assert.equal(store.claimNextTask(undefined, "worker-a")?.id, undefined);
     assert.equal(store.claimTask("budgeted", undefined, "worker-a"), undefined);
     assert.equal(store.recordQueueUsage({ taskId: "budgeted", actorId: "worker-a", inputTokens: 1, outputTokens: 1, idempotencyKey: "conflict" }), true);
@@ -3755,8 +3755,26 @@ test("task token budgets use the complete usage ledger beyond display history li
     assert.equal(store.queueUsage("long-running", 512).length, 512);
     assert.deepEqual(store.queueUsageTotals("long-running"), { inputTokens: 600, outputTokens: 600, costUsd: 0 });
     assert.deepEqual(store.queueUsageTotals(), { inputTokens: 600, outputTokens: 600, costUsd: 0 });
-    assert.deepEqual(store.queueUsageState("long-running"), { usedTokens: 1_200, budgetTokens: 1_000, remainingTokens: 0, exhausted: true });
+    assert.deepEqual(store.queueUsageState("long-running"), { usedTokens: 1_200, budgetTokens: 1_000, remainingTokens: 0, usedCostUsd: 0, budgetCostUsd: null, remainingCostUsd: null, exhausted: true });
     assert.equal(store.claimNextTask(undefined, "worker-a"), undefined);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("task USD budgets stop live work at the reported cost boundary", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-cost-budget-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "cost-budgeted", kind: "research.lane", priority: 1, costBudgetUsd: 0.05, payload: {} });
+    assert.equal(store.setTaskCostBudget("cost-budgeted", 0.1), true);
+    assert.equal(store.queueTasks().find((task) => task.id === "cost-budgeted")?.costBudgetUsd, 0.1);
+    const claimed = store.claimNextTask(undefined, "worker-a");
+    assert.equal(claimed?.id, "cost-budgeted");
+    assert.equal(store.recordQueueUsage({ taskId: "cost-budgeted", actorId: "worker-a", inputTokens: 1, outputTokens: 1, costUsd: 0.1, claimToken: claimed?.claimToken ?? undefined }), true);
+    assert.deepEqual(store.queueUsageState("cost-budgeted"), { usedTokens: 2, budgetTokens: null, remainingTokens: null, usedCostUsd: 0.1, budgetCostUsd: 0.1, remainingCostUsd: 0, exhausted: true });
+    assert.equal(store.queueTasks().find((task) => task.id === "cost-budgeted")?.status, "cancelled");
+    assert.equal(store.eventsByType("queue.cancelled").some((event) => event.payload && typeof event.payload === "object" && event.payload.source === "budget"), true);
+    assert.equal(store.setTaskCostBudget("cost-budgeted", null), false);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -3827,7 +3845,7 @@ test("queue status JSON exposes exact budget and usage state", async () => {
     assert.equal(result.code, 0, result.stderr);
     const task = JSON.parse(result.stdout).tasks.find((entry) => entry.id === "status-budget");
     assert.equal(Object.hasOwn(task, "claimToken"), false);
-    assert.deepEqual(task.usageState, { usedTokens: 15, budgetTokens: 20, remainingTokens: 5, exhausted: false });
+    assert.deepEqual(task.usageState, { usedTokens: 15, budgetTokens: 20, remainingTokens: 5, usedCostUsd: 0, budgetCostUsd: null, remainingCostUsd: null, exhausted: false });
     assert.deepEqual(task.usageTotals, { inputTokens: 8, outputTokens: 7, costUsd: 0 });
     const usageResult = await new Promise((resolve) => {
       const child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "queue", "usage", "--json"], { cwd: root, env: { ...process.env, EVIDRA_STATE_DIR: join(root, ".sota") }, stdio: ["ignore", "pipe", "pipe"] });

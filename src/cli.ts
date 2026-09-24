@@ -2248,7 +2248,7 @@ queue.command("status").option("--json", "emit machine-readable queue state").ac
     const lineage = store.taskLineage(task.id);
     const brokenLineage = lineage && (lineage.cycle || lineage.truncated || lineage.missingParentIds.length) ? ` · broken-lineage${lineage.missingParentIds.length ? ` missing:${lineage.missingParentIds.join(",")}` : ""}` : "";
     const aging = task.effectivePriority > task.priority ? ` (aged ${task.effectivePriority})` : "";
-    const budget = task.tokenBudget === null ? "" : (() => { const usage = store.queueUsageState(task.id); return ` · token budget ${usage?.usedTokens ?? 0}/${task.tokenBudget}${usage?.exhausted ? " exhausted" : ""}`; })();
+    const budget = task.tokenBudget === null && task.costBudgetUsd === null ? "" : (() => { const usage = store.queueUsageState(task.id); const token = task.tokenBudget === null ? "" : `tokens ${usage?.usedTokens ?? 0}/${task.tokenBudget}`; const cost = task.costBudgetUsd === null ? "" : `cost $${(usage?.usedCostUsd ?? 0).toFixed(6)}/$${task.costBudgetUsd.toFixed(6)}`; return ` · budget ${[token, cost].filter(Boolean).join(" · ")}${usage?.exhausted ? " exhausted" : ""}`; })();
     const deadline = task.deadlineAt ? ` · deadline ${task.deadlineAt}${Date.parse(task.deadlineAt) <= Date.now() ? " expired" : ""}` : "";
     return `${task.status} ${task.id} · ${task.kind} · priority ${task.priority}${aging} · attempts ${task.attempts}${task.assigneeId ? ` · assigned ${task.assigneeId}` : ""}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.requiredCapabilities.length ? ` · requires ${task.requiredCapabilities.join(",")}` : ""}${budget}${deadline}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${brokenLineage}${blocked}`;
   }).join("\n") : "Research queue is empty.");
@@ -2277,6 +2277,15 @@ queue.command("budget <id> <tokens>").description("Set a queued/failed task toke
   store.close();
   if (!updated) throw new Error(`Task '${id}' is missing or not queued/failed; live work cannot be re-budgeted.`);
   console.log(value === null ? `Cleared token budget for ${id}.` : `Set token budget for ${id} to ${value} tokens.`);
+});
+queue.command("cost-budget <id> <usd>").description("Set a queued/failed task USD ceiling; use 0 or unlimited to clear it").action((id: string, usd: string) => {
+  const value = /^(?:0|unlimited)$/i.test(usd) ? null : Number(usd);
+  if (value !== null && (!Number.isFinite(value) || value <= 0)) throw new Error("Task USD budget must be a positive number, 0, or unlimited.");
+  const store = new ResearchStore(statePath);
+  const updated = store.setTaskCostBudget(id, value);
+  store.close();
+  if (!updated) throw new Error(`Task '${id}' is missing or not queued/failed; live work cannot be re-budgeted.`);
+  console.log(value === null ? `Cleared cost budget for ${id}.` : `Set cost budget for ${id} to $${value.toFixed(6)}.`);
 });
 queue.command("deadline <id> <timestamp>").description("Set a queued/failed task ISO deadline; use none to clear it").action((id: string, timestamp: string) => {
   const value = /^none$/i.test(timestamp) ? null : /^\d+(?:\.\d+)?\s*(?:m|min|minutes?|h|hours?|d|days?)?$/i.test(timestamp)
