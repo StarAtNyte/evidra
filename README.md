@@ -307,6 +307,7 @@ Implemented today:
 - durable work labels: `evidra queue labels <id> research,gpu` (or `/queue labels ...`) classifies queue tickets for operator triage and dashboard inspection without weakening typed task capabilities;
 - label-filtered triage: `evidra queue status --label <label>` (or `/queue status <label>`) narrows the live work view without changing queue state;
 - task lifecycle history: `evidra queue history <id>` (or `/queue history <id>`) reconstructs bounded queue events for audit and recovery without exposing unrelated tickets;
+- durable task checkpoints: remote workers can POST `/tasks/checkpoint` with their fenced claim token to persist bounded resumable state; checkpoints survive controller restart, preserve the original task input, are hash-audited without logging contents, and stale workers cannot overwrite them;
 - durable queue approval gates: enqueue work with `requiresApproval`, then release it with `evidra queue approve <id>` (or `/queue approve`); rejected/pending tasks remain visible but cannot be claimed until explicitly approved;
 - unified approval inbox: pending/rejected queue tasks appear alongside experiment, submission, recovery, and external-action approvals in `/approvals` and the dashboard;
 - remote claim diagnostics: external workers receive bounded approval blockers when no eligible task can be claimed, making operator-gated queues explainable without exposing unrelated task payloads;
@@ -360,6 +361,9 @@ CLAIM_TOKEN=$(printf '%s' "$TASK_RESPONSE" | jq -r '.task.claimToken')
 # Send heartbeats while work runs, then complete with the same worker ID and claim token.
 curl -fsS -H "$AUTH" "${WORKER_HEADERS[@]}" -H 'content-type: application/json' \
   -d "{\"workerId\":\"$WORKER_ID\",\"taskId\":\"$TASK_ID\",\"claimToken\":\"$CLAIM_TOKEN\"}" "$BASE/tasks/heartbeat"
+# Persist resumable state at safe boundaries; the controller keeps the original input under _task.
+curl -fsS -H "$AUTH" "${WORKER_HEADERS[@]}" -H 'content-type: application/json' \
+  -d "{\"workerId\":\"$WORKER_ID\",\"taskId\":\"$TASK_ID\",\"claimToken\":\"$CLAIM_TOKEN\",\"checkpoint\":{\"stage\":\"retrieval\",\"artifact\":\"partial.json\"}}" "$BASE/tasks/checkpoint"
 curl -fsS -H "$AUTH" "${WORKER_HEADERS[@]}" -H 'content-type: application/json' \
   -d "{\"workerId\":\"$WORKER_ID\",\"taskId\":\"$TASK_ID\",\"claimToken\":\"$CLAIM_TOKEN\",\"status\":\"completed\",\"payload\":{\"summary\":\"done\"}}" "$BASE/tasks/complete"
 ```

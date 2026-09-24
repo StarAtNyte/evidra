@@ -3900,6 +3900,26 @@ test("queue labels are durable, normalized, and protected during a live claim", 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue checkpoints persist resumable state and fence stale workers", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-task-checkpoint-"));
+  const path = join(root, ".sota", "database.sqlite");
+  try {
+    const store = new ResearchStore(path);
+    store.enqueueTask({ id: "checkpointed", kind: "research.lane", priority: 1, payload: { objective: "resume the lane" } });
+    const claimed = store.claimTask("checkpointed", undefined, "worker-a");
+    assert.ok(claimed?.claimToken);
+    assert.equal(store.checkpointClaimedTask("checkpointed", "worker-b", { stage: "spoofed" }, claimed.claimToken), false);
+    assert.equal(store.checkpointClaimedTask("checkpointed", "worker-a", { stage: "retrieval", artifact: "partial.json" }, claimed.claimToken), true);
+    assert.deepEqual(store.queueTasks().find((task) => task.id === "checkpointed")?.payload?.checkpoint, { stage: "retrieval", artifact: "partial.json" });
+    assert.equal(store.eventsByType("queue.checkpoint").length, 1);
+    store.close();
+    const reopened = new ResearchStore(path);
+    assert.deepEqual(reopened.queueTasks().find((task) => task.id === "checkpointed")?.payload?.checkpoint, { stage: "retrieval", artifact: "partial.json" });
+    assert.equal(reopened.queueHistory("checkpointed").some((entry) => entry.type === "queue.checkpoint"), true);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue history reconstructs one ticket lifecycle without leaking other tasks", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-task-history-"));
   try {
@@ -8059,6 +8079,12 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(claimed.status, 200);
     const task = (await claimed.json()).task;
     assert.equal(task.id, "bridge-task");
+    const checkpoint = await post("/tasks/checkpoint", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, checkpoint: { stage: "remote-retrieval", artifact: "partial.json" } }, token, "worker-a", "worker-secret");
+    assert.equal(checkpoint.status, 200);
+    const checkpointStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    assert.deepEqual(checkpointStore.queueTasks().find((entry) => entry.id === task.id)?.payload?.checkpoint, { stage: "remote-retrieval", artifact: "partial.json" });
+    checkpointStore.close();
+    assert.equal((await post("/tasks/checkpoint", { workerId: "worker-a", taskId: task.id, claimToken: "stale-token", checkpoint: { stage: "stale" } }, token, "worker-a", "worker-secret")).status, 409);
     assert.equal((await post("/tasks/activity", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, kind: "progress", message: "inspected evidence" }, token, "worker-a", "worker-secret")).status, 200);
     assert.equal((await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, inputTokens: 12, outputTokens: 4, costUsd: 0.01, provider: "codex", model: "gpt-test", idempotencyKey: "turn-1" }, token, "worker-a", "worker-secret")).status, 200);
     assert.equal((await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, inputTokens: 12, outputTokens: 4, costUsd: 0.01, provider: "codex", model: "gpt-test", idempotencyKey: "turn-1" }, token, "worker-a", "worker-secret")).status, 200);

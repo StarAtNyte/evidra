@@ -2523,7 +2523,7 @@ event.command("serve")
     const workerCapabilities = parseWorkerCapabilityMap(options.workerCapabilities);
     const server = createServer((request, response) => {
       const headers = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" };
-      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release"].includes(request.url ?? "") ? request.url : undefined;
+      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release"].includes(request.url ?? "") ? request.url : undefined;
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
       const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
@@ -2537,7 +2537,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: integrity.status !== "invalid", integrity }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
@@ -2549,7 +2549,7 @@ event.command("serve")
       request.on("end", () => {
         if (rejected) return;
         try {
-          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
+          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; checkpoint?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
           if (taskPath) {
             const workerId = typeof parsed.workerId === "string" ? parsed.workerId.trim() : "";
             if (!workerId || workerId.length > 200) throw new Error("Task requests require a workerId of 1–200 characters.");
@@ -2648,6 +2648,29 @@ event.command("serve")
               store.close();
               response.writeHead(accepted ? 200 : 409, headers);
               response.end(JSON.stringify({ ok: accepted, taskId, status: status?.status ?? null, ...(cancellation ? { cancellation } : {}) }));
+              return;
+            }
+            if (taskPath === "/tasks/checkpoint") {
+              const currentTask = store.queueTasks().find((task) => task.id === taskId);
+              if (!currentTask || !permitsKind(currentTask.kind)) {
+                store.close();
+                response.writeHead(403, headers);
+                response.end(JSON.stringify({ error: "task is outside this worker's assigned scope" }));
+                return;
+              }
+              if (currentTask.status !== "running" || currentTask.ownerId !== workerId) {
+                store.close();
+                response.writeHead(409, headers);
+                response.end(JSON.stringify({ error: "worker does not own a live claim for this task" }));
+                return;
+              }
+              if (currentTask.claimToken && !claimToken) throw new Error("claimToken is required for this task lease");
+              const checkpoint = parsed.checkpoint === undefined ? parsed.payload : parsed.checkpoint;
+              if (checkpoint === undefined) throw new Error("Task checkpoint requires checkpoint or payload.");
+              const recorded = store.checkpointClaimedTask(taskId, workerId, parseExternalEventPayload(JSON.stringify(checkpoint)), claimToken || undefined);
+              store.close();
+              response.writeHead(recorded ? 200 : 409, headers);
+              response.end(JSON.stringify({ ok: recorded, taskId }));
               return;
             }
             if (taskPath === "/tasks/activity") {

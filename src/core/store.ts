@@ -2333,6 +2333,24 @@ export class ResearchStore {
     return result.changes === 1;
   }
 
+  /** Persist bounded resumable state for the current claim without completing it. */
+  checkpointClaimedTask(id: string, ownerId: string, checkpoint: unknown, claimToken?: string): boolean {
+    const current = this.queueTasks().find((task) => task.id === id);
+    if (!current || current.status !== "running" || current.ownerId !== ownerId) return false;
+    const encoded = JSON.stringify(checkpoint);
+    if (encoded === undefined || encoded.length > 1_000_000) throw new Error("Queue task checkpoint must be at most 1 MiB.");
+    const previous = current.payload && typeof current.payload === "object" && !Array.isArray(current.payload) ? current.payload as Record<string, unknown> : {};
+    const original = previous._task && typeof previous._task === "object" && !Array.isArray(previous._task) ? previous._task : previous;
+    const nextPayload = { ...previous, _task: original, checkpoint };
+    const now = new Date().toISOString();
+    const result = claimToken
+      ? this.db.prepare("UPDATE work_queue SET payload_json = ?, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ? AND claim_token = ?").run(safeJson(nextPayload), now, id, ownerId, claimToken)
+      : this.db.prepare("UPDATE work_queue SET payload_json = ?, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ?").run(safeJson(nextPayload), now, id, ownerId);
+    if (result.changes !== 1) return false;
+    this.appendEvent("queue.checkpoint", { id, ownerId, bytes: encoded.length, checkpointHash: createHash("sha256").update(encoded).digest("hex").slice(0, 20) });
+    return true;
+  }
+
   /** Complete a queue task only when the caller still owns its live claim. */
   completeClaimedTask(id: string, ownerId: string, status: Extract<QueueTaskStatus, "completed" | "failed" | "cancelled">, payload?: unknown, idempotencyKey?: string, claimToken?: string): boolean {
     if (this.taskDeadlineExpired(id)) {
