@@ -18,6 +18,7 @@ import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } fro
 import { diversityReport, loadPredictionVector, safePredictionPath } from "./ensemble.js";
 import { extractCompetitionInsights } from "./competition-insights.js";
 import { agentToolPermission } from "./agent-organization.js";
+import { loadExternalResearchTools, type ExternalResearchTool } from "./external-tools.js";
 
 const SOURCE_FRONTIER_EVENT_TYPES = [
   "research.source.search.completed",
@@ -63,6 +64,14 @@ export interface ResearchToolSpec {
   readOnly: boolean;
   /** Whether an identical call may reuse an observation within one director turn. */
   cacheable?: boolean;
+}
+
+function publicExternalSpec(tool: ExternalResearchTool): ResearchToolSpec {
+  return { name: tool.name, description: `${tool.description} (external project adapter)`, input: tool.input, readOnly: tool.readOnly, cacheable: tool.cacheable };
+}
+
+export function availableResearchTools(root?: string): ResearchToolSpec[] {
+  return [...RESEARCH_TOOLS, ...(root ? loadExternalResearchTools(root).tools.map(publicExternalSpec) : [])];
 }
 
 /** Apply the safest default when a provider or test double omits provenance metadata. */
@@ -127,6 +136,7 @@ function recordToolEvent(context: ResearchToolContext, result: ResearchToolResul
 }
 
 function toolTrust(name: string): ResearchToolTrust {
+  if (name.startsWith("external.")) return "untrusted_content";
   if (["workspace.read", "workspace.search", "git.diff", "shell.exec", "source.search", "source.retrieve", "competition.observe", "web.search", "repository.search"].includes(name)) return "untrusted_content";
   if (["validation.generate", "report.generate"].includes(name)) return "permission_boundary";
   return "controller_observation";
@@ -178,11 +188,12 @@ const TOOL_HINTS: Record<string, string> = {
 };
 
 /** Retrieve relevant tool descriptions without changing the full executor registry. */
-export function selectResearchTools(objective: string, limit = 12): ResearchToolSpec[] {
-  const boundedLimit = Math.max(4, Math.min(RESEARCH_TOOLS.length, Math.floor(limit)));
+export function selectResearchTools(objective: string, limit = 12, additionalTools: ResearchToolSpec[] = []): ResearchToolSpec[] {
+  const registry = [...RESEARCH_TOOLS, ...additionalTools];
+  const boundedLimit = Math.max(4, Math.min(registry.length, Math.floor(limit)));
   const query = objective.toLowerCase();
   const core = new Set(["workspace.files", "workspace.search", "workspace.read", "git.status"]);
-  const ranked = RESEARCH_TOOLS.map((tool, index) => {
+  const ranked = registry.map((tool, index) => {
     const terms = `${tool.name} ${tool.description} ${TOOL_HINTS[tool.name] ?? ""}`.toLowerCase().split(/[^a-z0-9]+/).filter((term) => term.length >= 3);
     const score = terms.reduce((total, term) => total + (query.includes(term) ? (term.length >= 6 ? 2 : 1) : 0), 0);
     return { tool, score, index };
@@ -192,7 +203,7 @@ export function selectResearchTools(objective: string, limit = 12): ResearchTool
     if (selected.size >= boundedLimit) break;
     selected.add(entry.tool.name);
   }
-  return RESEARCH_TOOLS.filter((tool) => selected.has(tool.name));
+  return registry.filter((tool) => selected.has(tool.name));
 }
 
 function inside(root: string, requested: string): string {
@@ -267,21 +278,41 @@ function validateToolArguments(name: string, value: unknown): Record<string, unk
 
 export async function executeResearchTool(call: ResearchToolCall, context: ResearchToolContext): Promise<ResearchToolResult> {
   try {
-    const spec = RESEARCH_TOOLS.find((tool) => tool.name === call.name);
+    const external = loadExternalResearchTools(context.root).tools.find((tool) => tool.name === call.name);
+    const spec = RESEARCH_TOOLS.find((tool) => tool.name === call.name) ?? (external ? publicExternalSpec(external) : undefined);
     if (!spec) throw new Error(`Unknown research tool: ${call.name}`);
     if (context.role) {
-      const permission = agentToolPermission(context.role, call.name);
-      if (!permission.allowed) throw new Error(`Permission boundary: ${permission.reason}`);
+      if (external) {
+        if (!external.roles.includes(context.role)) throw new Error(`Permission boundary: external tool '${call.name}' has no grant for role '${context.role}'.`);
+      } else {
+        const permission = agentToolPermission(context.role, call.name);
+        if (!permission.allowed) throw new Error(`Permission boundary: ${permission.reason}`);
+      }
     }
     if (context.autonomy === "safe" && !spec.readOnly) {
       throw new Error(`SAFE mode permits inspection tools only; '${call.name}' requires fast or yolo autonomy.`);
     }
-    const args = validateToolArguments(call.name, call.arguments);
     const workerEnvironment = safeWorkerEnvironment({ HOME: prepareWorkerHome(context.root) });
     let output: unknown;
     let toolOk = true;
     let toolError: string | undefined;
-    switch (call.name) {
+    if (external) {
+      const args = call.arguments && typeof call.arguments === "object" && !Array.isArray(call.arguments) ? call.arguments : {};
+      const serializedArgs = JSON.stringify(args);
+      if (Buffer.byteLength(serializedArgs, "utf8") > 16_000) throw new Error(`External tool arguments exceed the 16000-byte limit.`);
+      const environment = safeWorkerEnvironment({ ...workerEnvironment, EVIDRA_TOOL_NAME: external.name, EVIDRA_TOOL_ARGS_JSON: serializedArgs });
+      context.onProgress?.(`Tool ${external.name} · external adapter`);
+      const result = await runProcess(external.command, context.root, external.timeoutMs, undefined, context.onProcess, environment);
+      let value: unknown = result.stdout.slice(0, 50_000);
+      try { value = JSON.parse(result.stdout); } catch { /* Plain text adapter output remains untrusted data. */ }
+      output = { exitCode: result.exitCode, value, stderr: result.stderr.slice(0, 8_000), durationMs: result.durationMs };
+      if (result.exitCode !== 0) {
+        toolOk = false;
+        toolError = result.stderr.trim() || `External tool exited with code ${result.exitCode}.`;
+      }
+    } else {
+      const args = validateToolArguments(call.name, call.arguments);
+      switch (call.name) {
       case "workspace.files": {
         const result = await runProcess(["rg", "--files", "--hidden", "-g", "!.git/**", "-g", "!.sota/**", "-g", "!node_modules/**"], context.root, 30_000, undefined, context.onProcess, workerEnvironment);
         output = { exitCode: result.exitCode, files: result.stdout.split("\n").filter(Boolean).slice(0, 2_000) };
@@ -562,7 +593,8 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
         output = { kind, path };
         break;
       }
-      default: throw new Error(`Unknown research tool: ${call.name}`);
+        default: throw new Error(`Unknown research tool: ${call.name}`);
+      }
     }
     const trust = toolTrust(call.name);
     const securityWarnings = trust === "untrusted_content" ? untrustedContentWarnings(output) : [];

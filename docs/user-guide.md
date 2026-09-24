@@ -51,6 +51,35 @@ The complete operational contract, including isolation boundaries, checkpoint
 semantics, provider exhaustion, and production checks, is in
 [`codex-operations.md`](codex-operations.md).
 
+## 1.1 Project tool adapters
+
+Projects can extend Evidra’s research tool registry without changing the
+harness. Add a `.evidra/tools.json` manifest with namespaced `external.*`
+adapters:
+
+```json
+{
+  "tools": [
+    {
+      "name": "external.domain_audit",
+      "description": "Run the project’s bounded domain audit",
+      "command": ["python", "tools/domain_audit.py"],
+      "roles": ["domain researcher"],
+      "readOnly": true,
+      "input": {"path": "relative artifact path"},
+      "timeoutMs": 120000
+    }
+  ]
+}
+```
+
+Adapters are argv-only—there is no shell interpolation. Evidra passes JSON
+arguments through `EVIDRA_TOOL_ARGS_JSON`, bounds output and runtime, labels
+adapter output as untrusted content, records the actor and autonomy level, and
+requires an explicit role grant for specialist agents. This keeps domain
+tooling portable while preserving the same permission, provenance, and
+recovery boundary as built-in tools.
+
 ## 2. The Codex-first TUI
 
 The full-screen interface uses a compact Codex-style transcript:
