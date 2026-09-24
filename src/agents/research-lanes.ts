@@ -209,7 +209,7 @@ export interface ResearchLanesOptions {
   laneFocus?: string;
   laneRotation?: number;
   /** Durable role reviews used to schedule a bounded coaching attempt. */
-  roleReviews?: ReadonlyArray<Pick<AgentRoleReview, "role" | "recommendation" | "assignments">>;
+  roleReviews?: ReadonlyArray<Pick<AgentRoleReview, "role" | "recommendation" | "assignments" | "score" | "processFailures" | "evidenceAnchors">>;
   onProgress?: (message: string) => void;
   onProcess?: (control: ProcessControl) => void;
   isCancelled?: () => boolean;
@@ -310,7 +310,7 @@ export interface ResearchLaneSelectionOptions {
   /** Rotate otherwise equivalent specialists across autonomous cycles. */
   rotation?: number;
   /** Prior durable reviews can schedule a bounded coaching attempt. */
-  roleReviews?: ReadonlyArray<Pick<AgentRoleReview, "role" | "recommendation" | "assignments">>;
+  roleReviews?: ReadonlyArray<Pick<AgentRoleReview, "role" | "recommendation" | "assignments" | "score" | "processFailures" | "evidenceAnchors">>;
 }
 
 export function selectResearchLaneRoles(objective: string, requested: number, options: ResearchLaneSelectionOptions = {}): ResearchLaneRole[] {
@@ -436,7 +436,11 @@ function parseJson(output: unknown): unknown {
   }
 }
 
-function lanePrompt(role: ResearchLaneRole, objective: string): string {
+export function lanePrompt(
+  role: ResearchLaneRole,
+  objective: string,
+  review?: Pick<AgentRoleReview, "recommendation" | "assignments" | "score" | "processFailures" | "evidenceAnchors">,
+): string {
   const contract = agentRoleContract(role);
   const focus = role === "data detective"
     ? "Inspect data provenance, duplicates, leakage, distributions, hidden groups, and train/test shift."
@@ -449,7 +453,12 @@ function lanePrompt(role: ResearchLaneRole, objective: string): string {
         : role === "domain researcher"
           ? "Investigate the domain, definitions, assumptions, relevant literature, competing explanations, and unresolved questions."
           : "Investigate alternative methods, mechanisms, procedures, and implementation paths; propose falsifiable comparisons.";
-  return `${focus}\n\nRole contract: report to ${contract.parentRole ?? "the operator"}; authority=${contract.authority}; responsibility=${contract.responsibility}.\n\nObjective: ${objective}\n\n` +
+  const coaching = review?.recommendation === "needs-review"
+    ? `Role coaching signal: this role has ${review.assignments} prior assignment(s), score ${(review.score * 100).toFixed(0)}%, ${review.processFailures} process failure(s), and ${review.evidenceAnchors} evidence anchor(s). Change the route from prior work: ground every material finding in a durable observation, expose unresolved checks, and propose a concrete falsification test before recommending action.`
+    : review?.recommendation === "trusted"
+      ? `Role review signal: this role has remained reliable across ${review.assignments} assignment(s). Preserve its evidence discipline, but still independently verify every new claim.`
+      : "Role review signal: insufficient prior evidence; establish a clean, explicit baseline for this assignment.";
+  return `${focus}\n\nRole contract: report to ${contract.parentRole ?? "the operator"}; authority=${contract.authority}; responsibility=${contract.responsibility}.\n${coaching}\n\nObjective: ${objective}\n\n` +
     "You are an independent Evidra research lane. Use the supplied workspace and evidence context; run only read-only inspection when tools are available. Do not edit files, submit anything, or claim measurements you did not observe. Return ONLY JSON with this shape: " +
     '{"role":"...","summary":"...","findings":["..."],"recommendations":["..."],"uncertainties":["..."],"discriminatingTests":["cheapest observation or experiment that would distinguish competing explanations"],"evidence":["command, artifact, or source supporting each important statement"],"evidenceSourceIds":["exact durable source IDs for literature-derived evidence"],"confidence":0.0}. ' +
     "Recommendations must be testable and should state what would falsify them. For every material uncertainty or disagreement, propose a concrete discriminating test. A bounded prior-peer board may be present in the context: use it to challenge, extend, or explicitly reject earlier findings, but never treat it as stronger than primary evidence.";
@@ -876,7 +885,8 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
       try {
         const bounded = boundResearchContext({ ...context, laneToolResults: toolResults });
         modelStartedAt = Date.now();
-        const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective), context: bounded.context, outputSchema: RESEARCH_LANE_OUTPUT_SCHEMA }, {
+        const review = options.roleReviews?.find((candidate) => candidate.role === role);
+        const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective, review), context: bounded.context, outputSchema: RESEARCH_LANE_OUTPUT_SCHEMA }, {
           provider,
           model,
           limitPolicy: options.limitPolicy,
