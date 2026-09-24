@@ -1381,7 +1381,7 @@ export class ResearchStore {
   /** Use only a fresh heartbeat when a remote worker omits capabilities at claim time. */
   externalWorkerCapabilities(workerId: string, maxAgeMs = 120_000): string[] | undefined {
     const row = this.db.prepare("SELECT capabilities_json, last_heartbeat_at, status FROM external_workers WHERE worker_id = ?").get(workerId) as { capabilities_json: string; last_heartbeat_at: string; status: string } | undefined;
-    if (!row || row.status === "failed" || !Number.isFinite(Date.parse(row.last_heartbeat_at)) || Date.now() - Date.parse(row.last_heartbeat_at) > Math.max(1_000, maxAgeMs)) return undefined;
+    if (!row || !["running", "idle"].includes(row.status) || !Number.isFinite(Date.parse(row.last_heartbeat_at)) || Date.now() - Date.parse(row.last_heartbeat_at) > Math.max(1_000, maxAgeMs)) return undefined;
     return JSON.parse(row.capabilities_json || "[]") as string[];
   }
 

@@ -4072,6 +4072,8 @@ test("authenticated external agent heartbeats preserve lease ownership", () => {
     assert.deepEqual(store.externalWorkerCapabilities("worker-a"), ["python"]);
     assert.equal(store.externalWorkerCapabilities("missing-worker"), undefined);
     assert.equal(store.agentLanes().find((lane) => lane.role === "model researcher")?.status, "idle");
+    assert.equal(store.recordExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "blocked", capabilities: ["python"] }).accepted, true);
+    assert.equal(store.externalWorkerCapabilities("worker-a"), undefined);
     assert.ok(store.eventsByType("agent.external_heartbeat.rejected").length >= 1);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
