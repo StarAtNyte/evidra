@@ -115,7 +115,7 @@ import { loadProjectGuidance } from "./core/project-guidance.js";
 import { formatGoalAlignment, goalAlignment } from "./core/goal-alignment.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "./core/agent-evals.js";
 import { agentOrganization } from "./core/agent-organization.js";
-import { externalEventPayload, parseExternalEventPayload, validateExternalEventType } from "./core/external-events.js";
+import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "./core/external-events.js";
 import { createPortableBundle, validatePortableBundle } from "./core/portable-bundle.js";
 
 const PHASE_GATE_EVENT_TYPES = [
@@ -2204,16 +2204,22 @@ approvals.command("status").option("--json", "emit machine-readable approval ite
 program.addCommand(approvals);
 
 const event = new Command("event").description("Emit safe external wake-up events for integrations");
-function recordExternalEvent(type: string, payload: Record<string, unknown>, source: string, idempotencyKey?: string): { triggered: string[]; deduplicated: boolean } {
+function recordExternalEvent(type: string, payload: Record<string, unknown>, source: string, idempotencyKey?: string): { triggered: string[]; deduplicated: boolean; heartbeatAccepted?: boolean } {
   const eventType = validateExternalEventType(type);
+  const heartbeat = eventType === "external.agent.heartbeat" ? parseExternalAgentHeartbeat(payload) : undefined;
   const store = new ResearchStore(statePath);
   const eventPayload = externalEventPayload(payload, source.trim().slice(0, 80) || "cli");
   const result = idempotencyKey?.trim()
     ? store.appendExternalEvent(eventType, eventPayload, idempotencyKey)
     : (store.appendEvent(eventType, eventPayload), { accepted: true, createdAt: store.recentEvents(1)[0]?.createdAt ?? null });
   const triggered = result.accepted && result.createdAt ? store.triggerRoutines(eventType, result.createdAt) : [];
+  let heartbeatAccepted: boolean | undefined;
+  if (result.accepted && heartbeat) {
+    const health = store.recordExternalAgentHeartbeat(heartbeat);
+    heartbeatAccepted = health.accepted;
+  }
   store.close();
-  return { triggered, deduplicated: !result.accepted };
+  return { triggered, deduplicated: !result.accepted, ...(heartbeatAccepted === undefined ? {} : { heartbeatAccepted }) };
 }
 event.command("emit <type>")
   .option("--payload <json>", "JSON object delivered as an external trigger payload", "{}")
@@ -2224,7 +2230,7 @@ event.command("emit <type>")
     const eventType = validateExternalEventType(type);
     const payload = parseExternalEventPayload(options.payload);
     const result = recordExternalEvent(eventType, payload, options.source, options.idempotencyKey);
-    console.log(`${result.deduplicated ? "Deduplicated" : "Emitted"} ${eventType}${result.triggered.length ? `\nTriggered routines: ${result.triggered.join(", ")}` : "\nNo matching active routines."}`);
+    console.log(`${result.deduplicated ? "Deduplicated" : "Emitted"} ${eventType}${result.heartbeatAccepted === false ? "\nHeartbeat rejected: an active worker owns this role lease." : ""}${result.triggered.length ? `\nTriggered routines: ${result.triggered.join(", ")}` : "\nNo matching active routines."}`);
   });
 event.command("serve")
   .option("--port <port>", "HTTP port", "4311")
@@ -2264,8 +2270,8 @@ event.command("serve")
           const payload = parseExternalEventPayload(JSON.stringify(parsed.payload ?? {}));
           const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : request.headers["idempotency-key"];
           const result = recordExternalEvent(parsed.type, payload, typeof parsed.source === "string" ? parsed.source : "http", typeof idempotencyKey === "string" ? idempotencyKey : undefined);
-          response.writeHead(202, headers);
-          response.end(JSON.stringify({ ok: true, type: parsed.type, deduplicated: result.deduplicated, triggered: result.triggered }));
+          response.writeHead(result.heartbeatAccepted === false ? 409 : 202, headers);
+          response.end(JSON.stringify({ ok: result.heartbeatAccepted !== false, type: parsed.type, deduplicated: result.deduplicated, heartbeatAccepted: result.heartbeatAccepted, triggered: result.triggered }));
         } catch (error) {
           response.writeHead(400, headers);
           response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));

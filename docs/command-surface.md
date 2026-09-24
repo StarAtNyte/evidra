@@ -126,6 +126,15 @@ retries with the same key and event type are acknowledged without appending a
 second event or waking a routine again. `GET /health` reports event-chain
 integrity for liveness checks.
 
+External workers may also report liveness through the authenticated endpoint:
+
+```json
+{"type":"external.agent.heartbeat","payload":{"role":"model researcher","leaseId":"worker-17","provider":"claude","model":"sonnet","status":"running","task":"inspect methods"},"source":"agent-bridge"}
+```
+
+Evidra accepts only the owning lease, records accepted/rejected heartbeat events,
+and never grants the external worker controller or submission authority.
+
 Configure a routine with `--on-event external.github.push` (or the equivalent
 TUI routine flow). The event is hash-chained, wakes matching active routines,
 and remains visible in the event timeline for audit and replay.

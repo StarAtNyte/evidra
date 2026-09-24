@@ -14,7 +14,7 @@ import { approvalInbox } from "../dist/core/approvals.js";
 import { goalAlignment, pauseForGoalAlignment } from "../dist/core/goal-alignment.js";
 import { agentRoleContract, agentOrganization } from "../dist/core/agent-organization.js";
 import { agentRoleInterventions, evaluateAgentRoles } from "../dist/core/agent-evals.js";
-import { externalEventPayload, parseExternalEventPayload, validateExternalEventType } from "../dist/core/external-events.js";
+import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "../dist/core/external-events.js";
 import { createPortableBundle, PORTABLE_BUNDLE_TYPE, validatePortableBundle } from "../dist/core/portable-bundle.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../dist/core/submissions.js";
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaimRecords, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
@@ -3573,6 +3573,21 @@ test("external event idempotency keys suppress webhook retries durably", () => {
     assert.equal(reopened.appendExternalEvent("external.ci.completed", externalEventPayload({ run: "42" }, "ci"), "run-42").accepted, false);
     assert.equal(reopened.verifyEventChain().status, "valid");
     reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("authenticated external agent heartbeats preserve lease ownership", () => {
+  assert.deepEqual(parseExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "running" }).status, "running");
+  assert.throws(() => parseExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "unknown" }), /status/);
+  const root = mkdtempSync(join(tmpdir(), "evidra-external-heartbeat-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    assert.equal(store.recordExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "running", task: "inspect methods" }).accepted, true);
+    assert.equal(store.recordExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-b", provider: "bash", model: "external", status: "running" }).accepted, false);
+    assert.equal(store.recordExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "idle" }).accepted, true);
+    assert.equal(store.agentLanes().find((lane) => lane.role === "model researcher")?.status, "idle");
+    assert.ok(store.eventsByType("agent.external_heartbeat.rejected").length >= 1);
+    store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

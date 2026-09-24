@@ -27,3 +27,29 @@ export function parseExternalEventPayload(raw?: string): Record<string, unknown>
 export function externalEventPayload(payload: Record<string, unknown>, source = "cli"): Record<string, unknown> {
   return { source, receivedAt: new Date().toISOString(), payload };
 }
+
+export interface ExternalAgentHeartbeat {
+  role: string;
+  leaseId: string;
+  provider: string;
+  model: string;
+  status: "running" | "idle" | "blocked" | "failed";
+  task?: string | null;
+  budgetSeconds?: number | null;
+}
+
+/** Validate the narrow external-agent health contract before touching leases. */
+export function parseExternalAgentHeartbeat(payload: Record<string, unknown>): ExternalAgentHeartbeat {
+  const role = typeof payload.role === "string" ? payload.role.trim() : "";
+  const leaseId = typeof payload.leaseId === "string" ? payload.leaseId.trim() : "";
+  const provider = typeof payload.provider === "string" ? payload.provider.trim() : "";
+  const model = typeof payload.model === "string" ? payload.model.trim() : "";
+  const status = payload.status;
+  if (!role || role.length > 120) throw new Error("External agent heartbeat requires a role of 1–120 characters.");
+  if (!leaseId || leaseId.length > 200) throw new Error("External agent heartbeat requires a leaseId of 1–200 characters.");
+  if (!provider || provider.length > 120 || !model || model.length > 200) throw new Error("External agent heartbeat requires provider and model.");
+  if (!(typeof status === "string" && ["running", "idle", "blocked", "failed"].includes(status))) throw new Error("External agent heartbeat status must be running, idle, blocked, or failed.");
+  if (payload.task !== undefined && payload.task !== null && (typeof payload.task !== "string" || payload.task.length > 2_000)) throw new Error("External agent heartbeat task must be at most 2,000 characters.");
+  if (payload.budgetSeconds !== undefined && payload.budgetSeconds !== null && (typeof payload.budgetSeconds !== "number" || !Number.isFinite(payload.budgetSeconds) || payload.budgetSeconds <= 0)) throw new Error("External agent heartbeat budgetSeconds must be positive.");
+  return { role, leaseId, provider, model, status: status as ExternalAgentHeartbeat["status"], task: typeof payload.task === "string" ? payload.task : null, budgetSeconds: typeof payload.budgetSeconds === "number" ? payload.budgetSeconds : null };
+}

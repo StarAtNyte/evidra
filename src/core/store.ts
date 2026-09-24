@@ -1173,6 +1173,28 @@ export class ResearchStore {
     this.appendEvent(paused ? "agent.pause.requested" : "agent.pause.cleared", { role: normalized, reason: paused ? reason.slice(0, 500) : undefined });
   }
 
+  /** Accept a heartbeat from an authenticated external worker without allowing lease takeover. */
+  recordExternalAgentHeartbeat(input: { role: string; leaseId: string; provider: string; model: string; status: "running" | "idle" | "blocked" | "failed"; task?: string | null; budgetSeconds?: number | null }): { accepted: boolean; reason?: string } {
+    const existing = this.db.prepare("SELECT status, lease_id, heartbeat_at FROM agent_lanes WHERE role = ?").get(input.role) as { status: string; lease_id: string | null; heartbeat_at: string | null } | undefined;
+    if (existing?.status === "running" && existing.lease_id && existing.lease_id !== input.leaseId && existing.heartbeat_at && Date.now() - Date.parse(existing.heartbeat_at) <= 60_000) {
+      const reason = `lane is leased by ${existing.lease_id}`;
+      this.appendEvent("agent.external_heartbeat.rejected", { role: input.role, leaseId: input.leaseId, reason });
+      return { accepted: false, reason };
+    }
+    if (input.status === "running") {
+      const acquired = this.acquireAgentLane({ role: input.role, leaseId: input.leaseId, provider: input.provider, model: input.model, task: input.task, budgetSeconds: input.budgetSeconds });
+      if (!acquired.acquired) return { accepted: false, reason: acquired.reason };
+    } else {
+      if (existing?.status === "running" && existing.lease_id === input.leaseId) {
+        this.releaseAgentLane(input.role, input.leaseId, input.status, input.status === "failed" ? (input.task ?? "external worker reported failure") : undefined);
+      } else {
+        this.updateAgentLane({ role: input.role, status: input.status, provider: input.provider, model: input.model, task: input.task ?? null, error: input.status === "failed" ? (input.task ?? "external worker reported failure") : null, budgetSeconds: input.budgetSeconds });
+      }
+    }
+    this.appendEvent("agent.external_heartbeat.accepted", { role: input.role, leaseId: input.leaseId, provider: input.provider, model: input.model, status: input.status });
+    return { accepted: true };
+  }
+
   agentPause(role: string): { role: string; paused: boolean; reason: string | null; updatedAt: string } | undefined {
     const row = this.db.prepare("SELECT role, paused, reason, updated_at FROM agent_controls WHERE role = ?").get(role) as { role: string; paused: number; reason: string | null; updated_at: string } | undefined;
     return row ? { role: row.role, paused: row.paused === 1, reason: row.reason, updatedAt: row.updated_at } : undefined;
