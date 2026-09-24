@@ -985,6 +985,39 @@ test("custom role contract revisions can be inspected and rolled back", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("campaign run identity isolates queue usage and hard-stop cancellation", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-campaign-run-boundary-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    const goal = "same objective across independent runs";
+    const currentRun = "campaign-current";
+    const oldRun = "campaign-old";
+    store.saveCampaign({ goal, status: "running", startedAt: currentRun, runtime: { mode: "research" } });
+    const goalSetId = phaseGoalSetId(goal, "research");
+    store.savePhaseGoal({ id: "phase-current", phase: "validation", status: "active", payload: { id: "phase-current", phase: "validation", status: "active", goalSetId, objective: "validate the current run" } });
+    store.enqueueTask({ id: "old-completed", kind: "research.lane", priority: 1, goalId: "phase-current", payload: { campaignStartedAt: oldRun, role: "old lane" }, tokenBudget: 100, costBudgetUsd: 1 });
+    store.enqueueTask({ id: "current-running", kind: "research.lane", priority: 1, goalId: "phase-current", payload: { campaignStartedAt: currentRun, role: "current lane" }, tokenBudget: 100, costBudgetUsd: 1 });
+    store.enqueueTask({ id: "old-queued", kind: "research.lane", priority: 1, goalId: "phase-current", payload: { campaignStartedAt: oldRun, role: "old queued" } });
+    store.enqueueTask({ id: "current-queued", kind: "research.lane", priority: 1, goalId: "phase-current", payload: { campaignStartedAt: currentRun, role: "current queued" } });
+    const oldClaim = store.claimTask("old-completed", undefined, "old-worker");
+    assert.ok(oldClaim);
+    assert.equal(store.recordQueueUsage({ taskId: "old-completed", actorId: "old-worker", claimToken: oldClaim?.claimToken, inputTokens: 90, outputTokens: 10, costUsd: 0.9 }), true);
+    store.updateTask("old-completed", "completed", { summary: "old run complete" });
+    const currentClaim = store.claimTask("current-running", undefined, "current-worker");
+    assert.ok(currentClaim);
+    assert.equal(store.recordQueueUsage({ taskId: "current-running", actorId: "current-worker", claimToken: currentClaim?.claimToken, inputTokens: 9, outputTokens: 1, costUsd: 0.1 }), true);
+    const map = campaignOrganization(store);
+    assert.equal(map.totals.usage.inputTokens, 9);
+    assert.equal(map.totals.usage.outputTokens, 1);
+    assert.equal(map.accountability.foreignCampaignLive.includes("old-queued"), true);
+    assert.equal(map.accountability.foreignCampaignLive.includes("current-queued"), false);
+    assert.deepEqual(store.cancelQueuedTasksForCampaign(currentRun), ["current-queued"]);
+    assert.equal(store.queueTasks().find((task) => task.id === "old-queued")?.status, "queued");
+    assert.equal(store.queueTasks().find((task) => task.id === "current-queued")?.status, "cancelled");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("agent reviews learn from durable lane evidence without claiming metric attribution", () => {
   const reviews = evaluateAgentRoles([
     { payload: { laneReports: [{ role: "validation scientist", status: "completed", confidence: 0.9, verifiedEvidenceIds: ["run-1", "source-1"], playbookChecks: [{ step: "metric", status: "pass" }, { step: "replication", status: "blocked" }] }] }, quality: { overall: "PASS" } },

@@ -652,7 +652,7 @@ function openReviewTicket(options: ResearchLanesOptions, role: string, objective
     priority: 8,
     goalId: options.goalId ?? null,
     parentTaskId: options.parentTaskId ?? null,
-    payload: { role, objective, ownerId },
+    payload: { role, objective, ownerId, ...(options.campaignStartedAt ? { campaignStartedAt: options.campaignStartedAt } : {}) },
   });
   const claimed = ticketStore.claimTask(id, ["research.review"], ownerId);
   ticketStore.close();
@@ -888,7 +888,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
   try {
     const ticketStore = new ResearchStore(options.storePath);
     try {
-      ticketStore.enqueueTask({ id: laneTaskId, kind: "research.lane", priority: 6, goalId: options.goalId ?? null, parentTaskId: options.parentTaskId ?? null, payload: { role, objective, leaseId, provider: laneRoute.provider, model: laneRoute.model } });
+      ticketStore.enqueueTask({ id: laneTaskId, kind: "research.lane", priority: 6, goalId: options.goalId ?? null, parentTaskId: options.parentTaskId ?? null, payload: { role, objective, leaseId, provider: laneRoute.provider, model: laneRoute.model, ...(options.campaignStartedAt ? { campaignStartedAt: options.campaignStartedAt } : {}) } });
       ticket = ticketStore.claimTask(laneTaskId, ["research.lane"], leaseId);
     } finally {
       ticketStore.close();

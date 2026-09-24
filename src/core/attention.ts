@@ -151,6 +151,7 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
     if (organization.accountability.unassignedRunning.length) items.push({ id: "accountability:ownerless", severity: "warning", kind: "accountability", summary: `${organization.accountability.unassignedRunning.length} running task(s) have no owner`, next: "/organization" });
     if (organization.accountability.unscopedLive.length) items.push({ id: "accountability:scope", severity: "warning", kind: "accountability", summary: `${organization.accountability.unscopedLive.length} live task(s) have no phase goal`, next: "/organization" });
     if (organization.accountability.misalignedLive.length) items.push({ id: "accountability:misaligned", severity: "critical", kind: "accountability", summary: `${organization.accountability.misalignedLive.length} live task(s) reference a foreign or missing phase`, next: "/organization" });
+    if (organization.accountability.foreignCampaignLive.length) items.push({ id: "accountability:foreign-campaign", severity: "warning", kind: "accountability", summary: `${organization.accountability.foreignCampaignLive.length} live task(s) belong to another campaign run`, next: "/organization" });
     if (organization.accountability.unbudgetedLive.length) items.push({ id: "accountability:budget", severity: "warning", kind: "accountability", summary: `${organization.accountability.unbudgetedLive.length} live task(s) have no task-level budget`, next: "/organization" });
   }
   for (const stale of store.staleAgentDirectives().slice(0, 24)) {

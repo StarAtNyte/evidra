@@ -4154,7 +4154,7 @@ research
       store.saveClaim({ id: `claim_${observationId}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: observationId, status: "active", observation } });
       const cycleTaskId = `task_research_cycle_${cycle}_${randomUUID()}`;
       const cycleOwnerId = `controller-cycle-${randomUUID()}`;
-      store.enqueueTask({ id: cycleTaskId, kind: "research.cycle", priority: 10, goalId: phaseGoal?.id ?? null, payload: { cycle, objective: campaign.goal, ownerId: cycleOwnerId } });
+      store.enqueueTask({ id: cycleTaskId, kind: "research.cycle", priority: 10, goalId: phaseGoal?.id ?? null, payload: { cycle, objective: campaign.goal, ownerId: cycleOwnerId, campaignStartedAt: campaign.startedAt } });
       const cycleTicket = store.claimTask(cycleTaskId, ["research.cycle"], cycleOwnerId);
       if (!cycleTicket) {
         store.close();

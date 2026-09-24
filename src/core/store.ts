@@ -2875,7 +2875,10 @@ export class ResearchStore {
       const campaign = payload.campaign && typeof payload.campaign === "object" && !Array.isArray(payload.campaign)
         ? payload.campaign as Record<string, unknown>
         : undefined;
-      if (campaign?.startedAt !== startedAt) continue;
+      const taskStartedAt = typeof payload.campaignStartedAt === "string"
+        ? payload.campaignStartedAt
+        : typeof campaign?.startedAt === "string" ? campaign.startedAt : undefined;
+      if (taskStartedAt !== startedAt) continue;
       const cancellation = { reason: reason.trim().slice(0, 240) || "campaign budget exhausted", cancelledAt: now };
       const nextPayload = { ...payload, cancellation };
       const result = this.db.prepare("UPDATE work_queue SET status = 'cancelled', payload_json = ?, claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'queued'").run(safeJson(nextPayload), now, row.id);

@@ -55,6 +55,7 @@ export type CampaignOrganization = {
     unscopedLive: string[];
     misalignedLive: string[];
     unbudgetedLive: string[];
+    foreignCampaignLive: string[];
   };
 };
 
@@ -98,22 +99,38 @@ function usageAndBudget(store: ResearchStore, tasks: ReturnType<ResearchStore["q
  * This is a projection only: it never changes scheduling, permissions, or gates.
  */
 export function campaignOrganization(store: ResearchStore): CampaignOrganization {
-  const campaign = store.campaign() as { goal?: unknown; status?: unknown; runtime?: { mode?: unknown } } | undefined;
+  const campaign = store.campaign() as { goal?: unknown; status?: unknown; startedAt?: unknown; runtime?: { mode?: unknown } } | undefined;
   const tasks = store.queueTasks();
   const goals = store.phaseGoals();
   const mode = campaignMode(store);
   const campaignGoal = text(campaign?.goal);
+  const campaignStartedAt = text(campaign?.startedAt);
   const activeGoalSetId = campaignGoal ? phaseGoalSetId(campaignGoal, mode) : null;
   const belongsToCampaign = (entry: { payload: unknown }): boolean => {
     if (activeGoalSetId === null) return true;
     const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { goalSetId?: unknown } : {};
     return typeof payload.goalSetId !== "string" || payload.goalSetId === activeGoalSetId;
   };
+  const taskCampaignStartedAt = (task: { payload: unknown }): string | null => {
+    const payload = task.payload && typeof task.payload === "object" && !Array.isArray(task.payload) ? task.payload as Record<string, unknown> : {};
+    const nested = payload.campaign && typeof payload.campaign === "object" && !Array.isArray(payload.campaign) ? payload.campaign as Record<string, unknown> : {};
+    return text(payload.campaignStartedAt) ?? text(nested.startedAt);
+  };
+  // A goal can be intentionally resumed, but a fresh campaign with the same
+  // objective must not inherit the previous run's queue usage or budget.
+  // Tasks created before campaign identity was introduced remain visible as
+  // legacy work; new tasks are strictly scoped by their run identity.
+  const taskBelongsToCampaign = (task: { payload: unknown }): boolean => {
+    if (!campaignStartedAt) return true;
+    const taskStartedAt = taskCampaignStartedAt(task);
+    return taskStartedAt === null || taskStartedAt === campaignStartedAt;
+  };
+  const campaignTasks = tasks.filter(taskBelongsToCampaign);
   const campaignGoals = goals.filter(belongsToCampaign);
   const phaseById = new Map(campaignGoals.map((goal) => [goal.id, goal]));
   const phaseRows = campaignGoals.slice(0, 24).map((entry) => {
     const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as Record<string, unknown> : {};
-    const phaseTasks = tasks.filter((task) => task.goalId === entry.id);
+    const phaseTasks = campaignTasks.filter((task) => task.goalId === entry.id);
     const phaseUsage = usageAndBudget(store, phaseTasks);
     return {
       id: entry.id,
@@ -146,7 +163,7 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
     return (text(payload.status) ?? entry.status) === "blocked";
   }) ? "blocked" : campaignGoals.length > 0 && completedPhases === campaignGoals.length ? "met" : campaignGoals.length ? "active" : "pending";
   const organization = agentOrganization(store).slice(0, 32).map((role) => {
-    const activeQueue = tasks.filter((task) => task.status === "running" || task.status === "assigned")
+    const activeQueue = campaignTasks.filter((task) => task.status === "running" || task.status === "assigned")
       .filter((task) => task.assigneeId === role.role || task.ownerId === role.role || taskRole(task) === role.role).length;
     return {
       ...role,
@@ -157,8 +174,13 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
   });
   // Keep the phase lookup live in this projection so malformed/foreign goal IDs
   // remain visible as unassigned work instead of being silently presented as aligned.
-  const alignedTasks = tasks.filter((task) => Boolean(task.goalId) && phaseById.has(task.goalId!));
-  const liveTasks = tasks.filter((task) => task.status === "queued" || task.status === "running");
+  const alignedTasks = campaignTasks.filter((task) => Boolean(task.goalId) && phaseById.has(task.goalId!));
+  const liveTasks = campaignTasks.filter((task) => task.status === "queued" || task.status === "running");
+  const foreignCampaignLive = tasks.filter((task) => {
+    if (!campaignStartedAt || !["queued", "running"].includes(task.status)) return false;
+    const taskStartedAt = taskCampaignStartedAt(task);
+    return taskStartedAt !== null && taskStartedAt !== campaignStartedAt;
+  });
   const activeQueue = alignedTasks.filter((task) => task.status === "running" || task.status === "assigned").length;
   const queuedQueue = alignedTasks.filter((task) => task.status === "queued").length;
   const blockedQueue = alignedTasks.filter((task) => task.status === "blocked" || task.approvalStatus === "pending").length;
@@ -180,12 +202,13 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
     },
     phases: phaseRows,
     roles: organization,
-    totals: { phases: phaseRows.length, roles: organization.length, queue: alignedTasks.length, unscopedQueue: tasks.filter((task) => !task.goalId).length, queuedQueue, activeQueue, blockedQueue, completedQueue, failedQueue, usage: campaignUsage.usage, budget: campaignUsage.budget },
+    totals: { phases: phaseRows.length, roles: organization.length, queue: alignedTasks.length, unscopedQueue: campaignTasks.filter((task) => !task.goalId).length, queuedQueue, activeQueue, blockedQueue, completedQueue, failedQueue, usage: campaignUsage.usage, budget: campaignUsage.budget },
     accountability: {
       unassignedRunning: liveTasks.filter((task) => task.status === "running" && !task.assigneeId && !task.ownerId && !taskRole(task)).map((task) => task.id).slice(0, 64),
       unscopedLive: liveTasks.filter((task) => !task.goalId).map((task) => task.id).slice(0, 64),
       misalignedLive: liveTasks.filter((task) => Boolean(task.goalId) && !phaseById.has(task.goalId!)).map((task) => task.id).slice(0, 64),
       unbudgetedLive: liveTasks.filter((task) => task.tokenBudget === null && task.costBudgetUsd === null).map((task) => task.id).slice(0, 64),
+      foreignCampaignLive: foreignCampaignLive.map((task) => task.id).slice(0, 64),
     },
   };
 }
@@ -202,7 +225,7 @@ export function formatCampaignOrganization(map: CampaignOrganization): string {
     `  progress: ${map.progress.completedPhases}/${map.progress.totalPhases} phases · ${(map.progress.ratio * 100).toFixed(0)}% · ${map.progress.status}${map.progress.activePhase ? ` · active ${map.progress.activePhase}` : ""}`,
     `  work: ${map.totals.activeQueue} active · ${map.totals.queuedQueue} queued · ${map.totals.completedQueue} done · ${map.totals.queue} aligned${map.totals.unscopedQueue ? ` · ${map.totals.unscopedQueue} unscoped` : ""}${map.totals.blockedQueue ? ` · ${map.totals.blockedQueue} blocked` : ""}${map.totals.failedQueue ? ` · ${map.totals.failedQueue} failed` : ""}`,
     `  usage: ${map.totals.usage.inputTokens + map.totals.usage.outputTokens} tokens · $${map.totals.usage.costUsd.toFixed(4)}${map.totals.budget.tokenUtilization !== null ? ` · token budget ${(map.totals.budget.tokenUtilization * 100).toFixed(0)}%` : ""}${map.totals.budget.costUtilization !== null ? ` · cost budget ${(map.totals.budget.costUtilization * 100).toFixed(0)}%` : ""}`,
-    `  accountability: ${map.accountability.unassignedRunning.length} ownerless running · ${map.accountability.unscopedLive.length} unscoped · ${map.accountability.misalignedLive.length} mis-scoped · ${map.accountability.unbudgetedLive.length} unbudgeted`,
+    `  accountability: ${map.accountability.unassignedRunning.length} ownerless running · ${map.accountability.unscopedLive.length} unscoped · ${map.accountability.misalignedLive.length} mis-scoped · ${map.accountability.unbudgetedLive.length} unbudgeted${map.accountability.foreignCampaignLive.length ? ` · ${map.accountability.foreignCampaignLive.length} foreign campaign` : ""}`,
     "",
     "Phase ownership",
     ...(phaseLines.length ? phaseLines : ["  No phase goals recorded."]),
