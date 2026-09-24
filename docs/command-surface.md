@@ -76,6 +76,7 @@ duplicate campaigns:
 ```text
 evidra routine create --name nightly-literature --goal "find and test robust improvements" --every 1d --budget 4h
 evidra routine list --json
+evidra routine history <routine-id>
 evidra routine run <routine-id>
 evidra routine daemon           Poll and execute due routines continuously
 evidra routine pause <routine-id>

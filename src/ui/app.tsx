@@ -208,7 +208,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/loop": [["/loop status", "Show loop state"], ["/loop once", "Run one research cycle"], ["/loop start", "Start autonomous loop"], ["/loop pause", "Pause loop"], ["/loop stop", "Stop loop"]],
   "/steer": [["/steer ", "Guide the active campaign at the next safe boundary"]],
   "/scheduler": [["/scheduler start", "Start scheduling"], ["/scheduler pause", "Pause scheduling"], ["/scheduler drain", "Finish active work only"]],
-  "/routine": [["/routine list", "Show recurring research routines"], ["/routine daemon", "Run due routines continuously"], ["/routine recover", "Recover stale routine leases"], ["/routine run ", "Run a due routine"], ["/routine pause ", "Pause a routine"], ["/routine resume ", "Resume a routine"]],
+  "/routine": [["/routine list", "Show recurring research routines"], ["/routine daemon", "Run due routines continuously"], ["/routine recover", "Recover stale routine leases"], ["/routine history ", "Show routine run history"], ["/routine run ", "Run a due routine"], ["/routine pause ", "Pause a routine"], ["/routine resume ", "Resume a routine"]],
   "/thinking": REASONING_LEVELS.map((level) => [`/thinking ${level}`, `Thinking effort: ${level}`] as const),
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
@@ -2756,6 +2756,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const recovered = store.recoverStaleRoutines();
         store.close();
         append("assistant", recovered.length ? `Recovered stale routine leases: ${recovered.join(", ")}` : "No stale routine leases found.");
+        return;
+      }
+      if (action === "history" && id) {
+        const runs = store.routineRuns(id);
+        store.close();
+        append("assistant", runs.length
+          ? `Routine history\n${runs.map((run) => `  ${run.status} · ${run.id}\n    started ${run.startedAt}${run.finishedAt ? ` · finished ${run.finishedAt}` : ""}${run.exitCode !== null ? ` · exit ${run.exitCode}` : ""}${run.error ? `\n    ${run.error}` : ""}`).join("\n")}`
+          : `No runs recorded for routine ${id}.`);
         return;
       }
       if ((action === "pause" || action === "resume") && id) {

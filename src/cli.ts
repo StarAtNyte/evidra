@@ -1952,6 +1952,13 @@ routine.command("list").option("--json", "emit machine-readable routines").actio
   else console.log(routines.length ? routines.map((entry) => `${entry.status} ${entry.id} · ${entry.name} · ${entry.mode} · next ${entry.nextRunAt} · every ${entry.intervalSeconds}s · runs ${entry.runCount}${entry.lastResult ? ` · last ${entry.lastResult}` : ""}${entry.lastError ? ` · error ${entry.lastError}` : ""}`).join("\n") : "No routines configured.");
   store.close();
 });
+routine.command("history <id>").option("--json", "emit machine-readable run history").description("Show durable attempts for a routine").action((id: string, options: { json?: boolean }) => {
+  const store = new ResearchStore(statePath);
+  const runs = store.routineRuns(id);
+  if (options.json) console.log(JSON.stringify(runs, null, 2));
+  else console.log(runs.length ? runs.map((run) => `${run.status} ${run.id} · started ${run.startedAt}${run.finishedAt ? ` · finished ${run.finishedAt}` : ""}${run.exitCode !== null ? ` · exit ${run.exitCode}` : ""}${run.error ? ` · ${run.error}` : ""}`).join("\n") : `No runs recorded for routine '${id}'.`);
+  store.close();
+});
 routine.command("create")
   .requiredOption("--name <name>", "routine display name")
   .requiredOption("--goal <goal>", "research or challenge goal")
@@ -2007,12 +2014,12 @@ routine.command("run <id>").description("Run one due routine and persist its nex
   try {
     const result = await runProcess([process.execPath, script, ...args], root, Math.max(7 * 24 * 60 * 60_000, entry.budgetMinutes * 60_000 + 10 * 60_000), streamProcessOutput);
     const finishStore = new ResearchStore(statePath);
-    finishStore.finishRoutine(id, ownerId, result.exitCode === 0 ? "completed" : "failed", result.exitCode === 0 ? undefined : `campaign exited with code ${result.exitCode}: ${result.stderr.trim().slice(-1000)}`);
+    finishStore.finishRoutine(id, ownerId, result.exitCode === 0 ? "completed" : "failed", result.exitCode === 0 ? undefined : `campaign exited with code ${result.exitCode}: ${result.stderr.trim().slice(-1000)}`, result.exitCode);
     finishStore.close();
     if (result.exitCode !== 0) process.exitCode = result.exitCode;
   } catch (error) {
     const finishStore = new ResearchStore(statePath);
-    finishStore.finishRoutine(id, ownerId, "failed", error instanceof Error ? error.message : String(error));
+    finishStore.finishRoutine(id, ownerId, "failed", error instanceof Error ? error.message : String(error), 1);
     finishStore.close();
     throw error;
   }

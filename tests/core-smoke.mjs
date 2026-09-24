@@ -3207,11 +3207,13 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     const finished = store.finishRoutine("routine-demo", "runner-a", "completed");
     assert.equal(finished.runCount, 1);
     assert.equal(finished.lastResult, "completed");
+    assert.deepEqual(store.routineRuns("routine-demo").map((run) => [run.status, run.exitCode]), [["completed", 0]]);
     assert.equal(store.claimRoutine("routine-demo", "runner-c"), undefined);
     const stale = store.createRoutine({ ...routine, id: "routine-stale" });
     assert.equal(store.claimRoutine(stale.id, "runner-stale", -1)?.status, "running");
     assert.deepEqual(store.recoverStaleRoutines(), [stale.id]);
     assert.equal(store.routine(stale.id)?.status, "active");
+    assert.equal(store.routineRuns(stale.id)[0]?.status, "abandoned");
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
