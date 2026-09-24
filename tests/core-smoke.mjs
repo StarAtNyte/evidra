@@ -3825,6 +3825,25 @@ test("remote worker boundaries enforce deadlines without a controller poll", asy
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue-wide pause blocks new claims and survives store reopen", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-control-"));
+  try {
+    const path = join(root, ".sota", "database.sqlite");
+    const first = new ResearchStore(path);
+    first.enqueueTask({ id: "paused-task", kind: "research.lane", priority: 1, payload: {} });
+    assert.equal(first.setQueuePaused(true, "maintenance window").paused, true);
+    assert.deepEqual(first.queueControl().reason, "maintenance window");
+    assert.equal(first.claimNextTask(undefined, "worker-a"), undefined);
+    first.close();
+    const reopened = new ResearchStore(path);
+    assert.equal(reopened.queueControl().paused, true);
+    assert.equal(reopened.claimTask("paused-task", undefined, "worker-a"), undefined);
+    assert.equal(reopened.setQueuePaused(false).paused, false);
+    assert.equal(reopened.claimNextTask(undefined, "worker-a")?.id, "paused-task");
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue status JSON exposes exact budget and usage state", async () => {
   const { spawn } = await import("node:child_process");
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-status-json-"));
@@ -7928,6 +7947,15 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(unauthorizedHeartbeat.status, 401);
     const heartbeatResponse = await post("/events", { type: "external.agent.heartbeat", payload: { role: "remote lane", leaseId: "worker-a", provider: "codex", model: "gpt-test", status: "idle", capabilities: ["python", "gpu.cuda"] } }, token, "worker-a", "worker-secret");
     assert.equal(heartbeatResponse.status, 202);
+    const pauseStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    pauseStore.setQueuePaused(true, "operator maintenance");
+    pauseStore.close();
+    const pausedClaim = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"] }, token, "worker-a", "worker-secret");
+    assert.equal(pausedClaim.status, 409);
+    assert.equal((await pausedClaim.json()).reason, "operator maintenance");
+    const resumeStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    resumeStore.setQueuePaused(false);
+    resumeStore.close();
     assert.equal((await post("/tasks/claim", { workerId: "worker-a" }, "wrong-token")).status, 401);
     assert.equal((await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"] })).status, 401);
     const claimed = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"] }, token, "worker-a", "worker-secret");

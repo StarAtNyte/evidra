@@ -2228,17 +2228,18 @@ const queue = new Command("queue").description("Inspect the durable research wor
 queue.command("status").option("--json", "emit machine-readable queue state").action((options: { json?: boolean }) => {
   const store = new ResearchStore(statePath);
   const tasks = store.queueTasks();
+  const queueControl = store.queueControl();
   const rows = tasks.map((task) => {
     const { claimToken: _claimToken, ...publicTask } = task;
     return { ...publicTask, effectivePriority: queueEffectivePriority(task), readiness: store.taskReadiness(task.id), usageState: store.queueUsageState(task.id), usageTotals: store.queueUsageTotals(task.id) };
   });
   const recoveries = store.eventsByType("queue.recovery_required", 24).map((event) => event.payload);
   if (options.json) {
-    console.log(JSON.stringify({ tasks: rows, recoveries }, null, 2));
+    console.log(JSON.stringify({ paused: queueControl.paused, pauseReason: queueControl.reason, tasks: rows, recoveries }, null, 2));
     store.close();
     return;
   }
-  console.log(rows.length ? rows.map((task) => {
+  console.log(`${queueControl.paused ? `Queue paused${queueControl.reason ? `: ${queueControl.reason}` : ""}\n` : ""}${rows.length ? rows.map((task) => {
     const readiness = task.readiness;
     const blocked = readiness && !readiness.ready ? ` · blocked ${[
       ...readiness.missing.map((id) => `missing:${id}`),
@@ -2251,7 +2252,7 @@ queue.command("status").option("--json", "emit machine-readable queue state").ac
     const budget = task.tokenBudget === null && task.costBudgetUsd === null ? "" : (() => { const usage = store.queueUsageState(task.id); const token = task.tokenBudget === null ? "" : `tokens ${usage?.usedTokens ?? 0}/${task.tokenBudget}`; const cost = task.costBudgetUsd === null ? "" : `cost $${(usage?.usedCostUsd ?? 0).toFixed(6)}/$${task.costBudgetUsd.toFixed(6)}`; return ` · budget ${[token, cost].filter(Boolean).join(" · ")}${usage?.exhausted ? " exhausted" : ""}`; })();
     const deadline = task.deadlineAt ? ` · deadline ${task.deadlineAt}${Date.parse(task.deadlineAt) <= Date.now() ? " expired" : ""}` : "";
     return `${task.status} ${task.id} · ${task.kind} · priority ${task.priority}${aging} · attempts ${task.attempts}${task.assigneeId ? ` · assigned ${task.assigneeId}` : ""}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.requiredCapabilities.length ? ` · requires ${task.requiredCapabilities.join(",")}` : ""}${budget}${deadline}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${brokenLineage}${blocked}`;
-  }).join("\n") : "Research queue is empty.");
+  }).join("\n") : "Research queue is empty."}`);
   if (recoveries.length) console.log(`\nRecovery actions\n${recoveries.slice().reverse().slice(0, 8).map((entry) => { const value = entry && typeof entry === "object" ? entry as Record<string, unknown> : {}; return `  ${String(value.taskId ?? "task")} · ${String(value.failureClass ?? "unknown")} · ${String(value.route ?? "change_route")} · ${String(value.action ?? "inspect failure")}`; }).join("\n")}`);
   store.close();
 });
@@ -2268,6 +2269,18 @@ queue.command("cancel <id>").option("--reason <reason>", "why the work is being 
   store.close();
   if (!cancelled) throw new Error(`Task '${id}' is missing or already terminal; only queued/running work can be cancelled.`);
   console.log(`Cancelled ${id}.`);
+});
+queue.command("pause").option("--reason <reason>", "why new claims should stop", "operator paused queue").description("Pause new queue claims without cancelling live work").action((options: { reason: string }) => {
+  const store = new ResearchStore(statePath);
+  const control = store.setQueuePaused(true, options.reason);
+  store.close();
+  console.log(`Queue paused${control.reason ? `: ${control.reason}` : "."}`);
+});
+queue.command("resume").description("Resume new queue claims").action(() => {
+  const store = new ResearchStore(statePath);
+  store.setQueuePaused(false);
+  store.close();
+  console.log("Queue resumed.");
 });
 queue.command("budget <id> <tokens>").description("Set a queued/failed task token ceiling; use 0 or unlimited to clear it").action((id: string, tokens: string) => {
   const value = /^(?:0|unlimited)$/i.test(tokens) ? null : Number(tokens);
@@ -2507,6 +2520,13 @@ event.command("serve")
             const permitsKind = (kind: string): boolean => !workerAllowedKinds || workerAllowedKinds.includes(kind);
             const store = new ResearchStore(statePath);
             if (taskPath === "/tasks/claim") {
+              const queueControl = store.queueControl();
+              if (queueControl.paused) {
+                store.close();
+                response.writeHead(409, headers);
+                response.end(JSON.stringify({ error: "queue paused", reason: queueControl.reason }));
+                return;
+              }
               const kinds = parsed.kinds === undefined ? undefined : Array.isArray(parsed.kinds) && parsed.kinds.length <= 16 && parsed.kinds.every((kind) => typeof kind === "string" && kind.length <= 120) ? parsed.kinds as string[] : undefined;
               if (parsed.kinds !== undefined && !kinds) throw new Error("kinds must be an array of at most 16 strings.");
               const capabilities = parsed.capabilities === undefined ? undefined : Array.isArray(parsed.capabilities) && parsed.capabilities.length <= 32 && parsed.capabilities.every((capability) => typeof capability === "string" && /^[a-zA-Z0-9_.:-]{1,120}$/.test(capability.trim())) ? [...new Set((parsed.capabilities as string[]).map((capability) => capability.trim().toLowerCase()))] : undefined;

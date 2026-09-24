@@ -545,6 +545,12 @@ export class ResearchStore {
         reason TEXT,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS queue_control (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        paused INTEGER NOT NULL DEFAULT 0,
+        reason TEXT,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS agent_sessions (
         role TEXT NOT NULL,
         scope_key TEXT NOT NULL,
@@ -1343,6 +1349,21 @@ export class ResearchStore {
     this.appendEvent(paused ? "agent.pause.requested" : "agent.pause.cleared", { role: normalized, reason: paused ? reason.slice(0, 500) : undefined });
   }
 
+  queueControl(): { paused: boolean; reason: string | null; updatedAt: string } {
+    const row = this.db.prepare("SELECT paused, reason, updated_at FROM queue_control WHERE id = 1").get() as { paused: number; reason: string | null; updated_at: string } | undefined;
+    return row
+      ? { paused: row.paused === 1, reason: row.reason, updatedAt: row.updated_at }
+      : { paused: false, reason: null, updatedAt: new Date(0).toISOString() };
+  }
+
+  setQueuePaused(paused: boolean, reason = "operator request"): { paused: boolean; reason: string | null; updatedAt: string } {
+    const updatedAt = new Date().toISOString();
+    const normalizedReason = paused ? reason.trim().slice(0, 500) || "operator request" : null;
+    this.db.prepare("INSERT INTO queue_control (id, paused, reason, updated_at) VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET paused = excluded.paused, reason = excluded.reason, updated_at = excluded.updated_at").run(paused ? 1 : 0, normalizedReason, updatedAt);
+    this.appendEvent(paused ? "queue.paused" : "queue.resumed", { reason: normalizedReason });
+    return { paused, reason: normalizedReason, updatedAt };
+  }
+
   /** Permanently block a role until an explicit revive/restart action. */
   setAgentTermination(role: string, terminated: boolean, reason = "operator request"): void {
     const normalized = role.trim();
@@ -1861,6 +1882,7 @@ export class ResearchStore {
   }
 
   claimNextTask(kinds?: string[], ownerId?: string, workerCapabilities?: string[]): QueuedTask | undefined {
+    if (this.queueControl().paused) return undefined;
     this.expireDeadlineTasks();
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
@@ -1891,6 +1913,7 @@ export class ResearchStore {
 
   /** Atomically claim one known task, preserving queue ownership across controllers. */
   claimTask(id: string, kinds?: string[], ownerId?: string, workerCapabilities?: string[]): QueuedTask | undefined {
+    if (this.queueControl().paused) return undefined;
     this.expireDeadlineTasks();
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
