@@ -926,7 +926,7 @@ test("campaign organization maps goals, reporting lines, and aligned queue work"
     store.enqueueTask({ id: "unscoped-task", kind: "research.cycle", priority: 1, payload: {} });
     const validationClaim = store.claimTask("validation-task", undefined, "worker-validation-1");
     assert.ok(validationClaim);
-    assert.equal(store.recordQueueUsage({ taskId: "validation-task", actorId: "worker-validation-1", claimToken: validationClaim?.claimToken, inputTokens: 10, outputTokens: 5, costUsd: 0.02 }), true);
+    assert.equal(store.recordQueueUsage({ taskId: "validation-task", actorId: "worker-validation-1", claimToken: validationClaim?.claimToken, inputTokens: 900, outputTokens: 5, costUsd: 0.02 }), true);
     const map = campaignOrganization(store);
     assert.equal(map.goal, "improve the measured outcome");
     assert.equal(map.mode, "challenge");
@@ -939,11 +939,12 @@ test("campaign organization maps goals, reporting lines, and aligned queue work"
     assert.equal(map.totals.activeQueue, 1);
     assert.equal(map.totals.queuedQueue, 0);
     assert.equal(map.totals.completedQueue, 0);
-    assert.equal(map.totals.usage.inputTokens, 10);
+    assert.equal(map.totals.usage.inputTokens, 900);
     assert.equal(map.totals.usage.outputTokens, 5);
     assert.equal(map.totals.usage.costUsd, 0.02);
     assert.equal(map.totals.budget.tokenBudget, 1_000);
     assert.equal(map.totals.budget.costBudgetUsd, 0.5);
+    assert.equal(operatorAttention(store).items.find((item) => item.id === "accountability:budget-utilization")?.severity, "warning");
     assert.equal(map.totals.queue, 1);
     assert.equal(map.totals.unscopedQueue, 1);
     assert.equal(map.roles.find((role) => role.role === "validation scientist")?.activeQueue, 1);

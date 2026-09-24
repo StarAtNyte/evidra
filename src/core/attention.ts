@@ -134,6 +134,12 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
   if (alignment.status === "blocked") items.push({ id: "goal-alignment", severity: "critical", kind: "goal-alignment", summary: "Campaign alignment is blocked; new autonomous work must pause", next: "/status" });
   const organization = campaignOrganization(store);
   if (organization.status === "running") {
+    const budget = organization.totals.budget;
+    const tokenUtilization = budget.tokenUtilization ?? 0;
+    const costUtilization = budget.costUtilization ?? 0;
+    const highestUtilization = Math.max(tokenUtilization, costUtilization);
+    if (highestUtilization >= 1) items.push({ id: "accountability:budget-utilization", severity: "critical", kind: "budget", summary: `Campaign work budget is exhausted (${Math.round(highestUtilization * 100)}% utilization); stop allocation or revise the declared budget`, next: "/organization" });
+    else if (highestUtilization >= 0.8) items.push({ id: "accountability:budget-utilization", severity: "warning", kind: "budget", summary: `Campaign work budget is ${Math.round(highestUtilization * 100)}% utilized; review remaining work before allocating more`, next: "/organization" });
     if (organization.accountability.unassignedRunning.length) items.push({ id: "accountability:ownerless", severity: "warning", kind: "accountability", summary: `${organization.accountability.unassignedRunning.length} running task(s) have no owner`, next: "/organization" });
     if (organization.accountability.unscopedLive.length) items.push({ id: "accountability:scope", severity: "warning", kind: "accountability", summary: `${organization.accountability.unscopedLive.length} live task(s) have no phase goal`, next: "/organization" });
     if (organization.accountability.misalignedLive.length) items.push({ id: "accountability:misaligned", severity: "critical", kind: "accountability", summary: `${organization.accountability.misalignedLive.length} live task(s) reference a foreign or missing phase`, next: "/organization" });
