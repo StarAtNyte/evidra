@@ -227,6 +227,15 @@ export interface ResearchLanesOptions {
   onUsage?: (usage: AgentResult["usage"], provider: string, model: string, role: string) => void;
 }
 
+function roleTokenBudgetExhausted(options: ResearchLanesOptions, role: string): boolean {
+  const budget = options.roleTokenBudgets?.[role];
+  if (!options.campaignStartedAt || typeof budget !== "number" || budget <= 0) return false;
+  const store = new ResearchStore(options.storePath);
+  const used = campaignRoleAgentTokens(store.eventsByType("research.agent.usage"), options.campaignStartedAt, role);
+  store.close();
+  return used >= budget;
+}
+
 export interface ResearchLaneRoute {
   role: ResearchLaneRole;
   provider: AgentProvider;
@@ -648,6 +657,15 @@ export async function runResearchCritic(
   store.close();
   reviewTicket = openReviewTicket(options, "critic", objective);
   options.onProgress?.("Research critic · checking assumptions and disagreement...");
+  if (roleTokenBudgetExhausted(options, "critic")) {
+    const message = "Critic role token budget exhausted; independent review is required before promotion.";
+    const exhausted = new ResearchStore(options.storePath);
+    exhausted.appendEvent("research.role_budget.exhausted", { role: "critic", campaignStartedAt: options.campaignStartedAt, budgetTokens: options.roleTokenBudgets?.critic, action: "withhold-review" });
+    exhausted.updateAgentLane({ role: "critic", status: "idle", provider: options.provider, model: options.model, task: null, error: message });
+    exhausted.close();
+    reviewTicket.finish("completed", { verdict: "revise", reason: "role-token-budget" });
+    return { verdict: "revise", summary: message, objections: [message], requiredChecks: ["increase the critic role budget or run an independent review"], evidence: [], independentReplication: true, confidence: 0, status: "completed" };
+  }
   const prompt = `${objective}\n\nYou are Evidra's independent critic. Review the proposed decision and independent lane reports below. Look for unsupported claims, leakage, invalid comparisons, missing controls, overconfident conclusions, and cheaper falsification tests. Do not rewrite the decision or invent measurements. Return ONLY JSON: {"verdict":"proceed|revise|reject","summary":"...","objections":["..."],"requiredChecks":["..."],"evidence":["copy an exact evidence anchor from the lane reports or durable observation context"],"independentReplication":true,"confidence":0.0}. A proceed verdict is valid only when evidence contains at least one exact anchor from the supplied reports and requiredChecks is empty.\n\nDecision:\n${JSON.stringify(decision)}\n\nLane reports:\n${JSON.stringify(laneReports)}`;
   try {
     let provider = options.provider;
@@ -743,6 +761,15 @@ export async function runResearchSemanticAuditor(
   store.close();
   reviewTicket = openReviewTicket(options, role, objective);
   options.onProgress?.("Research auditor · independently checking evidence and method...");
+  if (roleTokenBudgetExhausted(options, role)) {
+    const message = "Semantic auditor role token budget exhausted; independent audit is required before promotion.";
+    const exhausted = new ResearchStore(options.storePath);
+    exhausted.appendEvent("research.role_budget.exhausted", { role, campaignStartedAt: options.campaignStartedAt, budgetTokens: options.roleTokenBudgets?.[role], action: "withhold-audit" });
+    exhausted.updateAgentLane({ role, status: "idle", provider: options.provider, model: options.model, task: null, error: message });
+    exhausted.close();
+    reviewTicket.finish("completed", { verdict: "revise", reason: "role-token-budget" });
+    return { verdict: "revise", summary: message, findings: [message], requiredChecks: ["increase the semantic auditor role budget or run an independent audit"], evidence: [], criteria: [], confidence: 0, status: "completed" };
+  }
   try {
     const directEvidence: ResearchToolResult[] = [];
     if (options.executeTool) {
