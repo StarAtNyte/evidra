@@ -2278,11 +2278,17 @@ queue.command("activity <id>").option("--limit <count>", "number of task updates
   store.close();
   console.log(activity.length ? activity.map((entry) => `${entry.createdAt}  ${entry.kind.padEnd(9)} ${entry.actorId}\n  ${entry.message}`).join("\n") : `No activity recorded for ${id}.`);
 });
-queue.command("usage [id]").option("--limit <count>", "number of usage records", "128").action((id: string | undefined, options: { limit: string }) => {
+queue.command("usage [id]").option("--limit <count>", "number of usage records", "128").option("--json", "emit machine-readable usage state").action((id: string | undefined, options: { limit: string; json?: boolean }) => {
   const store = new ResearchStore(statePath);
   const limit = Math.max(1, Math.min(512, Number.parseInt(options.limit, 10) || 128));
   const usage = store.queueUsage(id, limit);
-  const totals = id ? store.queueUsageTotals(id) : undefined;
+  const totals = store.queueUsageTotals(id);
+  const usageState = id ? store.queueUsageState(id) : undefined;
+  if (options.json) {
+    console.log(JSON.stringify({ taskId: id ?? null, records: usage, totals, usageState: usageState ?? null }, null, 2));
+    store.close();
+    return;
+  }
   store.close();
   const inputTokens = totals?.inputTokens ?? usage.reduce((sum, entry) => sum + entry.inputTokens, 0);
   const outputTokens = totals?.outputTokens ?? usage.reduce((sum, entry) => sum + entry.outputTokens, 0);

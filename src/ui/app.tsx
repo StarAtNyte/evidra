@@ -4114,7 +4114,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", activity.length ? activity.map((entry) => `${entry.createdAt}  ${entry.kind.padEnd(9)} ${entry.actorId}\n  ${entry.message}`).join("\n") : `No activity recorded for ${activityMatch[1]}.`);
       } else if (usageMatch) {
         const usage = store.queueUsage(usageMatch[1], 128);
-        const totals = usageMatch[1] ? store.queueUsageTotals(usageMatch[1]) : undefined;
+        const totals = store.queueUsageTotals(usageMatch[1]);
         const inputTokens = totals?.inputTokens ?? usage.reduce((sum, entry) => sum + entry.inputTokens, 0);
         const outputTokens = totals?.outputTokens ?? usage.reduce((sum, entry) => sum + entry.outputTokens, 0);
         const costUsd = totals?.costUsd ?? usage.reduce((sum, entry) => sum + (entry.costUsd ?? 0), 0);

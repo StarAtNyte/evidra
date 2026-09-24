@@ -3636,6 +3636,7 @@ test("task token budgets use the complete usage ledger beyond display history li
     for (let index = 0; index < 600; index += 1) store.recordQueueUsage({ taskId: "long-running", actorId: "worker-a", inputTokens: 1, outputTokens: 1 });
     assert.equal(store.queueUsage("long-running", 512).length, 512);
     assert.deepEqual(store.queueUsageTotals("long-running"), { inputTokens: 600, outputTokens: 600, costUsd: 0 });
+    assert.deepEqual(store.queueUsageTotals(), { inputTokens: 600, outputTokens: 600, costUsd: 0 });
     assert.deepEqual(store.queueUsageState("long-running"), { usedTokens: 1_200, budgetTokens: 1_000, remainingTokens: 0, exhausted: true });
     assert.equal(store.claimNextTask(undefined, "worker-a"), undefined);
     store.close();
@@ -3676,6 +3677,16 @@ test("queue status JSON exposes exact budget and usage state", async () => {
     const task = JSON.parse(result.stdout).tasks.find((entry) => entry.id === "status-budget");
     assert.deepEqual(task.usageState, { usedTokens: 15, budgetTokens: 20, remainingTokens: 5, exhausted: false });
     assert.deepEqual(task.usageTotals, { inputTokens: 8, outputTokens: 7, costUsd: 0 });
+    const usageResult = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "queue", "usage", "--json"], { cwd: root, env: { ...process.env, EVIDRA_STATE_DIR: join(root, ".sota") }, stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.on("close", (code) => resolve({ code, stdout, stderr }));
+    });
+    assert.equal(usageResult.code, 0, usageResult.stderr);
+    assert.deepEqual(JSON.parse(usageResult.stdout).totals, { inputTokens: 8, outputTokens: 7, costUsd: 0 });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
