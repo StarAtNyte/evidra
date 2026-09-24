@@ -7,7 +7,7 @@ import type { AgentResult } from "../core/types.js";
 import { isProviderUsageLimit, isRetryableAgentError, resolveLocalFallbackModel, runWithLocalFallback } from "./codex-exec.js";
 import type { ProcessControl } from "../core/process.js";
 import type { AutonomyLevel } from "../core/permissions.js";
-import { normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
+import { availableResearchTools, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
 import { boundResearchContext } from "../core/context-budget.js";
 import type { LaneFinding } from "../core/cross-pollination.js";
 import { agentRoleContract } from "../core/agent-organization.js";
@@ -414,10 +414,10 @@ export function researchLaneTeamSize(
 }
 
 /** Coalesce successful read-only lane observations without memoizing failures. */
-export function createLaneToolExecutor(executeTool: (call: ResearchToolCall, role?: string) => Promise<ResearchToolResult>): (call: ResearchToolCall, role?: string) => Promise<ResearchToolResult> {
+export function createLaneToolExecutor(executeTool: (call: ResearchToolCall, role?: string) => Promise<ResearchToolResult>, root?: string): (call: ResearchToolCall, role?: string) => Promise<ResearchToolResult> {
   const cache = new Map<string, Promise<ResearchToolResult>>();
   return async (call: ResearchToolCall, role?: string): Promise<ResearchToolResult> => {
-    const spec = RESEARCH_TOOLS.find((candidate) => candidate.name === call.name);
+    const spec = availableResearchTools(root).find((candidate) => candidate.name === call.name);
     const cacheable = spec?.readOnly === true && spec.cacheable !== false;
     if (!cacheable) return executeTool(call, role);
     // Read-only observations are safe to share across specialists; the role
@@ -1148,7 +1148,7 @@ export async function runResearchLanes(objective: string, context: Record<string
   // Share only immutable read-only observations within this invocation. The
   // promise map also collapses simultaneous identical calls from parallel
   // lanes, while cacheable=false tools (notably shell.exec) always execute.
-  const laneExecuteTool = options.executeTool ? createLaneToolExecutor(options.executeTool) : undefined;
+  const laneExecuteTool = options.executeTool ? createLaneToolExecutor(options.executeTool, options.cwd) : undefined;
   const laneOptions = laneExecuteTool ? { ...options, executeTool: laneExecuteTool } : options;
   const reports: ResearchLaneReport[] = [];
   const executionMode = options.executionMode ?? (options.autonomy === "safe" ? "waves" : "asynchronous");

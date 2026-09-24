@@ -4148,6 +4148,26 @@ test("lane observation cache never reuses a failed in-flight result", async () =
   assert.equal(attempts, 2);
 });
 
+test("lane observation cache discovers project adapter cache policy", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-lane-adapter-"));
+  try {
+    mkdirSync(join(root, ".evidra"), { recursive: true });
+    writeFileSync(join(root, ".evidra", "tools.json"), JSON.stringify({ tools: [{ name: "external.catalog", description: "Read the project catalog", command: [process.execPath, "catalog.mjs"], roles: ["domain researcher"], readOnly: true }] }));
+    let attempts = 0;
+    const execute = createLaneToolExecutor(async (call) => {
+      attempts += 1;
+      return { name: call.name, ok: true, output: { entries: [] }, trust: "untrusted_content" };
+    }, root);
+    const call = { name: "external.catalog", arguments: {} };
+    const first = execute(call, "domain researcher");
+    const second = execute(call, "domain researcher");
+    const results = await Promise.all([first, second]);
+    assert.equal(attempts, 1);
+    assert.equal(results[0].ok, true);
+    assert.equal(results[1].cached, true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("lane handoff boards are bounded and preserve challengeable evidence", () => {
   const board = laneHandoffBoard([
     { role: "domain researcher", summary: "A".repeat(2_000), findings: ["finding"], recommendations: ["test"], uncertainties: ["unknown"], discriminatingTests: ["run test"], evidence: ["source-1"], evidenceSourceIds: ["source-1"], confidence: 0.8, status: "completed" },
