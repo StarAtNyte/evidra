@@ -1257,6 +1257,30 @@ export class ResearchStore {
     return row ? JSON.parse(row.payload_json) : undefined;
   }
 
+  /**
+   * Reconstruct one bounded summary per campaign run from the immutable
+   * campaign-update stream. The singleton snapshot remains the live control
+   * surface; this projection makes older runs discoverable after a new run
+   * replaces that snapshot.
+   */
+  campaignHistory(limit = 32): Array<{ startedAt: string; status: string; campaign: Record<string, unknown>; updatedAt: string }> {
+    const latest = new Map<string, { startedAt: string; status: string; campaign: Record<string, unknown>; updatedAt: string }>();
+    for (const event of this.eventsByType("research.campaign.updated")) {
+      if (!event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) continue;
+      const campaign = event.payload as Record<string, unknown>;
+      if (typeof campaign.startedAt !== "string" || !campaign.startedAt.trim()) continue;
+      latest.set(campaign.startedAt, {
+        startedAt: campaign.startedAt,
+        status: typeof campaign.status === "string" ? campaign.status : "unknown",
+        campaign,
+        updatedAt: event.createdAt,
+      });
+    }
+    return [...latest.values()]
+      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+      .slice(0, Math.max(1, Math.min(128, Math.floor(limit))));
+  }
+
   saveTrajectory(trajectory: { id: string; runId?: string | null; experimentId?: string | null; payload: unknown; quality: unknown }): void {
     const now = new Date().toISOString();
     this.db.prepare(`

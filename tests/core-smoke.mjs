@@ -1021,6 +1021,22 @@ test("campaign run identity isolates queue usage and hard-stop cancellation", ()
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("campaign history preserves superseded runs behind the live snapshot", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-campaign-history-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.saveCampaign({ goal: "first run", goalSetId: "plan-first", startedAt: "2026-09-25T00:00:00.000Z", status: "paused", runtime: { mode: "research" } });
+    store.saveCampaign({ goal: "second run", goalSetId: "plan-second", startedAt: "2026-09-25T01:00:00.000Z", status: "running", runtime: { mode: "challenge" } });
+    store.saveCampaign({ goal: "first run", goalSetId: "plan-first", startedAt: "2026-09-25T00:00:00.000Z", status: "completed", runtime: { mode: "research" } });
+    const history = store.campaignHistory();
+    assert.equal(history.length, 2);
+    assert.equal(history.find((entry) => entry.startedAt === "2026-09-25T00:00:00.000Z")?.status, "completed");
+    assert.equal(history.find((entry) => entry.startedAt === "2026-09-25T01:00:00.000Z")?.campaign.goal, "second run");
+    assert.equal(store.campaign()?.goal, "first run");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("agent reviews learn from durable lane evidence without claiming metric attribution", () => {
   const reviews = evaluateAgentRoles([
     { payload: { laneReports: [{ role: "validation scientist", status: "completed", confidence: 0.9, verifiedEvidenceIds: ["run-1", "source-1"], playbookChecks: [{ step: "metric", status: "pass" }, { step: "replication", status: "blocked" }] }] }, quality: { overall: "PASS" } },

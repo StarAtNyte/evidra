@@ -3405,6 +3405,27 @@ research.command("plan")
     const history = options.history ? `\n\nStructural revisions\n${revisions.length ? revisions.slice().reverse().map((revision) => `   r${revision.revision} · ${revision.phase ?? revision.goalId} · ${revision.createdAt} · ${revision.previousFingerprint} → ${revision.fingerprint}`).join("\n") : "   No structural revisions recorded."}` : "";
     console.log(`Research plan\n\n${formatResearchStagePlan()}\n\nInternal phase progress\n${progress}${researchCampaign?.goal ? `\n\nActive goal\n   ${researchCampaign.goal}` : ""}${history}`);
   });
+research.command("history")
+  .option("--json", "emit campaign run history as JSON")
+  .description("Show durable research campaign runs retained behind the live snapshot")
+  .action((options: { json?: boolean }) => {
+    const store = new ResearchStore(statePath);
+    const history = store.campaignHistory();
+    store.close();
+    const rows = history.map((entry) => ({
+      startedAt: entry.startedAt,
+      updatedAt: entry.updatedAt,
+      status: entry.status,
+      goal: typeof entry.campaign.goal === "string" ? entry.campaign.goal : null,
+      mode: entry.campaign.runtime && typeof entry.campaign.runtime === "object" && !Array.isArray(entry.campaign.runtime) && (entry.campaign.runtime as Record<string, unknown>).mode === "challenge" ? "challenge" : "research",
+      goalSetId: typeof entry.campaign.goalSetId === "string" ? entry.campaign.goalSetId : null,
+    }));
+    if (options.json) {
+      console.log(JSON.stringify(rows, null, 2));
+      return;
+    }
+    console.log(rows.length ? rows.map((entry) => `${entry.status.padEnd(9)} ${entry.startedAt} · ${entry.mode} · ${entry.goal ?? "(no goal)"}${entry.goalSetId ? ` · plan ${entry.goalSetId}` : ""}`).join("\n") : "No durable research campaign runs recorded.");
+  });
 research.command("status")
   .description("Show durable research campaign and three-stage progress")
   .action(() => {

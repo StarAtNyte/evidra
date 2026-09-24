@@ -237,7 +237,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
   "/logout": [["/logout", "Sign out of the Codex account"]],
-  "/research": [["/research plan", "Show the three high-level research steps"], ["/research plan history", "Show structural plan revisions"], ["/research examples", "Show contemporary starter research briefs"], ["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research steer ", "Guide the active campaign at the next safe boundary"], ["/research resume", "Resume the saved campaign"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
+  "/research": [["/research plan", "Show the three high-level research steps"], ["/research plan history", "Show structural plan revisions"], ["/research history", "Show durable campaign runs"], ["/research examples", "Show contemporary starter research briefs"], ["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research steer ", "Guide the active campaign at the next safe boundary"], ["/research resume", "Resume the saved campaign"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
   "/challenge": [["/challenge status", "Show challenge state"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge steer ", "Guide the active campaign at the next safe boundary"], ["/challenge resume", "Resume the saved campaign"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
   "/sources": [["/sources list", "List retrieved sources"], ["/sources channels", "Show discussion and leaderboard insights"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources discover", "Search scholarly literature"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
@@ -4634,10 +4634,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
       finally { clearActiveProcess(); setBusy(false); setProgress(""); }
       return;
     }
-    if (["/research status", "/research start", "/research pause", "/research stop"].includes(request)) {
+    if (["/research status", "/research history", "/research start", "/research pause", "/research stop"].includes(request)) {
       const action = request.split(/\s+/)[1];
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      if (action === "status") {
+      if (action === "history") {
+        const history = store.campaignHistory();
+        append("assistant", history.length ? `Research campaign history\n${history.map((entry) => {
+          const campaign = entry.campaign;
+          const mode = campaign.runtime && typeof campaign.runtime === "object" && !Array.isArray(campaign.runtime) && (campaign.runtime as Record<string, unknown>).mode === "challenge" ? "challenge" : "research";
+          return `  ${entry.status.padEnd(9)} ${entry.startedAt} · ${mode} · ${typeof campaign.goal === "string" ? campaign.goal : "(no goal)"}${typeof campaign.goalSetId === "string" ? ` · plan ${campaign.goalSetId}` : ""}`;
+        }).join("\n")}` : "No durable research campaign runs recorded.");
+      } else if (action === "status") {
         const state = store.schedulerState();
         const campaign = store.campaign() as ResearchCampaign | undefined;
         const statusMode = resolveCampaignMode(campaign?.runtime?.mode, state.mode);
