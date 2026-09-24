@@ -1010,7 +1010,8 @@ agents.command("reviews").description("Show durable role review and intervention
       const objective = typeof payload.objective === "string" ? ` · ${payload.objective.slice(0, 120)}` : "";
       const source = typeof payload.source === "string" ? payload.source : "controller";
       const actions = interventions.map((item) => `  ${typeof item.role === "string" ? item.role : "role"} → ${typeof item.action === "string" ? item.action : "observe"} · ${typeof item.priority === "string" ? item.priority : "normal"} · ${typeof item.reason === "string" ? item.reason : ""}`).join("\n");
-      return `${event.createdAt} · ${source}${objective}\n${actions || "  no interventions"}`;
+      const coachingDirectiveIds = Array.isArray(payload.coachingDirectiveIds) ? payload.coachingDirectiveIds.filter((id): id is number => typeof id === "number") : [];
+      return `${event.createdAt} · ${source}${objective}\n${actions || "  no interventions"}${coachingDirectiveIds.length ? `\n  coaching directives: ${coachingDirectiveIds.map((id) => `#${id}`).join(", ")}` : ""}`;
     }).join("\n"));
   }
   store.close();

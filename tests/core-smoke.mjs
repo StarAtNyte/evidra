@@ -8292,7 +8292,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     setExternalToolStatus(root, "external.dashboard_probe", "disabled", "maintenance");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.appendEvent("test.dashboard", { token: "sk-test-dashboard-secret-value", command: ["tool", "--token", "secret-value"] });
-    store.appendEvent("research.agent.reviewed", { objective: "dashboard review objective", source: "test", reviews: [], interventions: [{ role: "model researcher", action: "coach", priority: "high", reason: "blocked playbook step" }] });
+    store.appendEvent("research.agent.reviewed", { objective: "dashboard review objective", source: "test", reviews: [], interventions: [{ role: "model researcher", action: "coach", priority: "high", reason: "blocked playbook step" }], coachingDirectiveIds: [42] });
     store.recordAgentActivity({ role: "model researcher", taskId: "dashboard-task", kind: "progress", message: "inspecting evidence" });
     const dashboardDirective = store.enqueueAgentDirective("model researcher", "inspect the result", null, "research director");
     store.consumeAgentDirectives("model researcher");
@@ -8314,6 +8314,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.ok(snapshot.attention && typeof snapshot.attention.total === "number");
     assert.equal(snapshot.agentReviewHistory.length, 1);
     assert.equal(snapshot.agentReviewHistory[0].interventions[0].action, "coach");
+    assert.deepEqual(snapshot.agentReviewHistory[0].coachingDirectiveIds, [42]);
     assert.ok(Array.isArray(snapshot.agentDirectives));
     assert.equal(snapshot.agentActivity[0].message, "inspecting evidence");
     assert.equal(snapshot.agentSessions[0].threadId, "thread-dashb…");
