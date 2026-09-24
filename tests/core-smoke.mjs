@@ -4066,6 +4066,7 @@ test("authenticated external agent heartbeats preserve lease ownership", () => {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     assert.equal(store.recordExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "running", task: "inspect methods", capabilities: ["python", "gpu.cuda"] }).accepted, true);
     assert.deepEqual(store.externalWorkers()[0]?.capabilities, ["gpu.cuda", "python"]);
+    assert.equal(store.externalWorkers()[0]?.health, "healthy");
     assert.equal(store.recordExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-b", provider: "bash", model: "external", status: "running" }).accepted, false);
     assert.equal(store.recordExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "idle", capabilities: ["python"] }).accepted, true);
     assert.deepEqual(store.externalWorkers()[0]?.capabilities, ["python"]);

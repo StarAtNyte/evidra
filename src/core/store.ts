@@ -283,6 +283,7 @@ export interface ExternalWorkerHealth {
   capabilities: string[];
   task: string | null;
   lastHeartbeatAt: string;
+  health: "healthy" | "stale";
   updatedAt: string;
 }
 
@@ -1375,7 +1376,7 @@ export class ResearchStore {
   externalWorkers(limit = 64): ExternalWorkerHealth[] {
     const bounded = Math.max(1, Math.min(256, Math.floor(limit)));
     const rows = this.db.prepare("SELECT worker_id, role, provider, model, status, capabilities_json, task, last_heartbeat_at, updated_at FROM external_workers ORDER BY last_heartbeat_at DESC LIMIT ?").all(bounded) as Array<{ worker_id: string; role: string; provider: string; model: string; status: string; capabilities_json: string; task: string | null; last_heartbeat_at: string; updated_at: string }>;
-    return rows.map((row) => ({ workerId: row.worker_id, role: row.role, provider: row.provider, model: row.model, status: row.status as ExternalWorkerHealth["status"], capabilities: JSON.parse(row.capabilities_json || "[]") as string[], task: row.task, lastHeartbeatAt: row.last_heartbeat_at, updatedAt: row.updated_at }));
+    return rows.map((row) => ({ workerId: row.worker_id, role: row.role, provider: row.provider, model: row.model, status: row.status as ExternalWorkerHealth["status"], capabilities: JSON.parse(row.capabilities_json || "[]") as string[], task: row.task, lastHeartbeatAt: row.last_heartbeat_at, health: Number.isFinite(Date.parse(row.last_heartbeat_at)) && Date.now() - Date.parse(row.last_heartbeat_at) <= 120_000 ? "healthy" : "stale", updatedAt: row.updated_at }));
   }
 
   /** Use only a fresh heartbeat when a remote worker omits capabilities at claim time. */
