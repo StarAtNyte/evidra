@@ -792,6 +792,13 @@ agents.command("reviews").description("Show durable role review and intervention
   }
   store.close();
 });
+agents.command("activity [role]").description("Show recent durable specialist work activity").action((role?: string) => {
+  const store = new ResearchStore(statePath);
+  const activity = store.agentActivities({ role: role?.trim() || undefined, limit: 32 }).slice().reverse();
+  if (!activity.length) console.log(role ? `No activity recorded for ${role}.` : "No specialist activity recorded.");
+  else console.log(activity.map((entry) => `${entry.createdAt}  ${entry.kind.padEnd(9)} ${entry.role}${entry.taskId ? `  ${entry.taskId}` : ""}\n  ${entry.message}`).join("\n"));
+  store.close();
+});
 
 program.command("usage").description("Show research, experiment, and campaign usage").action(() => {
   const store = new ResearchStore(statePath);

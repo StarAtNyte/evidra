@@ -122,6 +122,15 @@ export interface AgentDirective {
   createdAt: string;
   appliedAt: string | null;
 }
+export type AgentActivityKind = "started" | "progress" | "blocked" | "handoff" | "completed" | "failed";
+export interface AgentActivity {
+  role: string;
+  taskId: string | null;
+  kind: AgentActivityKind;
+  message: string;
+  metadata: unknown;
+  createdAt: string;
+}
 export interface ControllerLease {
   controllerId: string;
   pid: number;
@@ -591,6 +600,36 @@ export class ResearchStore {
       ? this.db.prepare("SELECT type, payload_json, created_at, event_hash FROM events WHERE type = ? ORDER BY id ASC").all(type)
       : this.db.prepare("SELECT type, payload_json, created_at, event_hash FROM events WHERE type = ? ORDER BY id DESC LIMIT ?").all(type, Math.max(1, Math.floor(limit))).reverse();
     return (rows as Array<{ type: string; payload_json: string; created_at: string; event_hash: string | null }>).map((row) => ({ type: row.type, payload: JSON.parse(row.payload_json), createdAt: row.created_at, eventHash: row.event_hash }));
+  }
+
+  /** Record a bounded, durable work-item update for cross-agent recovery and handoff. */
+  recordAgentActivity(input: { role: string; taskId?: string | null; kind: AgentActivityKind; message: string; metadata?: unknown }): void {
+    const role = input.role.trim().slice(0, 160);
+    const message = input.message.trim().slice(0, 2_000);
+    if (!role || !message) return;
+    this.appendEvent("agent.activity", {
+      role,
+      taskId: input.taskId?.trim().slice(0, 200) || null,
+      kind: input.kind,
+      message,
+      ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+    });
+  }
+
+  /** Read recent work-item updates without exposing the raw event stream to callers. */
+  agentActivities(options: { role?: string; taskId?: string; limit?: number } = {}): AgentActivity[] {
+    const limit = Math.max(1, Math.min(128, Math.floor(options.limit ?? 32)));
+    return this.eventsByType("agent.activity", limit).flatMap((event) => {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+      const role = typeof payload.role === "string" ? payload.role : "";
+      const taskId = typeof payload.taskId === "string" ? payload.taskId : null;
+      const kind = payload.kind;
+      const message = typeof payload.message === "string" ? payload.message : "";
+      if (!role || !message || !["started", "progress", "blocked", "handoff", "completed", "failed"].includes(String(kind))) return [];
+      if (options.role && role !== options.role) return [];
+      if (options.taskId && taskId !== options.taskId) return [];
+      return [{ role, taskId, kind: kind as AgentActivityKind, message, metadata: payload.metadata ?? null, createdAt: event.createdAt }];
+    });
   }
 
   /** Read structured subtask audits from the complete event history. */

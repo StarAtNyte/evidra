@@ -235,7 +235,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/memory": [["/memory recent", "Show recent evidence"], ["/memory search", "Search evidence and sources"]],
   "/data": [["/data audit", "Audit files and exact duplicates"]],
   "/validation": [["/validation inspect", "Show validation policy"], ["/validation generate", "Generate a versioned policy"], ["/validation lock", "Lock validation policy"], ["/validation unlock", "Unlock with a reason"]],
-  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents reviews", "Show durable role review history"], ["/agents directives", "Inspect specialist handoffs"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
+  "/agents": [["/agents status", "Show agent/provider health"], ["/agents limits", "Show configured limits"], ["/agents reviews", "Show durable role review history"], ["/agents activity", "Show recent specialist work activity"], ["/agents directives", "Inspect specialist handoffs"], ["/agents pause ", "Pause a specialist at the next safe boundary"], ["/agents resume ", "Resume a paused specialist"], ["/agents message ", "Send a durable directive to one specialist (use role -- message)"]],
   "/limits": [["/limits auto", "Use local fallback, then wait"], ["/limits wait", "Wait for Codex usage to reset"], ["/limits fallback", "Require local fallback"], ["/limits stop", "Stop when Codex is limited"]],
   "/compute": [["/compute status", "Show executor health"], ["/compute local", "Run experiments on this computer"], ["/compute container", "Run in Docker or Podman"], ["/compute modal", "Run experiments on Modal"], ["/compute slurm", "Run experiments through Slurm"], ["/compute budget", "Show campaign usage"]],
   "/submission": [["/submission status", "List prepared bundles"], ["/submission prepare", "Build a provenance bundle"], ["/submission validate", "Validate a bundle"], ["/submission approve", "Approve a valid bundle"], ["/submission submit", "Submit an approved bundle"], ["/submission poll", "Poll a configured external score"], ["/submission record", "Record an external score"], ["/submission distribution", "Estimate predictive validation split"]],
@@ -3630,6 +3630,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", history.length
         ? `Role review history\n${history.map((event) => { const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {}; const interventions = Array.isArray(payload.interventions) ? payload.interventions.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object")) : []; return `  ${event.createdAt} · ${typeof payload.source === "string" ? payload.source : "controller"}${typeof payload.objective === "string" ? ` · ${payload.objective.slice(0, 120)}` : ""}\n${interventions.map((item) => `    ${typeof item.role === "string" ? item.role : "role"} → ${typeof item.action === "string" ? item.action : "observe"} · ${typeof item.priority === "string" ? item.priority : "normal"}`).join("\n") || "    no interventions"}`; }).join("\n")}`
         : "No role reviews recorded.");
+      return;
+    }
+    if (request === "/agents activity") {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const activity = store.agentActivities({ limit: 32 }).slice().reverse();
+      store.close();
+      append("assistant", activity.length
+        ? `Recent agent activity\n${activity.map((entry) => `  ${entry.createdAt} · ${entry.kind} · ${entry.role}${entry.taskId ? ` · ${entry.taskId}` : ""}\n    ${entry.message}`).join("\n")}`
+        : "No specialist activity recorded.");
       return;
     }
     if (request === "/agents" || request === "/agents status" || request === "/agents limits") {

@@ -231,6 +231,7 @@ Source retrieval records URL, retrieval time, content hash, license, claims, and
 /agents message <role> -- <msg> Queue a directive for one role's next safe boundary
 /agents directives [role]     Inspect specialist handoffs and whether they were applied
 /agents reviews              Show durable role review and intervention history
+/agents activity [role]      Show recent durable specialist work activity
 /agents cancel <run>         Cancel a running agent task
 ```
 

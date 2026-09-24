@@ -673,6 +673,22 @@ test("agent reviews learn from durable lane evidence without claiming metric att
   assert.equal(agentRoleInterventions(reviews).find((intervention) => intervention.role === "validation scientist")?.action, "coach");
 });
 
+test("agent activity journal survives reopen and filters by specialist task", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-agent-activity-"));
+  const path = join(root, "state.sqlite");
+  try {
+    const first = new ResearchStore(path);
+    first.recordAgentActivity({ role: "model researcher", taskId: "task-a", kind: "started", message: "started model search", metadata: { goalId: "goal-a" } });
+    first.recordAgentActivity({ role: "validation scientist", taskId: "task-b", kind: "blocked", message: "split is not locked" });
+    first.close();
+    const reopened = new ResearchStore(path);
+    assert.equal(reopened.agentActivities({ role: "model researcher", taskId: "task-a" }).length, 1);
+    assert.equal(reopened.agentActivities({ role: "model researcher", taskId: "task-a" })[0].kind, "started");
+    assert.equal(reopened.agentActivities({ role: "validation scientist" })[0].message, "split is not locked");
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("Codex sandbox preserves read-only role boundaries", () => {
   const previous = process.env.EVIDRA_CODEX_SANDBOX;
   delete process.env.EVIDRA_CODEX_SANDBOX;
@@ -6921,6 +6937,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.appendEvent("test.dashboard", { token: "sk-test-dashboard-secret-value", command: ["tool", "--token", "secret-value"] });
     store.appendEvent("research.agent.reviewed", { objective: "dashboard review objective", source: "test", reviews: [], interventions: [{ role: "model researcher", action: "coach", priority: "high", reason: "blocked playbook step" }] });
+    store.recordAgentActivity({ role: "model researcher", taskId: "dashboard-task", kind: "progress", message: "inspecting evidence" });
     store.enqueueTask({ id: "dashboard-parent", kind: "research.cycle", priority: 10, payload: {} });
     store.enqueueTask({ id: "dashboard-child", kind: "research.review", priority: 8, payload: {}, parentTaskId: "dashboard-parent", dependsOn: ["dashboard-parent"] });
     const snapshot = dashboardSnapshot(store);
@@ -6933,6 +6950,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.equal(Array.isArray(snapshot.organization), true);
     assert.equal(snapshot.agentReviewHistory.length, 1);
     assert.equal(snapshot.agentReviewHistory[0].interventions[0].action, "coach");
+    assert.equal(snapshot.agentActivity[0].message, "inspecting evidence");
     assert.ok(snapshot.organization.some((entry) => entry.role === "research director"));
     assert.deepEqual(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.dependsOn, ["dashboard-parent"]);
     assert.equal(snapshot.queue.find((entry) => entry.id === "dashboard-child")?.parentTaskId, "dashboard-parent");

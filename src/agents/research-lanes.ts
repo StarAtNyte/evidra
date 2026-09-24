@@ -843,6 +843,14 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     failed.close();
     return { role, summary: "Lane was not started because its durable ticket could not be claimed.", findings: [], recommendations: [], uncertainties: ["durable lane ticket claim failed"], discriminatingTests: [], evidence: [], evidenceSourceIds: [], playbookChecks: [], confidence: 0, status: "failed", error: "durable lane ticket claim failed" };
   }
+  const recordActivity = (kind: "started" | "progress" | "blocked" | "handoff" | "completed" | "failed", message: string, metadata?: unknown): void => {
+    try {
+      const store = new ResearchStore(options.storePath);
+      store.recordAgentActivity({ role, taskId: laneTaskId, kind, message, metadata });
+      store.close();
+    } catch { /* activity telemetry must not invalidate the lane */ }
+  };
+  recordActivity("started", `Started research lane for ${objective.slice(0, 240)}`, { provider: laneRoute.provider, model: laneRoute.model, goalId: options.goalId ?? null });
   const heartbeat = setInterval(() => {
     try {
       const store = new ResearchStore(options.storePath);
@@ -885,6 +893,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
       store.close();
       if (received.length) {
         directives.push(...received.map((directive) => directive.message));
+        recordActivity("handoff", `Applied ${received.length} operator directive(s) at a safe boundary`, { count: received.length });
         options.onProgress?.(`Research lane · ${role} · received ${received.length} operator directive(s)`);
       }
     };
@@ -896,6 +905,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         consumeDirectives();
         const call = calls[callIndex];
         if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
+        recordActivity("progress", `Inspecting ${call.name}`, { tool: call.name, index: callIndex + 1 });
         options.onProgress?.(`Research lane · ${role} · ${call.name}...`);
         const callId = options.onToolCall?.(`lane:${role}`, call) ?? `${role}-${call.name}-${toolResults.length + 1}`;
         let result: ResearchToolResult = { name: call.name, ok: false, error: "Tool did not return a result.", trust: "permission_boundary" };
@@ -996,6 +1006,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     const completed = new ResearchStore(options.storePath);
     completed.releaseAgentLane(role, leaseId, "idle");
     completed.updateTask(laneTaskId, "completed", { role, status: "completed", evidenceIds: verifiedEvidenceIds });
+    completed.recordAgentActivity({ role, taskId: laneTaskId, kind: "completed", message: "Lane completed with a validated report", metadata: { evidenceIds: verifiedEvidenceIds, confidence: report.confidence } });
     completed.close();
     return { ...report, verifiedEvidenceIds };
   } catch (error) {
@@ -1005,6 +1016,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     const failed = new ResearchStore(options.storePath);
     failed.releaseAgentLane(role, leaseId, "failed", message);
     failed.updateTask(laneTaskId, "failed", { role, status: "failed", error: message });
+    failed.recordAgentActivity({ role, taskId: laneTaskId, kind: "failed", message: `Lane failed: ${message}` });
     failed.close();
     return report;
   } finally {
