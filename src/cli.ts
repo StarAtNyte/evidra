@@ -2579,27 +2579,32 @@ function parseWorkerTokenMap(raw: string | undefined): Map<string, string> {
   }
   return tokens;
 }
-function loadWorkerTokenMap(mapping: string | undefined, filePath: string | undefined): Map<string, string> {
-  if (mapping?.trim() && filePath?.trim()) throw new Error("Use either --worker-tokens or --worker-tokens-file, not both.");
-  if (!filePath?.trim()) return parseWorkerTokenMap(mapping);
+function loadSecretFile(filePath: string, label: string): string {
   const resolved = resolve(filePath);
   let mode: number;
   try {
     mode = statSync(resolved).mode;
   } catch {
-    throw new Error("Worker token file could not be read.");
+    throw new Error(`${label} file could not be read.`);
   }
-  // Refuse group/world-readable secret files on POSIX. This check is
-  // intentionally conservative; environment-based injection remains
-  // available for platforms without meaningful Unix mode bits.
-  if ((mode & 0o077) !== 0) throw new Error("Worker token file must not be group- or world-readable (use chmod 600).");
-  let contents: string;
+  if ((mode & 0o077) !== 0) throw new Error(`${label} file must not be group- or world-readable (use chmod 600).`);
   try {
-    contents = readFileSync(resolved, "utf8");
-  } catch {
-    throw new Error("Worker token file could not be read.");
+    const value = readFileSync(resolved, "utf8").trim();
+    if (!value) throw new Error(`${label} file is empty.`);
+    return value;
+  } catch (error) {
+    if (error instanceof Error && error.message === `${label} file is empty.`) throw error;
+    throw new Error(`${label} file could not be read.`);
   }
-  return parseWorkerTokenMap(contents);
+}
+function loadWorkerTokenMap(mapping: string | undefined, filePath: string | undefined): Map<string, string> {
+  if (mapping?.trim() && filePath?.trim()) throw new Error("Use either --worker-tokens or --worker-tokens-file, not both.");
+  if (!filePath?.trim()) return parseWorkerTokenMap(mapping);
+  return parseWorkerTokenMap(loadSecretFile(filePath, "Worker token"));
+}
+function loadSecretValue(value: string | undefined, filePath: string | undefined, label: string): string | undefined {
+  if (value?.trim() && filePath?.trim()) throw new Error(`Use either the inline ${label.toLowerCase()} or --token-file, not both.`);
+  return filePath?.trim() ? loadSecretFile(filePath, label) : value?.trim() || undefined;
 }
 function parseWorkerScopeMap(raw: string | undefined): Map<string, string[]> {
   const scopes = new Map<string, string[]>();
@@ -2668,17 +2673,19 @@ event.command("serve")
   .option("--port <port>", "HTTP port", "4311")
   .option("--host <host>", "bind address; loopback is the default", "127.0.0.1")
   .option("--token <token>", "Bearer token; required for non-loopback hosts", process.env.EVIDRA_EVENT_TOKEN)
+  .option("--token-file <path>", "read the bearer token from a chmod 600 file", process.env.EVIDRA_EVENT_TOKEN_FILE)
   .option("--task-kinds <kinds>", "comma-separated queue kinds allowed to external workers; unset means all kinds")
   .option("--worker-tokens <mapping>", "scoped worker credentials as worker-id=secret,...", process.env.EVIDRA_WORKER_TOKENS)
   .option("--worker-tokens-file <path>", "read scoped worker credentials from a chmod 600 file", process.env.EVIDRA_WORKER_TOKENS_FILE)
   .option("--worker-scopes <mapping>", "per-worker task scopes as worker-id=kind|kind,...", process.env.EVIDRA_WORKER_SCOPES)
   .option("--worker-capabilities <mapping>", "per-worker capability allowlists as worker-id=capability|capability,...", process.env.EVIDRA_WORKER_CAPABILITIES)
   .description("Run an authenticated local webhook listener for external events")
-  .action(async (options: { port: string; host: string; token?: string; taskKinds?: string; workerTokens?: string; workerTokensFile?: string; workerScopes?: string; workerCapabilities?: string }) => {
+  .action(async (options: { port: string; host: string; token?: string; tokenFile?: string; taskKinds?: string; workerTokens?: string; workerTokensFile?: string; workerScopes?: string; workerCapabilities?: string }) => {
     const port = Number.parseInt(options.port, 10);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Event server port must be an integer between 1 and 65535.");
+    const eventToken = loadSecretValue(options.token, options.tokenFile, "bearer token");
     const loopback = options.host === "127.0.0.1" || options.host === "localhost" || options.host === "::1";
-    if (!loopback && !options.token?.trim()) throw new Error("A token is required when the event server is not bound to loopback.");
+    if (!loopback && !eventToken) throw new Error("A token is required when the event server is not bound to loopback.");
     const parsedTaskKinds = options.taskKinds?.split(",").map((kind) => kind.trim()).filter(Boolean);
     const allowedTaskKinds = parsedTaskKinds?.length ? parsedTaskKinds : undefined;
     if (allowedTaskKinds?.some((kind) => kind.length > 120)) throw new Error("External worker task kinds must be at most 120 characters each.");
@@ -2691,7 +2698,7 @@ event.command("serve")
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
       const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
-      const bearerAuthenticated = !options.token?.trim() || request.headers.authorization === `Bearer ${options.token.trim()}`;
+      const bearerAuthenticated = !eventToken || request.headers.authorization === `Bearer ${eventToken}`;
       if ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated)) { response.writeHead(401, headers); response.end(JSON.stringify({ error: workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
