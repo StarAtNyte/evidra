@@ -8039,6 +8039,14 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const budgetHeartbeatResponse = await post("/tasks/heartbeat", { workerId: "worker-a", taskId: budgetTask.id, claimToken: budgetTask.claimToken }, token, "worker-a", "worker-secret");
     assert.equal(budgetHeartbeatResponse.status, 409);
     assert.equal((await budgetHeartbeatResponse.json()).cancellation.reason, "task token or USD budget exhausted");
+    const approvalStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    approvalStore.enqueueTask({ id: "bridge-approval", kind: "research.lane", priority: 100, requiresApproval: true, approvalReason: "review before remote execution", payload: {} });
+    approvalStore.close();
+    const approvalClaim = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"] }, token, "worker-a", "worker-secret");
+    const approvalClaimBody = await approvalClaim.json();
+    assert.equal(approvalClaim.status, 200);
+    assert.equal(approvalClaimBody.blockedApprovals[0].id, "bridge-approval");
+    assert.equal(approvalClaimBody.blockedApprovals[0].status, "pending");
     const releaseStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     releaseStore.enqueueTask({ id: "bridge-release", kind: "research.lane", priority: 3, payload: {} });
     releaseStore.close();

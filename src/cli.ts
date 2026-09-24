@@ -2558,9 +2558,14 @@ event.command("serve")
                 return;
               }
               const task = store.claimNextTask(kinds ?? scopedKinds, workerId, effectiveCapabilities);
+              const blockedApprovals = task ? [] : store.queueTasks("queued")
+                .filter((candidate) => ["pending", "rejected"].includes(candidate.approvalStatus))
+                .filter((candidate) => !scopedKinds || scopedKinds.includes(candidate.kind))
+                .slice(0, 16)
+                .map((candidate) => ({ id: candidate.id, kind: candidate.kind, status: candidate.approvalStatus, reason: candidate.approvalReason }));
               store.close();
               response.writeHead(200, headers);
-              response.end(JSON.stringify({ ok: true, task: task ?? null }));
+              response.end(JSON.stringify({ ok: true, task: task ?? null, blockedApprovals }));
               return;
             }
             const taskId = typeof parsed.taskId === "string" ? parsed.taskId.trim() : "";

@@ -254,6 +254,12 @@ POST /tasks/complete  {"workerId":"agent-17","taskId":"task-123","claimToken":"<
 POST /tasks/release   {"workerId":"agent-17","taskId":"task-123","claimToken":"<token>","reason":"yielding capacity"}
 ```
 
+When no task is claimable because eligible work is waiting for operator
+approval, the claim response remains successful with `task: null` and includes
+a bounded `blockedApprovals` list containing each task ID, approval status, and
+reason. Remote workers can therefore wait or notify an operator instead of
+spinning without an explanation.
+
 Claim, heartbeat, and completion all enforce the queue owner. A stale or foreign
 worker receives a conflict response and cannot overwrite another worker’s task.
 Workers can use `/tasks/release` to yield a live lease without counting a
