@@ -1629,14 +1629,14 @@ export class ResearchStore {
     return { allowed: true, role: row.role };
   }
 
-  agentPause(role: string): { role: string; paused: boolean; terminated: boolean; reason: string | null; updatedAt: string } | undefined {
-    const row = this.db.prepare("SELECT role, paused, terminated, reason, updated_at FROM agent_controls WHERE role = ?").get(role) as { role: string; paused: number; terminated: number; reason: string | null; updated_at: string } | undefined;
-    return row ? { role: row.role, paused: row.paused === 1, terminated: row.terminated === 1, reason: row.reason, updatedAt: row.updated_at } : undefined;
+  agentPause(role: string): { role: string; paused: boolean; terminated: boolean; admitted: boolean; reason: string | null; updatedAt: string } | undefined {
+    const row = this.db.prepare("SELECT role, paused, terminated, admitted, reason, updated_at FROM agent_controls WHERE role = ?").get(role) as { role: string; paused: number; terminated: number; admitted: number; reason: string | null; updated_at: string } | undefined;
+    return row ? { role: row.role, paused: row.paused === 1, terminated: row.terminated === 1, admitted: row.admitted === 1, reason: row.reason, updatedAt: row.updated_at } : undefined;
   }
 
-  agentPauses(): Array<{ role: string; paused: boolean; terminated: boolean; reason: string | null; updatedAt: string }> {
-    const rows = this.db.prepare("SELECT role, paused, terminated, reason, updated_at FROM agent_controls ORDER BY role ASC").all() as Array<{ role: string; paused: number; terminated: number; reason: string | null; updated_at: string }>;
-    return rows.map((row) => ({ role: row.role, paused: row.paused === 1, terminated: row.terminated === 1, reason: row.reason, updatedAt: row.updated_at }));
+  agentPauses(): Array<{ role: string; paused: boolean; terminated: boolean; admitted: boolean; reason: string | null; updatedAt: string }> {
+    const rows = this.db.prepare("SELECT role, paused, terminated, admitted, reason, updated_at FROM agent_controls ORDER BY role ASC").all() as Array<{ role: string; paused: number; terminated: number; admitted: number; reason: string | null; updated_at: string }>;
+    return rows.map((row) => ({ role: row.role, paused: row.paused === 1, terminated: row.terminated === 1, admitted: row.admitted === 1, reason: row.reason, updatedAt: row.updated_at }));
   }
 
   /** Atomically assign a lane to one worker. A live lease prevents duplicate specialist work. */

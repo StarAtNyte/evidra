@@ -4490,6 +4490,7 @@ test("portable bundles are redacted metadata snapshots with artifact references"
     setExternalToolStatus(root, "external.bundle_probe", "quarantined", "awaiting review");
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     store.appendEvent("test.credentials", { token: "sk-super-secret-value-1234567890", note: "keep this" });
+    store.setAgentRoleAdmission("external bundle role", true, "bundle test approval");
     store.enqueueAgentDirective("validation scientist", "replay the saved evidence", "bundle-phase", "research director");
     const bundle = createPortableBundle(store, root);
     assert.equal(bundle.type, PORTABLE_BUNDLE_TYPE);
@@ -4499,6 +4500,7 @@ test("portable bundles are redacted metadata snapshots with artifact references"
     assert.doesNotMatch(JSON.stringify(bundle), /super-secret-value/);
     assert.ok(Array.isArray(bundle.events));
     assert.ok(Array.isArray(bundle.agentControls));
+    assert.equal(bundle.agentControls[0].admitted, true);
     assert.ok(Array.isArray(bundle.agentSessions));
     assert.ok(Array.isArray(bundle.agentDirectives));
     assert.equal(bundle.agentDirectives[0].sourceRole, "research director");
