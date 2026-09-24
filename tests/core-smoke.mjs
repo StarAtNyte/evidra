@@ -680,8 +680,11 @@ test("agent organization gives every lane a responsibility and reporting line", 
   try {
     const store = new ResearchStore(join(root, "state.sqlite"));
     store.updateAgentLane({ role: "validation scientist", status: "running", provider: "local", model: "bench", task: "check replication" });
+    store.updateAgentLane({ role: "external geologist", status: "idle", provider: "remote", model: "specialist", task: "map domain constraints" });
     const org = agentOrganization(store);
     assert.equal(org.find((entry) => entry.role === "validation scientist")?.status, "running");
+    assert.equal(org.find((entry) => entry.role === "external geologist")?.parentRole, "research director");
+    assert.equal(org.find((entry) => entry.role === "external geologist")?.status, "idle");
     assert.ok(org.every((entry) => entry.responsibility.length > 0));
     assert.ok(org.every((entry) => entry.playbook.length >= 3));
     store.setAgentPause("validation scientist", true, "operator test");

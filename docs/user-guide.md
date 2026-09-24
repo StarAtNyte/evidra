@@ -481,6 +481,11 @@ route after failure. These are responsibility contracts, not cosmetic labels:
 lane prompts receive their reporting line and authority boundary so a specialist
 cannot silently redefine the campaign objective.
 
+Authenticated external workers may report custom roles. Those roles appear in
+the same organization and health views with a default review-required contract,
+so “bring your own agent” workers remain visible and governed instead of
+disappearing into raw heartbeat telemetry.
+
 The dashboard also shows role reviews learned from completed trajectories. They
 combine completion, evidence anchors, confidence, and process quality into a
 bounded `trusted`, `needs-review`, or `insufficient-data` signal. This is used

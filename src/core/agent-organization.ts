@@ -51,10 +51,16 @@ export function agentToolPermission(role: string, toolName: string): { allowed: 
 
 export function agentOrganization(store: ResearchStore): Array<AgentRoleContract & { status: string; task: string | null; budgetSeconds: number | null; usedSeconds: number; leaseId: string | null }> {
   const lanes = new Map(store.agentLanes().map((lane) => [lane.role, lane]));
-  return AGENT_ROLE_CONTRACTS.map((contract) => {
+  const builtIn = AGENT_ROLE_CONTRACTS.map((contract) => {
     const lane = lanes.get(contract.role);
     return { ...contract, status: lane?.status ?? "unstarted", task: lane?.task ?? null, budgetSeconds: lane?.budgetSeconds ?? null, usedSeconds: lane?.usedSeconds ?? 0, leaseId: lane?.leaseId ?? null };
   });
+  const known = new Set(AGENT_ROLE_CONTRACTS.map((contract) => contract.role));
+  const customRoles = [...lanes.keys()].filter((role) => !known.has(role)).sort((left, right) => left.localeCompare(right));
+  return [...builtIn, ...customRoles.map((role) => {
+    const lane = lanes.get(role)!;
+    return { ...agentRoleContract(role), status: lane.status, task: lane.task, budgetSeconds: lane.budgetSeconds, usedSeconds: lane.usedSeconds, leaseId: lane.leaseId };
+  })];
 }
 
 export function formatAgentRoleContract(role: string): string {
