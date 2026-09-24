@@ -105,6 +105,25 @@ export interface QueuedTaskLineage {
   truncated: boolean;
 }
 export type QueueActivityKind = "started" | "progress" | "blocked" | "handoff" | "completed" | "failed";
+const QUEUE_ACTIVITY_KINDS: QueueActivityKind[] = ["started", "progress", "blocked", "handoff", "completed", "failed"];
+
+function validateQueueCompletionContract(payload: unknown): void {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+  const raw = (payload as Record<string, unknown>).completionContract;
+  if (raw === undefined) return;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Queue completionContract must be an object.");
+  const value = raw as Record<string, unknown>;
+  for (const [field, max, limit] of [["requiredPayloadKeys", 32, 120], ["requiredEvidenceRefs", 64, 240]] as const) {
+    if (value[field] === undefined) continue;
+    if (!Array.isArray(value[field]) || value[field].length > max || value[field].some((entry) => typeof entry !== "string" || entry.trim().length === 0 || entry.length > limit)) {
+      throw new Error(`Queue completionContract.${field} must be a bounded array of non-empty strings.`);
+    }
+  }
+  if (value.requiredActivityKinds !== undefined && (!Array.isArray(value.requiredActivityKinds) || value.requiredActivityKinds.length > 16 || value.requiredActivityKinds.some((entry) => !QUEUE_ACTIVITY_KINDS.includes(entry as QueueActivityKind)))) {
+    throw new Error("Queue completionContract.requiredActivityKinds contains an unsupported activity kind.");
+  }
+}
+
 export interface QueueActivity {
   taskId: string;
   actorId: string;
@@ -1510,6 +1529,7 @@ export class ResearchStore {
 
   enqueueTask(task: { id: string; kind: string; priority: number; payload: unknown; availableAt?: string; assigneeId?: string | null; tokenBudget?: number | null; deadlineAt?: string | null; goalId?: string | null; parentTaskId?: string | null; dependsOn?: string[] }): void {
     const now = new Date().toISOString();
+    validateQueueCompletionContract(task.payload);
     const dependsOn = [...new Set((task.dependsOn ?? []).filter((id) => id.trim()))];
     const tokenBudget = normalizeQueueTokenBudget(task.tokenBudget);
     const deadlineAt = normalizeQueueDeadline(task.deadlineAt);
@@ -1891,9 +1911,8 @@ export class ResearchStore {
     const requiredEvidenceRefs = Array.isArray(value.requiredEvidenceRefs)
       ? value.requiredEvidenceRefs.filter((ref): ref is string => typeof ref === "string" && ref.trim().length > 0 && ref.length <= 240).slice(0, 64)
       : [];
-    const allowedKinds: QueueActivityKind[] = ["started", "progress", "blocked", "handoff", "completed", "failed"];
     const requiredActivityKinds = Array.isArray(value.requiredActivityKinds)
-      ? value.requiredActivityKinds.filter((kind): kind is QueueActivityKind => typeof kind === "string" && allowedKinds.includes(kind as QueueActivityKind)).slice(0, 16)
+      ? value.requiredActivityKinds.filter((kind): kind is QueueActivityKind => typeof kind === "string" && QUEUE_ACTIVITY_KINDS.includes(kind as QueueActivityKind)).slice(0, 16)
       : [];
     const contract: QueueCompletionContract = { requiredPayloadKeys, requiredEvidenceRefs, requiredActivityKinds };
     const payloadObject = completionPayload && typeof completionPayload === "object" && !Array.isArray(completionPayload)

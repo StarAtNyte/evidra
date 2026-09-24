@@ -3358,6 +3358,18 @@ test("queue worker retries rejected completion proof instead of stranding the ti
   }
 });
 
+test("queue completion contracts are validated before work is claimable", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-contract-validation-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    assert.throws(() => store.enqueueTask({ id: "malformed-contract", kind: "research.lane", priority: 1, payload: { completionContract: { requiredEvidenceRefs: "not-an-array" } } }), /completionContract/);
+    assert.throws(() => store.enqueueTask({ id: "unknown-activity", kind: "research.lane", priority: 1, payload: { completionContract: { requiredActivityKinds: ["invented"] } } }), /activity kind/);
+    assert.equal(store.queueTasks().some((task) => task.id === "malformed-contract" || task.id === "unknown-activity"), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("governance benchmark covers role boundaries and scoped handoffs", () => {
   const report = runGovernanceBenchmark();
   assert.equal(report.failed, 0);
