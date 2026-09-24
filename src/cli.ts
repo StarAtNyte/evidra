@@ -2017,6 +2017,35 @@ routine.command("run <id>").description("Run one due routine and persist its nex
     throw error;
   }
 });
+routine.command("daemon")
+  .description("Poll and run due routines until interrupted")
+  .option("--poll <duration>", "poll interval, e.g. 1m or 5m", "1m")
+  .option("--once", "process due routines once and exit")
+  .action(async (options: { poll: string; once?: boolean }) => {
+    const pollMs = durationMinutes(options.poll) * 60_000;
+    const script = process.argv[1];
+    if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
+    let firstPass = true;
+    do {
+      const store = new ResearchStore(statePath);
+      const recovered = store.recoverStaleRoutines();
+      const now = Date.now();
+      const due = store.routines().filter((entry) => entry.status === "active" && Date.parse(entry.nextRunAt) <= now).map((entry) => entry.id);
+      store.close();
+      if (recovered.length) console.log(`Recovered stale routines: ${recovered.join(", ")}`);
+      if (!due.length) {
+        if (options.once) return;
+        console.log(`Routine daemon idle · next poll in ${Math.round(pollMs / 60_000)}m`);
+      }
+      for (const id of due) {
+        console.log(`Routine daemon · running ${id}`);
+        const result = await runProcess([process.execPath, script, "routine", "run", id], root, 7 * 24 * 60 * 60_000, streamProcessOutput);
+        if (result.exitCode !== 0) console.error(`Routine ${id} exited with code ${result.exitCode}. It remains scheduled for its next interval.`);
+      }
+      if (options.once || !firstPass && !due.length) await new Promise((resolve) => setTimeout(resolve, pollMs));
+      firstPass = false;
+    } while (!options.once);
+  });
 program.addCommand(routine);
 
 const integrity = new Command("integrity").description("Verify durable Evidra state integrity");

@@ -302,7 +302,7 @@ Implemented today:
 - ownership-aware queue checkout: each worker gets a durable identity, only the claimant can heartbeat a task, and stale claims are safely reclaimable;
 - goal-aligned queue ancestry: tasks can carry a phase-goal ID and parent-task ID, making autonomous decomposition traceable from mission to work item;
 - dependency safety: prerequisite graphs block out-of-order execution, reject cycles before they can deadlock an autonomous campaign, and expose missing/waiting/failed readiness reasons through the CLI and dashboard;
-- durable routines: recurring research or challenge campaigns persist their goal, route, interval, budget, last result, and runner lease so cron, the TUI, or a future service can trigger them without duplicate controllers;
+- durable routines: recurring research or challenge campaigns persist their goal, route, interval, budget, last result, and runner lease; the native routine daemon polls and executes due work without duplicate controllers;
 - atomic research-lane leases with heartbeats, duplicate-specialist protection, and restart-time stale-lane recovery;
 - detached process groups so Escape stops child workers as well as the parent;
 - experiment manifests, isolated worktrees, local/Modal executor boundaries, artifact capture, retries, and failure classification;

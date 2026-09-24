@@ -378,6 +378,7 @@ restarts. Inspect it through the TUI or CLI:
 /queue status --json     Machine-readable queue ownership and dependency readiness
 /routine list             Show durable recurring campaigns
 /routine run <id>         Run a due routine once
+/routine daemon           Poll and execute due routines continuously
 /routine recover          Recover expired routine leases
 /report research        Research graph report
 /report challenge       Challenge progress report

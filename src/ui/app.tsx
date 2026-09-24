@@ -208,7 +208,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/loop": [["/loop status", "Show loop state"], ["/loop once", "Run one research cycle"], ["/loop start", "Start autonomous loop"], ["/loop pause", "Pause loop"], ["/loop stop", "Stop loop"]],
   "/steer": [["/steer ", "Guide the active campaign at the next safe boundary"]],
   "/scheduler": [["/scheduler start", "Start scheduling"], ["/scheduler pause", "Pause scheduling"], ["/scheduler drain", "Finish active work only"]],
-  "/routine": [["/routine list", "Show recurring research routines"], ["/routine recover", "Recover stale routine leases"], ["/routine run ", "Run a due routine"], ["/routine pause ", "Pause a routine"], ["/routine resume ", "Resume a routine"]],
+  "/routine": [["/routine list", "Show recurring research routines"], ["/routine daemon", "Run due routines continuously"], ["/routine recover", "Recover stale routine leases"], ["/routine run ", "Run a due routine"], ["/routine pause ", "Pause a routine"], ["/routine resume ", "Resume a routine"]],
   "/thinking": REASONING_LEVELS.map((level) => [`/thinking ${level}`, `Thinking effort: ${level}`] as const),
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
@@ -2775,6 +2775,21 @@ export function App({ root }: { root: string }): React.JSX.Element {
             if (line) setProgress(`Routine ${id} · ${stream}: ${line.slice(-140)}`);
           }, registerProcess);
           appendTool(`Routine ${id} finished with exit code ${result.exitCode}.\n${result.stdout.trim().slice(-3000) || result.stderr.trim().slice(-3000) || "(no output)"}`);
+        } catch (error) { appendError(error); }
+        finally { activeProcess.current = null; setBusy(false); setProgress(""); }
+        return;
+      }
+      if (action === "daemon") {
+        store.close();
+        const script = process.argv[1];
+        if (!script) { append("assistant", "Unable to locate the Evidra CLI entrypoint."); return; }
+        setBusy(true); setProgress("Routine daemon · polling for due campaigns...");
+        try {
+          const result = await runProcess([process.execPath, script, "routine", "daemon"], root, 365 * 24 * 60 * 60_000, (stream, chunk) => {
+            const line = chunk.replace(/\s+/g, " ").trim();
+            if (line) setProgress(`Routine daemon · ${stream}: ${line.slice(-140)}`);
+          }, registerProcess);
+          appendTool(`Routine daemon stopped with exit code ${result.exitCode}.\n${result.stdout.trim().slice(-3000) || result.stderr.trim().slice(-3000) || "(no output)"}`);
         } catch (error) { appendError(error); }
         finally { activeProcess.current = null; setBusy(false); setProgress(""); }
         return;
