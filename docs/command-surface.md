@@ -45,6 +45,13 @@ later specialists can challenge earlier findings; the hand-offs are durable
 `research.lane.handoff` events. `safe` remains a single read-only specialist
 pass.
 
+Every specialist wave acquires a durable role lease before starting. The lane
+heartbeat is refreshed while the provider is working, so a second controller
+cannot duplicate a live role. If a process disappears, the next research wave
+marks only expired leases as blocked and can recover them; live lanes remain
+untouched. Queue tasks use the same ownership rule: a worker can heartbeat only
+the task it claimed.
+
 ```text
 /research start               Start autonomous research setup
 /research pause               Pause active research workers

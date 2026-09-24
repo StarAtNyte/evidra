@@ -299,6 +299,8 @@ Implemented today:
 - bounded research-director tool loop;
 - workspace file/search/read, Git status, safe shell, data audit, artifact checksum/JSON audit, source retrieval, validation-policy, and report tools;
 - durable queue with retries, stale-task recovery, bounded concurrency, and visible queued prompts;
+- ownership-aware queue checkout: each worker gets a durable identity, only the claimant can heartbeat a task, and stale claims are safely reclaimable;
+- atomic research-lane leases with heartbeats, duplicate-specialist protection, and restart-time stale-lane recovery;
 - detached process groups so Escape stops child workers as well as the parent;
 - experiment manifests, isolated worktrees, local/Modal executor boundaries, artifact capture, retries, and failure classification;
 - failure finalization that prevents started experiments from remaining indefinitely in `running` state;
