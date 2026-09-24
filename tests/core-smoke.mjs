@@ -79,7 +79,7 @@ import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperi
 import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, createLaneToolExecutor, laneHandoffBoard, lanePrompt, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneTeamSize, researchLiteratureQueries, roleMemoryFromTrajectories, runResearchLanes, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
-import { agentBudgetLedger, campaignAgentTokens, campaignRoleAgentTokens, roleBudgetLedger, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "../dist/core/usage.js";
+import { agentBudgetLedger, campaignAgentTokens, campaignRoleAgentTokens, roleBudgetLedger, summarizeAgentUsage, summarizeAgentUsageBy, summarizeAgentUsageByScope, summarizeUsage } from "../dist/core/usage.js";
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { assessForecast, summarizeForecastAssessments } from "../dist/core/forecast-calibration.js";
@@ -4544,6 +4544,20 @@ test("agent usage preserves role and route attribution", () => {
   assert.deepEqual(buckets.map((bucket) => [bucket.role, bucket.provider, bucket.model, bucket.calls, bucket.inputTokens + bucket.outputTokens]), [
     ["domain researcher", "local", "qwen", 1, 102],
     ["critic", "codex", "gpt-5.6-luna", 2, 20],
+  ]);
+});
+
+test("agent usage preserves durable work-item attribution", () => {
+  const buckets = summarizeAgentUsageByScope([
+    { payload: { taskId: "cycle-1", goalId: "goal-hypothesis", parentTaskId: "campaign-1", inputTokens: 20, outputTokens: 5 } },
+    { payload: { taskId: "cycle-1", goalId: "goal-hypothesis", parentTaskId: "campaign-1", inputTokens: 10, outputTokens: 5 } },
+    { payload: { taskId: "cycle-2", goalId: "goal-validation", parentTaskId: "campaign-1", inputTokens: 4, outputTokens: 1 } },
+    { payload: { inputTokens: 100, outputTokens: 100 } },
+  ]);
+  assert.deepEqual(buckets.map((bucket) => [bucket.taskId, bucket.goalId, bucket.parentTaskId, bucket.calls, bucket.inputTokens + bucket.outputTokens]), [
+    [null, null, null, 1, 200],
+    ["cycle-1", "goal-hypothesis", "campaign-1", 2, 40],
+    ["cycle-2", "goal-validation", "campaign-1", 1, 5],
   ]);
 });
 

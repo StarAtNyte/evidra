@@ -56,7 +56,7 @@ import { observedGpuHours } from "./core/compute-budget.js";
 import { enforceClaimTermination, enforceGoalTermination } from "./core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds, type ClaimAuditReport } from "./core/claim-audit.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "./core/error-analysis.js";
-import { agentBudgetLedger, campaignAgentTokens, roleBudgetLedger, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "./core/usage.js";
+import { agentBudgetLedger, campaignAgentTokens, roleBudgetLedger, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage, summarizeAgentUsageByScope, type AgentUsageAttribution } from "./core/usage.js";
 import { createBlendCandidate, diversityReport, loadPredictionVector, safePredictionPath, validateBlendCandidate, type PredictionVector } from "./core/ensemble.js";
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, runResearchLanes } from "./agents/research-lanes.js";
@@ -948,6 +948,7 @@ program.command("usage").description("Show research, experiment, and campaign us
   const agentEvents = store.eventsByType("research.agent.usage");
   const agentUsage = summarizeAgentUsage(agentEvents);
   const agentRoutes = summarizeAgentUsageBy(agentEvents);
+  const agentScopes = summarizeAgentUsageByScope(agentEvents);
   const agentBudget = campaign?.startedAt && typeof campaign.runtime?.agentTokenBudget === "number"
     ? agentBudgetLedger(agentEvents, String(campaign.startedAt), campaign.runtime.agentTokenBudget)
     : agentBudgetLedger([], "", null);
@@ -970,6 +971,7 @@ program.command("usage").description("Show research, experiment, and campaign us
   else console.log("Agent budget  unlimited");
   if (roleBudgets.length) console.log(`Role budgets\n${roleBudgets.map((entry) => `  ${entry.role} · ${entry.usedTokens}/${entry.budgetTokens} tokens · ${entry.status}`).join("\n")}`);
   if (agentRoutes.length) console.log(`Agent routes\n${agentRoutes.map((bucket) => `  ${bucket.role} · ${bucket.provider}/${bucket.model} · ${bucket.calls} calls · ${bucket.inputTokens + bucket.outputTokens} tokens`).join("\n")}`);
+  if (agentScopes.length) console.log(`Work-item cost\n${agentScopes.slice(0, 12).map((bucket) => `  ${bucket.taskId ?? "unattributed"}${bucket.goalId ? ` · goal ${bucket.goalId}` : ""} · ${bucket.calls} calls · ${bucket.inputTokens + bucket.outputTokens} tokens`).join("\n")}`);
   console.log(`GPU-tagged    ${usage.gpuWallHours.toFixed(3)} hours`);
   console.log(`GPU reserved  ${store.reservedComputeGpuHours().toFixed(3)} hours`);
   for (const [executor, bucket] of Object.entries(usage.byExecutor)) console.log(`  ${executor.padEnd(11)} ${bucket.runs} runs · ${bucket.wallMinutes.toFixed(1)}m · ${bucket.gpuWallHours.toFixed(3)} GPU-h`);
@@ -3480,9 +3482,9 @@ research
       const toolTrace = createToolTraceRecorder(tracePrefix, { onEvent: (event) => {
         try { appendFileSync(tracePath, `${JSON.stringify(event)}\n`, "utf8"); } catch { /* Partial trace persistence is best-effort. */ }
       } });
-      const recordAgentUsage = (usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningOutputTokens?: number } | undefined, provider: string, model: string, role: string): void => {
+      const recordAgentUsage = (usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningOutputTokens?: number } | undefined, provider: string, model: string, role: string, attribution?: AgentUsageAttribution): void => {
         const usageStore = new ResearchStore(statePath);
-        usageStore.appendEvent("research.agent.usage", { cycle, campaignStartedAt: campaign.startedAt, role, provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, cacheWriteInputTokens: usage?.cacheWriteInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens });
+        usageStore.appendEvent("research.agent.usage", { cycle, campaignStartedAt: campaign.startedAt, role, provider, model, ...(attribution ?? {}), inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, cacheWriteInputTokens: usage?.cacheWriteInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens });
         usageStore.close();
       };
       let researchAttempt = 0;
@@ -3545,6 +3547,7 @@ research
             cwd: root,
             storePath: statePath,
             maxParallel: researchLaneLimit,
+            taskId: cycleTaskId,
             parentTaskId: cycleTaskId,
             campaignStartedAt: campaign.startedAt,
             roleTokenBudgets: campaign.runtime.roleTokenBudgets,
@@ -3599,6 +3602,7 @@ research
                 cwd: root,
                 storePath: statePath,
                 maxParallel: researchLaneLimit,
+                taskId: cycleTaskId,
                 parentTaskId: cycleTaskId,
                 campaignStartedAt: campaign.startedAt,
                 roleTokenBudgets: campaign.runtime.roleTokenBudgets,
@@ -3633,7 +3637,7 @@ research
           const verifiedStateStore = new ResearchStore(statePath);
           const verifiedState = phaseGoal ? projectVerifiedSubtaskState(verifiedStateStore.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined);
           verifiedStateStore.close();
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, crossPollination, agentRoleReviews, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness }, { provider: options.provider as "codex" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, refreshVerifiedState: () => {
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, crossPollination, agentRoleReviews, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness }, { provider: options.provider as "codex" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, taskId: cycleTaskId, goalId: phaseGoal?.id ?? null, parentTaskId: cycleTaskId, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, refreshVerifiedState: () => {
             const refreshStore = new ResearchStore(statePath);
             const payload = phaseGoal ? refreshStore.latestSubtaskAudit(phaseGoal.id)?.payload : undefined;
             refreshStore.close();
@@ -3658,6 +3662,7 @@ research
             campaignStartedAt: campaign.startedAt,
             roleTokenBudgets: campaign.runtime.roleTokenBudgets,
             maxParallel: 1,
+            taskId: cycleTaskId,
             goalId: phaseGoal?.id ?? null,
             parentTaskId: cycleTaskId,
             autonomy,
@@ -3684,6 +3689,7 @@ research
             campaignStartedAt: campaign.startedAt,
             roleTokenBudgets: campaign.runtime.roleTokenBudgets,
             maxParallel: 1,
+            taskId: cycleTaskId,
             goalId: phaseGoal?.id ?? null,
             parentTaskId: cycleTaskId,
             autonomy,

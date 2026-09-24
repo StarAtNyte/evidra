@@ -12,7 +12,7 @@ import { boundResearchContext } from "../core/context-budget.js";
 import type { LaneFinding } from "../core/cross-pollination.js";
 import { agentRoleContract } from "../core/agent-organization.js";
 import type { AgentRoleReview } from "../core/agent-evals.js";
-import { campaignRoleAgentTokens, roleBudgetLedger } from "../core/usage.js";
+import { campaignRoleAgentTokens, roleBudgetLedger, type AgentUsageAttribution } from "../core/usage.js";
 import { loadProjectGuidance, type ProjectGuidance } from "../core/project-guidance.js";
 type ProjectGuidanceText = Pick<ProjectGuidance, "text" | "contentHash" | "truncated">;
 
@@ -208,6 +208,8 @@ export interface ResearchLanesOptions {
   goalId?: string | null;
   /** Durable parent cycle ticket for hierarchical campaign tracing. */
   parentTaskId?: string | null;
+  /** Durable cycle ticket used to attribute specialist cost to work. */
+  taskId?: string | null;
   /** Campaign boundary and optional per-role model-token ceilings. */
   campaignStartedAt?: string;
   roleTokenBudgets?: Readonly<Record<string, number>>;
@@ -226,7 +228,7 @@ export interface ResearchLanesOptions {
   onToolResult?: (source: string, callId: string, result: ResearchToolResult) => void;
   onActivity?: (source: string, activity: string) => void;
   onAssistant?: (source: string, text: string) => void;
-  onUsage?: (usage: AgentResult["usage"], provider: string, model: string, role: string) => void;
+  onUsage?: (usage: AgentResult["usage"], provider: string, model: string, role: string, attribution?: AgentUsageAttribution) => void;
 }
 
 function roleTokenBudgetExhausted(options: ResearchLanesOptions, role: string): boolean {
@@ -709,7 +711,7 @@ export async function runResearchCritic(
       }
     }
     if (!result) throw lastError instanceof Error ? lastError : new Error("Research critic did not return a result.");
-    options.onUsage?.(result.usage, result.provider, result.model ?? model, "critic");
+    options.onUsage?.(result.usage, result.provider, result.model ?? model, "critic", { taskId: options.taskId ?? null, goalId: options.goalId ?? null, parentTaskId: options.parentTaskId ?? null });
     const evidenceStore = new ResearchStore(options.storePath);
     const evidenceAnchors = new Set<string>([
       ...laneReports.flatMap((lane) => lane.evidence),
@@ -811,7 +813,7 @@ export async function runResearchSemanticAuditor(
       onActivity: options.onActivity,
       onAssistant: options.onAssistant,
     }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
-    options.onUsage?.(result.usage, result.provider, result.model ?? model, role);
+    options.onUsage?.(result.usage, result.provider, result.model ?? model, role, { taskId: options.taskId ?? null, goalId: options.goalId ?? null, parentTaskId: options.parentTaskId ?? null });
     const evidenceStore = new ResearchStore(options.storePath);
     const validEvidence = new Set<string>([
       ...evidenceStore.eventsByType("research.observation").map((event) => event.type),
@@ -1021,7 +1023,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
           onActivity: options.onActivity,
           onAssistant: options.onAssistant,
         }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
-        options.onUsage?.(result.usage, result.provider, result.model ?? model, role);
+        options.onUsage?.(result.usage, result.provider, result.model ?? model, role, { taskId: laneTaskId, goalId: options.goalId ?? null, parentTaskId: options.parentTaskId ?? null });
         if (result.provider === "codex" && result.threadId) {
           const sessionStore = new ResearchStore(options.storePath);
           sessionStore.saveAgentSession({ role, scopeKey: sessionScope, provider: result.provider, model: result.model ?? model, threadId: result.threadId, taskId: laneTaskId });

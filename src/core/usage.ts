@@ -33,6 +33,19 @@ export interface AgentUsageBucket extends AgentUsageSummary {
   model: string;
 }
 
+export interface AgentUsageAttribution {
+  taskId?: string | null;
+  goalId?: string | null;
+  parentTaskId?: string | null;
+  cycle?: number;
+}
+
+export interface AgentUsageScopeBucket extends AgentUsageSummary {
+  taskId: string | null;
+  goalId: string | null;
+  parentTaskId: string | null;
+}
+
 export interface AgentBudgetLedger {
   budgetTokens: number | null;
   usedTokens: number;
@@ -118,6 +131,27 @@ export function summarizeAgentUsageBy(events: Array<{ payload: unknown }>): Agen
     buckets.set(key, bucket);
   }
   return [...buckets.values()].sort((left, right) => (right.inputTokens + right.outputTokens) - (left.inputTokens + left.outputTokens) || left.role.localeCompare(right.role));
+}
+
+/** Attribute inference cost to durable work items rather than only agent routes. */
+export function summarizeAgentUsageByScope(events: Array<{ payload: unknown }>): AgentUsageScopeBucket[] {
+  const buckets = new Map<string, AgentUsageScopeBucket>();
+  for (const event of events) {
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    const taskId = typeof payload.taskId === "string" && payload.taskId.trim() ? payload.taskId.trim() : null;
+    const goalId = typeof payload.goalId === "string" && payload.goalId.trim() ? payload.goalId.trim() : null;
+    const parentTaskId = typeof payload.parentTaskId === "string" && payload.parentTaskId.trim() ? payload.parentTaskId.trim() : null;
+    const key = `${taskId ?? "unattributed"}\u0000${goalId ?? ""}\u0000${parentTaskId ?? ""}`;
+    const bucket = buckets.get(key) ?? { taskId, goalId, parentTaskId, calls: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, reasoningOutputTokens: 0 };
+    bucket.calls += 1;
+    bucket.inputTokens += usageNumber(payload, "inputTokens");
+    bucket.outputTokens += usageNumber(payload, "outputTokens");
+    bucket.cachedInputTokens += usageNumber(payload, "cachedInputTokens");
+    bucket.cacheWriteInputTokens += usageNumber(payload, "cacheWriteInputTokens");
+    bucket.reasoningOutputTokens += usageNumber(payload, "reasoningOutputTokens");
+    buckets.set(key, bucket);
+  }
+  return [...buckets.values()].sort((left, right) => (right.inputTokens + right.outputTokens) - (left.inputTokens + left.outputTokens) || (left.taskId ?? "").localeCompare(right.taskId ?? ""));
 }
 
 /** Aggregate provider usage events consistently across CLI, TUI, and reports. */

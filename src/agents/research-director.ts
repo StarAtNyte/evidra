@@ -1,4 +1,5 @@
 import { ResearchDecisionSchema, type AgentResult, type ResearchDecision, type AgentTask } from "../core/types.js";
+import type { AgentUsageAttribution } from "../core/usage.js";
 import { isProviderUsageLimit, isRetryableAgentError, runWithLocalFallback, type AgentProvider, type CodexWebSearchMode } from "./codex-exec.js";
 import type { ProcessControl } from "../core/process.js";
 import { normalizeResearchToolResult, RESEARCH_TOOLS, selectResearchTools, toolFailureTrust, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
@@ -56,7 +57,10 @@ export interface ResearchDirectorOptions {
   onToolResult?: (source: string, callId: string, result: ResearchToolResult) => void;
   onActivity?: (source: string, activity: string) => void;
   onAssistant?: (source: string, text: string) => void;
-  onUsage?: (usage: AgentResult["usage"], provider: string, model: string, role: string) => void;
+  onUsage?: (usage: AgentResult["usage"], provider: string, model: string, role: string, attribution?: AgentUsageAttribution) => void;
+  taskId?: string | null;
+  goalId?: string | null;
+  parentTaskId?: string | null;
   /** Consume operator steering after each completed tool, before replanning. */
   consumeSteering?: () => string[];
   /** Refresh controller-owned verified state at each tool-feedback boundary. */
@@ -266,7 +270,7 @@ export async function runResearchDirector(
           context: workingContext,
           objective: `${objective}\n\n${contract}\n\n${contractGuidance}`,
         }, { ...options, provider, model, networkAccessEnabled: options.networkAccessEnabled ?? true, webSearchMode: options.webSearchMode ?? "live", onActivity: options.onActivity, onAssistant: options.onAssistant, onUsage: undefined }, options.fallbackLocalModel, onProgress, options.onProcess);
-        options.onUsage?.(result.usage, result.provider, result.model ?? model, "director");
+        options.onUsage?.(result.usage, result.provider, result.model ?? model, "director", { taskId: options.taskId ?? null, goalId: options.goalId ?? null, parentTaskId: options.parentTaskId ?? null });
         parsed = ResearchDecisionSchema.safeParse(normalizeResearchDecisionPayload(extractJson(result.output)));
         if (parsed.success) break;
         throw new Error(`Research director returned invalid decision: ${parsed.error.issues.map((issue) => issue.path.join(".") + " " + issue.message).join("; ")}`);

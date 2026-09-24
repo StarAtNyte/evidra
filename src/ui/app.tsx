@@ -74,7 +74,7 @@ import { recordBaselineEvidence } from "../core/baseline.js";
 import { redactSecrets } from "../core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "../core/claim-audit.js";
-import { agentBudgetLedger, campaignAgentTokens, summarizeAgentUsage, summarizeAgentUsageBy, summarizeUsage } from "../core/usage.js";
+import { agentBudgetLedger, campaignAgentTokens, summarizeAgentUsage, summarizeAgentUsageBy, summarizeAgentUsageByScope, summarizeUsage, type AgentUsageAttribution } from "../core/usage.js";
 import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "../core/literature-bench.js";
 import { parseAutoResearchBenchEvaluation } from "../core/autoresearch-bench.js";
 import { assessResearchDecisionRubric } from "../core/research-rubric.js";
@@ -1166,9 +1166,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const toolTrace = createToolTraceRecorder(tracePrefix, { onEvent: (event) => {
       try { appendFileSync(tracePath, `${JSON.stringify(event)}\n`, "utf8"); } catch { /* Partial trace persistence is best-effort. */ }
     } });
-    const recordAgentUsage = (usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningOutputTokens?: number } | undefined, provider: string, model: string, role: string): void => {
+    const recordAgentUsage = (usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningOutputTokens?: number } | undefined, provider: string, model: string, role: string, attribution?: AgentUsageAttribution): void => {
       const usageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      usageStore.appendEvent("research.agent.usage", { ...(campaign?.startedAt ? { campaignStartedAt: campaign.startedAt } : {}), role, provider, model, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, cacheWriteInputTokens: usage?.cacheWriteInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens });
+      usageStore.appendEvent("research.agent.usage", { ...(campaign?.startedAt ? { campaignStartedAt: campaign.startedAt } : {}), role, provider, model, ...(attribution ?? {}), inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, cacheWriteInputTokens: usage?.cacheWriteInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens });
       usageStore.close();
     };
     try {
@@ -1214,6 +1214,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         cwd: root,
         storePath: join(root, ".sota", "database.sqlite"),
         maxParallel: route.parallelLanes,
+        taskId: parentTaskId ?? null,
         campaignStartedAt: campaign?.startedAt,
         roleTokenBudgets: campaign?.runtime?.roleTokenBudgets,
         autonomy: config.autonomy,
@@ -1320,6 +1321,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         reasoningEffort: route.reasoningEffort === "high" ? config.reasoningEffort : route.reasoningEffort,
         limitPolicy: config.limitPolicy,
         cwd: root,
+        taskId: parentTaskId ?? null,
+        goalId: phaseGoal?.id ?? null,
+        parentTaskId: parentTaskId ?? null,
         fallbackLocalModel: config.fallbackModel,
         maxToolRounds: adaptiveHarness.maxToolRounds,
         maxToolAttempts: adaptiveHarness.maxToolAttempts,
@@ -1353,6 +1357,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         campaignStartedAt: campaign?.startedAt,
         roleTokenBudgets: campaign?.runtime?.roleTokenBudgets,
         maxParallel: 1,
+        taskId: parentTaskId ?? null,
         autonomy: config.autonomy,
         goalId: phaseGoal?.id ?? null,
         parentTaskId: parentTaskId ?? null,
@@ -1389,6 +1394,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         campaignStartedAt: campaign?.startedAt,
         roleTokenBudgets: campaign?.runtime?.roleTokenBudgets,
         maxParallel: 1,
+        taskId: parentTaskId ?? null,
         autonomy: config.autonomy,
         goalId: phaseGoal?.id ?? null,
         parentTaskId: parentTaskId ?? null,
@@ -3271,6 +3277,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const agentEvents = store.eventsByType("research.agent.usage");
       const agentUsage = summarizeAgentUsage(agentEvents);
       const agentRoutes = summarizeAgentUsageBy(agentEvents);
+      const agentScopes = summarizeAgentUsageByScope(agentEvents);
       store.close();
       const elapsed = campaign ? campaignElapsedMinutes(campaign) : 0;
       const executorUsage = Object.entries(usage.byExecutor).map(([executor, bucket]) => `  ${executor}: ${bucket.runs} runs · ${bucket.wallMinutes.toFixed(1)}m · ${bucket.gpuWallHours.toFixed(3)} GPU-h`).join("\n");
@@ -3279,6 +3286,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Agent usage\n  calls: ${agentUsage.calls}\n  tokens: ${agentUsage.inputTokens + agentUsage.outputTokens} (${agentUsage.inputTokens} in / ${agentUsage.outputTokens} out)${campaignTokenBudget ? `\n  campaign ceiling: ${campaignTokenBudget} tokens` : ""}`);
       append("assistant", `Codex accounting\n  cached input: ${agentUsage.cachedInputTokens}\n  cache written: ${agentUsage.cacheWriteInputTokens}\n  reasoning output: ${agentUsage.reasoningOutputTokens}`);
       if (agentRoutes.length) append("assistant", `Agent routes\n${agentRoutes.map((bucket) => `  ${bucket.role} · ${bucket.provider}/${bucket.model} · ${bucket.calls} calls · ${bucket.inputTokens + bucket.outputTokens} tokens`).join("\n")}`);
+      if (agentScopes.length) append("assistant", `Work-item cost\n${agentScopes.slice(0, 12).map((bucket) => `  ${bucket.taskId ?? "unattributed"}${bucket.goalId ? ` · goal ${bucket.goalId}` : ""} · ${bucket.calls} calls · ${bucket.inputTokens + bucket.outputTokens} tokens`).join("\n")}`);
       return;
     }
     if (request === "/telemetry export") {
