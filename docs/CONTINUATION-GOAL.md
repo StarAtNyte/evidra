@@ -90,6 +90,7 @@ external evaluator.
 - Remote queue and approval projections now apply structured secret redaction to arbitrary task payloads and inbox details, preventing credentials from escaping through otherwise-authenticated read models.
 - Remote operators can now consume a bounded cursor-based `GET /activity` feed, with redacted append-only events and integrity status, so external dashboards can reconcile activity incrementally.
 - Remote operators can now read a redacted `GET /organization` projection containing campaign identity, agent reporting lines, role controls, external workers, routines, queue control, and integrity state.
+- The organization projection now includes bounded pending directive summaries with source actor and scope, making remote steering inspectable before safe-boundary delivery.
 - Remote operators can now pause or resume durable routines through authenticated `POST /routines/:id/pause` and `/routines/:id/resume`; active runs remain protected from mid-run mutation.
 - Remote operators can now trigger an immediate routine cycle through authenticated `POST /routines/:id/trigger`; repeated or in-flight triggers are coalesced rather than launching concurrent runs.
 - Remote operators can now pause, resume, terminate, or revive known agent roles through authenticated role-scoped endpoints; controls are retry-safe, worker credentials are rejected, and termination blocks resume until explicit revival.

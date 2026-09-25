@@ -8861,6 +8861,9 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(remoteAgentMessageBody.idempotent, false);
     assert.equal(remoteAgentMessageBody.directive.role, "model researcher");
     assert.equal(remoteAgentMessageBody.directive.sourceRole, "research-console");
+    const organizationAfterMessage = await fetch(`http://127.0.0.1:${port}/organization`, { headers: { authorization: `Bearer ${token}` } });
+    const organizationAfterMessageBody = await organizationAfterMessage.json();
+    assert.equal(organizationAfterMessageBody.organization.find((entry) => entry.role === "model researcher")?.directiveQueue[0]?.sourceRole, "research-console");
     const repeatedAgentMessage = await post("/agents/model%20researcher/message", { message: "recheck the latest evidence", scopeKey: "phase-alpha" }, token, undefined, undefined, "research-console");
     assert.equal(repeatedAgentMessage.status, 200);
     assert.equal((await repeatedAgentMessage.json()).idempotent, true);

@@ -2778,7 +2778,12 @@ event.command("serve")
       if (operatorOrganizationPath) {
         const store = new ResearchStore(statePath);
         const campaign = store.campaign();
-        const organization = agentOrganization(store).map((agent) => ({ ...agent, control: store.agentPause(agent.role) ?? null, pendingDirectives: store.pendingAgentDirectives(agent.role).length }));
+        const organization = agentOrganization(store).map((agent) => ({
+          ...agent,
+          control: store.agentPause(agent.role) ?? null,
+          pendingDirectives: store.pendingAgentDirectives(agent.role).length,
+          directiveQueue: store.pendingAgentDirectives(agent.role).slice(0, 8).map((directive) => ({ id: directive.id, sourceRole: directive.sourceRole, scopeKey: directive.scopeKey, message: directive.message, createdAt: directive.createdAt })),
+        }));
         const routines = store.routines().slice(0, 64).map((routine) => ({ id: routine.id, name: routine.name, mode: routine.mode, status: routine.status, goal: routine.goal, nextRunAt: routine.nextRunAt, triggerEvent: routine.triggerEvent ?? null, pendingTriggers: routine.pendingTriggers ?? 0, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult, lastError: routine.lastError, runCount: routine.runCount, maxRuns: routine.maxRuns }));
         const externalWorkers = store.externalWorkers();
         const integrity = store.verifyEventChain();
