@@ -38,6 +38,27 @@ export function normalizeResearchDecisionPayload(value: unknown): unknown {
   return root;
 }
 
+/**
+ * Normalize provider-native shell names into Evidra's permissioned tool
+ * contract. Some Codex turns emit `exec_command` even when the structured
+ * director contract asks for typed research tools. The controller must map
+ * that alias rather than silently dropping the observation or granting the
+ * provider an unbounded executor.
+ */
+export function normalizeResearchToolCall(call: ResearchToolCall): ResearchToolCall {
+  if (call.name !== "exec_command") return call;
+  const args = call.arguments ?? {};
+  const command = args.command ?? args.cmd ?? args.argv;
+  const timeoutMs = args.timeoutMs ?? args.timeout;
+  return {
+    name: "shell.exec",
+    arguments: {
+      ...(command === undefined ? {} : { command }),
+      ...(typeof timeoutMs === "number" ? { timeoutMs } : {}),
+    },
+  };
+}
+
 export interface ResearchDirectorOptions {
   provider: AgentProvider;
   model: string;
@@ -303,10 +324,10 @@ export async function runResearchDirector(
       // Strict Codex schemas represent optional tool arguments as null because
       // every property must be required. Remove those sentinels before the
       // controller validates the public tool contract.
-      const normalizedCall: ResearchToolCall = {
+      const normalizedCall: ResearchToolCall = normalizeResearchToolCall({
         ...call,
         arguments: Object.fromEntries(Object.entries(call.arguments ?? {}).filter(([, value]) => value !== null)),
-      };
+      });
       const callId = options.onToolCall?.("director", normalizedCall) ?? `director-${normalizedCall.name}-${results.length + 1}`;
       const toolSpec = toolRegistry.find((tool) => tool.name === normalizedCall.name);
       const cacheKey = toolCacheKey(normalizedCall);

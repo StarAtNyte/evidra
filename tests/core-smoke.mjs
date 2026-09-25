@@ -33,7 +33,7 @@ import { QueueWorker } from "../dist/core/queue-worker.js";
 import { queueRecoveryAction } from "../dist/core/queue-recovery.js";
 import { executeResearchTool, normalizeResearchToolResult, availableResearchTools, RESEARCH_TOOLS, selectResearchTools, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
 import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "../dist/core/external-tools.js";
-import { normalizeResearchDecisionPayload, runResearchDirector } from "../dist/agents/research-director.js";
+import { normalizeResearchDecisionPayload, normalizeResearchToolCall, runResearchDirector } from "../dist/agents/research-director.js";
 import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, slurmCommand, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
@@ -277,6 +277,14 @@ test("strict Codex research output normalizes nullable optional fields", () => {
   assert.equal(payload.hypotheses[0].sourceAdaptation.section, undefined);
   assert.equal(payload.hypotheses[0].sourceAdaptation.repository, undefined);
   assert.equal(payload.selectedHypothesis, null);
+});
+
+test("provider-native exec_command calls map to the bounded shell research tool", () => {
+  assert.deepEqual(normalizeResearchToolCall({ name: "exec_command", arguments: { cmd: ["rg", "needle"], timeout: 5000, workdir: "/tmp/ignored" } }), {
+    name: "shell.exec",
+    arguments: { command: ["rg", "needle"], timeoutMs: 5000 },
+  });
+  assert.deepEqual(normalizeResearchToolCall({ name: "workspace.files", arguments: {} }), { name: "workspace.files", arguments: {} });
 });
 
 test("route drift requires adjacent windows before changing policy", () => {
