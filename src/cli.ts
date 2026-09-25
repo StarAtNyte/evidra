@@ -2709,8 +2709,8 @@ event.command("serve")
         }
         request.destroy();
       });
-      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/delegate", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release", "/tasks/note", "/tasks/cancel"].includes(request.url ?? "") ? request.url : undefined;
-      const operatorTaskPath = taskPath === "/tasks/note" || taskPath === "/tasks/cancel";
+      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/delegate", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release", "/tasks/note", "/tasks/cancel", "/queue/pause", "/queue/resume"].includes(request.url ?? "") ? request.url : undefined;
+      const operatorTaskPath = taskPath === "/tasks/note" || taskPath === "/tasks/cancel" || taskPath === "/queue/pause" || taskPath === "/queue/resume";
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
       const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
@@ -2726,7 +2726,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: integrity.status !== "invalid", integrity }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
@@ -2740,6 +2740,18 @@ event.command("serve")
         try {
           const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; checkpoint?: unknown; child?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; capacity?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
           if (taskPath) {
+            if (taskPath === "/queue/pause" || taskPath === "/queue/resume") {
+              const store = new ResearchStore(statePath);
+              const before = store.queueControl();
+              taskPath === "/queue/pause"
+                ? store.setQueuePaused(true, typeof parsed.reason === "string" ? parsed.reason : "remote operator paused queue")
+                : store.setQueuePaused(false);
+              const current = store.queueControl();
+              store.close();
+              response.writeHead(200, headers);
+              response.end(JSON.stringify({ ok: true, paused: current.paused, reason: current.reason, changed: before.paused !== current.paused || before.reason !== current.reason }));
+              return;
+            }
             if (taskPath === "/tasks/note") {
               const taskId = typeof parsed.taskId === "string" ? parsed.taskId.trim() : "";
               const message = typeof parsed.message === "string" ? parsed.message.trim() : "";

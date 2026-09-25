@@ -84,6 +84,7 @@ external evaluator.
 - The event control plane now exposes bearer-authenticated `POST /tasks/note` for the same operator note action, while deliberately rejecting worker-only authentication so notes cannot be confused with worker authority.
 - Remote operator notes accept bounded idempotency keys, acknowledge identical retries without appending duplicate activity, and reject conflicting reuse with a `409`.
 - The event control plane now exposes bearer-authenticated `POST /tasks/cancel` for remote governance; it cascades through unfinished descendants and leaves worker leases to observe cancellation cooperatively on their next heartbeat.
+- Remote operators can now pause/resume global queue dispatch through bearer-authenticated `POST /queue/pause` and `POST /queue/resume`; live tasks remain untouched and worker-only credentials are rejected.
 - Successful remote claims now include a bounded resume context—task lineage, attempt number, checkpoint metadata, and recent redacted activity—so crash recovery does not require a worker to reconstruct context from the full event log.
 - The deterministic orchestration benchmark now guards both capacity-aware checkout and resumable remote context, keeping the new recovery contract measured rather than documentation-only.
 - Dashboard queue rows now render the structured progress state, percent, and step instead of exposing those fields only through the API payload.
