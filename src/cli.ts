@@ -2309,6 +2309,55 @@ submission.command("record").argument("<bundle>").requiredOption("--public-score
   store.close();
   console.log(`Recorded ${options.platform} score ${score} for ${bundle}.`);
 });
+submission.command("observe")
+  .argument("<external-id>", "submission, run, or evaluation identifier")
+  .requiredOption("--score <score>", "score returned by the external evaluator")
+  .option("--platform <name>", "platform or evaluation source", "manual")
+  .option("--rank <rank>", "optional leaderboard rank")
+  .option("--experiment <id>", "optional Evidra experiment to attach the observation to")
+  .option("--validation <json>", "optional local validation scores as JSON")
+  .description("Record external score feedback even when the artifact was submitted outside Evidra")
+  .action((externalId: string, options: { score: string; platform: string; rank?: string; experiment?: string; validation?: string }) => {
+    const score = Number(options.score);
+    if (!Number.isFinite(score)) throw new Error("External score must be a finite number.");
+    const rank = options.rank === undefined ? undefined : Number(options.rank);
+    if (rank !== undefined && (!Number.isInteger(rank) || rank < 1)) throw new Error("Leaderboard rank must be a positive integer.");
+    let validationScores: Record<string, number> | undefined;
+    if (options.validation) {
+      const parsed = JSON.parse(options.validation) as Record<string, unknown>;
+      validationScores = Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value === "number" && Number.isFinite(value)) as Array<[string, number]>);
+    }
+    const recordedAt = new Date().toISOString();
+    const store = new ResearchStore(statePath);
+    const payload = {
+      externalId,
+      platform: options.platform,
+      score,
+      ...(rank === undefined ? {} : { rank }),
+      ...(options.experiment ? { experimentId: options.experiment } : {}),
+      ...(validationScores ? { validationScores } : {}),
+      observedAt: recordedAt,
+    };
+    store.saveClaim({
+      id: `claim_external_score_${options.platform}_${externalId}_${Date.now()}`,
+      payload: {
+        statement: `External ${options.platform} score for ${externalId}: ${score}`,
+        scope: options.experiment ?? externalId,
+        confidence: 1,
+        sourceType: "external_score",
+        sourceId: externalId,
+        status: "active",
+        score,
+        platform: options.platform,
+        recordedAt,
+        ...(rank === undefined ? {} : { rank }),
+        ...(validationScores ? { validationScores } : {}),
+      },
+    });
+    store.appendEvent("submission.score.observed", payload);
+    store.close();
+    console.log(`Observed ${options.platform} score ${score} for ${externalId}${rank === undefined ? "" : ` · rank #${rank}`}.`);
+  });
 submission.command("distribution").description("Estimate which local validation split tracks external scores").action(() => {
   const store = new ResearchStore(statePath);
   const observations: ExternalValidationObservation[] = store.submissions()
