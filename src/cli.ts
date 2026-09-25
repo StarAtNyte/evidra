@@ -2716,13 +2716,15 @@ event.command("serve")
       const operatorOrganizationPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/organization";
       const routineControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/routines\/([^/]+)\/(pause|resume)$/) : null;
       const operatorRoutinePath = Boolean(routineControlMatch);
+      const agentControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/agents\/([^/]+)\/(pause|resume|terminate|revive)$/) : null;
+      const operatorAgentPath = Boolean(agentControlMatch);
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
       const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
       const authorization = typeof request.headers.authorization === "string" ? request.headers.authorization : "";
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
-      if (operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
+      if (operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
@@ -2796,7 +2798,41 @@ event.command("serve")
         }
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, GET /queue/status, GET /activity, GET /organization, or GET /health are supported" })); return; }
+      if (operatorAgentPath && agentControlMatch) {
+        let role: string;
+        try { role = decodeURIComponent(agentControlMatch[1] ?? ""); } catch {
+          response.writeHead(400, headers);
+          response.end(JSON.stringify({ error: "agent role must be valid URL encoding" }));
+          return;
+        }
+        const action = agentControlMatch[2];
+        const store = new ResearchStore(statePath);
+        try {
+          if (!agentOrganization(store).some((entry) => entry.role === role)) {
+            response.writeHead(404, headers);
+            response.end(JSON.stringify({ error: `Unknown agent role '${role}'.` }));
+            return;
+          }
+          if (action === "resume" && store.agentPause(role)?.terminated) {
+            response.writeHead(409, headers);
+            response.end(JSON.stringify({ error: `Role '${role}' is terminated; revive it first.` }));
+            return;
+          }
+          let changed = false;
+          if (action === "pause" || action === "resume") changed = store.setAgentPause(role, action === "pause", "remote operator request");
+          else {
+            changed = store.setAgentTermination(role, action === "terminate", `remote operator ${action} request`);
+            if (action === "revive") changed = store.setAgentPause(role, false, "remote operator revive request") || changed;
+          }
+          const control = store.agentPause(role);
+          response.writeHead(200, headers);
+          response.end(JSON.stringify({ ok: true, role, action, changed, control: control ?? null }));
+        } finally {
+          store.close();
+        }
+        return;
+      }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, GET /queue/status, GET /activity, GET /organization, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");

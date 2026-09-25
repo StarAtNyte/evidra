@@ -1579,12 +1579,14 @@ export class ResearchStore {
   }
 
   /** Persist operator control separately from transient worker status. */
-  setAgentPause(role: string, paused: boolean, reason = "operator request"): void {
+  setAgentPause(role: string, paused: boolean, reason = "operator request"): boolean {
     const normalized = role.trim();
     if (!normalized) throw new Error("Agent role is required.");
+    if (this.agentPause(normalized)?.paused === paused) return false;
     const now = new Date().toISOString();
     this.db.prepare(`INSERT INTO agent_controls (role, paused, reason, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(role) DO UPDATE SET paused = excluded.paused, reason = excluded.reason, updated_at = excluded.updated_at`).run(normalized, paused ? 1 : 0, paused ? reason.slice(0, 500) : null, now);
     this.appendEvent(paused ? "agent.pause.requested" : "agent.pause.cleared", { role: normalized, reason: paused ? reason.slice(0, 500) : undefined });
+    return true;
   }
 
   queueControl(): { paused: boolean; reason: string | null; updatedAt: string } {
@@ -1653,12 +1655,14 @@ export class ResearchStore {
   }
 
   /** Permanently block a role until an explicit revive/restart action. */
-  setAgentTermination(role: string, terminated: boolean, reason = "operator request"): void {
+  setAgentTermination(role: string, terminated: boolean, reason = "operator request"): boolean {
     const normalized = role.trim();
     if (!normalized) throw new Error("Agent role is required.");
+    if (this.agentPause(normalized)?.terminated === terminated) return false;
     const now = new Date().toISOString();
     this.db.prepare(`INSERT INTO agent_controls (role, paused, terminated, reason, updated_at) VALUES (?, 0, ?, ?, ?) ON CONFLICT(role) DO UPDATE SET terminated = excluded.terminated, paused = CASE WHEN excluded.terminated = 1 THEN 0 ELSE agent_controls.paused END, reason = excluded.reason, updated_at = excluded.updated_at`).run(normalized, terminated ? 1 : 0, terminated ? reason.slice(0, 500) : null, now);
     this.appendEvent(terminated ? "agent.termination.requested" : "agent.termination.cleared", { role: normalized, reason: terminated ? reason.slice(0, 500) : undefined });
+    return true;
   }
 
   /** Built-in roles are trusted by default; custom/external roles need explicit admission. */
