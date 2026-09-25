@@ -2516,6 +2516,13 @@ queue.command("activity <id>").option("--limit <count>", "number of task updates
   store.close();
   console.log(activity.length ? activity.map((entry) => `${entry.createdAt}  ${entry.kind.padEnd(9)} ${entry.actorId}\n  ${entry.message}`).join("\n") : `No activity recorded for ${id}.`);
 });
+queue.command("note <id> <message>").description("Add an operator handoff note to a queue task without changing its evidence or completion state").action((id: string, message: string) => {
+  const store = new ResearchStore(statePath);
+  try {
+    if (!store.recordQueueActivity({ taskId: id, actorId: "operator", kind: "handoff", message })) throw new Error("task was not found or the note was invalid");
+  } finally { store.close(); }
+  console.log(`Added an operator handoff note to ${id}.`);
+});
 queue.command("usage [id]").option("--limit <count>", "number of usage records", "128").option("--json", "emit machine-readable usage state").action((id: string | undefined, options: { limit: string; json?: boolean }) => {
   const store = new ResearchStore(statePath);
   const limit = Math.max(1, Math.min(512, Number.parseInt(options.limit, 10) || 128));

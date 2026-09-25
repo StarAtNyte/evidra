@@ -4500,6 +4500,12 @@ test("queue status JSON exposes exact budget and usage state", async () => {
     assert.ok(store.claimTask("status-budget", ["research.lane"], "worker-a")?.claimToken);
     store.recordQueueUsage({ taskId: "status-budget", actorId: "worker-a", inputTokens: 8, outputTokens: 7 });
     store.close();
+    const noteOutput = execFileSync(process.execPath, [join(process.cwd(), "dist", "cli.js"), "queue", "note", "status-budget", "operator requested a fresh validation pass"], { cwd: root, env: { ...process.env, EVIDRA_STATE_DIR: join(root, ".sota") }, encoding: "utf8" });
+    assert.match(noteOutput, /Added an operator handoff note/);
+    const notedStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    assert.equal(notedStore.queueActivities("status-budget").at(-1)?.actorId, "operator");
+    assert.equal(notedStore.queueActivities("status-budget").at(-1)?.kind, "handoff");
+    notedStore.close();
     const result = await new Promise((resolve) => {
       const child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "queue", "status", "--json"], { cwd: root, env: { ...process.env, EVIDRA_STATE_DIR: join(root, ".sota") }, stdio: ["ignore", "pipe", "pipe"] });
       let stdout = "";
