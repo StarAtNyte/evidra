@@ -5178,6 +5178,15 @@ test("research tool registry exposes safe workspace tools", async () => {
     const lifecycleStore = new ResearchStore(db);
     assert.equal(lifecycleStore.eventsByType("research.external_tool.lifecycle_changed").length, 6);
     lifecycleStore.close();
+    mkdirSync(join(root, ".evidra", "plugins", "echo-plugin"), { recursive: true });
+    writeFileSync(join(root, ".evidra", "plugins", "echo-plugin", "plugin.json"), JSON.stringify({ version: 1, tools: [{ name: "external.probe", description: "Namespaced plugin probe", command: [process.execPath, "adapter.mjs"], roles: ["domain researcher"], readOnly: true, input: { value: "plugin value" } }] }));
+    const pluginManifest = loadExternalResearchTools(root);
+    assert.equal(pluginManifest.tools.some((tool) => tool.name === "external.echo-plugin.probe"), true);
+    assert.equal(externalToolStatus(root, "external.echo-plugin.probe").status, "quarantined");
+    assert.equal(availableResearchTools(root).some((tool) => tool.name === "external.echo-plugin.probe"), false);
+    setExternalToolStatus(root, "external.echo-plugin.probe", "enabled");
+    assert.equal(externalToolStatus(root, "external.echo-plugin.probe").status, "enabled");
+    assert.equal(availableResearchTools(root).some((tool) => tool.name === "external.echo-plugin.probe"), true);
     const healthy = recordExternalToolHealth(root, "external.echo", true);
     assert.equal(healthy.health?.status, "ok");
     assert.equal(healthy.health?.failureStreak, 0);
