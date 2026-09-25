@@ -157,6 +157,15 @@ requests full access. The variable may tighten a permissive engineer/user
 route, while all full-access work remains isolated from the controller
 checkout.
 
+On hosts where Codex can start a read-only turn but its bwrap network namespace
+cannot run shell observations, set `EVIDRA_CODEX_ISOLATED_RESEARCH=1` for the
+campaign controller. Research lanes and critics then use Codex's full-access
+mode only inside a disposable copy. The copy excludes dependencies, virtual
+environments, challenge datasets, Evidra artifacts, and the controller
+database, so the active checkout and durable state remain protected. This is a
+host-recovery route, not a general permission elevation; the normal read-only
+route remains the default.
+
 ## Long-running campaigns
 
 Start a campaign with an explicit goal and stopping condition:

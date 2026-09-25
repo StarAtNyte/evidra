@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { ResearchStore } from "../core/store.js";
 import type { AgentProvider, CodexWebSearchMode, ExecAgentOptions } from "./codex-exec.js";
 import type { AgentResult } from "../core/types.js";
-import { isProviderUsageLimit, isRetryableAgentError, resolveLocalFallbackModel, runWithLocalFallback } from "./codex-exec.js";
+import { isProviderUsageLimit, isRetryableAgentError, researchSandboxMode, resolveLocalFallbackModel, runWithLocalFallback } from "./codex-exec.js";
 import type { ProcessControl } from "../core/process.js";
 import type { AutonomyLevel } from "../core/permissions.js";
 import { availableResearchTools, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
@@ -719,7 +719,7 @@ export async function runResearchCritic(
           webSearchMode: options.webSearchMode ?? "live",
           timeoutMs: options.timeoutMs,
           cwd: options.cwd,
-          sandbox: "read-only",
+          sandbox: researchSandboxMode(),
           onActivity: options.onActivity,
           onAssistant: options.onAssistant,
         }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
@@ -837,7 +837,7 @@ export async function runResearchSemanticAuditor(
       webSearchMode: "disabled",
       timeoutMs: options.timeoutMs,
       cwd: options.cwd,
-      sandbox: "read-only",
+      sandbox: researchSandboxMode(),
       onActivity: options.onActivity,
       onAssistant: options.onAssistant,
     }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
@@ -1064,7 +1064,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
           webSearchMode: options.webSearchMode ?? "live",
           timeoutMs: remainingLaneTimeoutMs() ?? options.timeoutMs,
           cwd: options.cwd,
-          sandbox: "read-only",
+          sandbox: researchSandboxMode(),
           onActivity: options.onActivity,
           onAssistant: options.onAssistant,
         }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);

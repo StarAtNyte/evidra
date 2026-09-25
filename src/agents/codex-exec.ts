@@ -41,6 +41,15 @@ export function effectiveCodexSandbox(requested?: CodexSandboxMode): CodexSandbo
 }
 
 /**
+ * Select the sandbox for read-only research roles when the host's read-only
+ * bwrap namespace is unavailable. Full-access is still safe here because
+ * Codex receives a disposable copy, never the controller checkout.
+ */
+export function researchSandboxMode(): CodexSandboxMode {
+  return process.env.EVIDRA_CODEX_ISOLATED_RESEARCH === "1" ? "danger-full-access" : "read-only";
+}
+
+/**
  * A full-access provider sandbox must never share Evidra's controller checkout.
  * This is intentionally a copy, rather than a Git worktree: research agents are
  * instructed not to edit, but a provider/tool can still violate that instruction.
@@ -59,7 +68,8 @@ export function createIsolatedCodexWorkspace(source: string): { path: string; cl
       // experiment worktrees, or common credential files into the provider
       // sandbox.
       if (first === "node_modules") return false;
-      if (first === ".sota" && parts[1] === "worktrees") return false;
+      if (first === ".venv" || name === ".whest-data") return false;
+      if (first === ".sota" && ["worktrees", "artifacts", "database.sqlite"].includes(parts[1] ?? name)) return false;
       if (/^\.env(?:\.|$)/i.test(name) || /(?:credentials|token|secret|private).*\.(?:json|ya?ml|toml|pem|key)$/i.test(name)) return false;
       return true;
     },

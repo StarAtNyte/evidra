@@ -182,7 +182,7 @@ import { evidraVersion } from "../dist/version.js";
 import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../dist/core/validation-lock.js";
 import { researchFailureRecord } from "../dist/core/research-failure.js";
-import { codexIsLoggedInAsync, createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexModel, effectiveCodexSandbox, isProviderFallbackEligible, isProviderUsageLimit, listCodexModels, MAX_PROVIDER_RESET_WAIT_MS, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveCodexModel, shouldUseLocalFallback } from "../dist/agents/codex-exec.js";
+import { codexIsLoggedInAsync, createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexModel, effectiveCodexSandbox, isProviderFallbackEligible, isProviderUsageLimit, listCodexModels, MAX_PROVIDER_RESET_WAIT_MS, providerRetryAfterMs, queueCodexMessage, researchSandboxMode, resolveCodexBinary, resolveCodexModel, shouldUseLocalFallback } from "../dist/agents/codex-exec.js";
 import { analyzeHarnessComponentFailures, assessHarnessChangePresence, evaluateHarnessChange, inventoryHarnessComponents, parseHarnessChangeContract, planHarnessInterventions } from "../dist/core/harness-evolution.js";
 import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
 import { assessStopPolicy, betaPosteriorTail } from "../dist/core/stop-policy.js";
@@ -1171,6 +1171,16 @@ test("Codex sandbox preserves read-only role boundaries", () => {
   else process.env.EVIDRA_CODEX_SANDBOX = previous;
 });
 
+test("isolated research sandbox is explicit and keeps the default read-only", () => {
+  const previous = process.env.EVIDRA_CODEX_ISOLATED_RESEARCH;
+  delete process.env.EVIDRA_CODEX_ISOLATED_RESEARCH;
+  assert.equal(researchSandboxMode(), "read-only");
+  process.env.EVIDRA_CODEX_ISOLATED_RESEARCH = "1";
+  assert.equal(researchSandboxMode(), "danger-full-access");
+  if (previous === undefined) delete process.env.EVIDRA_CODEX_ISOLATED_RESEARCH;
+  else process.env.EVIDRA_CODEX_ISOLATED_RESEARCH = previous;
+});
+
 test("Codex model resolution preserves explicit selections", async () => {
   assert.equal(DEFAULT_CODEX_MODEL, "gpt-5.6-luna");
   assert.equal(await resolveCodexModel("gpt-5.6-luna"), "gpt-5.6-luna");
@@ -1270,11 +1280,18 @@ test("full-access research workspaces cannot modify the controller checkout", ()
     writeFileSync(join(root, "controller.txt"), "original\n");
     mkdirSync(join(root, ".sota"));
     writeFileSync(join(root, ".sota", "private.txt"), "controller state\n");
+    mkdirSync(join(root, ".sota", "artifacts"));
+    writeFileSync(join(root, ".sota", "artifacts", "large.log"), "artifact\n");
+    mkdirSync(join(root, ".whest-data"));
+    writeFileSync(join(root, ".whest-data", "weights.bin"), "dataset\n");
     const isolated = createIsolatedCodexWorkspace(root);
     try {
       writeFileSync(join(isolated.path, "controller.txt"), "provider edit\n");
       assert.equal(readFileSync(join(root, "controller.txt"), "utf8"), "original\n");
       assert.equal(existsSync(join(isolated.path, ".sota")), true);
+      assert.equal(existsSync(join(isolated.path, ".sota", "private.txt")), true);
+      assert.equal(existsSync(join(isolated.path, ".sota", "artifacts")), false);
+      assert.equal(existsSync(join(isolated.path, ".whest-data")), false);
     } finally {
       isolated.cleanup();
     }
