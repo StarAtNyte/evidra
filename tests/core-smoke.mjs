@@ -4805,6 +4805,7 @@ test("external event idempotency keys suppress webhook retries durably", () => {
 test("authenticated external agent heartbeats preserve lease ownership", () => {
     assert.deepEqual(parseExternalAgentHeartbeat({ workspaceId: "ws_00000000-0000-0000-0000-000000000000", role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "running", capacity: 2, capabilities: ["python", "gpu.cuda"] }).capabilities, ["gpu.cuda", "python"]);
   assert.equal(parseExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "idle", capacity: 2 }).capacity, 2);
+  assert.equal(parseExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "idle" }).capacity, undefined);
   assert.throws(() => parseExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "idle", capacity: 0 }), /capacity/);
   assert.throws(() => parseExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "unknown" }), /status/);
   const root = mkdtempSync(join(tmpdir(), "evidra-external-heartbeat-"));
@@ -4821,6 +4822,7 @@ test("authenticated external agent heartbeats preserve lease ownership", () => {
     assert.equal(store.recordExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-b", provider: "bash", model: "external", status: "running" }).accepted, false);
     assert.equal(store.recordExternalAgentHeartbeat({ role: "model researcher", leaseId: "worker-a", provider: "claude", model: "sonnet", status: "idle", capabilities: ["python"] }).accepted, true);
     assert.deepEqual(store.externalWorkers()[0]?.capabilities, ["python"]);
+    assert.equal(store.externalWorkers()[0]?.capacity, 2);
     assert.deepEqual(store.externalWorkerCapabilities("worker-a"), ["python"]);
     assert.equal(store.externalWorkerCapabilities("missing-worker"), undefined);
     assert.equal(store.externalWorkerAdmission("worker-a").allowed, true);
@@ -8770,6 +8772,8 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(claimedBody.resume.attempt, 1);
     assert.equal(claimedBody.resume.checkpoint.present, false);
     assert.deepEqual(claimedBody.resume.lineage.taskIds, [task.id]);
+    const overCapacityClaim = await post("/tasks/claim", { workerId: "worker-a", capacity: 64 }, token, "worker-a", "worker-secret");
+    assert.equal(overCapacityClaim.status, 400);
     const checkpoint = await post("/tasks/checkpoint", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, checkpoint: { stage: "remote-retrieval", artifact: "partial.json" } }, token, "worker-a", "worker-secret");
     assert.equal(checkpoint.status, 200);
     const checkpointStore = new ResearchStore(join(root, ".sota", "database.sqlite"));

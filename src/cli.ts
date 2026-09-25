@@ -2786,6 +2786,10 @@ event.command("serve")
                 return;
               }
               const dispatch = store.externalWorkerDispatchCapacity(workerId);
+              if (dispatch.limit !== null && requestedCapacity !== undefined && requestedCapacity > dispatch.limit) {
+                store.close();
+                throw new Error(`requested capacity ${requestedCapacity} exceeds the worker heartbeat capacity ${dispatch.limit}`);
+              }
               const capacity = requestedCapacity ?? dispatch.limit;
               const task = store.claimNextTask(kinds ?? scopedKinds, workerId, effectiveCapabilities, capacity);
               const blockedApprovals = task ? [] : store.queueTasks("queued")

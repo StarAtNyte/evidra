@@ -1813,7 +1813,7 @@ export class ResearchStore {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(worker_id) DO UPDATE SET role = excluded.role, provider = excluded.provider, model = excluded.model,
         workspace_id = excluded.workspace_id,
-        status = excluded.status, capabilities_json = excluded.capabilities_json, capacity = excluded.capacity, task = excluded.task,
+        status = excluded.status, capabilities_json = excluded.capabilities_json, capacity = COALESCE(excluded.capacity, external_workers.capacity), task = excluded.task,
         last_heartbeat_at = excluded.last_heartbeat_at, updated_at = excluded.updated_at
     `).run(input.leaseId, input.workspaceId ?? this.workspaceId(), input.role, input.provider, input.model, input.status, safeJson(capabilities), input.capacity ?? null, input.task ?? null, now, now);
     this.appendEvent("agent.external_heartbeat.accepted", { role: input.role, leaseId: input.leaseId, provider: input.provider, model: input.model, status: input.status });
