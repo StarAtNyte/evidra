@@ -55,6 +55,13 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     const capacityBlocked = store.claimNextTask(["capacity"], "capacity-worker", undefined, 1);
     const resumeContext = capacityFirst ? store.queueResumeContext(capacityFirst.id) : undefined;
     check("worker-capacity-and-resume", "A bounded worker cannot be over-dispatched and reclaimed work exposes resumable context.", capacityFirst?.id === "capacity-first" && !capacityBlocked && resumeContext?.taskId === "capacity-first" && resumeContext.attempt === 1 && resumeContext.checkpoint.present === false, { first: capacityFirst?.id, blocked: capacityBlocked?.id, resumeContext });
+    store.enqueueTask({ id: "work-product", kind: "artifact-worker", priority: 1, payload: {} });
+    const productClaim = store.claimTask("work-product", ["artifact-worker"], "product-worker");
+    const product = productClaim ? store.recordQueueWorkProduct({ taskId: "work-product", actorId: "product-worker", name: "result.json", path: "artifacts/result.json", checksum: `sha256:${"c".repeat(64)}`, claimToken: productClaim.claimToken ?? undefined }) : undefined;
+    const productResume = store.queueResumeContext("work-product");
+    const productVisible = store.queueWorkProducts("work-product").some((entry) => entry.id === product?.id && entry.checksum === `sha256:${"c".repeat(64)}`);
+    check("work-product-lineage", "A claimed worker can publish a hashed relative-path product that remains visible in resumable task context.", productClaim?.id === "work-product" && product !== undefined && productVisible && productResume?.workProducts.some((entry) => entry.id === product.id) === true, { productId: product?.id, productVisible, resumeProducts: productResume?.workProducts.length ?? 0 });
+    if (productClaim) store.completeClaimedTask("work-product", "product-worker", "completed", { product: product?.id }, undefined, productClaim.claimToken ?? undefined);
     if (capacityFirst) {
       store.releaseClaimedTask(capacityFirst.id, "capacity-worker", new Date().toISOString(), capacityFirst.claimToken ?? undefined, "benchmark capacity release");
       store.updateTask(capacityFirst.id, "completed");
