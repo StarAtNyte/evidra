@@ -1774,22 +1774,26 @@ export class ResearchStore {
     return contract;
   }
 
-  setAgentRoleAdmission(role: string, admitted: boolean, reason = "operator request"): void {
+  setAgentRoleAdmission(role: string, admitted: boolean, reason = "operator request"): boolean {
     const normalized = role.trim();
     if (!normalized) throw new Error("Agent role is required.");
     if (isBuiltInAgentRole(normalized)) throw new Error(`Built-in role '${normalized}' is approved by contract; use pause or terminate to control it.`);
+    if (this.agentRoleAdmissionStatus(normalized) === "approved" && admitted) return false;
     const now = new Date().toISOString();
     this.db.prepare(`INSERT INTO agent_controls (role, paused, terminated, admitted, admission_status, reason, updated_at) VALUES (?, 0, 0, ?, ?, ?, ?) ON CONFLICT(role) DO UPDATE SET admitted = excluded.admitted, admission_status = excluded.admission_status, reason = excluded.reason, updated_at = excluded.updated_at`).run(normalized, admitted ? 1 : 0, admitted ? "approved" : "review", reason.slice(0, 500), now);
     this.appendEvent(admitted ? "agent.role.admitted" : "agent.role.admission.revoked", { role: normalized, reason: reason.slice(0, 500) });
+    return true;
   }
 
-  rejectAgentRoleAdmission(role: string, reason = "operator rejected role"): void {
+  rejectAgentRoleAdmission(role: string, reason = "operator rejected role"): boolean {
     const normalized = role.trim();
     if (!normalized) throw new Error("Agent role is required.");
     if (isBuiltInAgentRole(normalized)) throw new Error(`Built-in role '${normalized}' is approved by contract; use pause or terminate to control it.`);
+    if (this.agentRoleAdmissionStatus(normalized) === "rejected") return false;
     const now = new Date().toISOString();
     this.db.prepare(`INSERT INTO agent_controls (role, paused, terminated, admitted, admission_status, reason, updated_at) VALUES (?, 0, 0, 0, 'rejected', ?, ?) ON CONFLICT(role) DO UPDATE SET admitted = 0, admission_status = 'rejected', reason = excluded.reason, updated_at = excluded.updated_at`).run(normalized, reason.slice(0, 500), now);
     this.appendEvent("agent.role.admission.rejected", { role: normalized, reason: reason.slice(0, 500) });
+    return true;
   }
 
   /** Accept a heartbeat from an authenticated external worker without allowing lease takeover. */

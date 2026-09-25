@@ -2719,7 +2719,7 @@ event.command("serve")
       const agentControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/agents\/([^/]+)\/(pause|resume|terminate|revive)$/) : null;
       const operatorAgentPath = Boolean(agentControlMatch);
       const operatorApprovalsPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/approvals";
-      const approvalControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/approvals\/(queue-task)\/([^/]+)\/(approve|reject)$/) : null;
+      const approvalControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/approvals\/(queue-task|agent-role)\/([^/]+)\/(approve|reject)$/) : null;
       const operatorApprovalControlPath = Boolean(approvalControlMatch);
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
@@ -2853,15 +2853,39 @@ event.command("serve")
         }
         const approval = approvalControlMatch[3] === "approve" ? "approved" : "rejected";
         const store = new ResearchStore(statePath);
-        const changed = store.setTaskApproval(taskId, approval, approval === "approved" ? "remote operator approval" : "remote operator rejection", "remote-operator");
-        const task = store.queueTasks().find((entry) => entry.id === taskId);
+        if (approvalControlMatch[1] === "queue-task") {
+          const changed = store.setTaskApproval(taskId, approval, approval === "approved" ? "remote operator approval" : "remote operator rejection", "remote-operator");
+          const task = store.queueTasks().find((entry) => entry.id === taskId);
+          store.close();
+          if (!task) { response.writeHead(404, headers); response.end(JSON.stringify({ error: `Unknown queue task '${taskId}'.` })); return; }
+          response.writeHead(changed || task.approvalStatus === approval ? 200 : 409, headers);
+          response.end(JSON.stringify({ ok: changed || task.approvalStatus === approval, id: taskId, status: task.approvalStatus, changed }));
+          return;
+        }
+        if (!agentOrganization(store).some((entry) => entry.role === taskId)) {
+          store.close();
+          response.writeHead(404, headers);
+          response.end(JSON.stringify({ error: `Unknown agent role '${taskId}'.` }));
+          return;
+        }
+        let changed: boolean;
+        try {
+          changed = approval === "approved"
+            ? store.setAgentRoleAdmission(taskId, true, "remote operator approval")
+            : store.rejectAgentRoleAdmission(taskId, "remote operator rejection");
+        } catch (error) {
+          store.close();
+          response.writeHead(409, headers);
+          response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+          return;
+        }
+        const status = store.agentRoleAdmissionStatus(taskId);
         store.close();
-        if (!task) { response.writeHead(404, headers); response.end(JSON.stringify({ error: `Unknown queue task '${taskId}'.` })); return; }
-        response.writeHead(changed || task.approvalStatus === approval ? 200 : 409, headers);
-        response.end(JSON.stringify({ ok: changed || task.approvalStatus === approval, id: taskId, status: task.approvalStatus, changed }));
+        response.writeHead(200, headers);
+        response.end(JSON.stringify({ ok: true, id: taskId, status, changed }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /approvals/queue-task/:id/approve, POST /approvals/queue-task/:id/reject, GET /approvals, GET /queue/status, GET /activity, GET /organization, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /approvals/queue-task/:id/approve|reject, POST /approvals/agent-role/:role/approve|reject, GET /approvals, GET /queue/status, GET /activity, GET /organization, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");

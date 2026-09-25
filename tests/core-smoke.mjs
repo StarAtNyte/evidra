@@ -8738,6 +8738,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     store.enqueueTask({ id: "bridge-task", kind: "research.lane", priority: 4, payload: { objective: "external worker smoke", campaignStartedAt: "bridge-campaign" } });
     store.enqueueTask({ id: "remote-cancel", kind: "research.lane", priority: 1, payload: { objective: "remote cancellation smoke" } });
     store.enqueueTask({ id: "remote-secret", kind: "research.lane", priority: 1, requiredCapabilities: ["redaction.test"], payload: { token: "sk-remote-queue-secret-12345678901234567890", objective: "redaction smoke" } });
+    store.updateAgentLane({ role: "remote approval role", status: "idle", provider: "remote", model: "gpt-test", task: "approval smoke" });
     store.enqueueTask({ id: "remote-approval", kind: "research.lane", priority: 1, requiresApproval: true, approvalReason: "remote approval smoke", payload: { objective: "remote approval smoke" } });
     store.createRoutine({ id: "remote-routine", name: "Remote routine", mode: "research", goal: "remote routine control smoke", budgetMinutes: 5, intervalSeconds: 60, stopCondition: "stop", provider: "codex", model: "gpt-test", thinking: "medium", autonomy: "safe", limitPolicy: "stop", executor: "local", lanes: 1, maxRuns: null, triggerEvent: null });
     store.close();
@@ -8841,6 +8842,14 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const repeatedApprovalReject = await post("/approvals/queue-task/remote-approval/reject", {}, token);
     assert.equal(repeatedApprovalReject.status, 200);
     assert.equal((await repeatedApprovalReject.json()).changed, false);
+    const workerOnlyRoleApproval = await post("/approvals/agent-role/remote%20approval%20role/approve", {}, null, "worker-a", "worker-secret");
+    assert.equal(workerOnlyRoleApproval.status, 401);
+    const remoteRoleApproval = await post("/approvals/agent-role/remote%20approval%20role/approve", {}, token);
+    assert.equal(remoteRoleApproval.status, 200);
+    assert.equal((await remoteRoleApproval.json()).status, "approved");
+    const repeatedRoleApproval = await post("/approvals/agent-role/remote%20approval%20role/approve", {}, token);
+    assert.equal(repeatedRoleApproval.status, 200);
+    assert.equal((await repeatedRoleApproval.json()).changed, false);
     const workerOnlyRoutinePause = await post("/routines/remote-routine/pause", {}, null, "worker-a", "worker-secret");
     assert.equal(workerOnlyRoutinePause.status, 401);
     const remoteRoutinePause = await post("/routines/remote-routine/pause", {}, token);
