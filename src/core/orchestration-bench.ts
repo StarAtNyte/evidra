@@ -157,6 +157,40 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     const budgetTask = store.queueTasks().find((task) => task.id === "budget-stop");
     check("live-budget-stop", "Crossing a live token ceiling cancels the claim before another worker turn.", Boolean(budgetRecorded && budgetTask?.status === "cancelled" && budgetTask.payload && typeof budgetTask.payload === "object" && (budgetTask.payload as Record<string, unknown>).cancellation !== undefined), { budgetRecorded, status: budgetTask?.status, cancellation: budgetTask?.payload && typeof budgetTask.payload === "object" ? (budgetTask.payload as Record<string, unknown>).cancellation : undefined });
 
+    const routine = store.createRoutine({
+      id: "benchmark-routine",
+      name: "Benchmark recurring research",
+      mode: "research",
+      goal: "verify recurring orchestration safeguards",
+      budgetMinutes: 5,
+      intervalSeconds: 60,
+      stopCondition: "stop",
+      provider: "local",
+      model: "bench",
+      thinking: "medium",
+      autonomy: "safe",
+      limitPolicy: "stop",
+      executor: "local",
+      lanes: 1,
+      maxRuns: null,
+      triggerEvent: null,
+    });
+    const liveRoutine = store.claimRoutine(routine.id, "routine-live", 60_000);
+    const stolenRoutine = store.recoverStaleRoutine(routine.id);
+    check("routine-lease-fencing", "A live recurring run cannot be stolen by stale-run recovery.", liveRoutine?.leaseId === "routine-live" && !stolenRoutine && store.routine(routine.id)?.status === "running", { owner: store.routine(routine.id)?.leaseId, recovered: Boolean(stolenRoutine) });
+    if (liveRoutine) store.finishRoutine(routine.id, "routine-live", "completed");
+
+    const circuit = store.createRoutine({ ...routine, id: "benchmark-circuit" });
+    for (const owner of ["circuit-a", "circuit-b", "circuit-c"]) {
+      const claim = store.claimRoutine(circuit.id, owner, 60_000, new Date(), true);
+      if (claim) store.finishRoutine(circuit.id, owner, "failed", "benchmark provider failure", 1);
+    }
+    const circuitState = store.routine(circuit.id);
+    const circuitEvent = store.eventsByType("routine.failure_circuit_open").at(-1);
+    const circuitPayload = circuitEvent?.payload && typeof circuitEvent.payload === "object" ? circuitEvent.payload as Record<string, unknown> : {};
+    const claimAfterPause = store.claimRoutine(circuit.id, "circuit-after", 60_000, new Date(), true);
+    check("routine-failure-circuit", "Repeated recurring-run failures pause the routine and leave an auditable recovery point.", circuitState?.status === "paused" && circuitState.failureStreak === 3 && !claimAfterPause && circuitPayload.threshold === 3, { status: circuitState?.status, failureStreak: circuitState?.failureStreak, claimAfterPause: Boolean(claimAfterPause), threshold: circuitPayload.threshold });
+
     store.releaseAgentLane("model researcher", "worker-a");
     const stale = store.acquireAgentLane({ role: "validation scientist", leaseId: "worker-stale", provider: "local", model: "bench" });
     store.enqueueTask({ id: "stale-lane-ticket", kind: "research.lane", priority: 1, payload: { role: "validation scientist", leaseId: "worker-stale" } });
