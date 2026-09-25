@@ -2741,7 +2741,7 @@ event.command("serve")
         const control = store.queueControl();
         const tasks = store.queueTasks().slice(0, 128).map((task) => {
           const { claimToken: _claimToken, ...publicTask } = task;
-          return { ...publicTask, payload: redactStructured(publicTask.payload), progress: store.queueProgress(task.id), readiness: store.taskReadiness(task.id), usage: store.queueUsageState(task.id) };
+          return redactStructured({ ...publicTask, payload: publicTask.payload, progress: store.queueProgress(task.id), readiness: store.taskReadiness(task.id), usage: store.queueUsageState(task.id) });
         });
         const recoveries = store.eventsByType("queue.recovery_required", 24).map((event) => event.payload);
         const integrity = store.verifyEventChain();
