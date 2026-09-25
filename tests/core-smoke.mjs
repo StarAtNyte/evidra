@@ -4096,6 +4096,26 @@ test("queue progress projection distinguishes active, blocked, and terminal work
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue worker context persists structured progress and checkpoints", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-progress-context-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "context-progress", kind: "progress", priority: 1, payload: {} });
+    const worker = new QueueWorker(store, async (_task, _signal, context) => {
+      assert.ok(context);
+      assert.equal(context.reportProgress({ message: "halfway", percent: 0.5, step: "validation", completed: 2, total: 4 }), true);
+      assert.equal(context.reportProgress({ message: "invalid", percent: 2 }), false);
+      assert.equal(context.checkpoint({ stage: "validation", item: 2 }), true);
+    }, { workerId: "progress-context-worker" });
+    await worker.runOnce();
+    const progress = store.queueProgress("context-progress");
+    assert.equal(progress?.state, "completed");
+    assert.deepEqual(progress?.details, { percent: 0.5, step: "validation", completed: 2, total: 4 });
+    assert.equal(store.queueCheckpoint("context-progress")?.stage, "validation");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue worker aborts immediately when its lease is lost", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-lease-loss-"));
   try {

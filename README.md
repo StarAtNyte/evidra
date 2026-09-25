@@ -358,6 +358,7 @@ Implemented today:
 - queue-supervisor recovery: polling-loop exceptions are contained, journaled as `queue.worker.error`, and surfaced as operator attention while later polls remain available for recovery;
 - completion-driven queue refill: bounded workers immediately claim the next eligible task when any lane finishes, so heterogeneous research jobs do not wait behind the slowest lane;
 - durable queue progress: every task exposes a shared `queued`/`active`/`blocked`/`stalled`/terminal projection with last activity and heartbeat age across CLI JSON, TUI, and dashboard surfaces;
+- typed worker progress: queue handlers can report bounded percent/step counters and durable checkpoints through a compatible context API; progress survives completion and restart without treating model prose as evidence;
 - progress-aware attention: blocked activity and stale running heartbeats become actionable operator warnings/critical alerts with direct queue-history or activity actions;
 - cooperative remote cancellation: the next authenticated worker heartbeat returns a structured `409` cancellation response, allowing external runtimes to stop promptly instead of discovering cancellation only at completion;
 - idempotent external usage: `/tasks/usage` accepts a stable per-turn `idempotencyKey`, so transport retries do not duplicate token or cost accounting;

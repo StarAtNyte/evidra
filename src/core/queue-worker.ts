@@ -14,7 +14,12 @@ export interface QueueWorkerOptions {
   workerId?: string;
 }
 
-export type QueueHandler = (task: QueuedTask, signal: AbortSignal) => Promise<unknown>;
+export type QueueProgressUpdate = string | { message: string; percent?: number; step?: string; completed?: number; total?: number };
+export interface QueueHandlerContext {
+  reportProgress(update: QueueProgressUpdate): boolean;
+  checkpoint(state: unknown): boolean;
+}
+export type QueueHandler = (task: QueuedTask, signal: AbortSignal, context?: QueueHandlerContext) => Promise<unknown>;
 
 /** Durable, bounded queue execution for research cycles and worker jobs. */
 export class QueueWorker {
@@ -117,8 +122,34 @@ export class QueueWorker {
       if (!current || current.status === "cancelled" || current.status !== "running" || current.ownerId !== this.workerId) taskAbortController.abort();
     }, this.heartbeatMs);
     activity("started", `Started ${task.kind} attempt ${task.attempts}`);
+    const context: QueueHandlerContext = {
+      reportProgress: (update) => {
+        const raw = typeof update === "string" ? { message: update } : update;
+        if (!raw || typeof raw.message !== "string" || !raw.message.trim()) return false;
+        const progress: Record<string, unknown> = {};
+        if (raw.percent !== undefined) {
+          if (typeof raw.percent !== "number" || !Number.isFinite(raw.percent) || raw.percent < 0 || raw.percent > 1) return false;
+          progress.percent = raw.percent;
+        }
+        if (raw.step !== undefined) {
+          if (typeof raw.step !== "string" || !raw.step.trim() || raw.step.length > 160) return false;
+          progress.step = raw.step.trim();
+        }
+        if (raw.completed !== undefined) {
+          if (!Number.isInteger(raw.completed) || raw.completed < 0) return false;
+          progress.completed = raw.completed;
+        }
+        if (raw.total !== undefined) {
+          if (!Number.isInteger(raw.total) || raw.total <= 0) return false;
+          progress.total = raw.total;
+        }
+        if (progress.completed !== undefined && progress.total !== undefined && (progress.completed as number) > (progress.total as number)) return false;
+        return activity("progress", raw.message, { progress });
+      },
+      checkpoint: (state) => this.store.checkpointClaimedTask(task.id, this.workerId, state, task.claimToken ?? undefined),
+    };
     try {
-      const result = await this.handler(task, taskAbortController.signal);
+      const result = await this.handler(task, taskAbortController.signal, context);
       const completionPayload = { result };
       if (this.store.completeClaimedTask(task.id, this.workerId, "completed", completionPayload, undefined, task.claimToken ?? undefined)) {
         this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind: "completed", message: "Task completed" });
