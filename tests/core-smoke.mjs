@@ -4158,6 +4158,8 @@ test("queue worker context persists structured progress and checkpoints", async 
     store.enqueueTask({ id: "context-progress", kind: "progress", priority: 1, payload: {} });
     const worker = new QueueWorker(store, async (_task, _signal, context) => {
       assert.ok(context);
+      assert.equal(context.comment("worker note: checkpoint is ready"), true);
+      assert.equal(context.discussion().some((entry) => entry.kind === "comment" && entry.message.includes("checkpoint is ready")), true);
       assert.equal(context.reportProgress({ message: "halfway", percent: 0.5, step: "validation", completed: 2, total: 4 }), true);
       assert.equal(context.reportProgress({ message: "invalid", percent: 2 }), false);
       assert.equal(context.checkpoint({ stage: "validation", item: 2 }), true);

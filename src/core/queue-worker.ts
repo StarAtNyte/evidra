@@ -1,4 +1,4 @@
-import { ResearchStore, type QueuedTask } from "./store.js";
+import { ResearchStore, type QueueActivity, type QueuedTask } from "./store.js";
 import { queueRecoveryAction } from "./queue-recovery.js";
 import { randomUUID } from "node:crypto";
 
@@ -18,6 +18,10 @@ export type QueueProgressUpdate = string | { message: string; percent?: number; 
 export interface QueueHandlerContext {
   reportProgress(update: QueueProgressUpdate): boolean;
   checkpoint(state: unknown): boolean;
+  /** Read the latest bounded operator/worker discussion without treating it as proof. */
+  discussion(limit?: number): QueueActivity[];
+  /** Append a bounded worker comment to the task discussion. */
+  comment(message: string, metadata?: unknown): boolean;
 }
 export type QueueHandler = (task: QueuedTask, signal: AbortSignal, context?: QueueHandlerContext) => Promise<unknown>;
 
@@ -166,6 +170,8 @@ export class QueueWorker {
         return activity("progress", raw.message, { progress });
       },
       checkpoint: (state) => this.store.checkpointClaimedTask(task.id, this.workerId, state, task.claimToken ?? undefined),
+      discussion: (limit = 16) => this.store.queueActivities(task.id, Math.max(1, Math.min(64, Math.floor(limit)))).filter((entry) => entry.kind === "comment" || entry.kind === "handoff"),
+      comment: (message, metadata) => activity("comment", message, metadata),
     };
     try {
       const result = await this.handler(task, taskAbortController.signal, context);
