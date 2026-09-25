@@ -53,11 +53,16 @@ export class QueueWorker {
         if (!task) break;
         const job = this.execute(task);
         this.active.add(job);
-        void job.finally(() => this.active.delete(job));
+        // Attach both settlement paths directly so a failed internal promise
+        // cannot create an unhandled rejection while removing its slot.
+        void job.then(() => this.active.delete(job), () => this.active.delete(job));
       }
-      if (this.active.size) await Promise.all([...this.active]);
+      // Refill as soon as any lane completes instead of waiting for the
+      // slowest active lane. This keeps bounded concurrency useful for mixed
+      // research jobs with very different runtimes.
+      if (this.active.size) await Promise.race([...this.active]);
       const available = this.store.queueTasks("queued").some((task) => Date.parse(task.availableAt) <= Date.now());
-      if (!available) break;
+      if (!available && this.active.size === 0) break;
     } while (!this.stopping);
   }
 

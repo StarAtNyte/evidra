@@ -3967,6 +3967,27 @@ test("durable queue worker bounds concurrency and retries failures", async () =>
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue worker refills capacity when a fast lane completes before a slow lane", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-worker-refill-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "slow", kind: "refill", priority: 3, payload: {} });
+    store.enqueueTask({ id: "fast", kind: "refill", priority: 2, payload: {} });
+    store.enqueueTask({ id: "refill", kind: "refill", priority: 1, payload: {} });
+    const started = new Map();
+    const worker = new QueueWorker(store, async (task) => {
+      started.set(task.id, Date.now());
+      await new Promise((resolve) => setTimeout(resolve, task.id === "slow" ? 300 : 20));
+    }, { workerId: "refill-worker", concurrency: 2, pollIntervalMs: 20 });
+    const begin = Date.now();
+    await worker.runOnce();
+    assert.equal(store.queueTasks("completed").length, 3);
+    assert.ok((started.get("refill") ?? Infinity) - begin < 180, `refill lane started too late: ${started.get("refill")}`);
+    assert.ok((started.get("refill") ?? Infinity) < (started.get("slow") ?? Infinity) + 250);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue worker supervisor contains polling failures and records recovery state", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-worker-supervisor-"));
   try {
