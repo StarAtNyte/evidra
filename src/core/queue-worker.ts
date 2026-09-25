@@ -65,9 +65,11 @@ export class QueueWorker {
   private async drainOnce(): Promise<void> {
     do {
       this.store.requeueStaleTasks(this.staleAfterMs, this.maxAttempts);
+      let claimedInPass = false;
       while (!this.stopping && this.active.size < this.concurrency) {
         const task = this.store.claimNextTask(this.kinds, this.workerId, this.capabilities);
         if (!task) break;
+        claimedInPass = true;
         const job = this.execute(task);
         this.active.add(job);
         // Attach both settlement paths directly so a failed internal promise
@@ -78,6 +80,11 @@ export class QueueWorker {
       // slowest active lane. This keeps bounded concurrency useful for mixed
       // research jobs with very different runtimes.
       if (this.active.size) await Promise.race([...this.active]);
+      // A queue may contain work that this worker cannot claim because of
+      // approval, capability, assignment, dependency, or deadline gates.
+      // Do not spin until another worker changes that state; the supervisor's
+      // next bounded poll will retry the claim.
+      if (!claimedInPass && this.active.size === 0) break;
       const available = this.store.queueTasks("queued").some((task) => Date.parse(task.availableAt) <= Date.now());
       if (!available && this.active.size === 0) break;
     } while (!this.stopping);

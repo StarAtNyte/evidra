@@ -73,6 +73,7 @@ external evaluator.
 - Lease-loss events now feed the shared operator-attention projection, so CLI, TUI, and dashboard operators see the ownership failure and its queue-history action without inspecting raw events.
 - Queue polling now has a supervisor rejection boundary: transient store/control errors become durable `queue.worker.error` records and shared operator attention instead of unhandled process failures, while subsequent polls can recover.
 - Queue execution now refills concurrency at each lane completion rather than waiting for the slowest active lane, improving heterogeneous research throughput without removing the global concurrency bound.
+- Queue drains now fail closed when a worker has no claimable ticket: approval, capability, assignment, dependency, and deadline gates no longer cause an ineligible worker to spin indefinitely; the next supervisor poll can retry after another actor changes the queue state.
 - Queue workers now serialize supervisor drains while active work is running, preventing overlapping stale-recovery scans and making claim/progress accounting deterministic.
 - Queue tickets now expose a provider-neutral progress projection—lifecycle state, last activity, idle time, heartbeat age, and stalled detection—shared by CLI JSON, TUI, and dashboard views.
 - The attention projection now consumes that progress state, surfacing blocked tasks and stale queue heartbeats as actionable operator alerts instead of treating every running ticket as healthy.

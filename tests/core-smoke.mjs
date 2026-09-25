@@ -3968,6 +3968,23 @@ test("durable queue worker bounds concurrency and retries failures", async () =>
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue worker exits when only ineligible work remains", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-worker-ineligible-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "needs-gpu", kind: "scoped", priority: 1, requiredCapabilities: ["gpu.cuda"], payload: {} });
+    store.enqueueTask({ id: "needs-approval", kind: "scoped", priority: 0, requiresApproval: true, approvalReason: "operator review", payload: {} });
+    const worker = new QueueWorker(store, async () => undefined, { workerId: "cpu-worker", capabilities: ["python"] });
+    await Promise.race([
+      worker.runOnce(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("worker spun on ineligible queue work")), 500)),
+    ]);
+    assert.equal(store.queueTasks("queued").length, 2);
+    assert.equal(store.queueTasks("completed").length, 0);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue worker refills capacity when a fast lane completes before a slow lane", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-worker-refill-"));
   try {
