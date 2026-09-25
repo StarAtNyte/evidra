@@ -173,7 +173,7 @@ Select these interactively instead of memorizing configuration variables:
 /thinking       Select reasoning effort
 ```
 
-The default route is Codex with `gpt-5.6-luna` and medium thinking effort. The
+The default route is Codex with `gpt-6-luna` and medium thinking effort. The
 available model list is refreshed after login. Evidra explicitly selects Luna
 after provider or login transitions so a server-side account default cannot
 silently select a different model. Model and provider changes invalidate the

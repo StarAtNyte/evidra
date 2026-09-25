@@ -1190,8 +1190,8 @@ test("isolated research sandbox is explicit and keeps the default read-only", ()
 });
 
 test("Codex model resolution preserves explicit selections", async () => {
-  assert.equal(DEFAULT_CODEX_MODEL, "gpt-5.6-luna");
-  assert.equal(await resolveCodexModel("gpt-5.6-luna"), "gpt-5.6-luna");
+  assert.equal(DEFAULT_CODEX_MODEL, "gpt-6-luna");
+  assert.equal(await resolveCodexModel("gpt-6-luna"), "gpt-6-luna");
   assert.equal(effectiveCodexModel("default"), DEFAULT_CODEX_MODEL);
   assert.equal(effectiveCodexModel(undefined), DEFAULT_CODEX_MODEL);
   assert.equal(effectiveCodexModel("gpt-custom"), "gpt-custom");

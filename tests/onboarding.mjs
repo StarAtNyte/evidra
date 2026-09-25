@@ -36,6 +36,6 @@ test('fresh terminal config resets permissions and provider thread', () => {
   });
   assert.equal(normalized.autonomy, 'safe');
   assert.equal(normalized.codexThreadId, undefined);
-  assert.equal(normalized.model, 'gpt-5.6-luna');
+  assert.equal(normalized.model, 'gpt-6-luna');
   assert.equal(normalized.campaign?.status, 'paused');
 });

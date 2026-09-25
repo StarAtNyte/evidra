@@ -11,7 +11,7 @@ import { evidraVersion } from "../version.js";
 export type AgentProvider = "codex" | "local";
 
 /** Cost-conscious Codex default used by the CLI, TUI, and autonomous tests. */
-export const DEFAULT_CODEX_MODEL = "gpt-5.6-luna";
+export const DEFAULT_CODEX_MODEL = "gpt-6-luna";
 
 /** Resolve one Codex executable for SDK and CLI subprocesses alike. */
 export function resolveCodexBinary(): string {

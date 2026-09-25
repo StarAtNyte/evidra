@@ -91,7 +91,7 @@ discovery, steering, and turns. Set `EVIDRA_CODEX_BIN` when `codex` is not on
 unavailable provider produces an actionable error without emitting provider
 gibberish or starting a phantom progress loop.
 
-The default Codex route is `gpt-5.6-luna` with medium effort. The model picker
+The default Codex route is `gpt-6-luna` with medium effort. The model picker
 shows discovered models, and direct selection rejects an unavailable model
 before a request begins. Changing provider or model starts a fresh provider
 thread so context cannot silently cross routes.
