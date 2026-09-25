@@ -216,11 +216,11 @@ function requireCompetitionContract(adapter: ReturnType<typeof activeCompetition
  * Untracked data is intentionally not copied implicitly; manifests must declare
  * it so provenance, cost, and reproducibility remain visible to the harness.
  */
-function stageDeclaredExperimentData(worktree: string, paths: string[]): void {
-  const workspacePrefix = root.endsWith("/") ? root : `${root}/`;
+function stageDeclaredExperimentData(worktree: string, paths: string[], sourceRoot = root): void {
+  const workspacePrefix = sourceRoot.endsWith("/") ? sourceRoot : `${sourceRoot}/`;
   for (const declared of paths) {
-    const source = resolve(root, declared);
-    if (!source.startsWith(workspacePrefix) || source === root) throw new Error(`Declared experiment data path must stay inside the workspace: ${declared}`);
+    const source = resolve(sourceRoot, declared);
+    if (!source.startsWith(workspacePrefix) || source === sourceRoot) throw new Error(`Declared experiment data path must stay inside the workspace: ${declared}`);
     if (!existsSync(source)) throw new Error(`Declared experiment data path is missing: ${declared}`);
     const destination = resolve(worktree, declared);
     const worktreePrefix = worktree.endsWith("/") ? worktree : `${worktree}/`;
@@ -6361,7 +6361,7 @@ experiment.command("run")
     store.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "running" } });
     store.close();
     const worktreePath = await ensureWorktree(root, root, id);
-    stageDeclaredExperimentData(worktreePath, adapter.config.execution?.dataPaths ?? []);
+    stageDeclaredExperimentData(worktreePath, adapter.config.execution?.dataPaths ?? [], adapter.workspacePath(root));
     const experimentCwd = join(worktreePath, relative(root, adapter.workspacePath(root)));
     const experimentEnvironment = prepareExperimentEnvironment(manifest, experimentCwd);
     const protectedReference = captureProtectedFiles(adapter.workspacePath(root), [adapter.config.evaluator.command]);
