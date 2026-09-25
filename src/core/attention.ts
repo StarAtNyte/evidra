@@ -64,6 +64,7 @@ export function controlPlaneHealth(store: ResearchStore): ControlPlaneHealth {
     const heartbeat = lane.heartbeatAt ? Date.parse(lane.heartbeatAt) : Number.NaN;
     return !Number.isFinite(heartbeat) || Date.now() - heartbeat > 120_000;
   }).length;
+  const exhaustedAgents = lanes.filter((lane) => lane.status === "running" && lane.budgetSeconds !== null && lane.usedSeconds >= lane.budgetSeconds).length;
   const alignment = goalAlignment(store);
   const organizationBudget = campaignOrganization(store).totals.budget;
   const organizationBudgetUtilization = Math.max(organizationBudget.tokenUtilization ?? 0, organizationBudget.costUtilization ?? 0);
@@ -83,9 +84,9 @@ export function controlPlaneHealth(store: ResearchStore): ControlPlaneHealth {
   } else if (campaign === "running" && organizationBudgetUtilization >= 0.8 && (organizationBudget.tokenBudget !== null || organizationBudget.costBudgetUsd !== null)) {
     status = "degraded";
     reason = `Campaign queue budget is ${Math.round(organizationBudgetUtilization * 100)}% utilized.`;
-  } else if (staleAgents > 0 || (campaign === "running" && controller !== "running")) {
+  } else if (staleAgents > 0 || exhaustedAgents > 0 || (campaign === "running" && controller !== "running")) {
     status = "blocked";
-    reason = staleAgents > 0 ? `${staleAgents} running agent(s) have stale heartbeats.` : "A running campaign has no live controller lease.";
+    reason = staleAgents > 0 ? `${staleAgents} running agent(s) have stale heartbeats.` : exhaustedAgents > 0 ? `${exhaustedAgents} running agent(s) exhausted their wall-clock budget.` : "A running campaign has no live controller lease.";
   } else if (controller === "stale" || failedTasks > 0 || blockedAgents > 0 || store.queueControl().paused) {
     status = "degraded";
     reason = controller === "stale" ? "The previous controller lease is stale." : failedTasks > 0 ? `${failedTasks} queue task(s) failed and need inspection.` : blockedAgents > 0 ? `${blockedAgents} agent lane(s) are blocked or failed.` : "Queue dispatch is paused by policy.";
@@ -157,6 +158,9 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
     items.push({ id: `agent:${lane.role}`, severity: "critical", kind: "agent", summary: `${lane.role} · ${lane.status}${lane.error ? ` · ${lane.error.slice(0, 160)}` : ""}`, next: "/agents status" });
   }
   for (const lane of store.agentLanes().filter((entry) => entry.status === "running").slice(0, 24)) {
+    if (lane.budgetSeconds !== null && lane.usedSeconds >= lane.budgetSeconds) {
+      items.push({ id: `agent-budget:${lane.role}`, severity: "critical", kind: "agent-budget", summary: `${lane.role} · wall-clock budget exhausted (${Math.round(lane.usedSeconds)}s / ${Math.round(lane.budgetSeconds)}s)`, next: "/agents status" });
+    }
     const heartbeat = lane.heartbeatAt ? Date.parse(lane.heartbeatAt) : Number.NaN;
     if (!Number.isFinite(heartbeat) || Date.now() - heartbeat > 120_000) {
       items.push({ id: `agent-stale:${lane.role}`, severity: "critical", kind: "agent-stale", summary: `${lane.role} · running without a fresh heartbeat${lane.leaseId ? " · lease can be recovered" : " · no reclaimable lease"}`, next: lane.leaseId ? "/agents recover" : "/agents status" });

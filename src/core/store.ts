@@ -1987,9 +1987,19 @@ export class ResearchStore {
   recordAgentLaneUsage(role: string, leaseId: string, durationSeconds: number): boolean {
     const seconds = Math.max(0, Number.isFinite(durationSeconds) ? durationSeconds : 0);
     const now = new Date().toISOString();
-    const result = this.db.prepare("UPDATE agent_lanes SET used_seconds = used_seconds + ?, usage_calls = usage_calls + 1, updated_at = ? WHERE role = ? AND lease_id = ? AND status = 'running'").run(seconds, now, role, leaseId);
-    if (result.changes === 1) this.appendEvent("agent.lane.usage", { role, leaseId, durationSeconds: seconds });
-    return result.changes === 1;
+    const result = this.db.transaction(() => {
+      const current = this.db.prepare("SELECT budget_seconds, used_seconds FROM agent_lanes WHERE role = ? AND lease_id = ? AND status = 'running'").get(role, leaseId) as { budget_seconds: number | null; used_seconds: number } | undefined;
+      if (!current) return { changed: false, exhausted: false, usedSeconds: 0, budgetSeconds: null };
+      const usedSeconds = Math.max(0, Number(current.used_seconds) || 0) + seconds;
+      const budgetSeconds = current.budget_seconds === null ? null : Math.max(0, Number(current.budget_seconds));
+      const updated = this.db.prepare("UPDATE agent_lanes SET used_seconds = ?, usage_calls = usage_calls + 1, updated_at = ? WHERE role = ? AND lease_id = ? AND status = 'running'").run(usedSeconds, now, role, leaseId);
+      return { changed: updated.changes === 1, exhausted: budgetSeconds !== null && Number(current.used_seconds) < budgetSeconds && usedSeconds >= budgetSeconds, usedSeconds, budgetSeconds };
+    })();
+    if (result.changed) {
+      this.appendEvent("agent.lane.usage", { role, leaseId, durationSeconds: seconds, usedSeconds: result.usedSeconds, budgetSeconds: result.budgetSeconds });
+      if (result.exhausted) this.appendEvent("agent.lane.budget_exhausted", { role, leaseId, usedSeconds: result.usedSeconds, budgetSeconds: result.budgetSeconds, action: "stop_at_next_safe_boundary" });
+    }
+    return result.changed;
   }
 
   releaseAgentLane(role: string, leaseId: string, status: "idle" | "blocked" | "failed" = "idle", error?: string): boolean {

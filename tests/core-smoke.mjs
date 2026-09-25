@@ -3930,6 +3930,21 @@ test("research tool boundaries protect sensitive paths and credentials", () => {
   rmSync(storeRoot, { recursive: true, force: true });
 });
 
+test("agent lane budget exhaustion is durable and blocks operator health", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-agent-budget-attention-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.saveCampaign({ goal: "budget attention", budgetMinutes: 10, status: "running", startedAt: "budget-attention-campaign" });
+    store.acquireAgentLane({ role: "model researcher", leaseId: "budget-worker", provider: "local", model: "test", task: "bounded lane", budgetSeconds: 10 });
+    assert.equal(store.recordAgentLaneUsage("model researcher", "budget-worker", 10), true);
+    assert.equal(store.eventsByType("agent.lane.budget_exhausted").length, 1);
+    const attention = operatorAttention(store);
+    assert.equal(attention.health.status, "blocked");
+    assert.equal(attention.items.some((item) => item.id === "agent-budget:model researcher"), true);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("research tool result normalization rejects malformed runtime contracts", () => {
   for (const input of [null, [], undefined, { name: "workspace.read", ok: "yes", trust: "made-up" }]) {
     const malformed = normalizeResearchToolResult(input);

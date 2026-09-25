@@ -100,6 +100,7 @@ Most coding agents optimize for one conversation and one code change. Evidra is 
 - **Reproducible execution.** Experiment manifests, Git worktrees, run metadata, metrics, logs, checksums, and environment snapshots make results inspectable.
 - **Provider choice.** Use the authenticated Codex CLI with a ChatGPT subscription or a local Ollama model.
 - **Human control.** Safe, fast, and YOLO permissions change automation level, while destructive commands and external submissions remain blocked.
+- **Hard agent-budget boundaries.** Lane wall-clock budgets are checked before every tool/model boundary; crossing one emits durable exhaustion evidence and blocks operator health until the lane stops or is deliberately recovered.
 
 ## Current maturity
 
