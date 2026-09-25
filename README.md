@@ -10,6 +10,30 @@ The model supplies reasoning. Evidra owns the deterministic and auditable parts:
 
 The workbench is general-purpose. It can be used for ML competitions, data science, scientific experiments, benchmark optimization, algorithm research, reverse engineering, and repository investigations. AIcrowd's ARC White-Box Estimation Challenge (WhestBench) is the first included trial adapter, not the product's scope.
 
+## At a glance
+
+| Need | Evidra gives you |
+| --- | --- |
+| Explore a question | Source retrieval, workspace inspection, competing hypotheses, and evidence provenance |
+| Improve a system | Isolated experiments, metrics, artifacts, ablations, replication, and promotion gates |
+| Run a challenge | Competition rules, discussions, leaderboard observations, submission tracking, and score feedback |
+| Keep working unattended | Durable campaigns, phase goals, queues, checkpoints, retries, provider limits, and resume |
+| Stay in control | Safe/fast/YOLO permissions, approval gates, bounded tools, and auditable state |
+
+The model proposes. Evidra measures, records, verifies, and decides whether the work is allowed to advance.
+
+## Contents
+
+- [Start here](#start-here)
+- [Why Evidra](#why-evidra)
+- [Research architecture](#research-architecture-inspired-by-frontier-research-systems)
+- [Quick start](#quick-start)
+- [Interactive workbench](#interactive-workbench)
+- [Autonomous research](#autonomous-research)
+- [Experiments, permissions, and providers](#experiments-and-permissions)
+- [Development](#development)
+- [Roadmap](#roadmap)
+
 ## Start here
 
 Install the latest source build globally with Node.js 22 or newer:
@@ -304,6 +328,11 @@ The claim-audit rule is shared by the CLI, TUI, and generated reports. Self-desc
 Before allocating compute, Evidra also structurally scores each hypothesis for a concrete mechanism, grounded evidence, falsifiability, implementation cost, and leakage risk. This score only prioritizes work; it never counts as an empirical improvement.
 
 Research hypotheses are not restricted to ML metrics: they can declare `metric`, `artifact`, `proof`, `behavior`, `system`, or `other` outcomes and describe non-scalar success with `expectedOutcome`. Competition manifests retain the metric path, while scientific and software investigations use the same durable evidence and verifier machinery without fabricated GPU estimates.
+
+<details>
+<summary><strong>Complete capability inventory</strong> — what is implemented today</summary>
+
+This is the detailed reference list. Start with the quick start and user guide above if you are evaluating Evidra for the first time.
 
 Implemented today:
 
@@ -651,6 +680,8 @@ evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" \
 - checksum-locked validation policies with auditable unlock reasons and pre-experiment mutation checks.
 - bounded scholarly-source discovery that returns candidates separately from trusted, hashed source retrieval.
 - SAFE research can retrieve and hash read-only literature evidence; workspace edits, policy changes, reports, and external actions remain permission-gated.
+
+</details>
 
 ### Experience-driven improvement
 

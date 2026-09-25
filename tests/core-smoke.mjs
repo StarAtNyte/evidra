@@ -3589,8 +3589,8 @@ test("project-local competition manifests replace hardcoded adapters", () => {
 test("included WhestBench manifest resolves its starter-kit workspace", () => {
   const adapter = loadCompetitionAdapter(process.cwd(), "whestbench");
   assert.equal(adapter.workspacePath(process.cwd()), join(process.cwd(), "competitions/whestbench/starterkit"));
-  assert.deepEqual(adapter.baselineCommand(), ["uv", "run", "whest", "run", "--estimator", "examples/02_mean_propagation.py", "--dataset", "hf://aicrowd/arc-whestbench-public-2026@v2-phase2", "--split", "mini", "--runner", "subprocess"]);
-  assert.deepEqual(adapter.experimentCommand(), ["uv", "run", "whest", "run", "--estimator", "estimator.py", "--dataset", "hf://aicrowd/arc-whestbench-public-2026@v2-phase2", "--split", "mini", "--runner", "subprocess"]);
+  assert.deepEqual(adapter.baselineCommand(), ["uv", "run", "whest", "run", "--estimator", "examples/02_mean_propagation.py", "--dataset", ".whest-data", "--split", "mini", "--runner", "subprocess"]);
+  assert.deepEqual(adapter.experimentCommand(), ["uv", "run", "whest", "run", "--estimator", "estimator.py", "--dataset", ".whest-data", "--split", "mini", "--runner", "subprocess"]);
 });
 
 test("detected Karpathy autoresearch workspaces get a usable adapter without a hand-written manifest", () => {
