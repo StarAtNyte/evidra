@@ -2709,14 +2709,15 @@ event.command("serve")
         }
         request.destroy();
       });
-      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/delegate", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release"].includes(request.url ?? "") ? request.url : undefined;
+      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/delegate", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release", "/tasks/note"].includes(request.url ?? "") ? request.url : undefined;
+      const operatorTaskPath = taskPath === "/tasks/note";
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
       const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
       const authorization = typeof request.headers.authorization === "string" ? request.headers.authorization : "";
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
-      if ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated)) { response.writeHead(401, headers); response.end(JSON.stringify({ error: workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
+      if (operatorTaskPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
@@ -2725,7 +2726,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: integrity.status !== "invalid", integrity }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
@@ -2739,6 +2740,20 @@ event.command("serve")
         try {
           const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; checkpoint?: unknown; child?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; capacity?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
           if (taskPath) {
+            if (taskPath === "/tasks/note") {
+              const taskId = typeof parsed.taskId === "string" ? parsed.taskId.trim() : "";
+              const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
+              if (!taskId || taskId.length > 200) throw new Error("Task notes require a taskId of 1–200 characters.");
+              if (!message || message.length > 2_000) throw new Error("Task notes require a message of 1–2,000 characters.");
+              const store = new ResearchStore(statePath);
+              const exists = store.queueTasks().some((task) => task.id === taskId);
+              const recorded = exists && store.recordQueueActivity({ taskId, actorId: "operator", kind: "handoff", message });
+              const progress = recorded ? store.queueProgress(taskId) : undefined;
+              store.close();
+              response.writeHead(recorded ? 200 : exists ? 409 : 404, headers);
+              response.end(JSON.stringify(recorded ? { ok: true, taskId, progress: progress ?? null } : { ok: false, taskId, error: exists ? "note could not be recorded" : "task not found" }));
+              return;
+            }
             const workerId = typeof parsed.workerId === "string" ? parsed.workerId.trim() : "";
             if (!workerId || workerId.length > 200) throw new Error("Task requests require a workerId of 1–200 characters.");
             if (workerTokens.size && (headerWorkerId !== workerId || !scopedWorkerAuthenticated)) {

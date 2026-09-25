@@ -8780,6 +8780,11 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.deepEqual(claimedBody.resume.lineage.taskIds, [task.id]);
     const overCapacityClaim = await post("/tasks/claim", { workerId: "worker-a", capacity: 64 }, token, "worker-a", "worker-secret");
     assert.equal(overCapacityClaim.status, 400);
+    const operatorNote = await post("/tasks/note", { taskId: task.id, message: "operator requested a fresh validation pass" }, token);
+    assert.equal(operatorNote.status, 200);
+    assert.equal((await operatorNote.json()).ok, true);
+    const workerOnlyNote = await post("/tasks/note", { taskId: task.id, message: "worker credential must not impersonate operator" }, null, "worker-a", "worker-secret");
+    assert.equal(workerOnlyNote.status, 401);
     const checkpoint = await post("/tasks/checkpoint", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, checkpoint: { stage: "remote-retrieval", artifact: "partial.json" } }, token, "worker-a", "worker-secret");
     assert.equal(checkpoint.status, 200);
     const checkpointStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
