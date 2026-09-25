@@ -2714,6 +2714,7 @@ event.command("serve")
       const taskDetailMatch = request.method === "GET" ? (request.url ?? "").split("?", 1)[0].match(/^\/tasks\/([^/]+)$/) : null;
       const operatorTaskDetailPath = Boolean(taskDetailMatch);
       const operatorQueueStatusPath = request.method === "GET" && request.url === "/queue/status";
+      const operatorCapabilitiesPath = request.method === "GET" && request.url === "/capabilities";
       const operatorAttentionPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/attention";
       const operatorActivityPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/activity";
       const operatorActivityStreamPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/activity/stream";
@@ -2742,13 +2743,32 @@ event.command("serve")
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
       const remoteActor = (typeof request.headers["x-evidra-actor"] === "string" ? request.headers["x-evidra-actor"] : "").replace(/[\u0000-\u001f\u007f]/g, "_").trim().slice(0, 200) || "remote-operator";
-      if (operatorTaskPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorRoutineDetailPath || operatorAgentPath || operatorAgentDetailPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorRoutineDetailPath || operatorAgentPath || operatorAgentDetailPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
+      if (operatorTaskPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorCapabilitiesPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorRoutineDetailPath || operatorAgentPath || operatorAgentDetailPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorCapabilitiesPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorRoutineDetailPath || operatorAgentPath || operatorAgentDetailPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
+        const attention = operatorAttention(store, root);
+        const workspaceId = store.workspaceId();
         store.close();
         response.writeHead(integrity.status === "invalid" ? 503 : 200, headers);
-        response.end(JSON.stringify({ ok: integrity.status !== "invalid", integrity }));
+        response.end(JSON.stringify({ ok: integrity.status !== "invalid", workspaceId, health: attention.health, attention: { total: attention.total, critical: attention.critical, warning: attention.warning, info: attention.info }, integrity }));
+        return;
+      }
+      if (operatorCapabilitiesPath) {
+        const store = new ResearchStore(statePath);
+        const integrity = store.verifyEventChain();
+        const workspaceId = store.workspaceId();
+        store.close();
+        response.writeHead(integrity.status === "invalid" ? 503 : 200, headers);
+        response.end(JSON.stringify({
+          ok: integrity.status !== "invalid",
+          protocolVersion: 1,
+          workspaceId,
+          authentication: { operator: "Authorization: Bearer <token>", worker: "X-Evidra-Worker-Id + X-Evidra-Worker-Token" },
+          features: ["queue", "worker-heartbeats", "task-progress", "task-detail", "activity-feed", "activity-stream", "operator-attention", "agent-organization", "agent-detail", "agent-directives", "routine-control", "routine-detail", "approvals", "event-integrity", "redaction"],
+          limits: { requestBodyBytes: 64_000, activityPage: 200, activityStreamEvents: 100, taskDetailHistory: 128, agentDetailItems: 128, routineDetailRuns: 64 },
+          integrity: integrity.status,
+        }));
         return;
       }
       if (operatorQueueStatusPath) {
@@ -3113,7 +3133,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: true, id: taskId, status, changed }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /tasks/:id, GET /attention, GET /activity, GET /activity/stream, GET /routines/:id, GET /organization, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /tasks/:id, GET /attention, GET /activity, GET /activity/stream, GET /routines/:id, GET /organization, GET /capabilities, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");

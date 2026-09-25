@@ -89,6 +89,7 @@ Most coding agents optimize for one conversation and one code change. Evidra is 
 - **Task-level remote inspection.** `GET /tasks/:id` exposes one redacted recovery view—status, progress, readiness, lineage, checkpoint metadata, usage, activity, history, and child rollups—without exposing worker claim tokens or raw secrets.
 - **Agent-level remote inspection.** `GET /agents/:role` exposes the specialist contract, admission/control state, health, directives, handoff outcomes, provider sessions, and bounded activity for one role, making the org chart operational rather than decorative.
 - **Routine-level remote inspection.** `GET /routines/:id` exposes schedule state, bounded run history, associated queue work, progress, and readiness so recurring research can be supervised and recovered remotely.
+- **Self-describing control plane.** `GET /capabilities` publishes the versioned protocol, supported features, authentication schemes, and hard limits; `/health` reports event integrity together with operational campaign health for external supervisors.
 - **Reproducible execution.** Experiment manifests, Git worktrees, run metadata, metrics, logs, checksums, and environment snapshots make results inspectable.
 - **Provider choice.** Use the authenticated Codex CLI with a ChatGPT subscription or a local Ollama model.
 - **Human control.** Safe, fast, and YOLO permissions change automation level, while destructive commands and external submissions remain blocked.
