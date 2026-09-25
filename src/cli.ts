@@ -2740,6 +2740,8 @@ event.command("serve")
       const operatorTaskControlPath = Boolean(taskControlMatch);
       const taskAssignMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/tasks\/([^/]+)\/assign$/) : null;
       const operatorTaskAssignPath = Boolean(taskAssignMatch);
+      const controllerControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/controller\/(pause|resume|stop)$/) : null;
+      const operatorControllerControlPath = Boolean(controllerControlMatch);
       const operatorAttentionAckPath = request.method === "POST" && (request.url === "/attention/ack" || request.url === "/attention/unack");
       const taskDetailMatch = request.method === "GET" ? (request.url ?? "").split("?", 1)[0].match(/^\/tasks\/([^/]+)$/) : null;
       const operatorTaskDetailPath = Boolean(taskDetailMatch);
@@ -2773,7 +2775,7 @@ event.command("serve")
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
       const remoteActor = (typeof request.headers["x-evidra-actor"] === "string" ? request.headers["x-evidra-actor"] : "").replace(/[\u0000-\u001f\u007f]/g, "_").trim().slice(0, 200) || "remote-operator";
-      if (operatorTaskPath || operatorTaskControlPath || operatorTaskAssignPath || operatorAttentionAckPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorCapabilitiesPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorRoutineDetailPath || operatorAgentPath || operatorAgentDetailPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorTaskControlPath || operatorTaskAssignPath || operatorAttentionAckPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorCapabilitiesPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorRoutineDetailPath || operatorAgentPath || operatorAgentDetailPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
+      if (operatorTaskPath || operatorTaskControlPath || operatorTaskAssignPath || operatorControllerControlPath || operatorAttentionAckPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorCapabilitiesPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorRoutineDetailPath || operatorAgentPath || operatorAgentDetailPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorTaskControlPath || operatorTaskAssignPath || operatorControllerControlPath || operatorAttentionAckPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorCapabilitiesPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorRoutineDetailPath || operatorAgentPath || operatorAgentDetailPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
@@ -2795,7 +2797,7 @@ event.command("serve")
           protocolVersion: 1,
           workspaceId,
           authentication: { operator: "Authorization: Bearer <token>", worker: "X-Evidra-Worker-Id + X-Evidra-Worker-Token" },
-          features: ["queue", "worker-heartbeats", "task-progress", "task-detail", "activity-feed", "activity-stream", "operator-attention", "agent-organization", "agent-detail", "agent-directives", "routine-control", "routine-detail", "approvals", "event-integrity", "redaction"],
+          features: ["queue", "worker-heartbeats", "task-progress", "task-detail", "activity-feed", "activity-stream", "operator-attention", "agent-organization", "agent-detail", "agent-directives", "routine-control", "routine-detail", "controller-control", "approvals", "event-integrity", "redaction"],
           limits: { requestBodyBytes: 64_000, activityPage: 200, activityStreamEvents: 100, taskDetailHistory: 128, agentDetailItems: 128, routineDetailRuns: 64 },
           integrity: integrity.status,
         }));
@@ -3164,7 +3166,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: true, id: taskId, status, changed }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath && !operatorAttentionAckPath && !operatorTaskControlPath && !operatorTaskAssignPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /attention/ack, /attention/unack, POST /tasks/:id/pause|resume, POST /tasks/:id/assign, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /tasks/:id, GET /attention, GET /activity, GET /activity/stream, GET /routines/:id, GET /organization, GET /capabilities, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath && !operatorAttentionAckPath && !operatorTaskControlPath && !operatorTaskAssignPath && !operatorControllerControlPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /attention/ack, /attention/unack, POST /tasks/:id/pause|resume, POST /tasks/:id/assign, POST /controller/pause|resume|stop, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /tasks/:id, GET /attention, GET /activity, GET /activity/stream, GET /routines/:id, GET /organization, GET /capabilities, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
@@ -3177,6 +3179,21 @@ event.command("serve")
         if (rejected) return;
         try {
           const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; checkpoint?: unknown; child?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; capacity?: unknown; status?: unknown; kind?: unknown; message?: unknown; scopeKey?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown; id?: unknown; fingerprint?: unknown; note?: unknown; assigneeId?: unknown };
+          if (operatorControllerControlPath && controllerControlMatch) {
+            const action = controllerControlMatch[1] as "pause" | "resume" | "stop";
+            const store = new ResearchStore(statePath);
+            const lease = store.requestControllerAction(action);
+            if (!lease) {
+              store.close();
+              response.writeHead(409, headers);
+              response.end(JSON.stringify({ error: "No live controller lease is available." }));
+              return;
+            }
+            store.close();
+            response.writeHead(200, headers);
+            response.end(JSON.stringify({ ok: true, action, controllerId: lease.controllerId, status: lease.status, requestedAction: lease.requestedAction }));
+            return;
+          }
           if (operatorTaskControlPath && taskControlMatch) {
             let taskId: string;
             try { taskId = decodeURIComponent(taskControlMatch[1] ?? ""); } catch { response.writeHead(400, headers); response.end(JSON.stringify({ error: "task id must be valid URL encoding" })); return; }

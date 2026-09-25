@@ -8734,6 +8734,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const workspaceId = store.workspaceId();
+    assert.equal(store.acquireControllerLease("remote-controller", process.pid, "research", "remote-test").acquired, true);
     store.setAgentRoleAdmission("remote lane", true, "test worker registration");
     store.enqueueTask({ id: "bridge-task", kind: "research.lane", priority: 4, payload: { objective: "external worker smoke", campaignStartedAt: "bridge-campaign" } });
     store.enqueueTask({ id: "remote-cancel", kind: "research.lane", priority: 1, payload: { objective: "remote cancellation smoke" } });
@@ -8764,6 +8765,14 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(capabilitiesBody.protocolVersion, 1);
     assert.equal(capabilitiesBody.features.includes("activity-stream"), true);
     assert.equal(capabilitiesBody.limits.requestBodyBytes, 64_000);
+    const workerOnlyControllerPause = await post("/controller/pause", {}, null, "worker-a", "worker-secret");
+    assert.equal(workerOnlyControllerPause.status, 401);
+    const controllerPause = await post("/controller/pause", {}, token, undefined, undefined, "research-console");
+    assert.equal(controllerPause.status, 200);
+    assert.equal((await controllerPause.json()).requestedAction, "pause");
+    const controllerResume = await post("/controller/resume", {}, token, undefined, undefined, "research-console");
+    assert.equal(controllerResume.status, 200);
+    assert.equal((await controllerResume.json()).requestedAction, "resume");
     const healthResponse = await fetch(`http://127.0.0.1:${port}/health`, { headers: { authorization: `Bearer ${token}` } });
     assert.equal(healthResponse.status, 200);
     const healthBody = await healthResponse.json();
