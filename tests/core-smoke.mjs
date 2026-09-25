@@ -8857,6 +8857,11 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const remoteTaskAssign = await post("/tasks/remote-secret/assign", { assigneeId: "worker-a" }, token, undefined, undefined, "research-console");
     assert.equal(remoteTaskAssign.status, 200);
     assert.equal((await remoteTaskAssign.json()).assigneeId, "worker-a");
+    const filteredQueue = await fetch(`http://127.0.0.1:${port}/queue/status?status=queued&assignee=worker-a&kind=research.lane&limit=8`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(filteredQueue.status, 200);
+    const filteredQueueBody = await filteredQueue.json();
+    assert.deepEqual(filteredQueueBody.filters, { status: "queued", assignee: "worker-a", kind: "research.lane", limit: 8 });
+    assert.equal(filteredQueueBody.tasks.some((entry) => entry.id === "remote-secret"), true);
     const remoteTaskUnassign = await post("/tasks/remote-secret/assign", { assigneeId: null }, token, undefined, undefined, "research-console");
     assert.equal(remoteTaskUnassign.status, 200);
     assert.equal((await remoteTaskUnassign.json()).assigneeId, null);

@@ -2745,7 +2745,7 @@ event.command("serve")
       const operatorAttentionAckPath = request.method === "POST" && (request.url === "/attention/ack" || request.url === "/attention/unack");
       const taskDetailMatch = request.method === "GET" ? (request.url ?? "").split("?", 1)[0].match(/^\/tasks\/([^/]+)$/) : null;
       const operatorTaskDetailPath = Boolean(taskDetailMatch);
-      const operatorQueueStatusPath = request.method === "GET" && request.url === "/queue/status";
+      const operatorQueueStatusPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/queue/status";
       const operatorCapabilitiesPath = request.method === "GET" && request.url === "/capabilities";
       const operatorAttentionPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/attention";
       const operatorActivityPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/activity";
@@ -2797,7 +2797,7 @@ event.command("serve")
           protocolVersion: 1,
           workspaceId,
           authentication: { operator: "Authorization: Bearer <token>", worker: "X-Evidra-Worker-Id + X-Evidra-Worker-Token" },
-          features: ["queue", "worker-heartbeats", "task-progress", "task-detail", "activity-feed", "activity-stream", "operator-attention", "agent-organization", "agent-detail", "agent-directives", "routine-control", "routine-detail", "controller-control", "approvals", "event-integrity", "redaction"],
+          features: ["queue", "queue-filters", "worker-heartbeats", "task-progress", "task-detail", "activity-feed", "activity-stream", "operator-attention", "agent-organization", "agent-detail", "agent-directives", "routine-control", "routine-detail", "controller-control", "approvals", "event-integrity", "redaction"],
           limits: { requestBodyBytes: 64_000, activityPage: 200, activityStreamEvents: 100, taskDetailHistory: 128, agentDetailItems: 128, routineDetailRuns: 64 },
           integrity: integrity.status,
         }));
@@ -2806,7 +2806,19 @@ event.command("serve")
       if (operatorQueueStatusPath) {
         const store = new ResearchStore(statePath);
         const control = store.queueControl();
-        const tasks = store.queueTasks().slice(0, 128).map((task) => {
+        const query = new URL(request.url ?? "/queue/status", "http://evidra.local").searchParams;
+        const status = query.get("status")?.trim() || null;
+        const assignee = query.get("assignee")?.trim() || null;
+        const kind = query.get("kind")?.trim() || null;
+        const limit = Number.parseInt(query.get("limit") ?? "128", 10);
+        const validStatuses = new Set(["queued", "running", "paused", "completed", "failed", "cancelled"]);
+        if ((status && !validStatuses.has(status)) || !Number.isInteger(limit) || limit < 1 || limit > 200) {
+          store.close();
+          response.writeHead(400, headers);
+          response.end(JSON.stringify({ error: "status must be queued, running, paused, completed, failed, or cancelled; limit must be between 1 and 200" }));
+          return;
+        }
+        const tasks = store.queueTasks().filter((task) => (!status || task.status === status) && (!assignee || task.assigneeId === assignee) && (!kind || task.kind === kind)).slice(0, limit).map((task) => {
           const { claimToken: _claimToken, ...publicTask } = task;
           return redactStructured({ ...publicTask, payload: publicTask.payload, progress: store.queueProgress(task.id), readiness: store.taskReadiness(task.id), usage: store.queueUsageState(task.id) });
         });
@@ -2814,7 +2826,7 @@ event.command("serve")
         const integrity = store.verifyEventChain();
         store.close();
         response.writeHead(200, headers);
-        response.end(JSON.stringify({ ok: integrity.status !== "invalid", paused: control.paused, pauseReason: control.reason, tasks, recoveries, integrity: integrity.status }));
+        response.end(JSON.stringify({ ok: integrity.status !== "invalid", paused: control.paused, pauseReason: control.reason, filters: { status, assignee, kind, limit }, tasks, recoveries, integrity: integrity.status }));
         return;
       }
       if (operatorAttentionPath) {

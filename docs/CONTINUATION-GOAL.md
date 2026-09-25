@@ -107,6 +107,7 @@ external evaluator.
 - Remote operators can now pause or resume one queue task through `/tasks/:id/pause` and `/tasks/:id/resume`; descendant transitions, progress, and actor-attributed audit events preserve per-task governance without a global queue pause.
 - Remote operators can now assign or clear queued/failed work through `/tasks/:id/assign`; assignment targets must be admitted roles or known external workers, and durable assignment events retain actor attribution.
 - Remote supervisors can now request controller `pause`, `resume`, or `stop` through authenticated `/controller/:action`; requests require a live lease and are consumed at the controller’s existing safe boundary.
+- Remote queue status now supports bounded `status`, `assignee`, `kind`, and `limit` filters and returns the applied filter set, keeping remote work views precise and reconcilable.
 - Remote operators can now inspect `GET /approvals` and resolve queue-task or external-agent-role gates through authenticated approve/reject endpoints; workers cannot impersonate operators and repeated decisions do not duplicate audit events.
 - Remote governance actions accept a bounded `X-Evidra-Actor` label and preserve it in durable action records, making dashboard and controller decisions attributable without exposing credentials.
 - Successful remote claims now include a bounded resume context—task lineage, attempt number, checkpoint metadata, and recent redacted activity—so crash recovery does not require a worker to reconstruct context from the full event log.
