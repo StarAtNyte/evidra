@@ -2727,6 +2727,7 @@ event.command("serve")
       const authorization = typeof request.headers.authorization === "string" ? request.headers.authorization : "";
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
+      const remoteActor = (typeof request.headers["x-evidra-actor"] === "string" ? request.headers["x-evidra-actor"] : "").replace(/[\u0000-\u001f\u007f]/g, "_").trim().slice(0, 200) || "remote-operator";
       if (operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
@@ -2831,10 +2832,10 @@ event.command("serve")
             return;
           }
           let changed = false;
-          if (action === "pause" || action === "resume") changed = store.setAgentPause(role, action === "pause", "remote operator request");
+          if (action === "pause" || action === "resume") changed = store.setAgentPause(role, action === "pause", `${remoteActor}: remote operator request`);
           else {
-            changed = store.setAgentTermination(role, action === "terminate", `remote operator ${action} request`);
-            if (action === "revive") changed = store.setAgentPause(role, false, "remote operator revive request") || changed;
+            changed = store.setAgentTermination(role, action === "terminate", `${remoteActor}: remote operator ${action} request`);
+            if (action === "revive") changed = store.setAgentPause(role, false, `${remoteActor}: remote operator revive request`) || changed;
           }
           const control = store.agentPause(role);
           response.writeHead(200, headers);
@@ -2854,7 +2855,7 @@ event.command("serve")
         const approval = approvalControlMatch[3] === "approve" ? "approved" : "rejected";
         const store = new ResearchStore(statePath);
         if (approvalControlMatch[1] === "queue-task") {
-          const changed = store.setTaskApproval(taskId, approval, approval === "approved" ? "remote operator approval" : "remote operator rejection", "remote-operator");
+          const changed = store.setTaskApproval(taskId, approval, `${remoteActor}: remote operator ${approval === "approved" ? "approval" : "rejection"}`, remoteActor);
           const task = store.queueTasks().find((entry) => entry.id === taskId);
           store.close();
           if (!task) { response.writeHead(404, headers); response.end(JSON.stringify({ error: `Unknown queue task '${taskId}'.` })); return; }
@@ -2871,8 +2872,8 @@ event.command("serve")
         let changed: boolean;
         try {
           changed = approval === "approved"
-            ? store.setAgentRoleAdmission(taskId, true, "remote operator approval")
-            : store.rejectAgentRoleAdmission(taskId, "remote operator rejection");
+            ? store.setAgentRoleAdmission(taskId, true, `${remoteActor}: remote operator approval`)
+            : store.rejectAgentRoleAdmission(taskId, `${remoteActor}: remote operator rejection`);
         } catch (error) {
           store.close();
           response.writeHead(409, headers);
@@ -2903,7 +2904,7 @@ event.command("serve")
               const store = new ResearchStore(statePath);
               const before = store.queueControl();
               taskPath === "/queue/pause"
-                ? store.setQueuePaused(true, typeof parsed.reason === "string" ? parsed.reason : "remote operator paused queue")
+                ? store.setQueuePaused(true, `${remoteActor}: ${typeof parsed.reason === "string" ? parsed.reason : "remote operator paused queue"}`)
                 : store.setQueuePaused(false);
               const current = store.queueControl();
               store.close();
@@ -2919,7 +2920,7 @@ event.command("serve")
               if (!message || message.length > 2_000) throw new Error("Task notes require a message of 1–2,000 characters.");
               if (parsed.idempotencyKey !== undefined && (!idempotencyKey || idempotencyKey.length > 200)) throw new Error("Task note idempotencyKey must be a non-empty string of at most 200 characters.");
               const store = new ResearchStore(statePath);
-              const note = store.recordQueueOperatorNote({ taskId, message, idempotencyKey });
+              const note = store.recordQueueOperatorNote({ taskId, message, idempotencyKey, actorId: remoteActor });
               const exists = store.queueTasks().some((task) => task.id === taskId);
               const progress = note.recorded ? store.queueProgress(taskId) : undefined;
               store.close();
@@ -2933,7 +2934,7 @@ event.command("serve")
               if (!taskId || taskId.length > 200) throw new Error("Task cancellation requires a taskId of 1–200 characters.");
               const store = new ResearchStore(statePath);
               const before = store.queueTasks().find((task) => task.id === taskId);
-              const cancelled = before ? store.cancelTask(taskId, reason || "remote operator cancelled task", "remote-operator") : false;
+              const cancelled = before ? store.cancelTask(taskId, reason || "remote operator cancelled task", remoteActor) : false;
               const after = store.queueTasks().find((task) => task.id === taskId);
               const progress = cancelled ? store.queueProgress(taskId) : undefined;
               store.close();

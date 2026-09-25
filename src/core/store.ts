@@ -2593,24 +2593,25 @@ export class ResearchStore {
   }
 
   /** Record an operator handoff note with retry-safe transport semantics. */
-  recordQueueOperatorNote(input: { taskId: string; message: string; idempotencyKey?: string }): { recorded: boolean; idempotent: boolean; conflict?: boolean } {
+  recordQueueOperatorNote(input: { taskId: string; message: string; idempotencyKey?: string; actorId?: string }): { recorded: boolean; idempotent: boolean; conflict?: boolean } {
     const taskId = input.taskId.trim().slice(0, 200);
     const message = input.message.trim().slice(0, 2_000);
     const idempotencyKey = input.idempotencyKey?.trim().slice(0, 200) || undefined;
+    const actorId = input.actorId?.trim().slice(0, 200) || "operator";
     if (!taskId || !message || (input.idempotencyKey !== undefined && (!idempotencyKey || input.idempotencyKey.length > 200))) return { recorded: false, idempotent: false };
     if (!this.queueTasks().some((task) => task.id === taskId)) return { recorded: false, idempotent: false };
     if (idempotencyKey) {
       const prior = this.eventsByType("queue.activity").find((event) => {
         const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, unknown> : {};
         const metadata = payload.metadata && typeof payload.metadata === "object" && !Array.isArray(payload.metadata) ? payload.metadata as Record<string, unknown> : {};
-        return payload.taskId === taskId && payload.actorId === "operator" && payload.kind === "handoff" && metadata.idempotencyKey === idempotencyKey;
+        return payload.taskId === taskId && payload.actorId === actorId && payload.kind === "handoff" && metadata.idempotencyKey === idempotencyKey;
       });
       if (prior) {
         const priorPayload = prior.payload && typeof prior.payload === "object" && !Array.isArray(prior.payload) ? prior.payload as Record<string, unknown> : {};
         return priorPayload.message === message ? { recorded: true, idempotent: true } : { recorded: false, idempotent: false, conflict: true };
       }
     }
-    const recorded = this.recordQueueActivity({ taskId, actorId: "operator", kind: "handoff", message, ...(idempotencyKey ? { metadata: { idempotencyKey } } : {}) });
+    const recorded = this.recordQueueActivity({ taskId, actorId, kind: "handoff", message, ...(idempotencyKey ? { metadata: { idempotencyKey } } : {}) });
     return { recorded, idempotent: false };
   }
 
