@@ -56,6 +56,9 @@ export function controlPlaneHealth(store: ResearchStore): ControlPlaneHealth {
   const rawLease = store.controllerLease();
   const controller: ControlPlaneHealth["controller"] = store.liveControllerLease() ? "running" : rawLease?.status === "running" ? "stale" : "idle";
   const tasks = store.queueTasks();
+  const routines = store.routines();
+  const staleRoutines = routines.filter((routine) => routine.status === "running" && routine.leaseExpiresAt !== null && Date.parse(routine.leaseExpiresAt) <= Date.now()).length;
+  const failedRoutines = routines.filter((routine) => routine.status === "failed").length;
   const activeTasks = tasks.filter((task) => ["queued", "running", "paused"].includes(task.status)).length;
   const lanes = store.agentLanes();
   const runningAgents = lanes.filter((lane) => lane.status === "running").length;
@@ -72,7 +75,10 @@ export function controlPlaneHealth(store: ResearchStore): ControlPlaneHealth {
   const blockedAgents = lanes.filter((lane) => lane.status === "blocked" || lane.status === "failed").length;
   let status: ControlPlaneHealth["status"] = "healthy";
   let reason = "Campaign control plane is healthy.";
-  if (campaign === "idle" && activeTasks === 0 && runningAgents === 0) {
+  if (staleRoutines > 0) {
+    status = "blocked";
+    reason = `${staleRoutines} routine runner lease(s) expired and require recovery.`;
+  } else if (campaign === "idle" && activeTasks === 0 && runningAgents === 0 && failedRoutines === 0) {
     status = "idle";
     reason = "No campaign or active work is running.";
   } else if (alignment.status === "blocked") {
@@ -87,9 +93,9 @@ export function controlPlaneHealth(store: ResearchStore): ControlPlaneHealth {
   } else if (staleAgents > 0 || exhaustedAgents > 0 || (campaign === "running" && controller !== "running")) {
     status = "blocked";
     reason = staleAgents > 0 ? `${staleAgents} running agent(s) have stale heartbeats.` : exhaustedAgents > 0 ? `${exhaustedAgents} running agent(s) exhausted their wall-clock budget.` : "A running campaign has no live controller lease.";
-  } else if (controller === "stale" || failedTasks > 0 || blockedAgents > 0 || store.queueControl().paused) {
+  } else if (controller === "stale" || failedTasks > 0 || failedRoutines > 0 || blockedAgents > 0 || store.queueControl().paused) {
     status = "degraded";
-    reason = controller === "stale" ? "The previous controller lease is stale." : failedTasks > 0 ? `${failedTasks} queue task(s) failed and need inspection.` : blockedAgents > 0 ? `${blockedAgents} agent lane(s) are blocked or failed.` : "Queue dispatch is paused by policy.";
+    reason = controller === "stale" ? "The previous controller lease is stale." : failedTasks > 0 ? `${failedTasks} queue task(s) failed and need inspection.` : failedRoutines > 0 ? `${failedRoutines} routine(s) failed and need inspection.` : blockedAgents > 0 ? `${blockedAgents} agent lane(s) are blocked or failed.` : "Queue dispatch is paused by policy.";
   }
   return { status, controller, campaign, activeTasks, runningAgents, staleAgents, reason };
 }
@@ -168,6 +174,12 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
   }
   for (const worker of store.externalWorkers(64).filter((entry) => entry.health === "stale" && entry.status === "running").slice(0, 24)) {
     items.push({ id: `worker:${worker.workerId}`, severity: "critical", kind: "worker-stale", summary: `${worker.workerId} · ${worker.role} · heartbeat stale`, next: "/agents status" });
+  }
+  for (const routine of store.routines().filter((entry) => entry.status === "running" && entry.leaseExpiresAt !== null && Date.parse(entry.leaseExpiresAt) <= Date.now()).slice(0, 24)) {
+    items.push({ id: `routine-stale:${routine.id}`, severity: "critical", kind: "routine-stale", summary: `${routine.id} · ${routine.name} runner lease expired`, next: "/routine recover" });
+  }
+  for (const routine of store.routines().filter((entry) => entry.status === "failed").slice(0, 24)) {
+    items.push({ id: `routine-failed:${routine.id}`, severity: "warning", kind: "routine-failed", summary: `${routine.id} · ${routine.name} failed${routine.lastError ? ` · ${routine.lastError.slice(0, 140)}` : ""}`, next: `/routine history ${routine.id}` });
   }
 
   const alignment = goalAlignment(store);
