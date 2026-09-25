@@ -8755,7 +8755,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
       child.stdout.on("data", (chunk) => { output += chunk; if (output.includes(`/events`)) { clearTimeout(timer); resolve(); } });
       child.once("error", (error) => { clearTimeout(timer); reject(error); });
     });
-    const post = (path, body, auth = token, scopedWorkerId, scopedWorkerToken) => fetch(`http://127.0.0.1:${port}${path}`, { method: "POST", headers: { "content-type": "application/json", ...(auth ? { authorization: `Bearer ${auth}` } : {}), ...(scopedWorkerId ? { "x-evidra-worker-id": scopedWorkerId, "x-evidra-worker-token": scopedWorkerToken } : {}) }, body: JSON.stringify(body) });
+    const post = (path, body, auth = token, scopedWorkerId, scopedWorkerToken, actor) => fetch(`http://127.0.0.1:${port}${path}`, { method: "POST", headers: { "content-type": "application/json", ...(auth ? { authorization: `Bearer ${auth}` } : {}), ...(scopedWorkerId ? { "x-evidra-worker-id": scopedWorkerId, "x-evidra-worker-token": scopedWorkerToken } : {}), ...(actor ? { "x-evidra-actor": actor } : {}) }, body: JSON.stringify(body) });
     const missingWorkspaceHeartbeat = await post("/events", { type: "external.agent.heartbeat", payload: { role: "remote lane", leaseId: "worker-a", provider: "codex", model: "gpt-test", status: "idle", capabilities: ["python"] } }, token, "worker-a", "worker-secret");
     assert.equal(missingWorkspaceHeartbeat.status, 403);
     const unauthorizedHeartbeat = await post("/events", { type: "external.agent.heartbeat", payload: { workspaceId, role: "remote lane", leaseId: "worker-a", provider: "codex", model: "gpt-test", status: "idle", capabilities: ["python", "gpu.cuda"] } }, token, "worker-b", "worker-b-secret");
@@ -8785,13 +8785,16 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.deepEqual(claimedBody.resume.lineage.taskIds, [task.id]);
     const overCapacityClaim = await post("/tasks/claim", { workerId: "worker-a", capacity: 64 }, token, "worker-a", "worker-secret");
     assert.equal(overCapacityClaim.status, 400);
-    const operatorNote = await post("/tasks/note", { taskId: task.id, message: "operator requested a fresh validation pass", idempotencyKey: "note-1" }, token);
+    const operatorNote = await post("/tasks/note", { taskId: task.id, message: "operator requested a fresh validation pass", idempotencyKey: "note-1" }, token, undefined, undefined, "research-console");
     assert.equal(operatorNote.status, 200);
     assert.equal((await operatorNote.json()).idempotent, false);
-    const duplicateOperatorNote = await post("/tasks/note", { taskId: task.id, message: "operator requested a fresh validation pass", idempotencyKey: "note-1" }, token);
+    const duplicateOperatorNote = await post("/tasks/note", { taskId: task.id, message: "operator requested a fresh validation pass", idempotencyKey: "note-1" }, token, undefined, undefined, "research-console");
     assert.equal(duplicateOperatorNote.status, 200);
     assert.equal((await duplicateOperatorNote.json()).idempotent, true);
-    const conflictingOperatorNote = await post("/tasks/note", { taskId: task.id, message: "different operation", idempotencyKey: "note-1" }, token);
+    const attributionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    assert.equal(attributionStore.queueActivities(task.id).find((entry) => entry.kind === "handoff")?.actorId, "research-console");
+    attributionStore.close();
+    const conflictingOperatorNote = await post("/tasks/note", { taskId: task.id, message: "different operation", idempotencyKey: "note-1" }, token, undefined, undefined, "research-console");
     assert.equal(conflictingOperatorNote.status, 409);
     const workerOnlyNote = await post("/tasks/note", { taskId: task.id, message: "worker credential must not impersonate operator" }, null, "worker-a", "worker-secret");
     assert.equal(workerOnlyNote.status, 401);
