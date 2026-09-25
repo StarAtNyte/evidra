@@ -180,6 +180,14 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     check("routine-lease-fencing", "A live recurring run cannot be stolen by stale-run recovery.", liveRoutine?.leaseId === "routine-live" && !stolenRoutine && store.routine(routine.id)?.status === "running", { owner: store.routine(routine.id)?.leaseId, recovered: Boolean(stolenRoutine) });
     if (liveRoutine) store.finishRoutine(routine.id, "routine-live", "completed");
 
+    const replayRoutine = store.createRoutine({ ...routine, id: "benchmark-replay", triggerEvent: "benchmark.signal", catchUpPolicy: "replay" });
+    const replayClaim = store.claimRoutine(replayRoutine.id, "replay-runner", 60_000, new Date(), true);
+    const replayBase = Date.now() + 1_000;
+    for (let index = 0; index < 3; index += 1) store.triggerRoutines("benchmark.signal", new Date(replayBase + index * 1_000).toISOString());
+    const replayQueued = store.routine(replayRoutine.id);
+    const replayFinished = replayClaim ? store.finishRoutine(replayRoutine.id, "replay-runner", "completed") : undefined;
+    check("routine-catch-up-replay", "Replay schedules retain bounded missed wakeups and consume one per completed run.", replayClaim?.status === "running" && replayQueued?.pendingTriggers === 3 && replayFinished?.pendingTriggers === 2 && replayFinished.pendingTriggerEvent?.eventType === "benchmark.signal", { queued: replayQueued?.pendingTriggers, remaining: replayFinished?.pendingTriggers, status: replayFinished?.status });
+
     const circuit = store.createRoutine({ ...routine, id: "benchmark-circuit" });
     let firstFailure: ResearchRoutine | undefined;
     for (const owner of ["circuit-a", "circuit-b", "circuit-c"]) {

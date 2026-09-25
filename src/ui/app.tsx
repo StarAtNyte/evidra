@@ -214,12 +214,13 @@ function researchSetupPrompt(step: "goal" | "budget" | "stop"): string {
   }
   return "Autonomous research setup · Step 3/3\nWhen should Evidra stop?\n\nAnswer with a measurable stopping condition. Example: ‘stop after a replicated +3% mAP improvement with no subgroup falling by more than 1%, or when the budget is exhausted.’ You can also say: when the current research goal is met.";
 }
-function routineSetupPrompt(step: "name" | "goal" | "interval" | "budget" | "trigger"): string {
-  if (step === "name") return "Recurring routine setup · Step 1/5\nWhat should this routine be called?\n\nUse a short name such as nightly-literature, weekly-replication, or challenge-watch. Type /cancel to stop setup.";
-  if (step === "goal") return "Recurring routine setup · Step 2/5\nWhat should the routine research or improve?\n\nState the durable goal in one sentence. Each run will create a fresh campaign with its own phase goals and evidence.";
-  if (step === "interval") return "Recurring routine setup · Step 3/5\nHow often should it run?\n\nExamples: 6h, 1d, or 7d. The native routine daemon will execute due runs.";
-  if (step === "budget") return "Recurring routine setup · Step 4/5\nWhat is the campaign budget per run?\n\nExamples: 90m, 4h, or 2d. This bounds each run independently.";
-  return "Recurring routine setup · Step 5/5\nShould an event wake it immediately?\n\nType none for interval-only, or an event such as research.agent_budget.exhausted. Routine lifecycle events are not allowed.";
+function routineSetupPrompt(step: "name" | "goal" | "interval" | "budget" | "trigger" | "catchUp"): string {
+  if (step === "name") return "Recurring routine setup · Step 1/6\nWhat should this routine be called?\n\nUse a short name such as nightly-literature, weekly-replication, or challenge-watch. Type /cancel to stop setup.";
+  if (step === "goal") return "Recurring routine setup · Step 2/6\nWhat should the routine research or improve?\n\nState the durable goal in one sentence. Each run will create a fresh campaign with its own phase goals and evidence.";
+  if (step === "interval") return "Recurring routine setup · Step 3/6\nHow often should it run?\n\nExamples: 6h, 1d, or 7d. The native routine daemon will execute due runs.";
+  if (step === "budget") return "Recurring routine setup · Step 4/6\nWhat is the campaign budget per run?\n\nExamples: 90m, 4h, or 2d. This bounds each run independently.";
+  if (step === "trigger") return "Recurring routine setup · Step 5/6\nShould an event wake it immediately?\n\nType none for interval-only, or an event such as research.agent_budget.exhausted. Routine lifecycle events are not allowed.";
+  return "Recurring routine setup · Step 6/6\nHow should missed event wakeups be handled?\n\nType coalesce to run once for a burst (recommended), or replay to run each missed wakeup, capped at 8 pending runs.";
 }
 const REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
 const AGENT_ROLES = ["research director", "domain researcher", "method researcher", "data detective", "validation scientist", "model researcher", "ensemble scientist", "reproducibility engineer", "experiment engineer", "critic", "repair agent"] as const;
@@ -433,8 +434,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [setupStep, setSetupStep] = useState<"goal" | "budget" | "stop" | null>(null);
   const [setupDraft, setSetupDraft] = useState<{ goal?: string; budgetMinutes?: number }>({});
-  const [routineSetupStep, setRoutineSetupStep] = useState<"name" | "goal" | "interval" | "budget" | "trigger" | null>(null);
-  const [routineSetupDraft, setRoutineSetupDraft] = useState<{ name?: string; goal?: string; intervalSeconds?: number; budgetMinutes?: number; triggerEvent?: string | null }>({});
+  const [routineSetupStep, setRoutineSetupStep] = useState<"name" | "goal" | "interval" | "budget" | "trigger" | "catchUp" | null>(null);
+  const [routineSetupDraft, setRoutineSetupDraft] = useState<{ name?: string; goal?: string; intervalSeconds?: number; budgetMinutes?: number; triggerEvent?: string | null; catchUpPolicy?: "coalesce" | "replay" }>({});
   const [inputMount, setInputMount] = useState(0);
   const sessionId = useRef(`session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
   const messagesRef = useRef<Message[]>(messages);
@@ -2517,21 +2518,28 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setRoutineSetupDraft((current) => ({ ...current, budgetMinutes }));
         setRoutineSetupStep("trigger"); append("assistant", routineSetupPrompt("trigger")); return;
       }
-      const triggerEvent = /^(none|off|manual)$/i.test(request.trim()) ? null : request.trim();
-      if (triggerEvent && (!/^[a-zA-Z0-9_.:-]{1,120}$/.test(triggerEvent) || triggerEvent.startsWith("routine."))) {
-        append("assistant", "Use none, or a simple non-routine event type such as research.agent_budget.exhausted."); return;
+      if (routineSetupStep === "trigger") {
+        const triggerEvent = /^(none|off|manual)$/i.test(request.trim()) ? null : request.trim();
+        if (triggerEvent && (!/^[a-zA-Z0-9_.:-]{1,120}$/.test(triggerEvent) || triggerEvent.startsWith("routine."))) {
+          append("assistant", "Use none, or a simple non-routine event type such as research.agent_budget.exhausted."); return;
+        }
+        setRoutineSetupDraft((current) => ({ ...current, triggerEvent })); setRoutineSetupStep("catchUp"); append("assistant", routineSetupPrompt("catchUp")); return;
+      }
+      const catchUpPolicy = request.trim().toLowerCase();
+      if (catchUpPolicy !== "coalesce" && catchUpPolicy !== "replay") {
+        append("assistant", "Use coalesce or replay."); return;
       }
       const draft = routineSetupDraft;
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const entry = store.createRoutine({
         name: draft.name ?? "evidra-routine", mode: configRef.current.mode, goal: draft.goal ?? "Advance the research project",
-        budgetMinutes: draft.budgetMinutes ?? 60, intervalSeconds: draft.intervalSeconds ?? 86_400, triggerEvent, stopCondition: "stop when the stated goal has sufficient reproducible evidence",
+        budgetMinutes: draft.budgetMinutes ?? 60, intervalSeconds: draft.intervalSeconds ?? 86_400, triggerEvent: draft.triggerEvent, stopCondition: "stop when the stated goal has sufficient reproducible evidence",
         provider: configRef.current.provider, model: configRef.current.model, thinking: configRef.current.reasoningEffort,
-        autonomy: configRef.current.autonomy, limitPolicy: configRef.current.limitPolicy, executor: configRef.current.experimentExecutor, lanes: 3, maxRuns: null,
+        autonomy: configRef.current.autonomy, limitPolicy: configRef.current.limitPolicy, executor: configRef.current.experimentExecutor, lanes: 3, maxRuns: null, catchUpPolicy,
       });
       store.close();
       setRoutineSetupStep(null); setRoutineSetupDraft({});
-      append("assistant", `Routine created\n  name: ${entry.name}\n  id: ${entry.id}\n  mode: ${entry.mode}\n  next run: ${entry.nextRunAt}\n  interval: ${entry.intervalSeconds / 3600}h\n  budget: ${entry.budgetMinutes} minutes\n  trigger: ${entry.triggerEvent ?? "interval only"}\n\nUse /routine daemon to run due routines continuously, or /routine run ${entry.id} to run it now.`);
+      append("assistant", `Routine created\n  name: ${entry.name}\n  id: ${entry.id}\n  mode: ${entry.mode}\n  next run: ${entry.nextRunAt}\n  interval: ${entry.intervalSeconds / 3600}h\n  budget: ${entry.budgetMinutes} minutes\n  trigger: ${entry.triggerEvent ?? "interval only"}\n  catch-up: ${entry.catchUpPolicy}\n\nUse /routine daemon to run due routines continuously, or /routine run ${entry.id} to run it now.`);
       return;
     }
     if (setupStep) {
@@ -3041,7 +3049,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         const routines = store.routines();
         store.close();
         append("assistant", routines.length
-          ? `Research routines\n${routines.map((entry) => `  ${entry.status} · ${entry.name} · ${entry.id}\n    ${entry.mode} · next ${entry.nextRunAt} · every ${entry.intervalSeconds}s · trigger ${entry.triggerEvent ?? "none"}${entry.pendingTriggers ? ` · pending ${entry.pendingTriggers}` : ""}${entry.pendingTriggerEvent ? ` · event ${entry.pendingTriggerEvent.eventType} @ ${entry.pendingTriggerEvent.eventCreatedAt}` : ""} · runs ${entry.runCount}${entry.maxRuns !== null ? `/${entry.maxRuns}` : ""}${entry.lastResult ? ` · last ${entry.lastResult}` : ""}`).join("\n")}`
+          ? `Research routines\n${routines.map((entry) => `  ${entry.status} · ${entry.name} · ${entry.id}\n    ${entry.mode} · next ${entry.nextRunAt} · every ${entry.intervalSeconds}s · trigger ${entry.triggerEvent ?? "none"} · catch-up ${entry.catchUpPolicy ?? "coalesce"}${entry.pendingTriggers ? ` · pending ${entry.pendingTriggers}` : ""}${entry.pendingTriggerEvent ? ` · event ${entry.pendingTriggerEvent.eventType} @ ${entry.pendingTriggerEvent.eventCreatedAt}` : ""} · runs ${entry.runCount}${entry.maxRuns !== null ? `/${entry.maxRuns}` : ""}${entry.lastResult ? ` · last ${entry.lastResult}` : ""}`).join("\n")}`
           : "No recurring routines configured. Create one with `evidra routine create --name ... --goal ...`, then use /routine run <id>.");
         return;
       }

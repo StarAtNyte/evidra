@@ -3064,7 +3064,7 @@ event.command("serve")
           pendingDirectives: store.pendingAgentDirectives(agent.role).length,
           directiveQueue: store.pendingAgentDirectives(agent.role).slice(0, 8).map((directive) => ({ id: directive.id, sourceRole: directive.sourceRole, scopeKey: directive.scopeKey, message: directive.message, createdAt: directive.createdAt })),
         }));
-        const routines = store.routines().slice(0, 64).map((routine) => ({ id: routine.id, name: routine.name, mode: routine.mode, status: routine.status, goal: routine.goal, nextRunAt: routine.nextRunAt, triggerEvent: routine.triggerEvent ?? null, pendingTriggers: routine.pendingTriggers ?? 0, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult, lastError: routine.lastError, runCount: routine.runCount, maxRuns: routine.maxRuns }));
+        const routines = store.routines().slice(0, 64).map((routine) => ({ id: routine.id, name: routine.name, mode: routine.mode, status: routine.status, goal: routine.goal, nextRunAt: routine.nextRunAt, triggerEvent: routine.triggerEvent ?? null, catchUpPolicy: routine.catchUpPolicy ?? "coalesce", pendingTriggers: routine.pendingTriggers ?? 0, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult, lastError: routine.lastError, runCount: routine.runCount, maxRuns: routine.maxRuns }));
         const externalWorkers = store.externalWorkers();
         const integrity = store.verifyEventChain();
         const queueControl = store.queueControl();
@@ -3789,7 +3789,7 @@ routine.command("list").option("--json", "emit machine-readable routines").actio
   store.recoverStaleRoutines();
   const routines = store.routines();
   if (options.json) console.log(JSON.stringify(routines, null, 2));
-  else console.log(routines.length ? routines.map((entry) => `${entry.status} ${entry.id} · ${entry.name} · ${entry.mode} · next ${entry.nextRunAt} · every ${entry.intervalSeconds}s · trigger ${entry.triggerEvent ?? "none"}${entry.pendingTriggers ? ` · pending ${entry.pendingTriggers}` : ""}${entry.pendingTriggerEvent ? ` · event ${entry.pendingTriggerEvent.eventType} @ ${entry.pendingTriggerEvent.eventCreatedAt}` : ""} · runs ${entry.runCount}${entry.maxRuns !== null ? `/${entry.maxRuns}` : ""}${entry.failureStreak ? ` · failures ${entry.failureStreak}/3${routineRetryDelaySeconds(entry) !== null ? ` · retry backoff ${routineRetryDelaySeconds(entry)}s` : ""}` : ""}${entry.lastResult ? ` · last ${entry.lastResult}` : ""}${entry.lastError ? ` · error ${entry.lastError}` : ""}`).join("\n") : "No routines configured.");
+  else console.log(routines.length ? routines.map((entry) => `${entry.status} ${entry.id} · ${entry.name} · ${entry.mode} · next ${entry.nextRunAt} · every ${entry.intervalSeconds}s · trigger ${entry.triggerEvent ?? "none"} · catch-up ${entry.catchUpPolicy ?? "coalesce"}${entry.pendingTriggers ? ` · pending ${entry.pendingTriggers}` : ""}${entry.pendingTriggerEvent ? ` · event ${entry.pendingTriggerEvent.eventType} @ ${entry.pendingTriggerEvent.eventCreatedAt}` : ""} · runs ${entry.runCount}${entry.maxRuns !== null ? `/${entry.maxRuns}` : ""}${entry.failureStreak ? ` · failures ${entry.failureStreak}/3${routineRetryDelaySeconds(entry) !== null ? ` · retry backoff ${routineRetryDelaySeconds(entry)}s` : ""}` : ""}${entry.lastResult ? ` · last ${entry.lastResult}` : ""}${entry.lastError ? ` · error ${entry.lastError}` : ""}`).join("\n") : "No routines configured.");
   store.close();
 });
 routine.command("history <id>").option("--json", "emit machine-readable run history").description("Show durable attempts for a routine").action((id: string, options: { json?: boolean }) => {
@@ -3815,20 +3815,22 @@ routine.command("create")
   .option("--lanes <count>", "maximum concurrent research lanes", "3")
   .option("--max-runs <count>", "pause permanently after this many runs; 0 means unlimited", "0")
   .option("--on-event <event>", "wake immediately when this durable event type is emitted")
-  .action((options: { name: string; goal: string; mode: string; every: string; budget: string; stop: string; provider: string; model: string; thinking: string; autonomy: string; limitPolicy: string; executor: string; lanes: string; maxRuns: string; onEvent?: string }) => {
+  .option("--catch-up <policy>", "coalesce missed triggers or replay them (max 8)", "coalesce")
+  .action((options: { name: string; goal: string; mode: string; every: string; budget: string; stop: string; provider: string; model: string; thinking: string; autonomy: string; limitPolicy: string; executor: string; lanes: string; maxRuns: string; onEvent?: string; catchUp: string }) => {
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Routine mode must be 'research' or 'challenge'.");
     if (options.provider !== "codex" && options.provider !== "local") throw new Error("Routine provider must be 'codex' or 'local'.");
     if (!["safe", "fast", "yolo"].includes(options.autonomy)) throw new Error("Routine autonomy must be 'safe', 'fast', or 'yolo'.");
     if (!["auto", "wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Routine limit policy must be 'auto', 'wait', 'fallback', or 'stop'.");
+    if (options.catchUp !== "coalesce" && options.catchUp !== "replay") throw new Error("Routine catch-up must be 'coalesce' or 'replay'.");
     if (!["local", "container", "modal", "slurm"].includes(options.executor)) throw new Error("Routine executor must be local, container, modal, or slurm.");
     const lanes = Number.parseInt(options.lanes, 10);
     if (!Number.isInteger(lanes) || lanes < 1 || lanes > 6) throw new Error("Routine lanes must be an integer from 1 to 6.");
     const maxRunsValue = Number.parseInt(options.maxRuns, 10);
     if (!Number.isInteger(maxRunsValue) || maxRunsValue < 0) throw new Error("Routine max-runs must be zero or a positive integer.");
     const store = new ResearchStore(statePath);
-    const entry = store.createRoutine({ name: options.name.trim(), mode: options.mode as "research" | "challenge", goal: options.goal.trim(), budgetMinutes: durationMinutes(options.budget), intervalSeconds: durationMinutes(options.every) * 60, stopCondition: options.stop.trim(), provider: options.provider as "codex" | "local", model: options.model, thinking: options.thinking, autonomy: options.autonomy as "safe" | "fast" | "yolo", limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", executor: options.executor as "local" | "container" | "modal" | "slurm", lanes, maxRuns: maxRunsValue === 0 ? null : maxRunsValue, triggerEvent: options.onEvent?.trim() || null });
+    const entry = store.createRoutine({ name: options.name.trim(), mode: options.mode as "research" | "challenge", goal: options.goal.trim(), budgetMinutes: durationMinutes(options.budget), intervalSeconds: durationMinutes(options.every) * 60, stopCondition: options.stop.trim(), provider: options.provider as "codex" | "local", model: options.model, thinking: options.thinking, autonomy: options.autonomy as "safe" | "fast" | "yolo", limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", executor: options.executor as "local" | "container" | "modal" | "slurm", lanes, maxRuns: maxRunsValue === 0 ? null : maxRunsValue, triggerEvent: options.onEvent?.trim() || null, catchUpPolicy: options.catchUp as "coalesce" | "replay" });
     store.close();
-    console.log(`Routine created: ${entry.id}\nNext run: ${entry.nextRunAt}\nTrigger: ${entry.triggerEvent ?? "interval only"}\nUse evidra routine run ${entry.id} or schedule it from cron.`);
+    console.log(`Routine created: ${entry.id}\nNext run: ${entry.nextRunAt}\nTrigger: ${entry.triggerEvent ?? "interval only"}\nCatch-up: ${entry.catchUpPolicy}\nUse evidra routine run ${entry.id} or schedule it from cron.`);
   });
 for (const action of ["pause", "resume"] as const) {
   routine.command(`${action} <id>`).description(`${action[0].toUpperCase()}${action.slice(1)} a recurring routine`).action((id: string) => {

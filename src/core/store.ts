@@ -260,6 +260,8 @@ export interface AttentionAcknowledgement {
 }
 
 export type RoutineStatus = "active" | "paused" | "running" | "failed";
+export type RoutineCatchUpPolicy = "coalesce" | "replay";
+export const MAX_ROUTINE_PENDING_TRIGGERS = 8;
 export interface RoutineTriggerContext {
   eventType: string;
   eventCreatedAt: string;
@@ -287,6 +289,8 @@ export interface ResearchRoutine {
   pendingTriggers?: number;
   /** The newest durable event that caused or is waiting to cause a run. */
   pendingTriggerEvent?: RoutineTriggerContext | null;
+  /** Whether missed wakeups collapse into one run or replay up to the bounded cap. */
+  catchUpPolicy?: RoutineCatchUpPolicy;
   status: RoutineStatus;
   nextRunAt: string;
   lastRunAt: string | null;
@@ -318,7 +322,7 @@ export function routineRetryDelaySeconds(routine: Pick<ResearchRoutine, "lastRes
   return Number.isFinite(delay) && delay >= 0 ? delay : null;
 }
 
-function validateRoutine(routine: Pick<ResearchRoutine, "name" | "goal" | "mode" | "budgetMinutes" | "intervalSeconds" | "provider" | "model" | "thinking" | "autonomy" | "limitPolicy" | "executor" | "lanes" | "maxRuns" | "triggerEvent">): void {
+function validateRoutine(routine: Pick<ResearchRoutine, "name" | "goal" | "mode" | "budgetMinutes" | "intervalSeconds" | "provider" | "model" | "thinking" | "autonomy" | "limitPolicy" | "executor" | "lanes" | "maxRuns" | "triggerEvent" | "catchUpPolicy">): void {
   if (!routine.name.trim()) throw new Error("Routine name must not be empty.");
   if (!routine.goal.trim()) throw new Error("Routine goal must not be empty.");
   if (!Number.isFinite(routine.budgetMinutes) || routine.budgetMinutes <= 0) throw new Error("Routine budget must be positive.");
@@ -334,6 +338,7 @@ function validateRoutine(routine: Pick<ResearchRoutine, "name" | "goal" | "mode"
   if (routine.maxRuns !== null && (!Number.isInteger(routine.maxRuns) || routine.maxRuns < 1)) throw new Error("Routine maxRuns must be null or a positive integer.");
   if (routine.triggerEvent !== undefined && routine.triggerEvent !== null && !/^[a-zA-Z0-9_.:-]{1,120}$/.test(routine.triggerEvent)) throw new Error("Routine trigger event must be a simple event type such as research.agent_budget.exhausted.");
   if (routine.triggerEvent?.startsWith("routine.")) throw new Error("Routine triggers cannot subscribe to routine lifecycle events; this would permit self-triggering loops.");
+  if (routine.catchUpPolicy !== undefined && !["coalesce", "replay"].includes(routine.catchUpPolicy)) throw new Error("Routine catch-up policy must be 'coalesce' or 'replay'.");
 }
 
 export type ControllerAction = "pause" | "resume" | "stop";
@@ -2194,7 +2199,7 @@ export class ResearchStore {
 
   private routineFromRow(row: { id: string; payload_json: string; status: string; next_run_at: string; lease_id: string | null; lease_expires_at: string | null; created_at: string; updated_at: string }): ResearchRoutine {
     const payload = JSON.parse(row.payload_json) as Omit<ResearchRoutine, "id" | "status" | "nextRunAt" | "leaseId" | "leaseExpiresAt" | "createdAt" | "updatedAt">;
-    return { ...payload, maxRuns: Number.isInteger(payload.maxRuns) && (payload.maxRuns as number) > 0 ? payload.maxRuns as number : null, failureStreak: Math.max(0, Number(payload.failureStreak) || 0), pendingTriggers: Math.max(0, Number(payload.pendingTriggers) || 0), id: row.id, status: row.status as RoutineStatus, nextRunAt: row.next_run_at, leaseId: row.lease_id, leaseExpiresAt: row.lease_expires_at, createdAt: row.created_at, updatedAt: row.updated_at };
+    return { ...payload, catchUpPolicy: payload.catchUpPolicy === "replay" ? "replay" : "coalesce", maxRuns: Number.isInteger(payload.maxRuns) && (payload.maxRuns as number) > 0 ? payload.maxRuns as number : null, failureStreak: Math.max(0, Number(payload.failureStreak) || 0), pendingTriggers: Math.min(MAX_ROUTINE_PENDING_TRIGGERS, Math.max(0, Number(payload.pendingTriggers) || 0)), id: row.id, status: row.status as RoutineStatus, nextRunAt: row.next_run_at, leaseId: row.lease_id, leaseExpiresAt: row.lease_expires_at, createdAt: row.created_at, updatedAt: row.updated_at };
   }
 
   routines(): ResearchRoutine[] {
@@ -2222,7 +2227,7 @@ export class ResearchStore {
       intervalSeconds: routine.intervalSeconds, stopCondition: routine.stopCondition, provider: routine.provider,
       model: routine.model, thinking: routine.thinking, autonomy: routine.autonomy, limitPolicy: routine.limitPolicy,
       executor: routine.executor, lanes: routine.lanes, maxRuns: routine.maxRuns ?? null, triggerEvent: routine.triggerEvent ?? null, lastTriggerAt: routine.lastTriggerAt ?? null, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult,
-      lastError: routine.lastError, runCount: routine.runCount, failureStreak: Math.max(0, Math.floor(routine.failureStreak ?? 0)), pendingTriggers: Math.max(0, Math.min(1, routine.pendingTriggers ?? 0)), pendingTriggerEvent: routine.pendingTriggerEvent ?? null,
+      lastError: routine.lastError, runCount: routine.runCount, failureStreak: Math.max(0, Math.floor(routine.failureStreak ?? 0)), pendingTriggers: Math.max(0, Math.min(MAX_ROUTINE_PENDING_TRIGGERS, routine.pendingTriggers ?? 0)), pendingTriggerEvent: routine.pendingTriggerEvent ?? null, catchUpPolicy: routine.catchUpPolicy === "replay" ? "replay" : "coalesce",
     };
     this.db.prepare(`
       INSERT INTO research_routines (id, payload_json, status, next_run_at, lease_id, lease_expires_at, created_at, updated_at)
@@ -2248,6 +2253,7 @@ export class ResearchStore {
       maxRuns: input.maxRuns ?? null,
       pendingTriggers: 0,
       pendingTriggerEvent: null,
+      catchUpPolicy: input.catchUpPolicy === "replay" ? "replay" : "coalesce",
       triggerEvent: input.triggerEvent ?? null,
       lastTriggerAt: input.triggerEvent ? now : null,
       leaseId: null,
@@ -2268,7 +2274,8 @@ export class ResearchStore {
       if (routine.lastTriggerAt && Date.parse(routine.lastTriggerAt) >= Date.parse(eventCreatedAt)) continue;
       const now = new Date().toISOString();
       const queued = routine.status === "running";
-      const updated: ResearchRoutine = { ...routine, nextRunAt: queued ? routine.nextRunAt : now, lastTriggerAt: eventCreatedAt, pendingTriggers: queued ? 1 : routine.pendingTriggers ?? 0, pendingTriggerEvent: { eventType, eventCreatedAt }, updatedAt: now };
+      const pendingTriggers = queued ? routine.catchUpPolicy === "replay" ? Math.min(MAX_ROUTINE_PENDING_TRIGGERS, (routine.pendingTriggers ?? 0) + 1) : 1 : routine.pendingTriggers ?? 0;
+      const updated: ResearchRoutine = { ...routine, nextRunAt: queued ? routine.nextRunAt : now, lastTriggerAt: eventCreatedAt, pendingTriggers, pendingTriggerEvent: { eventType, eventCreatedAt }, updatedAt: now };
       this.saveRoutine(updated);
       this.appendEvent(queued ? "routine.trigger_queued" : "routine.triggered", { id: routine.id, eventType, eventCreatedAt, coalesced: queued });
       triggered.push(routine.id);
@@ -2282,10 +2289,11 @@ export class ResearchStore {
     if (!current) throw new Error(`Unknown routine '${id}'.`);
     if (current.status === "paused") throw new Error(`Routine '${id}' is paused; resume it before triggering.`);
     const now = new Date().toISOString();
-    if (current.status === "running" && (current.pendingTriggers ?? 0) > 0) return { routine: current, changed: false };
+    if (current.status === "running" && current.catchUpPolicy !== "replay" && (current.pendingTriggers ?? 0) > 0) return { routine: current, changed: false };
     if (current.status === "active" && current.pendingTriggerEvent?.eventType === eventType && Date.parse(current.nextRunAt) <= Date.now()) return { routine: current, changed: false };
     const queued = current.status === "running";
-    const updated: ResearchRoutine = { ...current, nextRunAt: queued ? current.nextRunAt : now, lastTriggerAt: now, pendingTriggers: queued ? 1 : current.pendingTriggers ?? 0, pendingTriggerEvent: { eventType, eventCreatedAt: now }, updatedAt: now };
+    const pendingTriggers = queued ? current.catchUpPolicy === "replay" ? Math.min(MAX_ROUTINE_PENDING_TRIGGERS, (current.pendingTriggers ?? 0) + 1) : 1 : current.pendingTriggers ?? 0;
+    const updated: ResearchRoutine = { ...current, nextRunAt: queued ? current.nextRunAt : now, lastTriggerAt: now, pendingTriggers, pendingTriggerEvent: { eventType, eventCreatedAt: now }, updatedAt: now };
     this.saveRoutine(updated);
     this.appendEvent(queued ? "routine.trigger_queued" : "routine.triggered", { id, eventType, eventCreatedAt: now, coalesced: queued, source: "operator" });
     return { routine: this.routine(id) ?? updated, changed: true };
@@ -2336,7 +2344,8 @@ export class ResearchStore {
       : current.intervalSeconds;
     const nextRunAt = pendingTrigger ? now.toISOString() : new Date(now.getTime() + retryDelaySeconds * 1000).toISOString();
     this.db.prepare("UPDATE research_routine_runs SET status = ?, finished_at = ?, exit_code = ?, error = ? WHERE id = (SELECT id FROM research_routine_runs WHERE routine_id = ? AND owner_id = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1)").run(result, now.toISOString(), exitCode ?? (result === "completed" ? 0 : 1), error ?? null, id, ownerId);
-    const updated: ResearchRoutine = { ...current, status: circuitBroken ? "paused" : "active", nextRunAt, pendingTriggers: pendingTrigger ? 0 : circuitBroken ? 0 : current.pendingTriggers ?? 0, pendingTriggerEvent: pendingTrigger ? current.pendingTriggerEvent : null, lastRunAt: now.toISOString(), lastResult: result, lastError: error ?? null, runCount: current.runCount + 1, failureStreak, leaseId: null, leaseExpiresAt: null, updatedAt: now.toISOString() };
+    const remainingTriggers = pendingTrigger && current.catchUpPolicy === "replay" ? Math.max(0, (current.pendingTriggers ?? 0) - 1) : pendingTrigger ? 0 : circuitBroken ? 0 : current.pendingTriggers ?? 0;
+    const updated: ResearchRoutine = { ...current, status: circuitBroken ? "paused" : "active", nextRunAt, pendingTriggers: remainingTriggers, pendingTriggerEvent: pendingTrigger ? current.pendingTriggerEvent : null, lastRunAt: now.toISOString(), lastResult: result, lastError: error ?? null, runCount: current.runCount + 1, failureStreak, leaseId: null, leaseExpiresAt: null, updatedAt: now.toISOString() };
     this.saveRoutine(updated);
     this.appendEvent(`routine.${result}`, { id, runCount: updated.runCount, nextRunAt, retryDelaySeconds, pendingTrigger, failureStreak, circuitBroken, error: error ?? null });
     if (circuitBroken) this.appendEvent("routine.failure_circuit_open", { id, failureStreak, threshold: 3, action: "paused_until_operator_resume" });
