@@ -1,78 +1,62 @@
-"""WhestBench candidate: full covariance propagation.
+"""Self-contained full-covariance estimator for WhestBench Phase 2.
 
-The starter estimator was a zero predictor. This candidate promotes the
-starter kit's covariance method into the submission entry point, preserving a
-single auditable implementation while keeping the experiment change small.
+The archive contains only this file, so it must not import starter-kit examples.
 """
 
 from __future__ import annotations
 
-import argparse
-import importlib.util
-import sys
-from pathlib import Path
-
+import flopscope as flops
 import flopscope.numpy as fnp
-from whestbench import MLP, BaseEstimator
+from whestbench import BaseEstimator, SetupContext
+from whestbench.domain import MLP
 
 
-_COVARIANCE_PATH = Path(__file__).resolve().parent / "examples" / "03_covariance_propagation.py"
-_SPEC = importlib.util.spec_from_file_location("whest_covariance_candidate", _COVARIANCE_PATH)
-if _SPEC is None or _SPEC.loader is None:
-    raise RuntimeError(f"Could not load covariance candidate: {_COVARIANCE_PATH}")
-_MODULE = importlib.util.module_from_spec(_SPEC)
-sys.modules[_SPEC.name] = _MODULE
-_SPEC.loader.exec_module(_MODULE)
+_COV_RESCALE_THRESHOLD = 1e30
 
 
-class Estimator(_MODULE.Estimator):
-    """Submission entry point for the covariance-propagation candidate."""
+class Estimator(BaseEstimator):
+    """Propagate mean and full covariance through linear/ReLU layers."""
 
-    pass
+    def __init__(self) -> None:
+        self._setup_rng = None
 
+    def setup(self, ctx: SetupContext) -> None:
+        self._setup_rng = fnp.random.default_rng(ctx.seed)
 
-def _load_baseline(name: str) -> type[BaseEstimator]:
-    """Load the `Estimator` class from `examples/<name>.py` or `examples/0N_<name>.py`."""
-    examples_dir = Path(__file__).resolve().parent / "examples"
-    candidates = [examples_dir / f"{name}.py", *examples_dir.glob(f"??_{name}.py")]
-    for candidate in candidates:
-        if candidate.is_file():
-            spec = importlib.util.spec_from_file_location(candidate.stem, candidate)
-            assert spec and spec.loader
-            module = importlib.util.module_from_spec(spec)
-            # Register before exec_module: without this the class's __module__ has
-            # no entry in sys.modules, so inspect.getsourcefile() raises TypeError
-            # and the local engine reports "<unknown>" instead of the real file.
-            sys.modules[candidate.stem] = module
-            spec.loader.exec_module(module)
-            return module.Estimator
-    raise SystemExit(
-        f"\n[whest-starterkit] Could not find baseline `{name}` in examples/.\n"
-        f"Available: {sorted(p.name for p in examples_dir.glob('*.py'))}\n"
-    )
+    def predict(self, mlp: MLP, budget: int) -> fnp.ndarray:
+        del budget
+        width = mlp.width
+        _ = fnp.random.default_rng(mlp.seed)
+        mu = fnp.zeros(width, dtype=fnp.float32)
+        cov = flops.as_symmetric(fnp.eye(width, dtype=fnp.float32), symmetry=(0, 1))
+        log_scale = 0.0
+        rows = []
 
+        for w in mlp.weights:
+            max_var = float(fnp.max(fnp.diag(cov)))
+            if max_var > _COV_RESCALE_THRESHOLD:
+                scale = float(fnp.sqrt(max_var))
+                mu = mu / scale
+                cov = cov / (scale * scale)
+                log_scale += float(fnp.log(scale))
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Iterate on your estimator locally.")
-    parser.add_argument(
-        "--baseline",
-        default=None,
-        help="Compare your estimator against an example: 'random', 'mean_propagation', "
-        "'covariance_propagation', or 'shipped_weights'.",
-    )
-    parser.add_argument("--width", type=int, default=1024)
-    parser.add_argument("--depth", type=int, default=16)
-    parser.add_argument("--seed", type=int, default=0)
-    args = parser.parse_args()
+            mu_pre = w.T @ mu
+            cov_pre = fnp.einsum("ij,ia,jb->ab", cov, w, w)
+            var_pre = fnp.maximum(fnp.diag(cov_pre), 1e-12)
+            sigma_pre = fnp.sqrt(var_pre)
+            alpha = mu_pre / sigma_pre
+            phi = flops.stats.norm.pdf(alpha).astype(fnp.float32)
+            Phi = flops.stats.norm.cdf(alpha).astype(fnp.float32)
 
-    from local_engine import build_mlp, compare_against_monte_carlo
+            mu = mu_pre * Phi + sigma_pre * phi
+            ez2 = (mu_pre * mu_pre + var_pre) * Phi + mu_pre * sigma_pre * phi
+            var_post = fnp.maximum(ez2 - mu * mu, 0.0)
 
-    mlp = build_mlp(width=args.width, depth=args.depth, seed=args.seed)
+            zero32 = fnp.zeros((), dtype=fnp.float32)
+            gain = fnp.where(sigma_pre > 1e-12, Phi, zero32)
+            cov = fnp.multiply(fnp.outer(gain, gain), cov_pre)
+            fnp.fill_diagonal(cov, var_post)
+            cov = flops.as_symmetric(cov, symmetry=(0, 1))
+            rows.append(mu * float(fnp.exp(log_scale)))
 
-    print("--- Your estimator ---")
-    compare_against_monte_carlo(Estimator(), mlp, seed=args.seed)
-
-    if args.baseline:
-        baseline_cls = _load_baseline(args.baseline)
-        print(f"\n--- Baseline: {args.baseline} ---")
-        compare_against_monte_carlo(baseline_cls(), mlp, seed=args.seed)
+        return fnp.stack(rows, axis=0)
