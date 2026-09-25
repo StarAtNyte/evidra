@@ -4006,6 +4006,23 @@ test("queue worker supervisor contains polling failures and records recovery sta
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue worker polling is single-flight while active work is running", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-worker-single-flight-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "single-flight", kind: "smoke", priority: 1, payload: {} });
+    const originalRequeue = store.requeueStaleTasks.bind(store);
+    let scans = 0;
+    store.requeueStaleTasks = (...args) => { scans += 1; return originalRequeue(...args); };
+    const worker = new QueueWorker(store, async () => { await new Promise((resolve) => setTimeout(resolve, 180)); }, { workerId: "single-flight-worker", pollIntervalMs: 50 });
+    worker.start();
+    await new Promise((resolve) => setTimeout(resolve, 90));
+    await worker.stop();
+    assert.equal(scans, 1);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue recovery classifies failures and records a route-changing action", async () => {
   assert.equal(queueRecoveryAction(new Error("request timed out" )).route, "reduce_resources");
   assert.equal(queueRecoveryAction(new Error("bwrap: network namespace denied")).route, "alternate_executor");

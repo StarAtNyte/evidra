@@ -357,6 +357,7 @@ Implemented today:
 - lease-loss visibility: the same event appears as critical operator attention in the CLI, TUI, and dashboard with a direct queue-history action;
 - queue-supervisor recovery: polling-loop exceptions are contained, journaled as `queue.worker.error`, and surfaced as operator attention while later polls remain available for recovery;
 - completion-driven queue refill: bounded workers immediately claim the next eligible task when any lane finishes, so heterogeneous research jobs do not wait behind the slowest lane;
+- single-flight queue supervision: periodic polling never overlaps an active drain, keeping recovery scans, claims, and progress accounting deterministic while work is running;
 - durable queue progress: every task exposes a shared `queued`/`active`/`blocked`/`stalled`/terminal projection with last activity and heartbeat age across CLI JSON, TUI, and dashboard surfaces;
 - typed worker progress: queue handlers can report bounded percent/step counters and durable checkpoints through a compatible context API; progress survives completion and restart without treating model prose as evidence;
 - remote progress parity: authenticated `/tasks/activity` calls receive the same progress validation, so Modal, Slurm, and other external workers cannot bypass the local queue contract;

@@ -35,6 +35,7 @@ export class QueueWorker {
   private readonly active = new Set<Promise<void>>();
   private readonly abortController = new AbortController();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private runningLoop: Promise<void> | null = null;
   private stopping = false;
 
   constructor(private readonly store: ResearchStore, private readonly handler: QueueHandler, options: QueueWorkerOptions = {}) {
@@ -51,6 +52,17 @@ export class QueueWorker {
 
   async runOnce(): Promise<void> {
     if (this.stopping) return;
+    if (this.runningLoop) return this.runningLoop;
+    const loop = this.drainOnce();
+    this.runningLoop = loop;
+    try {
+      await loop;
+    } finally {
+      if (this.runningLoop === loop) this.runningLoop = null;
+    }
+  }
+
+  private async drainOnce(): Promise<void> {
     do {
       this.store.requeueStaleTasks(this.staleAfterMs, this.maxAttempts);
       while (!this.stopping && this.active.size < this.concurrency) {
