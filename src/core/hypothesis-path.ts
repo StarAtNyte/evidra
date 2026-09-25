@@ -17,8 +17,11 @@ export function candidateChangePath(value: unknown): string | undefined {
     // Do not accept a path fragment inside a URL, absolute path, or larger
     // identifier. Punctuation used to quote or end a sentence is allowed.
     if (before && /[A-Za-z0-9_./-]/.test(before)) continue;
-    if (after && /[A-Za-z0-9_./-]/.test(after)) continue;
+    if (after && /[A-Za-z0-9_/-]/.test(after)) continue;
     const normalized = token.replace(/^\.\//, "");
+    // Numeric literals such as `0.5` are common in hypotheses and must never
+    // be interpreted as candidate file paths.
+    if (/^\d+(?:\.\d+)?$/.test(normalized)) continue;
     const parts = normalized.split("/");
     if (!normalized || parts.some((part) => !part || part === "." || part === "..")) continue;
     return normalized;

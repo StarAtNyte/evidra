@@ -6496,6 +6496,7 @@ test("hypothesis paths support arbitrary languages while rejecting traversal fra
   assert.equal(candidateChangePath("Run --estimator=research/model.rs for the candidate."), "research/model.rs");
   assert.equal(candidateChangePath("Use ../secrets.py instead."), undefined);
   assert.equal(candidateChangePath("Read https://example.com/paper.pdf for context."), undefined);
+  assert.equal(candidateChangePath("Set CALIBRATION_SCALE=0.5 in estimator.py."), "estimator.py");
 });
 
 test("Modal result parser ignores progress and rejects malformed worker payloads", () => {
