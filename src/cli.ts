@@ -2711,6 +2711,8 @@ event.command("serve")
       });
       const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/delegate", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release", "/tasks/note", "/tasks/cancel", "/queue/pause", "/queue/resume"].includes(request.url ?? "") ? request.url : undefined;
       const operatorTaskPath = taskPath === "/tasks/note" || taskPath === "/tasks/cancel" || taskPath === "/queue/pause" || taskPath === "/queue/resume";
+      const taskDetailMatch = request.method === "GET" ? (request.url ?? "").split("?", 1)[0].match(/^\/tasks\/([^/]+)$/) : null;
+      const operatorTaskDetailPath = Boolean(taskDetailMatch);
       const operatorQueueStatusPath = request.method === "GET" && request.url === "/queue/status";
       const operatorAttentionPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/attention";
       const operatorActivityPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/activity";
@@ -2736,7 +2738,7 @@ event.command("serve")
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
       const remoteActor = (typeof request.headers["x-evidra-actor"] === "string" ? request.headers["x-evidra-actor"] : "").replace(/[\u0000-\u001f\u007f]/g, "_").trim().slice(0, 200) || "remote-operator";
-      if (operatorTaskPath || operatorQueueStatusPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
+      if (operatorTaskPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
@@ -2816,6 +2818,50 @@ event.command("serve")
         request.on("close", finish);
         response.on("close", finish);
         flush();
+        return;
+      }
+      if (operatorTaskDetailPath && taskDetailMatch) {
+        let taskId: string;
+        try { taskId = decodeURIComponent(taskDetailMatch[1] ?? ""); } catch {
+          response.writeHead(400, headers);
+          response.end(JSON.stringify({ error: "task id must be valid URL encoding" }));
+          return;
+        }
+        const query = new URL(request.url ?? "/tasks/task", "http://evidra.local").searchParams;
+        const activityLimit = Number.parseInt(query.get("activityLimit") ?? "32", 10);
+        const historyLimit = Number.parseInt(query.get("historyLimit") ?? "64", 10);
+        if (!Number.isInteger(activityLimit) || activityLimit < 1 || activityLimit > 128 || !Number.isInteger(historyLimit) || historyLimit < 1 || historyLimit > 128) {
+          response.writeHead(400, headers);
+          response.end(JSON.stringify({ error: "activityLimit and historyLimit must be between 1 and 128" }));
+          return;
+        }
+        const store = new ResearchStore(statePath);
+        const task = store.queueTasks().find((entry) => entry.id === taskId);
+        if (!task) {
+          store.close();
+          response.writeHead(404, headers);
+          response.end(JSON.stringify({ error: `Unknown queue task '${taskId}'.` }));
+          return;
+        }
+        const { claimToken: _claimToken, ...publicTask } = task;
+        const detail = {
+          task: publicTask,
+          progress: store.queueProgress(taskId),
+          readiness: store.taskReadiness(taskId),
+          usage: store.queueUsageState(taskId),
+          usageTotals: store.queueUsageTotals(taskId),
+          checkpoint: store.queueCheckpoint(taskId),
+          resume: store.queueResumeContext(taskId, Math.min(16, activityLimit)),
+          lineage: store.taskLineage(taskId),
+          children: store.queueChildSummary(taskId),
+          activity: store.queueActivities(taskId, activityLimit),
+          usageEntries: store.queueUsage(taskId, activityLimit),
+          history: store.queueHistory(taskId, historyLimit),
+        };
+        const integrity = store.verifyEventChain();
+        store.close();
+        response.writeHead(integrity.status === "invalid" ? 503 : 200, headers);
+        response.end(JSON.stringify({ ok: integrity.status !== "invalid", ...redactStructured(detail) as object, integrity: integrity.status }));
         return;
       }
       if (operatorApprovalsPath) {
@@ -2989,7 +3035,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: true, id: taskId, status, changed }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /attention, GET /activity, GET /activity/stream, GET /organization, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /tasks/:id, GET /attention, GET /activity, GET /activity/stream, GET /organization, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
