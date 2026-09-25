@@ -4790,6 +4790,16 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     assert.equal(store.claimRoutine(capped.id, "capped-resumed", 60_000, new Date(), true)?.status, "running");
     store.finishRoutine(capped.id, "capped-resumed", "completed");
     assert.equal(store.recentEvents(8).some((event) => event.type === "routine.max_runs_updated" && event.payload?.id === capped.id), true);
+    const circuit = store.createRoutine({ ...routine, id: "routine-circuit", triggerEvent: null });
+    for (const owner of ["circuit-a", "circuit-b", "circuit-c"]) {
+      assert.equal(store.claimRoutine(circuit.id, owner, 60_000, new Date(), true)?.status, "running");
+      store.finishRoutine(circuit.id, owner, "failed", "provider unavailable", 1);
+    }
+    assert.equal(store.routine(circuit.id)?.status, "paused");
+    assert.equal(store.routine(circuit.id)?.failureStreak, 3);
+    assert.equal(store.claimRoutine(circuit.id, "circuit-after", 60_000, new Date(), true), undefined);
+    assert.equal(store.recentEvents(8).some((event) => event.type === "routine.failure_circuit_open" && event.payload?.id === circuit.id), true);
+    assert.equal(store.setRoutineStatus(circuit.id, "active").failureStreak, 0);
     const stale = store.createRoutine({ ...routine, id: "routine-stale" });
     assert.equal(store.claimRoutine(stale.id, "runner-stale", -1)?.status, "running");
     assert.equal(operatorAttention(store).items.some((item) => item.id === "routine-stale:routine-stale"), true);

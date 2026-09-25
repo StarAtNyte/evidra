@@ -293,6 +293,8 @@ export interface ResearchRoutine {
   lastResult: "completed" | "failed" | null;
   lastError: string | null;
   runCount: number;
+  /** Consecutive failed runs; the circuit breaker pauses after three. */
+  failureStreak?: number;
   leaseId: string | null;
   leaseExpiresAt: string | null;
   createdAt: string;
@@ -2185,7 +2187,7 @@ export class ResearchStore {
 
   private routineFromRow(row: { id: string; payload_json: string; status: string; next_run_at: string; lease_id: string | null; lease_expires_at: string | null; created_at: string; updated_at: string }): ResearchRoutine {
     const payload = JSON.parse(row.payload_json) as Omit<ResearchRoutine, "id" | "status" | "nextRunAt" | "leaseId" | "leaseExpiresAt" | "createdAt" | "updatedAt">;
-    return { ...payload, maxRuns: Number.isInteger(payload.maxRuns) && (payload.maxRuns as number) > 0 ? payload.maxRuns as number : null, pendingTriggers: Math.max(0, Number(payload.pendingTriggers) || 0), id: row.id, status: row.status as RoutineStatus, nextRunAt: row.next_run_at, leaseId: row.lease_id, leaseExpiresAt: row.lease_expires_at, createdAt: row.created_at, updatedAt: row.updated_at };
+    return { ...payload, maxRuns: Number.isInteger(payload.maxRuns) && (payload.maxRuns as number) > 0 ? payload.maxRuns as number : null, failureStreak: Math.max(0, Number(payload.failureStreak) || 0), pendingTriggers: Math.max(0, Number(payload.pendingTriggers) || 0), id: row.id, status: row.status as RoutineStatus, nextRunAt: row.next_run_at, leaseId: row.lease_id, leaseExpiresAt: row.lease_expires_at, createdAt: row.created_at, updatedAt: row.updated_at };
   }
 
   routines(): ResearchRoutine[] {
@@ -2213,7 +2215,7 @@ export class ResearchStore {
       intervalSeconds: routine.intervalSeconds, stopCondition: routine.stopCondition, provider: routine.provider,
       model: routine.model, thinking: routine.thinking, autonomy: routine.autonomy, limitPolicy: routine.limitPolicy,
       executor: routine.executor, lanes: routine.lanes, maxRuns: routine.maxRuns ?? null, triggerEvent: routine.triggerEvent ?? null, lastTriggerAt: routine.lastTriggerAt ?? null, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult,
-      lastError: routine.lastError, runCount: routine.runCount, pendingTriggers: Math.max(0, Math.min(1, routine.pendingTriggers ?? 0)), pendingTriggerEvent: routine.pendingTriggerEvent ?? null,
+      lastError: routine.lastError, runCount: routine.runCount, failureStreak: Math.max(0, Math.floor(routine.failureStreak ?? 0)), pendingTriggers: Math.max(0, Math.min(1, routine.pendingTriggers ?? 0)), pendingTriggerEvent: routine.pendingTriggerEvent ?? null,
     };
     this.db.prepare(`
       INSERT INTO research_routines (id, payload_json, status, next_run_at, lease_id, lease_expires_at, created_at, updated_at)
@@ -2235,6 +2237,7 @@ export class ResearchStore {
       lastResult: null,
       lastError: null,
       runCount: 0,
+      failureStreak: 0,
       maxRuns: input.maxRuns ?? null,
       pendingTriggers: 0,
       pendingTriggerEvent: null,
@@ -2314,12 +2317,15 @@ export class ResearchStore {
     if (!current) throw new Error(`Unknown routine '${id}'.`);
     if (current.status !== "running" || current.leaseId !== ownerId) throw new Error(`Routine '${id}' is not owned by this runner.`);
     const now = new Date();
-    const pendingTrigger = (current.pendingTriggers ?? 0) > 0;
+    const failureStreak = result === "failed" ? (current.failureStreak ?? 0) + 1 : 0;
+    const circuitBroken = failureStreak >= 3;
+    const pendingTrigger = !circuitBroken && (current.pendingTriggers ?? 0) > 0;
     const nextRunAt = pendingTrigger ? now.toISOString() : new Date(now.getTime() + current.intervalSeconds * 1000).toISOString();
     this.db.prepare("UPDATE research_routine_runs SET status = ?, finished_at = ?, exit_code = ?, error = ? WHERE id = (SELECT id FROM research_routine_runs WHERE routine_id = ? AND owner_id = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1)").run(result, now.toISOString(), exitCode ?? (result === "completed" ? 0 : 1), error ?? null, id, ownerId);
-    const updated: ResearchRoutine = { ...current, status: "active", nextRunAt, pendingTriggers: pendingTrigger ? 0 : current.pendingTriggers ?? 0, pendingTriggerEvent: pendingTrigger ? current.pendingTriggerEvent : null, lastRunAt: now.toISOString(), lastResult: result, lastError: error ?? null, runCount: current.runCount + 1, leaseId: null, leaseExpiresAt: null, updatedAt: now.toISOString() };
+    const updated: ResearchRoutine = { ...current, status: circuitBroken ? "paused" : "active", nextRunAt, pendingTriggers: pendingTrigger ? 0 : circuitBroken ? 0 : current.pendingTriggers ?? 0, pendingTriggerEvent: pendingTrigger ? current.pendingTriggerEvent : null, lastRunAt: now.toISOString(), lastResult: result, lastError: error ?? null, runCount: current.runCount + 1, failureStreak, leaseId: null, leaseExpiresAt: null, updatedAt: now.toISOString() };
     this.saveRoutine(updated);
-    this.appendEvent(`routine.${result}`, { id, runCount: updated.runCount, nextRunAt, pendingTrigger, error: error ?? null });
+    this.appendEvent(`routine.${result}`, { id, runCount: updated.runCount, nextRunAt, pendingTrigger, failureStreak, circuitBroken, error: error ?? null });
+    if (circuitBroken) this.appendEvent("routine.failure_circuit_open", { id, failureStreak, threshold: 3, action: "paused_until_operator_resume" });
     return this.routine(id) ?? updated;
   }
 
@@ -2328,7 +2334,7 @@ export class ResearchStore {
     if (!current) throw new Error(`Unknown routine '${id}'.`);
     if (current.status === "running") throw new Error(`Routine '${id}' is running; interrupt its campaign before changing routine state.`);
     if (current.status === status) return current;
-    const updated: ResearchRoutine = { ...current, status, leaseId: null, leaseExpiresAt: null, updatedAt: new Date().toISOString() };
+    const updated: ResearchRoutine = { ...current, status, failureStreak: status === "active" ? 0 : current.failureStreak ?? 0, leaseId: null, leaseExpiresAt: null, updatedAt: new Date().toISOString() };
     this.saveRoutine(updated);
     this.appendEvent(`routine.${status}`, { id });
     return this.routine(id) ?? updated;
