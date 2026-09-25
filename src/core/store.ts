@@ -2534,12 +2534,12 @@ export class ResearchStore {
   }
 
   /** Assign or unassign queued work without changing its live claim owner. */
-  assignTask(id: string, assigneeId: string | null): boolean {
+  assignTask(id: string, assigneeId: string | null, actorId = "operator"): boolean {
     const normalized = assigneeId?.trim() || null;
     const now = new Date().toISOString();
     const result = this.db.prepare("UPDATE work_queue SET assignee_id = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'failed')").run(normalized, now, id);
     if (result.changes !== 1) return false;
-    this.appendEvent("queue.assigned", { id, assigneeId: normalized });
+    this.appendEvent("queue.assigned", { id, assigneeId: normalized, actorId: actorId.trim().slice(0, 200) || "operator" });
     return true;
   }
 

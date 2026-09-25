@@ -8843,6 +8843,14 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(Object.hasOwn(remoteTaskDetailBody.task, "claimToken"), false);
     assert.equal(Array.isArray(remoteTaskDetailBody.history), true);
     assert.doesNotMatch(JSON.stringify(remoteTaskDetailBody), /sk-remote-queue-secret-12345678901234567890/);
+    const workerOnlyTaskAssign = await post("/tasks/remote-secret/assign", { assigneeId: "worker-a" }, null, "worker-a", "worker-secret");
+    assert.equal(workerOnlyTaskAssign.status, 401);
+    const remoteTaskAssign = await post("/tasks/remote-secret/assign", { assigneeId: "worker-a" }, token, undefined, undefined, "research-console");
+    assert.equal(remoteTaskAssign.status, 200);
+    assert.equal((await remoteTaskAssign.json()).assigneeId, "worker-a");
+    const remoteTaskUnassign = await post("/tasks/remote-secret/assign", { assigneeId: null }, token, undefined, undefined, "research-console");
+    assert.equal(remoteTaskUnassign.status, 200);
+    assert.equal((await remoteTaskUnassign.json()).assigneeId, null);
     const workerOnlyTaskPause = await post("/tasks/remote-secret/pause", { reason: "worker must not pause task" }, null, "worker-a", "worker-secret");
     assert.equal(workerOnlyTaskPause.status, 401);
     const remoteTaskPause = await post("/tasks/remote-secret/pause", { reason: "operator maintenance" }, token, undefined, undefined, "research-console");
