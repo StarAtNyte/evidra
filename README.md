@@ -1,5 +1,7 @@
 # Evidra
 
+> A durable research harness for turning open questions and measurable challenges into validated results.
+
 Evidra is a research and experimentation workbench for people who want an agent to do more than write code.
 
 It turns a research workspace, competition repository, or empirical engineering problem into a durable loop:
@@ -9,6 +11,16 @@ It turns a research workspace, competition repository, or empirical engineering 
 The model supplies reasoning. Evidra owns the deterministic and auditable parts: workspace inspection, tool permissions, experiment state, process control, artifacts, validation policy, evidence memory, queues, budgets, and recovery.
 
 The workbench is general-purpose. It can be used for ML competitions, data science, scientific experiments, benchmark optimization, algorithm research, reverse engineering, and repository investigations. AIcrowd's ARC White-Box Estimation Challenge (WhestBench) is the first included trial adapter, not the product's scope.
+
+### The short version
+
+You bring the question, workspace, or challenge. Evidra coordinates the loop, keeps the evidence, runs isolated experiments, and refuses to call an idea successful until the declared validation gates pass.
+
+| Evidra is | Evidra is not |
+| --- | --- |
+| A durable controller for agentic research | A chat wrapper that forgets after one answer |
+| A general harness for metrics, artifacts, proofs, behavior, and system properties | A Kaggle-only automation script |
+| A reproducible experiment and evidence ledger | A promise that model output is ground truth |
 
 ## At a glance
 
@@ -30,37 +42,39 @@ The model proposes. Evidra measures, records, verifies, and decides whether the 
 - [Quick start](#quick-start)
 - [Interactive workbench](#interactive-workbench)
 - [Autonomous research](#autonomous-research)
-- [Experiments, permissions, and providers](#experiments-and-permissions)
+- [Experiments and permissions](#experiments-and-permissions)
+- [Provider architecture](#provider-architecture)
+- [Competition workflow](#competition-workflow)
+- [State and provenance](#state-and-provenance)
 - [Development](#development)
 - [Roadmap](#roadmap)
 
 ## Start here
 
-Install the latest source build globally with Node.js 22 or newer:
+### Install globally
+
+Requires Node.js 22 or newer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/StarAtNyte/evidra/master/install.sh | sh
+evidra
 ```
 
-Or install directly from the public GitHub repository:
+Or install directly from GitHub:
 
 ```bash
 npm install --global https://github.com/StarAtNyte/evidra.git
 ```
 
-For local development, use the checkout workflow below:
+### First session
 
-```bash
-nvm install 22
-nvm use 22
-npm install
-npm run build
-npm link
-evidra
-```
+Inside the TUI:
 
-Inside the TUI, authenticate and choose the Codex route with `/login codex`,
-select a model with `/model`, and select reasoning effort with `/thinking`.
+1. Run `/login codex` and complete Codex authentication, or choose `/provider local` for Ollama.
+2. Use `/model` and `/thinking` to choose the model and reasoning effort.
+3. Start with ordinary conversation, `/research start`, or `/challenge start`.
+4. Use `/status`, `/timeline`, and `/report` to inspect the work as it runs.
+
 Ordinary text is handled as normal conversation. Use `/research start` for an
 autonomous research campaign, `/challenge start` for a challenge campaign, or
 `!ls` to run an explicit terminal command. Type `/` for live command
@@ -84,6 +98,17 @@ replication.
 
 - [Download the complete demo video](assets/demo/evidra-complete-product-demo.mp4)
 - [Read the exact three-step screenplay](docs/demo-research-script.md)
+
+### Build from source
+
+```bash
+nvm install 22
+nvm use 22
+npm install
+npm run build
+npm link
+evidra
+```
 
 ## Why Evidra
 
@@ -698,49 +723,61 @@ workflows without requiring model fine-tuning.
 
 ## Quick start
 
-Requirements:
+### Requirements
 
-- Node.js version 22.19.0 or newer;
-- Git and ripgrep;
-- either an authenticated Codex CLI or a local Ollama installation.
+- Node.js 22.19.0 or newer
+- Git and ripgrep
+- Either an authenticated Codex CLI or a local Ollama installation
 
-Install from a checkout:
+### Install from a checkout
 
-    git clone https://github.com/StarAtNyte/evidra.git
-    cd evidra
-    nvm use 22
-    npm install
-    npm run build
-    npm link
+```bash
+git clone https://github.com/StarAtNyte/evidra.git
+cd evidra
+nvm use 22
+npm install
+npm run build
+npm link
+```
 
-Initialize a general workspace:
+### Initialize a workspace
 
-    cd /path/to/your/workspace
-    evidra init local-research
-    evidra
+```bash
+cd /path/to/your/workspace
+evidra init local-research
+evidra
+```
 
-Initialize a project-local competition manifest:
+For a competition or benchmark, initialize the project in its repository:
 
-    evidra init my-competition
-    evidra
+```bash
+evidra init my-competition
+evidra
+```
 
-Inside the TUI, select a provider and model:
+### Connect a provider
 
-    /provider
-    /login codex
-    /model
-    /thinking
-    /permissions
+```text
+/provider       # choose Codex or local
+/login codex    # authenticate through the official Codex CLI
+/model          # choose an available model
+/thinking       # choose reasoning effort
+/permissions    # choose safe, fast, or YOLO
+```
 
 Codex authentication is delegated to the official Codex CLI. Evidra does not read or copy authentication tokens:
 
-    codex login
-    codex login status
+```bash
+codex login
+codex login status
+```
 
 For local inference:
 
-    ollama serve
-    ollama pull qwen3.6:27b
+```bash
+ollama serve
+ollama pull qwen3.6:27b
+```
 
 The TUI checks provider access before making a model request. If no provider is available, ordinary conversation still works as a UI session; research execution reports the provider blocker instead of displaying fabricated progress or protocol gibberish.
 
@@ -768,7 +805,26 @@ Autonomous research is presented as a three-stage loop:
 
 The controller may use more detailed internal phase goals underneath those three stages, but live progress always reports `1/3`, `2/3`, and `3/3`. Run `/research examples` for contemporary AI/CV starter briefs, or `/research plan` to inspect the active detailed phase graph.
 
-Useful commands:
+### Everyday commands
+
+| Command | Use it for |
+| --- | --- |
+| `/help` | Browse commands and shortcuts |
+| `/status` | See project, campaign, queue, and execution state |
+| `/research start` | Start an autonomous research campaign |
+| `/challenge start` | Start an autonomous challenge campaign |
+| `/research pause` / `/research resume` | Pause or continue research safely |
+| `/challenge pause` / `/challenge resume` | Pause or continue challenge work safely |
+| `/steer ...` | Add guidance at the next safe boundary |
+| `/timeline` | Read the latest autonomous execution timeline |
+| `/usage` | Inspect activity, experiment time, and agent-token usage |
+| `/report` | Generate a portable research or challenge report |
+| `!ls -la` | Run an explicit, guarded shell command |
+
+<details>
+<summary><strong>Complete interactive command reference</strong></summary>
+
+```text
 
     /help                 Show commands and shortcuts
     /status               Show project, graph, queue, and execution state
@@ -793,6 +849,7 @@ Useful commands:
     /research steer ...   Guide the next safe research cycle
     /loop                 Run or control the autonomous loop
     /workbench            Select Research or Challenge mode
+```
 
 The controller also exposes a read-only local browser view:
 
@@ -803,6 +860,10 @@ evidra dashboard --port 4310
 Open `http://127.0.0.1:4310`. The dashboard polls the same durable SQLite
 state and event log as the TUI, shows campaign/phases/agents/runs/events, and
 does not expose mutation endpoints.
+
+Additional commands:
+
+```text
     /provider             Select Codex or local provider
     /model                Select an available provider model
     /fallback             Select the local model used after Codex exhaustion
@@ -842,21 +903,28 @@ does not expose mutation endpoints.
     /doctor               Diagnose dependencies and provider access
     evidra doctor --json  Export machine-readable provider/backend diagnostics, including `ready`
     /exit                 Leave the current session
+```
+
+</details>
 
 Explicit shell escapes are available for operator-directed work:
 
-    !ls -la
-    !git status --short
+```bash
+!ls -la
+!git status --short
+!python -m pytest -q
+```
 
 Experience can also be exported headlessly:
 
-    evidra experience status
-    evidra experience export --output .sota/experience.jsonl
-    evidra experience export --include-replay --output reports/replay-experience.jsonl
+```bash
+evidra experience status
+evidra experience export --output .sota/experience.jsonl
+evidra experience export --include-replay --output reports/replay-experience.jsonl
+```
 
 Candidate experiences are exported by default. `--include-replay` adds recoverable failures;
 quarantined or structurally ambiguous trajectories are always excluded.
-    !python -m pytest -q
 
 Shell execution passes through Evidra's command guard. YOLO does not override the hard block on destructive cleanup, privilege escalation, remote-script execution, or external submission.
 
@@ -931,6 +999,23 @@ Inspect a long-running campaign without reading raw event payloads:
     evidra timeline --limit 40
 
 The command checks the selected provider before starting repository inspection or baseline execution. Under `auto` or `fallback`, the default Codex path can change to a healthy configured local model after recognized usage-limit, network, or route-availability failures; authentication and model-configuration errors remain explicit instead of silently starting an unconfigured run.
+
+## Competition workflow
+
+Challenge mode uses the same research loop with a stricter evaluator contract. It can inspect rules, data, discussions, documentation, and leaderboard observations; establish a local baseline; generate isolated candidates; compare them against the protected evaluator; and retain external score feedback as separate evidence.
+
+```text
+challenge brief
+      ↓
+rules + data + discussions + leaderboard
+      ↓
+local baseline → hypothesis → isolated experiment
+      ↓
+validation + replication → approved submission → measured score
+      └────────────────────────────── feedback into the next cycle
+```
+
+External submission is always explicit and approval-gated. A public score can guide the next experiment, but it cannot replace local reproducibility, leakage checks, replication, or evaluator-integrity gates. The included [WhestBench trial workspace](competitions/whestbench/starterkit/README.md) demonstrates this workflow; the harness remains domain-neutral.
 
 ## General workspace manifests
 
