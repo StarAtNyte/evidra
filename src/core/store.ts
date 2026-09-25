@@ -1657,7 +1657,7 @@ export class ResearchStore {
   }
 
   /** Suspend one queue ticket and unfinished descendants without counting retries. */
-  pauseTask(id: string, reason = "operator paused task"): boolean {
+  pauseTask(id: string, reason = "operator paused task", actorId = "operator"): boolean {
     const normalizedReason = reason.trim().slice(0, 500) || "operator paused task";
     const now = new Date().toISOString();
     const candidateIds = [id, ...this.taskDescendantIds(id)];
@@ -1675,13 +1675,13 @@ export class ResearchStore {
     })();
     if (!rootPaused) return false;
     for (const entry of paused) {
-      this.appendEvent("queue.task.paused", { id: entry.id, kind: entry.kind, priorStatus: entry.status, priorOwnerId: entry.ownerId, parentTaskId: entry.parentTaskId, reason: normalizedReason, pausedAt: now, ...(entry.id === id ? {} : { cascadedFrom: id }) });
+      this.appendEvent("queue.task.paused", { id: entry.id, kind: entry.kind, priorStatus: entry.status, priorOwnerId: entry.ownerId, parentTaskId: entry.parentTaskId, reason: normalizedReason, actorId: actorId.trim().slice(0, 200) || "operator", pausedAt: now, ...(entry.id === id ? {} : { cascadedFrom: id }) });
     }
     return true;
   }
 
   /** Resume a suspended ticket and descendants paused by that ticket. */
-  resumeTask(id: string): boolean {
+  resumeTask(id: string, actorId = "operator"): boolean {
     const now = new Date().toISOString();
     const latestPauses = new Map<string, Record<string, unknown>>();
     for (const event of this.eventsByType("queue.task.paused")) {
@@ -1702,7 +1702,7 @@ export class ResearchStore {
       return resumed.includes(id);
     })();
     if (!rootResumed) return false;
-    for (const resumedId of resumed) this.appendEvent("queue.task.resumed", { id: resumedId, resumedAt: now, ...(resumedId === id ? {} : { cascadedFrom: id }) });
+    for (const resumedId of resumed) this.appendEvent("queue.task.resumed", { id: resumedId, actorId: actorId.trim().slice(0, 200) || "operator", resumedAt: now, ...(resumedId === id ? {} : { cascadedFrom: id }) });
     return true;
   }
 

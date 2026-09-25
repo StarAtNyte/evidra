@@ -91,6 +91,7 @@ Most coding agents optimize for one conversation and one code change. Evidra is 
 - **Routine-level remote inspection.** `GET /routines/:id` exposes schedule state, bounded run history, associated queue work, progress, and readiness so recurring research can be supervised and recovered remotely.
 - **Self-describing control plane.** `GET /capabilities` publishes the versioned protocol, supported features, authentication schemes, and hard limits; `/health` reports event integrity together with operational campaign health for external supervisors.
 - **Durable attention triage.** Operators can acknowledge or unacknowledge a specific attention item with its state fingerprint. Acknowledgements survive restarts but automatically reopen when the underlying signal changes.
+- **Task-level governance.** Remote operators can pause or resume one queued/running task and its unfinished descendants without stopping the entire queue; transitions are fenced by durable state and actor-audited.
 - **Reproducible execution.** Experiment manifests, Git worktrees, run metadata, metrics, logs, checksums, and environment snapshots make results inspectable.
 - **Provider choice.** Use the authenticated Codex CLI with a ChatGPT subscription or a local Ollama model.
 - **Human control.** Safe, fast, and YOLO permissions change automation level, while destructive commands and external submissions remain blocked.

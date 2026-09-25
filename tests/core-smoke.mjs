@@ -8843,6 +8843,14 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(Object.hasOwn(remoteTaskDetailBody.task, "claimToken"), false);
     assert.equal(Array.isArray(remoteTaskDetailBody.history), true);
     assert.doesNotMatch(JSON.stringify(remoteTaskDetailBody), /sk-remote-queue-secret-12345678901234567890/);
+    const workerOnlyTaskPause = await post("/tasks/remote-secret/pause", { reason: "worker must not pause task" }, null, "worker-a", "worker-secret");
+    assert.equal(workerOnlyTaskPause.status, 401);
+    const remoteTaskPause = await post("/tasks/remote-secret/pause", { reason: "operator maintenance" }, token, undefined, undefined, "research-console");
+    assert.equal(remoteTaskPause.status, 200);
+    assert.equal((await remoteTaskPause.json()).status, "paused");
+    const remoteTaskResume = await post("/tasks/remote-secret/resume", {}, token, undefined, undefined, "research-console");
+    assert.equal(remoteTaskResume.status, 200);
+    assert.equal((await remoteTaskResume.json()).status, "queued");
     const workerOnlyAttention = await fetch(`http://127.0.0.1:${port}/attention`, { headers: { "x-evidra-worker-id": "worker-a", "x-evidra-worker-token": "worker-secret" } });
     assert.equal(workerOnlyAttention.status, 401);
     const remoteAttention = await fetch(`http://127.0.0.1:${port}/attention`, { headers: { authorization: `Bearer ${token}` } });
