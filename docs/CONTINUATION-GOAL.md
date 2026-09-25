@@ -85,6 +85,7 @@ external evaluator.
 - Remote operator notes accept bounded idempotency keys, acknowledge identical retries without appending duplicate activity, and reject conflicting reuse with a `409`.
 - The event control plane now exposes bearer-authenticated `POST /tasks/cancel` for remote governance; it cascades through unfinished descendants and leaves worker leases to observe cancellation cooperatively on their next heartbeat.
 - Remote operators can now pause/resume global queue dispatch through bearer-authenticated `POST /queue/pause` and `POST /queue/resume`; live tasks remain untouched and worker-only credentials are rejected.
+- Queue governance mutations are retry-safe: repeating the same pause/resume state does not append duplicate lifecycle events.
 - Remote operators can now reconcile queue state through bearer-authenticated `GET /queue/status`, which redacts claim tokens while returning progress, readiness, usage, recovery alerts, pause state, and integrity status.
 - Remote queue and approval projections now apply structured secret redaction to arbitrary task payloads and inbox details, preventing credentials from escaping through otherwise-authenticated read models.
 - Remote operators can now consume a bounded cursor-based `GET /activity` feed, with redacted append-only events and integrity status, so external dashboards can reconcile activity incrementally.

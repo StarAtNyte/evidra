@@ -1597,8 +1597,10 @@ export class ResearchStore {
   }
 
   setQueuePaused(paused: boolean, reason = "operator request"): { paused: boolean; reason: string | null; updatedAt: string } {
-    const updatedAt = new Date().toISOString();
     const normalizedReason = paused ? reason.trim().slice(0, 500) || "operator request" : null;
+    const current = this.queueControl();
+    if (current.paused === paused && current.reason === normalizedReason) return current;
+    const updatedAt = new Date().toISOString();
     this.db.prepare("INSERT INTO queue_control (id, paused, reason, updated_at) VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET paused = excluded.paused, reason = excluded.reason, updated_at = excluded.updated_at").run(paused ? 1 : 0, normalizedReason, updatedAt);
     this.appendEvent(paused ? "queue.paused" : "queue.resumed", { reason: normalizedReason });
     return { paused, reason: normalizedReason, updatedAt };

@@ -8873,11 +8873,17 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const remotePause = await post("/queue/pause", { reason: "remote maintenance" }, token);
     assert.equal(remotePause.status, 200);
     assert.equal((await remotePause.json()).paused, true);
+    const repeatedRemotePause = await post("/queue/pause", { reason: "remote maintenance" }, token);
+    assert.equal(repeatedRemotePause.status, 200);
+    assert.equal((await repeatedRemotePause.json()).changed, false);
     const pausedByRemote = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"] }, token, "worker-a", "worker-secret");
     assert.equal(pausedByRemote.status, 409);
     const remoteResume = await post("/queue/resume", {}, token);
     assert.equal(remoteResume.status, 200);
     assert.equal((await remoteResume.json()).paused, false);
+    const repeatedRemoteResume = await post("/queue/resume", {}, token);
+    assert.equal(repeatedRemoteResume.status, 200);
+    assert.equal((await repeatedRemoteResume.json()).changed, false);
     const checkpoint = await post("/tasks/checkpoint", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, checkpoint: { stage: "remote-retrieval", artifact: "partial.json" } }, token, "worker-a", "worker-secret");
     assert.equal(checkpoint.status, 200);
     const checkpointStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
