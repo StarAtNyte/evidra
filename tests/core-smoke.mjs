@@ -3967,6 +3967,23 @@ test("durable queue worker bounds concurrency and retries failures", async () =>
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue worker supervisor contains polling failures and records recovery state", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-worker-supervisor-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const originalClaim = store.claimNextTask.bind(store);
+    store.claimNextTask = () => { throw new Error("temporary queue database failure"); };
+    const worker = new QueueWorker(store, async () => undefined, { workerId: "supervisor-test", pollIntervalMs: 50 });
+    worker.start();
+    await new Promise((resolve) => setTimeout(resolve, 125));
+    await worker.stop();
+    store.claimNextTask = originalClaim;
+    assert.ok(store.eventsByType("queue.worker.error").some((event) => event.payload.workerId === "supervisor-test"));
+    assert.ok(operatorAttention(store).items.some((item) => item.kind === "queue-worker-error" && item.summary.includes("supervisor-test")));
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue recovery classifies failures and records a route-changing action", async () => {
   assert.equal(queueRecoveryAction(new Error("request timed out" )).route, "reduce_resources");
   assert.equal(queueRecoveryAction(new Error("bwrap: network namespace denied")).route, "alternate_executor");

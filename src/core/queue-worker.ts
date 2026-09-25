@@ -61,10 +61,26 @@ export class QueueWorker {
     } while (!this.stopping);
   }
 
+  private handleLoopError(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      this.store.appendEvent("queue.worker.error", { workerId: this.workerId, error: message.slice(0, 500), recoverable: true });
+    } catch {
+      // If the store itself is unavailable, there is no durable surface left
+      // to write to. Keep the polling supervisor alive for the next recovery
+      // attempt rather than turning a transient queue failure into a process
+      // crash.
+    }
+  }
+
+  private runSupervised(): void {
+    void this.runOnce().catch((error: unknown) => this.handleLoopError(error));
+  }
+
   start(): void {
     if (this.timer || this.stopping) return;
-    void this.runOnce();
-    this.timer = setInterval(() => { void this.runOnce(); }, this.pollIntervalMs);
+    this.runSupervised();
+    this.timer = setInterval(() => this.runSupervised(), this.pollIntervalMs);
   }
 
   async stop(): Promise<void> {

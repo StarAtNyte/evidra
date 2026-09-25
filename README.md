@@ -355,6 +355,7 @@ Implemented today:
 - cooperative local cancellation: queue workers poll the durable ticket and propagate cancellation through the handler `AbortSignal`, allowing process-aware handlers to stop without waiting for the full task timeout;
 - lease-loss fencing: a local worker aborts immediately when its claim heartbeat is rejected, and records a durable `queue.lease_lost` audit event so a stale process cannot continue side effects after ownership changes;
 - lease-loss visibility: the same event appears as critical operator attention in the CLI, TUI, and dashboard with a direct queue-history action;
+- queue-supervisor recovery: polling-loop exceptions are contained, journaled as `queue.worker.error`, and surfaced as operator attention while later polls remain available for recovery;
 - cooperative remote cancellation: the next authenticated worker heartbeat returns a structured `409` cancellation response, allowing external runtimes to stop promptly instead of discovering cancellation only at completion;
 - idempotent external usage: `/tasks/usage` accepts a stable per-turn `idempotencyKey`, so transport retries do not duplicate token or cost accounting;
 - conflicting usage-key reuse is rejected and journaled instead of silently accepting a different token/cost payload;
