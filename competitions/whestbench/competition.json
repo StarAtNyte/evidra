@@ -41,7 +41,8 @@
       "enabled": true,
       "minimumDelta": 0,
       "tolerance": 0
-    }
+    },
+    "dataPaths": [".whest-data"]
   },
   "researchSources": [
     "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026",
