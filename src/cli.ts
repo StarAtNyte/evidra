@@ -2709,8 +2709,8 @@ event.command("serve")
         }
         request.destroy();
       });
-      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/delegate", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release", "/tasks/note"].includes(request.url ?? "") ? request.url : undefined;
-      const operatorTaskPath = taskPath === "/tasks/note";
+      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/delegate", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release", "/tasks/note", "/tasks/cancel"].includes(request.url ?? "") ? request.url : undefined;
+      const operatorTaskPath = taskPath === "/tasks/note" || taskPath === "/tasks/cancel";
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
       const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
@@ -2726,7 +2726,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: integrity.status !== "invalid", integrity }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
@@ -2754,6 +2754,20 @@ event.command("serve")
               store.close();
               response.writeHead(note.recorded ? 200 : note.conflict ? 409 : exists ? 409 : 404, headers);
               response.end(JSON.stringify(note.recorded ? { ok: true, idempotent: note.idempotent, taskId, progress: progress ?? null } : { ok: false, taskId, error: note.conflict ? "idempotency key conflicts with an existing note" : exists ? "note could not be recorded" : "task not found" }));
+              return;
+            }
+            if (taskPath === "/tasks/cancel") {
+              const taskId = typeof parsed.taskId === "string" ? parsed.taskId.trim() : "";
+              const reason = typeof parsed.reason === "string" ? parsed.reason.trim().slice(0, 400) : "remote operator cancelled task";
+              if (!taskId || taskId.length > 200) throw new Error("Task cancellation requires a taskId of 1–200 characters.");
+              const store = new ResearchStore(statePath);
+              const before = store.queueTasks().find((task) => task.id === taskId);
+              const cancelled = before ? store.cancelTask(taskId, reason || "remote operator cancelled task", "remote-operator") : false;
+              const after = store.queueTasks().find((task) => task.id === taskId);
+              const progress = cancelled ? store.queueProgress(taskId) : undefined;
+              store.close();
+              response.writeHead(cancelled ? 200 : before ? 409 : 404, headers);
+              response.end(JSON.stringify(cancelled ? { ok: true, taskId, status: after?.status ?? "cancelled", progress: progress ?? null } : { ok: false, taskId, error: before ? "task is already terminal" : "task not found" }));
               return;
             }
             const workerId = typeof parsed.workerId === "string" ? parsed.workerId.trim() : "";

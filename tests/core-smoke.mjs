@@ -8736,6 +8736,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const workspaceId = store.workspaceId();
     store.setAgentRoleAdmission("remote lane", true, "test worker registration");
     store.enqueueTask({ id: "bridge-task", kind: "research.lane", priority: 4, payload: { objective: "external worker smoke", campaignStartedAt: "bridge-campaign" } });
+    store.enqueueTask({ id: "remote-cancel", kind: "research.lane", priority: 1, payload: { objective: "remote cancellation smoke" } });
     store.close();
     const eventTokenFile = join(root, "event-token");
     writeFileSync(eventTokenFile, `${token}\n`);
@@ -8790,6 +8791,11 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(conflictingOperatorNote.status, 409);
     const workerOnlyNote = await post("/tasks/note", { taskId: task.id, message: "worker credential must not impersonate operator" }, null, "worker-a", "worker-secret");
     assert.equal(workerOnlyNote.status, 401);
+    const workerOnlyCancel = await post("/tasks/cancel", { taskId: "remote-cancel", reason: "worker credential must not cancel" }, null, "worker-a", "worker-secret");
+    assert.equal(workerOnlyCancel.status, 401);
+    const operatorCancel = await post("/tasks/cancel", { taskId: "remote-cancel", reason: "operator changed direction" }, token);
+    assert.equal(operatorCancel.status, 200);
+    assert.equal((await operatorCancel.json()).status, "cancelled");
     const checkpoint = await post("/tasks/checkpoint", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, checkpoint: { stage: "remote-retrieval", artifact: "partial.json" } }, token, "worker-a", "worker-secret");
     assert.equal(checkpoint.status, 200);
     const checkpointStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
