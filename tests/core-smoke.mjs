@@ -8805,6 +8805,18 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const remoteStatusBody = await remoteStatus.json();
     assert.equal(remoteStatusBody.paused, false);
     assert.equal(remoteStatusBody.tasks.some((entry) => entry.id === task.id && !Object.hasOwn(entry, "claimToken")), true);
+    const workerOnlyActivity = await fetch(`http://127.0.0.1:${port}/activity`, { headers: { "x-evidra-worker-id": "worker-a", "x-evidra-worker-token": "worker-secret" } });
+    assert.equal(workerOnlyActivity.status, 401);
+    const activityFeedResponse = await fetch(`http://127.0.0.1:${port}/activity?after=0&limit=25`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(activityFeedResponse.status, 200);
+    const remoteActivityBody = await activityFeedResponse.json();
+    assert.equal(Array.isArray(remoteActivityBody.events), true);
+    assert.equal(remoteActivityBody.events.every((entry) => typeof entry.id === "number" && !Object.hasOwn(entry, "claimToken")), true);
+    if (remoteActivityBody.events.length) {
+      const nextActivity = await fetch(`http://127.0.0.1:${port}/activity?after=${remoteActivityBody.nextAfter}&limit=25`, { headers: { authorization: `Bearer ${token}` } });
+      assert.equal(nextActivity.status, 200);
+      assert.equal((await nextActivity.json()).events.some((entry) => entry.id <= remoteActivityBody.nextAfter), false);
+    }
     const remotePause = await post("/queue/pause", { reason: "remote maintenance" }, token);
     assert.equal(remotePause.status, 200);
     assert.equal((await remotePause.json()).paused, true);

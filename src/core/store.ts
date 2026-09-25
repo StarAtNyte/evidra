@@ -945,6 +945,14 @@ export class ResearchStore {
     return (this.db.prepare("SELECT COUNT(*) AS count FROM events").get() as { count: number }).count;
   }
 
+  /** Read a bounded, append-only activity page for remote operators. */
+  eventFeed(afterId = 0, limit = 100): Array<{ id: number; type: string; payload: unknown; createdAt: string; eventHash?: string | null }> {
+    const cursor = Number.isInteger(afterId) && afterId >= 0 ? afterId : 0;
+    const pageSize = Number.isInteger(limit) ? Math.max(1, Math.min(200, limit)) : 100;
+    const rows = this.db.prepare("SELECT id, type, payload_json, created_at, event_hash FROM events WHERE id > ? ORDER BY id ASC LIMIT ?").all(cursor, pageSize) as Array<{ id: number; type: string; payload_json: string; created_at: string; event_hash: string | null }>;
+    return rows.map((row) => ({ id: row.id, type: row.type, payload: JSON.parse(row.payload_json), createdAt: row.created_at, eventHash: row.event_hash }));
+  }
+
   recentEvents(limit = 20): Array<{ type: string; payload: unknown; createdAt: string; eventHash?: string | null }> {
     const rows = this.db.prepare("SELECT type, payload_json, created_at, event_hash FROM events ORDER BY id DESC LIMIT ?").all(limit) as Array<{ type: string; payload_json: string; created_at: string; event_hash: string | null }>;
     return rows.reverse().map((row) => ({ type: row.type, payload: JSON.parse(row.payload_json), createdAt: row.created_at, eventHash: row.event_hash }));

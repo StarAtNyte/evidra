@@ -2712,13 +2712,14 @@ event.command("serve")
       const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/delegate", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release", "/tasks/note", "/tasks/cancel", "/queue/pause", "/queue/resume"].includes(request.url ?? "") ? request.url : undefined;
       const operatorTaskPath = taskPath === "/tasks/note" || taskPath === "/tasks/cancel" || taskPath === "/queue/pause" || taskPath === "/queue/resume";
       const operatorQueueStatusPath = request.method === "GET" && request.url === "/queue/status";
+      const operatorActivityPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/activity";
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
       const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
       const authorization = typeof request.headers.authorization === "string" ? request.headers.authorization : "";
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
-      if (operatorTaskPath || operatorQueueStatusPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
+      if (operatorTaskPath || operatorQueueStatusPath || operatorActivityPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorActivityPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
@@ -2741,7 +2742,20 @@ event.command("serve")
         response.end(JSON.stringify({ ok: integrity.status !== "invalid", paused: control.paused, pauseReason: control.reason, tasks, recoveries, integrity: integrity.status }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, GET /queue/status, or GET /health are supported" })); return; }
+      if (operatorActivityPath) {
+        const query = new URL(request.url ?? "/activity", "http://evidra.local").searchParams;
+        const after = Number.parseInt(query.get("after") ?? "0", 10);
+        const limit = Number.parseInt(query.get("limit") ?? "100", 10);
+        if (!Number.isInteger(after) || after < 0 || !Number.isInteger(limit) || limit < 1 || limit > 200) { response.writeHead(400, headers); response.end(JSON.stringify({ error: "after must be a non-negative integer and limit must be between 1 and 200" })); return; }
+        const store = new ResearchStore(statePath);
+        const events = store.eventFeed(after, limit);
+        const integrity = store.verifyEventChain();
+        store.close();
+        response.writeHead(200, headers);
+        response.end(JSON.stringify({ ok: integrity.status !== "invalid", events, nextAfter: events.at(-1)?.id ?? after, hasMore: events.length === limit, integrity: integrity.status }));
+        return;
+      }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, GET /queue/status, GET /activity, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
