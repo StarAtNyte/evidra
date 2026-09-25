@@ -959,10 +959,12 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     if (!budget?.bounded || budget.remainingSeconds === null) return options.timeoutMs;
     return Math.max(1, Math.min(options.timeoutMs ?? 120_000, Math.floor(budget.remainingSeconds * 1_000)));
   };
-  const recordLaneWork = (startedAt: number): void => {
+  const recordLaneWork = (startedAt: number): boolean => {
     const store = new ResearchStore(options.storePath);
     store.recordAgentLaneUsage(role, leaseId, (Date.now() - startedAt) / 1_000);
+    const budget = store.agentLaneBudget(role, leaseId);
     store.close();
+    return Boolean(budget?.bounded && (budget.remainingSeconds ?? 0) <= 0);
   };
   const receivedDirectiveIds: number[] = [];
   try {
@@ -993,15 +995,17 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         let result: ResearchToolResult = { name: call.name, ok: false, error: "Tool did not return a result.", trust: "permission_boundary" };
         for (let attempt = 1; attempt <= 2; attempt += 1) {
           const toolStartedAt = Date.now();
+          let laneBudgetExhausted = false;
           try {
             result = boundLaneToolResult(await options.executeTool(call, role));
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             result = { name: call.name, ok: false, error: errorMessage, trust: toolFailureTrust(errorMessage) };
           } finally {
-            recordLaneWork(toolStartedAt);
+            laneBudgetExhausted = recordLaneWork(toolStartedAt);
           }
           options.onToolResult?.(`lane:${role}`, attempt === 1 ? callId : `${callId}:retry`, result);
+          if (laneBudgetExhausted) throw new Error(`Lane budget exhausted for ${role}; preserving partial evidence and changing route.`);
           if (result.ok || attempt === 2 || !isRetryableAgentError(new Error(result.error ?? ""))) break;
           options.onProgress?.(`Research lane · ${role} · ${call.name} failed transiently; retrying once...`);
           await new Promise<void>((resolve) => setTimeout(resolve, 250));
@@ -1035,6 +1039,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
       if (options.isCancelled?.()) throw new Error("Interrupted · research lane cancelled.");
       attemptedRoutes.add(laneRouteKey({ provider, model }));
       let modelStartedAt = 0;
+      let modelBudgetExhausted = false;
       try {
         const bounded = boundResearchContext({ ...context, laneToolResults: toolResults });
         modelStartedAt = Date.now();
@@ -1087,18 +1092,19 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
             model = alternate.model;
             resumableThreadId = undefined;
             options.onProgress?.(`Research lane · ${role} · changing route to ${provider}/${model}...`);
-            continue;
+          } else {
+            // If no untried route exists, retain the bounded same-route retry.
+            // This is useful for transient transport failures and avoids
+            // fabricating diversity when the configured pool has one member.
+            const delayMs = attempt * 1_000;
+            options.onProgress?.(`Research lane · ${role} · retry ${attempt}/2 in ${delayMs / 1000}s...`);
+            await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
           }
-          // If no untried route exists, retain the bounded same-route retry.
-          // This is useful for transient transport failures and avoids
-          // fabricating diversity when the configured pool has one member.
-          const delayMs = attempt * 1_000;
-          options.onProgress?.(`Research lane · ${role} · retry ${attempt}/2 in ${delayMs / 1000}s...`);
-          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
         }
       } finally {
-        if (modelStartedAt > 0) recordLaneWork(modelStartedAt);
+        if (modelStartedAt > 0) modelBudgetExhausted = recordLaneWork(modelStartedAt);
       }
+      if (modelBudgetExhausted) throw new Error(`Lane budget exhausted for ${role}; preserving partial evidence and changing route.`);
     }
     if (!parsed) throw lastError instanceof Error ? lastError : new Error("Lane did not produce a validated report.");
     const report: ResearchLaneReport = { ...parsed, role, status: "completed", ...(options.executeTool ? { toolResults } : {}) };

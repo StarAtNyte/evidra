@@ -5392,6 +5392,28 @@ test("research lane teams share only cacheable observations within one invocatio
   }
 });
 
+test("research lanes fail instead of promoting work after a wall-clock budget crossing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-lane-budget-stop-"));
+  try {
+    const storePath = join(root, ".sota", "database.sqlite");
+    const reports = await runResearchLanes("inspect a bounded objective", {}, {
+      provider: "local", model: "test", autonomy: "fast", maxParallel: 1, laneTeamSize: 1,
+      laneBudgetMs: 1, cwd: root, storePath, timeoutMs: 5_000,
+      executeTool: async (call) => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { name: call.name, ok: true, output: { files: [] }, trust: "controller_observation" };
+      },
+    });
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0].status, "failed");
+    assert.match(reports[0].error ?? "", /Lane budget exhausted/);
+    const store = new ResearchStore(storePath);
+    assert.equal(store.eventsByType("agent.lane.budget_exhausted").length, 1);
+    assert.equal(store.queueTasks("failed").filter((task) => task.kind === "research.lane").length, 1);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("lane selection schedules bounded coaching for reviewed roles", () => {
   const objective = "improve model validation metric";
   const reviewed = selectResearchLaneRoles(objective, 2, {
