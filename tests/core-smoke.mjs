@@ -8785,7 +8785,9 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const remoteProgressStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     assert.deepEqual(remoteProgressStore.queueProgress(task.id)?.details, { percent: 0.5, step: "retrieval", completed: 2, total: 4 });
     remoteProgressStore.close();
-    assert.equal((await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, inputTokens: 12, outputTokens: 4, costUsd: 0.01, provider: "codex", model: "gpt-test", idempotencyKey: "turn-1" }, token, "worker-a", "worker-secret")).status, 200);
+    const remoteUsage = await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, inputTokens: 12, outputTokens: 4, costUsd: 0.01, provider: "codex", model: "gpt-test", idempotencyKey: "turn-1" }, token, "worker-a", "worker-secret");
+    assert.equal(remoteUsage.status, 200);
+    assert.deepEqual((await remoteUsage.json()).progress.details, { percent: 0.5, step: "retrieval", completed: 2, total: 4 });
     assert.equal((await post("/tasks/usage", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, inputTokens: 12, outputTokens: 4, costUsd: 0.01, provider: "codex", model: "gpt-test", idempotencyKey: "turn-1" }, token, "worker-a", "worker-secret")).status, 200);
     const usageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     assert.deepEqual(usageStore.queueUsageTotals(task.id), { inputTokens: 12, outputTokens: 4, costUsd: 0.01 });
@@ -8811,7 +8813,9 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal((await post("/tasks/heartbeat", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken }, token, "worker-a", "wrong-secret")).status, 401);
     assert.equal((await post("/tasks/heartbeat", { workerId: "worker-b", taskId: task.id, claimToken: task.claimToken }, token, "worker-b", "worker-b-secret")).status, 403);
     assert.equal((await post("/tasks/complete", { workerId: "worker-b", taskId: task.id, claimToken: task.claimToken, status: "completed", payload: { result: "spoofed" } }, token, "worker-b", "worker-b-secret")).status, 403);
-    assert.equal((await post("/tasks/complete", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, status: "completed", payload: { result: "verified" } }, token, "worker-a", "worker-secret")).status, 200);
+    const completed = await post("/tasks/complete", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, status: "completed", payload: { result: "verified" } }, token, "worker-a", "worker-secret");
+    assert.equal(completed.status, 200);
+    assert.deepEqual((await completed.json()).progress.details, { percent: 0.5, step: "retrieval", completed: 2, total: 4 });
     const capabilityStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     capabilityStore.enqueueTask({ id: "bridge-gpu", kind: "research.lane", priority: 99, payload: {}, requiredCapabilities: ["gpu.cuda"] });
     capabilityStore.close();
@@ -8853,7 +8857,9 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(firstReleaseTask.id, "bridge-release");
     const released = await post("/tasks/release", { workerId: "worker-a", taskId: firstReleaseTask.id, claimToken: firstReleaseTask.claimToken, reason: "worker yielding capacity" }, token, "worker-a", "worker-secret");
     assert.equal(released.status, 200);
-    assert.equal((await released.json()).currentStatus, "queued");
+    const releasedBody = await released.json();
+    assert.equal(releasedBody.currentStatus, "queued");
+    assert.equal(releasedBody.progress.state, "queued");
     const secondReleaseClaim = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"] }, token, "worker-a", "worker-secret");
     const secondReleaseTask = (await secondReleaseClaim.json()).task;
     assert.equal(secondReleaseTask.id, "bridge-release");

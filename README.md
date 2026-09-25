@@ -361,7 +361,7 @@ Implemented today:
 - durable queue progress: every task exposes a shared `queued`/`active`/`blocked`/`stalled`/terminal projection with last activity and heartbeat age across CLI JSON, TUI, and dashboard surfaces;
 - typed worker progress: queue handlers can report bounded percent/step counters and durable checkpoints through a compatible context API; progress survives completion and restart without treating model prose as evidence;
 - remote progress parity: authenticated `/tasks/activity` calls receive the same progress validation, so Modal, Slurm, and other external workers cannot bypass the local queue contract;
-- remote progress reconciliation: `/tasks/claim`, `/tasks/heartbeat`, and `/tasks/activity` return the current durable progress snapshot, so external workers can recover state without guessing or issuing a second read;
+- remote progress reconciliation: `/tasks/claim`, `/tasks/heartbeat`, `/tasks/checkpoint`, `/tasks/activity`, `/tasks/usage`, `/tasks/release`, and `/tasks/complete` return the current durable progress snapshot, so external workers can recover state after every control-plane mutation without guessing or issuing a second read;
 - progress-aware attention: blocked activity and stale running heartbeats become actionable operator warnings/critical alerts with direct queue-history or activity actions;
 - dashboard progress parity: rendered queue rows show the same lifecycle state, percent, and current step already available through the structured API;
 - cooperative remote cancellation: the next authenticated worker heartbeat returns a structured `409` cancellation response, allowing external runtimes to stop promptly instead of discovering cancellation only at completion;

@@ -2916,9 +2916,10 @@ event.command("serve")
               const availableAt = typeof parsed.availableAt === "string" ? parsed.availableAt : new Date().toISOString();
               const released = store.releaseClaimedTask(taskId, workerId, availableAt, claimToken || undefined, typeof parsed.reason === "string" ? parsed.reason : undefined);
               const currentStatus = store.queueTasks().find((task) => task.id === taskId)?.status ?? null;
+              const progress = store.queueProgress(taskId);
               store.close();
               response.writeHead(released ? 200 : 409, headers);
-              response.end(JSON.stringify({ ok: released, taskId, currentStatus }));
+              response.end(JSON.stringify({ ok: released, taskId, currentStatus, progress: progress ?? null }));
               return;
             }
             if (taskPath === "/tasks/heartbeat") {
@@ -2964,9 +2965,10 @@ event.command("serve")
               const checkpoint = parsed.checkpoint === undefined ? parsed.payload : parsed.checkpoint;
               if (checkpoint === undefined) throw new Error("Task checkpoint requires checkpoint or payload.");
               const recorded = store.checkpointClaimedTask(taskId, workerId, parseExternalEventPayload(JSON.stringify(checkpoint)), claimToken || undefined);
+              const progress = store.queueProgress(taskId);
               store.close();
               response.writeHead(recorded ? 200 : 409, headers);
-              response.end(JSON.stringify({ ok: recorded, taskId }));
+              response.end(JSON.stringify({ ok: recorded, taskId, progress: progress ?? null }));
               return;
             }
             if (taskPath === "/tasks/activity") {
@@ -3021,11 +3023,12 @@ event.command("serve")
               }
               const recorded = store.recordQueueUsage({ taskId, actorId: workerId, claimToken: claimToken || undefined, inputTokens: typeof parsed.inputTokens === "number" ? parsed.inputTokens : 0, outputTokens: typeof parsed.outputTokens === "number" ? parsed.outputTokens : 0, costUsd: parsed.costUsd === null ? null : typeof parsed.costUsd === "number" ? parsed.costUsd : undefined, provider: typeof parsed.provider === "string" ? parsed.provider : undefined, model: typeof parsed.model === "string" ? parsed.model : undefined, idempotencyKey: typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : undefined });
               const usage = recorded ? store.queueUsageState(taskId) : undefined;
+              const progress = recorded ? store.queueProgress(taskId) : undefined;
               const budgetExhausted = Boolean(recorded && usage?.exhausted && store.queueTasks().find((task) => task.id === taskId)?.status === "cancelled");
               store.close();
               if (!recorded) throw new Error("Task usage requires non-negative bounded token counts and an optional non-negative cost.");
               response.writeHead(budgetExhausted ? 409 : 200, headers);
-              response.end(JSON.stringify({ ok: !budgetExhausted, taskId, usage, ...(budgetExhausted ? { error: "task token budget exhausted", status: "cancelled" } : {}) }));
+              response.end(JSON.stringify({ ok: !budgetExhausted, taskId, usage, progress: progress ?? null, ...(budgetExhausted ? { error: "task token budget exhausted", status: "cancelled" } : {}) }));
               return;
             }
             if (!(typeof parsed.status === "string" && ["completed", "failed", "cancelled"].includes(parsed.status))) throw new Error("Task completion status must be completed, failed, or cancelled.");
@@ -3049,18 +3052,20 @@ event.command("serve")
               });
               if (prior) {
                 const currentStatus = store.queueTasks().find((task) => task.id === taskId)?.status ?? null;
+                const progress = store.queueProgress(taskId);
                 store.close();
                 response.writeHead(200, headers);
-                response.end(JSON.stringify({ ok: true, idempotent: true, taskId, status: parsed.status, currentStatus }));
+                response.end(JSON.stringify({ ok: true, idempotent: true, taskId, status: parsed.status, currentStatus, progress: progress ?? null }));
                 return;
               }
             }
             const completionAudit = parsed.status === "completed" ? store.taskCompletionAudit(taskId, taskPayload) : { valid: true, missing: [] as string[] };
             const accepted = store.completeClaimedTask(taskId, workerId, parsed.status as "completed" | "failed" | "cancelled", taskPayload, idempotencyKey || undefined, claimToken || undefined);
             const currentStatus = store.queueTasks().find((task) => task.id === taskId)?.status ?? null;
+            const progress = store.queueProgress(taskId);
             store.close();
             response.writeHead(accepted ? 200 : 409, headers);
-            response.end(JSON.stringify({ ok: accepted, taskId, status: parsed.status, currentStatus, ...(!accepted && !completionAudit.valid ? { error: "completion proof rejected", missing: completionAudit.missing } : {}) }));
+            response.end(JSON.stringify({ ok: accepted, taskId, status: parsed.status, currentStatus, progress: progress ?? null, ...(!accepted && !completionAudit.valid ? { error: "completion proof rejected", missing: completionAudit.missing } : {}) }));
             return;
           }
           if (typeof parsed.type !== "string") throw new Error("request JSON requires a string 'type'");
