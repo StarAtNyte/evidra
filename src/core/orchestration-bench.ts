@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
-import { ResearchStore } from "./store.js";
+import { ResearchStore, type ResearchRoutine } from "./store.js";
 
 export interface OrchestrationProbe {
   id: string;
@@ -181,15 +181,20 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     if (liveRoutine) store.finishRoutine(routine.id, "routine-live", "completed");
 
     const circuit = store.createRoutine({ ...routine, id: "benchmark-circuit" });
+    let firstFailure: ResearchRoutine | undefined;
     for (const owner of ["circuit-a", "circuit-b", "circuit-c"]) {
       const claim = store.claimRoutine(circuit.id, owner, 60_000, new Date(), true);
-      if (claim) store.finishRoutine(circuit.id, owner, "failed", "benchmark provider failure", 1);
+      if (claim) {
+        const finished = store.finishRoutine(circuit.id, owner, "failed", "benchmark provider failure", 1);
+        if (!firstFailure) firstFailure = finished;
+      }
     }
     const circuitState = store.routine(circuit.id);
     const circuitEvent = store.eventsByType("routine.failure_circuit_open").at(-1);
     const circuitPayload = circuitEvent?.payload && typeof circuitEvent.payload === "object" ? circuitEvent.payload as Record<string, unknown> : {};
     const claimAfterPause = store.claimRoutine(circuit.id, "circuit-after", 60_000, new Date(), true);
-    check("routine-failure-circuit", "Repeated recurring-run failures pause the routine and leave an auditable recovery point.", circuitState?.status === "paused" && circuitState.failureStreak === 3 && !claimAfterPause && circuitPayload.threshold === 3, { status: circuitState?.status, failureStreak: circuitState?.failureStreak, claimAfterPause: Boolean(claimAfterPause), threshold: circuitPayload.threshold });
+    const firstFailureDelay = firstFailure?.lastRunAt ? Math.round((Date.parse(firstFailure.nextRunAt) - Date.parse(firstFailure.lastRunAt)) / 1000) : 0;
+    check("routine-failure-circuit", "Repeated recurring-run failures back off, then pause the routine with an auditable recovery point.", circuitState?.status === "paused" && circuitState.failureStreak === 3 && !claimAfterPause && circuitPayload.threshold === 3 && firstFailureDelay === routine.intervalSeconds * 2, { status: circuitState?.status, failureStreak: circuitState?.failureStreak, claimAfterPause: Boolean(claimAfterPause), threshold: circuitPayload.threshold, firstFailureDelay });
 
     store.releaseAgentLane("model researcher", "worker-a");
     const stale = store.acquireAgentLane({ role: "validation scientist", leaseId: "worker-stale", provider: "local", model: "bench" });

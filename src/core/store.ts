@@ -2320,11 +2320,18 @@ export class ResearchStore {
     const failureStreak = result === "failed" ? (current.failureStreak ?? 0) + 1 : 0;
     const circuitBroken = failureStreak >= 3;
     const pendingTrigger = !circuitBroken && (current.pendingTriggers ?? 0) > 0;
-    const nextRunAt = pendingTrigger ? now.toISOString() : new Date(now.getTime() + current.intervalSeconds * 1000).toISOString();
+    // Back off failed routines so a provider or executor outage cannot turn a
+    // recurring campaign into a tight retry loop. Successful coalesced wakeups
+    // remain immediate; failures retain the wakeup but defer it with a bounded
+    // exponential delay. The circuit breaker still pauses after three misses.
+    const retryDelaySeconds = result === "failed"
+      ? Math.min(current.intervalSeconds * (2 ** failureStreak), 60 * 60)
+      : current.intervalSeconds;
+    const nextRunAt = pendingTrigger ? now.toISOString() : new Date(now.getTime() + retryDelaySeconds * 1000).toISOString();
     this.db.prepare("UPDATE research_routine_runs SET status = ?, finished_at = ?, exit_code = ?, error = ? WHERE id = (SELECT id FROM research_routine_runs WHERE routine_id = ? AND owner_id = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1)").run(result, now.toISOString(), exitCode ?? (result === "completed" ? 0 : 1), error ?? null, id, ownerId);
     const updated: ResearchRoutine = { ...current, status: circuitBroken ? "paused" : "active", nextRunAt, pendingTriggers: pendingTrigger ? 0 : circuitBroken ? 0 : current.pendingTriggers ?? 0, pendingTriggerEvent: pendingTrigger ? current.pendingTriggerEvent : null, lastRunAt: now.toISOString(), lastResult: result, lastError: error ?? null, runCount: current.runCount + 1, failureStreak, leaseId: null, leaseExpiresAt: null, updatedAt: now.toISOString() };
     this.saveRoutine(updated);
-    this.appendEvent(`routine.${result}`, { id, runCount: updated.runCount, nextRunAt, pendingTrigger, failureStreak, circuitBroken, error: error ?? null });
+    this.appendEvent(`routine.${result}`, { id, runCount: updated.runCount, nextRunAt, retryDelaySeconds, pendingTrigger, failureStreak, circuitBroken, error: error ?? null });
     if (circuitBroken) this.appendEvent("routine.failure_circuit_open", { id, failureStreak, threshold: 3, action: "paused_until_operator_resume" });
     return this.routine(id) ?? updated;
   }
