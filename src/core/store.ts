@@ -189,6 +189,16 @@ export interface QueueActivity {
   metadata: unknown;
   createdAt: string;
 }
+export interface QueueWorkProduct {
+  id: string;
+  taskId: string;
+  actorId: string;
+  name: string;
+  path: string;
+  checksum: string;
+  metadata: unknown;
+  createdAt: string;
+}
 
 export type QueueProgressState = "queued" | "active" | "blocked" | "stalled" | "completed" | "failed" | "cancelled" | "paused";
 export interface QueueProgressDetails {
@@ -239,6 +249,7 @@ export interface QueueResumeContext {
   lineage: QueuedTaskLineage;
   checkpoint: QueueCheckpointSummary;
   recentActivity: QueueActivity[];
+  workProducts: QueueWorkProduct[];
   updatedAt: string;
 }
 export interface QueueUsage {
@@ -2729,6 +2740,36 @@ export class ResearchStore {
     return true;
   }
 
+  /** Attach a checksummed, workspace-relative work product to a live task. */
+  recordQueueWorkProduct(input: { taskId: string; actorId: string; name: string; path: string; checksum: string; metadata?: unknown; claimToken?: string }): QueueWorkProduct | undefined {
+    const taskId = input.taskId.trim().slice(0, 200);
+    const actorId = input.actorId.trim().slice(0, 200);
+    const name = input.name.trim().slice(0, 200);
+    const path = input.path.trim().slice(0, 500);
+    const checksum = input.checksum.trim();
+    const pathParts = path.split(/[\\/]+/);
+    if (!taskId || !actorId || !name || !path || path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || pathParts.includes("..") || !/^sha256:[a-f0-9]{64}$/.test(checksum)) return undefined;
+    const task = this.db.prepare("SELECT id FROM work_queue WHERE id = ?").get(taskId) as { id: string } | undefined;
+    if (!task) return undefined;
+    if (input.claimToken) {
+      const claim = this.db.prepare("SELECT status, owner_id, claim_token FROM work_queue WHERE id = ?").get(taskId) as { status: string; owner_id: string | null; claim_token: string | null } | undefined;
+      if (!claim || claim.status !== "running" || claim.owner_id !== actorId || claim.claim_token !== input.claimToken) return undefined;
+    }
+    const product: QueueWorkProduct = { id: `product-${randomUUID()}`, taskId, actorId, name, path, checksum, metadata: input.metadata === undefined ? null : redactStructured(input.metadata), createdAt: new Date().toISOString() };
+    this.appendEvent("queue.work_product", product);
+    return product;
+  }
+
+  queueWorkProducts(taskId?: string, limit = 32): QueueWorkProduct[] {
+    const boundedLimit = Math.max(1, Math.min(128, Math.floor(limit)));
+    return this.eventsByType("queue.work_product", 2_048).flatMap((event) => {
+      const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, unknown> : {};
+      if (taskId && payload.taskId !== taskId) return [];
+      if (typeof payload.id !== "string" || typeof payload.taskId !== "string" || typeof payload.actorId !== "string" || typeof payload.name !== "string" || typeof payload.path !== "string" || typeof payload.checksum !== "string" || !/^sha256:[a-f0-9]{64}$/.test(payload.checksum)) return [];
+      return [{ id: payload.id, taskId: payload.taskId, actorId: payload.actorId, name: payload.name, path: payload.path, checksum: payload.checksum, metadata: payload.metadata ?? null, createdAt: event.createdAt } satisfies QueueWorkProduct];
+    }).slice(-boundedLimit);
+  }
+
   /** Record an operator handoff note with retry-safe transport semantics. */
   recordQueueOperatorNote(input: { taskId: string; message: string; idempotencyKey?: string; actorId?: string }): { recorded: boolean; idempotent: boolean; conflict?: boolean } {
     const taskId = input.taskId.trim().slice(0, 200);
@@ -2865,6 +2906,7 @@ export class ResearchStore {
       lineage: this.taskLineage(task.id) ?? { taskIds: [task.id], goalIds: [], missingParentIds: [], cycle: false, truncated: false },
       checkpoint: this.queueCheckpoint(task.id) ?? { present: false, bytes: 0, hash: null, updatedAt: null, keys: [], stage: null },
       recentActivity: this.queueActivities(task.id, Math.max(1, Math.min(16, Math.floor(activityLimit)))),
+      workProducts: this.queueWorkProducts(task.id, Math.max(1, Math.min(16, Math.floor(activityLimit)))),
       updatedAt: task.updatedAt,
     };
   }

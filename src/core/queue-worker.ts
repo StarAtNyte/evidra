@@ -1,4 +1,4 @@
-import { ResearchStore, type QueueActivity, type QueuedTask } from "./store.js";
+import { ResearchStore, type QueueActivity, type QueueWorkProduct, type QueuedTask } from "./store.js";
 import { queueRecoveryAction } from "./queue-recovery.js";
 import { randomUUID } from "node:crypto";
 
@@ -22,6 +22,8 @@ export interface QueueHandlerContext {
   discussion(limit?: number): QueueActivity[];
   /** Append a bounded worker comment to the task discussion. */
   comment(message: string, metadata?: unknown): boolean;
+  /** Attach a checksummed, relative-path work product to the task. */
+  publishWorkProduct(input: { name: string; path: string; checksum: string; metadata?: unknown }): QueueWorkProduct | undefined;
 }
 export type QueueHandler = (task: QueuedTask, signal: AbortSignal, context?: QueueHandlerContext) => Promise<unknown>;
 
@@ -172,6 +174,7 @@ export class QueueWorker {
       checkpoint: (state) => this.store.checkpointClaimedTask(task.id, this.workerId, state, task.claimToken ?? undefined),
       discussion: (limit = 16) => this.store.queueActivities(task.id, Math.max(1, Math.min(64, Math.floor(limit)))).filter((entry) => entry.kind === "comment" || entry.kind === "handoff"),
       comment: (message, metadata) => activity("comment", message, metadata),
+      publishWorkProduct: (input) => this.store.recordQueueWorkProduct({ taskId: task.id, actorId: this.workerId, ...input, claimToken: task.claimToken ?? undefined }),
     };
     try {
       const result = await this.handler(task, taskAbortController.signal, context);

@@ -2546,6 +2546,13 @@ queue.command("activity <id>").option("--limit <count>", "number of task updates
   store.close();
   console.log(activity.length ? activity.map((entry) => `${entry.createdAt}  ${entry.kind.padEnd(9)} ${entry.actorId}\n  ${entry.message}`).join("\n") : `No activity recorded for ${id}.`);
 });
+queue.command("products <id>").option("--limit <count>", "number of work products", "32").option("--json", "emit machine-readable products").description("Show checksummed work products attached to a queue task").action((id: string, options: { limit: string; json?: boolean }) => {
+  const store = new ResearchStore(statePath);
+  const products = store.queueWorkProducts(id, Number.parseInt(options.limit, 10) || 32);
+  store.close();
+  if (options.json) { console.log(JSON.stringify(products, null, 2)); return; }
+  console.log(products.length ? products.map((product) => `${product.createdAt}  ${product.name}\n  ${product.path}\n  ${product.checksum}\n  by ${product.actorId}`).join("\n") : `No work products recorded for ${id}.`);
+});
 queue.command("note <id> <message>").description("Add an operator handoff note to a queue task without changing its evidence or completion state").action((id: string, message: string) => {
   const store = new ResearchStore(statePath);
   try {
@@ -2746,7 +2753,7 @@ event.command("serve")
         }
         request.destroy();
       });
-      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/delegate", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release", "/tasks/note", "/tasks/cancel", "/queue/pause", "/queue/resume"].includes(request.url ?? "") ? request.url : undefined;
+      const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/delegate", "/tasks/activity", "/tasks/work-product", "/tasks/usage", "/tasks/complete", "/tasks/release", "/tasks/note", "/tasks/cancel", "/queue/pause", "/queue/resume"].includes(request.url ?? "") ? request.url : undefined;
       const operatorTaskPath = taskPath === "/tasks/note" || taskPath === "/tasks/cancel" || taskPath === "/queue/pause" || taskPath === "/queue/resume";
       const taskControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/tasks\/([^/]+)\/(pause|resume)$/) : null;
       const operatorTaskControlPath = Boolean(taskControlMatch);
@@ -2938,6 +2945,7 @@ event.command("serve")
           lineage: store.taskLineage(taskId),
           children: store.queueChildSummary(taskId),
           activity: store.queueActivities(taskId, activityLimit),
+          workProducts: store.queueWorkProducts(taskId, activityLimit),
           usageEntries: store.queueUsage(taskId, activityLimit),
           history: store.queueHistory(taskId, historyLimit),
         };
@@ -3697,6 +3705,41 @@ event.command("serve")
               store.close();
               response.writeHead(recorded ? 200 : 409, headers);
               response.end(JSON.stringify({ ok: recorded, taskId, progress: progress ?? null }));
+              return;
+            }
+            if (taskPath === "/tasks/work-product") {
+              const currentTask = store.queueTasks().find((task) => task.id === taskId);
+              if (!currentTask || !permitsKind(currentTask.kind)) {
+                store.close();
+                response.writeHead(403, headers);
+                response.end(JSON.stringify({ error: "task is outside this worker's assigned scope" }));
+                return;
+              }
+              if (currentTask.status !== "running" || currentTask.ownerId !== workerId) {
+                store.close();
+                response.writeHead(409, headers);
+                response.end(JSON.stringify({ error: "worker does not own a live claim for this task" }));
+                return;
+              }
+              if (currentTask.claimToken && !claimToken) {
+                store.close();
+                response.writeHead(409, headers);
+                response.end(JSON.stringify({ error: "claimToken is required for this task lease" }));
+                return;
+              }
+              const productPayload = parsed as Record<string, unknown>;
+              const product = store.recordQueueWorkProduct({
+                taskId,
+                actorId: workerId,
+                name: typeof productPayload.name === "string" ? productPayload.name : "",
+                path: typeof productPayload.path === "string" ? productPayload.path : "",
+                checksum: typeof productPayload.checksum === "string" ? productPayload.checksum : "",
+                metadata: productPayload.metadata === undefined ? undefined : parseExternalEventPayload(JSON.stringify(productPayload.metadata)),
+                claimToken: claimToken || undefined,
+              });
+              store.close();
+              response.writeHead(product ? 201 : 400, headers);
+              response.end(JSON.stringify(product ? { ok: true, product } : { ok: false, error: "work product requires a live claim, relative path, and sha256 checksum" }));
               return;
             }
             if (taskPath === "/tasks/usage") {

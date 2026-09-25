@@ -4161,6 +4161,9 @@ test("queue worker context persists structured progress and checkpoints", async 
       assert.ok(context);
       assert.equal(context.comment("worker note: checkpoint is ready"), true);
       assert.equal(context.discussion().some((entry) => entry.kind === "comment" && entry.message.includes("checkpoint is ready")), true);
+      const product = context.publishWorkProduct({ name: "checkpoint.json", path: "artifacts/checkpoint.json", checksum: `sha256:${"a".repeat(64)}`, metadata: { stage: "validation" } });
+      assert.equal(product?.name, "checkpoint.json");
+      assert.equal(product?.path, "artifacts/checkpoint.json");
       assert.equal(context.reportProgress({ message: "halfway", percent: 0.5, step: "validation", completed: 2, total: 4 }), true);
       assert.equal(context.reportProgress({ message: "invalid", percent: 2 }), false);
       assert.equal(context.checkpoint({ stage: "validation", item: 2 }), true);
@@ -9198,6 +9201,13 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const remoteCommentStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     assert.equal(remoteCommentStore.queueActivities(task.id, 16).some((entry) => entry.kind === "comment" && entry.message.includes("independent replication")), true);
     remoteCommentStore.close();
+    const remoteProduct = await post("/tasks/work-product", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, name: "remote-evidence.json", path: "artifacts/remote-evidence.json", checksum: `sha256:${"b".repeat(64)}`, metadata: { source: "remote-worker" } }, token, "worker-a", "worker-secret");
+    assert.equal(remoteProduct.status, 201);
+    const remoteProductBody = await remoteProduct.json();
+    assert.equal(remoteProductBody.product.name, "remote-evidence.json");
+    const remoteProductStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    assert.equal(remoteProductStore.queueWorkProducts(task.id, 16).some((entry) => entry.name === "remote-evidence.json"), true);
+    remoteProductStore.close();
     assert.equal((await post("/tasks/activity", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, kind: "progress", message: "malformed progress", metadata: { progress: { percent: 2 } } }, token, "worker-a", "worker-secret")).status, 409);
     const remoteProgressStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     assert.deepEqual(remoteProgressStore.queueProgress(task.id)?.details, { percent: 0.5, step: "retrieval", completed: 2, total: 4 });
