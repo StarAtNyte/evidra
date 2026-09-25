@@ -43,6 +43,14 @@ export function runGovernanceBenchmark(): GovernanceBenchmarkReport {
     setExternalToolStatus(root, "external.governance_probe", "enabled");
     const reenabled = activeExternalResearchTools(root).some((tool) => tool.name === "external.governance_probe");
     check("adapter-lifecycle-boundary", "Quarantined adapters disappear from selection, enter the approval inbox, and require deliberate re-enablement.", quarantinedHidden && quarantinedApproval !== undefined && reenabled, { quarantinedHidden, quarantinedApproval, reenabled });
+    mkdirSync(join(root, ".evidra", "plugins", "governance-plugin"), { recursive: true });
+    writeFileSync(join(root, ".evidra", "plugins", "governance-plugin", "plugin.json"), JSON.stringify({ version: 1, tools: [{ name: "external.probe", description: "Namespaced governance plugin", command: [process.execPath, "-e", "process.stdout.write('{}')"], roles: ["domain researcher"], readOnly: true }] }));
+    const pluginName = "external.governance-plugin.probe";
+    const pluginQuarantined = !activeExternalResearchTools(root).some((tool) => tool.name === pluginName);
+    const pluginApproval = approvalInbox(store, root).find((item) => item.kind === "external-tool" && item.id === pluginName);
+    setExternalToolStatus(root, pluginName, "enabled");
+    const pluginEnabled = activeExternalResearchTools(root).some((tool) => tool.name === pluginName);
+    check("plugin-admission-boundary", "Discovered plugin tools are namespaced, quarantined by default, visible for approval, and only selectable after explicit enablement.", pluginQuarantined && pluginApproval !== undefined && pluginEnabled, { pluginQuarantined, pluginApproval, pluginEnabled });
     store.updateAgentLane({ role: "external domain specialist", status: "idle", provider: "remote", model: "bench", task: "governance probe" });
     const organization = agentOrganization(store);
     const builtInOrganization = organization.filter((role) => AGENT_ROLE_CONTRACTS.some((contract) => contract.role === role.role));
