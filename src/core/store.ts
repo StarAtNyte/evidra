@@ -189,6 +189,17 @@ export interface QueueActivity {
   metadata: unknown;
   createdAt: string;
 }
+
+export type QueueProgressState = "queued" | "active" | "blocked" | "stalled" | "completed" | "failed" | "cancelled" | "paused";
+export interface QueueProgress {
+  state: QueueProgressState;
+  lastActivityAt: string | null;
+  lastActivityKind: QueueActivityKind | null;
+  lastActivityMessage: string | null;
+  idleSeconds: number | null;
+  heartbeatAgeSeconds: number | null;
+  stalled: boolean;
+}
 export interface QueueHistoryEntry {
   type: string;
   payload: unknown;
@@ -2526,6 +2537,28 @@ export class ResearchStore {
       if (!id || !actorId || !message || !["started", "progress", "blocked", "handoff", "completed", "failed"].includes(String(kind)) || (taskId && id !== taskId)) return [];
       return [{ taskId: id, actorId, kind: kind as QueueActivityKind, message, metadata: payload.metadata ?? null, createdAt: row.created_at }];
     });
+  }
+
+  /** Build a bounded, provider-neutral progress signal for operator surfaces. */
+  queueProgress(taskId: string, now = Date.now(), staleAfterMs = 15 * 60_000): QueueProgress | undefined {
+    const task = this.queueTasks().find((entry) => entry.id === taskId);
+    if (!task) return undefined;
+    const latest = this.queueActivities(taskId, 1).at(-1);
+    const lastActivityAt = latest?.createdAt ?? null;
+    const lastActivityMs = lastActivityAt ? Date.parse(lastActivityAt) : Number.NaN;
+    const heartbeatMs = task.claimedAt ? Date.parse(task.claimedAt) : Number.NaN;
+    const heartbeatAgeSeconds = Number.isFinite(heartbeatMs) ? Math.max(0, Math.floor((now - heartbeatMs) / 1_000)) : null;
+    const idleSeconds = Number.isFinite(lastActivityMs) ? Math.max(0, Math.floor((now - lastActivityMs) / 1_000)) : null;
+    const stalled = task.status === "running" && (!Number.isFinite(heartbeatMs) || now - heartbeatMs > Math.max(1_000, staleAfterMs));
+    const state: QueueProgressState = task.status === "completed" ? "completed"
+      : task.status === "failed" ? "failed"
+        : task.status === "cancelled" ? "cancelled"
+          : task.status === "paused" ? "paused"
+            : task.status === "queued" ? "queued"
+              : stalled ? "stalled"
+                : latest?.kind === "blocked" ? "blocked"
+                  : "active";
+    return { state, lastActivityAt, lastActivityKind: latest?.kind ?? null, lastActivityMessage: latest?.message ?? null, idleSeconds, heartbeatAgeSeconds, stalled };
   }
 
   /** Return the bounded lifecycle stream for one queue ticket, not just worker notes. */

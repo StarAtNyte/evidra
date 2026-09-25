@@ -2354,7 +2354,7 @@ queue.command("status").option("--json", "emit machine-readable queue state").op
   const queueControl = store.queueControl();
   const rows = tasks.map((task) => {
     const { claimToken: _claimToken, ...publicTask } = task;
-    return { ...publicTask, effectivePriority: queueEffectivePriority(task), readiness: store.taskReadiness(task.id), usageState: store.queueUsageState(task.id), usageTotals: store.queueUsageTotals(task.id) };
+    return { ...publicTask, effectivePriority: queueEffectivePriority(task), progress: store.queueProgress(task.id), readiness: store.taskReadiness(task.id), usageState: store.queueUsageState(task.id), usageTotals: store.queueUsageTotals(task.id) };
   });
   const recoveries = store.eventsByType("queue.recovery_required", 24).map((event) => event.payload);
   if (options.json) {
@@ -2370,6 +2370,7 @@ queue.command("status").option("--json", "emit machine-readable queue state").op
       ...readiness.failed.map((id) => `failed:${id}`),
     ].join(",")}` : "";
     const children = store.queueChildSummary(task.id);
+    const progress = store.queueProgress(task.id);
     const childSummary = children?.total ? ` · children ${children.completed}/${children.total} done${children.unfinished ? ` (${children.unfinished} active)` : ""}` : "";
     const lineage = store.taskLineage(task.id);
     const brokenLineage = lineage && (lineage.cycle || lineage.truncated || lineage.missingParentIds.length) ? ` · broken-lineage${lineage.missingParentIds.length ? ` missing:${lineage.missingParentIds.join(",")}` : ""}` : "";
@@ -2377,7 +2378,7 @@ queue.command("status").option("--json", "emit machine-readable queue state").op
     const approval = task.approvalStatus === "none" || task.approvalStatus === "approved" ? "" : ` · approval ${task.approvalStatus}${task.approvalReason ? `: ${task.approvalReason}` : ""}`;
     const budget = task.tokenBudget === null && task.costBudgetUsd === null ? "" : (() => { const usage = store.queueUsageState(task.id); const token = task.tokenBudget === null ? "" : `tokens ${usage?.usedTokens ?? 0}/${task.tokenBudget}`; const cost = task.costBudgetUsd === null ? "" : `cost $${(usage?.usedCostUsd ?? 0).toFixed(6)}/$${task.costBudgetUsd.toFixed(6)}`; return ` · budget ${[token, cost].filter(Boolean).join(" · ")}${usage?.exhausted ? " exhausted" : ""}`; })();
     const deadline = task.deadlineAt ? ` · deadline ${task.deadlineAt}${Date.parse(task.deadlineAt) <= Date.now() ? " expired" : ""}` : "";
-    return `${task.status} ${task.id} · ${task.kind} · priority ${task.priority}${aging} · attempts ${task.attempts}${task.labels.length ? ` · labels ${task.labels.join(",")}` : ""}${task.assigneeId ? ` · assigned ${task.assigneeId}` : ""}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.requiredCapabilities.length ? ` · requires ${task.requiredCapabilities.join(",")}` : ""}${approval}${budget}${deadline}${childSummary}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${brokenLineage}${blocked}`;
+    return `${task.status} ${task.id} · ${task.kind} · progress ${progress?.state ?? "unknown"}${progress?.idleSeconds !== null && progress?.idleSeconds !== undefined ? ` idle ${progress.idleSeconds}s` : ""}${progress?.lastActivityMessage ? ` · last ${progress.lastActivityMessage.slice(0, 100)}` : ""} · priority ${task.priority}${aging} · attempts ${task.attempts}${task.labels.length ? ` · labels ${task.labels.join(",")}` : ""}${task.assigneeId ? ` · assigned ${task.assigneeId}` : ""}${task.ownerId ? ` · owner ${task.ownerId}` : ""}${task.requiredCapabilities.length ? ` · requires ${task.requiredCapabilities.join(",")}` : ""}${approval}${budget}${deadline}${childSummary}${task.goalId ? ` · goal ${task.goalId}` : ""}${task.parentTaskId ? ` · parent ${task.parentTaskId}` : ""}${task.dependsOn.length ? ` · depends ${task.dependsOn.join(",")}` : ""}${brokenLineage}${blocked}`;
   }).join("\n") : "Research queue is empty."}`);
   if (recoveries.length) console.log(`\nRecovery actions\n${recoveries.slice().reverse().slice(0, 8).map((entry) => { const value = entry && typeof entry === "object" ? entry as Record<string, unknown> : {}; return `  ${String(value.taskId ?? "task")} · ${String(value.failureClass ?? "unknown")} · ${String(value.route ?? "change_route")} · ${String(value.action ?? "inspect failure")}`; }).join("\n")}`);
   store.close();

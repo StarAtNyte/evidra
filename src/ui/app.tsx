@@ -4368,6 +4368,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const blocked = readiness && !readiness.ready ? ` · blocked ${[...readiness.missing.map((id) => `missing:${id}`), ...readiness.pending.map((id) => `waiting:${id}`), ...readiness.failed.map((id) => `failed:${id}`)].join(",")}` : "";
           const taskRole = task.payload && typeof task.payload === "object" && !Array.isArray(task.payload) && typeof (task.payload as { role?: unknown }).role === "string" ? (task.payload as { role: string }).role : "";
           const latestActivity = store.queueActivities(task.id, 1).at(-1);
+          const progress = store.queueProgress(task.id);
           const usage = store.queueUsage(task.id, 128);
           const totals = store.queueUsageTotals(task.id);
           const inputTokens = totals?.inputTokens ?? usage.reduce((sum, entry) => sum + entry.inputTokens, 0);
@@ -4379,7 +4380,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
           const approvalSummary = task.approvalStatus === "none" || task.approvalStatus === "approved" ? "" : `approval ${task.approvalStatus}${task.approvalReason ? `: ${task.approvalReason}` : ""}`;
           const children = store.queueChildSummary(task.id);
           const childSummary = children?.total ? `children ${children.completed}/${children.total} done${children.unfinished ? ` (${children.unfinished} active)` : ""}` : "";
-          const lineage = [taskRole ? `role ${taskRole}` : "", task.parentTaskId ? `parent ${task.parentTaskId}` : "", task.goalId ? `goal ${task.goalId}` : "", childSummary, task.dependsOn.length ? `depends ${task.dependsOn.join(",")}` : "", task.assigneeId ? `assigned ${task.assigneeId}` : "", task.ownerId ? `owner ${task.ownerId}` : "", approvalSummary, budgetSummary, deadlineSummary, usageSummary, latestActivity ? `last ${latestActivity.kind}: ${latestActivity.message.slice(0, 120)}` : ""].filter(Boolean).join(" · ");
+          const lineage = [taskRole ? `role ${taskRole}` : "", task.parentTaskId ? `parent ${task.parentTaskId}` : "", task.goalId ? `goal ${task.goalId}` : "", childSummary, task.dependsOn.length ? `depends ${task.dependsOn.join(",")}` : "", task.assigneeId ? `assigned ${task.assigneeId}` : "", task.ownerId ? `owner ${task.ownerId}` : "", approvalSummary, budgetSummary, deadlineSummary, usageSummary, progress ? `progress ${progress.state}${progress.idleSeconds !== null ? ` · idle ${progress.idleSeconds}s` : ""}` : "", latestActivity ? `last ${latestActivity.kind}: ${latestActivity.message.slice(0, 120)}` : ""].filter(Boolean).join(" · ");
           const aging = queueEffectivePriority(task) > task.priority ? ` (aged ${queueEffectivePriority(task)})` : "";
           return `${task.status === "running" ? "●" : task.status === "queued" ? "○" : task.status === "paused" ? "Ⅱ" : task.status === "completed" ? "✓" : "✗"} ${task.id} · ${task.kind} · priority ${task.priority}${aging} · attempts ${task.attempts}${lineage ? `\n  ${lineage}` : ""}${blocked}`;
         }).join("\n")}` : "Research queue is empty.";

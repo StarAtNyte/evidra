@@ -73,6 +73,7 @@ external evaluator.
 - Lease-loss events now feed the shared operator-attention projection, so CLI, TUI, and dashboard operators see the ownership failure and its queue-history action without inspecting raw events.
 - Queue polling now has a supervisor rejection boundary: transient store/control errors become durable `queue.worker.error` records and shared operator attention instead of unhandled process failures, while subsequent polls can recover.
 - Queue execution now refills concurrency at each lane completion rather than waiting for the slowest active lane, improving heterogeneous research throughput without removing the global concurrency bound.
+- Queue tickets now expose a provider-neutral progress projection—lifecycle state, last activity, idle time, heartbeat age, and stalled detection—shared by CLI JSON, TUI, and dashboard views.
 
 - Latest pushed state: `origin/master` at the latest handoff commit (verify with `git log`).
 - Competition manifests now support typed `researchChannels` for rules,

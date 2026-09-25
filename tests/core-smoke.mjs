@@ -4078,6 +4078,23 @@ test("queue heartbeats are owned by the claiming worker", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue progress projection distinguishes active, blocked, and terminal work", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-progress-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "progress", kind: "progress", priority: 1, payload: {} });
+    const claimed = store.claimNextTask(undefined, "progress-worker");
+    assert.ok(claimed);
+    store.recordQueueActivity({ taskId: "progress", actorId: "progress-worker", kind: "started", message: "started" });
+    assert.equal(store.queueProgress("progress")?.state, "active");
+    store.recordQueueActivity({ taskId: "progress", actorId: "progress-worker", kind: "blocked", message: "waiting for evidence" });
+    assert.equal(store.queueProgress("progress")?.state, "blocked");
+    assert.equal(store.completeClaimedTask("progress", "progress-worker", "completed", {}, undefined, claimed?.claimToken ?? undefined), true);
+    assert.equal(store.queueProgress("progress")?.state, "completed");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue worker aborts immediately when its lease is lost", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-lease-loss-"));
   try {
