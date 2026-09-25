@@ -2714,6 +2714,7 @@ event.command("serve")
       const operatorQueueStatusPath = request.method === "GET" && request.url === "/queue/status";
       const operatorAttentionPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/attention";
       const operatorActivityPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/activity";
+      const operatorActivityStreamPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/activity/stream";
       const operatorOrganizationPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/organization";
       const routineControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/routines\/([^/]+)\/(pause|resume|trigger)$/) : null;
       const operatorRoutinePath = Boolean(routineControlMatch);
@@ -2735,7 +2736,7 @@ event.command("serve")
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
       const remoteActor = (typeof request.headers["x-evidra-actor"] === "string" ? request.headers["x-evidra-actor"] : "").replace(/[\u0000-\u001f\u007f]/g, "_").trim().slice(0, 200) || "remote-operator";
-      if (operatorTaskPath || operatorQueueStatusPath || operatorAttentionPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorAttentionPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
+      if (operatorTaskPath || operatorQueueStatusPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
@@ -2765,6 +2766,56 @@ event.command("serve")
         store.close();
         response.writeHead(integrity.status === "invalid" ? 503 : 200, headers);
         response.end(JSON.stringify({ ok: integrity.status !== "invalid", attention, integrity: integrity.status }));
+        return;
+      }
+      if (operatorActivityStreamPath) {
+        const query = new URL(request.url ?? "/activity/stream", "http://evidra.local").searchParams;
+        const after = Number.parseInt(query.get("after") ?? "0", 10);
+        const limit = Number.parseInt(query.get("limit") ?? "50", 10);
+        const seconds = Number.parseInt(query.get("seconds") ?? "25", 10);
+        if (!Number.isInteger(after) || after < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(seconds) || seconds < 1 || seconds > 30) {
+          response.writeHead(400, headers);
+          response.end(JSON.stringify({ error: "after must be non-negative, limit must be between 1 and 100, and seconds must be between 1 and 30" }));
+          return;
+        }
+        const store = new ResearchStore(statePath);
+        const integrity = store.verifyEventChain();
+        if (integrity.status === "invalid") {
+          store.close();
+          response.writeHead(503, headers);
+          response.end(JSON.stringify({ ok: false, integrity }));
+          return;
+        }
+        const streamHeaders = { ...headers, "cache-control": "no-cache, no-transform", "connection": "keep-alive", "content-type": "text/event-stream; charset=utf-8" };
+        response.writeHead(200, streamHeaders);
+        response.write(`event: ready\ndata: ${JSON.stringify({ ok: true, after, integrity: integrity.status })}\n\n`);
+        let cursor = after;
+        let closed = false;
+        const finish = () => {
+          if (closed) return;
+          closed = true;
+          clearInterval(poll);
+          clearTimeout(deadline);
+          store.close();
+          if (!response.writableEnded) response.end();
+        };
+        const flush = () => {
+          if (closed) return;
+          const events = store.eventFeed(cursor, limit);
+          for (const event of events) {
+            cursor = event.id;
+            response.write(`event: activity\nid: ${event.id}\ndata: ${JSON.stringify(redactStructured(event))}\n\n`);
+          }
+        };
+        const poll = setInterval(() => {
+          if (response.destroyed || response.writableEnded) { finish(); return; }
+          flush();
+          response.write(`: heartbeat ${new Date().toISOString()}\n\n`);
+        }, 250);
+        const deadline = setTimeout(finish, seconds * 1_000);
+        request.on("close", finish);
+        response.on("close", finish);
+        flush();
         return;
       }
       if (operatorApprovalsPath) {
@@ -2938,7 +2989,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: true, id: taskId, status, changed }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /attention, GET /activity, GET /organization, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /attention, GET /activity, GET /activity/stream, GET /organization, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");

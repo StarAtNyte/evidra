@@ -8822,6 +8822,12 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(typeof remoteAttentionBody.attention.health.status, "string");
     assert.equal(remoteAttentionBody.attention.items.length > 0, true);
     assert.doesNotMatch(JSON.stringify(remoteAttentionBody), /sk-remote-queue-secret-12345678901234567890/);
+    const activityStream = await fetch(`http://127.0.0.1:${port}/activity/stream?after=0&limit=10&seconds=1`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(activityStream.status, 200);
+    const activityStreamText = await activityStream.text();
+    assert.match(activityStreamText, /event: ready/);
+    assert.match(activityStreamText, /event: activity/);
+    assert.doesNotMatch(activityStreamText, /sk-remote-queue-secret-12345678901234567890/);
     const workerOnlyActivity = await fetch(`http://127.0.0.1:${port}/activity`, { headers: { "x-evidra-worker-id": "worker-a", "x-evidra-worker-token": "worker-secret" } });
     assert.equal(workerOnlyActivity.status, 401);
     const activityFeedResponse = await fetch(`http://127.0.0.1:${port}/activity?after=0&limit=25`, { headers: { authorization: `Bearer ${token}` } });
