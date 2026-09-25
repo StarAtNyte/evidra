@@ -291,6 +291,8 @@ export interface ResearchRoutine {
   pendingTriggerEvent?: RoutineTriggerContext | null;
   /** Whether missed wakeups collapse into one run or replay up to the bounded cap. */
   catchUpPolicy?: RoutineCatchUpPolicy;
+  /** Replay wakeups dropped after the bounded pending cap; retained for audit. */
+  droppedTriggers?: number;
   status: RoutineStatus;
   nextRunAt: string;
   lastRunAt: string | null;
@@ -2199,7 +2201,7 @@ export class ResearchStore {
 
   private routineFromRow(row: { id: string; payload_json: string; status: string; next_run_at: string; lease_id: string | null; lease_expires_at: string | null; created_at: string; updated_at: string }): ResearchRoutine {
     const payload = JSON.parse(row.payload_json) as Omit<ResearchRoutine, "id" | "status" | "nextRunAt" | "leaseId" | "leaseExpiresAt" | "createdAt" | "updatedAt">;
-    return { ...payload, catchUpPolicy: payload.catchUpPolicy === "replay" ? "replay" : "coalesce", maxRuns: Number.isInteger(payload.maxRuns) && (payload.maxRuns as number) > 0 ? payload.maxRuns as number : null, failureStreak: Math.max(0, Number(payload.failureStreak) || 0), pendingTriggers: Math.min(MAX_ROUTINE_PENDING_TRIGGERS, Math.max(0, Number(payload.pendingTriggers) || 0)), id: row.id, status: row.status as RoutineStatus, nextRunAt: row.next_run_at, leaseId: row.lease_id, leaseExpiresAt: row.lease_expires_at, createdAt: row.created_at, updatedAt: row.updated_at };
+    return { ...payload, catchUpPolicy: payload.catchUpPolicy === "replay" ? "replay" : "coalesce", droppedTriggers: Math.max(0, Number(payload.droppedTriggers) || 0), maxRuns: Number.isInteger(payload.maxRuns) && (payload.maxRuns as number) > 0 ? payload.maxRuns as number : null, failureStreak: Math.max(0, Number(payload.failureStreak) || 0), pendingTriggers: Math.min(MAX_ROUTINE_PENDING_TRIGGERS, Math.max(0, Number(payload.pendingTriggers) || 0)), id: row.id, status: row.status as RoutineStatus, nextRunAt: row.next_run_at, leaseId: row.lease_id, leaseExpiresAt: row.lease_expires_at, createdAt: row.created_at, updatedAt: row.updated_at };
   }
 
   routines(): ResearchRoutine[] {
@@ -2227,7 +2229,7 @@ export class ResearchStore {
       intervalSeconds: routine.intervalSeconds, stopCondition: routine.stopCondition, provider: routine.provider,
       model: routine.model, thinking: routine.thinking, autonomy: routine.autonomy, limitPolicy: routine.limitPolicy,
       executor: routine.executor, lanes: routine.lanes, maxRuns: routine.maxRuns ?? null, triggerEvent: routine.triggerEvent ?? null, lastTriggerAt: routine.lastTriggerAt ?? null, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult,
-      lastError: routine.lastError, runCount: routine.runCount, failureStreak: Math.max(0, Math.floor(routine.failureStreak ?? 0)), pendingTriggers: Math.max(0, Math.min(MAX_ROUTINE_PENDING_TRIGGERS, routine.pendingTriggers ?? 0)), pendingTriggerEvent: routine.pendingTriggerEvent ?? null, catchUpPolicy: routine.catchUpPolicy === "replay" ? "replay" : "coalesce",
+      lastError: routine.lastError, runCount: routine.runCount, failureStreak: Math.max(0, Math.floor(routine.failureStreak ?? 0)), pendingTriggers: Math.max(0, Math.min(MAX_ROUTINE_PENDING_TRIGGERS, routine.pendingTriggers ?? 0)), pendingTriggerEvent: routine.pendingTriggerEvent ?? null, catchUpPolicy: routine.catchUpPolicy === "replay" ? "replay" : "coalesce", droppedTriggers: Math.max(0, Math.floor(routine.droppedTriggers ?? 0)),
     };
     this.db.prepare(`
       INSERT INTO research_routines (id, payload_json, status, next_run_at, lease_id, lease_expires_at, created_at, updated_at)
@@ -2254,6 +2256,7 @@ export class ResearchStore {
       pendingTriggers: 0,
       pendingTriggerEvent: null,
       catchUpPolicy: input.catchUpPolicy === "replay" ? "replay" : "coalesce",
+      droppedTriggers: 0,
       triggerEvent: input.triggerEvent ?? null,
       lastTriggerAt: input.triggerEvent ? now : null,
       leaseId: null,
@@ -2274,10 +2277,12 @@ export class ResearchStore {
       if (routine.lastTriggerAt && Date.parse(routine.lastTriggerAt) >= Date.parse(eventCreatedAt)) continue;
       const now = new Date().toISOString();
       const queued = routine.status === "running";
-      const pendingTriggers = queued ? routine.catchUpPolicy === "replay" ? Math.min(MAX_ROUTINE_PENDING_TRIGGERS, (routine.pendingTriggers ?? 0) + 1) : 1 : routine.pendingTriggers ?? 0;
-      const updated: ResearchRoutine = { ...routine, nextRunAt: queued ? routine.nextRunAt : now, lastTriggerAt: eventCreatedAt, pendingTriggers, pendingTriggerEvent: { eventType, eventCreatedAt }, updatedAt: now };
+      const requestedPending = queued && routine.catchUpPolicy === "replay" ? (routine.pendingTriggers ?? 0) + 1 : 0;
+      const dropped = requestedPending > MAX_ROUTINE_PENDING_TRIGGERS ? requestedPending - MAX_ROUTINE_PENDING_TRIGGERS : 0;
+      const pendingTriggers = queued ? routine.catchUpPolicy === "replay" ? Math.min(MAX_ROUTINE_PENDING_TRIGGERS, requestedPending) : 1 : routine.pendingTriggers ?? 0;
+      const updated: ResearchRoutine = { ...routine, nextRunAt: queued ? routine.nextRunAt : now, lastTriggerAt: eventCreatedAt, pendingTriggers, droppedTriggers: (routine.droppedTriggers ?? 0) + dropped, pendingTriggerEvent: { eventType, eventCreatedAt }, updatedAt: now };
       this.saveRoutine(updated);
-      this.appendEvent(queued ? "routine.trigger_queued" : "routine.triggered", { id: routine.id, eventType, eventCreatedAt, coalesced: queued });
+      this.appendEvent(queued ? "routine.trigger_queued" : "routine.triggered", { id: routine.id, eventType, eventCreatedAt, coalesced: queued, droppedWakeups: dropped });
       triggered.push(routine.id);
     }
     return triggered;
@@ -2292,10 +2297,12 @@ export class ResearchStore {
     if (current.status === "running" && current.catchUpPolicy !== "replay" && (current.pendingTriggers ?? 0) > 0) return { routine: current, changed: false };
     if (current.status === "active" && current.pendingTriggerEvent?.eventType === eventType && Date.parse(current.nextRunAt) <= Date.now()) return { routine: current, changed: false };
     const queued = current.status === "running";
-    const pendingTriggers = queued ? current.catchUpPolicy === "replay" ? Math.min(MAX_ROUTINE_PENDING_TRIGGERS, (current.pendingTriggers ?? 0) + 1) : 1 : current.pendingTriggers ?? 0;
-    const updated: ResearchRoutine = { ...current, nextRunAt: queued ? current.nextRunAt : now, lastTriggerAt: now, pendingTriggers, pendingTriggerEvent: { eventType, eventCreatedAt: now }, updatedAt: now };
+    const requestedPending = queued && current.catchUpPolicy === "replay" ? (current.pendingTriggers ?? 0) + 1 : 0;
+    const dropped = requestedPending > MAX_ROUTINE_PENDING_TRIGGERS ? requestedPending - MAX_ROUTINE_PENDING_TRIGGERS : 0;
+    const pendingTriggers = queued ? current.catchUpPolicy === "replay" ? Math.min(MAX_ROUTINE_PENDING_TRIGGERS, requestedPending) : 1 : current.pendingTriggers ?? 0;
+    const updated: ResearchRoutine = { ...current, nextRunAt: queued ? current.nextRunAt : now, lastTriggerAt: now, pendingTriggers, droppedTriggers: (current.droppedTriggers ?? 0) + dropped, pendingTriggerEvent: { eventType, eventCreatedAt: now }, updatedAt: now };
     this.saveRoutine(updated);
-    this.appendEvent(queued ? "routine.trigger_queued" : "routine.triggered", { id, eventType, eventCreatedAt: now, coalesced: queued, source: "operator" });
+    this.appendEvent(queued ? "routine.trigger_queued" : "routine.triggered", { id, eventType, eventCreatedAt: now, coalesced: queued, droppedWakeups: dropped, source: "operator" });
     return { routine: this.routine(id) ?? updated, changed: true };
   }
 

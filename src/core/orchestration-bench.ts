@@ -183,10 +183,12 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     const replayRoutine = store.createRoutine({ ...routine, id: "benchmark-replay", triggerEvent: "benchmark.signal", catchUpPolicy: "replay" });
     const replayClaim = store.claimRoutine(replayRoutine.id, "replay-runner", 60_000, new Date(), true);
     const replayBase = Date.now() + 1_000;
-    for (let index = 0; index < 3; index += 1) store.triggerRoutines("benchmark.signal", new Date(replayBase + index * 1_000).toISOString());
+    for (let index = 0; index < 10; index += 1) store.triggerRoutines("benchmark.signal", new Date(replayBase + index * 1_000).toISOString());
     const replayQueued = store.routine(replayRoutine.id);
     const replayFinished = replayClaim ? store.finishRoutine(replayRoutine.id, "replay-runner", "completed") : undefined;
-    check("routine-catch-up-replay", "Replay schedules retain bounded missed wakeups and consume one per completed run.", replayClaim?.status === "running" && replayQueued?.pendingTriggers === 3 && replayFinished?.pendingTriggers === 2 && replayFinished.pendingTriggerEvent?.eventType === "benchmark.signal", { queued: replayQueued?.pendingTriggers, remaining: replayFinished?.pendingTriggers, status: replayFinished?.status });
+    const replayOverflowEvent = store.eventsByType("routine.trigger_queued").at(-1);
+    const replayOverflowPayload = replayOverflowEvent?.payload && typeof replayOverflowEvent.payload === "object" ? replayOverflowEvent.payload as Record<string, unknown> : {};
+    check("routine-catch-up-replay", "Replay schedules retain bounded missed wakeups, audit overflow, and consume one per completed run.", replayClaim?.status === "running" && replayQueued?.pendingTriggers === 8 && replayQueued.droppedTriggers === 2 && replayFinished?.pendingTriggers === 7 && replayFinished.pendingTriggerEvent?.eventType === "benchmark.signal" && replayOverflowPayload.droppedWakeups === 1, { queued: replayQueued?.pendingTriggers, dropped: replayQueued?.droppedTriggers, remaining: replayFinished?.pendingTriggers, lastDropped: replayOverflowPayload.droppedWakeups, status: replayFinished?.status });
 
     const circuit = store.createRoutine({ ...routine, id: "benchmark-circuit" });
     let firstFailure: ResearchRoutine | undefined;
