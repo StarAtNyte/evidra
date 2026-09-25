@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { approvalInbox, type ApprovalInboxItem } from "./approvals.js";
 import { goalAlignment } from "./goal-alignment.js";
 import { campaignOrganization } from "./campaign-organization.js";
@@ -33,6 +34,11 @@ export type ControlPlaneHealth = {
 };
 
 const severityRank: Record<AttentionSeverity, number> = { critical: 0, warning: 1, info: 2 };
+
+/** Stable state fingerprint: an acknowledgement reopens when the underlying signal changes. */
+export function attentionFingerprint(item: OperatorAttentionItem): string {
+  return createHash("sha256").update(`${item.id}\0${item.severity}\0${item.kind}\0${item.summary}\0${item.next}`).digest("hex").slice(0, 32);
+}
 
 function approvalSeverity(item: ApprovalInboxItem): AttentionSeverity {
   if (item.kind === "phase-goal" || item.kind === "queue-recovery") return "critical";
@@ -183,7 +189,8 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
   const control = store.queueControl();
   if (control.paused) items.push({ id: "queue-control", severity: "info", kind: "queue-control", summary: `Queue dispatch paused${control.reason ? ` · ${control.reason}` : ""}`, next: "/queue resume" });
 
-  const unique = [...new Map(items.map((item) => [item.id, item])).values()];
+  const unique = [...new Map(items.map((item) => [item.id, item])).values()]
+    .filter((item) => store.attentionAcknowledgement(item.id)?.fingerprint !== attentionFingerprint(item));
   unique.sort((left, right) => severityRank[left.severity] - severityRank[right.severity] || left.id.localeCompare(right.id));
   const bounded = unique.slice(0, 64);
   return {

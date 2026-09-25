@@ -114,7 +114,7 @@ import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.j
 import { approvalInbox } from "./core/approvals.js";
 import { loadProjectGuidance } from "./core/project-guidance.js";
 import { formatGoalAlignment, goalAlignment } from "./core/goal-alignment.js";
-import { operatorAttention } from "./core/attention.js";
+import { attentionFingerprint, operatorAttention } from "./core/attention.js";
 import { agentCoachingDirective, agentRoleInterventions, applyAgentCoaching, evaluateAgentCoachingProgress, evaluateAgentRoles } from "./core/agent-evals.js";
 import { agentOrganization } from "./core/agent-organization.js";
 import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "./core/external-events.js";
@@ -2711,6 +2711,7 @@ event.command("serve")
       });
       const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/delegate", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release", "/tasks/note", "/tasks/cancel", "/queue/pause", "/queue/resume"].includes(request.url ?? "") ? request.url : undefined;
       const operatorTaskPath = taskPath === "/tasks/note" || taskPath === "/tasks/cancel" || taskPath === "/queue/pause" || taskPath === "/queue/resume";
+      const operatorAttentionAckPath = request.method === "POST" && (request.url === "/attention/ack" || request.url === "/attention/unack");
       const taskDetailMatch = request.method === "GET" ? (request.url ?? "").split("?", 1)[0].match(/^\/tasks\/([^/]+)$/) : null;
       const operatorTaskDetailPath = Boolean(taskDetailMatch);
       const operatorQueueStatusPath = request.method === "GET" && request.url === "/queue/status";
@@ -2743,7 +2744,7 @@ event.command("serve")
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
       const remoteActor = (typeof request.headers["x-evidra-actor"] === "string" ? request.headers["x-evidra-actor"] : "").replace(/[\u0000-\u001f\u007f]/g, "_").trim().slice(0, 200) || "remote-operator";
-      if (operatorTaskPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorCapabilitiesPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorRoutineDetailPath || operatorAgentPath || operatorAgentDetailPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorCapabilitiesPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorRoutineDetailPath || operatorAgentPath || operatorAgentDetailPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
+      if (operatorTaskPath || operatorAttentionAckPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorCapabilitiesPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorRoutineDetailPath || operatorAgentPath || operatorAgentDetailPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorAttentionAckPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorCapabilitiesPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorRoutineDetailPath || operatorAgentPath || operatorAgentDetailPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
@@ -2787,7 +2788,8 @@ event.command("serve")
       }
       if (operatorAttentionPath) {
         const store = new ResearchStore(statePath);
-        const attention = redactStructured(operatorAttention(store, root));
+        const rawAttention = operatorAttention(store, root);
+        const attention = redactStructured({ ...rawAttention, items: rawAttention.items.map((item) => ({ ...item, fingerprint: attentionFingerprint(item) })) });
         const integrity = store.verifyEventChain();
         store.close();
         response.writeHead(integrity.status === "invalid" ? 503 : 200, headers);
@@ -3133,7 +3135,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: true, id: taskId, status, changed }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /tasks/:id, GET /attention, GET /activity, GET /activity/stream, GET /routines/:id, GET /organization, GET /capabilities, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath && !operatorAttentionAckPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /attention/ack, /attention/unack, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /tasks/:id, GET /attention, GET /activity, GET /activity/stream, GET /routines/:id, GET /organization, GET /capabilities, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
@@ -3145,7 +3147,34 @@ event.command("serve")
       request.on("end", () => {
         if (rejected) return;
         try {
-          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; checkpoint?: unknown; child?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; capacity?: unknown; status?: unknown; kind?: unknown; message?: unknown; scopeKey?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
+          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; checkpoint?: unknown; child?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; capacity?: unknown; status?: unknown; kind?: unknown; message?: unknown; scopeKey?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown; id?: unknown; fingerprint?: unknown; note?: unknown };
+          if (operatorAttentionAckPath) {
+            const itemId = typeof parsed.id === "string" ? parsed.id.trim().slice(0, 240) : "";
+            if (!itemId) throw new Error("Attention acknowledgement requires an id.");
+            const store = new ResearchStore(statePath);
+            if (request.url === "/attention/unack") {
+              const changed = store.clearAttentionAcknowledgement(itemId, remoteActor);
+              store.close();
+              response.writeHead(200, headers);
+              response.end(JSON.stringify({ ok: true, id: itemId, changed }));
+              return;
+            }
+            const currentItem = operatorAttention(store, root).items.find((item) => item.id === itemId);
+            const existing = store.attentionAcknowledgement(itemId);
+            const suppliedFingerprint = typeof parsed.fingerprint === "string" ? parsed.fingerprint.trim() : "";
+            const fingerprint = suppliedFingerprint || (currentItem ? attentionFingerprint(currentItem) : existing?.fingerprint || "");
+            if (!fingerprint || (currentItem && fingerprint !== attentionFingerprint(currentItem))) {
+              store.close();
+              response.writeHead(currentItem ? 409 : 404, headers);
+              response.end(JSON.stringify({ error: currentItem ? "attention item changed; refresh before acknowledging" : `Unknown attention item '${itemId}'.` }));
+              return;
+            }
+            const acknowledgement = store.acknowledgeAttention(itemId, fingerprint, remoteActor, typeof parsed.note === "string" ? parsed.note : null);
+            store.close();
+            response.writeHead(200, headers);
+            response.end(JSON.stringify({ ok: true, id: itemId, changed: acknowledgement.changed, acknowledgement: redactStructured(acknowledgement.acknowledgement) }));
+            return;
+          }
           if (operatorAgentDirectiveCancelPath && agentDirectiveCancelMatch) {
             let role: string;
             try { role = decodeURIComponent(agentDirectiveCancelMatch[1] ?? ""); } catch {

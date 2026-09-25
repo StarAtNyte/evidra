@@ -8851,6 +8851,17 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(typeof remoteAttentionBody.attention.total, "number");
     assert.equal(typeof remoteAttentionBody.attention.health.status, "string");
     assert.equal(remoteAttentionBody.attention.items.length > 0, true);
+    const attentionItem = remoteAttentionBody.attention.items[0];
+    assert.equal(typeof attentionItem.fingerprint, "string");
+    const acknowledged = await post("/attention/ack", { id: attentionItem.id, fingerprint: attentionItem.fingerprint, note: "operator is handling this" }, token, undefined, undefined, "research-console");
+    assert.equal(acknowledged.status, 200);
+    assert.equal((await acknowledged.json()).changed, true);
+    const attentionAfterAck = await fetch(`http://127.0.0.1:${port}/attention`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal((await attentionAfterAck.json()).attention.items.some((item) => item.id === attentionItem.id), false);
+    const unacknowledged = await post("/attention/unack", { id: attentionItem.id }, token, undefined, undefined, "research-console");
+    assert.equal(unacknowledged.status, 200);
+    const attentionAfterUnack = await fetch(`http://127.0.0.1:${port}/attention`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal((await attentionAfterUnack.json()).attention.items.some((item) => item.id === attentionItem.id), true);
     assert.doesNotMatch(JSON.stringify(remoteAttentionBody), /sk-remote-queue-secret-12345678901234567890/);
     const activityStream = await fetch(`http://127.0.0.1:${port}/activity/stream?after=0&limit=10&seconds=1`, { headers: { authorization: `Bearer ${token}` } });
     assert.equal(activityStream.status, 200);

@@ -251,6 +251,13 @@ export interface QueueUsage {
   model: string | null;
   createdAt: string;
 }
+export interface AttentionAcknowledgement {
+  itemId: string;
+  fingerprint: string;
+  actorId: string;
+  note: string | null;
+  acknowledgedAt: string;
+}
 
 export type RoutineStatus = "active" | "paused" | "running" | "failed";
 export interface RoutineTriggerContext {
@@ -673,6 +680,13 @@ export class ResearchStore {
         paused INTEGER NOT NULL DEFAULT 0,
         reason TEXT,
         updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS attention_acknowledgements (
+        item_id TEXT PRIMARY KEY,
+        fingerprint TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        note TEXT,
+        acknowledged_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS agent_sessions (
         role TEXT NOT NULL,
@@ -1604,6 +1618,42 @@ export class ResearchStore {
     this.db.prepare("INSERT INTO queue_control (id, paused, reason, updated_at) VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET paused = excluded.paused, reason = excluded.reason, updated_at = excluded.updated_at").run(paused ? 1 : 0, normalizedReason, updatedAt);
     this.appendEvent(paused ? "queue.paused" : "queue.resumed", { reason: normalizedReason });
     return { paused, reason: normalizedReason, updatedAt };
+  }
+
+  attentionAcknowledgement(itemId: string): AttentionAcknowledgement | undefined {
+    const normalized = itemId.trim().slice(0, 240);
+    if (!normalized) return undefined;
+    const row = this.db.prepare("SELECT item_id, fingerprint, actor_id, note, acknowledged_at FROM attention_acknowledgements WHERE item_id = ?").get(normalized) as { item_id: string; fingerprint: string; actor_id: string; note: string | null; acknowledged_at: string } | undefined;
+    return row ? { itemId: row.item_id, fingerprint: row.fingerprint, actorId: row.actor_id, note: row.note, acknowledgedAt: row.acknowledged_at } : undefined;
+  }
+
+  attentionAcknowledgements(limit = 128): AttentionAcknowledgement[] {
+    const rows = this.db.prepare("SELECT item_id, fingerprint, actor_id, note, acknowledged_at FROM attention_acknowledgements ORDER BY acknowledged_at DESC LIMIT ?").all(Math.max(1, Math.min(256, Math.floor(limit)))) as Array<{ item_id: string; fingerprint: string; actor_id: string; note: string | null; acknowledged_at: string }>;
+    return rows.map((row) => ({ itemId: row.item_id, fingerprint: row.fingerprint, actorId: row.actor_id, note: row.note, acknowledgedAt: row.acknowledged_at }));
+  }
+
+  acknowledgeAttention(itemId: string, fingerprint: string, actorId: string, note?: string | null): { changed: boolean; acknowledgement: AttentionAcknowledgement } {
+    const normalizedItem = itemId.trim().slice(0, 240);
+    const normalizedFingerprint = fingerprint.trim().slice(0, 128);
+    const normalizedActor = actorId.trim().slice(0, 200) || "operator";
+    const normalizedNote = note?.trim().slice(0, 500) || null;
+    if (!normalizedItem || !normalizedFingerprint) throw new Error("Attention acknowledgement requires an item id and fingerprint.");
+    const current = this.attentionAcknowledgement(normalizedItem);
+    const now = new Date().toISOString();
+    const changed = !current || current.fingerprint !== normalizedFingerprint || current.note !== normalizedNote || current.actorId !== normalizedActor;
+    if (changed) {
+      this.db.prepare("INSERT INTO attention_acknowledgements (item_id, fingerprint, actor_id, note, acknowledged_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(item_id) DO UPDATE SET fingerprint = excluded.fingerprint, actor_id = excluded.actor_id, note = excluded.note, acknowledged_at = excluded.acknowledged_at").run(normalizedItem, normalizedFingerprint, normalizedActor, normalizedNote, now);
+      this.appendEvent("operator.attention.acknowledged", { itemId: normalizedItem, fingerprint: normalizedFingerprint, actorId: normalizedActor, note: normalizedNote });
+    }
+    return { changed, acknowledgement: this.attentionAcknowledgement(normalizedItem) as AttentionAcknowledgement };
+  }
+
+  clearAttentionAcknowledgement(itemId: string, actorId = "operator"): boolean {
+    const normalized = itemId.trim().slice(0, 240);
+    if (!normalized) return false;
+    const changed = this.db.prepare("DELETE FROM attention_acknowledgements WHERE item_id = ?").run(normalized).changes === 1;
+    if (changed) this.appendEvent("operator.attention.unacknowledged", { itemId: normalized, actorId: actorId.trim().slice(0, 200) || "operator" });
+    return changed;
   }
 
   /** Suspend one queue ticket and unfinished descendants without counting retries. */
