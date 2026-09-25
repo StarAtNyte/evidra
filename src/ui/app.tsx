@@ -12,7 +12,7 @@ import { createPortableBundle, portableAgentContracts, validatePortableBundle } 
 import { campaignOrganization, formatCampaignOrganization } from "../core/campaign-organization.js";
 import { roleBudgetLedger } from "../core/usage.js";
 import { formatGoalAlignment, goalAlignment, pauseForGoalAlignment } from "../core/goal-alignment.js";
-import { operatorAttention } from "../core/attention.js";
+import { attentionFingerprint, operatorAttention } from "../core/attention.js";
 import { agentCoachingDirective, agentRoleInterventions, applyAgentCoaching, evaluateAgentCoachingProgress, evaluateAgentRoles } from "../core/agent-evals.js";
 import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
@@ -142,6 +142,7 @@ const COMMANDS = [
   ["/routine", "Create and run recurring autonomous campaigns"],
   ["/steer", "Guide the active campaign at its next safe boundary"],
   ["/status", "Show complete workbench state"],
+  ["/attention", "Inspect and triage operator attention"],
   ["/organization", "Show campaign ownership and reporting lines"],
   ["/goals", "Show the durable goal tree and phase progress"],
   ["/experience", "Show reusable trajectory experience and curriculum"],
@@ -321,6 +322,7 @@ function help(): string {
     "/experiment [propose|run]    Create or run a reproducible experiment",
     "/loop [once|start|pause]     Run the autonomous research loop",
     "/status                      Show complete workbench state",
+    "/attention [list|ack|unack]  Triage durable operator attention",
     "/experience [export]       Show or export trajectory experience",
     "/usage                       Show budgets and research activity",
     "/budget tokens <count>       Set the campaign agent-token ceiling (0 = unlimited)",
@@ -3394,6 +3396,31 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       append("assistant", formatCampaignOrganization(campaignOrganization(store)));
       store.close();
+      return;
+    }
+    if (request === "/attention" || request === "/attention list") {
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const attention = operatorAttention(store, root);
+      append("assistant", attention.total ? `Attention · ${attention.total} actionable · ${attention.critical} critical · ${attention.warning} warning\n${attention.items.map((item) => `${item.severity} · ${item.id}\n  ${item.summary}\n  next: ${item.next}\n  fingerprint: ${attentionFingerprint(item)}`).join("\n")}` : "No actionable attention.");
+      store.close();
+      return;
+    }
+    if (request.startsWith("/attention ack ")) {
+      const itemId = request.replace(/^\/attention ack\s+/, "").trim();
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const item = operatorAttention(store, root).items.find((entry) => entry.id === itemId);
+      if (!item) { store.close(); append("assistant", `Unknown or already acknowledged attention item: ${itemId}`); return; }
+      const result = store.acknowledgeAttention(itemId, attentionFingerprint(item), "operator");
+      store.close();
+      append("assistant", `${result.changed ? "Acknowledged" : "Already acknowledged"} ${itemId}. It will reopen if its state changes.`);
+      return;
+    }
+    if (request.startsWith("/attention unack ")) {
+      const itemId = request.replace(/^\/attention unack\s+/, "").trim();
+      const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const changed = store.clearAttentionAcknowledgement(itemId, "operator");
+      store.close();
+      append("assistant", changed ? `Reopened ${itemId}.` : `No acknowledgement found for ${itemId}.`);
       return;
     }
     if (request === "/status" || request === "/project status") {

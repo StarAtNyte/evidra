@@ -584,6 +584,31 @@ program.command("status").action(() => {
   store.close();
 });
 
+const attentionCommand = program.command("attention").description("Inspect and triage durable operator attention");
+attentionCommand.command("list").option("--json", "emit machine-readable attention").description("Show current actionable attention items").action((options: { json?: boolean }) => {
+  const store = new ResearchStore(statePath);
+  const raw = operatorAttention(store, root);
+  const report = { ...raw, items: raw.items.map((item) => ({ ...item, fingerprint: attentionFingerprint(item) })) };
+  if (options.json) console.log(JSON.stringify(report, null, 2));
+  else console.log(`Health  ${raw.health.status.toUpperCase()} · ${raw.health.reason}\n${raw.total ? raw.items.map((item) => `${item.severity.padEnd(8)} ${item.id}\n  ${item.summary}\n  next: ${item.next}\n  fingerprint: ${attentionFingerprint(item)}`).join("\n") : "No actionable attention."}`);
+  store.close();
+});
+attentionCommand.command("ack <id>").option("--note <note>", "operator note").description("Acknowledge one attention item until its state changes").action((id: string, options: { note?: string }) => {
+  const store = new ResearchStore(statePath);
+  const item = operatorAttention(store, root).items.find((entry) => entry.id === id);
+  if (!item) { store.close(); throw new Error(`Unknown or already acknowledged attention item '${id}'.`); }
+  const result = store.acknowledgeAttention(id, attentionFingerprint(item), "operator", options.note);
+  console.log(`${result.changed ? "Acknowledged" : "Already acknowledged"} ${id}.`);
+  store.close();
+});
+attentionCommand.command("unack <id>").description("Reopen one acknowledged attention item").action((id: string) => {
+  const store = new ResearchStore(statePath);
+  const changed = store.clearAttentionAcknowledgement(id, "operator");
+  store.close();
+  if (!changed) throw new Error(`No acknowledgement found for '${id}'.`);
+  console.log(`Reopened ${id}.`);
+});
+
 program.command("organization")
   .option("--json", "emit the bounded organization projection as JSON")
   .description("Inspect campaign mission, phase ownership, reporting lines, and active work")
