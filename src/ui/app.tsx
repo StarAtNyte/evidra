@@ -234,7 +234,7 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/loop": [["/loop status", "Show loop state"], ["/loop once", "Run one research cycle"], ["/loop start", "Start autonomous loop"], ["/loop pause", "Pause loop"], ["/loop stop", "Stop loop"]],
   "/steer": [["/steer ", "Guide the active campaign at the next safe boundary"]],
   "/scheduler": [["/scheduler start", "Start scheduling"], ["/scheduler pause", "Pause scheduling"], ["/scheduler drain", "Finish active work only"]],
-  "/routine": [["/routine create", "Create a recurring routine"], ["/routine list", "Show recurring research routines"], ["/routine daemon", "Run due routines continuously"], ["/routine recover", "Recover stale routine leases"], ["/routine history ", "Show routine run history"], ["/routine run ", "Run a due routine"], ["/routine max-runs ", "Change a routine lifetime cap"], ["/routine pause ", "Pause a routine"], ["/routine resume ", "Resume a routine"]],
+  "/routine": [["/routine create", "Create a recurring routine"], ["/routine list", "Show recurring research routines"], ["/routine daemon", "Run due routines continuously"], ["/routine recover", "Recover stale routine leases"], ["/routine history ", "Show routine run history"], ["/routine run ", "Run a due routine"], ["/routine max-runs ", "Change a routine lifetime cap"], ["/routine catch-up ", "Change missed-wakeup policy"], ["/routine pause ", "Pause a routine"], ["/routine resume ", "Resume a routine"]],
   "/thinking": REASONING_LEVELS.map((level) => [`/thinking ${level}`, `Thinking effort: ${level}`] as const),
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
@@ -3077,6 +3077,15 @@ export function App({ root }: { root: string }): React.JSX.Element {
         } catch (error) { store.close(); appendError(error); }
         return;
       }
+      if (action === "catch-up" && id && count !== undefined) {
+        if (count !== "coalesce" && count !== "replay") { store.close(); append("assistant", "Use /routine catch-up <id> coalesce or /routine catch-up <id> replay."); return; }
+        try {
+          const entry = store.setRoutineCatchUpPolicy(id, count);
+          store.close();
+          append("assistant", `Routine ${entry.name} catch-up policy: ${entry.catchUpPolicy}. Pending wakeups: ${entry.pendingTriggers ?? 0}.`);
+        } catch (error) { store.close(); appendError(error); }
+        return;
+      }
       if ((action === "pause" || action === "resume") && id) {
         const entry = store.setRoutineStatus(id, action === "pause" ? "paused" : "active");
         store.close();
@@ -3114,7 +3123,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
       store.close();
-      append("assistant", "Use /routine list, /routine run <id>, /routine max-runs <id> <count>, /routine pause <id>, /routine resume <id>, or /routine recover.");
+      append("assistant", "Use /routine list, /routine run <id>, /routine max-runs <id> <count>, /routine catch-up <id> coalesce|replay, /routine pause <id>, /routine resume <id>, or /routine recover.");
       return;
     }
     if (request === "/hero" || request === "/hero status") {

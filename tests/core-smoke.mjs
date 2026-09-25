@@ -9089,6 +9089,11 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const repeatedRoutineTrigger = await post("/routines/remote-routine/trigger", {}, token);
     assert.equal(repeatedRoutineTrigger.status, 200);
     assert.equal((await repeatedRoutineTrigger.json()).changed, false);
+    const remoteRoutineCatchUp = await post("/routines/remote-routine/catch-up?policy=replay", {}, token);
+    assert.equal(remoteRoutineCatchUp.status, 200);
+    assert.equal((await remoteRoutineCatchUp.json()).catchUpPolicy, "replay");
+    const remoteRoutineCatchUpInvalid = await post("/routines/remote-routine/catch-up?policy=invalid", {}, token);
+    assert.equal(remoteRoutineCatchUpInvalid.status, 400);
     const workerOnlyRoutineRecover = await post("/routines/remote-stale-routine/recover", {}, null, "worker-a", "worker-secret");
     assert.equal(workerOnlyRoutineRecover.status, 401);
     const remoteRoutineRecover = await post("/routines/remote-stale-routine/recover", {}, token, undefined, undefined, "research-console");

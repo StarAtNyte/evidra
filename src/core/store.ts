@@ -2381,6 +2381,18 @@ export class ResearchStore {
     return this.routine(id) ?? updated;
   }
 
+  setRoutineCatchUpPolicy(id: string, catchUpPolicy: RoutineCatchUpPolicy): ResearchRoutine {
+    if (catchUpPolicy !== "coalesce" && catchUpPolicy !== "replay") throw new Error("Routine catch-up policy must be 'coalesce' or 'replay'.");
+    const current = this.routine(id);
+    if (!current) throw new Error(`Unknown routine '${id}'.`);
+    if (current.status === "running") throw new Error(`Routine '${id}' is running; change its catch-up policy after the current run finishes.`);
+    const pendingTriggers = catchUpPolicy === "coalesce" && (current.pendingTriggers ?? 0) > 0 ? 1 : current.pendingTriggers ?? 0;
+    const updated: ResearchRoutine = { ...current, catchUpPolicy, pendingTriggers, updatedAt: new Date().toISOString() };
+    this.saveRoutine(updated);
+    this.appendEvent("routine.catch_up_policy_updated", { id, from: current.catchUpPolicy ?? "coalesce", to: catchUpPolicy, pendingTriggers });
+    return this.routine(id) ?? updated;
+  }
+
   recoverStaleRoutines(now = new Date(), source = "scheduler"): string[] {
     const rows = this.db.prepare("SELECT id FROM research_routines WHERE status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?").all(now.toISOString()) as Array<{ id: string }>;
     return rows.flatMap((row) => this.recoverStaleRoutine(row.id, now, source) ? [row.id] : []);

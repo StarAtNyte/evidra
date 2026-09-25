@@ -2753,7 +2753,7 @@ event.command("serve")
       const operatorActivityPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/activity";
       const operatorActivityStreamPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/activity/stream";
       const operatorOrganizationPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/organization";
-      const routineControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/routines\/([^/]+)\/(pause|resume|trigger|recover)$/) : null;
+      const routineControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/routines\/([^/]+)\/(pause|resume|trigger|recover|catch-up)$/) : null;
       const operatorRoutinePath = Boolean(routineControlMatch);
       const routineDetailMatch = request.method === "GET" ? (request.url ?? "").split("?", 1)[0].match(/^\/routines\/([^/]+)$/) : null;
       const operatorRoutineDetailPath = Boolean(routineDetailMatch);
@@ -2799,7 +2799,7 @@ event.command("serve")
           protocolVersion: 1,
           workspaceId,
           authentication: { operator: "Authorization: Bearer <token>", worker: "X-Evidra-Worker-Id + X-Evidra-Worker-Token" },
-          features: ["queue", "queue-filters", "worker-heartbeats", "task-progress", "task-detail", "task-recovery", "activity-feed", "activity-stream", "operator-attention", "agent-organization", "agent-detail", "agent-directives", "routine-control", "routine-recovery", "routine-detail", "controller-control", "approvals", "event-integrity", "redaction"],
+          features: ["queue", "queue-filters", "worker-heartbeats", "task-progress", "task-detail", "task-recovery", "activity-feed", "activity-stream", "operator-attention", "agent-organization", "agent-detail", "agent-directives", "routine-control", "routine-recovery", "routine-policy", "routine-detail", "controller-control", "approvals", "event-integrity", "redaction"],
           limits: { requestBodyBytes: 64_000, activityPage: 200, activityStreamEvents: 100, taskDetailHistory: 128, agentDetailItems: 128, routineDetailRuns: 64 },
           integrity: integrity.status,
         }));
@@ -3100,6 +3100,19 @@ event.command("serve")
             response.end(JSON.stringify({ ok: true, id: routine.id, status: routine.status, changed: true, nextRunAt: routine.nextRunAt }));
             return;
           }
+          if (actionName === "catch-up") {
+            const catchUpPolicy = new URL(request.url ?? "/", "http://evidra.local").searchParams.get("policy");
+            if (catchUpPolicy !== "coalesce" && catchUpPolicy !== "replay") {
+              response.writeHead(400, headers);
+              response.end(JSON.stringify({ error: "catch-up policy must be supplied as ?policy=coalesce or ?policy=replay" }));
+              return;
+            }
+            const before = store.routine(routineId);
+            const routine = store.setRoutineCatchUpPolicy(routineId, catchUpPolicy);
+            response.writeHead(200, headers);
+            response.end(JSON.stringify({ ok: true, id: routine.id, status: routine.status, catchUpPolicy: routine.catchUpPolicy, pendingTriggers: routine.pendingTriggers, changed: before?.catchUpPolicy !== routine.catchUpPolicy }));
+            return;
+          }
           const action = actionName === "pause" ? "paused" : "active";
           const before = store.routine(routineId);
           const routine = store.setRoutineStatus(routineId, action);
@@ -3189,7 +3202,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: true, id: taskId, status, changed }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath && !operatorAttentionAckPath && !operatorTaskControlPath && !operatorTaskAssignPath && !operatorTaskRecoveryPath && !operatorControllerControlPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /attention/ack, /attention/unack, POST /tasks/:id/pause|resume, POST /tasks/:id/assign, POST /tasks/:id/recover, POST /controller/pause|resume|stop, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /routines/:id/recover, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /tasks/:id, GET /attention, GET /activity, GET /activity/stream, GET /routines/:id, GET /organization, GET /capabilities, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath && !operatorAttentionAckPath && !operatorTaskControlPath && !operatorTaskAssignPath && !operatorTaskRecoveryPath && !operatorControllerControlPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /attention/ack, /attention/unack, POST /tasks/:id/pause|resume, POST /tasks/:id/assign, POST /tasks/:id/recover, POST /controller/pause|resume|stop, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /routines/:id/recover, /routines/:id/catch-up, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /tasks/:id, GET /attention, GET /activity, GET /activity/stream, GET /routines/:id, GET /organization, GET /capabilities, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
@@ -3201,7 +3214,7 @@ event.command("serve")
       request.on("end", () => {
         if (rejected) return;
         try {
-          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; checkpoint?: unknown; child?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; capacity?: unknown; status?: unknown; kind?: unknown; message?: unknown; scopeKey?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown; id?: unknown; fingerprint?: unknown; note?: unknown; assigneeId?: unknown; route?: unknown };
+          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; checkpoint?: unknown; child?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; capacity?: unknown; status?: unknown; kind?: unknown; message?: unknown; scopeKey?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown; id?: unknown; fingerprint?: unknown; note?: unknown; assigneeId?: unknown; route?: unknown; catchUpPolicy?: unknown };
           if (operatorControllerControlPath && controllerControlMatch) {
             const action = controllerControlMatch[1] as "pause" | "resume" | "stop";
             const store = new ResearchStore(statePath);
@@ -3798,6 +3811,13 @@ routine.command("history <id>").option("--json", "emit machine-readable run hist
   if (options.json) console.log(JSON.stringify(runs, null, 2));
   else console.log(runs.length ? runs.map((run) => `${run.status} ${run.id} · started ${run.startedAt}${run.finishedAt ? ` · finished ${run.finishedAt}` : ""}${run.exitCode !== null ? ` · exit ${run.exitCode}` : ""}${run.error ? ` · ${run.error}` : ""}`).join("\n") : `No runs recorded for routine '${id}'.`);
   store.close();
+});
+routine.command("catch-up <id> <policy>").description("Change how a routine handles missed event wakeups").action((id: string, policy: string) => {
+  if (policy !== "coalesce" && policy !== "replay") throw new Error("Routine catch-up must be 'coalesce' or 'replay'.");
+  const store = new ResearchStore(statePath);
+  const entry = store.setRoutineCatchUpPolicy(id, policy);
+  store.close();
+  console.log(`Routine ${entry.id} catch-up policy: ${entry.catchUpPolicy}. Pending wakeups: ${entry.pendingTriggers ?? 0}.`);
 });
 routine.command("create")
   .requiredOption("--name <name>", "routine display name")
