@@ -2722,6 +2722,8 @@ event.command("serve")
       const operatorRoutinePath = Boolean(routineControlMatch);
       const agentControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/agents\/([^/]+)\/(pause|resume|terminate|revive)$/) : null;
       const operatorAgentPath = Boolean(agentControlMatch);
+      const agentDetailMatch = request.method === "GET" ? (request.url ?? "").split("?", 1)[0].match(/^\/agents\/([^/]+)$/) : null;
+      const operatorAgentDetailPath = Boolean(agentDetailMatch);
       const agentMessageMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/agents\/([^/]+)\/message$/) : null;
       const operatorAgentMessagePath = Boolean(agentMessageMatch);
       const agentDirectiveCancelMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/agents\/([^/]+)\/directives\/(\d+)\/cancel$/) : null;
@@ -2738,7 +2740,7 @@ event.command("serve")
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
       const remoteActor = (typeof request.headers["x-evidra-actor"] === "string" ? request.headers["x-evidra-actor"] : "").replace(/[\u0000-\u001f\u007f]/g, "_").trim().slice(0, 200) || "remote-operator";
-      if (operatorTaskPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
+      if (operatorTaskPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentDetailPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorTaskDetailPath || operatorQueueStatusPath || operatorAttentionPath || operatorActivityPath || operatorActivityStreamPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentDetailPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorAgentDirectiveHistoryPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
@@ -2857,6 +2859,44 @@ event.command("serve")
           activity: store.queueActivities(taskId, activityLimit),
           usageEntries: store.queueUsage(taskId, activityLimit),
           history: store.queueHistory(taskId, historyLimit),
+        };
+        const integrity = store.verifyEventChain();
+        store.close();
+        response.writeHead(integrity.status === "invalid" ? 503 : 200, headers);
+        response.end(JSON.stringify({ ok: integrity.status !== "invalid", ...redactStructured(detail) as object, integrity: integrity.status }));
+        return;
+      }
+      if (operatorAgentDetailPath && agentDetailMatch) {
+        let role: string;
+        try { role = decodeURIComponent(agentDetailMatch[1] ?? ""); } catch {
+          response.writeHead(400, headers);
+          response.end(JSON.stringify({ error: "agent role must be valid URL encoding" }));
+          return;
+        }
+        const query = new URL(request.url ?? "/agents/role", "http://evidra.local").searchParams;
+        const activityLimit = Number.parseInt(query.get("activityLimit") ?? "32", 10);
+        const directiveLimit = Number.parseInt(query.get("directiveLimit") ?? "32", 10);
+        const sessionLimit = Number.parseInt(query.get("sessionLimit") ?? "16", 10);
+        if (![activityLimit, directiveLimit, sessionLimit].every((value) => Number.isInteger(value) && value >= 1 && value <= 128)) {
+          response.writeHead(400, headers);
+          response.end(JSON.stringify({ error: "activityLimit, directiveLimit, and sessionLimit must be between 1 and 128" }));
+          return;
+        }
+        const store = new ResearchStore(statePath);
+        const organizationEntry = agentOrganization(store).find((entry) => entry.role === role);
+        if (!organizationEntry) {
+          store.close();
+          response.writeHead(404, headers);
+          response.end(JSON.stringify({ error: `Unknown agent role '${role}'.` }));
+          return;
+        }
+        const detail = {
+          role: organizationEntry,
+          control: store.agentPause(role) ?? null,
+          directives: store.agentDirectives(role, directiveLimit),
+          directiveOutcomes: store.agentDirectiveOutcomes(128).filter((entry) => entry.role === role).slice(-directiveLimit),
+          activity: store.agentActivities({ role, limit: activityLimit }),
+          sessions: store.agentSessions(128).filter((entry) => entry.role === role).slice(0, sessionLimit),
         };
         const integrity = store.verifyEventChain();
         store.close();
@@ -3035,7 +3075,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: true, id: taskId, status, changed }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /tasks/:id, GET /attention, GET /activity, GET /activity/stream, GET /organization, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /tasks/:id, GET /attention, GET /activity, GET /activity/stream, GET /organization, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");

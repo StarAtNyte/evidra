@@ -8889,6 +8889,16 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const organizationAfterMessageBody = await organizationAfterMessage.json();
     assert.equal(organizationAfterMessageBody.organization.find((entry) => entry.role === "model researcher")?.directiveQueue[0]?.sourceRole, "research-console");
     const directiveId = remoteAgentMessageBody.directive.id;
+    const workerOnlyAgentDetail = await fetch(`http://127.0.0.1:${port}/agents/model%20researcher`, { headers: { "x-evidra-worker-id": "worker-a", "x-evidra-worker-token": "worker-secret" } });
+    assert.equal(workerOnlyAgentDetail.status, 401);
+    const remoteAgentDetail = await fetch(`http://127.0.0.1:${port}/agents/model%20researcher?activityLimit=8&directiveLimit=8&sessionLimit=8`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(remoteAgentDetail.status, 200);
+    const remoteAgentDetailBody = await remoteAgentDetail.json();
+    assert.equal(remoteAgentDetailBody.role.role, "model researcher");
+    assert.equal(typeof remoteAgentDetailBody.role.responsibility, "string");
+    assert.equal(Array.isArray(remoteAgentDetailBody.directives), true);
+    assert.equal(remoteAgentDetailBody.directives.some((entry) => entry.id === directiveId), true);
+    assert.equal(Array.isArray(remoteAgentDetailBody.activity), true);
     const repeatedAgentMessage = await post("/agents/model%20researcher/message", { message: "recheck the latest evidence", scopeKey: "phase-alpha" }, token, undefined, undefined, "research-console");
     assert.equal(repeatedAgentMessage.status, 200);
     assert.equal((await repeatedAgentMessage.json()).idempotent, true);
