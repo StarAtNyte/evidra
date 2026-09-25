@@ -291,6 +291,12 @@ export function laneToolCalls(role: ResearchLaneRole, objective = ""): ResearchT
     { name: "workspace.files", arguments: {} },
     { name: "workspace.search", arguments: { query: focus } },
   ];
+  // Dataset files are intentionally not copied into disposable provider
+  // workspaces. Give the data lane a bounded controller-side audit instead,
+  // so it can still observe dataset presence, skipped large files, duplicate
+  // metadata, and warnings without granting the provider write access to the
+  // source data or consuming gigabytes of disk per lane.
+  if (role === "data detective") calls.push({ name: "data.audit", arguments: {} });
   // Literature-aware lanes should discover primary work before the director
   // commits to a method. Search is deliberately bounded and remains only a
   // candidate frontier; retrieval and claim verification still happen through

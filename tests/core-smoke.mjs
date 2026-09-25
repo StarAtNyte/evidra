@@ -3900,7 +3900,7 @@ test("research lanes use bounded role-specific workspace observations", () => {
   const dataCalls = laneToolCalls("data detective");
   const validationCalls = laneToolCalls("validation scientist");
   const modelCalls = laneToolCalls("model researcher");
-  assert.deepEqual(dataCalls.map((call) => call.name), ["workspace.files", "workspace.search", "web.search"]);
+  assert.deepEqual(dataCalls.map((call) => call.name), ["workspace.files", "workspace.search", "data.audit", "web.search"]);
   assert.match(String(dataCalls[1].arguments.query), /leak|duplicate/i);
   assert.match(String(validationCalls[1].arguments.query), /split|metric/i);
   assert.match(String(modelCalls[1].arguments.query), /model|estimator/i);
