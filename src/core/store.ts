@@ -391,6 +391,9 @@ export interface ExternalWorkerHealth {
   status: "running" | "idle" | "blocked" | "failed";
   admission: "approved" | "review" | "rejected";
   capabilities: string[];
+  capacity: number | null;
+  activeTasks: number;
+  availableSlots: number | null;
   task: string | null;
   lastHeartbeatAt: string;
   health: "healthy" | "stale";
@@ -642,6 +645,7 @@ export class ResearchStore {
         model TEXT NOT NULL,
         status TEXT NOT NULL,
         capabilities_json TEXT NOT NULL DEFAULT '[]',
+        capacity INTEGER,
         task TEXT,
         last_heartbeat_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -787,6 +791,7 @@ export class ResearchStore {
     try { this.db.exec("ALTER TABLE run_attempts ADD COLUMN metric_conflicts_json TEXT NOT NULL DEFAULT '[]'"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN heartbeat_at TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE external_workers ADD COLUMN workspace_id TEXT"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE external_workers ADD COLUMN capacity INTEGER"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE agent_lanes ADD COLUMN lease_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN owner_id TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE work_queue ADD COLUMN claim_token TEXT"); } catch { /* already migrated */ }
@@ -1766,7 +1771,7 @@ export class ResearchStore {
   }
 
   /** Accept a heartbeat from an authenticated external worker without allowing lease takeover. */
-  recordExternalAgentHeartbeat(input: { workspaceId?: string; role: string; leaseId: string; provider: string; model: string; status: "running" | "idle" | "blocked" | "failed"; task?: string | null; budgetSeconds?: number | null; capabilities?: string[] }): { accepted: boolean; reason?: string } {
+  recordExternalAgentHeartbeat(input: { workspaceId?: string; role: string; leaseId: string; provider: string; model: string; status: "running" | "idle" | "blocked" | "failed"; task?: string | null; budgetSeconds?: number | null; capacity?: number | null; capabilities?: string[] }): { accepted: boolean; reason?: string } {
     if (input.workspaceId && input.workspaceId !== this.workspaceId()) {
       const reason = "worker heartbeat belongs to a different Evidra workspace";
       this.appendEvent("agent.external_heartbeat.rejected", { role: input.role, leaseId: input.leaseId, reason });
@@ -1796,21 +1801,33 @@ export class ResearchStore {
     const now = new Date().toISOString();
     const capabilities = [...new Set((input.capabilities ?? []).map((capability) => capability.trim().toLowerCase()))].sort();
     this.db.prepare(`
-      INSERT INTO external_workers (worker_id, workspace_id, role, provider, model, status, capabilities_json, task, last_heartbeat_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO external_workers (worker_id, workspace_id, role, provider, model, status, capabilities_json, capacity, task, last_heartbeat_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(worker_id) DO UPDATE SET role = excluded.role, provider = excluded.provider, model = excluded.model,
         workspace_id = excluded.workspace_id,
-        status = excluded.status, capabilities_json = excluded.capabilities_json, task = excluded.task,
+        status = excluded.status, capabilities_json = excluded.capabilities_json, capacity = excluded.capacity, task = excluded.task,
         last_heartbeat_at = excluded.last_heartbeat_at, updated_at = excluded.updated_at
-    `).run(input.leaseId, input.workspaceId ?? this.workspaceId(), input.role, input.provider, input.model, input.status, safeJson(capabilities), input.task ?? null, now, now);
+    `).run(input.leaseId, input.workspaceId ?? this.workspaceId(), input.role, input.provider, input.model, input.status, safeJson(capabilities), input.capacity ?? null, input.task ?? null, now, now);
     this.appendEvent("agent.external_heartbeat.accepted", { role: input.role, leaseId: input.leaseId, provider: input.provider, model: input.model, status: input.status });
     return { accepted: true };
   }
 
   externalWorkers(limit = 64): ExternalWorkerHealth[] {
     const bounded = Math.max(1, Math.min(256, Math.floor(limit)));
-    const rows = this.db.prepare("SELECT worker_id, workspace_id, role, provider, model, status, capabilities_json, task, last_heartbeat_at, updated_at FROM external_workers ORDER BY last_heartbeat_at DESC LIMIT ?").all(bounded) as Array<{ worker_id: string; workspace_id: string | null; role: string; provider: string; model: string; status: string; capabilities_json: string; task: string | null; last_heartbeat_at: string; updated_at: string }>;
-    return rows.map((row) => ({ workerId: row.worker_id, workspaceId: row.workspace_id, role: row.role, provider: row.provider, model: row.model, status: row.status as ExternalWorkerHealth["status"], admission: this.agentRoleAdmissionStatus(row.role), capabilities: JSON.parse(row.capabilities_json || "[]") as string[], task: row.task, lastHeartbeatAt: row.last_heartbeat_at, health: Number.isFinite(Date.parse(row.last_heartbeat_at)) && Date.now() - Date.parse(row.last_heartbeat_at) <= 120_000 ? "healthy" as const : "stale" as const, updatedAt: row.updated_at }));
+    const rows = this.db.prepare("SELECT worker_id, workspace_id, role, provider, model, status, capabilities_json, capacity, task, last_heartbeat_at, updated_at FROM external_workers ORDER BY last_heartbeat_at DESC LIMIT ?").all(bounded) as Array<{ worker_id: string; workspace_id: string | null; role: string; provider: string; model: string; status: string; capabilities_json: string; capacity: number | null; task: string | null; last_heartbeat_at: string; updated_at: string }>;
+    return rows.map((row) => {
+      const activeTasks = Number((this.db.prepare("SELECT COUNT(*) AS count FROM work_queue WHERE owner_id = ? AND status = 'running'").get(row.worker_id) as { count: number }).count);
+      return { workerId: row.worker_id, workspaceId: row.workspace_id, role: row.role, provider: row.provider, model: row.model, status: row.status as ExternalWorkerHealth["status"], admission: this.agentRoleAdmissionStatus(row.role), capabilities: JSON.parse(row.capabilities_json || "[]") as string[], capacity: row.capacity === null ? null : Math.max(1, Math.min(64, Math.floor(row.capacity))), activeTasks, availableSlots: row.capacity === null ? null : Math.max(0, Math.floor(row.capacity) - activeTasks), task: row.task, lastHeartbeatAt: row.last_heartbeat_at, health: Number.isFinite(Date.parse(row.last_heartbeat_at)) && Date.now() - Date.parse(row.last_heartbeat_at) <= 120_000 ? "healthy" as const : "stale" as const, updatedAt: row.updated_at };
+    });
+  }
+
+  /** Return a fresh worker's atomic dispatch budget for remote queue checkout. */
+  externalWorkerDispatchCapacity(workerId: string, maxAgeMs = 120_000): { limit: number | null; active: number; available: number | null; fresh: boolean } {
+    const row = this.db.prepare("SELECT capacity, last_heartbeat_at, status FROM external_workers WHERE worker_id = ?").get(workerId) as { capacity: number | null; last_heartbeat_at: string; status: string } | undefined;
+    const fresh = Boolean(row && ["running", "idle"].includes(row.status) && Number.isFinite(Date.parse(row.last_heartbeat_at)) && Date.now() - Date.parse(row.last_heartbeat_at) <= Math.max(1_000, maxAgeMs));
+    const active = Number((this.db.prepare("SELECT COUNT(*) AS count FROM work_queue WHERE owner_id = ? AND status = 'running'").get(workerId) as { count: number }).count);
+    const limit = fresh && row?.capacity !== null && row?.capacity !== undefined ? Math.max(1, Math.min(64, Math.floor(row.capacity))) : null;
+    return { limit, active, available: limit === null ? null : Math.max(0, limit - active), fresh };
   }
 
   /** Use only a fresh heartbeat when a remote worker omits capabilities at claim time. */
@@ -2343,13 +2360,17 @@ export class ResearchStore {
     return { ready: missing.length === 0 && pending.length === 0 && failed.length === 0, missing, pending, failed };
   }
 
-  claimNextTask(kinds?: string[], ownerId?: string, workerCapabilities?: string[]): QueuedTask | undefined {
+  claimNextTask(kinds?: string[], ownerId?: string, workerCapabilities?: string[], workerCapacity?: number | null): QueuedTask | undefined {
     if (this.queueControl().paused) return undefined;
     this.expireDeadlineTasks();
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
       const control = this.db.prepare("SELECT paused FROM queue_control WHERE id = 1").get() as { paused: number } | undefined;
       if (control?.paused === 1) return undefined;
+      if (ownerId && workerCapacity !== null && workerCapacity !== undefined) {
+        const active = (this.db.prepare("SELECT COUNT(*) AS count FROM work_queue WHERE owner_id = ? AND status = 'running'").get(ownerId) as { count: number }).count;
+        if (active >= workerCapacity) return undefined;
+      }
       // Preserve explicit priority while giving long-waiting work a bounded
       // boost. One point per hour, capped at three, prevents a steady stream
       // of newer high-priority tickets from starving durable background work.
@@ -2376,13 +2397,17 @@ export class ResearchStore {
   }
 
   /** Atomically claim one known task, preserving queue ownership across controllers. */
-  claimTask(id: string, kinds?: string[], ownerId?: string, workerCapabilities?: string[]): QueuedTask | undefined {
+  claimTask(id: string, kinds?: string[], ownerId?: string, workerCapabilities?: string[], workerCapacity?: number | null): QueuedTask | undefined {
     if (this.queueControl().paused) return undefined;
     this.expireDeadlineTasks();
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
       const control = this.db.prepare("SELECT paused FROM queue_control WHERE id = 1").get() as { paused: number } | undefined;
       if (control?.paused === 1) return undefined;
+      if (ownerId && workerCapacity !== null && workerCapacity !== undefined) {
+        const active = (this.db.prepare("SELECT COUNT(*) AS count FROM work_queue WHERE owner_id = ? AND status = 'running'").get(ownerId) as { count: number }).count;
+        if (active >= workerCapacity) return undefined;
+      }
       const kindClause = kinds?.length ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
       const assignmentClause = ownerId ? " AND (assignee_id IS NULL OR assignee_id = ?)" : " AND assignee_id IS NULL";
       if (this.queueUsageState(id)?.exhausted === true) return undefined;

@@ -920,7 +920,7 @@ const agents = program.command("agents")
       console.log(JSON.stringify(output, null, 2));
     } else {
       const roleLines = organization.map((agent) => `${agent.control?.terminated ? "terminated" : agent.control?.paused ? "paused" : agent.status.padEnd(8)} ${agent.role} · ${agent.admission} · ${agent.authority} · tools ${agent.toolAllowlist?.join(",") ?? "defaults"} · health ${agent.health} · reports to ${agent.parentRole ?? "operator"}${agent.review ? ` · ${agent.review.recommendation} ${(agent.review.score * 100).toFixed(0)}%` : ""}${agent.pendingDirectives ? ` · ${agent.pendingDirectives} directive(s)` : ""}${agent.task ? ` · ${agent.task.slice(0, 100)}` : ""}`);
-      const workerLines = output.externalWorkers.map((worker) => `external ${worker.status.padEnd(7)} ${worker.workerId} · ${worker.provider}/${worker.model} · ${worker.admission} · ${worker.health}${worker.capabilities.length ? ` · ${worker.capabilities.join(",")}` : ""}`);
+      const workerLines = output.externalWorkers.map((worker) => `external ${worker.status.padEnd(7)} ${worker.workerId} · ${worker.provider}/${worker.model} · ${worker.admission} · ${worker.health}${worker.capacity === null ? "" : ` · slots ${worker.activeTasks}/${worker.capacity}`} ${worker.capabilities.length ? ` · ${worker.capabilities.join(",")}` : ""}`);
       console.log([...roleLines, ...(workerLines.length ? ["External workers", ...workerLines] : [])].join("\n") || "No agent roles recorded.");
       console.log(`\nResumable sessions  ${sessions.length}`);
       if (output.roleBudgets.length) console.log(`\nRole budgets\n${output.roleBudgets.map((entry) => `  ${entry.role} · ${entry.usedTokens}/${entry.budgetTokens} tokens · ${entry.status}`).join("\n")}`);
@@ -2730,7 +2730,7 @@ event.command("serve")
       request.on("end", () => {
         if (rejected) return;
         try {
-          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; checkpoint?: unknown; child?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
+          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; checkpoint?: unknown; child?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; capacity?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
           if (taskPath) {
             const workerId = typeof parsed.workerId === "string" ? parsed.workerId.trim() : "";
             if (!workerId || workerId.length > 200) throw new Error("Task requests require a workerId of 1–200 characters.");
@@ -2772,6 +2772,8 @@ event.command("serve")
               if (parsed.kinds !== undefined && !kinds) throw new Error("kinds must be an array of at most 16 strings.");
               const capabilities = parsed.capabilities === undefined ? undefined : Array.isArray(parsed.capabilities) && parsed.capabilities.length <= 32 && parsed.capabilities.every((capability) => typeof capability === "string" && /^[a-zA-Z0-9_.:-]{1,120}$/.test(capability.trim())) ? [...new Set((parsed.capabilities as string[]).map((capability) => capability.trim().toLowerCase()))] : undefined;
               if (parsed.capabilities !== undefined && !capabilities) throw new Error("capabilities must be an array of at most 32 simple names.");
+              const requestedCapacity = parsed.capacity === undefined || parsed.capacity === null ? undefined : typeof parsed.capacity === "number" && Number.isInteger(parsed.capacity) && parsed.capacity >= 1 && parsed.capacity <= 64 ? parsed.capacity : undefined;
+              if (parsed.capacity !== undefined && parsed.capacity !== null && requestedCapacity === undefined) throw new Error("capacity must be an integer from 1 to 64.");
               if (allowedTaskKinds && kinds?.some((kind) => !allowedTaskKinds.includes(kind))) throw new Error("Requested task kind is outside this worker bridge's allowed scope.");
               if (kinds?.some((kind) => !permitsKind(kind))) { store.close(); throw new Error("Requested task kind is outside this worker's assigned scope."); }
               const scopedKinds = workerAllowedKinds ? (allowedTaskKinds ? workerAllowedKinds.filter((kind) => allowedTaskKinds.includes(kind)) : workerAllowedKinds) : allowedTaskKinds;
@@ -2783,16 +2785,19 @@ event.command("serve")
                 response.end(JSON.stringify({ error: "worker requested a capability outside its configured allowlist" }));
                 return;
               }
-              const task = store.claimNextTask(kinds ?? scopedKinds, workerId, effectiveCapabilities);
+              const dispatch = store.externalWorkerDispatchCapacity(workerId);
+              const capacity = requestedCapacity ?? dispatch.limit;
+              const task = store.claimNextTask(kinds ?? scopedKinds, workerId, effectiveCapabilities, capacity);
               const blockedApprovals = task ? [] : store.queueTasks("queued")
                 .filter((candidate) => ["pending", "rejected"].includes(candidate.approvalStatus))
                 .filter((candidate) => !scopedKinds || scopedKinds.includes(candidate.kind))
                 .slice(0, 16)
                 .map((candidate) => ({ id: candidate.id, kind: candidate.kind, status: candidate.approvalStatus, reason: candidate.approvalReason }));
               const taskWithProgress = task ? { ...task, progress: store.queueProgress(task.id) } : null;
+              const afterDispatch = store.externalWorkerDispatchCapacity(workerId);
               store.close();
               response.writeHead(200, headers);
-              response.end(JSON.stringify({ ok: true, task: taskWithProgress, blockedApprovals }));
+              response.end(JSON.stringify({ ok: true, task: taskWithProgress, blockedApprovals, capacity: { limit: afterDispatch.limit, active: afterDispatch.active, available: afterDispatch.available } }));
               return;
             }
             const taskId = typeof parsed.taskId === "string" ? parsed.taskId.trim() : "";
