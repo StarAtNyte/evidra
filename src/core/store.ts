@@ -2353,12 +2353,23 @@ export class ResearchStore {
 
   recoverStaleRoutines(now = new Date()): string[] {
     const rows = this.db.prepare("SELECT id FROM research_routines WHERE status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?").all(now.toISOString()) as Array<{ id: string }>;
-    if (!rows.length) return [];
-    this.db.prepare("UPDATE research_routines SET status = 'active', lease_id = NULL, lease_expires_at = NULL, updated_at = ? WHERE status = 'running' AND lease_expires_at <= ?").run(now.toISOString(), now.toISOString());
-    for (const row of rows) this.db.prepare("UPDATE research_routine_runs SET status = 'abandoned', finished_at = ?, exit_code = NULL, error = ? WHERE id = (SELECT id FROM research_routine_runs WHERE routine_id = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1)").run(now.toISOString(), "runner lease expired", row.id);
-    const ids = rows.map((row) => row.id);
-    this.appendEvent("routine.stale_recovered", { ids });
-    return ids;
+    return rows.flatMap((row) => this.recoverStaleRoutine(row.id, now) ? [row.id] : []);
+  }
+
+  /** Reclaim exactly one expired routine lease for a remote or local operator. */
+  recoverStaleRoutine(id: string, now = new Date()): ResearchRoutine | undefined {
+    const timestamp = now.toISOString();
+    const recovered = this.db.transaction(() => {
+      const row = this.db.prepare("SELECT status, lease_expires_at FROM research_routines WHERE id = ?").get(id) as { status: string; lease_expires_at: string | null } | undefined;
+      if (!row || row.status !== "running" || !row.lease_expires_at || Date.parse(row.lease_expires_at) > now.getTime()) return false;
+      const result = this.db.prepare("UPDATE research_routines SET status = 'active', lease_id = NULL, lease_expires_at = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND lease_expires_at <= ?").run(timestamp, id, timestamp);
+      if (result.changes !== 1) return false;
+      this.db.prepare("UPDATE research_routine_runs SET status = 'abandoned', finished_at = ?, exit_code = NULL, error = ? WHERE id = (SELECT id FROM research_routine_runs WHERE routine_id = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1)").run(timestamp, "runner lease expired", id);
+      return true;
+    })();
+    if (!recovered) return undefined;
+    this.appendEvent("routine.stale_recovered", { id, source: "operator" });
+    return this.routine(id);
   }
 
   queueTasks(status?: QueueTaskStatus): QueuedTask[] {

@@ -2753,7 +2753,7 @@ event.command("serve")
       const operatorActivityPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/activity";
       const operatorActivityStreamPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/activity/stream";
       const operatorOrganizationPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/organization";
-      const routineControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/routines\/([^/]+)\/(pause|resume|trigger)$/) : null;
+      const routineControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/routines\/([^/]+)\/(pause|resume|trigger|recover)$/) : null;
       const operatorRoutinePath = Boolean(routineControlMatch);
       const routineDetailMatch = request.method === "GET" ? (request.url ?? "").split("?", 1)[0].match(/^\/routines\/([^/]+)$/) : null;
       const operatorRoutineDetailPath = Boolean(routineDetailMatch);
@@ -2799,7 +2799,7 @@ event.command("serve")
           protocolVersion: 1,
           workspaceId,
           authentication: { operator: "Authorization: Bearer <token>", worker: "X-Evidra-Worker-Id + X-Evidra-Worker-Token" },
-          features: ["queue", "queue-filters", "worker-heartbeats", "task-progress", "task-detail", "task-recovery", "activity-feed", "activity-stream", "operator-attention", "agent-organization", "agent-detail", "agent-directives", "routine-control", "routine-detail", "controller-control", "approvals", "event-integrity", "redaction"],
+          features: ["queue", "queue-filters", "worker-heartbeats", "task-progress", "task-detail", "task-recovery", "activity-feed", "activity-stream", "operator-attention", "agent-organization", "agent-detail", "agent-directives", "routine-control", "routine-recovery", "routine-detail", "controller-control", "approvals", "event-integrity", "redaction"],
           limits: { requestBodyBytes: 64_000, activityPage: 200, activityStreamEvents: 100, taskDetailHistory: 128, agentDetailItems: 128, routineDetailRuns: 64 },
           integrity: integrity.status,
         }));
@@ -3091,6 +3091,15 @@ event.command("serve")
             response.end(JSON.stringify({ ok: true, id: result.routine.id, status: result.routine.status, nextRunAt: result.routine.nextRunAt, changed: result.changed, pendingTriggers: result.routine.pendingTriggers }));
             return;
           }
+          if (actionName === "recover") {
+            const before = store.routine(routineId);
+            const routine = store.recoverStaleRoutine(routineId);
+            if (!before) { response.writeHead(404, headers); response.end(JSON.stringify({ error: `Unknown routine '${routineId}'.` })); return; }
+            if (!routine) { response.writeHead(409, headers); response.end(JSON.stringify({ error: `Routine '${routineId}' does not have an expired runner lease.` })); return; }
+            response.writeHead(200, headers);
+            response.end(JSON.stringify({ ok: true, id: routine.id, status: routine.status, changed: true, nextRunAt: routine.nextRunAt }));
+            return;
+          }
           const action = actionName === "pause" ? "paused" : "active";
           const before = store.routine(routineId);
           const routine = store.setRoutineStatus(routineId, action);
@@ -3180,7 +3189,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: true, id: taskId, status, changed }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath && !operatorAttentionAckPath && !operatorTaskControlPath && !operatorTaskAssignPath && !operatorTaskRecoveryPath && !operatorControllerControlPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /attention/ack, /attention/unack, POST /tasks/:id/pause|resume, POST /tasks/:id/assign, POST /tasks/:id/recover, POST /controller/pause|resume|stop, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /tasks/:id, GET /attention, GET /activity, GET /activity/stream, GET /routines/:id, GET /organization, GET /capabilities, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath && !operatorAttentionAckPath && !operatorTaskControlPath && !operatorTaskAssignPath && !operatorTaskRecoveryPath && !operatorControllerControlPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /attention/ack, /attention/unack, POST /tasks/:id/pause|resume, POST /tasks/:id/assign, POST /tasks/:id/recover, POST /controller/pause|resume|stop, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /routines/:id/recover, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, GET /agents/:role, GET /agents/:role/directives, POST /approvals/queue-task/:id/approve|reject, GET /approvals, GET /queue/status, GET /tasks/:id, GET /attention, GET /activity, GET /activity/stream, GET /routines/:id, GET /organization, GET /capabilities, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");

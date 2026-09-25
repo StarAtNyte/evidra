@@ -8815,6 +8815,8 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     store.updateAgentLane({ role: "remote approval role", status: "idle", provider: "remote", model: "gpt-test", task: "approval smoke" });
     store.enqueueTask({ id: "remote-approval", kind: "research.lane", priority: 1, requiresApproval: true, approvalReason: "remote approval smoke", payload: { objective: "remote approval smoke" } });
     store.createRoutine({ id: "remote-routine", name: "Remote routine", mode: "research", goal: "remote routine control smoke", budgetMinutes: 5, intervalSeconds: 60, stopCondition: "stop", provider: "codex", model: "gpt-test", thinking: "medium", autonomy: "safe", limitPolicy: "stop", executor: "local", lanes: 1, maxRuns: null, triggerEvent: null });
+    store.createRoutine({ id: "remote-stale-routine", name: "Remote stale routine", mode: "research", goal: "remote stale routine recovery smoke", budgetMinutes: 5, intervalSeconds: 60, stopCondition: "stop", provider: "codex", model: "gpt-test", thinking: "medium", autonomy: "safe", limitPolicy: "stop", executor: "local", lanes: 1, maxRuns: null, triggerEvent: null });
+    assert.equal(store.claimRoutine("remote-stale-routine", "remote-stale-runner", -1)?.status, "running");
     store.close();
     const failureStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const failedClaim = failureStore.claimTask("remote-failed", ["research.recovery"], "remote-recovery-seed");
@@ -9083,6 +9085,13 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const repeatedRoutineTrigger = await post("/routines/remote-routine/trigger", {}, token);
     assert.equal(repeatedRoutineTrigger.status, 200);
     assert.equal((await repeatedRoutineTrigger.json()).changed, false);
+    const workerOnlyRoutineRecover = await post("/routines/remote-stale-routine/recover", {}, null, "worker-a", "worker-secret");
+    assert.equal(workerOnlyRoutineRecover.status, 401);
+    const remoteRoutineRecover = await post("/routines/remote-stale-routine/recover", {}, token, undefined, undefined, "research-console");
+    assert.equal(remoteRoutineRecover.status, 200);
+    assert.equal((await remoteRoutineRecover.json()).status, "active");
+    const repeatedRoutineRecover = await post("/routines/remote-stale-routine/recover", {}, token);
+    assert.equal(repeatedRoutineRecover.status, 409);
     const missingRoutine = await post("/routines/missing-routine/pause", {}, token);
     assert.equal(missingRoutine.status, 404);
     const workerOnlyAgentPause = await post("/agents/model%20researcher/pause", {}, null, "worker-a", "worker-secret");
