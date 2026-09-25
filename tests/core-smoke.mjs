@@ -3678,7 +3678,8 @@ test("orchestration benchmark covers worker ownership and recovery", () => {
   const report = runOrchestrationBenchmark();
   assert.equal(report.failed, 0);
   assert.equal(report.score, 1);
-  assert.equal(report.probes.length, 19);
+  assert.equal(report.probes.length, 20);
+  assert.equal(report.probes.some((probe) => probe.id === "worker-capacity-and-resume"), true);
   assert.equal(report.probes.some((probe) => probe.id === "queue-starvation-prevention"), true);
   assert.equal(report.probes.some((probe) => probe.id === "completion-watchdog"), true);
   assert.equal(report.probes.some((probe) => probe.id === "hierarchical-cancellation"), true);

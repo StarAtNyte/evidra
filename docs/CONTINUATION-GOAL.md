@@ -81,6 +81,7 @@ external evaluator.
 - Remote claim, heartbeat, checkpoint, activity, usage, release, and completion responses now include the durable progress snapshot, giving external workers an immediate restart/reconciliation path after every control-plane mutation.
 - External worker heartbeats can now declare an optional capacity of 1–64 concurrent tasks. Claim checkout enforces that capacity inside the same SQLite transaction, and CLI/dashboard health surfaces active and available slots; workers without a declaration remain backward-compatible and unlimited.
 - Successful remote claims now include a bounded resume context—task lineage, attempt number, checkpoint metadata, and recent redacted activity—so crash recovery does not require a worker to reconstruct context from the full event log.
+- The deterministic orchestration benchmark now guards both capacity-aware checkout and resumable remote context, keeping the new recovery contract measured rather than documentation-only.
 - Dashboard queue rows now render the structured progress state, percent, and step instead of exposing those fields only through the API payload.
 
 - Latest pushed state: `origin/master` at the latest handoff commit (verify with `git log`).

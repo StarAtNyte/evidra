@@ -49,6 +49,18 @@ export function runOrchestrationBenchmark(): OrchestrationBenchmarkReport {
     const wrongTaskHeartbeat = store.heartbeatTask("bench-task", "worker-b");
     const rightTaskHeartbeat = store.heartbeatTask("bench-task", "worker-a");
     check("queue-heartbeat-ownership", "Only the queue claimant can refresh a running task.", claimed?.ownerId === "worker-a" && claimed.goalId === "goal-bench" && claimed.parentTaskId === "task-parent" && !wrongTaskHeartbeat && rightTaskHeartbeat, { claimedOwner: claimed?.ownerId, goalId: claimed?.goalId, parentTaskId: claimed?.parentTaskId, wrongTaskHeartbeat, rightTaskHeartbeat });
+    store.enqueueTask({ id: "capacity-first", kind: "capacity", priority: 2, payload: {} });
+    store.enqueueTask({ id: "capacity-second", kind: "capacity", priority: 1, payload: {} });
+    const capacityFirst = store.claimNextTask(["capacity"], "capacity-worker", undefined, 1);
+    const capacityBlocked = store.claimNextTask(["capacity"], "capacity-worker", undefined, 1);
+    const resumeContext = capacityFirst ? store.queueResumeContext(capacityFirst.id) : undefined;
+    check("worker-capacity-and-resume", "A bounded worker cannot be over-dispatched and reclaimed work exposes resumable context.", capacityFirst?.id === "capacity-first" && !capacityBlocked && resumeContext?.taskId === "capacity-first" && resumeContext.attempt === 1 && resumeContext.checkpoint.present === false, { first: capacityFirst?.id, blocked: capacityBlocked?.id, resumeContext });
+    if (capacityFirst) {
+      store.releaseClaimedTask(capacityFirst.id, "capacity-worker", new Date().toISOString(), capacityFirst.claimToken ?? undefined, "benchmark capacity release");
+      store.updateTask(capacityFirst.id, "completed");
+    }
+    const capacitySecond = store.claimTask("capacity-second", ["capacity"], "capacity-worker", undefined, 1);
+    if (capacitySecond) store.updateTask(capacitySecond.id, "completed");
     store.updateTask("bench-task", "completed");
     store.enqueueTask({ id: "dependent", kind: "dependent", priority: 2, payload: {}, dependsOn: ["prerequisite"] });
     const blockedBeforeParent = store.claimNextTask(undefined, "worker-a");
