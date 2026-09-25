@@ -2720,6 +2720,8 @@ event.command("serve")
       const operatorAgentPath = Boolean(agentControlMatch);
       const agentMessageMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/agents\/([^/]+)\/message$/) : null;
       const operatorAgentMessagePath = Boolean(agentMessageMatch);
+      const agentDirectiveCancelMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/agents\/([^/]+)\/directives\/(\d+)\/cancel$/) : null;
+      const operatorAgentDirectiveCancelPath = Boolean(agentDirectiveCancelMatch);
       const operatorApprovalsPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/approvals";
       const approvalControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/approvals\/(queue-task|agent-role)\/([^/]+)\/(approve|reject)$/) : null;
       const operatorApprovalControlPath = Boolean(approvalControlMatch);
@@ -2730,7 +2732,7 @@ event.command("serve")
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
       const remoteActor = (typeof request.headers["x-evidra-actor"] === "string" ? request.headers["x-evidra-actor"] : "").replace(/[\u0000-\u001f\u007f]/g, "_").trim().slice(0, 200) || "remote-operator";
-      if (operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
+      if (operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorAgentDirectiveCancelPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
@@ -2900,7 +2902,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: true, id: taskId, status, changed }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /approvals/queue-task/:id/approve|reject, POST /approvals/agent-role/:role/approve|reject, GET /approvals, GET /queue/status, GET /activity, GET /organization, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath && !operatorAgentDirectiveCancelPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /agents/:role/directives/:id/cancel, POST /approvals/queue-task/:id/approve|reject, POST /approvals/agent-role/:role/approve|reject, GET /approvals, GET /queue/status, GET /activity, GET /organization, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
@@ -2913,6 +2915,28 @@ event.command("serve")
         if (rejected) return;
         try {
           const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; checkpoint?: unknown; child?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; capacity?: unknown; status?: unknown; kind?: unknown; message?: unknown; scopeKey?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
+          if (operatorAgentDirectiveCancelPath && agentDirectiveCancelMatch) {
+            let role: string;
+            try { role = decodeURIComponent(agentDirectiveCancelMatch[1] ?? ""); } catch {
+              response.writeHead(400, headers);
+              response.end(JSON.stringify({ error: "agent role must be valid URL encoding" }));
+              return;
+            }
+            const directiveId = Number.parseInt(agentDirectiveCancelMatch[2] ?? "", 10);
+            const store = new ResearchStore(statePath);
+            const directive = store.agentDirectives(role, 128).find((entry) => entry.id === directiveId);
+            if (!directive) {
+              store.close();
+              response.writeHead(404, headers);
+              response.end(JSON.stringify({ error: `Unknown directive '${directiveId}' for role '${role}'.` }));
+              return;
+            }
+            const changed = directive.cancelledAt === null ? store.cancelAgentDirective(directiveId, `${remoteActor}: remote operator cancellation`) : false;
+            store.close();
+            response.writeHead(200, headers);
+            response.end(JSON.stringify({ ok: true, id: directiveId, role, changed, cancelled: changed || directive.cancelledAt !== null }));
+            return;
+          }
           if (operatorAgentMessagePath && agentMessageMatch) {
             let role: string;
             try { role = decodeURIComponent(agentMessageMatch[1] ?? ""); } catch {

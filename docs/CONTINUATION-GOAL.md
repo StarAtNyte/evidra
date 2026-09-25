@@ -95,6 +95,7 @@ external evaluator.
 - Remote operators can now trigger an immediate routine cycle through authenticated `POST /routines/:id/trigger`; repeated or in-flight triggers are coalesced rather than launching concurrent runs.
 - Remote operators can now pause, resume, terminate, or revive known agent roles through authenticated role-scoped endpoints; controls are retry-safe, worker credentials are rejected, and termination blocks resume until explicit revival.
 - Remote operators can now steer a known specialist with an authenticated role-scoped message; source actor and optional phase scope are preserved, identical pending retries are deduplicated, and no new authority is granted.
+- Remote operators can now cancel an unapplied specialist directive through a role-scoped authenticated endpoint; applied directives remain immutable and repeated cancellation is idempotent.
 - Remote operators can now inspect `GET /approvals` and resolve queue-task or external-agent-role gates through authenticated approve/reject endpoints; workers cannot impersonate operators and repeated decisions do not duplicate audit events.
 - Remote governance actions accept a bounded `X-Evidra-Actor` label and preserve it in durable action records, making dashboard and controller decisions attributable without exposing credentials.
 - Successful remote claims now include a bounded resume context—task lineage, attempt number, checkpoint metadata, and recent redacted activity—so crash recovery does not require a worker to reconstruct context from the full event log.

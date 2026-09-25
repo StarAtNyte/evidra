@@ -8864,9 +8864,18 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const organizationAfterMessage = await fetch(`http://127.0.0.1:${port}/organization`, { headers: { authorization: `Bearer ${token}` } });
     const organizationAfterMessageBody = await organizationAfterMessage.json();
     assert.equal(organizationAfterMessageBody.organization.find((entry) => entry.role === "model researcher")?.directiveQueue[0]?.sourceRole, "research-console");
+    const directiveId = remoteAgentMessageBody.directive.id;
     const repeatedAgentMessage = await post("/agents/model%20researcher/message", { message: "recheck the latest evidence", scopeKey: "phase-alpha" }, token, undefined, undefined, "research-console");
     assert.equal(repeatedAgentMessage.status, 200);
     assert.equal((await repeatedAgentMessage.json()).idempotent, true);
+    const workerOnlyDirectiveCancel = await post(`/agents/model%20researcher/directives/${directiveId}/cancel`, {}, null, "worker-a", "worker-secret");
+    assert.equal(workerOnlyDirectiveCancel.status, 401);
+    const remoteDirectiveCancel = await post(`/agents/model%20researcher/directives/${directiveId}/cancel`, {}, token, undefined, undefined, "research-console");
+    assert.equal(remoteDirectiveCancel.status, 200);
+    assert.equal((await remoteDirectiveCancel.json()).changed, true);
+    const repeatedDirectiveCancel = await post(`/agents/model%20researcher/directives/${directiveId}/cancel`, {}, token, undefined, undefined, "research-console");
+    assert.equal(repeatedDirectiveCancel.status, 200);
+    assert.equal((await repeatedDirectiveCancel.json()).changed, false);
     const workerOnlyRoutinePause = await post("/routines/remote-routine/pause", {}, null, "worker-a", "worker-secret");
     assert.equal(workerOnlyRoutinePause.status, 401);
     const remoteRoutinePause = await post("/routines/remote-routine/pause", {}, token);
