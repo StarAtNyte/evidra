@@ -184,7 +184,7 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
     items.push({ id: `routine-failed:${routine.id}`, severity: "warning", kind: "routine-failed", summary: `${routine.id} · ${routine.name} failed${routine.lastError ? ` · ${routine.lastError.slice(0, 140)}` : ""}`, next: `/routine history ${routine.id}` });
   }
   for (const routine of store.routines().filter((entry) => (entry.droppedTriggers ?? 0) > 0).slice(0, 24)) {
-    items.push({ id: `routine-overflow:${routine.id}`, severity: "warning", kind: "routine-overflow", summary: `${routine.id} · ${routine.name} dropped ${routine.droppedTriggers} replay wakeup(s) at the cap`, next: `/routine catch-up ${routine.id} coalesce` });
+    items.push({ id: `routine-overflow:${routine.id}`, severity: "warning", kind: "routine-overflow", summary: `${routine.id} · ${routine.name} dropped ${routine.droppedTriggers} replay wakeup(s) at the cap`, next: `/attention ack routine-overflow:${routine.id}` });
   }
 
   const alignment = goalAlignment(store);

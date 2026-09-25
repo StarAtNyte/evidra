@@ -4809,7 +4809,9 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     for (let index = 0; index < 9; index += 1) store.triggerRoutines("overflow.test", new Date(overflowBase + index * 1_000).toISOString());
     store.finishRoutine(overflow.id, "overflow-runner", "completed");
     assert.equal(store.routine(overflow.id)?.droppedTriggers, 1);
-    assert.equal(operatorAttention(store).items.some((item) => item.id === "routine-overflow:routine-overflow"), true);
+    const overflowAttention = operatorAttention(store).items.find((item) => item.id === "routine-overflow:routine-overflow");
+    assert.equal(Boolean(overflowAttention), true);
+    assert.equal(overflowAttention?.next, "/attention ack routine-overflow:routine-overflow");
     assert.equal(operatorAttention(store).health.status, "degraded");
     const stale = store.createRoutine({ ...routine, id: "routine-stale" });
     assert.equal(store.claimRoutine(stale.id, "runner-stale", -1)?.status, "running");
