@@ -5040,6 +5040,21 @@ research
       console.log(`${mode === "challenge" ? "Challenge" : "Research"} ${cycle} · inspecting workspace${mode === "challenge" ? " and baseline" : ""} (budget ${campaign.budgetMinutes}m)...`);
       const gitStatus = await runProcess(["git", "status", "--short"], root);
       const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
+      // Agent workspaces intentionally omit large challenge datasets. Preserve
+      // the controller's bounded host-side audit in the cycle context so lanes
+      // can reason about dataset presence without copying gigabytes into each
+      // disposable workspace.
+      const dataAudit = auditData(root);
+      const dataAuditSummary = {
+        root: dataAudit.root,
+        scannedFiles: dataAudit.scannedFiles,
+        totalBytes: dataAudit.totalBytes,
+        duplicateGroups: dataAudit.duplicateGroups.length,
+        skippedFiles: dataAudit.skippedFiles.slice(0, 200),
+        warnings: dataAudit.warnings.slice(0, 20),
+        fingerprint: dataAuditFingerprint(dataAudit),
+      };
+      store.appendEvent("data.audit.completed", dataAuditSummary);
       // Baseline provenance must remain reusable after a long campaign has
       // emitted more than 100 research/tool events. The event store is bounded
       // at a much larger durable horizon, so do not accidentally rerun a
@@ -5066,7 +5081,7 @@ research
         const metric = parsed.metrics[adapter.config.metric.name] ?? null;
         recordBaselineEvidence(store, root, baseline, metric, parsed.metrics, parsed.metricsByFold);
       }
-      const observation = { gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40), repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120), ...(baseline ? { baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: redactSecrets(baseline.stdout.slice(-4000)), stderr: redactSecrets(baseline.stderr.slice(-4000)) } } : {}) };
+      const observation = { gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40), repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120), dataAudit: dataAuditSummary, ...(baseline ? { baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: redactSecrets(baseline.stdout.slice(-4000)), stderr: redactSecrets(baseline.stderr.slice(-4000)) } } : {}) };
       const observationId = `observation_${Date.now()}`;
       store.appendEvent("research.observation", { ...observation, sourceId: observationId });
       store.saveSource({ id: observationId, payload: { id: observationId, title: "Evidra workspace observation", url: `https://evidra.local/observation/${observationId}`, retrievedAt: new Date().toISOString(), contentHash: observationId, evidenceClass: "implementation", claims: [] } });
