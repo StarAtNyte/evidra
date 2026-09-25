@@ -2519,7 +2519,7 @@ queue.command("activity <id>").option("--limit <count>", "number of task updates
 queue.command("note <id> <message>").description("Add an operator handoff note to a queue task without changing its evidence or completion state").action((id: string, message: string) => {
   const store = new ResearchStore(statePath);
   try {
-    if (!store.recordQueueActivity({ taskId: id, actorId: "operator", kind: "handoff", message })) throw new Error("task was not found or the note was invalid");
+    if (!store.recordQueueOperatorNote({ taskId: id, message }).recorded) throw new Error("task was not found or the note was invalid");
   } finally { store.close(); }
   console.log(`Added an operator handoff note to ${id}.`);
 });
@@ -2743,15 +2743,17 @@ event.command("serve")
             if (taskPath === "/tasks/note") {
               const taskId = typeof parsed.taskId === "string" ? parsed.taskId.trim() : "";
               const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
+              const idempotencyKey = parsed.idempotencyKey === undefined ? undefined : typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey.trim() : "";
               if (!taskId || taskId.length > 200) throw new Error("Task notes require a taskId of 1–200 characters.");
               if (!message || message.length > 2_000) throw new Error("Task notes require a message of 1–2,000 characters.");
+              if (parsed.idempotencyKey !== undefined && (!idempotencyKey || idempotencyKey.length > 200)) throw new Error("Task note idempotencyKey must be a non-empty string of at most 200 characters.");
               const store = new ResearchStore(statePath);
+              const note = store.recordQueueOperatorNote({ taskId, message, idempotencyKey });
               const exists = store.queueTasks().some((task) => task.id === taskId);
-              const recorded = exists && store.recordQueueActivity({ taskId, actorId: "operator", kind: "handoff", message });
-              const progress = recorded ? store.queueProgress(taskId) : undefined;
+              const progress = note.recorded ? store.queueProgress(taskId) : undefined;
               store.close();
-              response.writeHead(recorded ? 200 : exists ? 409 : 404, headers);
-              response.end(JSON.stringify(recorded ? { ok: true, taskId, progress: progress ?? null } : { ok: false, taskId, error: exists ? "note could not be recorded" : "task not found" }));
+              response.writeHead(note.recorded ? 200 : exists ? 409 : 404, headers);
+              response.end(JSON.stringify(note.recorded ? { ok: true, idempotent: note.idempotent, taskId, progress: progress ?? null } : { ok: false, taskId, error: exists ? "note could not be recorded" : "task not found" }));
               return;
             }
             const workerId = typeof parsed.workerId === "string" ? parsed.workerId.trim() : "";
