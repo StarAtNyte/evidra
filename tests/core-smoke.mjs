@@ -4089,6 +4089,7 @@ test("queue progress projection distinguishes active, blocked, and terminal work
     assert.equal(store.queueProgress("progress")?.state, "active");
     store.recordQueueActivity({ taskId: "progress", actorId: "progress-worker", kind: "blocked", message: "waiting for evidence" });
     assert.equal(store.queueProgress("progress")?.state, "blocked");
+    assert.equal(operatorAttention(store).items.some((item) => item.kind === "queue-blocked-progress" && item.summary.includes("progress")), true);
     assert.equal(store.completeClaimedTask("progress", "progress-worker", "completed", {}, undefined, claimed?.claimToken ?? undefined), true);
     assert.equal(store.queueProgress("progress")?.state, "completed");
     store.close();

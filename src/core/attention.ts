@@ -101,6 +101,12 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
   const taskById = new Map(queue.map((task) => [task.id, task]));
   for (const task of queue) {
     if (!["queued", "running"].includes(task.status)) continue;
+    const progress = store.queueProgress(task.id);
+    if (progress?.state === "stalled") {
+      items.push({ id: `queue-stalled:${task.id}`, severity: "critical", kind: "queue-stalled", summary: `${task.id} · ${task.kind} has a stale heartbeat${progress.heartbeatAgeSeconds !== null ? ` (${progress.heartbeatAgeSeconds}s)` : ""}`, next: `/queue history ${task.id}` });
+    } else if (progress?.state === "blocked") {
+      items.push({ id: `queue-blocked-progress:${task.id}`, severity: "warning", kind: "queue-blocked-progress", summary: `${task.id} · ${task.kind} reported blocked${progress.lastActivityMessage ? ` · ${progress.lastActivityMessage.slice(0, 140)}` : ""}`, next: `/queue activity ${task.id}` });
+    }
     const readiness = store.taskReadiness(task.id);
     if (readiness && !readiness.ready) {
       const reasons = [...readiness.missing.map((id) => `missing:${id}`), ...readiness.pending.map((id) => `waiting:${id}`), ...readiness.failed.map((id) => `failed:${id}`)].slice(0, 4);
