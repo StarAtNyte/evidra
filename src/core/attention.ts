@@ -110,6 +110,12 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
   for (const task of queue.filter((entry) => entry.status === "failed").slice(0, 24)) {
     items.push({ id: `queue-failed:${task.id}`, severity: "warning", kind: "queue-failed", summary: `${task.id} · ${task.kind} · failed`, next: `/queue history ${task.id}` });
   }
+  for (const event of store.eventsByType("queue.lease_lost", 24)) {
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as { taskId?: unknown; actorId?: unknown; reason?: unknown } : {};
+    const taskId = typeof payload.taskId === "string" && payload.taskId.trim() ? payload.taskId.trim() : "unknown-task";
+    const actorId = typeof payload.actorId === "string" && payload.actorId.trim() ? payload.actorId.trim() : "unknown-worker";
+    items.push({ id: `queue-lease-lost:${taskId}:${event.createdAt}`, severity: "critical", kind: "queue-lease-lost", summary: `${taskId} · worker ${actorId} lost its queue lease${typeof payload.reason === "string" && payload.reason.trim() ? ` · ${payload.reason.trim().slice(0, 120)}` : ""}`, next: `/queue history ${taskId}` });
+  }
   // A delegated failure is actionable in the context of its live parent. Make
   // the supervision boundary visible so the route or decomposition can change
   // deliberately instead of the parent silently repeating a broken branch.

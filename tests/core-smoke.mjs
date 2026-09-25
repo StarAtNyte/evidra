@@ -1063,10 +1063,11 @@ test("autonomous role coaching is durable and does not duplicate within one evid
       { payload: { laneReports: [{ role: "validation scientist", status: "completed", confidence: 0.2, verifiedEvidenceIds: [] }] }, quality: { overall: "FAIL" } },
       { payload: { laneReports: [{ role: "validation scientist", status: "completed", confidence: 0.2, verifiedEvidenceIds: [] }] }, quality: { overall: "FAIL" } },
     ]);
-    const first = applyAgentCoaching(store, reviews, "2026-09-25T00:00:00.000Z");
+    const evidenceAt = new Date(Date.now() + 1_000).toISOString();
+    const first = applyAgentCoaching(store, reviews, evidenceAt);
     assert.equal(first.length, 1);
     store.appendEvent("research.agent.coaching.applied", { directiveIds: first, roles: ["validation scientist"], source: "test" });
-    assert.deepEqual(applyAgentCoaching(store, reviews, "2026-09-25T00:00:00.000Z"), first);
+    assert.deepEqual(applyAgentCoaching(store, reviews, evidenceAt), first);
     assert.equal(store.pendingAgentDirectives("validation scientist").length, 1);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -1076,12 +1077,13 @@ test("coaching progress compares the next role review and remains idempotent", (
   const root = mkdtempSync(join(tmpdir(), "evidra-agent-coaching-progress-"));
   try {
     const store = new ResearchStore(join(root, "state.sqlite"));
+    const evidenceAt = new Date(Date.now() + 1_000).toISOString();
     store.appendEvent("research.agent.reviewed", { reviews: [{ role: "validation scientist", score: 0.4 }], interventions: [{ role: "validation scientist", action: "coach" }], source: "test" });
     store.appendEvent("research.agent.coaching.applied", { directiveIds: [7], roles: ["validation scientist"], source: "test" });
-    const improved = evaluateAgentCoachingProgress(store, [{ role: "validation scientist", assignments: 3, completed: 3, failed: 0, confidence: 0.8, evidenceAnchors: 3, processPasses: 3, processWarnings: 0, processFailures: 0, playbookPasses: 3, playbookPartials: 0, playbookBlocks: 0, playbookRate: 1, score: 0.5, recommendation: "needs-review" }], "2026-09-25T00:01:00.000Z");
-    assert.deepEqual(improved[0], { role: "validation scientist", directiveIds: [7], beforeScore: 0.4, afterScore: 0.5, delta: 0.1, verdict: "improved", evidenceAt: "2026-09-25T00:01:00.000Z" });
-    store.appendEvent("research.agent.coaching.evaluated", { evidenceAt: "2026-09-25T00:01:00.000Z", outcomes: improved });
-    assert.deepEqual(evaluateAgentCoachingProgress(store, [{ role: "validation scientist", assignments: 3, completed: 3, failed: 0, confidence: 0.8, evidenceAnchors: 3, processPasses: 3, processWarnings: 0, processFailures: 0, playbookPasses: 3, playbookPartials: 0, playbookBlocks: 0, playbookRate: 1, score: 0.5, recommendation: "needs-review" }], "2026-09-25T00:01:00.000Z"), []);
+    const improved = evaluateAgentCoachingProgress(store, [{ role: "validation scientist", assignments: 3, completed: 3, failed: 0, confidence: 0.8, evidenceAnchors: 3, processPasses: 3, processWarnings: 0, processFailures: 0, playbookPasses: 3, playbookPartials: 0, playbookBlocks: 0, playbookRate: 1, score: 0.5, recommendation: "needs-review" }], evidenceAt);
+    assert.deepEqual(improved[0], { role: "validation scientist", directiveIds: [7], beforeScore: 0.4, afterScore: 0.5, delta: 0.1, verdict: "improved", evidenceAt });
+    store.appendEvent("research.agent.coaching.evaluated", { evidenceAt, outcomes: improved });
+    assert.deepEqual(evaluateAgentCoachingProgress(store, [{ role: "validation scientist", assignments: 3, completed: 3, failed: 0, confidence: 0.8, evidenceAnchors: 3, processPasses: 3, processWarnings: 0, processFailures: 0, playbookPasses: 3, playbookPartials: 0, playbookBlocks: 0, playbookRate: 1, score: 0.5, recommendation: "needs-review" }], evidenceAt), []);
     assert.deepEqual(evaluateAgentCoachingProgress(store, [{ role: "validation scientist", assignments: 4, completed: 4, failed: 0, confidence: 0.9, evidenceAnchors: 4, processPasses: 4, processWarnings: 0, processFailures: 0, playbookPasses: 4, playbookPartials: 0, playbookBlocks: 0, playbookRate: 1, score: 0.8, recommendation: "trusted" }], "2026-09-25T00:02:00.000Z"), []);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -4057,6 +4059,7 @@ test("queue worker aborts immediately when its lease is lost", async () => {
     assert.equal(observedAbort, true);
     assert.equal(store.queueTasks().find((task) => task.id === "lease-loss")?.status, "completed");
     assert.equal(store.eventsByType("queue.lease_lost").some((event) => event.payload.taskId === "lease-loss"), true);
+    assert.equal(operatorAttention(store).items.some((item) => item.kind === "queue-lease-lost" && item.summary.includes("lease-loss")), true);
     await worker.stop();
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }

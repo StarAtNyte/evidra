@@ -70,6 +70,7 @@ external evaluator.
 - Specialist handoffs now have crash-safe lifecycle recovery: an acknowledged directive is not treated as completed, stale acknowledgements are tied to recipient heartbeat health, `/agents recover` resolves them with an auditable failed outcome, and the autonomous CLI/TUI/lane allocation boundary performs the same bounded recovery before new work is allocated. Retrying requires a changed route and preserves the original failure reason.
 - Event-server bearer authentication now supports permission-checked file-backed secrets, uses constant-time comparison, and bounds headers, request bodies, request duration, and keep-alive sockets so external integrations cannot stall the controller indefinitely.
 - Local queue workers now treat a rejected claim heartbeat as a fencing event: they abort through the handler signal immediately and persist `queue.lease_lost`, preventing stale workers from continuing after ownership changes.
+- Lease-loss events now feed the shared operator-attention projection, so CLI, TUI, and dashboard operators see the ownership failure and its queue-history action without inspecting raw events.
 
 - Latest pushed state: `origin/master` at the latest handoff commit (verify with `git log`).
 - Competition manifests now support typed `researchChannels` for rules,
