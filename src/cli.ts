@@ -2789,9 +2789,10 @@ event.command("serve")
                 .filter((candidate) => !scopedKinds || scopedKinds.includes(candidate.kind))
                 .slice(0, 16)
                 .map((candidate) => ({ id: candidate.id, kind: candidate.kind, status: candidate.approvalStatus, reason: candidate.approvalReason }));
+              const taskWithProgress = task ? { ...task, progress: store.queueProgress(task.id) } : null;
               store.close();
               response.writeHead(200, headers);
-              response.end(JSON.stringify({ ok: true, task: task ?? null, blockedApprovals }));
+              response.end(JSON.stringify({ ok: true, task: taskWithProgress, blockedApprovals }));
               return;
             }
             const taskId = typeof parsed.taskId === "string" ? parsed.taskId.trim() : "";
@@ -2939,9 +2940,10 @@ event.command("serve")
               const cancellation = status?.payload && typeof status.payload === "object" && !Array.isArray(status.payload) && (status.payload as Record<string, unknown>).cancellation && typeof (status.payload as Record<string, unknown>).cancellation === "object"
                 ? (status.payload as Record<string, unknown>).cancellation
                 : undefined;
+              const progress = store.queueProgress(taskId);
               store.close();
               response.writeHead(accepted ? 200 : 409, headers);
-              response.end(JSON.stringify({ ok: accepted, taskId, status: status?.status ?? null, ...(cancellation ? { cancellation } : {}) }));
+              response.end(JSON.stringify({ ok: accepted, taskId, status: status?.status ?? null, progress: progress ?? null, ...(cancellation ? { cancellation } : {}) }));
               return;
             }
             if (taskPath === "/tasks/checkpoint") {
@@ -2991,9 +2993,10 @@ event.command("serve")
               const message = typeof parsed.message === "string" ? parsed.message : "";
               if (!(typeof activityKind === "string" && ["started", "progress", "blocked", "handoff", "completed", "failed"].includes(activityKind)) || !message.trim()) throw new Error("Task activity requires a valid kind and non-empty message.");
               const recorded = store.recordQueueActivity({ taskId, actorId: workerId, claimToken: claimToken || undefined, kind: activityKind as import("./core/store.js").QueueActivityKind, message, metadata: parsed.metadata === undefined ? undefined : parseExternalEventPayload(JSON.stringify(parsed.metadata)) });
+              const progress = recorded ? store.queueProgress(taskId) : undefined;
               store.close();
               response.writeHead(recorded ? 200 : 409, headers);
-              response.end(JSON.stringify({ ok: recorded, taskId }));
+              response.end(JSON.stringify({ ok: recorded, taskId, progress: progress ?? null }));
               return;
             }
             if (taskPath === "/tasks/usage") {
