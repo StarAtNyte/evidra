@@ -2714,7 +2714,7 @@ event.command("serve")
       const operatorQueueStatusPath = request.method === "GET" && request.url === "/queue/status";
       const operatorActivityPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/activity";
       const operatorOrganizationPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/organization";
-      const routineControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/routines\/([^/]+)\/(pause|resume)$/) : null;
+      const routineControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/routines\/([^/]+)\/(pause|resume|trigger)$/) : null;
       const operatorRoutinePath = Boolean(routineControlMatch);
       const agentControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/agents\/([^/]+)\/(pause|resume|terminate|revive)$/) : null;
       const operatorAgentPath = Boolean(agentControlMatch);
@@ -2797,9 +2797,16 @@ event.command("serve")
           response.end(JSON.stringify({ error: "routine id must be valid URL encoding" }));
           return;
         }
-        const action = routineControlMatch[2] === "pause" ? "paused" : "active";
         const store = new ResearchStore(statePath);
         try {
+          const actionName = routineControlMatch[2];
+          if (actionName === "trigger") {
+            const result = store.triggerRoutineNow(routineId);
+            response.writeHead(200, headers);
+            response.end(JSON.stringify({ ok: true, id: result.routine.id, status: result.routine.status, nextRunAt: result.routine.nextRunAt, changed: result.changed, pendingTriggers: result.routine.pendingTriggers }));
+            return;
+          }
+          const action = actionName === "pause" ? "paused" : "active";
           const before = store.routine(routineId);
           const routine = store.setRoutineStatus(routineId, action);
           response.writeHead(200, headers);
@@ -2888,7 +2895,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: true, id: taskId, status, changed }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /approvals/queue-task/:id/approve|reject, POST /approvals/agent-role/:role/approve|reject, GET /approvals, GET /queue/status, GET /activity, GET /organization, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /routines/:id/trigger, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /approvals/queue-task/:id/approve|reject, POST /approvals/agent-role/:role/approve|reject, GET /approvals, GET /queue/status, GET /activity, GET /organization, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");

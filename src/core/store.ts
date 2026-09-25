@@ -2203,6 +2203,21 @@ export class ResearchStore {
     return triggered;
   }
 
+  /** Request an immediate run without bypassing routine leasing or coalescing. */
+  triggerRoutineNow(id: string, eventType = "operator.routine.triggered"): { routine: ResearchRoutine; changed: boolean } {
+    const current = this.routine(id);
+    if (!current) throw new Error(`Unknown routine '${id}'.`);
+    if (current.status === "paused") throw new Error(`Routine '${id}' is paused; resume it before triggering.`);
+    const now = new Date().toISOString();
+    if (current.status === "running" && (current.pendingTriggers ?? 0) > 0) return { routine: current, changed: false };
+    if (current.status === "active" && current.pendingTriggerEvent?.eventType === eventType && Date.parse(current.nextRunAt) <= Date.now()) return { routine: current, changed: false };
+    const queued = current.status === "running";
+    const updated: ResearchRoutine = { ...current, nextRunAt: queued ? current.nextRunAt : now, lastTriggerAt: now, pendingTriggers: queued ? 1 : current.pendingTriggers ?? 0, pendingTriggerEvent: { eventType, eventCreatedAt: now }, updatedAt: now };
+    this.saveRoutine(updated);
+    this.appendEvent(queued ? "routine.trigger_queued" : "routine.triggered", { id, eventType, eventCreatedAt: now, coalesced: queued, source: "operator" });
+    return { routine: this.routine(id) ?? updated, changed: true };
+  }
+
   claimRoutine(id: string, ownerId: string, leaseMs = 7 * 24 * 60 * 60_000, now = new Date(), force = false): ResearchRoutine | undefined {
     let exhausted = false;
     const claimed = this.db.transaction(() => {
