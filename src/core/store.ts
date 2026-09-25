@@ -2524,9 +2524,10 @@ export class ResearchStore {
   /** Approve, reject, or reset a queue task before checkout. */
   setTaskApproval(id: string, status: QueueApprovalStatus, reason?: string | null, actorId = "operator"): boolean {
     if (!["none", "pending", "approved", "rejected"].includes(status)) throw new Error("Queue approval status must be none, pending, approved, or rejected.");
-    const current = this.db.prepare("SELECT status, approval_status FROM work_queue WHERE id = ?").get(id) as { status: QueueTaskStatus; approval_status: string } | undefined;
+    const current = this.db.prepare("SELECT status, approval_status, approval_reason FROM work_queue WHERE id = ?").get(id) as { status: QueueTaskStatus; approval_status: string; approval_reason: string | null } | undefined;
     if (!current || !["queued", "failed"].includes(current.status)) return false;
     const normalizedReason = status === "none" ? null : reason?.trim().slice(0, 500) || (status === "approved" ? "approved by operator" : status === "rejected" ? "rejected by operator" : "operator approval required");
+    if (current.approval_status === status && current.approval_reason === normalizedReason) return false;
     const now = new Date().toISOString();
     const result = this.db.prepare("UPDATE work_queue SET approval_status = ?, approval_reason = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'failed')").run(status, normalizedReason, now, id);
     if (result.changes !== 1) return false;

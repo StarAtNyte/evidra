@@ -2718,13 +2718,16 @@ event.command("serve")
       const operatorRoutinePath = Boolean(routineControlMatch);
       const agentControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/agents\/([^/]+)\/(pause|resume|terminate|revive)$/) : null;
       const operatorAgentPath = Boolean(agentControlMatch);
+      const operatorApprovalsPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/approvals";
+      const approvalControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/approvals\/(queue-task)\/([^/]+)\/(approve|reject)$/) : null;
+      const operatorApprovalControlPath = Boolean(approvalControlMatch);
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
       const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
       const authorization = typeof request.headers.authorization === "string" ? request.headers.authorization : "";
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
-      if (operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
+      if (operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
@@ -2745,6 +2748,15 @@ event.command("serve")
         store.close();
         response.writeHead(200, headers);
         response.end(JSON.stringify({ ok: integrity.status !== "invalid", paused: control.paused, pauseReason: control.reason, tasks, recoveries, integrity: integrity.status }));
+        return;
+      }
+      if (operatorApprovalsPath) {
+        const store = new ResearchStore(statePath);
+        const items = approvalInbox(store, root);
+        const integrity = store.verifyEventChain();
+        store.close();
+        response.writeHead(200, headers);
+        response.end(JSON.stringify({ ok: integrity.status !== "invalid", items, integrity: integrity.status }));
         return;
       }
       if (operatorActivityPath) {
@@ -2832,7 +2844,24 @@ event.command("serve")
         }
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, GET /queue/status, GET /activity, GET /organization, or GET /health are supported" })); return; }
+      if (operatorApprovalControlPath && approvalControlMatch) {
+        let taskId: string;
+        try { taskId = decodeURIComponent(approvalControlMatch[2] ?? ""); } catch {
+          response.writeHead(400, headers);
+          response.end(JSON.stringify({ error: "approval id must be valid URL encoding" }));
+          return;
+        }
+        const approval = approvalControlMatch[3] === "approve" ? "approved" : "rejected";
+        const store = new ResearchStore(statePath);
+        const changed = store.setTaskApproval(taskId, approval, approval === "approved" ? "remote operator approval" : "remote operator rejection", "remote-operator");
+        const task = store.queueTasks().find((entry) => entry.id === taskId);
+        store.close();
+        if (!task) { response.writeHead(404, headers); response.end(JSON.stringify({ error: `Unknown queue task '${taskId}'.` })); return; }
+        response.writeHead(changed || task.approvalStatus === approval ? 200 : 409, headers);
+        response.end(JSON.stringify({ ok: changed || task.approvalStatus === approval, id: taskId, status: task.approvalStatus, changed }));
+        return;
+      }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /approvals/queue-task/:id/approve, POST /approvals/queue-task/:id/reject, GET /approvals, GET /queue/status, GET /activity, GET /organization, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");

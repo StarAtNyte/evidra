@@ -8737,6 +8737,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     store.setAgentRoleAdmission("remote lane", true, "test worker registration");
     store.enqueueTask({ id: "bridge-task", kind: "research.lane", priority: 4, payload: { objective: "external worker smoke", campaignStartedAt: "bridge-campaign" } });
     store.enqueueTask({ id: "remote-cancel", kind: "research.lane", priority: 1, payload: { objective: "remote cancellation smoke" } });
+    store.enqueueTask({ id: "remote-approval", kind: "research.lane", priority: 1, requiresApproval: true, approvalReason: "remote approval smoke", payload: { objective: "remote approval smoke" } });
     store.createRoutine({ id: "remote-routine", name: "Remote routine", mode: "research", goal: "remote routine control smoke", budgetMinutes: 5, intervalSeconds: 60, stopCondition: "stop", provider: "codex", model: "gpt-test", thinking: "medium", autonomy: "safe", limitPolicy: "stop", executor: "local", lanes: 1, maxRuns: null, triggerEvent: null });
     store.close();
     const eventTokenFile = join(root, "event-token");
@@ -8826,6 +8827,18 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(Array.isArray(remoteOrganizationBody.organization), true);
     assert.equal(Array.isArray(remoteOrganizationBody.routines), true);
     assert.equal(remoteOrganizationBody.organization.every((entry) => !Object.hasOwn(entry, "claimToken")), true);
+    const workerOnlyApprovals = await fetch(`http://127.0.0.1:${port}/approvals`, { headers: { "x-evidra-worker-id": "worker-a", "x-evidra-worker-token": "worker-secret" } });
+    assert.equal(workerOnlyApprovals.status, 401);
+    const remoteApprovals = await fetch(`http://127.0.0.1:${port}/approvals`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(remoteApprovals.status, 200);
+    const remoteApprovalsBody = await remoteApprovals.json();
+    assert.equal(remoteApprovalsBody.items.some((item) => item.kind === "queue-task" && item.id === "remote-approval"), true);
+    const remoteApprovalReject = await post("/approvals/queue-task/remote-approval/reject", {}, token);
+    assert.equal(remoteApprovalReject.status, 200);
+    assert.equal((await remoteApprovalReject.json()).changed, true);
+    const repeatedApprovalReject = await post("/approvals/queue-task/remote-approval/reject", {}, token);
+    assert.equal(repeatedApprovalReject.status, 200);
+    assert.equal((await repeatedApprovalReject.json()).changed, false);
     const workerOnlyRoutinePause = await post("/routines/remote-routine/pause", {}, null, "worker-a", "worker-secret");
     assert.equal(workerOnlyRoutinePause.status, 401);
     const remoteRoutinePause = await post("/routines/remote-routine/pause", {}, token);
