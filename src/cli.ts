@@ -2718,6 +2718,8 @@ event.command("serve")
       const operatorRoutinePath = Boolean(routineControlMatch);
       const agentControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/agents\/([^/]+)\/(pause|resume|terminate|revive)$/) : null;
       const operatorAgentPath = Boolean(agentControlMatch);
+      const agentMessageMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/agents\/([^/]+)\/message$/) : null;
+      const operatorAgentMessagePath = Boolean(agentMessageMatch);
       const operatorApprovalsPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/approvals";
       const approvalControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/approvals\/(queue-task|agent-role)\/([^/]+)\/(approve|reject)$/) : null;
       const operatorApprovalControlPath = Boolean(approvalControlMatch);
@@ -2728,7 +2730,7 @@ event.command("serve")
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
       const remoteActor = (typeof request.headers["x-evidra-actor"] === "string" ? request.headers["x-evidra-actor"] : "").replace(/[\u0000-\u001f\u007f]/g, "_").trim().slice(0, 200) || "remote-operator";
-      if (operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
+      if (operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorApprovalsPath || operatorApprovalControlPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath || operatorAgentPath || operatorAgentMessagePath || operatorApprovalsPath || operatorApprovalControlPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
@@ -2886,7 +2888,7 @@ event.command("serve")
         response.end(JSON.stringify({ ok: true, id: taskId, status, changed }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /approvals/queue-task/:id/approve|reject, POST /approvals/agent-role/:role/approve|reject, GET /approvals, GET /queue/status, GET /activity, GET /organization, or GET /health are supported" })); return; }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath && !operatorAgentMessagePath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, /agents/:role/pause, /agents/:role/resume, /agents/:role/terminate, /agents/:role/revive, POST /agents/:role/message, POST /approvals/queue-task/:id/approve|reject, POST /approvals/agent-role/:role/approve|reject, GET /approvals, GET /queue/status, GET /activity, GET /organization, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
@@ -2898,7 +2900,32 @@ event.command("serve")
       request.on("end", () => {
         if (rejected) return;
         try {
-          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; checkpoint?: unknown; child?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; capacity?: unknown; status?: unknown; kind?: unknown; message?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
+          const parsed = JSON.parse(body) as { type?: unknown; payload?: unknown; checkpoint?: unknown; child?: unknown; source?: unknown; idempotencyKey?: unknown; claimToken?: unknown; availableAt?: unknown; reason?: unknown; workerId?: unknown; taskId?: unknown; kinds?: unknown; capabilities?: unknown; capacity?: unknown; status?: unknown; kind?: unknown; message?: unknown; scopeKey?: unknown; metadata?: unknown; inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown; provider?: unknown; model?: unknown };
+          if (operatorAgentMessagePath && agentMessageMatch) {
+            let role: string;
+            try { role = decodeURIComponent(agentMessageMatch[1] ?? ""); } catch {
+              response.writeHead(400, headers);
+              response.end(JSON.stringify({ error: "agent role must be valid URL encoding" }));
+              return;
+            }
+            const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
+            const scopeKey = parsed.scopeKey === undefined ? null : typeof parsed.scopeKey === "string" ? parsed.scopeKey.trim().slice(0, 200) || null : null;
+            if (!message || message.length > 4_000) throw new Error("Agent messages require a message of 1–4,000 characters.");
+            const store = new ResearchStore(statePath);
+            try {
+              if (!agentOrganization(store).some((entry) => entry.role === role)) {
+                response.writeHead(404, headers);
+                response.end(JSON.stringify({ error: `Unknown agent role '${role}'.` }));
+                return;
+              }
+              const directive = store.enqueueAgentDirective(role, message, scopeKey, remoteActor);
+              response.writeHead(201, headers);
+              response.end(JSON.stringify({ ok: true, directive }));
+            } finally {
+              store.close();
+            }
+            return;
+          }
           if (taskPath) {
             if (taskPath === "/queue/pause" || taskPath === "/queue/resume") {
               const store = new ResearchStore(statePath);

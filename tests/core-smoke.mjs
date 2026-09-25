@@ -8853,6 +8853,13 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const repeatedRoleApproval = await post("/approvals/agent-role/remote%20approval%20role/approve", {}, token);
     assert.equal(repeatedRoleApproval.status, 200);
     assert.equal((await repeatedRoleApproval.json()).changed, false);
+    const workerOnlyAgentMessage = await post("/agents/model%20researcher/message", { message: "worker must not steer a role" }, null, "worker-a", "worker-secret");
+    assert.equal(workerOnlyAgentMessage.status, 401);
+    const remoteAgentMessage = await post("/agents/model%20researcher/message", { message: "recheck the latest evidence", scopeKey: "phase-alpha" }, token, undefined, undefined, "research-console");
+    assert.equal(remoteAgentMessage.status, 201);
+    const remoteAgentMessageBody = await remoteAgentMessage.json();
+    assert.equal(remoteAgentMessageBody.directive.role, "model researcher");
+    assert.equal(remoteAgentMessageBody.directive.sourceRole, "research-console");
     const workerOnlyRoutinePause = await post("/routines/remote-routine/pause", {}, null, "worker-a", "worker-secret");
     assert.equal(workerOnlyRoutinePause.status, 401);
     const remoteRoutinePause = await post("/routines/remote-routine/pause", {}, token);
