@@ -2918,9 +2918,10 @@ event.command("serve")
                 response.end(JSON.stringify({ error: `Unknown agent role '${role}'.` }));
                 return;
               }
-              const directive = store.enqueueAgentDirective(role, message, scopeKey, remoteActor);
-              response.writeHead(201, headers);
-              response.end(JSON.stringify({ ok: true, directive }));
+              const existing = store.pendingAgentDirectives(role, scopeKey).some((entry) => entry.sourceRole === remoteActor && entry.message === message);
+              const directive = store.enqueueAgentDirectiveOnce(role, message, scopeKey, remoteActor);
+              response.writeHead(existing ? 200 : 201, headers);
+              response.end(JSON.stringify({ ok: true, idempotent: existing, directive }));
             } finally {
               store.close();
             }
