@@ -8761,9 +8761,14 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal((await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"] })).status, 401);
     const claimed = await post("/tasks/claim", { workerId: "worker-a", kinds: ["research.lane"] }, token, "worker-a", "worker-secret");
     assert.equal(claimed.status, 200);
-    assert.deepEqual((await claimed.clone().json()).capacity, { limit: 2, active: 1, available: 1 });
-    const task = (await claimed.json()).task;
+    const claimedBody = await claimed.json();
+    assert.deepEqual(claimedBody.capacity, { limit: 2, active: 1, available: 1 });
+    const task = claimedBody.task;
     assert.equal(task.id, "bridge-task");
+    assert.equal(claimedBody.resume.taskId, task.id);
+    assert.equal(claimedBody.resume.attempt, 1);
+    assert.equal(claimedBody.resume.checkpoint.present, false);
+    assert.deepEqual(claimedBody.resume.lineage.taskIds, [task.id]);
     const checkpoint = await post("/tasks/checkpoint", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, checkpoint: { stage: "remote-retrieval", artifact: "partial.json" } }, token, "worker-a", "worker-secret");
     assert.equal(checkpoint.status, 200);
     const checkpointStore = new ResearchStore(join(root, ".sota", "database.sqlite"));

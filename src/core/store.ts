@@ -233,6 +233,14 @@ export interface QueueCheckpointSummary {
   keys: string[];
   stage: string | null;
 }
+export interface QueueResumeContext {
+  taskId: string;
+  attempt: number;
+  lineage: QueuedTaskLineage;
+  checkpoint: QueueCheckpointSummary;
+  recentActivity: QueueActivity[];
+  updatedAt: string;
+}
 export interface QueueUsage {
   taskId: string;
   actorId: string;
@@ -2664,6 +2672,20 @@ export class ResearchStore {
       updatedAt: checkpointEvent?.createdAt ?? task.updatedAt,
       keys,
       stage,
+    };
+  }
+
+  /** Build bounded, secret-safe context for a worker reclaiming a task. */
+  queueResumeContext(id: string, activityLimit = 8): QueueResumeContext | undefined {
+    const task = this.queueTasks().find((entry) => entry.id === id);
+    if (!task) return undefined;
+    return {
+      taskId: task.id,
+      attempt: task.attempts,
+      lineage: this.taskLineage(task.id) ?? { taskIds: [task.id], goalIds: [], missingParentIds: [], cycle: false, truncated: false },
+      checkpoint: this.queueCheckpoint(task.id) ?? { present: false, bytes: 0, hash: null, updatedAt: null, keys: [], stage: null },
+      recentActivity: this.queueActivities(task.id, Math.max(1, Math.min(16, Math.floor(activityLimit)))),
+      updatedAt: task.updatedAt,
     };
   }
 

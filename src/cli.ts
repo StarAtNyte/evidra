@@ -2794,10 +2794,11 @@ event.command("serve")
                 .slice(0, 16)
                 .map((candidate) => ({ id: candidate.id, kind: candidate.kind, status: candidate.approvalStatus, reason: candidate.approvalReason }));
               const taskWithProgress = task ? { ...task, progress: store.queueProgress(task.id) } : null;
+              const resume = task ? store.queueResumeContext(task.id) : null;
               const afterDispatch = store.externalWorkerDispatchCapacity(workerId);
               store.close();
               response.writeHead(200, headers);
-              response.end(JSON.stringify({ ok: true, task: taskWithProgress, blockedApprovals, capacity: { limit: afterDispatch.limit, active: afterDispatch.active, available: afterDispatch.available } }));
+              response.end(JSON.stringify({ ok: true, task: taskWithProgress, resume, blockedApprovals, capacity: { limit: afterDispatch.limit, active: afterDispatch.active, available: afterDispatch.available } }));
               return;
             }
             const taskId = typeof parsed.taskId === "string" ? parsed.taskId.trim() : "";
