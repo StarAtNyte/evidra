@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { EvidenceClaimSchema } from "./types.js";
 import { compareClaims } from "./claim-consistency.js";
@@ -9,6 +9,8 @@ import { canonicalSourceUrl } from "./sources.js";
 import { subtaskAuditFingerprint } from "./subtask-state.js";
 import { queueRecoveryAction } from "./queue-recovery.js";
 import { isBuiltInAgentRole } from "./agent-organization.js";
+import { sha256File } from "./evidence.js";
+import { isSensitiveWorkspacePath } from "./redaction.js";
 
 function safeJson(value: unknown): string {
   return JSON.stringify(redactStructured(value));
@@ -197,6 +199,7 @@ export interface QueueWorkProduct {
   path: string;
   checksum: string;
   metadata: unknown;
+  verification: "unverified" | "verified" | "missing" | "mismatch";
   createdAt: string;
 }
 
@@ -2755,19 +2758,44 @@ export class ResearchStore {
       const claim = this.db.prepare("SELECT status, owner_id, claim_token FROM work_queue WHERE id = ?").get(taskId) as { status: string; owner_id: string | null; claim_token: string | null } | undefined;
       if (!claim || claim.status !== "running" || claim.owner_id !== actorId || claim.claim_token !== input.claimToken) return undefined;
     }
-    const product: QueueWorkProduct = { id: `product-${randomUUID()}`, taskId, actorId, name, path, checksum, metadata: input.metadata === undefined ? null : redactStructured(input.metadata), createdAt: new Date().toISOString() };
+    const product: QueueWorkProduct = { id: `product-${randomUUID()}`, taskId, actorId, name, path, checksum, metadata: input.metadata === undefined ? null : redactStructured(input.metadata), verification: "unverified", createdAt: new Date().toISOString() };
     this.appendEvent("queue.work_product", product);
     return product;
   }
 
   queueWorkProducts(taskId?: string, limit = 32): QueueWorkProduct[] {
     const boundedLimit = Math.max(1, Math.min(128, Math.floor(limit)));
+    const verification = new Map(this.eventsByType("queue.work_product.verified", 2_048).flatMap((event) => {
+      const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, unknown> : {};
+      return typeof payload.productId === "string" && (payload.verification === "verified" || payload.verification === "missing" || payload.verification === "mismatch") ? [[payload.productId, payload.verification] as const] : [];
+    }));
     return this.eventsByType("queue.work_product", 2_048).flatMap((event) => {
       const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, unknown> : {};
       if (taskId && payload.taskId !== taskId) return [];
       if (typeof payload.id !== "string" || typeof payload.taskId !== "string" || typeof payload.actorId !== "string" || typeof payload.name !== "string" || typeof payload.path !== "string" || typeof payload.checksum !== "string" || !/^sha256:[a-f0-9]{64}$/.test(payload.checksum)) return [];
-      return [{ id: payload.id, taskId: payload.taskId, actorId: payload.actorId, name: payload.name, path: payload.path, checksum: payload.checksum, metadata: payload.metadata ?? null, createdAt: event.createdAt } satisfies QueueWorkProduct];
+      return [{ id: payload.id, taskId: payload.taskId, actorId: payload.actorId, name: payload.name, path: payload.path, checksum: payload.checksum, metadata: payload.metadata ?? null, verification: verification.get(payload.id) ?? "unverified", createdAt: event.createdAt } satisfies QueueWorkProduct];
     }).slice(-boundedLimit);
+  }
+
+  /** Verify a product against the controller-visible workspace without promoting it to evidence. */
+  verifyQueueWorkProduct(root: string, productId: string): QueueWorkProduct | undefined {
+    const product = this.queueWorkProducts().find((entry) => entry.id === productId);
+    if (!product) return undefined;
+    const rootPath = resolve(root);
+    const candidate = resolve(rootPath, product.path);
+    const relativePath = relative(rootPath, candidate);
+    let status: QueueWorkProduct["verification"] = "missing";
+    let observedChecksum: string | null = null;
+    if (!relativePath.startsWith("..") && !isSensitiveWorkspacePath(relativePath)) {
+      try {
+        observedChecksum = sha256File(candidate);
+        status = observedChecksum === product.checksum ? "verified" : "mismatch";
+      } catch {
+        status = "missing";
+      }
+    }
+    this.appendEvent("queue.work_product.verified", { productId, taskId: product.taskId, verification: status, expectedChecksum: product.checksum, observedChecksum });
+    return { ...product, verification: status };
   }
 
   /** Record an operator handoff note with retry-safe transport semantics. */

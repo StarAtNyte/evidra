@@ -2553,6 +2553,13 @@ queue.command("products <id>").option("--limit <count>", "number of work product
   if (options.json) { console.log(JSON.stringify(products, null, 2)); return; }
   console.log(products.length ? products.map((product) => `${product.createdAt}  ${product.name}\n  ${product.path}\n  ${product.checksum}\n  by ${product.actorId}`).join("\n") : `No work products recorded for ${id}.`);
 });
+queue.command("verify-products <id>").option("--json", "emit machine-readable verification").description("Verify task work-product files against their declared checksums").action((id: string, options: { json?: boolean }) => {
+  const store = new ResearchStore(statePath);
+  const products = store.queueWorkProducts(id, 128).map((product) => store.verifyQueueWorkProduct(root, product.id)).filter((product): product is NonNullable<typeof product> => product !== undefined);
+  store.close();
+  if (options.json) { console.log(JSON.stringify(products, null, 2)); return; }
+  console.log(products.length ? products.map((product) => `${product.verification === "verified" ? "OK" : "FAIL"} ${product.name} · ${product.verification}\n  ${product.path}\n  expected ${product.checksum}`).join("\n") : `No work products recorded for ${id}.`);
+});
 queue.command("note <id> <message>").description("Add an operator handoff note to a queue task without changing its evidence or completion state").action((id: string, message: string) => {
   const store = new ResearchStore(statePath);
   try {

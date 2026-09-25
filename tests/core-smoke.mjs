@@ -4153,6 +4153,27 @@ test("queue progress projection distinguishes active, blocked, and terminal work
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("queue work-product verification distinguishes declared, verified, and changed files", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-work-product-verify-"));
+  try {
+    mkdirSync(join(root, "artifacts"), { recursive: true });
+    const productPath = join(root, "artifacts", "result.json");
+    writeFileSync(productPath, "{\"score\":1}\n");
+    const checksum = `sha256:${createHash("sha256").update(readFileSync(productPath)).digest("hex")}`;
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.enqueueTask({ id: "product-verify", kind: "artifact", priority: 1, payload: {} });
+    const claim = store.claimTask("product-verify", ["artifact"], "product-worker");
+    const product = store.recordQueueWorkProduct({ taskId: "product-verify", actorId: "product-worker", name: "result.json", path: "artifacts/result.json", checksum, claimToken: claim?.claimToken ?? undefined });
+    assert.equal(product?.verification, "unverified");
+    assert.equal(store.verifyQueueWorkProduct(root, product?.id ?? "")?.verification, "verified");
+    writeFileSync(productPath, "{\"score\":0}\n");
+    assert.equal(store.verifyQueueWorkProduct(root, product?.id ?? "")?.verification, "mismatch");
+    rmSync(productPath, { force: true });
+    assert.equal(store.verifyQueueWorkProduct(root, product?.id ?? "")?.verification, "missing");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue worker context persists structured progress and checkpoints", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-queue-progress-context-"));
   try {
