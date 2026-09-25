@@ -311,6 +311,13 @@ export interface ResearchRoutineRun {
   error: string | null;
 }
 
+/** Return the durable delay currently protecting a failed routine from a retry storm. */
+export function routineRetryDelaySeconds(routine: Pick<ResearchRoutine, "lastResult" | "lastRunAt" | "nextRunAt">): number | null {
+  if (routine.lastResult !== "failed" || !routine.lastRunAt) return null;
+  const delay = Math.round((Date.parse(routine.nextRunAt) - Date.parse(routine.lastRunAt)) / 1000);
+  return Number.isFinite(delay) && delay >= 0 ? delay : null;
+}
+
 function validateRoutine(routine: Pick<ResearchRoutine, "name" | "goal" | "mode" | "budgetMinutes" | "intervalSeconds" | "provider" | "model" | "thinking" | "autonomy" | "limitPolicy" | "executor" | "lanes" | "maxRuns" | "triggerEvent">): void {
   if (!routine.name.trim()) throw new Error("Routine name must not be empty.");
   if (!routine.goal.trim()) throw new Error("Routine goal must not be empty.");

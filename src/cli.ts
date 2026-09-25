@@ -4,7 +4,7 @@ import { appendFileSync, cpSync, mkdirSync, writeFileSync, existsSync, readFileS
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { dirname, join, relative, resolve } from "node:path";
-import { ResearchStore, queueEffectivePriority } from "./core/store.js";
+import { ResearchStore, queueEffectivePriority, routineRetryDelaySeconds } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
 import { formatResearchStarterBriefs, RESEARCH_STARTER_BRIEFS } from "./core/research-starters.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "./core/experiment-manifest.js";
@@ -3789,7 +3789,7 @@ routine.command("list").option("--json", "emit machine-readable routines").actio
   store.recoverStaleRoutines();
   const routines = store.routines();
   if (options.json) console.log(JSON.stringify(routines, null, 2));
-  else console.log(routines.length ? routines.map((entry) => `${entry.status} ${entry.id} · ${entry.name} · ${entry.mode} · next ${entry.nextRunAt} · every ${entry.intervalSeconds}s · trigger ${entry.triggerEvent ?? "none"}${entry.pendingTriggers ? ` · pending ${entry.pendingTriggers}` : ""}${entry.pendingTriggerEvent ? ` · event ${entry.pendingTriggerEvent.eventType} @ ${entry.pendingTriggerEvent.eventCreatedAt}` : ""} · runs ${entry.runCount}${entry.maxRuns !== null ? `/${entry.maxRuns}` : ""}${entry.lastResult ? ` · last ${entry.lastResult}` : ""}${entry.lastError ? ` · error ${entry.lastError}` : ""}`).join("\n") : "No routines configured.");
+  else console.log(routines.length ? routines.map((entry) => `${entry.status} ${entry.id} · ${entry.name} · ${entry.mode} · next ${entry.nextRunAt} · every ${entry.intervalSeconds}s · trigger ${entry.triggerEvent ?? "none"}${entry.pendingTriggers ? ` · pending ${entry.pendingTriggers}` : ""}${entry.pendingTriggerEvent ? ` · event ${entry.pendingTriggerEvent.eventType} @ ${entry.pendingTriggerEvent.eventCreatedAt}` : ""} · runs ${entry.runCount}${entry.maxRuns !== null ? `/${entry.maxRuns}` : ""}${entry.failureStreak ? ` · failures ${entry.failureStreak}/3${routineRetryDelaySeconds(entry) !== null ? ` · retry backoff ${routineRetryDelaySeconds(entry)}s` : ""}` : ""}${entry.lastResult ? ` · last ${entry.lastResult}` : ""}${entry.lastError ? ` · error ${entry.lastError}` : ""}`).join("\n") : "No routines configured.");
   store.close();
 });
 routine.command("history <id>").option("--json", "emit machine-readable run history").description("Show durable attempts for a routine").action((id: string, options: { json?: boolean }) => {
