@@ -3660,6 +3660,7 @@ test("autonomy policy and shell guard enforce hard safety boundaries", () => {
   assert.equal(guardAutonomousCommand(["curl", "-L", "https://example.com/data.csv"]).allowed, false);
   assert.equal(guardAutonomousCommand(["curl", "--head", "https://example.com"]).allowed, true);
   assert.equal(guardAutonomousCommand(["git", "status", "--short"]).allowed, true);
+  assert.equal(guardReadOnlyInspection(["true"]).allowed, true);
   assert.equal(guardReadOnlyInspection(["git", "status", "--short"]).allowed, true);
   assert.equal(guardReadOnlyInspection(["git", "diff", "--output", "report.txt"]).allowed, false);
   assert.equal(guardReadOnlyInspection(["git", "branch", "-D", "main"]).allowed, false);

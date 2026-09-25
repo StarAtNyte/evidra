@@ -129,7 +129,7 @@ export function guardWorkspaceCommand(command: string[], root: string): CommandG
  */
 export function guardReadOnlyInspection(command: string[]): CommandGuard {
   const executable = basename(command[0] ?? "").toLowerCase();
-  const readOnly = new Set(["pwd", "ls", "find", "rg", "grep", "head", "tail", "sed", "awk", "wc", "du", "file", "which"]);
+  const readOnly = new Set(["true", "pwd", "ls", "find", "rg", "grep", "head", "tail", "sed", "awk", "wc", "du", "file", "which"]);
   if (executable === "git") {
     const allowed = new Set(["status", "rev-parse", "log", "diff", "show", "ls-files", "branch"]);
     if (!allowed.has(command[1]?.toLowerCase() ?? "")) return { allowed: false, reason: "SAFE mode only permits read-only Git inspection commands." };
