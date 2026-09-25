@@ -125,7 +125,7 @@ export class QueueWorker {
     const abortFromWorker = (): void => taskAbortController.abort();
     this.abortController.signal.addEventListener("abort", abortFromWorker, { once: true });
     let leaseLost = false;
-    const activity = (kind: "started" | "progress" | "blocked" | "handoff" | "completed" | "failed", message: string, metadata?: unknown): boolean => this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind, message, metadata, claimToken: task.claimToken ?? undefined });
+    const activity = (kind: "started" | "progress" | "blocked" | "comment" | "handoff" | "completed" | "failed", message: string, metadata?: unknown): boolean => this.store.recordQueueActivity({ taskId: task.id, actorId: this.workerId, kind, message, metadata, claimToken: task.claimToken ?? undefined });
     const heartbeat = setInterval(() => {
       if (leaseLost) return;
       if (!this.store.heartbeatTask(task.id, this.workerId, task.claimToken ?? undefined)) {

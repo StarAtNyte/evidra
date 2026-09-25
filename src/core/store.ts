@@ -158,8 +158,8 @@ export interface QueueChildSummary {
   failed: number;
   cancelled: number;
 }
-export type QueueActivityKind = "started" | "progress" | "blocked" | "handoff" | "completed" | "failed";
-const QUEUE_ACTIVITY_KINDS: QueueActivityKind[] = ["started", "progress", "blocked", "handoff", "completed", "failed"];
+export type QueueActivityKind = "started" | "progress" | "blocked" | "comment" | "handoff" | "completed" | "failed";
+const QUEUE_ACTIVITY_KINDS: QueueActivityKind[] = ["started", "progress", "blocked", "comment", "handoff", "completed", "failed"];
 
 function validateQueueCompletionContract(payload: unknown): void {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
@@ -2712,7 +2712,7 @@ export class ResearchStore {
     const taskId = input.taskId.trim().slice(0, 200);
     const actorId = input.actorId.trim().slice(0, 200);
     const message = redactStructured(input.message.trim().slice(0, 2_000));
-    if (!taskId || !actorId || !message || !["started", "progress", "blocked", "handoff", "completed", "failed"].includes(input.kind)) return false;
+    if (!taskId || !actorId || !message || !["started", "progress", "blocked", "comment", "handoff", "completed", "failed"].includes(input.kind)) return false;
     let metadata = input.metadata;
     if (metadata && typeof metadata === "object" && !Array.isArray(metadata) && Object.prototype.hasOwnProperty.call(metadata, "progress")) {
       const details = normalizeQueueProgressDetails((metadata as Record<string, unknown>).progress);
@@ -2773,7 +2773,7 @@ export class ResearchStore {
       const actorId = typeof payload.actorId === "string" ? payload.actorId : "";
       const kind = payload.kind;
       const message = typeof payload.message === "string" ? payload.message : "";
-      if (!id || !actorId || !message || !["started", "progress", "blocked", "handoff", "completed", "failed"].includes(String(kind)) || (taskId && id !== taskId)) return [];
+      if (!id || !actorId || !message || !["started", "progress", "blocked", "comment", "handoff", "completed", "failed"].includes(String(kind)) || (taskId && id !== taskId)) return [];
       return [{ taskId: id, actorId, kind: kind as QueueActivityKind, message, metadata: payload.metadata ?? null, createdAt: row.created_at }];
     });
   }

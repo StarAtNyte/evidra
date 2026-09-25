@@ -376,8 +376,10 @@ test("durable research state and queue survive store reopen", () => {
     first.enqueueTask({ id: "task-external", kind: "research.lane", priority: 5, payload: { smoke: true } });
     assert.equal(first.claimNextTask(["research.lane"], "external-worker")?.id, "task-external");
     assert.equal(first.recordQueueActivity({ taskId: "task-external", actorId: "external-worker", kind: "handoff", message: "verified handoff", metadata: { token: "should redact" } }), true);
-    assert.equal(first.queueActivities("task-external")[0]?.message, "verified handoff");
-    assert.equal(first.queueActivities("task-external")[0]?.metadata?.token, "[REDACTED]");
+    assert.equal(first.recordQueueActivity({ taskId: "task-external", actorId: "operator", kind: "comment", message: "Please include the independent check." }), true);
+    assert.equal(first.queueActivities("task-external").find((entry) => entry.kind === "handoff")?.message, "verified handoff");
+    assert.equal(first.queueActivities("task-external").find((entry) => entry.kind === "handoff")?.metadata?.token, "[REDACTED]");
+    assert.equal(first.queueActivities("task-external").find((entry) => entry.kind === "comment")?.message, "Please include the independent check.");
     assert.equal(first.recordQueueUsage({ taskId: "task-external", actorId: "external-worker", inputTokens: 120, outputTokens: 30, costUsd: 0.02, provider: "codex", model: "gpt-test" }), true);
     assert.deepEqual(first.queueUsage("task-external")[0], { taskId: "task-external", actorId: "external-worker", inputTokens: 120, outputTokens: 30, costUsd: 0.02, provider: "codex", model: "gpt-test", createdAt: first.queueUsage("task-external")[0].createdAt });
     assert.equal(first.recordQueueUsage({ taskId: "task-external", actorId: "external-worker", inputTokens: -1, outputTokens: 0 }), false);
@@ -9179,6 +9181,11 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const remoteActivity = await post("/tasks/activity", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, kind: "progress", message: "inspected evidence", metadata: { progress: { percent: 0.5, step: "retrieval", completed: 2, total: 4 } } }, token, "worker-a", "worker-secret");
     assert.equal(remoteActivity.status, 200);
     assert.deepEqual((await remoteActivity.json()).progress.details, { percent: 0.5, step: "retrieval", completed: 2, total: 4 });
+    const remoteComment = await post("/tasks/activity", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, kind: "comment", message: "The evidence needs an independent replication." }, token, "worker-a", "worker-secret");
+    assert.equal(remoteComment.status, 200);
+    const remoteCommentStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    assert.equal(remoteCommentStore.queueActivities(task.id, 16).some((entry) => entry.kind === "comment" && entry.message.includes("independent replication")), true);
+    remoteCommentStore.close();
     assert.equal((await post("/tasks/activity", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, kind: "progress", message: "malformed progress", metadata: { progress: { percent: 2 } } }, token, "worker-a", "worker-secret")).status, 409);
     const remoteProgressStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     assert.deepEqual(remoteProgressStore.queueProgress(task.id)?.details, { percent: 0.5, step: "retrieval", completed: 2, total: 4 });

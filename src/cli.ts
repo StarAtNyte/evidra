@@ -2553,6 +2553,13 @@ queue.command("note <id> <message>").description("Add an operator handoff note t
   } finally { store.close(); }
   console.log(`Added an operator handoff note to ${id}.`);
 });
+queue.command("comment <id> <message>").description("Add a durable discussion comment to a queue task without changing its state").action((id: string, message: string) => {
+  const store = new ResearchStore(statePath);
+  try {
+    if (!store.recordQueueActivity({ taskId: id, actorId: "operator", kind: "comment", message })) throw new Error("task was not found or the comment was invalid");
+  } finally { store.close(); }
+  console.log(`Added a discussion comment to ${id}.`);
+});
 queue.command("usage [id]").option("--limit <count>", "number of usage records", "128").option("--json", "emit machine-readable usage state").action((id: string | undefined, options: { limit: string; json?: boolean }) => {
   const store = new ResearchStore(statePath);
   const limit = Math.max(1, Math.min(512, Number.parseInt(options.limit, 10) || 128));
@@ -3684,7 +3691,7 @@ event.command("serve")
               }
               const activityKind = parsed.kind;
               const message = typeof parsed.message === "string" ? parsed.message : "";
-              if (!(typeof activityKind === "string" && ["started", "progress", "blocked", "handoff", "completed", "failed"].includes(activityKind)) || !message.trim()) throw new Error("Task activity requires a valid kind and non-empty message.");
+              if (!(typeof activityKind === "string" && ["started", "progress", "blocked", "comment", "handoff", "completed", "failed"].includes(activityKind)) || !message.trim()) throw new Error("Task activity requires a valid kind and non-empty message.");
               const recorded = store.recordQueueActivity({ taskId, actorId: workerId, claimToken: claimToken || undefined, kind: activityKind as import("./core/store.js").QueueActivityKind, message, metadata: parsed.metadata === undefined ? undefined : parseExternalEventPayload(JSON.stringify(parsed.metadata)) });
               const progress = recorded ? store.queueProgress(taskId) : undefined;
               store.close();
