@@ -361,6 +361,7 @@ Implemented today:
 - typed worker progress: queue handlers can report bounded percent/step counters and durable checkpoints through a compatible context API; progress survives completion and restart without treating model prose as evidence;
 - remote progress parity: authenticated `/tasks/activity` calls receive the same progress validation, so Modal, Slurm, and other external workers cannot bypass the local queue contract;
 - progress-aware attention: blocked activity and stale running heartbeats become actionable operator warnings/critical alerts with direct queue-history or activity actions;
+- dashboard progress parity: rendered queue rows show the same lifecycle state, percent, and current step already available through the structured API;
 - cooperative remote cancellation: the next authenticated worker heartbeat returns a structured `409` cancellation response, allowing external runtimes to stop promptly instead of discovering cancellation only at completion;
 - idempotent external usage: `/tasks/usage` accepts a stable per-turn `idempotencyKey`, so transport retries do not duplicate token or cost accounting;
 - conflicting usage-key reuse is rejected and journaled instead of silently accepting a different token/cost payload;
