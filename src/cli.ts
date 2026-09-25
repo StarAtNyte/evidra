@@ -2714,13 +2714,15 @@ event.command("serve")
       const operatorQueueStatusPath = request.method === "GET" && request.url === "/queue/status";
       const operatorActivityPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/activity";
       const operatorOrganizationPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/organization";
+      const routineControlMatch = request.method === "POST" ? (request.url ?? "").split("?", 1)[0].match(/^\/routines\/([^/]+)\/(pause|resume)$/) : null;
+      const operatorRoutinePath = Boolean(routineControlMatch);
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
       const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
       const authorization = typeof request.headers.authorization === "string" ? request.headers.authorization : "";
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
-      if (operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
+      if (operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath || operatorRoutinePath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
@@ -2771,7 +2773,29 @@ event.command("serve")
         response.end(JSON.stringify({ ok: integrity.status !== "invalid", workspaceId, project: project ? { id: project.id, name: project.name, competitionId: project.competitionId } : null, campaign: campaign ?? null, organization, externalWorkers, routines, queueControl, integrity: integrity.status }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, GET /queue/status, GET /activity, GET /organization, or GET /health are supported" })); return; }
+      if (operatorRoutinePath && routineControlMatch) {
+        let routineId: string;
+        try { routineId = decodeURIComponent(routineControlMatch[1] ?? ""); } catch {
+          response.writeHead(400, headers);
+          response.end(JSON.stringify({ error: "routine id must be valid URL encoding" }));
+          return;
+        }
+        const action = routineControlMatch[2] === "pause" ? "paused" : "active";
+        const store = new ResearchStore(statePath);
+        try {
+          const routine = store.setRoutineStatus(routineId, action);
+          response.writeHead(200, headers);
+          response.end(JSON.stringify({ ok: true, id: routine.id, status: routine.status, nextRunAt: routine.nextRunAt }));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          response.writeHead(message.startsWith("Unknown routine") ? 404 : 409, headers);
+          response.end(JSON.stringify({ error: message }));
+        } finally {
+          store.close();
+        }
+        return;
+      }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, /routines/:id/pause, /routines/:id/resume, GET /queue/status, GET /activity, GET /organization, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");

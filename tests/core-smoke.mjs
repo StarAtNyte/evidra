@@ -8737,6 +8737,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     store.setAgentRoleAdmission("remote lane", true, "test worker registration");
     store.enqueueTask({ id: "bridge-task", kind: "research.lane", priority: 4, payload: { objective: "external worker smoke", campaignStartedAt: "bridge-campaign" } });
     store.enqueueTask({ id: "remote-cancel", kind: "research.lane", priority: 1, payload: { objective: "remote cancellation smoke" } });
+    store.createRoutine({ id: "remote-routine", name: "Remote routine", mode: "research", goal: "remote routine control smoke", budgetMinutes: 5, intervalSeconds: 60, stopCondition: "stop", provider: "codex", model: "gpt-test", thinking: "medium", autonomy: "safe", limitPolicy: "stop", executor: "local", lanes: 1, maxRuns: null, triggerEvent: null });
     store.close();
     const eventTokenFile = join(root, "event-token");
     writeFileSync(eventTokenFile, `${token}\n`);
@@ -8825,6 +8826,16 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(Array.isArray(remoteOrganizationBody.organization), true);
     assert.equal(Array.isArray(remoteOrganizationBody.routines), true);
     assert.equal(remoteOrganizationBody.organization.every((entry) => !Object.hasOwn(entry, "claimToken")), true);
+    const workerOnlyRoutinePause = await post("/routines/remote-routine/pause", {}, null, "worker-a", "worker-secret");
+    assert.equal(workerOnlyRoutinePause.status, 401);
+    const remoteRoutinePause = await post("/routines/remote-routine/pause", {}, token);
+    assert.equal(remoteRoutinePause.status, 200);
+    assert.equal((await remoteRoutinePause.json()).status, "paused");
+    const remoteRoutineResume = await post("/routines/remote-routine/resume", {}, token);
+    assert.equal(remoteRoutineResume.status, 200);
+    assert.equal((await remoteRoutineResume.json()).status, "active");
+    const missingRoutine = await post("/routines/missing-routine/pause", {}, token);
+    assert.equal(missingRoutine.status, 404);
     const remotePause = await post("/queue/pause", { reason: "remote maintenance" }, token);
     assert.equal(remotePause.status, 200);
     assert.equal((await remotePause.json()).paused, true);
