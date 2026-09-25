@@ -4766,6 +4766,12 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     const forcedFinished = store.finishRoutine("routine-demo", "runner-force", "completed");
     assert.equal(forcedFinished.pendingTriggers, 0);
     assert.equal(forcedFinished.pendingTriggerEvent?.eventType, "research.test");
+    const failedRun = store.claimRoutine("routine-demo", "runner-failed", 60_000, new Date(), true);
+    assert.equal(failedRun?.status, "running");
+    const failedFinished = store.finishRoutine("routine-demo", "runner-failed", "failed", "provider unavailable", 1);
+    assert.equal(failedFinished.lastResult, "failed");
+    assert.equal(operatorAttention(store).items.some((item) => item.id === "routine-failed:routine-demo"), true);
+    assert.equal(operatorAttention(store).health.status, "degraded");
     assert.equal(store.claimRoutine("routine-demo", "runner-followup", 60_000, new Date(), true)?.status, "running");
     const followupFinished = store.finishRoutine("routine-demo", "runner-followup", "completed");
     assert.equal(followupFinished.pendingTriggerEvent, null);

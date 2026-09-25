@@ -58,7 +58,7 @@ export function controlPlaneHealth(store: ResearchStore): ControlPlaneHealth {
   const tasks = store.queueTasks();
   const routines = store.routines();
   const staleRoutines = routines.filter((routine) => routine.status === "running" && routine.leaseExpiresAt !== null && Date.parse(routine.leaseExpiresAt) <= Date.now()).length;
-  const failedRoutines = routines.filter((routine) => routine.status === "failed").length;
+  const failedRoutines = routines.filter((routine) => routine.status === "failed" || routine.lastResult === "failed").length;
   const activeTasks = tasks.filter((task) => ["queued", "running", "paused"].includes(task.status)).length;
   const lanes = store.agentLanes();
   const runningAgents = lanes.filter((lane) => lane.status === "running").length;
@@ -178,7 +178,7 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
   for (const routine of store.routines().filter((entry) => entry.status === "running" && entry.leaseExpiresAt !== null && Date.parse(entry.leaseExpiresAt) <= Date.now()).slice(0, 24)) {
     items.push({ id: `routine-stale:${routine.id}`, severity: "critical", kind: "routine-stale", summary: `${routine.id} · ${routine.name} runner lease expired`, next: "/routine recover" });
   }
-  for (const routine of store.routines().filter((entry) => entry.status === "failed").slice(0, 24)) {
+  for (const routine of store.routines().filter((entry) => entry.status === "failed" || entry.lastResult === "failed").slice(0, 24)) {
     items.push({ id: `routine-failed:${routine.id}`, severity: "warning", kind: "routine-failed", summary: `${routine.id} · ${routine.name} failed${routine.lastError ? ` · ${routine.lastError.slice(0, 140)}` : ""}`, next: `/routine history ${routine.id}` });
   }
 
