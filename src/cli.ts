@@ -2783,9 +2783,10 @@ event.command("serve")
         const action = routineControlMatch[2] === "pause" ? "paused" : "active";
         const store = new ResearchStore(statePath);
         try {
+          const before = store.routine(routineId);
           const routine = store.setRoutineStatus(routineId, action);
           response.writeHead(200, headers);
-          response.end(JSON.stringify({ ok: true, id: routine.id, status: routine.status, nextRunAt: routine.nextRunAt }));
+          response.end(JSON.stringify({ ok: true, id: routine.id, status: routine.status, nextRunAt: routine.nextRunAt, changed: before?.status !== routine.status }));
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           response.writeHead(message.startsWith("Unknown routine") ? 404 : 409, headers);

@@ -8831,6 +8831,9 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const remoteRoutinePause = await post("/routines/remote-routine/pause", {}, token);
     assert.equal(remoteRoutinePause.status, 200);
     assert.equal((await remoteRoutinePause.json()).status, "paused");
+    const repeatedRoutinePause = await post("/routines/remote-routine/pause", {}, token);
+    assert.equal(repeatedRoutinePause.status, 200);
+    assert.equal((await repeatedRoutinePause.json()).changed, false);
     const remoteRoutineResume = await post("/routines/remote-routine/resume", {}, token);
     assert.equal(remoteRoutineResume.status, 200);
     assert.equal((await remoteRoutineResume.json()).status, "active");

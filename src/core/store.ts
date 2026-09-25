@@ -2239,6 +2239,7 @@ export class ResearchStore {
     const current = this.routine(id);
     if (!current) throw new Error(`Unknown routine '${id}'.`);
     if (current.status === "running") throw new Error(`Routine '${id}' is running; interrupt its campaign before changing routine state.`);
+    if (current.status === status) return current;
     const updated: ResearchRoutine = { ...current, status, leaseId: null, leaseExpiresAt: null, updatedAt: new Date().toISOString() };
     this.saveRoutine(updated);
     this.appendEvent(`routine.${status}`, { id });
