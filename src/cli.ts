@@ -222,7 +222,7 @@ function stageDeclaredExperimentData(worktree: string, paths: string[], sourceRo
     const source = resolve(sourceRoot, declared);
     if (!source.startsWith(workspacePrefix) || source === sourceRoot) throw new Error(`Declared experiment data path must stay inside the workspace: ${declared}`);
     if (!existsSync(source)) throw new Error(`Declared experiment data path is missing: ${declared}`);
-    const destination = resolve(worktree, declared);
+    const destination = resolve(worktree, relative(root, sourceRoot), declared);
     const worktreePrefix = worktree.endsWith("/") ? worktree : `${worktree}/`;
     if (!destination.startsWith(worktreePrefix)) throw new Error(`Declared experiment data path escapes the isolated worktree: ${declared}`);
     cpSync(source, destination, { recursive: true, force: true, dereference: true });
