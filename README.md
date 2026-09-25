@@ -95,6 +95,7 @@ Most coding agents optimize for one conversation and one code change. Evidra is 
 - **Explicit work ownership.** Remote operators can assign or clear recoverable work with `/tasks/:id/assign`; only known admitted roles or workers are accepted, and live claims cannot be silently reassigned.
 - **Controller governance.** Remote supervisors can request campaign pause, resume, or stop through the live controller lease, preserving the same safe-boundary behavior as local and Modal controllers.
 - **Filtered queue operations.** `GET /queue/status` accepts bounded `status`, `assignee`, `kind`, and `limit` filters, allowing remote consoles to inspect exactly the work they own without downloading the full queue.
+- **Route-changing recovery.** `POST /tasks/:id/recover` exposes the same explicit failed-task recovery gate remotely: a new route and rationale are required, repeated routes are rejected, and the failed attempt remains durable evidence.
 - **Reproducible execution.** Experiment manifests, Git worktrees, run metadata, metrics, logs, checksums, and environment snapshots make results inspectable.
 - **Provider choice.** Use the authenticated Codex CLI with a ChatGPT subscription or a local Ollama model.
 - **Human control.** Safe, fast, and YOLO permissions change automation level, while destructive commands and external submissions remain blocked.
