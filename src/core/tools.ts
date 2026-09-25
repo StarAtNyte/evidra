@@ -156,7 +156,7 @@ export const RESEARCH_TOOLS: ResearchToolSpec[] = [
   // Shell execution is inspection-compatible in SAFE mode, but it is not
   // cacheable: FAST/YOLO may run commands whose filesystem/process state can
   // change between rounds.
-  { name: "shell.exec", description: "Run an allowlisted shell command with captured output.", input: { command: "argv array or shell string", timeoutMs: "optional timeout" }, readOnly: true, cacheable: false },
+  { name: "shell.exec", description: "Run one allowlisted read-only command with captured output. Prefer an argv array such as [\"rg\", \"-n\", \"pattern\", \"path\"]; do not join commands with &&, ;, pipes, redirections, cd, or shell wrappers. Use workspace.search/read/files for composed inspection.", input: { command: "one argv array or simple command string; no shell operators", timeoutMs: "optional timeout" }, readOnly: true, cacheable: false },
   // Retrieval writes only durable local evidence; it does not mutate the
   // workspace or perform an external action, so safe research may use it.
   { name: "source.retrieve", description: "Retrieve, hash, excerpt, and store a research source with extracted claims; optionally classify it as a paper or external channel; reuse a fresh cached copy unless refresh is requested.", input: { url: "HTTP(S) URL", kind: "optional general|paper|rules|discussion|leaderboard|documentation|repository|other", refresh: "optional boolean to bypass the fresh-source cache" }, readOnly: true },
