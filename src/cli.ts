@@ -5046,15 +5046,22 @@ research
       // 20-minute baseline just because it moved outside a short UI window.
       const priorBaseline = mode === "challenge" ? store.eventsByType("baseline.completed").at(-1) : undefined;
       let baseline: { command: string[]; cwd: string; exitCode: number; durationMs: number; stdout: string; stderr: string } | undefined;
-      if (mode === "challenge" && options.skipBaseline && priorBaseline) {
+      // A campaign baseline is a control, not a per-cycle experiment. Isolated
+      // candidate worktrees do not mutate the competition workspace, so rerunning
+      // the same expensive baseline on every cycle only consumes the research
+      // budget and can starve actual score-improvement experiments. Cycle 0 (or
+      // an explicit --skip-baseline request) establishes/reuses the control; later
+      // cycles reuse the latest durable observation until a new campaign starts.
+      const reusePriorBaseline = mode === "challenge" && Boolean(priorBaseline) && (options.skipBaseline || cycle > 0);
+      if (reusePriorBaseline && priorBaseline) {
         const payload = priorBaseline.payload as { command?: string[]; cwd?: string; exitCode?: number; durationMs?: number; stdout?: string; stderr?: string };
         baseline = { command: payload.command ?? adapter.baselineCommand(), cwd: payload.cwd ?? adapter.workspacePath(root), exitCode: payload.exitCode ?? 0, durationMs: payload.durationMs ?? 0, stdout: payload.stdout ?? "", stderr: payload.stderr ?? "" };
-        console.log("Research · reusing the latest recorded baseline observation (--skip-baseline).");
+        console.log(`Research · reusing the latest recorded baseline observation (${options.skipBaseline ? "explicit skip" : "completed campaign control"}).`);
       } else if (mode === "challenge") {
         if (options.skipBaseline) throw new Error("--skip-baseline requested, but no baseline.completed event exists. Run evidra baseline first.");
         baseline = await runProcess(adapter.baselineCommand(), adapter.workspacePath(root), adapter.config.evaluatorTimeoutMinutes * 60_000);
       }
-      if (mode === "challenge" && baseline && !(options.skipBaseline && priorBaseline)) {
+      if (mode === "challenge" && baseline && !reusePriorBaseline) {
         const parsed = parseMetricOutput(baseline.stdout, adapter.config.metric.name);
         const metric = parsed.metrics[adapter.config.metric.name] ?? null;
         recordBaselineEvidence(store, root, baseline, metric, parsed.metrics, parsed.metricsByFold);
