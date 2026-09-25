@@ -2711,13 +2711,14 @@ event.command("serve")
       });
       const taskPath = request.method === "POST" && ["/tasks/claim", "/tasks/heartbeat", "/tasks/checkpoint", "/tasks/delegate", "/tasks/activity", "/tasks/usage", "/tasks/complete", "/tasks/release", "/tasks/note", "/tasks/cancel", "/queue/pause", "/queue/resume"].includes(request.url ?? "") ? request.url : undefined;
       const operatorTaskPath = taskPath === "/tasks/note" || taskPath === "/tasks/cancel" || taskPath === "/queue/pause" || taskPath === "/queue/resume";
+      const operatorQueueStatusPath = request.method === "GET" && request.url === "/queue/status";
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
       const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
       const authorization = typeof request.headers.authorization === "string" ? request.headers.authorization : "";
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
-      if (operatorTaskPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
+      if (operatorTaskPath || operatorQueueStatusPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
@@ -2726,7 +2727,21 @@ event.command("serve")
         response.end(JSON.stringify({ ok: integrity.status !== "invalid", integrity }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, or GET /health are supported" })); return; }
+      if (operatorQueueStatusPath) {
+        const store = new ResearchStore(statePath);
+        const control = store.queueControl();
+        const tasks = store.queueTasks().slice(0, 128).map((task) => {
+          const { claimToken: _claimToken, ...publicTask } = task;
+          return { ...publicTask, progress: store.queueProgress(task.id), readiness: store.taskReadiness(task.id), usage: store.queueUsageState(task.id) };
+        });
+        const recoveries = store.eventsByType("queue.recovery_required", 24).map((event) => event.payload);
+        const integrity = store.verifyEventChain();
+        store.close();
+        response.writeHead(200, headers);
+        response.end(JSON.stringify({ ok: integrity.status !== "invalid", paused: control.paused, pauseReason: control.reason, tasks, recoveries, integrity: integrity.status }));
+        return;
+      }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, GET /queue/status, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");
