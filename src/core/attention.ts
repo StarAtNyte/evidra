@@ -30,6 +30,7 @@ export type ControlPlaneHealth = {
   activeTasks: number;
   runningAgents: number;
   staleAgents: number;
+  droppedWakeups: number;
   reason: string;
 };
 
@@ -59,6 +60,7 @@ export function controlPlaneHealth(store: ResearchStore): ControlPlaneHealth {
   const routines = store.routines();
   const staleRoutines = routines.filter((routine) => routine.status === "running" && routine.leaseExpiresAt !== null && Date.parse(routine.leaseExpiresAt) <= Date.now()).length;
   const failedRoutines = routines.filter((routine) => routine.status === "failed" || routine.lastResult === "failed").length;
+  const droppedWakeups = routines.reduce((total, routine) => total + (routine.droppedTriggers ?? 0), 0);
   const activeTasks = tasks.filter((task) => ["queued", "running", "paused"].includes(task.status)).length;
   const lanes = store.agentLanes();
   const runningAgents = lanes.filter((lane) => lane.status === "running").length;
@@ -78,7 +80,7 @@ export function controlPlaneHealth(store: ResearchStore): ControlPlaneHealth {
   if (staleRoutines > 0) {
     status = "blocked";
     reason = `${staleRoutines} routine runner lease(s) expired and require recovery.`;
-  } else if (campaign === "idle" && activeTasks === 0 && runningAgents === 0 && failedRoutines === 0) {
+  } else if (campaign === "idle" && activeTasks === 0 && runningAgents === 0 && failedRoutines === 0 && droppedWakeups === 0) {
     status = "idle";
     reason = "No campaign or active work is running.";
   } else if (alignment.status === "blocked") {
@@ -93,11 +95,11 @@ export function controlPlaneHealth(store: ResearchStore): ControlPlaneHealth {
   } else if (staleAgents > 0 || exhaustedAgents > 0 || (campaign === "running" && controller !== "running")) {
     status = "blocked";
     reason = staleAgents > 0 ? `${staleAgents} running agent(s) have stale heartbeats.` : exhaustedAgents > 0 ? `${exhaustedAgents} running agent(s) exhausted their wall-clock budget.` : "A running campaign has no live controller lease.";
-  } else if (controller === "stale" || failedTasks > 0 || failedRoutines > 0 || blockedAgents > 0 || store.queueControl().paused) {
+  } else if (controller === "stale" || failedTasks > 0 || failedRoutines > 0 || droppedWakeups > 0 || blockedAgents > 0 || store.queueControl().paused) {
     status = "degraded";
-    reason = controller === "stale" ? "The previous controller lease is stale." : failedTasks > 0 ? `${failedTasks} queue task(s) failed and need inspection.` : failedRoutines > 0 ? `${failedRoutines} routine(s) failed and need inspection.` : blockedAgents > 0 ? `${blockedAgents} agent lane(s) are blocked or failed.` : "Queue dispatch is paused by policy.";
+    reason = controller === "stale" ? "The previous controller lease is stale." : failedTasks > 0 ? `${failedTasks} queue task(s) failed and need inspection.` : failedRoutines > 0 ? `${failedRoutines} routine(s) failed and need inspection.` : droppedWakeups > 0 ? `${droppedWakeups} routine wakeup(s) were dropped at the replay cap and need review.` : blockedAgents > 0 ? `${blockedAgents} agent lane(s) are blocked or failed.` : "Queue dispatch is paused by policy.";
   }
-  return { status, controller, campaign, activeTasks, runningAgents, staleAgents, reason };
+  return { status, controller, campaign, activeTasks, runningAgents, staleAgents, droppedWakeups, reason };
 }
 
 /**
@@ -180,6 +182,9 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
   }
   for (const routine of store.routines().filter((entry) => entry.status === "failed" || entry.lastResult === "failed").slice(0, 24)) {
     items.push({ id: `routine-failed:${routine.id}`, severity: "warning", kind: "routine-failed", summary: `${routine.id} · ${routine.name} failed${routine.lastError ? ` · ${routine.lastError.slice(0, 140)}` : ""}`, next: `/routine history ${routine.id}` });
+  }
+  for (const routine of store.routines().filter((entry) => (entry.droppedTriggers ?? 0) > 0).slice(0, 24)) {
+    items.push({ id: `routine-overflow:${routine.id}`, severity: "warning", kind: "routine-overflow", summary: `${routine.id} · ${routine.name} dropped ${routine.droppedTriggers} replay wakeup(s) at the cap`, next: `/routine catch-up ${routine.id} coalesce` });
   }
 
   const alignment = goalAlignment(store);

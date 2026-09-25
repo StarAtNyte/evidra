@@ -4803,6 +4803,14 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     assert.equal(store.claimRoutine(circuit.id, "circuit-after", 60_000, new Date(), true), undefined);
     assert.equal(store.recentEvents(8).some((event) => event.type === "routine.failure_circuit_open" && event.payload?.id === circuit.id), true);
     assert.equal(store.setRoutineStatus(circuit.id, "active").failureStreak, 0);
+    const overflow = store.createRoutine({ ...routine, id: "routine-overflow", triggerEvent: "overflow.test", catchUpPolicy: "replay" });
+    assert.equal(store.claimRoutine(overflow.id, "overflow-runner", 60_000, new Date(), true)?.status, "running");
+    const overflowBase = Date.now() + 1_000;
+    for (let index = 0; index < 9; index += 1) store.triggerRoutines("overflow.test", new Date(overflowBase + index * 1_000).toISOString());
+    store.finishRoutine(overflow.id, "overflow-runner", "completed");
+    assert.equal(store.routine(overflow.id)?.droppedTriggers, 1);
+    assert.equal(operatorAttention(store).items.some((item) => item.id === "routine-overflow:routine-overflow"), true);
+    assert.equal(operatorAttention(store).health.status, "degraded");
     const stale = store.createRoutine({ ...routine, id: "routine-stale" });
     assert.equal(store.claimRoutine(stale.id, "runner-stale", -1)?.status, "running");
     assert.equal(operatorAttention(store).items.some((item) => item.id === "routine-stale:routine-stale"), true);
