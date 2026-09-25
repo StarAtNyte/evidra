@@ -8769,7 +8769,10 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(workerOnlyControllerPause.status, 401);
     const controllerPause = await post("/controller/pause", {}, token, undefined, undefined, "research-console");
     assert.equal(controllerPause.status, 200);
-    assert.equal((await controllerPause.json()).requestedAction, "pause");
+    assert.equal((await controllerPause.json()).changed, true);
+    const controllerPauseRepeat = await post("/controller/pause", {}, token, undefined, undefined, "research-console");
+    assert.equal(controllerPauseRepeat.status, 200);
+    assert.equal((await controllerPauseRepeat.json()).changed, false);
     const controllerResume = await post("/controller/resume", {}, token, undefined, undefined, "research-console");
     assert.equal(controllerResume.status, 200);
     assert.equal((await controllerResume.json()).requestedAction, "resume");

@@ -3194,7 +3194,8 @@ event.command("serve")
           if (operatorControllerControlPath && controllerControlMatch) {
             const action = controllerControlMatch[1] as "pause" | "resume" | "stop";
             const store = new ResearchStore(statePath);
-            const lease = store.requestControllerAction(action);
+            const before = store.controllerLease();
+            const lease = store.requestControllerAction(action, remoteActor);
             if (!lease) {
               store.close();
               response.writeHead(409, headers);
@@ -3203,7 +3204,7 @@ event.command("serve")
             }
             store.close();
             response.writeHead(200, headers);
-            response.end(JSON.stringify({ ok: true, action, controllerId: lease.controllerId, status: lease.status, requestedAction: lease.requestedAction }));
+            response.end(JSON.stringify({ ok: true, action, changed: before?.requestedAction !== action, controllerId: lease.controllerId, status: lease.status, requestedAction: lease.requestedAction }));
             return;
           }
           if (operatorTaskControlPath && taskControlMatch) {

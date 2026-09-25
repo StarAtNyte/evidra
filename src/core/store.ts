@@ -1423,11 +1423,14 @@ export class ResearchStore {
     return result.changes === 1;
   }
 
-  requestControllerAction(action: ControllerAction): ControllerLease | undefined {
+  requestControllerAction(action: ControllerAction, actorId = "operator"): ControllerLease | undefined {
     const now = new Date().toISOString();
+    const current = this.readControllerLease();
+    if (!current || current.status !== "running") return undefined;
+    if (current.requestedAction === action) return current;
     this.db.prepare("UPDATE controller_leases SET requested_action = ?, updated_at = ? WHERE id = 1 AND status = 'running'").run(action, now);
     const lease = this.readControllerLease();
-    if (lease?.status === "running") this.appendEvent("controller.action.requested", { action, controllerId: lease.controllerId, pid: lease.pid });
+    if (lease?.status === "running") this.appendEvent("controller.action.requested", { action, controllerId: lease.controllerId, pid: lease.pid, actorId: actorId.trim().slice(0, 200) || "operator" });
     return lease;
   }
 
