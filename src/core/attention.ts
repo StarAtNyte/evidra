@@ -116,11 +116,15 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
     const actorId = typeof payload.actorId === "string" && payload.actorId.trim() ? payload.actorId.trim() : "unknown-worker";
     items.push({ id: `queue-lease-lost:${taskId}:${event.createdAt}`, severity: "critical", kind: "queue-lease-lost", summary: `${taskId} · worker ${actorId} lost its queue lease${typeof payload.reason === "string" && payload.reason.trim() ? ` · ${payload.reason.trim().slice(0, 120)}` : ""}`, next: `/queue history ${taskId}` });
   }
-  for (const event of store.eventsByType("queue.worker.error", 24)) {
+  const latestWorkerErrors = new Map<string, { event: { createdAt: string }; error: string }>();
+  for (const event of store.eventsByType("queue.worker.error", 64)) {
     const payload = event.payload && typeof event.payload === "object" ? event.payload as { workerId?: unknown; error?: unknown } : {};
     const workerId = typeof payload.workerId === "string" && payload.workerId.trim() ? payload.workerId.trim() : "unknown-worker";
     const error = typeof payload.error === "string" && payload.error.trim() ? payload.error.trim().slice(0, 160) : "queue supervisor failure";
-    items.push({ id: `queue-worker-error:${workerId}:${event.createdAt}`, severity: "warning", kind: "queue-worker-error", summary: `${workerId} · ${error}`, next: "/queue status" });
+    latestWorkerErrors.set(workerId, { event, error });
+  }
+  for (const [workerId, entry] of latestWorkerErrors) {
+    items.push({ id: `queue-worker-error:${workerId}`, severity: "warning", kind: "queue-worker-error", summary: `${workerId} · ${entry.error}`, next: "/queue status" });
   }
   // A delegated failure is actionable in the context of its live parent. Make
   // the supervision boundary visible so the route or decomposition can change

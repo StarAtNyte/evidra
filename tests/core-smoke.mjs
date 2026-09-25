@@ -3979,7 +3979,8 @@ test("queue worker supervisor contains polling failures and records recovery sta
     await worker.stop();
     store.claimNextTask = originalClaim;
     assert.ok(store.eventsByType("queue.worker.error").some((event) => event.payload.workerId === "supervisor-test"));
-    assert.ok(operatorAttention(store).items.some((item) => item.kind === "queue-worker-error" && item.summary.includes("supervisor-test")));
+    const workerAttention = operatorAttention(store).items.filter((item) => item.kind === "queue-worker-error" && item.summary.includes("supervisor-test"));
+    assert.equal(workerAttention.length, 1);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
