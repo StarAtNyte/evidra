@@ -84,6 +84,7 @@ Most coding agents optimize for one conversation and one code change. Evidra is 
 - Active-claim resolution also checks linked source lifecycle state, so older databases with superseded sources cannot reintroduce stale literature claims after restart.
 - **Concurrent lane safety.** The SQLite store uses WAL and a bounded writer wait, so parallel Codex lanes can record observations and traces without turning brief writer contention into lost research evidence.
 - **Bounded autonomy.** A campaign has an ultimate goal, internal phase goals, a budget, and a stopping condition. It pauses when genuinely blocked and can resume later.
+- **Remote operator attention.** Authenticated controllers can read one bounded `/attention` projection containing campaign health and actionable approval, recovery, queue, worker, and agent signals instead of reconstructing state from separate endpoints. Secrets and worker fencing tokens are never included.
 - **Reproducible execution.** Experiment manifests, Git worktrees, run metadata, metrics, logs, checksums, and environment snapshots make results inspectable.
 - **Provider choice.** Use the authenticated Codex CLI with a ChatGPT subscription or a local Ollama model.
 - **Human control.** Safe, fast, and YOLO permissions change automation level, while destructive commands and external submissions remain blocked.

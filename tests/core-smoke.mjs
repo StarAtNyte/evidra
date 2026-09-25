@@ -8813,6 +8813,15 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(remoteStatusBody.paused, false);
     assert.equal(remoteStatusBody.tasks.some((entry) => entry.id === task.id && !Object.hasOwn(entry, "claimToken")), true);
     assert.doesNotMatch(JSON.stringify(remoteStatusBody), /sk-remote-queue-secret-12345678901234567890/);
+    const workerOnlyAttention = await fetch(`http://127.0.0.1:${port}/attention`, { headers: { "x-evidra-worker-id": "worker-a", "x-evidra-worker-token": "worker-secret" } });
+    assert.equal(workerOnlyAttention.status, 401);
+    const remoteAttention = await fetch(`http://127.0.0.1:${port}/attention`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(remoteAttention.status, 200);
+    const remoteAttentionBody = await remoteAttention.json();
+    assert.equal(typeof remoteAttentionBody.attention.total, "number");
+    assert.equal(typeof remoteAttentionBody.attention.health.status, "string");
+    assert.equal(remoteAttentionBody.attention.items.length > 0, true);
+    assert.doesNotMatch(JSON.stringify(remoteAttentionBody), /sk-remote-queue-secret-12345678901234567890/);
     const workerOnlyActivity = await fetch(`http://127.0.0.1:${port}/activity`, { headers: { "x-evidra-worker-id": "worker-a", "x-evidra-worker-token": "worker-secret" } });
     assert.equal(workerOnlyActivity.status, 401);
     const activityFeedResponse = await fetch(`http://127.0.0.1:${port}/activity?after=0&limit=25`, { headers: { authorization: `Bearer ${token}` } });

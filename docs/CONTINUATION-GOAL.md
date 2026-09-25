@@ -97,6 +97,7 @@ external evaluator.
 - Remote operators can now steer a known specialist with an authenticated role-scoped message; source actor and optional phase scope are preserved, identical pending retries are deduplicated, and no new authority is granted.
 - Remote operators can now cancel an unapplied specialist directive through a role-scoped authenticated endpoint; applied directives remain immutable and repeated cancellation is idempotent.
 - Remote operators can now inspect bounded per-role directive history, including applied and cancelled steering, through an authenticated redacted endpoint.
+- Remote operators can now read one authenticated redacted `/attention` projection combining control-plane health with actionable approvals, recoveries, stalled work, stale workers, and blocked agents; this keeps remote automation aligned with the same intervention semantics as the local dashboard.
 - Remote operators can now inspect `GET /approvals` and resolve queue-task or external-agent-role gates through authenticated approve/reject endpoints; workers cannot impersonate operators and repeated decisions do not duplicate audit events.
 - Remote governance actions accept a bounded `X-Evidra-Actor` label and preserve it in durable action records, making dashboard and controller decisions attributable without exposing credentials.
 - Successful remote claims now include a bounded resume context—task lineage, attempt number, checkpoint metadata, and recent redacted activity—so crash recovery does not require a worker to reconstruct context from the full event log.
