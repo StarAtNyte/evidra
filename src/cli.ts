@@ -2752,8 +2752,8 @@ event.command("serve")
               const exists = store.queueTasks().some((task) => task.id === taskId);
               const progress = note.recorded ? store.queueProgress(taskId) : undefined;
               store.close();
-              response.writeHead(note.recorded ? 200 : exists ? 409 : 404, headers);
-              response.end(JSON.stringify(note.recorded ? { ok: true, idempotent: note.idempotent, taskId, progress: progress ?? null } : { ok: false, taskId, error: exists ? "note could not be recorded" : "task not found" }));
+              response.writeHead(note.recorded ? 200 : note.conflict ? 409 : exists ? 409 : 404, headers);
+              response.end(JSON.stringify(note.recorded ? { ok: true, idempotent: note.idempotent, taskId, progress: progress ?? null } : { ok: false, taskId, error: note.conflict ? "idempotency key conflicts with an existing note" : exists ? "note could not be recorded" : "task not found" }));
               return;
             }
             const workerId = typeof parsed.workerId === "string" ? parsed.workerId.trim() : "";

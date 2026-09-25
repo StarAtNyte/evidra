@@ -82,7 +82,7 @@ external evaluator.
 - External worker heartbeats can now declare an optional capacity of 1–64 concurrent tasks. Claim checkout enforces that capacity inside the same SQLite transaction, rejects claim-side escalation, preserves the declaration across heartbeats that omit it, and CLI/dashboard health surfaces active and available slots; workers without a declaration remain backward-compatible and unlimited.
 - Queue collaboration is now CLI/TUI-parity: operators can add scoped handoff notes with `evidra queue note` or `/queue note`; notes remain activity/audit context and cannot satisfy evidence or completion contracts.
 - The event control plane now exposes bearer-authenticated `POST /tasks/note` for the same operator note action, while deliberately rejecting worker-only authentication so notes cannot be confused with worker authority.
-- Remote operator notes accept bounded idempotency keys and acknowledge duplicate retries without appending duplicate activity.
+- Remote operator notes accept bounded idempotency keys, acknowledge identical retries without appending duplicate activity, and reject conflicting reuse with a `409`.
 - Successful remote claims now include a bounded resume context—task lineage, attempt number, checkpoint metadata, and recent redacted activity—so crash recovery does not require a worker to reconstruct context from the full event log.
 - The deterministic orchestration benchmark now guards both capacity-aware checkout and resumable remote context, keeping the new recovery contract measured rather than documentation-only.
 - Dashboard queue rows now render the structured progress state, percent, and step instead of exposing those fields only through the API payload.

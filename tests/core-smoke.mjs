@@ -8786,6 +8786,8 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const duplicateOperatorNote = await post("/tasks/note", { taskId: task.id, message: "operator requested a fresh validation pass", idempotencyKey: "note-1" }, token);
     assert.equal(duplicateOperatorNote.status, 200);
     assert.equal((await duplicateOperatorNote.json()).idempotent, true);
+    const conflictingOperatorNote = await post("/tasks/note", { taskId: task.id, message: "different operation", idempotencyKey: "note-1" }, token);
+    assert.equal(conflictingOperatorNote.status, 409);
     const workerOnlyNote = await post("/tasks/note", { taskId: task.id, message: "worker credential must not impersonate operator" }, null, "worker-a", "worker-secret");
     assert.equal(workerOnlyNote.status, 401);
     const checkpoint = await post("/tasks/checkpoint", { workerId: "worker-a", taskId: task.id, claimToken: task.claimToken, checkpoint: { stage: "remote-retrieval", artifact: "partial.json" } }, token, "worker-a", "worker-secret");
