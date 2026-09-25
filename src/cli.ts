@@ -2713,13 +2713,14 @@ event.command("serve")
       const operatorTaskPath = taskPath === "/tasks/note" || taskPath === "/tasks/cancel" || taskPath === "/queue/pause" || taskPath === "/queue/resume";
       const operatorQueueStatusPath = request.method === "GET" && request.url === "/queue/status";
       const operatorActivityPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/activity";
+      const operatorOrganizationPath = request.method === "GET" && (request.url ?? "").split("?", 1)[0] === "/organization";
       const headerWorkerId = typeof request.headers["x-evidra-worker-id"] === "string" ? request.headers["x-evidra-worker-id"].trim() : "";
       const headerWorkerToken = typeof request.headers["x-evidra-worker-token"] === "string" ? request.headers["x-evidra-worker-token"] : "";
       const scopedWorkerAuthenticated = Boolean(taskPath && workerTokens.size && headerWorkerId && secretMatches(workerTokens.get(headerWorkerId), headerWorkerToken));
       const authorization = typeof request.headers.authorization === "string" ? request.headers.authorization : "";
       const bearerToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
       const bearerAuthenticated = !eventToken || secretMatches(eventToken, bearerToken);
-      if (operatorTaskPath || operatorQueueStatusPath || operatorActivityPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorActivityPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
+      if (operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath ? !bearerAuthenticated : ((workerTokens.size && taskPath && !scopedWorkerAuthenticated) || (!bearerAuthenticated && !scopedWorkerAuthenticated))) { response.writeHead(401, headers); response.end(JSON.stringify({ error: operatorTaskPath || operatorQueueStatusPath || operatorActivityPath || operatorOrganizationPath ? "invalid bearer token" : workerTokens.size && taskPath ? "invalid worker credentials" : "invalid bearer token" })); return; }
       if (request.method === "GET" && request.url === "/health") {
         const store = new ResearchStore(statePath);
         const integrity = store.verifyEventChain();
@@ -2755,7 +2756,22 @@ event.command("serve")
         response.end(JSON.stringify({ ok: integrity.status !== "invalid", events, nextAfter: events.at(-1)?.id ?? after, hasMore: events.length === limit, integrity: integrity.status }));
         return;
       }
-      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, GET /queue/status, GET /activity, or GET /health are supported" })); return; }
+      if (operatorOrganizationPath) {
+        const store = new ResearchStore(statePath);
+        const campaign = store.campaign();
+        const organization = agentOrganization(store).map((agent) => ({ ...agent, control: store.agentPause(agent.role) ?? null, pendingDirectives: store.pendingAgentDirectives(agent.role).length }));
+        const routines = store.routines().slice(0, 64).map((routine) => ({ id: routine.id, name: routine.name, mode: routine.mode, status: routine.status, goal: routine.goal, nextRunAt: routine.nextRunAt, triggerEvent: routine.triggerEvent ?? null, pendingTriggers: routine.pendingTriggers ?? 0, lastRunAt: routine.lastRunAt, lastResult: routine.lastResult, lastError: routine.lastError, runCount: routine.runCount, maxRuns: routine.maxRuns }));
+        const externalWorkers = store.externalWorkers();
+        const integrity = store.verifyEventChain();
+        const queueControl = store.queueControl();
+        const project = store.project();
+        const workspaceId = store.workspaceId();
+        store.close();
+        response.writeHead(200, headers);
+        response.end(JSON.stringify({ ok: integrity.status !== "invalid", workspaceId, project: project ? { id: project.id, name: project.name, competitionId: project.competitionId } : null, campaign: campaign ?? null, organization, externalWorkers, routines, queueControl, integrity: integrity.status }));
+        return;
+      }
+      if (request.method !== "POST" || (request.url !== "/events" && !taskPath)) { response.writeHead(404, headers); response.end(JSON.stringify({ error: "POST /events, /tasks/claim, /tasks/heartbeat, /tasks/checkpoint, /tasks/delegate, /tasks/activity, /tasks/usage, /tasks/complete, /tasks/release, /tasks/note, /tasks/cancel, /queue/pause, /queue/resume, GET /queue/status, GET /activity, GET /organization, or GET /health are supported" })); return; }
       let body = "";
       let rejected = false;
       request.setEncoding("utf8");

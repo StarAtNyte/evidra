@@ -8817,6 +8817,14 @@ test("authenticated external queue worker endpoints enforce ownership end to end
       assert.equal(nextActivity.status, 200);
       assert.equal((await nextActivity.json()).events.some((entry) => entry.id <= remoteActivityBody.nextAfter), false);
     }
+    const workerOnlyOrganization = await fetch(`http://127.0.0.1:${port}/organization`, { headers: { "x-evidra-worker-id": "worker-a", "x-evidra-worker-token": "worker-secret" } });
+    assert.equal(workerOnlyOrganization.status, 401);
+    const remoteOrganization = await fetch(`http://127.0.0.1:${port}/organization`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(remoteOrganization.status, 200);
+    const remoteOrganizationBody = await remoteOrganization.json();
+    assert.equal(Array.isArray(remoteOrganizationBody.organization), true);
+    assert.equal(Array.isArray(remoteOrganizationBody.routines), true);
+    assert.equal(remoteOrganizationBody.organization.every((entry) => !Object.hasOwn(entry, "claimToken")), true);
     const remotePause = await post("/queue/pause", { reason: "remote maintenance" }, token);
     assert.equal(remotePause.status, 200);
     assert.equal((await remotePause.json()).paused, true);

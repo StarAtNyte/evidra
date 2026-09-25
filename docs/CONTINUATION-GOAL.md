@@ -87,6 +87,7 @@ external evaluator.
 - Remote operators can now pause/resume global queue dispatch through bearer-authenticated `POST /queue/pause` and `POST /queue/resume`; live tasks remain untouched and worker-only credentials are rejected.
 - Remote operators can now reconcile queue state through bearer-authenticated `GET /queue/status`, which redacts claim tokens while returning progress, readiness, usage, recovery alerts, pause state, and integrity status.
 - Remote operators can now consume a bounded cursor-based `GET /activity` feed, with redacted append-only events and integrity status, so external dashboards can reconcile activity incrementally.
+- Remote operators can now read a redacted `GET /organization` projection containing campaign identity, agent reporting lines, role controls, external workers, routines, queue control, and integrity state.
 - Successful remote claims now include a bounded resume context—task lineage, attempt number, checkpoint metadata, and recent redacted activity—so crash recovery does not require a worker to reconstruct context from the full event log.
 - The deterministic orchestration benchmark now guards both capacity-aware checkout and resumable remote context, keeping the new recovery contract measured rather than documentation-only.
 - Dashboard queue rows now render the structured progress state, percent, and step instead of exposing those fields only through the API payload.
