@@ -3884,7 +3884,7 @@ routine.command("run <id>").option("--force", "run immediately even when the int
   const entry = store.claimRoutine(id, ownerId, undefined, undefined, options.force === true);
   if (!entry) { store.close(); throw new Error(`Routine '${id}' is paused, missing, or already owned.`); }
   store.close();
-  const args = ["research", "--mode", entry.mode, "--goal", entry.goal, "--budget", `${entry.budgetMinutes}m`, "--stop", entry.stopCondition, "--provider", entry.provider, "--model", entry.model, "--thinking", entry.thinking, "--autonomy", entry.autonomy, "--limit-policy", entry.limitPolicy, "--executor", entry.executor, "--lanes", String(entry.lanes), ...(entry.pendingTriggerEvent ? ["--trigger-context", JSON.stringify(entry.pendingTriggerEvent)] : [])];
+  const args = ["research", "--mode", entry.mode, "--goal", entry.goal, "--budget", `${entry.budgetMinutes}m`, "--stop", entry.stopCondition, "--provider", entry.provider, "--model", entry.model, "--thinking", entry.thinking, "--autonomy", entry.autonomy, "--limit-policy", entry.limitPolicy, "--executor", entry.executor, "--lanes", String(entry.lanes), "--routine-id", entry.id, ...(entry.pendingTriggerEvent ? ["--trigger-context", JSON.stringify(entry.pendingTriggerEvent)] : [])];
   try {
     const result = await runProcess([process.execPath, script, ...args], root, Math.max(7 * 24 * 60 * 60_000, entry.budgetMinutes * 60_000 + 10 * 60_000), streamProcessOutput);
     const finishStore = new ResearchStore(statePath);
@@ -4258,10 +4258,11 @@ research
   .option("--limit-policy <policy>", "on provider usage limit: auto, wait, fallback, or stop", "auto")
   .option("--executor <executor>", "experiment execution target: local, container, modal, or slurm", "local")
   .option("--trigger-context <json>", "bounded structured event context that caused this campaign to start")
+  .option("--routine-id <id>", "internal durable routine identity for queue lineage")
   .option("--resume", "resume the latest durable non-completed research campaign")
   .option("--resume-run <started-at>", "resume a specific retained campaign run by its startedAt timestamp")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; agentTokenBudget: string; roleTokenBudgets?: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; autonomy: string; limitPolicy: string; executor: string; triggerContext?: string; resume?: boolean; resumeRun?: string; skipBaseline?: boolean }) => {
+  .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; agentTokenBudget: string; roleTokenBudgets?: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; autonomy: string; limitPolicy: string; executor: string; triggerContext?: string; routineId?: string; resume?: boolean; resumeRun?: string; skipBaseline?: boolean }) => {
     const savedStore = new ResearchStore(statePath);
     type SavedCampaign = { goal?: string; goalSetId?: string; budgetMinutes?: number; gpuBudgetHours?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; triggerContext?: { eventType: string; eventCreatedAt: string }; runtime?: unknown; runtimeFingerprint?: string; autoExecuteExperiments?: boolean };
     const liveCampaign = savedStore.campaign() as SavedCampaign | undefined;
@@ -4301,6 +4302,7 @@ research
     // selected model when resuming (including an opt-in Astra route).
     if (options.provider === "codex" && options.model === "default") options.model = DEFAULT_CODEX_MODEL;
     if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
+    if (options.routineId && !/^[a-zA-Z0-9_.:-]{1,160}$/.test(options.routineId)) throw new Error("Routine id must be a bounded identifier.");
     if (!["auto", "wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'auto', 'wait', 'fallback', or 'stop'.");
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Mode must be 'research' or 'challenge'.");
     if (!["safe", "fast", "yolo"].includes(options.autonomy)) throw new Error("Autonomy must be 'safe', 'fast', or 'yolo'.");
@@ -4944,7 +4946,7 @@ research
       store.saveClaim({ id: `claim_${observationId}`, payload: { statement: "Repository inspection and canonical baseline execution completed before the research decision.", scope: "current-workspace", confidence: 1, sourceType: "observation", sourceId: observationId, status: "active", observation } });
       const cycleTaskId = `task_research_cycle_${cycle}_${randomUUID()}`;
       const cycleOwnerId = `controller-cycle-${randomUUID()}`;
-      store.enqueueTask({ id: cycleTaskId, kind: "research.cycle", priority: 10, goalId: phaseGoal?.id ?? null, payload: { cycle, objective: campaign.goal, ownerId: cycleOwnerId, campaignStartedAt: campaign.startedAt } });
+      store.enqueueTask({ id: cycleTaskId, kind: "research.cycle", priority: 10, goalId: phaseGoal?.id ?? null, payload: { cycle, objective: campaign.goal, ownerId: cycleOwnerId, campaignStartedAt: campaign.startedAt, ...(options.routineId ? { routineId: options.routineId } : {}) } });
       const cycleTicket = store.claimTask(cycleTaskId, ["research.cycle"], cycleOwnerId);
       if (!cycleTicket) {
         store.close();

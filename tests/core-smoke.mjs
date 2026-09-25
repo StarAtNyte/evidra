@@ -8819,6 +8819,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     store.updateAgentLane({ role: "remote approval role", status: "idle", provider: "remote", model: "gpt-test", task: "approval smoke" });
     store.enqueueTask({ id: "remote-approval", kind: "research.lane", priority: 1, requiresApproval: true, approvalReason: "remote approval smoke", payload: { objective: "remote approval smoke" } });
     store.createRoutine({ id: "remote-routine", name: "Remote routine", mode: "research", goal: "remote routine control smoke", budgetMinutes: 5, intervalSeconds: 60, stopCondition: "stop", provider: "codex", model: "gpt-test", thinking: "medium", autonomy: "safe", limitPolicy: "stop", executor: "local", lanes: 1, maxRuns: null, triggerEvent: null });
+    store.enqueueTask({ id: "remote-routine-cycle", kind: "research.cycle", priority: 2, payload: { routineId: "remote-routine", cycle: 1 } });
     store.createRoutine({ id: "remote-stale-routine", name: "Remote stale routine", mode: "research", goal: "remote stale routine recovery smoke", budgetMinutes: 5, intervalSeconds: 60, stopCondition: "stop", provider: "codex", model: "gpt-test", thinking: "medium", autonomy: "safe", limitPolicy: "stop", executor: "local", lanes: 1, maxRuns: null, triggerEvent: null });
     assert.equal(store.claimRoutine("remote-stale-routine", "remote-stale-runner", -1)?.status, "running");
     store.close();
@@ -8930,6 +8931,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     assert.equal(remoteRoutineDetailBody.routine.id, "remote-routine");
     assert.equal(Array.isArray(remoteRoutineDetailBody.runs), true);
     assert.equal(Array.isArray(remoteRoutineDetailBody.queue), true);
+    assert.equal(remoteRoutineDetailBody.queue.some((entry) => entry.id === "remote-routine-cycle"), true);
     const workerOnlyTaskDetail = await fetch(`http://127.0.0.1:${port}/tasks/remote-secret`, { headers: { "x-evidra-worker-id": "worker-a", "x-evidra-worker-token": "worker-secret" } });
     assert.equal(workerOnlyTaskDetail.status, 401);
     const remoteTaskDetail = await fetch(`http://127.0.0.1:${port}/tasks/remote-secret?activityLimit=8&historyLimit=8`, { headers: { authorization: `Bearer ${token}` } });
