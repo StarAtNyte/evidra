@@ -37,7 +37,7 @@ import { createBlendCandidate, diversityReport, loadPredictionVector, safePredic
 import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
 import { auditData, dataAuditFingerprint } from "../core/data-audit.js";
 import { availableResearchTools, executeResearchTool } from "../core/tools.js";
-import { externalToolStatus, loadExternalResearchTools, setExternalToolStatus } from "../core/external-tools.js";
+import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "../core/external-tools.js";
 import { projectVerifiedSubtaskState } from "../core/subtask-state.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { canonicalSourceUrl, retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
@@ -2987,7 +2987,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const active = availableResearchTools(root);
       const activeNames = new Set(active.map((tool) => tool.name));
       const tools = [...active, ...manifest.tools.filter((tool) => !activeNames.has(tool.name))];
-      append("assistant", `Research tools\n  manifest: ${manifest.path ?? "none"}${manifest.warnings.length ? `\n  warnings: ${manifest.warnings.length}` : ""}\n\n${tools.map((tool) => `  ${tool.name} · ${externalToolStatus(root, tool.name).status} · ${tool.readOnly ? "read-only" : "mutating"}${tool.cacheable === false ? " · live" : " · cacheable"}\n    ${tool.description}`).join("\n")}`);
+      append("assistant", `Research tools\n  manifest: ${manifest.path ?? "none"}${manifest.warnings.length ? `\n  warnings: ${manifest.warnings.length}` : ""}\n\n${tools.map((tool) => { const state = externalToolStatus(root, tool.name); return `  ${tool.name} · ${state.status} · ${tool.readOnly ? "read-only" : "mutating"}${tool.cacheable === false ? " · live" : " · cacheable"}${state.health ? ` · health ${state.health.status}${state.health.failureStreak ? `/${state.health.failureStreak}` : ""}` : ""}\n    ${tool.description}`; }).join("\n")}`);
       return;
     }
     const toolHealth = request.match(/^\/tools\s+health(?:\s+(external\.[a-z0-9][a-z0-9._-]{1,78}))?$/i);
@@ -2998,7 +2998,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const results = [];
       for (const tool of candidates) {
         const result = await executeResearchTool({ name: tool.name, arguments: {} }, { root, storePath: join(root, ".sota", "database.sqlite"), autonomy: "safe" });
-        results.push(`${result.ok ? "OK" : "FAIL"} ${tool.name}${result.error ? ` · ${result.error}` : ""}`);
+        const state = recordExternalToolHealth(root, tool.name, result.ok, result.error);
+        results.push(`${result.ok ? "OK" : "FAIL"} ${tool.name}${result.error ? ` · ${result.error}` : ""}${state.health?.failureStreak ? ` · failure streak ${state.health.failureStreak}` : ""}${state.status === "quarantined" ? " · quarantined" : ""}`);
       }
       append("assistant", `Adapter health\n${results.join("\n")}`);
       return;

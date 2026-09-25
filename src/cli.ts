@@ -40,7 +40,7 @@ import { applyIndependentReplicationEvidence, comparisonFamilySize, evaluateVali
 import { renderReport, writeReport, type ReportKind } from "./core/reports.js";
 import { processFailureResult, runProcess } from "./core/process.js";
 import { availableResearchTools, executeResearchTool } from "./core/tools.js";
-import { externalToolStatus, loadExternalResearchTools, setExternalToolStatus } from "./core/external-tools.js";
+import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "./core/external-tools.js";
 import { projectVerifiedSubtaskState } from "./core/subtask-state.js";
 import { classifyProcessFailure, executorFor, mergeEvaluatorResult, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "./core/executors.js";
 import { sha256File } from "./core/evidence.js";
@@ -666,12 +666,15 @@ const tools = program.command("tools")
     const manifest = loadExternalResearchTools(root);
     const active = availableResearchTools(root);
     const activeNames = new Set(active.map((tool) => tool.name));
-    const registry = [...active, ...manifest.tools.filter((tool) => !activeNames.has(tool.name))].map((tool) => ({ name: tool.name, description: tool.description, readOnly: tool.readOnly, cacheable: tool.cacheable !== false, input: tool.input, status: externalToolStatus(root, tool.name).status }));
+    const registry = [...active, ...manifest.tools.filter((tool) => !activeNames.has(tool.name))].map((tool) => {
+      const state = externalToolStatus(root, tool.name);
+      return { name: tool.name, description: tool.description, readOnly: tool.readOnly, cacheable: tool.cacheable !== false, input: tool.input, status: state.status, health: state.health ?? null };
+    });
     if (options.json) console.log(JSON.stringify({ tools: registry, manifest: manifest.path, warnings: manifest.warnings }, null, 2));
     else {
       console.log(`Research tools\nManifest    ${manifest.path ?? "none"}`);
       if (manifest.warnings.length) console.log(`Warnings\n${manifest.warnings.map((warning) => `  ! ${warning}`).join("\n")}`);
-      console.log(`\n${registry.map((tool) => `  ${tool.name.padEnd(28)} ${tool.status} · ${tool.readOnly ? "read-only" : "mutating"}${tool.cacheable ? " · cacheable" : ""}\n    ${tool.description}`).join("\n")}`);
+      console.log(`\n${registry.map((tool) => `  ${tool.name.padEnd(28)} ${tool.status} · ${tool.readOnly ? "read-only" : "mutating"}${tool.cacheable ? " · cacheable" : ""}${tool.health ? ` · health ${tool.health.status}${tool.health.failureStreak ? `/${tool.health.failureStreak}` : ""}` : ""}\n    ${tool.description}`).join("\n")}`);
     }
   });
 
@@ -695,7 +698,9 @@ tools.command("health [name]").description("Run bounded zero-argument health pro
   }
   for (const tool of candidates) {
     const result = await executeResearchTool({ name: tool.name, arguments: {} }, { root, storePath: statePath, autonomy: "safe" });
-    console.log(`${result.ok ? "OK" : "FAIL"} ${tool.name}${result.error ? ` · ${result.error}` : ""}`);
+    const state = recordExternalToolHealth(root, tool.name, result.ok, result.error);
+    const health = state.health;
+    console.log(`${result.ok ? "OK" : "FAIL"} ${tool.name}${result.error ? ` · ${result.error}` : ""}${health?.failureStreak ? ` · failure streak ${health.failureStreak}` : ""}${state.status === "quarantined" ? " · quarantined" : ""}`);
   }
 });
 

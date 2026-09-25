@@ -32,7 +32,7 @@ import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInsp
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { queueRecoveryAction } from "../dist/core/queue-recovery.js";
 import { executeResearchTool, normalizeResearchToolResult, availableResearchTools, RESEARCH_TOOLS, selectResearchTools, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
-import { externalToolStatus, loadExternalResearchTools, setExternalToolStatus } from "../dist/core/external-tools.js";
+import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "../dist/core/external-tools.js";
 import { normalizeResearchDecisionPayload, runResearchDirector } from "../dist/agents/research-director.js";
 import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, slurmCommand, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
@@ -5174,6 +5174,18 @@ test("research tool registry exposes safe workspace tools", async () => {
     const lifecycleStore = new ResearchStore(db);
     assert.equal(lifecycleStore.eventsByType("research.external_tool.lifecycle_changed").length, 6);
     lifecycleStore.close();
+    const healthy = recordExternalToolHealth(root, "external.echo", true);
+    assert.equal(healthy.health?.status, "ok");
+    assert.equal(healthy.health?.failureStreak, 0);
+    assert.equal(externalToolStatus(root, "external.echo").health?.status, "ok");
+    recordExternalToolHealth(root, "external.echo", false, "probe one");
+    recordExternalToolHealth(root, "external.echo", false, "probe two");
+    const quarantinedByHealth = recordExternalToolHealth(root, "external.echo", false, "probe three");
+    assert.equal(quarantinedByHealth.status, "quarantined");
+    assert.equal(quarantinedByHealth.health?.failureStreak, 3);
+    assert.match(quarantinedByHealth.reason, /3 consecutive health failures/);
+    assert.equal(externalToolStatus(root, "external.echo").health?.lastError, "probe three");
+    setExternalToolStatus(root, "external.echo", "enabled");
     assert.equal(existsSync(join(root, "reports")), false);
     const predictionA = join(root, "pred-a.json");
     const predictionB = join(root, "pred-b.json");
@@ -5193,7 +5205,7 @@ test("research tool registry exposes safe workspace tools", async () => {
   assert(RESEARCH_TOOLS.some((tool) => tool.name === "ensemble.analyze" && tool.readOnly));
   assert.equal(RESEARCH_TOOLS.find((tool) => tool.name === "shell.exec")?.cacheable, false);
     const eventStore = new ResearchStore(db);
-    const events = eventStore.recentEvents(10).map((event) => event.type);
+    const events = eventStore.recentEvents(30).map((event) => event.type);
     eventStore.close();
     assert(events.includes("research.tool.completed"));
     assert(events.includes("research.tool.failed"));

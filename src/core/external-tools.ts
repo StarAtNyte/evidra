@@ -23,8 +23,12 @@ export type ExternalResearchTool = {
 
 export type ExternalToolLoadResult = { tools: ExternalResearchTool[]; warnings: string[]; path: string | null; contentHash: string | null };
 export type ExternalToolStatus = "enabled" | "disabled" | "quarantined";
-export type ExternalToolState = { status: ExternalToolStatus; reason?: string; changedAt: string; manifestHash?: string };
+export type ExternalToolHealth = { status: "ok" | "failed"; checkedAt: string; failureStreak: number; lastError?: string };
+export type ExternalToolState = { status: ExternalToolStatus; reason?: string; changedAt: string; manifestHash?: string; health?: ExternalToolHealth };
 export type ExternalToolStateMap = Record<string, ExternalToolState>;
+
+const MAX_HEALTH_ERROR = 500;
+const HEALTH_FAILURE_QUARANTINE_THRESHOLD = 3;
 
 function boundedString(value: unknown, max: number): string | undefined {
   return typeof value === "string" && value.trim() && value.length <= max ? value.trim() : undefined;
@@ -91,7 +95,21 @@ export function loadExternalToolState(root: string): ExternalToolStateMap {
       const value = entry as Record<string, unknown>;
       const status = value.status;
       if (status !== "enabled" && status !== "disabled" && status !== "quarantined") continue;
-      state[name] = { status, ...(typeof value.reason === "string" && value.reason.trim() ? { reason: value.reason.slice(0, 500) } : {}), changedAt: typeof value.changedAt === "string" ? value.changedAt : new Date(0).toISOString(), ...(typeof value.manifestHash === "string" && /^sha256:[a-f0-9]{64}$/.test(value.manifestHash) ? { manifestHash: value.manifestHash } : {}) };
+      const healthValue = value.health;
+      const health = healthValue && typeof healthValue === "object" && !Array.isArray(healthValue)
+        ? healthValue as Record<string, unknown>
+        : undefined;
+      const healthStatus = health?.status === "ok" || health?.status === "failed" ? health.status : undefined;
+      const failureStreak = typeof health?.failureStreak === "number" && Number.isInteger(health.failureStreak) ? Math.max(0, Math.min(HEALTH_FAILURE_QUARANTINE_THRESHOLD, health.failureStreak)) : undefined;
+      state[name] = {
+        status,
+        ...(typeof value.reason === "string" && value.reason.trim() ? { reason: value.reason.slice(0, 500) } : {}),
+        changedAt: typeof value.changedAt === "string" ? value.changedAt : new Date(0).toISOString(),
+        ...(typeof value.manifestHash === "string" && /^sha256:[a-f0-9]{64}$/.test(value.manifestHash) ? { manifestHash: value.manifestHash } : {}),
+        ...(healthStatus && failureStreak !== undefined && typeof health?.checkedAt === "string" ? {
+          health: { status: healthStatus, checkedAt: health.checkedAt, failureStreak, ...(typeof health.lastError === "string" && health.lastError.trim() ? { lastError: health.lastError.slice(0, MAX_HEALTH_ERROR) } : {}) },
+        } : {}),
+      };
     }
     return state;
   } catch { return {}; }
@@ -125,6 +143,50 @@ export function setExternalToolStatus(root: string, name: string, status: Extern
     store.close();
   } catch {
     // The lifecycle file remains authoritative if telemetry cannot be opened.
+  }
+  return next;
+}
+
+/** Persist bounded adapter health across CLI and controller restarts. */
+export function recordExternalToolHealth(root: string, name: string, ok: boolean, error?: string): ExternalToolState {
+  const manifest = loadExternalResearchTools(root);
+  if (!manifest.tools.some((tool) => tool.name === name)) throw new Error(`Unknown external tool '${name}'.`);
+  const state = loadExternalToolState(root);
+  const previous = state[name] ?? { status: "enabled" as const, changedAt: new Date(0).toISOString() };
+  const failureStreak = ok ? 0 : Math.min(HEALTH_FAILURE_QUARANTINE_THRESHOLD, (previous.health?.failureStreak ?? 0) + 1);
+  const checkedAt = new Date().toISOString();
+  const health: ExternalToolHealth = {
+    status: ok ? "ok" : "failed",
+    checkedAt,
+    failureStreak,
+    ...(error?.trim() ? { lastError: error.trim().slice(0, MAX_HEALTH_ERROR) } : {}),
+  };
+  const shouldQuarantine = !ok && failureStreak >= HEALTH_FAILURE_QUARANTINE_THRESHOLD && previous.status === "enabled";
+  const next: ExternalToolState = {
+    ...previous,
+    ...(shouldQuarantine ? { status: "quarantined" as const, reason: `automatic quarantine after ${failureStreak} consecutive health failures` } : {}),
+    health,
+    changedAt: shouldQuarantine ? checkedAt : previous.changedAt,
+    ...(manifest.contentHash ? { manifestHash: manifest.contentHash } : {}),
+  };
+  state[name] = next;
+  const path = resolve(root, TOOL_STATE_PATH);
+  mkdirSync(resolve(root, ".sota"), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  try {
+    const store = new ResearchStore(resolve(root, ".sota/database.sqlite"));
+    store.appendEvent("research.external_tool.health_checked", {
+      name,
+      status: health.status,
+      failureStreak,
+      quarantined: shouldQuarantine,
+      error: health.lastError ?? null,
+      source: "health_probe",
+    });
+    if (shouldQuarantine) store.appendEvent("research.external_tool.lifecycle_changed", { name, status: next.status, reason: next.reason, source: "health_probe" });
+    store.close();
+  } catch {
+    // Health state remains authoritative if telemetry cannot be opened.
   }
   return next;
 }
