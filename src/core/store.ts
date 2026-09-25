@@ -2351,13 +2351,13 @@ export class ResearchStore {
     return this.routine(id) ?? updated;
   }
 
-  recoverStaleRoutines(now = new Date()): string[] {
+  recoverStaleRoutines(now = new Date(), source = "scheduler"): string[] {
     const rows = this.db.prepare("SELECT id FROM research_routines WHERE status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?").all(now.toISOString()) as Array<{ id: string }>;
-    return rows.flatMap((row) => this.recoverStaleRoutine(row.id, now) ? [row.id] : []);
+    return rows.flatMap((row) => this.recoverStaleRoutine(row.id, now, source) ? [row.id] : []);
   }
 
   /** Reclaim exactly one expired routine lease for a remote or local operator. */
-  recoverStaleRoutine(id: string, now = new Date()): ResearchRoutine | undefined {
+  recoverStaleRoutine(id: string, now = new Date(), source = "operator"): ResearchRoutine | undefined {
     const timestamp = now.toISOString();
     const recovered = this.db.transaction(() => {
       const row = this.db.prepare("SELECT status, lease_expires_at FROM research_routines WHERE id = ?").get(id) as { status: string; lease_expires_at: string | null } | undefined;
@@ -2368,7 +2368,7 @@ export class ResearchStore {
       return true;
     })();
     if (!recovered) return undefined;
-    this.appendEvent("routine.stale_recovered", { id, source: "operator" });
+    this.appendEvent("routine.stale_recovered", { id, source: source.trim().slice(0, 80) || "recovery" });
     return this.routine(id);
   }
 

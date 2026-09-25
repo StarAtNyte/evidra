@@ -4805,6 +4805,7 @@ test("durable routines claim, finish, and recover without duplicate runners", ()
     assert.equal(operatorAttention(store).items.some((item) => item.id === "routine-stale:routine-stale"), true);
     assert.equal(operatorAttention(store).health.status, "blocked");
     assert.deepEqual(store.recoverStaleRoutines(), [stale.id]);
+    assert.equal(store.eventsByType("routine.stale_recovered").at(-1)?.payload.source, "scheduler");
     assert.equal(store.routine(stale.id)?.status, "active");
     assert.equal(store.routineRuns(stale.id)[0]?.status, "abandoned");
     store.close();
