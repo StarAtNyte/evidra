@@ -8737,6 +8737,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     store.setAgentRoleAdmission("remote lane", true, "test worker registration");
     store.enqueueTask({ id: "bridge-task", kind: "research.lane", priority: 4, payload: { objective: "external worker smoke", campaignStartedAt: "bridge-campaign" } });
     store.enqueueTask({ id: "remote-cancel", kind: "research.lane", priority: 1, payload: { objective: "remote cancellation smoke" } });
+    store.enqueueTask({ id: "remote-secret", kind: "research.lane", priority: 1, requiredCapabilities: ["redaction.test"], payload: { token: "sk-remote-queue-secret-12345678901234567890", objective: "redaction smoke" } });
     store.enqueueTask({ id: "remote-approval", kind: "research.lane", priority: 1, requiresApproval: true, approvalReason: "remote approval smoke", payload: { objective: "remote approval smoke" } });
     store.createRoutine({ id: "remote-routine", name: "Remote routine", mode: "research", goal: "remote routine control smoke", budgetMinutes: 5, intervalSeconds: 60, stopCondition: "stop", provider: "codex", model: "gpt-test", thinking: "medium", autonomy: "safe", limitPolicy: "stop", executor: "local", lanes: 1, maxRuns: null, triggerEvent: null });
     store.close();
@@ -8807,6 +8808,7 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const remoteStatusBody = await remoteStatus.json();
     assert.equal(remoteStatusBody.paused, false);
     assert.equal(remoteStatusBody.tasks.some((entry) => entry.id === task.id && !Object.hasOwn(entry, "claimToken")), true);
+    assert.doesNotMatch(JSON.stringify(remoteStatusBody), /sk-remote-queue-secret-12345678901234567890/);
     const workerOnlyActivity = await fetch(`http://127.0.0.1:${port}/activity`, { headers: { "x-evidra-worker-id": "worker-a", "x-evidra-worker-token": "worker-secret" } });
     assert.equal(workerOnlyActivity.status, 401);
     const activityFeedResponse = await fetch(`http://127.0.0.1:${port}/activity?after=0&limit=25`, { headers: { authorization: `Bearer ${token}` } });

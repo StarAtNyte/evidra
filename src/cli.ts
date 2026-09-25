@@ -52,7 +52,7 @@ import { recoverUncommittedTraceFiles } from "./core/trajectory-recovery.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "./core/experiment-patches.js";
 import { applyCriticGate, latestOpenCriticConstraint } from "./core/critic-gate.js";
 import { recordBaselineEvidence } from "./core/baseline.js";
-import { redactSecrets } from "./core/redaction.js";
+import { redactSecrets, redactStructured } from "./core/redaction.js";
 import { observedGpuHours } from "./core/compute-budget.js";
 import { enforceClaimTermination, enforceGoalTermination } from "./core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds, type ClaimAuditReport } from "./core/claim-audit.js";
@@ -2741,7 +2741,7 @@ event.command("serve")
         const control = store.queueControl();
         const tasks = store.queueTasks().slice(0, 128).map((task) => {
           const { claimToken: _claimToken, ...publicTask } = task;
-          return { ...publicTask, progress: store.queueProgress(task.id), readiness: store.taskReadiness(task.id), usage: store.queueUsageState(task.id) };
+          return { ...publicTask, payload: redactStructured(publicTask.payload), progress: store.queueProgress(task.id), readiness: store.taskReadiness(task.id), usage: store.queueUsageState(task.id) };
         });
         const recoveries = store.eventsByType("queue.recovery_required", 24).map((event) => event.payload);
         const integrity = store.verifyEventChain();
@@ -2756,7 +2756,7 @@ event.command("serve")
         const integrity = store.verifyEventChain();
         store.close();
         response.writeHead(200, headers);
-        response.end(JSON.stringify({ ok: integrity.status !== "invalid", items, integrity: integrity.status }));
+        response.end(JSON.stringify({ ok: integrity.status !== "invalid", items: redactStructured(items), integrity: integrity.status }));
         return;
       }
       if (operatorActivityPath) {
