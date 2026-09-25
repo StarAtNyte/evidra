@@ -28,6 +28,11 @@ export const whestbenchConfig: CompetitionConfig = {
   evaluatorTimeoutMinutes: 60,
   baselineCommand: ["uv", "run", "whest", "run", "--estimator", "examples/02_mean_propagation.py", "--dataset", ".whest-data", "--split", "mini", "--runner", "subprocess"],
   experimentCommand: ["uv", "run", "whest", "run", "--estimator", "estimator.py", "--dataset", ".whest-data", "--split", "mini", "--runner", "subprocess"],
+  execution: {
+    matrixRequired: false,
+    requiredArtifacts: [],
+    dataPaths: [".whest-data"],
+  },
   submission: {
     platform: "command",
     source: "workspace",
