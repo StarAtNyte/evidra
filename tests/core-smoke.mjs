@@ -8876,6 +8876,12 @@ test("authenticated external queue worker endpoints enforce ownership end to end
     const repeatedDirectiveCancel = await post(`/agents/model%20researcher/directives/${directiveId}/cancel`, {}, token, undefined, undefined, "research-console");
     assert.equal(repeatedDirectiveCancel.status, 200);
     assert.equal((await repeatedDirectiveCancel.json()).changed, false);
+    const workerOnlyDirectiveHistory = await fetch(`http://127.0.0.1:${port}/agents/model%20researcher/directives`, { headers: { "x-evidra-worker-id": "worker-a", "x-evidra-worker-token": "worker-secret" } });
+    assert.equal(workerOnlyDirectiveHistory.status, 401);
+    const remoteDirectiveHistory = await fetch(`http://127.0.0.1:${port}/agents/model%20researcher/directives?limit=8`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(remoteDirectiveHistory.status, 200);
+    const remoteDirectiveHistoryBody = await remoteDirectiveHistory.json();
+    assert.equal(remoteDirectiveHistoryBody.directives.some((entry) => entry.id === directiveId && entry.cancelledAt !== null), true);
     const workerOnlyRoutinePause = await post("/routines/remote-routine/pause", {}, null, "worker-a", "worker-secret");
     assert.equal(workerOnlyRoutinePause.status, 401);
     const remoteRoutinePause = await post("/routines/remote-routine/pause", {}, token);
