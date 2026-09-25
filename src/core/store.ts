@@ -207,6 +207,19 @@ export interface QueueProgress {
   stalled: boolean;
   details: QueueProgressDetails;
 }
+
+export function normalizeQueueProgressDetails(input: unknown): QueueProgressDetails | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const value = input as Record<string, unknown>;
+  if (!["percent", "step", "completed", "total"].some((key) => value[key] !== undefined)) return undefined;
+  const percent = value.percent === undefined ? null : typeof value.percent === "number" && Number.isFinite(value.percent) && value.percent >= 0 && value.percent <= 1 ? value.percent : undefined;
+  const step = value.step === undefined ? null : typeof value.step === "string" && value.step.trim() && value.step.length <= 160 ? value.step.trim().slice(0, 160) : undefined;
+  const completed = value.completed === undefined ? null : Number.isInteger(value.completed) && (value.completed as number) >= 0 ? value.completed as number : undefined;
+  const total = value.total === undefined ? null : Number.isInteger(value.total) && (value.total as number) > 0 ? value.total as number : undefined;
+  if (percent === undefined || step === undefined || completed === undefined || total === undefined) return undefined;
+  if (completed !== null && total !== null && completed > total) return undefined;
+  return { percent, step, completed, total };
+}
 export interface QueueHistoryEntry {
   type: string;
   payload: unknown;
@@ -2510,13 +2523,19 @@ export class ResearchStore {
     const actorId = input.actorId.trim().slice(0, 200);
     const message = redactStructured(input.message.trim().slice(0, 2_000));
     if (!taskId || !actorId || !message || !["started", "progress", "blocked", "handoff", "completed", "failed"].includes(input.kind)) return false;
+    let metadata = input.metadata;
+    if (metadata && typeof metadata === "object" && !Array.isArray(metadata) && Object.prototype.hasOwnProperty.call(metadata, "progress")) {
+      const details = normalizeQueueProgressDetails((metadata as Record<string, unknown>).progress);
+      if (!details) return false;
+      metadata = { ...(metadata as Record<string, unknown>), progress: details };
+    }
     const task = this.db.prepare("SELECT id FROM work_queue WHERE id = ?").get(taskId) as { id: string } | undefined;
     if (!task) return false;
     if (input.claimToken) {
       const claim = this.db.prepare("SELECT status, owner_id, claim_token FROM work_queue WHERE id = ?").get(taskId) as { status: string; owner_id: string | null; claim_token: string | null } | undefined;
       if (!claim || claim.status !== "running" || claim.owner_id !== actorId || claim.claim_token !== input.claimToken) return false;
     }
-    this.appendEvent("queue.activity", { taskId, actorId, kind: input.kind, message, ...(input.metadata === undefined ? {} : { metadata: input.metadata }) });
+    this.appendEvent("queue.activity", { taskId, actorId, kind: input.kind, message, ...(metadata === undefined ? {} : { metadata }) });
     return true;
   }
 
@@ -2559,11 +2578,7 @@ export class ResearchStore {
     const progressMetadata = progressActivity?.metadata && typeof progressActivity.metadata === "object" && !Array.isArray(progressActivity.metadata)
       ? (progressActivity.metadata as Record<string, unknown>).progress
       : undefined;
-    const progressRecord = progressMetadata && typeof progressMetadata === "object" && !Array.isArray(progressMetadata) ? progressMetadata as Record<string, unknown> : {};
-    const percent = typeof progressRecord.percent === "number" && Number.isFinite(progressRecord.percent) ? Math.max(0, Math.min(1, progressRecord.percent)) : null;
-    const completed = typeof progressRecord.completed === "number" && Number.isInteger(progressRecord.completed) && progressRecord.completed >= 0 ? progressRecord.completed : null;
-    const total = typeof progressRecord.total === "number" && Number.isInteger(progressRecord.total) && progressRecord.total > 0 ? progressRecord.total : null;
-    const step = typeof progressRecord.step === "string" && progressRecord.step.trim() ? progressRecord.step.trim().slice(0, 160) : null;
+    const details = normalizeQueueProgressDetails(progressMetadata) ?? { percent: null, step: null, completed: null, total: null };
     const lastActivityAt = latest?.createdAt ?? null;
     const lastActivityMs = lastActivityAt ? Date.parse(lastActivityAt) : Number.NaN;
     const heartbeatMs = task.claimedAt ? Date.parse(task.claimedAt) : Number.NaN;
@@ -2578,7 +2593,7 @@ export class ResearchStore {
               : stalled ? "stalled"
                 : latest?.kind === "blocked" ? "blocked"
                   : "active";
-    return { state, lastActivityAt, lastActivityKind: latest?.kind ?? null, lastActivityMessage: latest?.message ?? null, idleSeconds, heartbeatAgeSeconds, stalled, details: { percent, step, completed, total } };
+    return { state, lastActivityAt, lastActivityKind: latest?.kind ?? null, lastActivityMessage: latest?.message ?? null, idleSeconds, heartbeatAgeSeconds, stalled, details };
   }
 
   /** Return the bounded lifecycle stream for one queue ticket, not just worker notes. */

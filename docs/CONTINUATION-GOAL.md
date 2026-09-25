@@ -76,6 +76,7 @@ external evaluator.
 - Queue tickets now expose a provider-neutral progress projection—lifecycle state, last activity, idle time, heartbeat age, and stalled detection—shared by CLI JSON, TUI, and dashboard views.
 - The attention projection now consumes that progress state, surfacing blocked tasks and stale queue heartbeats as actionable operator alerts instead of treating every running ticket as healthy.
 - Queue handlers can now report bounded structured progress (`percent`, `step`, `completed`, `total`) and checkpoints through an optional typed context; legacy two-argument handlers remain compatible and the latest progress survives terminalization.
+- The durable store validates the same progress schema for authenticated remote `/tasks/activity` calls, keeping local, Modal, Slurm, and other worker routes interoperable.
 
 - Latest pushed state: `origin/master` at the latest handoff commit (verify with `git log`).
 - Competition manifests now support typed `researchChannels` for rules,

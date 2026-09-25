@@ -4112,6 +4112,7 @@ test("queue worker context persists structured progress and checkpoints", async 
     assert.equal(progress?.state, "completed");
     assert.deepEqual(progress?.details, { percent: 0.5, step: "validation", completed: 2, total: 4 });
     assert.equal(store.queueCheckpoint("context-progress")?.stage, "validation");
+    assert.equal(store.recordQueueActivity({ taskId: "context-progress", actorId: "operator", kind: "handoff", message: "bad progress", metadata: { progress: { percent: 2 } } }), false);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
