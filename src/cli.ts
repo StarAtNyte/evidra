@@ -914,7 +914,7 @@ program.command("dashboard")
               const finalGoal = profileGuidance[profile] ? `${goal}\n\n${profileGuidance[profile]}` : goal;
               const model = provider === "codex" ? DEFAULT_CODEX_MODEL : await resolveLocalFallbackModel("auto");
               await checkProvider({ provider, model, cwd: root });
-              if (mode === "challenge") requireCompetitionContract(activeCompetition("challenge"));
+              if (mode === "challenge") requireCompetitionContract(activeCompetition());
               args = [script, "research", "--mode", mode, "--goal", finalGoal, "--budget", budget, "--provider", provider, "--model", model, "--thinking", "medium", "--lanes", "3", "--autonomy", "safe", "--limit-policy", "auto", "--executor", "local"];
             } else if (action === "steer") {
               const message = typeof body.message === "string" ? body.message.trim() : "";
