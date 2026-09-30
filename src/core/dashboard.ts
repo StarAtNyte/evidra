@@ -39,6 +39,14 @@ export function dashboardSnapshot(store: ResearchStore, root?: string): Record<s
     campaign: campaign ?? null,
     scheduler,
     counts: store.counts(),
+    sources: store.sources().slice(0, 40).map((entry) => {
+      const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as Record<string, unknown> : {};
+      return { id: entry.id, title: typeof payload.title === "string" ? payload.title.slice(0, 240) : null, url: typeof payload.url === "string" ? payload.url.slice(0, 2_000) : null, sourceType: typeof payload.sourceType === "string" ? payload.sourceType.slice(0, 80) : null, createdAt: entry.createdAt };
+    }),
+    claims: store.claims().slice(0, 60).map((entry) => {
+      const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as Record<string, unknown> : {};
+      return { id: entry.id, statement: typeof payload.statement === "string" ? payload.statement.slice(0, 500) : typeof payload.claim === "string" ? payload.claim.slice(0, 500) : null, status: typeof payload.status === "string" ? payload.status.slice(0, 80) : null, sourceId: typeof payload.sourceId === "string" ? payload.sourceId.slice(0, 240) : null, createdAt: entry.createdAt };
+    }),
     integrity: store.verifyEventChain(),
     stages: researchStageProgress(phaseGoalsForMode(goals, mode)),
     phases,

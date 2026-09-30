@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { appendFileSync, cpSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
+import { spawn } from "node:child_process";
 import { dirname, join, relative, resolve } from "node:path";
 import { ResearchStore, queueEffectivePriority, routineRetryDelaySeconds } from "./core/store.js";
 import { materializeResearchDecision } from "./core/research-graph.js";
@@ -19,6 +20,7 @@ import { canonicalSourceUrl, retrieveSource, searchResearchSources, sourceClaimR
 import { competitionResearchClaimType, competitionResearchSources } from "./core/competition-sources.js";
 import { extractCompetitionInsights } from "./core/competition-insights.js";
 import { dashboardHtml, dashboardSnapshot } from "./core/dashboard.js";
+import { workbenchHtml } from "./core/dashboard-web.js";
 import { pauseForGoalAlignment } from "./core/goal-alignment.js";
 import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "./core/literature-bench.js";
 import { parseAutoResearchBenchEvaluation } from "./core/autoresearch-bench.js";
@@ -836,7 +838,7 @@ program.command("doctor")
 
 program.command("dashboard")
   .option("--port <port>", "localhost HTTP port", "4310")
-  .description("Serve a read-only live dashboard for durable Evidra state")
+  .description("Serve the local Evidra web workbench and live campaign dashboard")
   .action(async (options: { port: string }) => {
     const port = Number.parseInt(options.port, 10);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Dashboard port must be an integer between 1 and 65535.");
@@ -850,8 +852,99 @@ program.command("dashboard")
       ...baseHeaders,
       "content-type": "application/json; charset=utf-8",
     };
+    const workbenchToken = `${randomUUID().replaceAll("-", "")}${randomUUID().replaceAll("-", "")}`;
     const server = createServer((request, response) => {
-      if (request.method !== "GET") { response.writeHead(405, { ...baseHeaders, allow: "GET" }); response.end("Method Not Allowed"); return; }
+      if (request.method === "POST" && request.url === "/api/workbench/action") {
+        void (async () => {
+          const fail = (status: number, message: string): void => {
+            response.writeHead(status, jsonHeaders);
+            response.end(JSON.stringify({ error: message }));
+          };
+          try {
+            const host = request.headers.host ?? "";
+            const origin = request.headers.origin ?? "";
+            let parsedOrigin: URL;
+            try { parsedOrigin = new URL(origin); } catch { fail(403, "A same-origin browser request is required."); return; }
+            if (parsedOrigin.protocol !== "http:" || parsedOrigin.host !== host || !["127.0.0.1", "localhost", "::1"].includes(parsedOrigin.hostname.replace(/^\[|\]$/g, ""))) {
+              fail(403, "Workbench actions are allowed only from the local Evidra page."); return;
+            }
+            const suppliedToken = request.headers["x-evidra-token"];
+            if (typeof suppliedToken !== "string" || suppliedToken.length !== workbenchToken.length || !timingSafeEqual(Buffer.from(suppliedToken), Buffer.from(workbenchToken))) {
+              fail(403, "Workbench session token is invalid. Reload the local page and try again."); return;
+            }
+            const chunks: Buffer[] = [];
+            let size = 0;
+            for await (const chunk of request) {
+              const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+              size += bytes.length;
+              if (size > 16_384) { fail(413, "Workbench action payload is too large."); request.destroy(); return; }
+              chunks.push(bytes);
+            }
+            let body: Record<string, unknown>;
+            try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>; }
+            catch { fail(400, "Action body must be valid JSON."); return; }
+            const action = body.action;
+            if (action !== "start" && action !== "pause" && action !== "resume" && action !== "stop" && action !== "steer") { fail(400, "Unsupported workbench action."); return; }
+            const store = new ResearchStore(statePath);
+            const saved = store.campaign() as { status?: string; runtime?: { mode?: unknown } } | undefined;
+            const savedMode = saved?.runtime?.mode === "challenge" ? "challenge" : "research";
+            store.close();
+            const mode = action === "start"
+              ? body.mode === "challenge" ? "challenge" : body.mode === "research" ? "research" : undefined
+              : body.mode === savedMode ? savedMode : undefined;
+            if (!mode) { fail(400, "Choose Research or Challenge, or reload to sync the active campaign mode."); return; }
+            const script = process.argv[1];
+            if (!script) { fail(500, "Unable to locate the Evidra CLI entrypoint."); return; }
+            let args: string[];
+            if (action === "start") {
+              const goal = typeof body.goal === "string" ? body.goal.trim() : "";
+              const budget = typeof body.budget === "string" ? body.budget.trim() : "";
+              const provider = body.provider === "local" ? "local" : body.provider === "codex" ? "codex" : undefined;
+              if (goal.length < 5 || goal.length > 4_000) { fail(400, "Goal must be between 5 and 4,000 characters."); return; }
+              if (!budget || !/^\\d{1,5}(?:\\.\\d{1,2})?(?:m|h|d)$/i.test(budget)) { fail(400, "Enter a time budget such as 90m, 4h, or 2d."); return; }
+              if (!provider) { fail(400, "Select Codex or Local as the provider."); return; }
+              const profile = typeof body.profile === "string" ? body.profile : "general";
+              const profileGuidance: Record<string, string> = {
+                build: "Build / Engineering profile: prioritize a working implementation, repository inspection, tests, and reviewable artifacts.",
+                data: "Data / Analytics profile: prioritize data provenance, measurement validity, uncertainty, and reproducible analysis.",
+                business: "Business / Operations profile: prioritize the decision context, evidence quality, constraints, and measurable operational outcomes.",
+                design: "Design / Creative profile: prioritize user needs, alternatives, concrete prototypes, and evaluation against explicit criteria.",
+                custom: "Custom profile: follow the goal and any workspace guidance; ask for missing constraints before consequential work.",
+              };
+              const finalGoal = profileGuidance[profile] ? `${goal}\n\n${profileGuidance[profile]}` : goal;
+              const model = provider === "codex" ? DEFAULT_CODEX_MODEL : await resolveLocalFallbackModel("auto");
+              await checkProvider({ provider, model, cwd: root });
+              if (mode === "challenge") requireCompetitionContract(activeCompetition("challenge"));
+              args = [script, "research", "--mode", mode, "--goal", finalGoal, "--budget", budget, "--provider", provider, "--model", model, "--thinking", "medium", "--lanes", "3", "--autonomy", "safe", "--limit-policy", "auto", "--executor", "local"];
+            } else if (action === "steer") {
+              const message = typeof body.message === "string" ? body.message.trim() : "";
+              if (message.length < 1 || message.length > 4_000) { fail(400, "Steering text must be between 1 and 4,000 characters."); return; }
+              args = [script, "research", "steer", message];
+            } else {
+              if (!saved) { fail(409, `No ${mode} campaign exists.`); return; }
+              args = [script, mode, action];
+            }
+            const child = spawn(process.execPath, args, { cwd: root, detached: true, stdio: "ignore", env: process.env });
+            child.once("error", () => undefined);
+            child.unref();
+            response.writeHead(202, jsonHeaders);
+            response.end(JSON.stringify({ accepted: true, action, mode, message: action === "start" ? "Provider verified. Campaign launch requested; its live state will appear here." : action === "steer" ? "Steering instruction delivered to the active controller." : `${mode} ${action} requested through the local controller.` }));
+          } catch (error) {
+            fail(400, error instanceof Error ? error.message : String(error));
+          }
+        })();
+        return;
+      }
+      if (request.method !== "GET") { response.writeHead(405, { ...baseHeaders, allow: "GET, POST" }); response.end("Method Not Allowed"); return; }
+      if (request.url === "/workbench") {
+        response.writeHead(200, {
+          ...baseHeaders,
+          "content-type": "text/html; charset=utf-8",
+          "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'",
+        });
+        response.end(workbenchHtml(workbenchToken));
+        return;
+      }
       if (request.url === "/" || request.url === "/index.html") {
         response.writeHead(200, {
           ...baseHeaders,
@@ -899,7 +992,7 @@ program.command("dashboard")
       process.once("SIGINT", shutdown);
       process.once("SIGTERM", shutdown);
       server.once("error", rejectServer);
-      server.listen(port, "127.0.0.1", () => console.log(`Evidra dashboard: http://127.0.0.1:${port}`));
+      server.listen(port, "127.0.0.1", () => console.log(`Evidra dashboard: http://127.0.0.1:${port}\nEvidra workbench: http://127.0.0.1:${port}/workbench`));
     });
   });
 

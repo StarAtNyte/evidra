@@ -80,6 +80,22 @@ autonomous research campaign, `/challenge start` for a challenge campaign, or
 `!ls` to run an explicit terminal command. Type `/` for live command
 suggestions and Tab completion.
 
+You can also open the local browser workbench over the same workspace and
+campaign state:
+
+```bash
+evidra dashboard
+# open http://127.0.0.1:4310/workbench
+```
+
+The browser and TUI share the active controller, durable evidence, experiments,
+queue, and campaign lifecycle. The workbench can start a Research or Challenge
+campaign, pause/resume/stop it, and send steering at the next safe boundary.
+Build/Engineering, Data/Analytics, Business/Operations, Design/Creative, and
+Custom are lightweight goal profiles on the common engine; they do not claim
+separate specialized adapters. The local web controller is loopback-bound and
+requires a per-launch session token plus same-origin requests for actions.
+
 The practical user guide is [`docs/user-guide.md`](docs/user-guide.md), and the
 complete interactive command catalog is [`docs/command-surface.md`](docs/command-surface.md).
 It covers Codex sessions, model routing, permissions, steering and queued

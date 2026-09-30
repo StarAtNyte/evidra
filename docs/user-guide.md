@@ -565,9 +565,24 @@ Queue checkout preserves declared priority but adds a capped waiting-time boost
 (one priority point per hour, up to three points). This keeps explicit urgent
 work ahead while ensuring durable background tasks eventually receive a turn.
 
-For a browser view of the active workspace, run `evidra dashboard --port 4310`
-and open `http://127.0.0.1:4310`. It is read-only, localhost-bound, and polls
-the same durable state used by the TUI.
+### Browser workbench
+
+Run `evidra dashboard --port 4310`, then open
+`http://127.0.0.1:4310/workbench`. The dashboard at `/` remains a read-only
+diagnostic view; `/workbench` is the light-first operational UI with a persistent
+light/dark preference. It is bound to loopback and polls the same durable state
+database, workspace root, and active campaign as the TUI—there is no separate
+web session or second research controller.
+
+Research and Challenge are the native campaign modes. The additional
+Build/Engineering, Data/Analytics, Business/Operations, Design/Creative, and
+Custom profiles add bounded goal guidance while reusing the shared research
+engine; they do not imply that every domain has its own dedicated evaluator or
+integration. Campaign starts verify Codex or Local/Ollama before launch and use
+safe permissions. Browser pause/resume/stop requests go through the same durable
+CLI controller actions, while steering is delivered at the next safe campaign
+boundary. Mutating requests require a per-server token embedded in the local
+page and a same-origin check.
 
 Generated reports include provenance coverage, claims, metrics, artifacts,
 runtime, failure classes, and the quality/reliability/time frontier. Reports
