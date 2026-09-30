@@ -836,7 +836,7 @@ program.command("doctor")
   }
 });
 
-program.command("dashboard")
+program.command("dashboard").alias("web")
   .option("--port <port>", "localhost HTTP port", "4310")
   .description("Serve the local Evidra web workbench and live campaign dashboard")
   .action(async (options: { port: string }) => {
