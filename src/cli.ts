@@ -6936,28 +6936,31 @@ experiment.command("audit")
   });
 program.addCommand(experiment);
 
-try {
-  if (process.argv.length <= 2) {
-    if (!process.stdin.isTTY) {
-      await startInteractive(root, statePath);
-    } else {
-      // The TUI owns the primary Evidra experience; readline remains available for pipes and scripts.
-      process.stdout.write("\u001b[?1049h\u001b[H\u001b[2J");
-      let restored = false;
-      const restoreTerminal = (): void => {
-        if (restored) return;
-        restored = true;
-        process.stdout.write("\u001b[?1049l");
-      };
-      process.once("exit", restoreTerminal);
-      await new Promise<void>((resolve) => {
-        const instance = render(React.createElement(App, { root }));
-        instance.waitUntilExit().then(() => { restoreTerminal(); resolve(); });
-      });
-    }
-  } else {
-    await program.parseAsync();
+async function launchTui(): Promise<void> {
+  if (!process.stdin.isTTY) {
+    await startInteractive(root, statePath);
+    return;
   }
+  // The TUI owns the primary Evidra experience; readline remains available for pipes and scripts.
+  process.stdout.write("\u001b[?1049h\u001b[H\u001b[2J");
+  let restored = false;
+  const restoreTerminal = (): void => {
+    if (restored) return;
+    restored = true;
+    process.stdout.write("\u001b[?1049l");
+  };
+  process.once("exit", restoreTerminal);
+  await new Promise<void>((resolve) => {
+    const instance = render(React.createElement(App, { root }));
+    instance.waitUntilExit().then(() => { restoreTerminal(); resolve(); });
+  });
+}
+
+program.command("tui").description("Open Evidra's interactive terminal workbench").action(launchTui);
+
+try {
+  if (process.argv.length <= 2) await launchTui();
+  else await program.parseAsync();
 } catch (error: unknown) {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;

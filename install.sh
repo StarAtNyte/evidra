@@ -59,7 +59,7 @@ run_stage() {
 
 run_stage "1/5 Downloading Evidra" git clone --quiet --depth 1 "$REPO_URL" "$INSTALL_DIR/evidra"
 cd "$INSTALL_DIR/evidra"
-run_stage "2/5 Installing dependencies and building" npm install
+run_stage "2/5 Installing locked dependencies and building" npm ci
 # Install an archive, not a link into the temporary checkout. Dependency
 # install scripts must run so native modules such as better-sqlite3 work.
 run_stage "3/5 Packaging CLI" npm pack --ignore-scripts --quiet
@@ -68,19 +68,28 @@ run_stage "4/5 Installing global command" npm install --global "$INSTALL_DIR/evi
 GLOBAL_PREFIX=$(npm prefix --global)
 run_stage "5/5 Verifying installation" "$GLOBAL_PREFIX/bin/evidra" --version
 echo "Evidra installed globally."
+show_commands() {
+  printf '\nStart using Evidra:\n'
+  printf '  evidra       Interactive terminal workbench (default)\n'
+  printf '  evidra tui   Interactive terminal workbench\n'
+  printf '  evidra web   Browser workbench at http://127.0.0.1:4310/workbench\n'
+  printf '  evidra --help  List all CLI commands\n'
+  printf '  /help          List interactive TUI commands\n'
+}
 case ":$PATH:" in
   *":$GLOBAL_PREFIX/bin:"*)
     if command -v evidra >/dev/null 2>&1; then
-      echo "Run: evidra"
+      show_commands
     else
       # Bash and zsh can cache a failed command lookup in the parent shell.
       echo "Your shell already includes $GLOBAL_PREFIX/bin but has a stale command cache."
-      echo "Run: hash -r 2>/dev/null || rehash; evidra"
+      echo "Run: hash -r 2>/dev/null || rehash"
+      show_commands
     fi
     ;;
   *)
     echo "Add $GLOBAL_PREFIX/bin to your PATH to run evidra:"
     echo "  export PATH=\"$GLOBAL_PREFIX/bin:\$PATH\""
-    echo "Then run: evidra"
+    show_commands
     ;;
 esac
