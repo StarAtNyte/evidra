@@ -264,7 +264,29 @@ remains the fallback.
 
 The IDs 20–39 check completed with 14/20 wins, mean per-row ratio `0.997619`, and pooled
 MSE ratio `0.997905` (0.2095% reduction). Combined with bounded-setting IDs 16–19, the
-24-row pooled reduction is 0.219%; however, its 50,000-resample paired-bootstrap 95% interval
-is `[-0.214%, +0.574%]` and only 86.1% of resamples are positive. This is not decisive on its
-own. A frozen IDs 40–99 confirmation under the identical bounded configuration is now
-running; no submission decision should be made until that block is included.
+24-row pooled reduction was 0.219%; its 50,000-resample paired-bootstrap 95% interval
+`[-0.214%, +0.574%]` still crossed zero. This was not decisive, so coefficients stayed
+frozen for IDs 40–99.
+
+That final 60-row confirmation completed under the identical bounded settings (4,427.5 s).
+Across all disjoint held-out IDs 16–99 (84 MLPs), 61 improved. Pooled MSE ratio was
+`0.997849` (0.2151% reduction), with mean per-row ratio `0.997733`. A paired row bootstrap
+(50,000 resamples, seed `20261001`) gives a 95% interval of `0.0347%` to `0.3791%` MSE
+reduction, with 98.98% of resamples positive. The measured compute rises from
+587,015,904,751 to 587,060,601,327 FLOPs per MLP (44,696,576, or 0.00761%). Since both are
+above the scoring floor, the paired adjusted-score reduction is estimated at `0.2075%`;
+the transformed bootstrap interval remains positive (about `0.027%` to `0.372%`). This is
+a small, statistically supported public-mini gain—not a hidden-set or leaderboard result,
+and nowhere near the long-term `1e-9` target. It is an incremental candidate worth one
+submission, with V29 preserved as the rollback baseline.
+
+Submitted to AIcrowd as submission **333375** on 2026-10-01 after the package and dry-run
+gates passed. Grading is pending; do not report a leaderboard gain until the returned grade
+is available and compared with the incumbent.
+
+The exact candidate generated from the frozen fit manifest passed `whest validate`, package
+validation, a submit dry-run, and four consecutive isolated official-runner predictions with
+the depth/fusion constants embedded in the estimator; all four completed below the time,
+residual, and FLOP caps. The four-run smoke rows overlap the fit set and only establish
+runtime/contract viability; the quality estimate above comes from IDs 16–99. The remote
+leaderboard grade remains the decisive test.
