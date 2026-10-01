@@ -12,8 +12,10 @@ teacher-forced intermediate states?
 
 This was motivated by trajectory-calibrated/DAgger-style moment correction described in
 public Phase 1 work. It is distinct in intent from the existing `CORR_BETA` table, but it
-uses the same correction mechanism. Existing evidence already warns that local mean
-corrections can hurt; this pilot checks whether an on-policy fit changes that conclusion.
+uses the same correction mechanism. Methodological correction: the pilot below fit every
+layer simultaneously on the **uncorrected baseline trajectory**. It was not proper
+sequential DAgger, where layer `l` is fit after rolling through already-fitted corrections
+for layers `0…l−1`. The negative result applies only to the simultaneous-fit variant.
 
 ## Derivation and why this can fail
 
@@ -39,7 +41,8 @@ but it still needs to optimize a final-output-weighted loss to address this mism
 - Base: existing `lean_k3_aug.lean_k3_predict`, float32 CPU, 1 torch thread.
 - Features: the existing 13 per-neuron mean-correction features, fit separately per layer.
 - Fit: standardized ridge regression (`lambda=1e-2`) against each layer's local mean
-  residual, then apply all fitted corrections online through the rollout.
+  residual from the uncorrected baseline rollout; then apply all fitted corrections online
+  simultaneously. This is a baseline-trajectory batch fit, **not sequential DAgger**.
 - One correction round was evaluated. A second round was stopped immediately after the
   first training row regressed sharply; it is not part of the result.
 
@@ -61,23 +64,84 @@ candidate is rejected; no estimator source or submission bundle was changed.
 The result is consistent with the objective mismatch in the derivation: independently
 fitting layer-local residuals can cause harmful compounded changes in the final output.
 This is a four-row pilot with only two training MLPs, so it does **not** establish that every
-trajectory-calibrated method fails. In particular, it did not fit a final-output-weighted
-loss or use a downstream Jacobian/adjoint. It does establish that this straightforward
-13-feature, per-layer local-ridge variant is not worth scaling.
+trajectory-calibrated method fails. It was not sequential DAgger, did not fit a
+final-output-weighted loss, and did not use a downstream Jacobian/adjoint. It establishes
+that this straightforward simultaneous 13-feature, per-layer local-ridge variant is not
+worth scaling; sequential fit-on-corrected-prefix remains untested.
 
 ## Next discriminating test
 
-Only revisit learned mean correction through a distinct algorithm: approximate or compute
-the downstream sensitivity `J[L <- l+1]`, use it to project local defects into final-output
-space, and fit against final-layer residuals. Begin with a small sensitivity parity test and
-an untouched mini split; abandon the idea if the Jacobian approximation is inaccurate or the
-held-out final MSE fails to improve. A separately testable idea is whether a third-cumulant
-term predicts *accumulated* drift even when a one-step local correction does not; treat that
-as a new hypothesis, not as validation of this pilot.
+### Sequential DAgger follow-up (completed)
+
+A second experiment now implements the actual sequential fit-on-corrected-prefix procedure
+in [`probe_whest_sequential_dagger.py`](probe_whest_sequential_dagger.py). For each layer
+`l`, it rolls the training MLPs through already-fitted corrections `0…l−1`, refits features
+at `l`, and fits only that layer's coefficients. It trained on public mini IDs 84–87 and
+evaluated the frozen full-depth (16-layer) correction on fresh IDs 92–95. Data shard SHA-256:
+`6eb84bd50068e8dcb0d8a6a609f2c4f90177d6228229ccb0793b656d7458fd59`.
+
+| MLP ID | Split | Baseline final MSE | Sequential correction | Ratio |
+|---:|---|---:|---:|---:|
+| 92 | held out | 3.981347e-8 | 3.217782e-8 | 0.8082 |
+| 93 | held out | 3.407854e-8 | 2.924411e-8 | 0.8581 |
+| 94 | held out | 2.877577e-8 | 2.629709e-8 | 0.9139 |
+| 95 | held out | 4.350339e-8 | 3.490877e-8 | 0.8024 |
+
+All four held-out rows improved. Mean per-MLP ratio is `0.84566` (15.4% mean relative
+reduction); ratio of pooled held-out MSEs is `0.8390` (16.1% reduction). Train IDs 84–87
+also improved, but are not evidence of generalization. A smaller three-layer sequential
+pilot on IDs 80–81 / 82–83 was effectively flat on validation (mean ratio `1.0043`), so the
+observed gain appears to need the deeper correction path, but this is not yet established.
+
+This is a promising *research signal*, not an estimator result: only four held-out MLPs,
+public labels were used for fitting, and this was measured with the research `lean_k3_aug`
+chain rather than the official bundled evaluator / exact V29 source. A direct baseline check
+on the same ID 92 confirms the mismatch is material: V29 scored `2.479036e-8` final MSE at
+`0.2671 × B`, while `lean_k3_aug` scored `3.981347e-8`. Thus these coefficients cannot be
+transferred to V29 as-is, and the ~15% research-chain gain says nothing yet about the
+incumbent submission. Cost and adjusted score for the corrected chain were not measured. Do
+not submit or claim this as a challenge score.
+
+### Next gate
+
+Reproduce sequential fitting on the exact V29 estimator path, rather than transplanting
+coefficients from `lean_k3_aug`. First instrument the V29 feature path in a research-only
+wrapper and verify instrumentation leaves outputs bit-identical; then evaluate frozen V29-fit
+coefficients on a larger untouched block and the full 100-row public mini split with zero
+failures, recording per-row MSE, FLOPs, and the official adjusted-score formula. Do not
+retune on those evaluation rows. Only after these checks consider integrating the correction
+into a candidate and submission bundle. A separate final-objective sensitivity fit and
+third-cumulant accumulated-drift model remain distinct future hypotheses.
 
 ## Reproduction caveat
 
-The one-off driver ran from `/tmp/whest_dagger_probe.py` and is not checked into this
-repository. The numerical output above was captured directly from that run; the exact data
-shard is retained under ignored `.sota/tmp`. Promote a portable reproduction script only if
-this line of work is reopened.
+The simultaneous-fit pilot used a one-off driver in `/tmp/whest_dagger_probe.py`, which is not
+checked in. The sequential follow-up is reproducible with the checked-in script and the exact
+public mini shard retained in the ignored `.sota` worktree data. The script outputs per-MLP
+metrics and saves its run manifest under ignored `.sota/tmp`.
+
+### Exact-V29 shallow pilot (completed; negative)
+
+The V29 instrumentation was checked against pristine source before fitting: predictions were
+bit-identical (`array_equal`, maximum absolute difference `0.0`). Feature capture adds
+44,270,592 measured FLOPs on ID 96 (about `0.000020 × B`); this verifies the measurement
+wrapper, not a submission artifact.
+
+An important parity check on the same ID 92 found that the research `lean_k3_aug` chain is
+not a proxy for V29: its baseline MSE was `3.981347e-8`, versus V29's `2.479036e-8` (V29 cost
+`0.267056 × B`). The earlier 15% lean-chain gain therefore cannot be attributed to or
+transferred to the incumbent.
+
+The first exact-V29 fit trained sequentially on IDs 84–87 but corrected only layers 0–3,
+using ridge `1e-2`; IDs 96–99 were its validation block. Per-row held-out ratios were
+`0.999858`, `1.000533`, `1.007967`, and `1.006284`. Pooled held-out MSE increased from
+`2.2490075e-8` to `2.2574202e-8` (ratio `1.003741`, a 0.37% regression); mean per-row ratio
+was `1.003660`. The measured quality change is negative. Reject this four-layer variant and
+do not spend a submission on it. This does not test the full-depth sequential method that
+produced the research-chain signal; a separate 16-layer V29 fit is the next discriminating
+test.
+
+Reproduce with `probe_v29_sequential_dagger.py`; its coefficients and run manifest are
+written to ignored `.sota/tmp/whest_v29_sequential_dagger.json`. Source SHA-256 was
+`0eedf1ac107db931c855d693e2556c088e396744517ccd00287e6178099be5ce`. IDs 96–99 are now
+development data for this investigation, not an untouched validation set.
