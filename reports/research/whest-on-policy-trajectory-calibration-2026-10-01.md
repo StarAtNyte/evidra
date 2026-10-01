@@ -315,17 +315,43 @@ most `1e-8`). Relative to incumbent 332337, that requires at least a 53.1% raw-M
 to `1e-8`, alongside reducing the multiplier from `0.2541` to `0.1` if landing exactly on
 that boundary. This rules out further pure Strassen tuning as the path to the target.
 
-The next algorithm family worth a cheap falsification is cross-order extrapolation: combine
-weights-only K=1/K=2/K=3 predictions to cancel correlated truncation bias, motivated by a
-separate cumulant-estimator study that reports a three-order Richardson/Romberg ensemble.
-That result was at width 256/depth 8, not this Phase-2 width-1024/depth-16 task, so its
-coefficients cannot be transplanted. Before implementation, derive Phase-2 branches from
-the exact V29 source and measure (a) pairwise error-vector alignment on whole MLPs, (b) the
-oracle linear-combination ceiling on a training cohort, (c) fixed-weight grouped holdout
-performance, and (d) the combined FLOP multiplier. Reject immediately unless a lawful,
-held-out combination can cut MSE enough to pay for extra compute. Relevant upstream
-description: https://github.com/paulrosu11/arc-cumulant-mlp-estimator and its mathematical
-progress notes. This is a hypothesis, not an Evidra result or a production candidate.
+### Cross-order K2→V29 blend screen (completed; reject on adjusted score)
+
+Motivated by a separate width-256/depth-8 study reporting three-order
+Richardson/Romberg extrapolation, we tested the cheaper two-branch analogue at Phase-2 scale.
+Using the starter-kit K=2 covariance estimator as the low-cost branch, fit one pooled scalar
+`alpha` on whole MLP IDs 0–3, then freeze it for IDs 4–15:
+
+`prediction = V29 + alpha * (K2 - V29)`
+
+The fitted `alpha` was `0.0160958`. On the 12 untouched test MLPs, 11/12 improved raw MSE
+and the pooled MSE ratio was **0.98128** (1.87% reduction). This supports weak, transferable
+error-direction alignment, but it is not enough to justify the compute: K2 costs
+`56,786,552,287` FLOPs versus `568,327,465,455` for the captured V29 branch. Running both
+raises the compute multiplier by about 10%; the estimated adjusted-score ratio is therefore
+`0.98128 × (1 + 56.79/568.33) ≈ 1.079`, about **7.9% worse**. Reject this straightforward
+blend for submission. A future cross-order method is only viable if it replaces or
+substantially thins part of V29 rather than simply adding K2 on top.
+
+Reproduction:
+
+```sh
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  competitions/whestbench/starterkit/.venv/bin/python \
+  reports/research/probe_whest_cross_order_blend.py \
+  --train-ids 0,1,2,3 --test-ids 4,5,6,7,8,9,10,11,12,13,14,15 \
+  --output .sota/tmp/whest-cross-order-k2-screen.json
+```
+
+The probe and JSON preserve source hashes and the exact MLP-level rows. Limitations: this is
+a small public-Mini screen; the V29 capture is from local source hash
+`0eedf1ac107db931c855d693e2556c088e396744517ccd00287e6178099be5ce`, which differs from
+the historical archive member; the starter K2 branch includes its embedded calibration;
+and the predictions were measured in-process rather than package-isolated. The 12 MLPs are
+not independent neuron samples, so the 11/12 count is descriptive, not a significance test.
+The inspiration's published method is documented at
+https://github.com/paulrosu11/arc-cumulant-mlp-estimator; its coefficients/results are not
+claimed to transfer here.
 
 The exact candidate generated from the frozen fit manifest passed `whest validate`, package
 validation, a submit dry-run, and four consecutive isolated official-runner predictions with
