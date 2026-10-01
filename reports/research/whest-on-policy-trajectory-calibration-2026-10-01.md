@@ -190,3 +190,15 @@ All four regressed: ratios `1.06789`, `1.03388`, `1.01013`, and `1.00247`; mean 
 non-generalizing. Do not submit it. The contrast with IDs 88–91 confirms that selecting the
 scale on a four-row block can create a misleading tiny positive; the next hypothesis instead
 targets the terminal objective directly and avoids compounding 16 local corrections.
+
+### Direct terminal-layer ridge (completed; negative)
+
+To remove objective mismatch rather than merely damp it, fit only V29's final-layer additive
+correction from the exact baseline terminal features to the final-layer residual; all earlier
+layer corrections are zero. This makes the learned delta directly additive to the metric
+output, instead of asking a chain of local corrections to improve it indirectly. With four
+training MLPs (IDs 84–87), ridge `1e-2`, and disjoint IDs 64–67 for validation, ratios were
+`1.05212`, `0.98543`, `1.02815`, and `1.07795`; mean ratio `1.03591`, pooled MSE ratio
+`1.03877` (3.88% regression). Reject this small-sample terminal fit too. Its coefficient
+norm was `0.193`; added cost was the same 44.7M FLOPs. Next test whether broader calibration
+data stabilizes this direct terminal objective before rejecting the formulation itself.
