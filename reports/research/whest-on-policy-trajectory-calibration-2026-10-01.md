@@ -281,12 +281,25 @@ and nowhere near the long-term `1e-9` target. It is an incremental candidate wor
 submission, with V29 preserved as the rollback baseline.
 
 Submitted to AIcrowd as submission **333375** on 2026-10-01 after the package and dry-run
-gates passed. Grading is pending; do not report a leaderboard gain until the returned grade
-is available and compared with the incumbent.
+gates passed. The official grade is now available: **5.649395034260486e-9**. The incumbent
+submission **332337** was independently re-queried and remains **5.418168137938331e-9**;
+therefore 333375 is about **4.27% worse** and is rejected. The small public-Mini gain did not
+transfer into an external-score improvement. This is an important negative result: do not
+promote the terminal ridge or claim it improved WhestBench. Keep the incumbent artifact as
+the champion until a candidate beats it on a locked full-Mini run and its external grade.
+
+The new score is nearly identical to the earlier Strassen-4 calibration submission 332999
+(`5.6487344412033275e-9`, only about 0.012% better than 333375). That points to the bounded
+Strassen-4 base behavior dominating this candidate's tiny residual correction; it does not
+establish that the correction is useful on the hidden grading set. Our local-to-external
+calibration also remains noisy and source-dependent, so external grades—not local projected
+scores—decide promotion.
 
 The exact candidate generated from the frozen fit manifest passed `whest validate`, package
 validation, a submit dry-run, and four consecutive isolated official-runner predictions with
 the depth/fusion constants embedded in the estimator; all four completed below the time,
 residual, and FLOP caps. The four-run smoke rows overlap the fit set and only establish
-runtime/contract viability; the quality estimate above comes from IDs 16–99. The remote
-leaderboard grade remains the decisive test.
+runtime/contract viability. The public-Mini estimate was positive, but the official grade
+rejected its transfer. Keep the frozen artifact for reproducibility, not as the active
+champion. Next work should investigate the source/configuration and score-transfer gap before
+spending more entries on similarly small post-hoc corrections.
