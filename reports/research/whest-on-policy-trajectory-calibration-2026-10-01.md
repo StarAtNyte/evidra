@@ -214,3 +214,15 @@ B`). This is the first positive exact-V29 held-out signal in this line, but it i
 only four rows; it is not yet evidence for an external-score improvement or a submission.
 The next gate is a frozen evaluation on disjoint public mini IDs 20–99, followed by exact
 package parity and adjusted-score calculation if the broad block remains positive.
+
+### Frozen 20-row follow-up (small positive; uncertainty remains)
+
+The same coefficient matrix was scored without refitting on IDs 20–39. Fourteen of 20 rows
+improved; pooled final-MSE ratio was `0.997912` (0.209% reduction), and mean per-row ratio
+was `0.997626` (0.237% mean reduction). The worst regression was 3.32%; no rows failed.
+Every row's measured FLOP count was 587,307,467,247 versus 587,262,770,671 baseline. A
+paired row bootstrap (20,000 resamples, seed `20261001`) puts the pooled relative-reduction
+95% interval at `[-0.273%, +0.618%]`, with 82.6% of resamples positive. The point estimate
+is encouraging but not yet separated from zero. Next, score frozen IDs 40–99 before
+promoting or submitting; if the effect persists, build the actual `.py` bundle and run its
+official mini contract and adjusted-score calculation.
