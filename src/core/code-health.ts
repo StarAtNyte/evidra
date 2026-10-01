@@ -31,6 +31,11 @@ export interface CodeHealthTrend {
   reasons: string[];
 }
 
+export interface ScopedCodeHealthAssessment {
+  scope: string;
+  assessment: CodeHealthAssessment;
+}
+
 const TEST_PATH = /(^|\/)(test|tests|spec|specs)(\/|$)|(?:^|[._-])(test|spec)\.[^.]+$/i;
 const CODE_PATH = /\.(?:ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|cpp|cc|cxx|c|h|hpp|rb|php|swift|sh)$/i;
 
@@ -82,4 +87,20 @@ export function assessCodeHealthTrend(assessments: CodeHealthAssessment[]): Code
   const severe = recent.some((item) => item.status === "fail") || (untestedGrowthStreak >= 4 && cumulativeSourceLineDelta >= 500) || cumulativeTodoDelta >= 25;
   const status: CodeHealthTrend["status"] = severe ? "fail" : reasons.length ? "warn" : "pass";
   return { samples: recent.length, cumulativeSourceLineDelta, cumulativeTestLineDelta, cumulativeTodoDelta, untestedGrowthStreak, status, reasons };
+}
+
+/**
+ * Trend only within a lineage that shares a mutable workspace. Autonomous
+ * experiments normally use fresh worktrees, so unrelated candidates must not
+ * accumulate one another's untested-growth streaks.
+ */
+export function assessScopedCodeHealthTrend(
+  prior: ScopedCodeHealthAssessment[],
+  currentScope: string,
+  current: CodeHealthAssessment,
+): CodeHealthTrend {
+  return assessCodeHealthTrend([
+    ...prior.filter((entry) => entry.scope === currentScope).map((entry) => entry.assessment),
+    current,
+  ]);
 }

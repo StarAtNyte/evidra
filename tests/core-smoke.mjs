@@ -2276,6 +2276,20 @@ test("code health detects severe test deletion and untested structural growth", 
   assert.equal(trend.untestedGrowthStreak, 3);
   const severeTrend = assessCodeHealthTrend([growth, growth, growth, growth]);
   assert.equal(severeTrend.status, "fail");
+  const isolatedTrend = assessScopedCodeHealthTrend([
+    { scope: "worktree-a", assessment: growth },
+    { scope: "worktree-b", assessment: growth },
+    { scope: "worktree-c", assessment: growth },
+  ], "worktree-d", growth);
+  assert.equal(isolatedTrend.status, "pass");
+  assert.equal(isolatedTrend.untestedGrowthStreak, 1);
+  const sameLineageTrend = assessScopedCodeHealthTrend([
+    { scope: "worktree-d", assessment: growth },
+    { scope: "worktree-d", assessment: growth },
+    { scope: "worktree-d", assessment: growth },
+  ], "worktree-d", growth);
+  assert.equal(sameLineageTrend.status, "fail");
+  assert.equal(sameLineageTrend.untestedGrowthStreak, 4);
 });
 
 test("accepted experiment evidence forms a monotonic best-so-far ratchet", () => {

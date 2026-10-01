@@ -144,7 +144,7 @@ const CRITIC_EVENT_TYPES = [
   "research.critic.completed",
   "research.critic.gate",
 ] as const;
-import { assessCodeHealth, assessCodeHealthTrend, snapshotCodeHealth, type CodeHealthAssessment, type CodeHealthFile } from "./core/code-health.js";
+import { assessCodeHealth, assessScopedCodeHealthTrend, snapshotCodeHealth, type CodeHealthAssessment, type CodeHealthFile, type ScopedCodeHealthAssessment } from "./core/code-health.js";
 
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
@@ -347,9 +347,15 @@ async function implementCampaignHypothesis(
   const health = assessCodeHealth(healthBefore, healthAfter);
   const healthStore = new ResearchStore(statePath);
   const priorAssessments = healthStore.eventsByType("experiment.code_health.assessed")
-    .map((event) => event.payload && typeof event.payload === "object" ? (event.payload as { assessment?: unknown }).assessment : undefined)
-    .filter((assessment): assessment is CodeHealthAssessment => Boolean(assessment && typeof assessment === "object" && ["pass", "warn", "fail"].includes((assessment as { status?: unknown }).status as string)));
-  const trend = assessCodeHealthTrend([...priorAssessments, health]);
+    .map((event) => {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload as { worktree?: unknown; assessment?: unknown } : {};
+      return typeof payload.worktree === "string" && payload.assessment && typeof payload.assessment === "object"
+        && ["pass", "warn", "fail"].includes((payload.assessment as { status?: unknown }).status as string)
+        ? { scope: payload.worktree, assessment: payload.assessment as CodeHealthAssessment }
+        : undefined;
+    })
+    .filter((entry): entry is ScopedCodeHealthAssessment => entry !== undefined);
+  const trend = assessScopedCodeHealthTrend(priorAssessments, worktree, health);
   healthStore.appendEvent("experiment.code_health.assessed", { experimentId, worktree, before: healthBefore, after: healthAfter, assessment: health, trend });
   healthStore.close();
   if (health.status === "fail" || trend.status === "fail") throw new Error(`Code-health guard rejected ${experimentId}: ${[...health.reasons, ...trend.reasons].join("; ")}`);
