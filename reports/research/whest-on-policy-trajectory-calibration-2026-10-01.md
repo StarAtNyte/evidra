@@ -168,3 +168,16 @@ trust-region/damping step may be worth screening, but the undamped correction is
 The validation IDs are now development data for this method and cannot serve as fresh
 confirmation. The run took 2,412.5 seconds; metrics and coefficients are in the ignored
 `.sota/tmp/whest_v29_sequential_dagger.json` manifest.
+
+### Trust-region damping screen (scale 0.5; exposed development block)
+
+The full-depth fit suggested limiting the update magnitude. Scaling every fitted coefficient
+by `0.5` reduced the pooled regression on the already exposed IDs 88–91 to a small gain:
+pooled MSE ratio `0.997816` (0.218% reduction), mean per-row ratio `0.998329` (0.167%
+mean reduction). Ratios were `0.974862`, `1.040587`, `0.997739`, and `0.980128`; the worst
+row still regressed 4.1%, but much less than the undamped 13.8%. Cost remained the same
+44.7M extra FLOPs. This is a promising *screening signal*, not confirmatory evidence: scale
+0.5 was selected after seeing IDs 88–91. The checked-in probe now supports reusing frozen
+coefficients and applying a trust-region scale. A separate run is evaluating the frozen
+0.5-scaled coefficients on IDs 76–79; do not submit unless that independent block and a full
+official mini evaluation also support the gain.
