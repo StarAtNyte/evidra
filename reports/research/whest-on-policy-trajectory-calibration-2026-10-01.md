@@ -202,3 +202,15 @@ training MLPs (IDs 84–87), ridge `1e-2`, and disjoint IDs 64–67 for validati
 `1.03877` (3.88% regression). Reject this small-sample terminal fit too. Its coefficient
 norm was `0.193`; added cost was the same 44.7M FLOPs. Next test whether broader calibration
 data stabilizes this direct terminal objective before rejecting the formulation itself.
+
+### Broader terminal fit (16 training MLPs; small positive four-row screen)
+
+To test the small-sample explanation, the same terminal-only ridge (`1e-2`) was fit on IDs
+0–15 and frozen on disjoint IDs 16–19. All 16 training trajectories were used only to fit
+the one final-layer correction. Validation ratios were `1.00460`, `0.99793`, `0.99110`,
+and `0.99719`: three of four improved. Mean ratio was `0.997705`; pooled ratio was
+`0.997249`, a 0.275% held-out MSE reduction. Added cost stayed at 44.7M FLOPs (`~0.000020 ×
+B`). This is the first positive exact-V29 held-out signal in this line, but it is small and
+only four rows; it is not yet evidence for an external-score improvement or a submission.
+The next gate is a frozen evaluation on disjoint public mini IDs 20–99, followed by exact
+package parity and adjusted-score calculation if the broad block remains positive.
