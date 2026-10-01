@@ -8574,6 +8574,30 @@ test("research decisions support non-metric outcomes without fabricated GPU esti
   }), /less than or equal to median|greater than or equal to median/);
 });
 
+test("research hypothesis implementation mode is typed and defaults to modification", () => {
+  const base = {
+    phase: "hypothesis",
+    goalStatus: "active",
+    decision: "propose",
+    bottleneck: "choose a bounded experiment",
+    rationale: "The proposed behavior can be tested directly.",
+    selectedHypothesis: null,
+    nextAction: "Run the declared check.",
+    toolCalls: [],
+  };
+  const verification = ResearchDecisionSchema.parse({
+    ...base,
+    hypotheses: [{ title: "verify existing behavior", implementationMode: "verify", mechanism: "An existing behavior can be checked without edits.", proposedChange: "Run a deterministic verifier.", falsificationTest: "The verifier fails." }],
+  });
+  assert.equal(verification.hypotheses[0].implementationMode, "verify");
+
+  const modification = ResearchDecisionSchema.parse({
+    ...base,
+    hypotheses: [{ title: "modify implementation", mechanism: "A code change may improve the outcome.", proposedChange: "Change one bounded component.", falsificationTest: "The metric does not improve." }],
+  });
+  assert.equal(modification.hypotheses[0].implementationMode, "modify");
+});
+
 test("forecast calibration records coverage and directional error", () => {
   const covered = assessForecast({ low: 0.01, median: 0.03, high: 0.06 }, 0.031);
   assert.equal(covered.covered, true);

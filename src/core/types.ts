@@ -101,6 +101,7 @@ export const ResearchHypothesisSchema = z.object({
   title: z.string().min(1),
   formulationFamily: z.string().min(1).max(80).default("unspecified"),
   outcomeType: z.enum(["metric", "artifact", "proof", "behavior", "system", "other"]).default("metric"),
+  implementationMode: z.enum(["modify", "verify"]).default("modify"),
   expectedOutcome: z.string().trim().min(1).optional(),
   mechanism: z.string().min(1),
   /** Conditions that must hold for the mechanism or transfer claim to be plausible. */

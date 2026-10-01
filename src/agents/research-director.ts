@@ -104,11 +104,12 @@ function toolCacheKey(call: ResearchToolCall): string {
 const RESEARCH_HYPOTHESIS_OUTPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["title", "formulationFamily", "outcomeType", "expectedOutcome", "mechanism", "assumptions", "evidence", "evidenceSourceIds", "parentHypothesisIds", "sourceAdaptation", "proposedChange", "falsificationTest", "expectedMetricDelta", "computeCostGpuHours", "implementationRisk", "leakageRisk", "dependencies", "ablationFactors"],
+  required: ["title", "formulationFamily", "outcomeType", "implementationMode", "expectedOutcome", "mechanism", "assumptions", "evidence", "evidenceSourceIds", "parentHypothesisIds", "sourceAdaptation", "proposedChange", "falsificationTest", "expectedMetricDelta", "computeCostGpuHours", "implementationRisk", "leakageRisk", "dependencies", "ablationFactors"],
   properties: {
     title: { type: "string" },
     formulationFamily: { type: "string" },
     outcomeType: { type: "string", enum: ["metric", "artifact", "proof", "behavior", "system", "other"] },
+    implementationMode: { type: "string", enum: ["modify", "verify"] },
     expectedOutcome: { type: ["string", "null"] },
     mechanism: { type: "string" },
     assumptions: { type: "array", maxItems: 8, items: { type: "string" } },
