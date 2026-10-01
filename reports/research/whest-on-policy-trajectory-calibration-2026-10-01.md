@@ -259,5 +259,12 @@ The frozen IDs 16–19 check was repeated with those exact depth/fusion settings
 four improved; pooled MSE ratio was `0.997272` (0.273% reduction), compared with `0.997249`
 under the original kernel setting. Per-row ratios also closely matched, supporting the
 bounded-memory path as a faithful implementation of the residual candidate on this block.
-A frozen IDs 20–39 check using the same settings is in progress. Do not submit until that
-completes, and keep the original V29 artifact as fallback.
+The frozen IDs 20–39 check using the same settings is complete; the original V29 artifact
+remains the fallback.
+
+The IDs 20–39 check completed with 14/20 wins, mean per-row ratio `0.997619`, and pooled
+MSE ratio `0.997905` (0.2095% reduction). Combined with bounded-setting IDs 16–19, the
+24-row pooled reduction is 0.219%; however, its 50,000-resample paired-bootstrap 95% interval
+is `[-0.214%, +0.574%]` and only 86.1% of resamples are positive. This is not decisive on its
+own. A frozen IDs 40–99 confirmation under the identical bounded configuration is now
+running; no submission decision should be made until that block is included.
