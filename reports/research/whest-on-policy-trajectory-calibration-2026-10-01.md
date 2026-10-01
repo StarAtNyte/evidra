@@ -221,8 +221,43 @@ The same coefficient matrix was scored without refitting on IDs 20–39. Fourtee
 improved; pooled final-MSE ratio was `0.997912` (0.209% reduction), and mean per-row ratio
 was `0.997626` (0.237% mean reduction). The worst regression was 3.32%; no rows failed.
 Every row's measured FLOP count was 587,307,467,247 versus 587,262,770,671 baseline. A
-paired row bootstrap (20,000 resamples, seed `20261001`) puts the pooled relative-reduction
-95% interval at `[-0.273%, +0.618%]`, with 82.6% of resamples positive. The point estimate
-is encouraging but not yet separated from zero. Next, score frozen IDs 40–99 before
-promoting or submitting; if the effect persists, build the actual `.py` bundle and run its
-official mini contract and adjusted-score calculation.
+paired row bootstrap (20,000 resamples, seed `20261001`) put the pooled relative-reduction
+95% interval at `[-0.273%, +0.618%]`, with 82.6% of resamples positive. This was encouraging
+but not yet separated from zero, so the coefficients were kept frozen for IDs 40–99.
+
+### Frozen broad confirmation (IDs 16–99; small but consistent positive)
+
+The final locked block, IDs 40–99, was scored without refitting or selecting coefficients;
+it took 4,235.8 seconds. Across all disjoint held-out IDs 16–99 (84 MLPs), 61 improved.
+Pooled final-MSE ratio was `0.997848`, a `0.2152%` reduction; the mean per-row ratio was
+`0.997731`. A paired bootstrap over MLP rows (50,000 resamples, seed `20261001`) gives a
+95% interval of `0.0345%` to `0.3794%` MSE reduction, with 98.98% of resamples positive.
+The mean measured FLOP overhead was `0.00761%` (44,696,576 extra FLOPs per MLP), so this
+candidate improves the observed quality-cost tradeoff on this fixed public mini set. This is
+a small incremental result—not a claim of a `1e-9` score, a leaderboard gain, or proof of
+generalization beyond this benchmark distribution.
+
+This is now strong enough to justify the next step rather than discard the idea: materialize
+the frozen terminal correction as a candidate, verify exact compatibility with the official
+submission contract, and run the official mini evaluator with the exact score formula and
+resource limits. Preserve V29 as the fallback and submit only if package-level parity passes
+and the official adjusted score improves. Keep the coefficients and evaluation set frozen;
+any further fitting or tuning requires a new untouched split.
+
+### Submission-runtime gate and bounded-memory candidate
+
+The first isolated-runner smoke with V29's default Strassen depth/fusion settings failed to
+allocate a 375 MiB workspace; the next repeated-call smoke also ended with `WORKER_EOF`.
+This is a candidate packaging/runtime blocker, not evidence about the learned residual. A
+rules-compliant bounded-memory configuration (Strassen depth 4, fused-leaf threshold 32)
+passed `whest validate` and four consecutive official subprocess predictions with zero
+budget, wall-time, or residual-time failures. Their mean measured wall time was 28.2 s and
+mean adjusted score was `6.28756e-9`; these first four MLPs overlap the fit IDs, so this is
+only a runtime smoke and not a generalization estimate.
+
+The frozen IDs 16–19 check was repeated with those exact depth/fusion settings. Three of
+four improved; pooled MSE ratio was `0.997272` (0.273% reduction), compared with `0.997249`
+under the original kernel setting. Per-row ratios also closely matched, supporting the
+bounded-memory path as a faithful implementation of the residual candidate on this block.
+A frozen IDs 20–39 check using the same settings is in progress. Do not submit until that
+completes, and keep the original V29 artifact as fallback.
