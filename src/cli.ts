@@ -85,7 +85,7 @@ import { withExecutionHeartbeat } from "./core/execution-heartbeat.js";
 import { researchFailureRecord } from "./core/research-failure.js";
 import { DEFAULT_SEARCH_OPERATORS, DEFAULT_SEARCH_OPERATOR_COSTS, DEFAULT_SEARCH_OPERATOR_NOVELTY, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "./core/search-policy.js";
 import { planPortfolio } from "./core/portfolio.js";
-import { promoteHalvingStage } from "./core/successive-halving.js";
+import { promoteHalvingStage, reducedValidationApplicable } from "./core/successive-halving.js";
 import { estimateCost, type CostObservation } from "./core/cost-model.js";
 import { synthesizeLaneReports } from "./core/cross-pollination.js";
 import { discoverAutoLabTasks } from "./core/autolab.js";
@@ -5913,6 +5913,8 @@ research
         const selectedIndex = materialized.hypothesisIds.indexOf(portfolioCandidate.id);
         const selectedHypothesisId = selectedIndex >= 0 ? materialized.hypothesisIds[selectedIndex] : undefined;
         const selectedHypothesis = selectedIndex >= 0 ? decision.hypotheses[selectedIndex] : undefined;
+        const candidateHalvingEnabled = halvingEnabled
+          && Boolean(selectedHypothesis && reducedValidationApplicable(selectedHypothesis.implementationMode, Boolean(adapter.config.execution?.reducedValidationCommand)));
         const hypothesisAlreadyScheduled = selectedHypothesis
           ? decisionStore.experiments().some((entry) => {
             const payload = entry.payload as { hypothesisId?: string; status?: string; executor?: string; searchOperator?: string; runtimeContext?: { provider?: string; model?: string; executor?: string } };
@@ -5985,7 +5987,7 @@ research
             let run: { exitCode: number; stdout: string; stderr: string };
             try {
               await implementCampaignHypothesis(root, experimentId, selectedHypothesis, manifest, { provider: options.provider as "codex" | "local", model: selectedModel, thinking: options.thinking, fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", protectedCommands: [adapter.config.evaluator.command] });
-              if (halvingEnabled) {
+              if (candidateHalvingEnabled) {
                 run = await runCampaignExperiment(root, experimentId, "reduced", campaignRemainingMs(campaign));
                 const screenStore = new ResearchStore(statePath);
                 const screenEvent = screenStore.eventsByType("experiment.screening.completed").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === experimentId);

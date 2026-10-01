@@ -31,6 +31,11 @@ export interface HalvingOutcome {
   valid: boolean;
 }
 
+/** Verification-only candidates run their declared checks directly, not reduced-data screens. */
+export function reducedValidationApplicable(implementationMode: "modify" | "verify", hasReducedValidationCommand: boolean): boolean {
+  return implementationMode === "modify" && hasReducedValidationCommand;
+}
+
 /**
  * Allocate a portfolio across cheap-to-expensive evaluation stages. The
  * planner is deliberately agnostic to the domain: a stage fraction can mean

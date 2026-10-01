@@ -2577,6 +2577,13 @@ test("external scores produce conservative validation split beliefs", () => {
   assert.match(report.warning, /few external/i);
 });
 
+test("verification-only experiments skip reduced-data stages", async () => {
+  const { reducedValidationApplicable } = await import("../dist/core/successive-halving.js");
+  assert.equal(reducedValidationApplicable("verify", true), false);
+  assert.equal(reducedValidationApplicable("modify", true), true);
+  assert.equal(reducedValidationApplicable("modify", false), false);
+});
+
 test("execution stages reject invalid contracts before expensive work", () => {
   const manifest = { acceptance: { requireReplication: true }, resources: { timeoutMinutes: 10 }, evaluation: { requiredArtifacts: ["metrics.json", "predictions.json"] } };
   const plan = createExecutionPlan(manifest);
