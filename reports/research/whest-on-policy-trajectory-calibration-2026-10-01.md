@@ -288,12 +288,44 @@ transfer into an external-score improvement. This is an important negative resul
 promote the terminal ridge or claim it improved WhestBench. Keep the incumbent artifact as
 the champion until a candidate beats it on a locked full-Mini run and its external grade.
 
-The new score is nearly identical to the earlier Strassen-4 calibration submission 332999
-(`5.6487344412033275e-9`, only about 0.012% better than 333375). That points to the bounded
-Strassen-4 base behavior dominating this candidate's tiny residual correction; it does not
-establish that the correction is useful on the hidden grading set. Our local-to-external
-calibration also remains noisy and source-dependent, so external grades—not local projected
+AIcrowd's secondary metric clarifies why: 333375's raw final-layer MSE is
+`2.133063446763117e-8`, only **0.0193% worse** than 332337's
+`2.1326515771136202e-8`, while the implied score multiplier (`adjusted / raw`) is
+`0.264849` versus `0.254058` (**4.25% higher cost multiplier**). Submission 332999 has the
+same pattern (`2.132420394929113e-8` raw, multiplier `0.264898`). Thus the decisive loss is
+the Strassen-4 compute profile under the adjusted metric, not a large accuracy regression
+from ridge. Future work should first recover the exact 332337 implementation/configuration
+and target equal-or-lower cost at comparable raw MSE; the residual correction is not worth
+its current cost.
+
+The new adjusted score is nearly identical to the earlier Strassen-4 calibration submission
+332999 (`5.6487344412033275e-9`, only about 0.012% better than 333375), and both have an
+implied compute multiplier around `0.2649`. This points to the bounded Strassen-4 base
+behavior dominating the candidate's tiny residual correction; it does not establish that
+the correction is useful on the hidden grading set. External grades—not local projected
 scores—decide promotion.
+
+### Target arithmetic and next algorithm gate
+
+The adjusted metric is `MSE × max(0.1, C/B)`. At 333375's raw MSE, even the absolute
+best possible multiplier floor would score `2.1331e-9`; compute-only optimization cannot
+reach the requested `1e-9`. To reach `1e-9`, raw MSE must first fall below `1e-8`, and
+then the compute multiplier must be at most `1e-9 / MSE` (or the floor 0.1 if MSE is at
+most `1e-8`). Relative to incumbent 332337, that requires at least a 53.1% raw-MSE reduction
+to `1e-8`, alongside reducing the multiplier from `0.2541` to `0.1` if landing exactly on
+that boundary. This rules out further pure Strassen tuning as the path to the target.
+
+The next algorithm family worth a cheap falsification is cross-order extrapolation: combine
+weights-only K=1/K=2/K=3 predictions to cancel correlated truncation bias, motivated by a
+separate cumulant-estimator study that reports a three-order Richardson/Romberg ensemble.
+That result was at width 256/depth 8, not this Phase-2 width-1024/depth-16 task, so its
+coefficients cannot be transplanted. Before implementation, derive Phase-2 branches from
+the exact V29 source and measure (a) pairwise error-vector alignment on whole MLPs, (b) the
+oracle linear-combination ceiling on a training cohort, (c) fixed-weight grouped holdout
+performance, and (d) the combined FLOP multiplier. Reject immediately unless a lawful,
+held-out combination can cut MSE enough to pay for extra compute. Relevant upstream
+description: https://github.com/paulrosu11/arc-cumulant-mlp-estimator and its mathematical
+progress notes. This is a hypothesis, not an Evidra result or a production candidate.
 
 The exact candidate generated from the frozen fit manifest passed `whest validate`, package
 validation, a submit dry-run, and four consecutive isolated official-runner predictions with
