@@ -145,3 +145,26 @@ Reproduce with `probe_v29_sequential_dagger.py`; its coefficients and run manife
 written to ignored `.sota/tmp/whest_v29_sequential_dagger.json`. Source SHA-256 was
 `0eedf1ac107db931c855d693e2556c088e396744517ccd00287e6178099be5ce`. IDs 96–99 are now
 development data for this investigation, not an untouched validation set.
+
+### Exact-V29 full-depth sequential pilot (completed; negative pooled result)
+
+To test whether the lean-chain improvement depended on depth, all 16 V29 layers were fit
+sequentially on IDs 84–87 (ridge `1e-2`) and evaluated, with frozen coefficients, on IDs
+88–91. The feature-capture wrapper remained in-memory only. All four training rows improved
+(ratios `0.9755`, `0.9634`, `0.9744`, `0.9700`), but held-out results were mixed:
+
+| MLP ID | Baseline final MSE | Full-depth correction | Ratio |
+|---:|---:|---:|---:|
+| 88 | 2.465903e-8 | 2.407335e-8 | 0.97625 |
+| 89 | 2.220641e-8 | 2.526555e-8 | 1.13776 |
+| 90 | 2.957062e-8 | 2.998261e-8 | 1.01393 |
+| 91 | 2.156773e-8 | 2.119129e-8 | 0.98255 |
+
+Mean per-row ratio was `1.02762`; pooled held-out MSE ratio was `1.02560`, a 2.56%
+regression. Each prediction cost 587,307,467,247 FLOPs versus 587,262,770,671 for V29
+baseline, an increase of 44,696,576 FLOPs (`~0.000020 × B`). This is a negative result, not
+a submission candidate. The gain on two of four held-out rows is a hint that a conservative
+trust-region/damping step may be worth screening, but the undamped correction is rejected.
+The validation IDs are now development data for this method and cannot serve as fresh
+confirmation. The run took 2,412.5 seconds; metrics and coefficients are in the ignored
+`.sota/tmp/whest_v29_sequential_dagger.json` manifest.

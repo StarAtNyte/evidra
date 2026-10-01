@@ -137,6 +137,14 @@ def main():
     ap.add_argument("--validation-ids", type=int, nargs="+", default=[96, 97, 98, 99])
     ap.add_argument("--fit-layers", type=int, default=4)
     ap.add_argument("--ridge", type=float, default=1e-2)
+    ap.add_argument("--reuse-coefficients", type=Path,
+                    help="load frozen coefficients from a prior JSON run manifest instead of fitting")
+    ap.add_argument("--scale", type=float, default=1.0,
+                    help="multiply all frozen correction coefficients by this trust-region scale")
+    ap.add_argument("--output", type=Path,
+                    help="manifest output path (default: ignored .sota/tmp location)")
+    ap.add_argument("--validation-only", action="store_true",
+                    help="score only validation IDs; useful for frozen-coefficient screens")
     ap.add_argument("--verify-only", action="store_true")
     args = ap.parse_args()
     if set(args.train_ids) & set(args.validation_ids):
@@ -164,23 +172,35 @@ def main():
     beta = np.zeros((16, 13), dtype=np.float64)
     layer_log = []
     started = time.time()
-    for layer in range(args.fit_layers):
-        xs, residuals = [], []
-        for mid in args.train_ids:
-            w, truth, seed = rows[mid]
-            pred, captures, _ = run(module, w, seed, beta, stop_after=layer, capture=True)
-            hit = [entry for entry in captures if entry[0] == layer]
-            if len(hit) != 1:
-                raise RuntimeError(f"ID {mid}, layer {layer}: expected one feature row; got {len(hit)}")
-            _, x, raw_mu = hit[0]
-            xs.append(np.asarray(x).reshape(1, 1024, 13))
-            residuals.append((truth[layer] - np.asarray(raw_mu).reshape(1024))[None, :])
-        beta[layer] = fit_layer(xs, residuals, args.ridge)
-        layer_log.append({"layer": layer, "coefficient_norm": float(np.linalg.norm(beta[layer]))})
-        print(f"fit V29 layer={layer} · coefficient_norm={np.linalg.norm(beta[layer]):.4g}", flush=True)
+    if args.reuse_coefficients:
+        if not 0.0 <= args.scale <= 1.0:
+            raise SystemExit("trust-region scale must be in [0,1]")
+        prior = json.loads(args.reuse_coefficients.read_text())
+        beta = np.asarray(prior["coefficients"], dtype=np.float64)
+        if beta.shape != (16, 13):
+            raise SystemExit(f"expected coefficient shape (16,13), got {beta.shape}")
+        beta *= args.scale
+        layer_log = prior.get("layer_log", [])
+    else:
+        for layer in range(args.fit_layers):
+            xs, residuals = [], []
+            for mid in args.train_ids:
+                w, truth, seed = rows[mid]
+                pred, captures, _ = run(module, w, seed, beta, stop_after=layer, capture=True)
+                hit = [entry for entry in captures if entry[0] == layer]
+                if len(hit) != 1:
+                    raise RuntimeError(f"ID {mid}, layer {layer}: expected one feature row; got {len(hit)}")
+                _, x, raw_mu = hit[0]
+                xs.append(np.asarray(x).reshape(1, 1024, 13))
+                residuals.append((truth[layer] - np.asarray(raw_mu).reshape(1024))[None, :])
+            beta[layer] = fit_layer(xs, residuals, args.ridge)
+            layer_log.append({"layer": layer, "coefficient_norm": float(np.linalg.norm(beta[layer]))})
+            print(f"fit V29 layer={layer} · coefficient_norm={np.linalg.norm(beta[layer]):.4g}", flush=True)
 
     results = []
-    for split, ids in (("train", args.train_ids), ("validation", args.validation_ids)):
+    evaluation_splits = (("validation", args.validation_ids),) if args.validation_only else (
+        ("train", args.train_ids), ("validation", args.validation_ids))
+    for split, ids in evaluation_splits:
         for mid in ids:
             w, truth, seed = rows[mid]
             base, _, base_flops = run(pristine, w, seed, np.zeros((16, 13)))
@@ -196,10 +216,12 @@ def main():
               "data_sha256": {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in data_paths},
               "train_ids": args.train_ids, "validation_ids": args.validation_ids,
               "fit_layers": args.fit_layers, "ridge": args.ridge,
+              "coefficient_scale": args.scale if args.reuse_coefficients else 1.0,
+              "reused_from": str(args.reuse_coefficients) if args.reuse_coefficients else None,
               "layer_log": layer_log, "per_mlp": results,
               "validation_mean_ratio": float(np.mean([r["ratio"] for r in val])),
               "coefficients": beta.tolist(), "elapsed_sec": time.time() - started}
-    out = ROOT / ".sota/tmp/whest_v29_sequential_dagger.json"
+    out = args.output or ROOT / ".sota/tmp/whest_v29_sequential_dagger.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2), flush=True)
