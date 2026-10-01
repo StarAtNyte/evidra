@@ -136,6 +136,8 @@ def main():
     ap.add_argument("--train-ids", type=int, nargs="+", default=[84, 85, 86, 87])
     ap.add_argument("--validation-ids", type=int, nargs="+", default=[96, 97, 98, 99])
     ap.add_argument("--fit-layers", type=int, default=4)
+    ap.add_argument("--fit-only-layer", type=int,
+                    help="fit one layer on the uncorrected V29 trajectory (e.g. layer 15 for terminal residual regression)")
     ap.add_argument("--ridge", type=float, default=1e-2)
     ap.add_argument("--reuse-coefficients", type=Path,
                     help="load frozen coefficients from a prior JSON run manifest instead of fitting")
@@ -169,6 +171,8 @@ def main():
 
     if not 1 <= args.fit_layers <= 16:
         raise SystemExit("fit-layers must be in [1,16]")
+    if args.fit_only_layer is not None and not 0 <= args.fit_only_layer < 16:
+        raise SystemExit("fit-only-layer must be in [0,15]")
     beta = np.zeros((16, 13), dtype=np.float64)
     layer_log = []
     started = time.time()
@@ -182,7 +186,8 @@ def main():
         beta *= args.scale
         layer_log = prior.get("layer_log", [])
     else:
-        for layer in range(args.fit_layers):
+        fit_layers = [args.fit_only_layer] if args.fit_only_layer is not None else range(args.fit_layers)
+        for layer in fit_layers:
             xs, residuals = [], []
             for mid in args.train_ids:
                 w, truth, seed = rows[mid]
@@ -211,11 +216,14 @@ def main():
             results.append(entry)
             print(json.dumps(entry), flush=True)
     val = [r for r in results if r["split"] == "validation"]
-    report = {"method": "sequential fit on exact V29 rolled prefixes; correction features captured in-memory",
+    report = {"method": ("terminal residual ridge on exact V29 baseline features" if args.fit_only_layer == 15 else
+                          "single-layer baseline-trajectory correction" if args.fit_only_layer is not None else
+                          "sequential fit on exact V29 rolled prefixes; correction features captured in-memory"),
               "source_sha256": hashlib.sha256(V29_PATH.read_bytes()).hexdigest(),
               "data_sha256": {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in data_paths},
               "train_ids": args.train_ids, "validation_ids": args.validation_ids,
               "fit_layers": args.fit_layers, "ridge": args.ridge,
+              "fit_only_layer": args.fit_only_layer,
               "coefficient_scale": args.scale if args.reuse_coefficients else 1.0,
               "reused_from": str(args.reuse_coefficients) if args.reuse_coefficients else None,
               "layer_log": layer_log, "per_mlp": results,

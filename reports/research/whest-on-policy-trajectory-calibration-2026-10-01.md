@@ -181,3 +181,12 @@ row still regressed 4.1%, but much less than the undamped 13.8%. Cost remained t
 coefficients and applying a trust-region scale. A separate run is evaluating the frozen
 0.5-scaled coefficients on IDs 76–79; do not submit unless that independent block and a full
 official mini evaluation also support the gain.
+
+### Frozen damping check on a second block (completed; negative)
+
+Without refitting or retuning, the 0.5-scaled coefficients were evaluated on IDs 76–79.
+All four regressed: ratios `1.06789`, `1.03388`, `1.01013`, and `1.00247`; mean ratio
+`1.02859` and pooled MSE ratio `1.03053` (3.05% worse). This rejects the damping variant as
+non-generalizing. Do not submit it. The contrast with IDs 88–91 confirms that selecting the
+scale on a four-row block can create a misleading tiny positive; the next hypothesis instead
+targets the terminal objective directly and avoids compounding 16 local corrections.
