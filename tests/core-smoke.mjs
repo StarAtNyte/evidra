@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import test from "node:test";
 import Database from "better-sqlite3";
 import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../dist/core/statistics.js";
+import { failedAutonomousExperimentPayload } from "../dist/core/experiment-finalization.js";
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
 import { ResearchStore, queueEffectivePriority } from "../dist/core/store.js";
 import { approvalInbox } from "../dist/core/approvals.js";
@@ -97,6 +98,23 @@ import { evaluateGpuBudget, observedGpuHours } from "../dist/core/compute-budget
 import { collaborationUtility } from "../dist/core/adaptive-harness.js";
 import { assessCodeHealth, assessCodeHealthTrend, snapshotCodeHealth } from "../dist/core/code-health.js";
 import { selectRatchetReference } from "../dist/core/ratchet.js";
+test("failed autonomous screening persists a retryable failed experiment instead of stranding it running", () => {
+  const failed = failedAutonomousExperimentPayload({ id: "exp-1", status: "running", manifest: { immutable: true } }, {
+    exitCode: 1,
+    stderr: "Insufficient space to stage experiment data",
+  }, "2026-10-01T04:00:00.000Z");
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.manifest.immutable, true);
+  assert.deepEqual(failed.failure, {
+    exitCode: 1,
+    stdout: "",
+    stderr: "Insufficient space to stage experiment data",
+    recordedAt: "2026-10-01T04:00:00.000Z",
+    retryable: true,
+  });
+  assert.equal(failedAutonomousExperimentPayload({ id: "exp-2", status: "completed" }, { exitCode: 1 }), undefined);
+  assert.equal(failedAutonomousExperimentPayload({ id: "exp-3", status: "running" }, { exitCode: 0 }), undefined);
+});
 
 test("search policies receive independent matched scorecards and comparisons", () => {
   const trial = (policy, task, candidateMetric) => ({ harness: `evidra-${policy}`, policy, task, arm: "default", seed: 1, model: "model", budgetMinutes: 1, direction: "maximize", baselineMetric: 0.5, candidateMetric, validRun: true, durationSeconds: 10, recovered: false, reproducible: true });

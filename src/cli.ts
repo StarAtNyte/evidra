@@ -56,6 +56,7 @@ import { applyCriticGate, latestOpenCriticConstraint } from "./core/critic-gate.
 import { recordBaselineEvidence } from "./core/baseline.js";
 import { redactSecrets, redactStructured } from "./core/redaction.js";
 import { observedGpuHours } from "./core/compute-budget.js";
+import { failedAutonomousExperimentPayload } from "./core/experiment-finalization.js";
 import { enforceClaimTermination, enforceGoalTermination } from "./core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds, type ClaimAuditReport } from "./core/claim-audit.js";
 import { analyzePredictionRows, comparePredictionRows, parsePredictionRows } from "./core/error-analysis.js";
@@ -5749,6 +5750,10 @@ research
         const comparisonEvent = completionStore.eventsByType("experiment.comparison.completed").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === experimentId);
         const comparison = comparisonEvent?.payload as { comparison?: { direction?: string; candidate?: number } } | undefined;
         const parent = completionStore.experiments().find((entry) => entry.id === experimentId);
+        if (parent && run.exitCode !== 0 && parent.payload && typeof parent.payload === "object" && !Array.isArray(parent.payload)) {
+          const failedPayload = failedAutonomousExperimentPayload(parent.payload as Record<string, unknown>, run);
+          if (failedPayload) completionStore.saveExperiment({ id: experimentId, payload: failedPayload });
+        }
         const parentManifest = parent ? ExperimentManifestSchema.safeParse(parent.payload) : undefined;
         let ablationEvidence = { complete: true, missing: [] as string[], failed: [] as string[] };
         if (run.exitCode === 0 && comparison?.comparison?.direction === "improved" && parentManifest?.success && parentManifest.data.acceptance.requireReplication) {
