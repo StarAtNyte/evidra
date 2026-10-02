@@ -11281,7 +11281,7 @@ test("dashboard read model is bounded and secret-redacted", () => {
     const workbench = workbenchHtml("0123456789abcdef");
     assert.match(workbench, /Research/);
     assert.match(workbench, /Challenge/);
-    assert.match(workbench, /Build \/ Engineering/);
+    assert.match(workbench, /Painting/);
     assert.match(workbench, /data-theme="light"/);
     assert.match(workbench, /DARK MODE/);
     assert.ok(workbench.includes("/api/workbench/action"));
