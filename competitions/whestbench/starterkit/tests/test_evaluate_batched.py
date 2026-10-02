@@ -121,14 +121,14 @@ def test_main_invokes_one_persistent_official_runner_for_limited_prefix(tmp_path
         {"mlp_index": index, "adjusted_final_layer_score": 0.01, "final_layer_mse": 0.1, "flops_used": 100}
         for index in range(2)
     ]
-    report = {"run_config": {"flop_budget": 1000}, "results": {"per_mlp": rows}}
+    report = {"run_config": {"flop_budget": 1000, "residual_wall_time_limit_s": 1.0}, "results": {"per_mlp": rows}}
     calls = []
 
     def fake_run(command, **_kwargs):
         calls.append(command)
         return subprocess.CompletedProcess(command, 0, json.dumps(report), "")
 
-    monkeypatch.setattr(sys, "argv", ["evaluate_batched.py", "--dataset", str(dataset), "--estimator", str(estimator), "--limit", "2", "--max-threads", "1", "--output-json", str(output_json)])
+    monkeypatch.setattr(sys, "argv", ["evaluate_batched.py", "--dataset", str(dataset), "--estimator", str(estimator), "--limit", "2", "--max-threads", "1", "--residual-wall-time-limit", "1", "--output-json", str(output_json)])
     monkeypatch.setattr(evaluate_batched, "run_streaming", fake_run)
 
     assert evaluate_batched.main() == 0
@@ -136,12 +136,15 @@ def test_main_invokes_one_persistent_official_runner_for_limited_prefix(tmp_path
     assert calls[0][calls[0].index("--runner") + 1] == "subprocess"
     assert calls[0][calls[0].index("--max-threads") + 1] == "1"
     assert calls[0][calls[0].index("--n-mlps") + 1] == "2"
+    assert calls[0][calls[0].index("--residual-wall-time-limit") + 1] == "1.0"
     printed = json.loads(capsys.readouterr().out)
     persisted = json.loads(output_json.read_text(encoding="utf-8"))
     assert printed["n_mlps"] == 2
     assert persisted == printed
     assert persisted["provenance"]["estimator_sha256"] == hashlib.sha256(estimator.read_bytes()).hexdigest()
     assert persisted["provenance"]["command"][persisted["provenance"]["command"].index("--runner") + 1] == "subprocess"
+    assert persisted["provenance"]["evaluation_scope"] == "diagnostic_non_scoring_limits"
+    assert persisted["provenance"]["residual_wall_time_limit_s"] == 1
 
 
 def test_main_persists_partial_result_but_returns_failure(tmp_path, monkeypatch, capsys) -> None:
@@ -178,6 +181,13 @@ def test_main_persists_partial_result_but_returns_failure(tmp_path, monkeypatch,
 
 def test_main_rejects_nonpositive_thread_cap_before_running_whest(monkeypatch) -> None:
     monkeypatch.setattr(sys, "argv", ["evaluate_batched.py", "--max-threads", "0"])
+    with pytest.raises(SystemExit) as error:
+        evaluate_batched.main()
+    assert error.value.code == 2
+
+
+def test_main_rejects_nonpositive_residual_limit_before_running_whest(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["evaluate_batched.py", "--residual-wall-time-limit", "0"])
     with pytest.raises(SystemExit) as error:
         evaluate_batched.main()
     assert error.value.code == 2

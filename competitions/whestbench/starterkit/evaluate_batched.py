@@ -205,13 +205,13 @@ def summarize_report(report: dict, expected_rows: int | None = None) -> dict:
         "n_mlps": len(rows),
         "n_failed_mlps": sum(row["failed"] for row in normalized_rows),
         "per_mlp": normalized_rows,
-    "whest_local_reference": {
-        "whestbench_version": report.get("whestbench_version"),
-        "runner": "subprocess",
-        "instance_scope": "one persistent estimator worker for this local split",
-        "platform_worker_assignment": "not reproduced; AIcrowd grade is the external outcome",
-        "run_config": config,
-        "run_meta": report.get("run_meta"),
+        "whest_local_reference": {
+            "whestbench_version": report.get("whestbench_version"),
+            "runner": "subprocess",
+            "instance_scope": "one persistent estimator worker for this local split",
+            "platform_worker_assignment": "not reproduced; AIcrowd grade is the external outcome",
+            "run_config": config,
+            "run_meta": report.get("run_meta"),
         },
     }
 
@@ -242,12 +242,15 @@ def main() -> int:
     parser.add_argument("--split", default="mini")
     parser.add_argument("--limit", type=int, help="evaluate a prefix in one persistent official runner")
     parser.add_argument("--max-threads", type=int, default=2, help="cap Whest BLAS threads (default: 2; lower this to reduce memory pressure)")
+    parser.add_argument("--residual-wall-time-limit", type=float, default=0.4, help="per-MLP residual-time cap in seconds (0.4 is the Phase 2 scoring limit; other values are diagnostic only)")
     parser.add_argument("--timeout-seconds", type=float, default=4 * 60 * 60, help="hard wall-clock limit for the complete persistent evaluation (default: 4 hours)")
     parser.add_argument("--output-json", type=Path, help="atomically persist the complete verified per-MLP report at this path")
     args = parser.parse_args()
 
     if args.max_threads < 1:
         parser.error("--max-threads must be a positive integer")
+    if not math.isfinite(args.residual_wall_time_limit) or args.residual_wall_time_limit <= 0:
+        parser.error("--residual-wall-time-limit must be a positive finite number")
 
     dataset = Path(args.dataset).resolve()
     metadata_path = dataset / "metadata.json"
@@ -272,6 +275,7 @@ def main() -> int:
         "--split", args.split,
         "--runner", "subprocess",
         "--max-threads", str(args.max_threads),
+        "--residual-wall-time-limit", str(args.residual_wall_time_limit),
         "--n-mlps", str(expected),
         "--format", "json",
         "--detail", "full",
@@ -309,6 +313,8 @@ def main() -> int:
         "estimator_path": str(estimator_path),
         "estimator_sha256": estimator_sha256,
         "command": command,
+        "evaluation_scope": "phase2_scoring_limits" if math.isclose(args.residual_wall_time_limit, 0.4) else "diagnostic_non_scoring_limits",
+        "residual_wall_time_limit_s": args.residual_wall_time_limit,
         "environment": reproducibility_environment,
         "exit_code": result.returncode,
     }
