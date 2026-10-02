@@ -2,7 +2,7 @@ import { cpSync, mkdtempSync, rmSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { basename, join, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { Codex } from "@openai/codex-sdk";
+import { Codex, type Input } from "@openai/codex-sdk";
 import type { AgentResult, AgentTask } from "../core/types.js";
 import type { ProcessControl } from "../core/process.js";
 import { redactSecrets } from "../core/redaction.js";
@@ -88,9 +88,8 @@ export interface ExecAgentOptions {
   threadId?: string;
   reasoningEffort?: string;
   sandbox?: CodexSandboxMode;
-  /** The painting runner uses a newly created, per-job studio and must expose
-   * simulator output to its frame watcher. Callers must opt in explicitly. */
-  allowUnisolatedDangerSandbox?: boolean;
+  /** Local reference images attached to the first Codex turn. */
+  images?: string[];
   /** Enable Codex-native web retrieval only for explicitly research routes. */
   networkAccessEnabled?: boolean;
   webSearchMode?: CodexWebSearchMode;
@@ -114,8 +113,8 @@ export interface CodexExecDependencies {
   /** Test or embedding hook; production defaults to the installed SDK. */
   isLoggedIn?: () => Promise<boolean>;
   createClient?: (options: Record<string, unknown>) => {
-    startThread: (options: Record<string, unknown>) => { runStreamed: (input: string, options?: Record<string, unknown>) => Promise<{ events: AsyncIterable<unknown> }> };
-    resumeThread: (threadId: string, options: Record<string, unknown>) => { runStreamed: (input: string, options?: Record<string, unknown>) => Promise<{ events: AsyncIterable<unknown> }> };
+    startThread: (options: Record<string, unknown>) => { runStreamed: (input: Input, options?: Record<string, unknown>) => Promise<{ events: AsyncIterable<unknown> }> };
+    resumeThread: (threadId: string, options: Record<string, unknown>) => { runStreamed: (input: Input, options?: Record<string, unknown>) => Promise<{ events: AsyncIterable<unknown> }> };
   };
 }
 
@@ -535,7 +534,7 @@ export class CodexExecAgent {
     const submissionBoundary = task.role === "experiment engineer"
       ? "You may create and validate local experiment outputs and evaluator artifacts required by the task, but never submit externally or expose credentials."
       : "Do not submit anything or expose credentials.";
-    const responseInstruction = task.role === "experiment engineer" || task.role === "painting artist"
+    const responseInstruction = task.role === "experiment engineer"
       ? "Execute the task through to its required local artifact; only summarize after the artifact and verification are complete."
       : "Return a concise, evidence-oriented answer.";
     const prompt = `${task.objective}\n\nResearch context:\n${JSON.stringify(task.context, null, 2)}\n\n` +
@@ -585,9 +584,7 @@ export class CodexExecAgent {
     };
     onProcess?.(control);
     const sandboxMode = sandboxOverride ?? effectiveCodexSandbox(this.options.sandbox);
-    const isolatedWorkspace = sandboxMode === "danger-full-access"
-      && this.options.sandbox !== "workspace-write"
-      && !this.options.allowUnisolatedDangerSandbox;
+    const isolatedWorkspace = sandboxMode === "danger-full-access" && this.options.sandbox !== "workspace-write";
     const isolated = isolatedWorkspace ? createIsolatedCodexWorkspace(this.options.cwd) : undefined;
     const model = effectiveCodexModel(this.options.model);
 
@@ -632,7 +629,10 @@ export class CodexExecAgent {
         try { outputSchema = JSON.parse(outputSchemaText); }
         catch { throw new Error("The configured Codex output schema is invalid JSON."); }
       }
-      const stream = await thread.runStreamed(prompt, { signal: abort.signal, ...(outputSchema ? { outputSchema } : {}) });
+      const input: Input = this.options.images?.length
+        ? [{ type: "text", text: prompt }, ...this.options.images.map((path) => ({ type: "local_image" as const, path }))]
+        : prompt;
+      const stream = await thread.runStreamed(input, { signal: abort.signal, ...(outputSchema ? { outputSchema } : {}) });
       let finalText = "";
       let usage: AgentResult["usage"];
       let threadId: string | undefined;

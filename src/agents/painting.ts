@@ -197,13 +197,10 @@ export async function runPaintingJob(manifestPath: string, statePath: string, on
     const task: AgentTask = {
       role: "painting artist",
       objective: [
-        "This is an execution task. Use the shell tools to create the painting artifacts; do not return only a plan or claim success without producing them.",
-        "Read BRIEF.md and notes/easel_guide.md, and run `./bin/easel tubes --markdown` to inspect the available pigments. Paint an original finished work with the physical simulator bundled at ./bin/easel.",
-        "If a reference image is listed, inspect it before painting and use its composition, palette and mood as guidance. Create an original painting rather than tracing or copying it.",
-        "Run `./bin/easel open painting`, then paint in purposeful Lua chunks with `./bin/easel do`. Inspect the live canvas with `./bin/easel look` and revise it based on what you see. Use the physical brushes, pigment tubes, and wet paint; do not draw a flat vector or substitute another renderer.",
-        "Write the complete, replayable log to paintings/lua/painting.lua. It must start with a valid `canvas{...}` chunk and include all later marks. Finish by running `./bin/easel run paintings/lua/painting.lua --out out/painting.png`, then verify both files exist and the PNG opens as an image.",
-        "Keep all changes inside this painting studio. Do not use network access, install packages, submit anything, or modify files outside this folder. Do not claim the work is complete unless the simulator wrote both the PNG and painting log.",
-        "When done, reply with the painting's title, a short description, and the relative paths of the PNG and replayable log.",
+        "Design an original oil painting for the subject and style in the brief. Use the attached reference image, if any, for composition, palette, light, and mood without tracing it.",
+        "Return JSON matching the schema: title, a concise summary, and 5 to 20 Lua chunks. The first chunk must start with canvas{...}. Each later chunk is executed in the same persistent easel session, so globals defined in earlier chunks remain available.",
+        "Use only the painting simulator's Lua DSL described in the guide. Use physical pigment piles, brushes, shapes, work(), and blending. Plan a complete scene with foreground, middle distance, and background where appropriate. Make marks large enough for the 2400px replay, and keep each chunk purposeful and bounded.",
+        "Return Lua only inside the JSON strings. Do not include shell commands, Markdown fences, explanations, or code that accesses files, processes, networking, or operating-system APIs.",
       ].join("\n\n"),
       context: {
         briefPath: "BRIEF.md",
@@ -214,26 +211,96 @@ export async function runPaintingJob(manifestPath: string, statePath: string, on
         easelGuide: readFileSync(easelGuide, "utf8"),
         simulator: "claude-paint Rust easel; physical oil paint; isolated per-painting studio",
       },
+      outputSchema: JSON.stringify({
+        type: "object", additionalProperties: false, required: ["title", "summary", "chunks"],
+        properties: {
+          title: { type: "string", minLength: 3, maxLength: 120 },
+          summary: { type: "string", minLength: 10, maxLength: 800 },
+          chunks: { type: "array", minItems: 5, maxItems: 20, items: { type: "string", minLength: 8, maxLength: 64000 } },
+        },
+      }),
     };
     const result = await new CodexExecAgent({
       provider: job.provider,
       model: job.model,
       cwd: studio,
-      // The host cannot create Codex's workspace-write bwrap namespace. Each
-      // painting already runs in a fresh, dedicated studio under .sota; use
-      // full access there so the simulator can run, while keeping all output
-      // visible to the live frame watcher.
-      sandbox: "danger-full-access",
-      allowUnisolatedDangerSandbox: true,
+      sandbox: "read-only",
+      images: job.referencePath ? [job.referencePath] : undefined,
       networkAccessEnabled: false,
       webSearchMode: "disabled",
       reasoningEffort: "high",
       limitPolicy: "stop",
       timeoutMs: PAINTING_TIMEOUT_MS,
-      maxRepeatedCommands: 5,
-      maxFailedCommands: 5,
       onActivity: (_source, activity) => progress(activity),
     }).run(task, progress);
+    let plan: { title?: unknown; summary?: unknown; chunks?: unknown };
+    try { plan = JSON.parse(typeof result.output === "string" ? result.output : JSON.stringify(result.output)) as typeof plan; }
+    catch { throw new Error("The painting model did not return valid structured Lua instructions."); }
+    if (typeof plan.title !== "string" || typeof plan.summary !== "string" || !Array.isArray(plan.chunks) || plan.chunks.length < 5 || plan.chunks.length > 20 || plan.chunks.some((chunk) => typeof chunk !== "string")) {
+      throw new Error("The painting model returned an incomplete canvas plan.");
+    }
+    const chunks = plan.chunks as string[];
+    if (!/^\s*canvas\s*\{/i.test(chunks[0])) throw new Error("The first painting chunk must start with canvas{...}.");
+    if (chunks.some((chunk) => chunk.length > 64_000) || chunks.reduce((total, chunk) => total + Buffer.byteLength(chunk), 0) > 512_000) throw new Error("The painting plan is larger than the studio's Lua limit.");
+    for (const [index, initialChunk] of chunks.entries()) {
+      let chunk = initialChunk;
+      let applied = { exitCode: 1, stderr: "The chunk was not executed.", stdout: "" };
+      let repairs = 0;
+      while (true) {
+        if (/\b(?:os|io|package|debug)\s*[.:]/.test(chunk)) throw new Error(`Painting chunk ${index + 1} uses a forbidden Lua library.`);
+        const chunkPath = join(studio, `.chunk-${String(index + 1).padStart(2, "0")}.lua`);
+        writeFileSync(chunkPath, chunk, { mode: 0o600 });
+        progress(`Painting canvas · ${index + 1} of ${chunks.length}${repairs > 0 ? ` · repair ${repairs}` : ""}`);
+        applied = await runProcess(["./bin/easel", "do", "-f", relative(studio, chunkPath)], studio, 10 * 60_000);
+        if (applied.exitCode === 0) break;
+        const errorText = applied.stderr || applied.stdout;
+        if (/rebuilding from the log|retry after it finishes/i.test(errorText)) {
+          progress(`The easel is rebuilding its canvas · waiting before layer ${index + 1}…`);
+          const deadline = Date.now() + 5 * 60_000;
+          let ready = false;
+          while (Date.now() < deadline) {
+            const status = await runProcess(["./bin/easel", "status"], studio, 30_000);
+            if (status.exitCode === 0 && !/rebuilding/i.test(status.stdout)) { ready = true; break; }
+            await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
+          }
+          if (!ready) throw new Error(`The easel did not finish rebuilding before layer ${index + 1}.`);
+          continue;
+        }
+        if (repairs >= 2) break;
+        repairs += 1;
+        progress(`Repairing paint layer ${index + 1}…`);
+        const repair = await new CodexExecAgent({
+          provider: job.provider, model: job.model, cwd: studio, threadId: result.threadId,
+          sandbox: "read-only", networkAccessEnabled: false, webSearchMode: "disabled",
+          reasoningEffort: "high", limitPolicy: "stop", timeoutMs: 5 * 60_000,
+        }).run({
+          role: "painting artist",
+          objective: "Replace the failed Lua chunk with a valid chunk for the same painting. The easel error is authoritative. Preserve the visual intent and use only operations, shapes, pigments, and edge values documented in the easel guide. Return only a JSON object with one string field named chunk. Do not use Markdown or shell commands.",
+          context: {
+            chunkNumber: index + 1, subject: job.subject, style: job.style,
+            failedChunk: chunk, easelError: progressLine(applied.stderr || applied.stdout, 1_500),
+            canvasState: "The failed chunk changed nothing; prior chunks remain committed in this same live easel session.",
+            easelGuide: readFileSync(easelGuide, "utf8"),
+          },
+          outputSchema: JSON.stringify({ type: "object", additionalProperties: false, required: ["chunk"], properties: { chunk: { type: "string", minLength: 8, maxLength: 64000 } } }),
+        }, progress);
+        try {
+          const corrected = JSON.parse(typeof repair.output === "string" ? repair.output : JSON.stringify(repair.output)) as { chunk?: unknown };
+          if (typeof corrected.chunk !== "string" || corrected.chunk.length > 64_000) throw new Error("Replacement Lua is missing or too long.");
+          chunk = corrected.chunk;
+        } catch (error) {
+          throw new Error(`The painting model could not repair chunk ${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      if (applied.exitCode !== 0) throw new Error(`Painting chunk ${index + 1} failed after repair: ${progressLine(applied.stderr || applied.stdout, 600)}`);
+      chunks[index] = chunk;
+    }
+    progress(`Replaying ${chunks.length} paint layers at final resolution…`);
+    const replay = await runProcess(["./bin/easel", "run", "paintings/lua/painting.lua", "--out", "out/painting.png"], studio, 30 * 60_000, (_stream, chunk) => {
+      const compact = progressLine(chunk, 180);
+      if (/chunk|wrote/i.test(compact)) progress(compact);
+    });
+    if (replay.exitCode !== 0) throw new Error(`The final painting replay failed: ${progressLine(replay.stderr || replay.stdout, 700)}`);
     clearInterval(previewTimer);
     syncPreview();
     const outputPath = join(studio, "out", "painting.png");
