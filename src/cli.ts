@@ -1249,7 +1249,7 @@ program.command("dashboard").alias("web")
         return;
       }
       if (request.method !== "GET") { response.writeHead(405, { ...baseHeaders, allow: "GET, POST" }); response.end("Method Not Allowed"); return; }
-      if (request.url === "/workbench") {
+      if (request.url === "/" || request.url === "/index.html" || request.url === "/workbench") {
         response.writeHead(200, {
           ...baseHeaders,
           "content-type": "text/html; charset=utf-8",
@@ -1258,7 +1258,7 @@ program.command("dashboard").alias("web")
         response.end(workbenchHtml(workbenchToken));
         return;
       }
-      if (request.url === "/" || request.url === "/index.html") {
+      if (request.url === "/dashboard") {
         response.writeHead(200, {
           ...baseHeaders,
           "content-type": "text/html; charset=utf-8",
