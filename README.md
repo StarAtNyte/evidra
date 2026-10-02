@@ -53,7 +53,7 @@ The model proposes. Evidra measures, records, verifies, and decides whether the 
 
 ### Install globally
 
-Requires Node.js 22 or newer:
+Requires Node.js 22.19.0 or newer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/StarAtNyte/evidra/master/install.sh | sh
@@ -201,7 +201,7 @@ Provider-route claims can also require task-disjoint transfer: the same comparis
 
 Provider exhaustion is autonomous by default. The `auto` policy first selects an installed local Qwen/Ollama model, then waits durably for the Codex entitlement reset if no local model is available. Use `/limits auto`, `/limits fallback`, `/limits wait`, or `/limits stop` in the TUI to choose explicitly. The fallback model can be pinned with `EVIDRA_FALLBACK_MODEL`, or per campaign with `--fallback-model qwen3.6:27b`; that choice is stored in the campaign runtime and restored on resume.
 
-The cost-conscious Codex defaults are `gpt-5.6-luna` and medium thinking effort across the CLI, TUI, autonomous research, challenge campaigns, and harness benchmarks. Evidra does not select Astra automatically. An explicitly selected Astra route is preserved in the campaign runtime and remains visible in provenance; users can choose models explicitly with `/model`.
+The default Codex model is `gpt-6-luna` with medium thinking effort across the CLI, TUI, autonomous research, challenge campaigns, and harness benchmarks. Evidra does not select Astra automatically. An explicitly selected Astra route is preserved in the campaign runtime and remains visible in provenance; users can choose models explicitly with `/model`.
 
 Lane concurrency is adaptive: `safe` runs one independent lane, while `fast` and `yolo` use a bounded asynchronous completion-driven scheduler. Capacity is refilled as specialists finish, and each later lane receives a compact cross-pollination board from completed peers; no mutable workspace or live transcript is shared between lanes. Local Ollama concurrency also respects `OLLAMA_NUM_PARALLEL`; the TUI never interprets YOLO as permission to exhaust a laptop, subscription, or external service.
 
@@ -839,6 +839,13 @@ The controller may use more detailed internal phase goals underneath those three
 | `/report` | Generate a portable research or challenge report |
 | `!ls -la` | Run an explicit, guarded shell command |
 
+Resume preserves the saved campaign route by default. To explicitly change only
+its autonomy policy while resuming, use `evidra challenge resume --autonomy fast`
+(`safe`, `fast`, or `yolo`). Evidra verifies that provider, model, effort,
+budgets, lanes, and executor are unchanged, records the override in durable
+state, and keeps external submissions behind their separate approval/evidence
+gates.
+
 <details>
 <summary><strong>Complete interactive command reference</strong></summary>
 
@@ -1035,6 +1042,8 @@ validation + replication → approved submission → measured score
 
 External submission is always explicit and approval-gated. A public score can guide the next experiment, but it cannot replace local reproducibility, leakage checks, replication, or evaluator-integrity gates. The included [WhestBench trial workspace](competitions/whestbench/starterkit/README.md) demonstrates this workflow; the harness remains domain-neutral.
 
+External feedback is not tied to a particular platform or metric. If a score is returned outside an Evidra adapter, record it with `/submission observe <evaluation-id> --score <number> --platform <name> --experiment <id> --validation '{"split-a":0.71,"split-b":0.68}'`. Evidra pairs those local validation scores with the external result, deduplicates feedback already attached to a submission, and uses accumulated evidence to assess which validation split best tracks external performance. This is advisory calibration for any numeric objective—not a replacement for the evaluator, replication, or metric-specific acceptance criteria.
+
 ## General workspace manifests
 
 Evidra does not require a fixed competition name. A project can provide competition.json at its root or under competitions/<id>/competition.json:
@@ -1053,6 +1062,11 @@ Evidra does not require a fixed competition name. A project can provide competit
       "baselineCommand": ["python", "baseline.py"],
       "experimentCommand": ["python", "run_experiment.py"],
       "execution": {
+        "environment": {
+          "OMP_NUM_THREADS": "2",
+          "OPENBLAS_NUM_THREADS": "2"
+        },
+        "supportFiles": ["evaluate_helpers/score.py"],
         "smokeCommand": ["python", "run_experiment.py", "--smoke"],
         "reducedValidationCommand": ["python", "run_experiment.py", "--folds", "1", "--epochs", "1"],
         "reducedPromotion": {
@@ -1073,6 +1087,8 @@ Evidra does not require a fixed competition name. A project can provide competit
     }
 
 The manifest is intentionally small. Dataset manifests, split registries, metrics, worker protocols, and platform adapters belong in the workspace instead of being hardcoded into Evidra. Paths are checked to remain inside the project root.
+
+`execution.environment` provides reproducible, secret-free variables to isolated experiment workers across supported execution backends. `execution.supportFiles` explicitly declares immutable workspace-local evaluator helpers that Git worktrees would otherwise omit; Evidra copies these into the experiment worktree and verifies them against the source before evaluation. Credential-like environment names and protected process variables are rejected; use Evidra's designated secret mechanisms for credentials. Per-run time budgets are configurable with `evidra experiment propose --timeout-minutes <minutes>` rather than a fixed short global limit.
 
 When `reducedPromotion.enabled` is true, the reduced run becomes an early compute gate. Evidra
 compares its declared metric against the latest durable baseline, correctly handling maximize and
@@ -1183,11 +1199,12 @@ without giving credentials to agents. Score polling defaults to Kaggle's
 `competitions submissions --csv` output, including its public-score column, so
 no custom polling command is required.
 
-Other platforms can use an argv-based command adapter. Supported placeholders are `{bundle}`, `{file}`, `{competition}`, and `{message}`; Evidra does not invoke a shell for adapter arguments:
+Other platforms can use an argv-based command adapter. Supported placeholders are `{bundle}`, `{file}`, `{competition}`, and `{message}`; Evidra does not invoke a shell for adapter arguments. For workspace-based solutions, declare immutable `artifactPaths` relative to the configured submission working directory and reference them as `{artifact:<path>}`. Evidra snapshots those files into the prepared bundle, verifies their checksums, submits from that immutable copy, and records each submitted file's SHA-256 and size alongside the provider submission ID. A submission command that alters a snapshotted artifact is treated as an ambiguous external outcome and must be reconciled before retrying.
 
     "submission": {
       "platform": "command",
-      "submitCommand": ["./scripts/submit", "--file", "{file}", "--message", "{message}"],
+      "artifactPaths": ["submission.tar.gz"],
+      "submitCommand": ["./scripts/submit", "--file", "{artifact:submission.tar.gz}", "--message", "{message}"],
       "scoreCommand": ["./scripts/score", "--submission", "{submission}"]
     }
 

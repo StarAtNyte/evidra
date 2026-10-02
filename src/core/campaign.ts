@@ -36,6 +36,18 @@ export function nextCampaignCycle(checkpoint?: CampaignCheckpoint): number {
   return checkpoint.currentStep === "cycle-complete" ? checkpoint.currentCycle + 1 : checkpoint.currentCycle;
 }
 
+/** Return only queued/running tasks for campaign "active work" projections.
+ * Paused tasks remain resumable, but are not active and should not appear as
+ * live work in status or checkpoints.
+ */
+export function activeCampaignTaskIds(tasks: Array<{ id: string; status: string }>, limit = 64): string[] {
+  const cap = Number.isFinite(limit) ? Math.max(0, Math.min(256, Math.floor(limit))) : 64;
+  return [...new Set(tasks
+    .filter((task) => task.status === "queued" || task.status === "running")
+    .map((task) => task.id.trim().slice(0, 240))
+    .filter(Boolean))].slice(0, cap);
+}
+
 /** Attach a validated checkpoint to any campaign-shaped payload. */
 export function withCampaignCheckpoint<T extends object>(campaign: T, step: CampaignCheckpointStep, cycle: number, checkpointedAt = new Date().toISOString(), activeTaskIds?: string[]): T & CampaignCheckpoint {
   if (!Number.isInteger(cycle) || cycle < 0) throw new Error("Campaign checkpoint cycle must be a non-negative integer.");
@@ -120,6 +132,11 @@ export function campaignRuntimeFingerprint(runtime: CampaignRuntimeConfig): stri
   return createHash("sha256").update(canonical).digest("hex");
 }
 
+/** True only when every saved route/budget field matches and autonomy alone differs. */
+export function campaignRuntimeMatchesExceptAutonomy(saved: CampaignRuntimeConfig, requested: CampaignRuntimeConfig): boolean {
+  return campaignRuntimeFingerprint({ ...requested, autonomy: saved.autonomy }) === campaignRuntimeFingerprint(saved);
+}
+
 export function readCampaignRuntime(value: unknown): CampaignRuntimeConfig | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const runtime = (value as { runtime?: unknown }).runtime;
@@ -193,6 +210,37 @@ export function campaignElapsedMinutes(campaign: CampaignTimeState, now = Date.n
 export function campaignRemainingMs(campaign: CampaignTimeState & { budgetMinutes: number }, now = Date.now()): number {
   if (!Number.isFinite(campaign.budgetMinutes) || campaign.budgetMinutes < 0) return 0;
   return Math.max(0, (campaign.budgetMinutes - campaignElapsedMinutes(campaign, now)) * 60_000);
+}
+
+/** Mark a campaign budget boundary without claiming its research objective is complete. */
+export function pauseCampaignForBudget<T extends CampaignTimeState>(campaign: T, now = new Date().toISOString()): T & { budgetExhausted: true } {
+  return { ...pauseCampaign(campaign, now), budgetExhausted: true };
+}
+
+/** Clear a stale exhaustion marker when the durable campaign still has active time remaining. */
+export function recoverFalseBudgetExhaustion<T extends CampaignTimeState & { budgetMinutes: number; budgetExhausted?: boolean }>(campaign: T, now = Date.now()): (T & { budgetExhausted: false }) | undefined {
+  if (campaign.budgetExhausted !== true || campaignElapsedMinutes(campaign, now) >= campaign.budgetMinutes) return undefined;
+  return { ...campaign, budgetExhausted: false };
+}
+
+/** Recover legacy controllers that marked an unfinished, budget-expired run completed. */
+export function recoverCompletedBudgetPause<T extends CampaignTimeState & { budgetMinutes: number; status: "completed" | "paused" | "running"; budgetExhausted?: boolean }>(
+  campaign: T,
+  finalDecision: { decision?: string; goalStatus?: string } | undefined,
+  stopPolicyAction: string | undefined,
+  now = new Date().toISOString(),
+): (T & { status: "paused"; pausedAt: string; budgetExhausted: true }) | undefined {
+  if (campaign.status !== "completed" || campaign.budgetExhausted === true) return undefined;
+  if (campaignElapsedMinutes(campaign, Date.parse(now)) < campaign.budgetMinutes) return undefined;
+  if (!finalDecision || finalDecision.goalStatus !== "active" || finalDecision.decision === "stop" || stopPolicyAction !== "continue") return undefined;
+  return pauseCampaignForBudget(campaign, now) as T & { status: "paused"; pausedAt: string; budgetExhausted: true };
+}
+
+/** Extend an existing campaign's wall-clock allowance while preserving its pause/run state. */
+export function extendCampaignBudget<T extends CampaignTimeState & { budgetMinutes: number; budgetExhausted?: boolean }>(campaign: T, additionalMinutes: number): T & { budgetExhausted: false } {
+  if (!Number.isFinite(additionalMinutes) || additionalMinutes <= 0) throw new Error("Campaign budget extension must be a positive number of minutes.");
+  if (!Number.isFinite(campaign.budgetMinutes) || campaign.budgetMinutes < 0) throw new Error("Saved campaign budget is invalid and cannot be extended.");
+  return { ...campaign, budgetMinutes: campaign.budgetMinutes + additionalMinutes, budgetExhausted: false };
 }
 
 /**

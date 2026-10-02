@@ -1,9 +1,12 @@
 import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
-import { basename, isAbsolute, relative, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { statSync } from "node:fs";
+import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import { guardCommand } from "./permissions.js";
 import { runProcess, type ProcessControl } from "./process.js";
 import { safeBundlePath, validateSubmissionBundle, type SubmissionValidation } from "./submissions.js";
 import { redactCommand, redactSecrets } from "./redaction.js";
+import { worktreeBasePath } from "./worktree.js";
 import type { CompetitionConfig } from "./types.js";
 
 export interface SubmissionReceipt {
@@ -14,6 +17,7 @@ export interface SubmissionReceipt {
   stdout: string;
   stderr: string;
   submissionId?: string;
+  submittedArtifacts?: Array<{ path: string; sha256: string; sizeBytes: number }>;
 }
 
 export interface SubmissionAttempt {
@@ -30,14 +34,63 @@ export interface SubmissionScoreObservation {
   stderr: string;
 }
 
+/** Bind a workspace-based submit adapter to the exact worktree that produced the run. */
+export function submissionConfigForWorktree(
+  root: string,
+  worktreePath: string | undefined,
+  competition: CompetitionConfig,
+  configuredWorktreeBase = worktreeBasePath(root),
+): CompetitionConfig {
+  const config = competition.submission;
+  if (!worktreePath || config?.source !== "workspace" || !config.workingDirectory) return competition;
+  const projectRoot = realpathSync(resolve(root));
+  const isInside = (parent: string, candidate: string): boolean => {
+    const rel = relative(parent, candidate);
+    return !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
+  };
+  const experimentPath = resolve(worktreePath);
+  const unresolvedBase = resolve(configuredWorktreeBase);
+  const worktreeBase = existsSync(unresolvedBase) ? realpathSync(unresolvedBase) : unresolvedBase;
+  if (!isInside(projectRoot, experimentPath) && !isInside(worktreeBase, experimentPath)) {
+    throw new Error("Experiment worktree must be inside the Evidra project or its explicitly configured worktree root before a workspace submission can use it.");
+  }
+  const experimentRelativeToBase = relative(worktreeBase, experimentPath);
+  const worktreeId = experimentRelativeToBase && !isAbsolute(experimentRelativeToBase) && !experimentRelativeToBase.startsWith(`..${sep}`)
+    ? experimentRelativeToBase.split(sep)[0]
+    : undefined;
+  // Campaign records store the experiment working directory inside the Git
+  // worktree. Resolve it against the configured root instead of assuming that
+  // all worktrees live under <project>/.sota/worktrees.
+  const unresolvedWorktreeRoot = worktreeId ? resolve(worktreeBase, worktreeId) : experimentPath;
+  const worktreeRoot = existsSync(unresolvedWorktreeRoot) ? realpathSync(unresolvedWorktreeRoot) : unresolvedWorktreeRoot;
+  if (worktreeRoot === worktreeBase || !isInside(worktreeBase, worktreeRoot)) throw new Error("Experiment worktree escapes its configured worktree root.");
+  const configuredProjectDirectory = resolve(projectRoot, config.workingDirectory);
+  if (!isInside(projectRoot, configuredProjectDirectory)) throw new Error("Configured submission working directory escapes the project root.");
+  const checkedProjectDirectory = existsSync(configuredProjectDirectory) ? realpathSync(configuredProjectDirectory) : configuredProjectDirectory;
+  if (!isInside(projectRoot, checkedProjectDirectory)) throw new Error("Configured submission working directory escapes the project root.");
+  const worktreeDirectory = resolve(worktreeRoot, relative(projectRoot, configuredProjectDirectory));
+  const checkedWorktreeDirectory = existsSync(worktreeDirectory) ? realpathSync(worktreeDirectory) : worktreeDirectory;
+  if (!isInside(worktreeRoot, checkedWorktreeDirectory)) {
+    throw new Error("Configured submission working directory escapes the Evidra project.");
+  }
+  const directoryRelativeToProject = isInside(projectRoot, checkedWorktreeDirectory)
+    ? relative(projectRoot, checkedWorktreeDirectory)
+    : checkedWorktreeDirectory;
+  return {
+    ...competition,
+    submission: { ...config, workingDirectory: directoryRelativeToProject },
+  };
+}
+
 /** Resolve the provider's identifier from a persisted submission receipt. */
 export function externalSubmissionId(payload: unknown, fallback: string): string {
   if (!fallback.trim()) throw new Error("Submission bundle identifier must be non-empty.");
   if (!payload || typeof payload !== "object") return fallback;
   const receipt = (payload as { receipt?: unknown }).receipt;
   if (!receipt || typeof receipt !== "object") return fallback;
-  const value = (receipt as { submissionId?: unknown }).submissionId;
-  return typeof value === "string" && value.trim() ? value : fallback;
+  const record = receipt as { submissionId?: unknown; stdout?: unknown };
+  if (typeof record.submissionId === "string" && record.submissionId.trim()) return record.submissionId;
+  return typeof record.stdout === "string" ? responseSubmissionId(record.stdout) ?? fallback : fallback;
 }
 
 function validateHttpUrl(raw: string, label: string): string {
@@ -113,7 +166,7 @@ async function fetchWithRetry(url: string, init: RequestInit, label: string, max
   throw new Error(`${label} failed: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
-function httpResponseId(body: string): string | undefined {
+export function responseSubmissionId(body: string): string | undefined {
   try {
     const parsed: unknown = JSON.parse(body);
     if (parsed && typeof parsed === "object") {
@@ -121,7 +174,7 @@ function httpResponseId(body: string): string | undefined {
       for (const key of ["submissionId", "submission_id", "id", "jobId", "job_id"]) if (typeof value[key] === "string" && value[key].trim()) return value[key];
     }
   } catch { /* permit text responses */ }
-  return body.match(/(?:submission|job)(?:[_ -]?id)?\s*[:=]\s*([A-Za-z0-9._:-]+)/i)?.[1];
+  return body.match(/(?:submission|job)(?:[_ -]?id)?(?:\s*[:=#]\s*|\s+)([A-Za-z0-9][A-Za-z0-9._:-]{0,127})/i)?.[1];
 }
 
 async function httpSubmit(file: string, config: NonNullable<CompetitionConfig["submission"]>): Promise<{ submissionId?: string; body: string }> {
@@ -133,7 +186,7 @@ async function httpSubmit(file: string, config: NonNullable<CompetitionConfig["s
   // remote service did not accept the submission, and replay could duplicate it.
   const response = await fetchWithRetry(url, { method: "POST", headers: httpAuthHeaders(config.authEnv), body: form }, "HTTP submission", 1);
   const body = await httpResponse(response, "HTTP submission");
-  return { body, ...(httpResponseId(body) ? { submissionId: httpResponseId(body) } : {}) };
+  return { body, ...(responseSubmissionId(body) ? { submissionId: responseSubmissionId(body) } : {}) };
 }
 
 async function httpScore(submissionId: string, config: NonNullable<CompetitionConfig["submission"]>): Promise<{ score: number; body: string; url: string }> {
@@ -153,8 +206,24 @@ function predictionFile(bundlePath: string, configured?: string): string {
   return candidate;
 }
 
-function substitute(command: string[], values: Record<string, string>): string[] {
-  return command.map((part) => part.replace(/\{(bundle|file|competition|message|submission)\}/g, (_, key: string) => values[key] ?? ""));
+function substitute(command: string[], values: Record<string, string>, bundlePath: string, artifactPaths: string[] = []): string[] {
+  return command.map((part) => part.replace(/\{(bundle|file|competition|message|submission)\}|\{artifact:([^{}]+)\}/g, (match, key: string | undefined, artifactPath: string | undefined) => {
+    if (artifactPath !== undefined) {
+      if (!artifactPaths.includes(artifactPath)) throw new Error(`Submission command references undeclared artifact '${artifactPath}'.`);
+      const artifact = safeBundlePath(bundlePath, `source/${artifactPath}`);
+      if (!artifact || !existsSync(artifact)) throw new Error(`Immutable submission artifact '${artifactPath}' is missing or unsafe.`);
+      return artifact;
+    }
+    return values[key ?? ""] ?? match;
+  }));
+}
+
+function submissionArtifactReceipts(bundlePath: string, artifactPaths: string[] = []): Array<{ path: string; sha256: string; sizeBytes: number }> {
+  return artifactPaths.map((path) => {
+    const file = safeBundlePath(bundlePath, `source/${path}`);
+    if (!file || !existsSync(file)) throw new Error(`Immutable submission artifact '${path}' is missing or unsafe.`);
+    return { path, sha256: createHash("sha256").update(readFileSync(file)).digest("hex"), sizeBytes: statSync(file).size };
+  });
 }
 
 function commandWorkingDirectory(root: string, configured?: string): string {
@@ -165,7 +234,12 @@ function commandWorkingDirectory(root: string, configured?: string): string {
   // external command to run there.
   const checked = existsSync(workingDirectory) ? realpathSync(workingDirectory) : workingDirectory;
   const workingRelative = relative(rootPath, checked);
-  if (isAbsolute(workingRelative) || workingRelative.startsWith("..")) throw new Error("Submission workingDirectory must stay inside the project root.");
+  if (isAbsolute(workingRelative) || workingRelative === ".." || workingRelative.startsWith(`..${sep}`)) {
+    const externalWorktreeBase = resolve(worktreeBasePath(rootPath));
+    const checkedBase = existsSync(externalWorktreeBase) ? realpathSync(externalWorktreeBase) : externalWorktreeBase;
+    const externalRelative = relative(checkedBase, checked);
+    if (isAbsolute(externalRelative) || externalRelative === ".." || externalRelative.startsWith(`..${sep}`)) throw new Error("Submission workingDirectory must stay inside the project or configured worktree root.");
+  }
   return checked;
 }
 
@@ -216,17 +290,22 @@ async function verifyKaggleAccess(config: NonNullable<CompetitionConfig["submiss
 }
 
 /** Parse the intentionally small score protocol used by generic competition adapters. */
-export function parseSubmissionScore(output: string): number | undefined {
+export function parseSubmissionScore(output: string, metricName?: string): number | undefined {
   const candidates: unknown[] = [];
   const csvScores: number[] = [];
+  const normalizeKey = (value: string): string => value.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
+  const recognizedKeys = new Set(["publicscore", "leaderboardscore", "score"]);
+  if (metricName?.trim()) recognizedKeys.add(normalizeKey(metricName));
   for (const line of output.split(/\r?\n/)) {
     try {
       const parsed: unknown = JSON.parse(line.trim());
       if (parsed && typeof parsed === "object") {
         const value = parsed as Record<string, unknown>;
-        for (const key of ["publicScore", "public_score", "leaderboardScore", "leaderboard_score", "score"]) candidates.push(value[key]);
+        for (const [key, score] of Object.entries(value)) if (recognizedKeys.has(normalizeKey(key))) candidates.push(score);
         const nested = value.result;
-        if (nested && typeof nested === "object") candidates.push((nested as Record<string, unknown>).score);
+        if (nested && typeof nested === "object") {
+          for (const [key, score] of Object.entries(nested as Record<string, unknown>)) if (recognizedKeys.has(normalizeKey(key))) candidates.push(score);
+        }
       } else candidates.push(parsed);
     } catch { /* permit human-readable adapter output below */ }
   }
@@ -237,7 +316,7 @@ export function parseSubmissionScore(output: string): number | undefined {
     let header: string[];
     try { header = parseCsvRow(lines[0]!).map((value) => value.toLowerCase().replaceAll(/[^a-z0-9]/g, "")); }
     catch { header = []; }
-    const scoreIndex = header.findIndex((value) => value === "publicscore" || value === "leaderboardscore" || value === "score");
+    const scoreIndex = header.findIndex((value) => recognizedKeys.has(value));
     if (scoreIndex >= 0) {
       for (const line of lines.slice(1).reverse()) {
         try {
@@ -251,7 +330,8 @@ export function parseSubmissionScore(output: string): number | undefined {
   // Prefer a structurally recognized CSV value over incidental `score: ...`
   // text in status logs or descriptions emitted alongside the table.
   if (csvScores.length) return csvScores.at(-1);
-  for (const match of output.matchAll(/(?:public[_ ]score|leaderboard[_ ]score|score)\s*[:=]\s*(-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/gi)) candidates.push(match[1]);
+  const labelPattern = [...recognizedKeys].sort((a, b) => b.length - a.length).map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  for (const match of output.matchAll(new RegExp(`(?:${labelPattern})(?:\\s*[:=]\\s*|\\s+)(-?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?)`, "gi"))) candidates.push(match[1]);
   for (const value of candidates) {
     const score = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
     if (Number.isFinite(score)) return score;
@@ -272,7 +352,7 @@ export async function submitApprovedBundle(root: string, bundlePath: string, com
   const values = { bundle: bundlePath, file, competition: config?.competition ?? competition.id, message, submission: "" };
   const command = platform === "kaggle"
     ? kaggleSubmitCommand(config!, competition, values.file, values.message)
-    : substitute(config?.submitCommand ?? [], values);
+    : substitute(config?.submitCommand ?? [], values, bundlePath, config?.artifactPaths ?? []);
   if (platform === "http") {
     if (!config) throw new Error("HTTP submission configuration is missing.");
     const file = predictionFile(bundlePath, config?.predictionFile);
@@ -288,6 +368,7 @@ export async function submitApprovedBundle(root: string, bundlePath: string, com
   if (!guard.allowed) throw new Error(`Submission command refused: ${guard.reason}`);
   const workingDirectory = commandWorkingDirectory(root, config?.workingDirectory);
   if (platform === "kaggle") await verifyKaggleAccess(config!, competition, workingDirectory, onProcess);
+  const submittedArtifacts = submissionArtifactReceipts(bundlePath, config?.artifactPaths ?? []);
   let result;
   try {
     result = await runProcess(command, workingDirectory, 10 * 60_000, undefined, onProcess);
@@ -295,9 +376,13 @@ export async function submitApprovedBundle(root: string, bundlePath: string, com
     throw new Error(`External submission could not start: ${redactSecrets(error instanceof Error ? error.message : String(error))}`);
   }
   if (result.exitCode !== 0) throw new Error(`External submission failed (${result.exitCode}): ${redactSecrets(result.stderr || result.stdout)}`);
+  const artifactsAfterSubmit = submissionArtifactReceipts(bundlePath, config?.artifactPaths ?? []);
+  if (JSON.stringify(artifactsAfterSubmit) !== JSON.stringify(submittedArtifacts)) {
+    throw new Error("Submission command modified an immutable prepared artifact; external outcome requires reconciliation before retry.");
+  }
   return {
     validation,
-    receipt: { platform, submittedAt: new Date().toISOString(), predictionFile: file, command: redactCommand(command), stdout: redactSecrets(result.stdout), stderr: redactSecrets(result.stderr) },
+    receipt: { platform, submittedAt: new Date().toISOString(), predictionFile: file, command: redactCommand(command), ...(responseSubmissionId(result.stdout) ? { submissionId: responseSubmissionId(result.stdout) } : {}), ...(submittedArtifacts.length ? { submittedArtifacts } : {}), stdout: redactSecrets(result.stdout), stderr: redactSecrets(result.stderr) },
   };
 }
 
@@ -318,7 +403,7 @@ export async function pollSubmissionScore(root: string, bundlePath: string, subm
   if (!template.length) throw new Error("No scoreCommand is configured. Add submission.scoreCommand or use submission record for a manually observed score.");
   const needsFile = Boolean(config?.predictionFile) || template.some((part) => part.includes("{file}"));
   const file = needsFile ? predictionFile(bundlePath, config?.predictionFile) : "";
-  const command = substitute(template, { bundle: bundlePath, file, competition: config?.competition ?? competition.id, message: "", submission: submissionId });
+  const command = substitute(template, { bundle: bundlePath, file, competition: config?.competition ?? competition.id, message: "", submission: submissionId }, bundlePath, config?.artifactPaths ?? []);
   const guard = guardCommand(command);
   if (!guard.allowed) throw new Error(`Score polling command refused: ${guard.reason}`);
   let result;

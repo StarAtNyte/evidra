@@ -4,7 +4,11 @@ export function redactSecrets(value: string): string {
     .replace(/\b(?:sk|rk|ak)-[A-Za-z0-9_-]{16,}\b/g, "[REDACTED_TOKEN]")
     .replace(/\b(?:ghp|github_pat)_[A-Za-z0-9_]{16,}\b/g, "[REDACTED_TOKEN]")
     .replace(/\b(?:xox[baprs])-[A-Za-z0-9-]{16,}\b/g, "[REDACTED_TOKEN]")
-    .replace(/((?:api[_-]?key|token|secret|password|authorization)\s*[:=]\s*)([^\s,;]+)/gi, "$1[REDACTED]");
+    .replace(/((?:["']?authorization["']?)\s*[:=]\s*)Bearer\s+[^\s,;"']+/gi, "$1[REDACTED]")
+    // Handle both dotenv/header forms and quoted JSON/YAML keys and values;
+    // a file read is raw text, so structured redaction alone is insufficient.
+    .replace(/(["'](?:api[_-]?key|token|secret|password|authorization)["']\s*:\s*)"([^"]*)"/gi, (_match, prefix: string, secret: string) => prefix + '"' + (secret.includes("REDACTED") ? secret : "[REDACTED]") + '"')
+    .replace(/((?:["']?(?:api[_-]?key|token|secret|password|authorization)["']?)\s*[:=]\s*)(?:'([^']*)'|(\[REDACTED_TOKEN\]|[^\s,;"'}\]]+))/gi, (_match, prefix: string, quoted: string | undefined, bare: string | undefined) => prefix + (quoted === undefined ? "" : "'") + (quoted === undefined && /^(?:null|undefined)$/i.test(bare ?? "") ? bare : "[REDACTED]") + (quoted === undefined ? "" : "'"));
 }
 
 const SENSITIVE_COMMAND_FLAG = /^(?:--?|\/)?(?:api[-_]?key|token|secret|password|passwd|authorization|auth|credential)(?:=|$)/i;
@@ -31,7 +35,7 @@ export function redactStructured<T>(value: T): T {
   if (Array.isArray(value)) return value.map((entry) => redactStructured(entry)) as T;
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => {
-      if (/^(?:api[_-]?key|token|secret|password|passwd|authorization|credential|access[_-]?token|refresh[_-]?token)$/i.test(key)) {
+      if (/(?:^|[_-])(?:api[_-]?key|token|secret|password|passwd|authorization|credentials?|access[_-]?token|refresh[_-]?token)(?:$|[_-])/i.test(key)) {
         const redacted = typeof entry === "string" ? redactSecrets(entry) : entry;
         return [key, typeof redacted === "string" && redacted !== entry ? redacted : "[REDACTED]"];
       }

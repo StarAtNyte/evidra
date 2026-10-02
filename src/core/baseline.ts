@@ -1,5 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { lstatSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ProcessResult } from "./types.js";
 import { sha256File } from "./evidence.js";
 import type { ResearchStore } from "./store.js";
@@ -78,4 +78,49 @@ export function recordBaselineEvidence(
   });
   store.appendEvent(result.exitCode === 0 ? "baseline.completed" : "baseline.failed", evidence);
   return evidence;
+}
+
+/** Re-anchor an earlier successful baseline into a new campaign only if its stored artifacts still match. */
+export function recordBaselineReuse(
+  store: ResearchStore,
+  root: string,
+  prior: Partial<BaselineEvidence>,
+  campaignStartedAt: string,
+): boolean {
+  if (prior.exitCode !== 0 || typeof prior.runId !== "string" || !prior.runId.trim()
+    || typeof prior.metric !== "number" || !Number.isFinite(prior.metric)) return false;
+  const paths = prior.artifactPaths;
+  const checksums = prior.artifactChecksums;
+  if (!paths || !checksums || !Object.keys(checksums).length) return false;
+  const artifactRoot = resolve(root, ".sota", "artifacts");
+  let canonicalRoot: string;
+  try { canonicalRoot = realpathSync(artifactRoot); } catch { return false; }
+  for (const [name, checksum] of Object.entries(checksums)) {
+    const path = paths[name];
+    if (typeof path !== "string" || typeof checksum !== "string" || !/^sha256:[a-f0-9]{64}$/i.test(checksum)) return false;
+    const resolvedPath = resolve(path);
+    const pathFromRoot = relative(artifactRoot, resolvedPath);
+    if (!pathFromRoot || pathFromRoot.startsWith("..") || isAbsolute(pathFromRoot)) return false;
+    try {
+      if (lstatSync(resolvedPath).isSymbolicLink() || !lstatSync(resolvedPath).isFile()) return false;
+      const canonicalPath = realpathSync(resolvedPath);
+      const canonicalRelative = relative(canonicalRoot, canonicalPath);
+      if (!canonicalRelative || canonicalRelative.startsWith("..") || isAbsolute(canonicalRelative) || sha256File(canonicalPath) !== checksum) return false;
+    } catch { return false; }
+  }
+  store.appendEvent("baseline.reused", {
+    sourceRunId: prior.runId,
+    campaignStartedAt,
+    command: prior.command ?? [],
+    cwd: prior.cwd ?? root,
+    exitCode: 0,
+    durationMs: prior.durationMs ?? 0,
+    metric: prior.metric,
+    metrics: prior.metrics ?? {},
+    metricsByFold: prior.metricsByFold ?? {},
+    artifactPaths: paths,
+    artifactChecksums: checksums,
+    verifiedAt: new Date().toISOString(),
+  });
+  return true;
 }

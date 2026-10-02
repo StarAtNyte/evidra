@@ -23,11 +23,77 @@ export function createExecutionPlan(manifest: ExperimentManifest): ExecutionStag
   return stages;
 }
 
-export function validateExecutionContract(manifest: Pick<ExperimentManifest, "resources" | "evaluation">, cwd: string, command: string[]): { valid: boolean; reasons: string[] } {
+export function trivialSuccessCommand(command: string[]): boolean {
+  const executable = command[0]?.replace(/\\/g, "/").split("/").at(-1)?.toLowerCase();
+  return executable === "true" || executable === ":";
+}
+
+/** A metric evaluator itself is valid verification evidence when an unchanged
+ * implementation is under test; non-metric verification still needs explicit
+ * artifacts or verifier commands.
+ */
+export function verificationOnlyHasEvidence(
+  manifest: Pick<ExperimentManifest, "evaluation"> & Partial<Pick<ExperimentManifest, "outcomeType" | "implementationMode">>,
+  command: string[],
+): boolean {
+  if (manifest.evaluation.requiredArtifacts.length || manifest.evaluation.verificationCommand?.length || manifest.evaluation.verificationCommands?.length) return true;
+  return manifest.implementationMode === "verify"
+    && manifest.outcomeType === "metric"
+    && manifest.evaluation.metrics.length > 0
+    && command.length > 0
+    && command.every((part) => part.trim().length > 0)
+    && !trivialSuccessCommand(command);
+}
+
+/** File-backed verification must name the exact source digest that is copied
+ * into the isolated worktree. Otherwise a "replication" can silently measure
+ * whichever estimator happens to be checked out at the base commit.
+ */
+export function verificationSourcePinError(manifest: { implementationMode?: unknown; outcomeType?: unknown; change?: { configPatch?: unknown }; evaluation?: { metrics?: unknown[] } }): string | undefined {
+  if (manifest.implementationMode !== "verify") return undefined;
+  const rawPatch = manifest.change?.configPatch;
+  const patch = rawPatch && typeof rawPatch === "object" && !Array.isArray(rawPatch)
+    ? rawPatch as Record<string, unknown>
+    : undefined;
+  const estimatorPath = typeof patch?.estimatorPath === "string" ? patch.estimatorPath.trim() : "";
+  const source = patch?.implementationSource;
+  const sourceRecord = source && typeof source === "object" && !Array.isArray(source)
+    ? source as Record<string, unknown>
+    : undefined;
+  const targetPath = typeof sourceRecord?.targetPath === "string" ? sourceRecord.targetPath.trim() : estimatorPath;
+  const fileBackedMetric = Boolean(estimatorPath)
+    && (manifest.outcomeType === "metric" || (manifest.evaluation?.metrics?.length ?? 0) > 0);
+  if (!sourceRecord && !fileBackedMetric) return undefined;
+  if (!estimatorPath && !targetPath) return undefined;
+  if (!sourceRecord || typeof sourceRecord.path !== "string" || !sourceRecord.path.trim()) {
+    return "verification-only experiments with a file-backed estimator require implementationSource.path and a SHA-256 pin";
+  }
+  const digest = typeof sourceRecord.sha256 === "string" ? sourceRecord.sha256.trim() : "";
+  if (!/^sha256:[a-f0-9]{64}$/i.test(digest)) {
+    return "verification-only implementationSource.sha256 must be a sha256:-prefixed 64-character digest";
+  }
+  if (estimatorPath && targetPath && estimatorPath !== targetPath) {
+    return `verification-only implementation source target ${targetPath} does not match evaluator estimatorPath ${estimatorPath}`;
+  }
+  return undefined;
+}
+
+export function validateExecutionContract(manifest: Pick<ExperimentManifest, "resources" | "evaluation"> & Partial<Pick<ExperimentManifest, "outcomeType" | "implementationMode" | "change">>, cwd: string, command: string[]): { valid: boolean; reasons: string[] } {
   const reasons: string[] = [];
   if (!command.length || command.some((part) => !part.trim())) reasons.push("experiment command is empty or contains a blank argument");
+  if (trivialSuccessCommand(command)) reasons.push("experiment command is a placeholder success command and cannot provide evaluation evidence");
   if (!Number.isFinite(manifest.resources.timeoutMinutes) || manifest.resources.timeoutMinutes <= 0) reasons.push("timeout must be positive");
   if (!resolve(cwd) || !isAbsolute(resolve(cwd))) reasons.push("experiment cwd must resolve to an absolute path");
+  if (manifest.outcomeType === "metric" && manifest.evaluation.metrics.length === 0) reasons.push("metric experiment must declare at least one metric");
+  if (manifest.outcomeType && manifest.outcomeType !== "metric") {
+    const hasEvidenceContract = manifest.evaluation.requiredArtifacts.length > 0
+      || Boolean(manifest.evaluation.verificationCommand?.length)
+      || Boolean(manifest.evaluation.verificationCommands?.length);
+    if (!hasEvidenceContract) reasons.push(`${manifest.outcomeType} experiment must declare required artifacts or verification commands`);
+  }
+  if (manifest.implementationMode === "verify" && !verificationOnlyHasEvidence(manifest, command)) reasons.push("verification-only experiment must declare required artifacts, verification commands, or a valid metric evaluator");
+  const sourcePinFailure = verificationSourcePinError(manifest);
+  if (sourcePinFailure) reasons.push(sourcePinFailure);
   const required = new Set<string>();
   for (const artifact of manifest.evaluation.requiredArtifacts) {
     if (required.has(artifact)) reasons.push(`duplicate required artifact: ${artifact}`);

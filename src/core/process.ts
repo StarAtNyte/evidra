@@ -47,7 +47,10 @@ export function runProcess(
     const started = Date.now();
     // A detached process group lets interruption stop wrappers such as uv, python,
     // and evaluator subprocesses together instead of leaving grandchildren alive.
-    const child = spawn(command[0], command.slice(1), { cwd, shell: false, detached: true, env: environment });
+    // Evidra does not expose a stdin payload for managed commands. Inherit no
+    // open pipe: programs that accidentally omit an input path (e.g. `rg`)
+    // must see EOF instead of hanging until the command timeout.
+    const child = spawn(command[0], command.slice(1), { cwd, shell: false, detached: true, env: environment, stdio: ["ignore", "pipe", "pipe"] });
     let paused = false;
     let settled = false;
     let processExited = false;

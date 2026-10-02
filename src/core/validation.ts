@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { evaluateEvidenceGate, sha256File } from "./evidence.js";
+import { verificationSourcePinError } from "./execution-stages.js";
 import type { ExperimentManifest, RunResult } from "./types.js";
 import { auditSubtask, subtaskAuditFingerprint, type SubtaskAudit, type SubtaskContract } from "./subtask-state.js";
 
@@ -137,6 +138,7 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
     : declaredMetricNames.length
       ? declaredMetricNames.every((name) => typeof run.metrics[name] === "number" && Number.isFinite(run.metrics[name]))
       : Object.keys(run.metrics).length > 0;
+  const sourcePinFailure = verificationSourcePinError(manifest);
   const gates = {
     validCommit: manifest.gitCommit === context.currentCommit,
     datasetMatch: manifest.datasetVersion === context.datasetVersion,
@@ -152,6 +154,7 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
     leakageAuditPassed: context.leakageAuditPassed ?? false,
     reviewerApproved: context.reviewerApproved ?? false,
     verifiersPassed,
+    implementationSourcePinDeclared: sourcePinFailure === undefined,
     evaluationCoverage: matrix.valid,
     replicationObserved: !manifest.acceptance.requireReplication || context.independentReplicationObserved === true,
     ...((context.externalScoreRequired === true || manifest.acceptance.requireExternalScore) ? { externalScoreObserved: context.externalScoreObserved === true } : {}),
@@ -160,5 +163,8 @@ export function auditExperiment(manifest: ExperimentManifest, run: RunResult, co
   const reasons = [...result.reasons];
   if (missingMetrics.length) reasons.push(`missing finite declared metric${missingMetrics.length === 1 ? "" : "s"}: ${missingMetrics.join(", ")}`);
   if (nonMetric && !nonMetricEvidenceDeclared) reasons.push("non-metric outcome must declare at least one required artifact or verifier");
+  if (sourcePinFailure) reasons.push(sourcePinFailure);
+  if (!gates.replicationObserved) reasons.push("an independent replication is required but has not completed");
+  if (gates.externalScoreObserved === false) reasons.push("the required external evaluator score has not been observed");
   return { accepted: reasons.length === 0, reasons, gates, missingMetrics, evidenceContract: nonMetric ? nonMetricEvidenceDeclared ? "artifact_or_verifier" : "missing" : "metric_suite" };
 }

@@ -37,3 +37,11 @@ test('installer gives actionable guidance when the global bin is hidden by PATH 
   assert.match(installer, /export PATH=/);
   assert.match(installer, /Verifying installation/);
 });
+
+test('installer uses the committed dependency lockfile for reproducible builds', () => {
+  const installer = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
+  const lockfile = new URL('../package-lock.json', import.meta.url);
+  assert.ok(readFileSync(lockfile).byteLength > 0, 'a committed npm lockfile is available');
+  assert.match(installer, /run_stage "2\/5 Installing locked dependencies and building" npm ci/);
+  assert.doesNotMatch(installer, /run_stage "2\/5 [^"]*" npm install/);
+});

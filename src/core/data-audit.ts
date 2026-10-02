@@ -10,17 +10,53 @@ export interface DataAuditReport {
   tabularDiagnostics: Array<{ file: string; rows: number; columns: number; duplicateRows: number; constantColumns: string[]; highMissingColumns: string[]; columnProfiles: Record<string, { missingRate: number; uniqueValues: number; sample: string[] }> }>;
   distributionShift: Array<{ trainFile: string; testFile: string; shiftedColumns: string[] }>;
   skippedFiles: string[];
+  /** Dataset-like files whose bytes were counted/hashed but whose contents were not parsed. */
+  uninspectedDataFiles: Array<{ file: string; format: string; reason: string }>;
   warnings: string[];
   generatedAt: string;
 }
 
 /** Stable identity for the findings in an audit, excluding its generation time. */
 export function dataAuditFingerprint(report: DataAuditReport): string {
-  return `sha256:${createHash("sha256").update(JSON.stringify({ duplicateGroups: report.duplicateGroups, tabularDiagnostics: report.tabularDiagnostics, distributionShift: report.distributionShift, skippedFiles: report.skippedFiles, warnings: report.warnings })).digest("hex")}`;
+  return `sha256:${createHash("sha256").update(JSON.stringify({ duplicateGroups: report.duplicateGroups, tabularDiagnostics: report.tabularDiagnostics, distributionShift: report.distributionShift, skippedFiles: report.skippedFiles, uninspectedDataFiles: report.uninspectedDataFiles, warnings: report.warnings })).digest("hex")}`;
 }
 
 const IGNORED = new Set([".git", ".venv", "node_modules", ".sota", "__pycache__"]);
 const TABULAR_EXTENSIONS = new Set([".csv", ".tsv", ".jsonl"]);
+const UNINSPECTED_DATA_FORMATS: Record<string, string> = {
+  ".parquet": "Parquet", ".feather": "Feather", ".arrow": "Arrow", ".avro": "Avro", ".orc": "ORC",
+  ".xlsx": "Excel", ".xls": "Excel", ".json": "JSON", ".ndjson": "NDJSON",
+  ".sqlite": "SQLite", ".db": "database", ".npy": "NumPy", ".npz": "NumPy archive",
+  ".h5": "HDF5", ".hdf5": "HDF5", ".pt": "PyTorch", ".pth": "PyTorch", ".tfrecord": "TFRecord",
+};
+
+/**
+ * Cheap identity for the auditable file set. Campaigns use this to reuse an
+ * unchanged audit instead of hashing/parsing the same inputs on every cycle.
+ * Size, timestamps, and filesystem identity detect normal replacement and
+ * edits without reading large dataset contents again.
+ */
+export function dataAuditManifestFingerprint(root: string, maxFiles = 2000): string {
+  const entries: string[] = [];
+  const limit = Number.isFinite(maxFiles) ? Math.max(0, Math.min(100_000, Math.floor(maxFiles))) : 2000;
+  const visit = (directory: string): void => {
+    if (!existsSync(directory) || entries.length >= limit) return;
+    let names: string[];
+    try { names = readdirSync(directory).sort(); } catch { return; }
+    for (const name of names) {
+      if (IGNORED.has(name)) continue;
+      const path = join(directory, name);
+      let stat;
+      try { stat = lstatSync(path); } catch { continue; }
+      if (stat.isDirectory()) { visit(path); continue; }
+      if (!stat.isFile()) continue;
+      entries.push(`${relative(root, path)}\0${stat.size}\0${stat.mtimeMs}\0${stat.ctimeMs}\0${stat.dev}\0${stat.ino}`);
+      if (entries.length >= limit) break;
+    }
+  };
+  visit(root);
+  return `sha256:${createHash("sha256").update(entries.join("\n")).digest("hex")}`;
+}
 
 /** Parse RFC-4180-style delimited text without loading an unbounded number of rows. */
 function parseDelimited(text: string, delimiter: string, maxRows: number): string[][] {
@@ -113,6 +149,7 @@ function tabularDiagnostic(root: string, path: string, maxRows = 50_000): DataAu
 export function auditData(root: string, maxFiles = 2000, maxFileBytes = 50 * 1024 * 1024): DataAuditReport {
   const checksums = new Map<string, string[]>();
   const skippedFiles: string[] = [];
+  const uninspectedDataFiles: DataAuditReport["uninspectedDataFiles"] = [];
   const tabularDiagnostics: DataAuditReport["tabularDiagnostics"] = [];
   let scannedFiles = 0;
   let totalBytes = 0;
@@ -127,6 +164,15 @@ export function auditData(root: string, maxFiles = 2000, maxFileBytes = 50 * 102
       if (!stat.isFile()) continue;
       if (scannedFiles >= maxFiles || stat.size > maxFileBytes) {
         skippedFiles.push(relative(root, path));
+        const extension = path.slice(path.lastIndexOf(".")).toLowerCase();
+        const format = UNINSPECTED_DATA_FORMATS[extension];
+        if (format) uninspectedDataFiles.push({
+          file: relative(root, path),
+          format,
+          reason: stat.size > maxFileBytes
+            ? `file size ${stat.size} exceeds the ${maxFileBytes}-byte audit limit; content and checksum were not inspected`
+            : `audit file-count limit (${maxFiles}) reached before this file was inspected`,
+        });
         continue;
       }
       const checksum = `sha256:${createHash("sha256").update(readFileSync(path)).digest("hex")}`;
@@ -135,7 +181,13 @@ export function auditData(root: string, maxFiles = 2000, maxFileBytes = 50 * 102
       checksums.set(checksum, files);
       scannedFiles += 1;
       totalBytes += stat.size;
-      try { const diagnostic = tabularDiagnostic(root, path); if (diagnostic) tabularDiagnostics.push(diagnostic); } catch { /* malformed tabular files remain ordinary scanned files */ }
+      const diagnostic = tabularDiagnostic(root, path);
+      if (diagnostic) tabularDiagnostics.push(diagnostic);
+      else {
+        const extension = path.slice(path.lastIndexOf(".")).toLowerCase();
+        const format = UNINSPECTED_DATA_FORMATS[extension];
+        if (format) uninspectedDataFiles.push({ file: relative(root, path), format, reason: "content parser unavailable; only file metadata and checksum were inspected" });
+      }
     }
   };
   visit(root);
@@ -157,10 +209,11 @@ export function auditData(root: string, maxFiles = 2000, maxFileBytes = 50 * 102
   const warnings = [
     ...(duplicateGroups.length ? [`${duplicateGroups.length} exact duplicate file group(s) detected; ensure split policy keeps duplicates together.`] : []),
     ...(skippedFiles.length ? [`${skippedFiles.length} file(s) skipped due to audit limits.`] : []),
+    ...(uninspectedDataFiles.length ? [`${uninspectedDataFiles.length} dataset file(s) were not content-inspected (${[...new Set(uninspectedDataFiles.map((entry) => entry.format))].join(", ")}); empty tabular diagnostics do not establish absence of duplicates, leakage, or distribution shift.`] : []),
     ...(tabularDiagnostics.some((diagnostic) => diagnostic.duplicateRows > 0) ? ["Duplicate rows detected in tabular files; use group-aware or duplicate-component splits."] : []),
     ...(tabularDiagnostics.some((diagnostic) => diagnostic.constantColumns.length > 0) ? ["Constant tabular columns detected; verify they are not artifacts or unusable identifiers."] : []),
     ...(tabularDiagnostics.some((diagnostic) => diagnostic.highMissingColumns.length > 0) ? ["High-missingness tabular columns detected; inspect train/test missingness before modeling."] : []),
     ...(distributionShift.length ? [`Candidate train/test distribution shift detected in ${distributionShift.length} file pair(s); validate by group, source, or time before trusting random splits.`] : []),
   ];
-  return { root, scannedFiles, totalBytes, duplicateGroups, tabularDiagnostics, distributionShift, skippedFiles, warnings, generatedAt: new Date().toISOString() };
+  return { root, scannedFiles, totalBytes, duplicateGroups, tabularDiagnostics, distributionShift, skippedFiles, uninspectedDataFiles, warnings, generatedAt: new Date().toISOString() };
 }

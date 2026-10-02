@@ -36,6 +36,20 @@ export interface CrossPollinationBoard {
   needsAdversarialReview: boolean;
 }
 
+/** Pay for a second review wave only when the lane board is materially contested. */
+export function shouldRunPeerReview(input: {
+  needsAdversarialReview: boolean;
+  peerReviewEnabled: boolean;
+  teamRecommended: boolean;
+  completedLaneCount: number;
+  autonomy: string;
+}): boolean {
+  return input.needsAdversarialReview
+    && (input.peerReviewEnabled || input.teamRecommended)
+    && input.completedLaneCount > 1
+    && input.autonomy !== "safe";
+}
+
 /**
  * Compress independent lane reports into a bounded hand-off for the director.
  * Agreement is only reported when multiple lanes share meaningful terms; this

@@ -16,6 +16,12 @@ export interface DecisionAuditResult {
   evidence: string[];
 }
 
+/** The controller owns phase transitions; model output can only label work. */
+export function alignResearchDecisionPhase<T extends Pick<ResearchDecision, "phase">>(decision: T, currentPhase?: ResearchPhase): T {
+  if (!currentPhase || decision.phase === currentPhase) return decision;
+  return { ...decision, phase: currentPhase };
+}
+
 /**
  * Controller-owned checks for a director decision. This intentionally does not
  * inspect the director's rationale: the audit is independent of persuasive
@@ -53,10 +59,14 @@ export function auditResearchDecision(
 }
 
 /** Safely turn an unaudited execution/completion request into inspection. */
-export function downgradeUnauditedDecision<T extends Pick<ResearchDecision, "decision" | "goalStatus" | "nextAction">>(decision: T, audit: DecisionAuditResult): T {
+export function downgradeUnauditedDecision<T extends Pick<ResearchDecision, "decision" | "goalStatus" | "nextAction"> & Partial<Pick<ResearchDecision, "phase">>>(decision: T, audit: DecisionAuditResult, currentPhase?: ResearchPhase): T {
   if (audit.verdict === "pass") return decision;
   return {
     ...decision,
+    // A rejected phase label must not survive the safety downgrade. Inspection
+    // is always scoped to the controller's active phase; otherwise the same
+    // bad label is audited again and can deadlock the campaign.
+    ...(currentPhase ? { phase: currentPhase } : {}),
     decision: "inspect",
     goalStatus: "active",
     nextAction: `${decision.nextAction} (controller audit: ${[...audit.reasons, ...audit.requiredChecks].join(", ")})`,

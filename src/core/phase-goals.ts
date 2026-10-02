@@ -109,6 +109,20 @@ export function phaseGoalSubtaskContract(goal: Pick<PhaseGoal, "id" | "objective
 }
 
 /**
+ * Phase criteria describe when a phase may close; they are not prerequisites
+ * for every decision made while working in that phase. Supplying them to the
+ * semantic auditor on every cycle makes it reject useful intermediate work
+ * for not having completed the phase yet.
+ */
+export function phaseCompletionCriteriaForAudit(
+  goal: Pick<PhaseGoal, "completionCriteria"> | undefined,
+  goalStatus: "active" | "blocked" | "met",
+): Array<{ id: string; description: string }> {
+  if (!goal || goalStatus !== "met") return [];
+  return goal.completionCriteria.map((description, index) => ({ id: `criterion_${index + 1}`, description }));
+}
+
+/**
  * Run the generic auditor for a phase goal. The phase-specific gate remains
  * responsible for interpreting domain evidence; this adapter makes its final
  * decision auditable and prevents executor prose from satisfying a phase.
@@ -153,10 +167,24 @@ export function mergePhaseGoalAudits(
   }), auditedAt);
 }
 
+/** Intermediate-cycle semantic reviews carry no closure criteria and must not veto a satisfied domain gate. */
+export function phaseGoalCycleAudit(
+  goal: Pick<PhaseGoal, "id" | "objective" | "completionCriteria">,
+  domainAudit: SubtaskAudit,
+  semanticCriteria: Array<{ criterionId: string; verdict: "pass" | "revise" | "reject"; evidence?: string[]; reasoning?: string }>,
+): SubtaskAudit {
+  return semanticCriteria.length ? mergePhaseGoalAudits(goal, domainAudit, semanticCriteria) : domainAudit;
+}
+
+/** A phase advances only when its deterministic domain gate and durable audit both pass. */
+export function phaseGoalCanAdvance(domainGateMet: boolean, audit: Pick<SubtaskAudit, "complete"> | undefined): boolean {
+  return domainGateMet && audit?.complete === true;
+}
+
 /** Event families that can satisfy phase completion; correctness must read the durable history. */
 export const PHASE_GOAL_EVENT_TYPES = [
-  "research.observation", "project.created", "baseline.completed", "data.audit.completed", "data.audit.accepted",
-  "validation.policy.created", "validation.policy.locked", "validation.policy.unlocked", "hypothesis.created", "experiment.created", "experiment.stage.smoke.completed",
+  "research.observation", "project.created", "baseline.completed", "baseline.reused", "data.audit.completed", "data.audit.accepted",
+  "validation.policy.created", "validation.policy.reused", "validation.policy.locked", "validation.policy.unlocked", "hypothesis.created", "experiment.created", "experiment.stage.smoke.completed",
   "experiment.stage.full_validation.completed", "run.completed", "experiment.comparison.completed", "replication.manifest.created", "experiment.autonomous.replication.completed",
   "experiment.gates.updated", "experiment.validation.assessed", "research.ablation.plan", "research.ablation.evidence",
 ] as const;
@@ -196,6 +224,18 @@ export function phaseGoalsForMode(goals: PhaseGoal[], mode: "research" | "challe
   const modeGoals = goals.filter((goal) => goal.id.startsWith(`goal_${mode}_`));
   if (!goalSetId) return modeGoals;
   return modeGoals.filter((goal) => goal.goalSetId === goalSetId || goal.id.startsWith(`goal_${mode}_${goalSetId}_`));
+}
+
+/** Select one campaign's phase machine for progress reporting, not its full history. */
+export function phaseGoalsForCurrentSet(goals: PhaseGoal[], mode: "research" | "challenge", goalSetId?: string): PhaseGoal[] {
+  const modeGoals = phaseGoalsForMode(goals, mode);
+  const explicit = goalSetId?.trim();
+  const currentSet = explicit || modeGoals
+    .filter((goal) => goal.goalSetId)
+    .slice()
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.updatedAt.localeCompare(right.updatedAt))
+    .at(-1)?.goalSetId;
+  return currentSet ? phaseGoalsForMode(modeGoals, mode, currentSet) : modeGoals;
 }
 
 /** Keep phase-gate evidence inside the objective's durable creation boundary. */
@@ -248,7 +288,11 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
       }
       // A project can contain legacy and retried baselines. Evaluate the newest
       // successful record so a valid rerun can repair an older incomplete one.
-      const baseline = payloads("baseline.completed").reverse().find((payload) => (payload as { exitCode?: unknown }).exitCode === 0);
+      const baseline = [...evidence.eventPayloads]
+        .filter((event) => event.type === "baseline.completed" || event.type === "baseline.reused")
+        .map((event) => event.payload)
+        .reverse()
+        .find((payload) => (payload as { exitCode?: unknown }).exitCode === 0);
       requireCheck(Boolean(baseline), "successful baseline");
       requireCheck(Boolean(baseline && typeof (baseline as { metric?: unknown }).metric === "number" && Number.isFinite((baseline as { metric?: number }).metric)), "parsed primary baseline metric");
       requireCheck(Boolean(baseline && Object.keys((baseline as { artifactChecksums?: Record<string, unknown> }).artifactChecksums ?? {}).length), "checksummed baseline artifacts");
@@ -269,10 +313,11 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
       break;
     }
     case "validation": {
-      requireCheck(has("validation.policy.created"), "versioned validation policy");
-      const policyLifecycle = evidence.eventPayloads.filter((event) => ["validation.policy.created", "validation.policy.locked", "validation.policy.unlocked"].includes(event.type));
+      requireCheck(has("validation.policy.created") || has("validation.policy.reused"), "versioned validation policy");
+      const policyLifecycle = evidence.eventPayloads.filter((event) => ["validation.policy.created", "validation.policy.reused", "validation.policy.locked", "validation.policy.unlocked"].includes(event.type));
       const latestPolicyEvent = policyLifecycle.at(-1)?.type;
-      requireCheck(latestPolicyEvent === "validation.policy.locked", "validation policy locked");
+      const latestPayload = policyLifecycle.at(-1)?.payload as { locked?: unknown; checksum?: unknown } | undefined;
+      requireCheck(latestPolicyEvent === "validation.policy.locked" || (latestPolicyEvent === "validation.policy.reused" && latestPayload?.locked === true && typeof latestPayload.checksum === "string"), "validation policy locked");
       break;
     }
     case "hypothesis":

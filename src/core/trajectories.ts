@@ -21,6 +21,32 @@ export interface TrajectoryEvent {
   callId?: string;
 }
 
+/** Bounded, controller-issued trace evidence for independent decision audits. */
+export function semanticAuditTraceEvidence(events: TrajectoryEvent[]): Array<Record<string, unknown>> {
+  const observations: Array<Record<string, unknown>> = [];
+  for (const event of events) {
+    const payload = event.payload;
+    if (event.kind === "tool_result") {
+      const output = payload.output;
+      const serialized = output === undefined ? "" : typeof output === "string" ? output : JSON.stringify(output);
+      observations.push({
+        evidenceAnchor: `trace:${event.id}`,
+        kind: "tool_result",
+        source: typeof payload.source === "string" ? payload.source : "controller",
+        tool: typeof payload.tool === "string" ? payload.tool : "unknown",
+        ok: payload.ok === true,
+        ...(typeof payload.error === "string" ? { error: payload.error.slice(0, 500) } : {}),
+        ...(serialized ? { output: serialized.slice(0, 2_000), outputTruncated: serialized.length > 2_000 } : {}),
+      });
+      continue;
+    }
+    if (event.kind === "process" && typeof payload.activity === "string" && /tool[- ]round budget exhausted/i.test(payload.activity)) {
+      observations.push({ evidenceAnchor: `trace:${event.id}`, kind: "controller_telemetry", source: "controller", activity: payload.activity.slice(0, 1_000) });
+    }
+  }
+  return observations.slice(-80);
+}
+
 export interface ToolTraceRecorder {
   events: TrajectoryEvent[];
   onToolCall: (source: string, call: ResearchToolCall) => string;
@@ -85,13 +111,18 @@ export function providerActivityFailureClass(activity: string): "timeout" | "rat
 }
 
 /** Map a typed research-tool failure to the same recovery vocabulary as executors. */
-export function researchToolFailureClass(result: Pick<ResearchToolResult, "ok" | "error" | "trust" | "securityWarnings">): "timeout" | "rate_limit" | "auth" | "dependency" | "sandbox" | "disk" | "unknown" | undefined {
+export function researchToolFailureClass(result: Pick<ResearchToolResult, "ok" | "error" | "trust" | "securityWarnings">): "timeout" | "rate_limit" | "auth" | "dependency" | "sandbox" | "disk" | "memory_exhausted" | "unknown" | undefined {
   if (result.ok || result.trust === "permission_boundary") return undefined;
   const text = `${result.error ?? ""} ${(result.securityWarnings ?? []).join(" ")}`;
+  // A malformed/unsupported agent tool call is useful quality telemetry, but
+  // it is not an executor outage and should not force every later campaign
+  // cycle into infrastructure recovery.
+  if (/^unknown research tool:|^tool argument ['"].+['"] (?:is required|must be)|^file does not exist:|^eisdir:/i.test(result.error ?? "")) return undefined;
   if (/rate limit|quota|too many requests|429/i.test(text)) return "rate_limit";
   if (/not logged in|auth|credential|unauthorized|forbidden/i.test(text)) return "auth";
   if (/timeout|timed out|network|unreachable|connection|econnreset|ePIPE|502|503|504/i.test(text)) return "timeout";
   if (/module not found|dependency|package|executable not found|command not found/i.test(text)) return "dependency";
+  if (/out of memory|memory exhausted|heap out of memory|allocation failed|cannot create a string longer|enomem|failed to allocate/i.test(text)) return "memory_exhausted";
   if (/disk full|no space left|enospc/i.test(text)) return "disk";
   if (/sandbox|loopback|bwrap|escapes the workspace|symlink/i.test(text)) return "sandbox";
   return "unknown";

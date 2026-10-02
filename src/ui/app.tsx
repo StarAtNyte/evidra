@@ -22,12 +22,13 @@ import { ensureWorktree } from "../core/worktree.js";
 import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "../core/validation.js";
 import { auditResearchDecision, downgradeUnauditedDecision } from "../core/decision-auditor.js";
 import { sha256File } from "../core/evidence.js";
+import { seedVerificationImplementation, verifyImplementationSnapshot, type ImplementationSnapshot } from "../core/implementation-guard.js";
 import { captureEnvironment } from "../core/environment.js";
 import { compareRuns } from "../core/statistics.js";
 import { recoveryDelay, recoveryPlan, recoveryRouteDirective } from "../core/recovery.js";
 import { observedGpuHours } from "../core/compute-budget.js";
 import { distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../core/distribution-beliefs.js";
-import { bindCampaignRuntime, campaignElapsedMinutes, parseRoleTokenBudgets, pauseCampaign, readCampaignCheckpoint, resolveCampaignMode, resumeCampaign, serializeRoleTokenBudgets, withCampaignCheckpoint, type CampaignRuntimeConfig } from "../core/campaign.js";
+import { bindCampaignRuntime, campaignElapsedMinutes, extendCampaignBudget, parseRoleTokenBudgets, pauseCampaign, readCampaignCheckpoint, resolveCampaignMode, resumeCampaign, serializeRoleTokenBudgets, withCampaignCheckpoint, type CampaignRuntimeConfig } from "../core/campaign.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../core/submissions.js";
 import { formatResearchStarterBriefs, selectResearchStarter } from "../core/research-starters.js";
 import { classifyResearchSetupInput } from "../core/research-setup.js";
@@ -41,9 +42,9 @@ import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth
 import { projectVerifiedSubtaskState } from "../core/subtask-state.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { canonicalSourceUrl, retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
-import { competitionResearchClaimType, competitionResearchSources } from "../core/competition-sources.js";
+import { competitionResearchClaimType, competitionResearchSources, competitionSourceRefreshMs } from "../core/competition-sources.js";
 import { extractCompetitionInsights } from "../core/competition-insights.js";
-import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatResearchStagePlan, mergePhaseGoalAudits, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageProgress } from "../core/phase-goals.js";
+import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatResearchStagePlan, mergePhaseGoalAudits, PHASE_GOAL_EVENT_TYPES, phaseCompletionCriteriaForAudit, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageProgress } from "../core/phase-goals.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
 import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
@@ -51,7 +52,7 @@ import { codexIsLoggedInAsync, codexLoginStatus, codexResearchModelPool, DEFAULT
 import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
 import { boundedPeerBoard, runResearchCritic, runResearchLanes, runResearchSemanticAuditor, type ResearchLaneReport, type ResearchReview, type ResearchSemanticAudit } from "../agents/research-lanes.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema, type ExperimentExecutorKind } from "../core/types.js";
-import { createToolTraceRecorder, evaluateTrajectory, providerActivityFailureClass, researchToolFailureClass, type TrajectoryEvent } from "../core/trajectories.js";
+import { createToolTraceRecorder, evaluateTrajectory, providerActivityFailureClass, researchToolFailureClass, semanticAuditTraceEvidence, type TrajectoryEvent } from "../core/trajectories.js";
 import { recoverUncommittedTraceFiles } from "../core/trajectory-recovery.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../core/capability-router.js";
 import { allocateNextResearch } from "../core/allocation.js";
@@ -65,7 +66,7 @@ import { captureProtectedFiles, changedProtectedFiles } from "../core/integrity.
 import { candidateChangePath } from "../core/hypothesis-path.js";
 import { withExecutionHeartbeat } from "../core/execution-heartbeat.js";
 import { evaluateValidationAcceptance } from "../core/validation-engine.js";
-import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, type ExecutionStage } from "../core/execution-stages.js";
+import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, verificationSourcePinError, type ExecutionStage } from "../core/execution-stages.js";
 import { runReducedValidation } from "../core/stage-executor.js";
 import { renderTimeline } from "../core/timeline.js";
 import { activeContradictionEdges, activeDuplicateClaimCount, latestSourceEntries, researchMemoryContext } from "../core/research-context.js";
@@ -94,7 +95,7 @@ type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "me
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
 type WorkbenchMode = "research" | "challenge";
 type AutonomyLevel = "safe" | "fast" | "yolo";
-type ResearchCampaign = { goal: string; goalSetId?: string; budgetMinutes: number; gpuBudgetHours?: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean; currentCycle?: number; currentStep?: string; checkpointedAt?: string; runtime?: CampaignRuntimeConfig & { fingerprint: string }; runtimeFingerprint?: string };
+type ResearchCampaign = { goal: string; goalSetId?: string; budgetMinutes: number; budgetExhausted?: boolean; gpuBudgetHours?: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean; currentCycle?: number; currentStep?: string; checkpointedAt?: string; runtime?: CampaignRuntimeConfig & { fingerprint: string }; runtimeFingerprint?: string };
 type LimitPolicy = "auto" | "wait" | "fallback" | "stop";
 type SessionConfig = { provider: AgentProvider; model: string; reasoningEffort: string; mode: WorkbenchMode; autonomy: AutonomyLevel; limitPolicy: LimitPolicy; fallbackModel: string; experimentExecutor: ExperimentExecutorKind; campaign?: ResearchCampaign; codexThreadId?: string };
 
@@ -239,8 +240,8 @@ const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/provider": [["/provider codex", "Use authenticated Codex"], ["/provider local", "Use local Ollama"]],
   "/login": [["/login codex", "Sign in with ChatGPT subscription"], ["/login status", "Check Codex authentication"]],
   "/logout": [["/logout", "Sign out of the Codex account"]],
-  "/research": [["/research plan", "Show the three high-level research steps"], ["/research plan history", "Show structural plan revisions"], ["/research history", "Show durable campaign runs"], ["/research examples", "Show contemporary starter research briefs"], ["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research steer ", "Guide the active campaign at the next safe boundary"], ["/research resume", "Resume the saved campaign"], ["/research resume ", "Resume a selected campaign run"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
-  "/challenge": [["/challenge status", "Show challenge state"], ["/challenge history", "Show durable challenge runs"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge steer ", "Guide the active campaign at the next safe boundary"], ["/challenge resume", "Resume the saved campaign"], ["/challenge resume ", "Resume a selected campaign run"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
+  "/research": [["/research plan", "Show the three high-level research steps"], ["/research plan history", "Show structural plan revisions"], ["/research history", "Show durable campaign runs"], ["/research examples", "Show contemporary starter research briefs"], ["/research next", "Run the next evidence-gathering cycle"], ["/research status", "Show research state"], ["/research start", "Start autonomous research"], ["/research steer ", "Guide the active campaign at the next safe boundary"], ["/research budget add ", "Extend time for a paused campaign"], ["/research resume", "Resume the saved campaign"], ["/research resume ", "Resume a selected campaign run"], ["/research pause", "Pause active workers"], ["/research stop", "Stop and save the campaign"]],
+  "/challenge": [["/challenge status", "Show challenge state"], ["/challenge history", "Show durable challenge runs"], ["/challenge start", "Start challenge zero-to-hero flow"], ["/challenge steer ", "Guide the active campaign at the next safe boundary"], ["/challenge budget add ", "Extend time for a paused campaign"], ["/challenge resume", "Resume the saved campaign"], ["/challenge resume ", "Resume a selected campaign run"], ["/challenge pause", "Pause active workers"], ["/challenge stop", "Stop and save the campaign"], ["/challenge inspect", "Inspect rules and evaluator"], ["/challenge audit", "Audit files and duplicate data"], ["/challenge audit accept ", "Accept documented audit findings"], ["/challenge policy", "Generate validation policy"], ["/challenge baseline", "Run the canonical baseline"]],
   "/experiment": [["/experiment list", "List experiment manifests"], ["/experiment propose", "Create an immutable manifest"], ["/experiment run", "Run an isolated experiment"], ["/experiment replicate", "Create an independent replication"], ["/experiment compare", "Compare two runs"], ["/experiment audit", "Audit evidence gates"], ["/experiment gate", "Record leakage/reviewer approval"]],
   "/sources": [["/sources list", "List retrieved sources"], ["/sources channels", "Show discussion and leaderboard insights"], ["/sources add", "Retrieve a URL into the evidence store"], ["/sources discover", "Search scholarly literature"], ["/sources search", "Search retrieved sources"], ["/sources show", "Show a source and excerpt"]],
   "/benchmark": [["/benchmark literature-score ", "Score Evidra literature discovery"], ["/benchmark autoresearch ", "Import official AutoResearchBench evaluation"], ["/benchmark safety", "Run safety-boundary probes"], ["/benchmark orchestration", "Run worker-orchestration probes"], ["/benchmark governance", "Run role-governance probes"]],
@@ -415,6 +416,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const [messages, setMessages] = useState<Message[]>([
     { role: "system", text: "Evidra Research Director — type /help for commands." },
   ]);
+  // Transcript history is intentionally kept in the session. This offset only
+  // controls the rendered window; zero follows new output at the bottom.
+  const [transcriptOffset, setTranscriptOffset] = useState(0);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [busyFrame, setBusyFrame] = useState(0);
@@ -699,6 +703,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
   }, []);
 
   useInput((value, key) => {
+    if (!picker && key.pageUp) {
+      setTranscriptOffset((current) => Math.min(Math.max(0, messages.length - 1), current + 8));
+      return;
+    }
+    if (!picker && key.pageDown) {
+      setTranscriptOffset((current) => Math.max(0, current - 8));
+      return;
+    }
     if (key.ctrl && value === "c") {
       if (input) {
         setInput("");
@@ -867,7 +879,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     for (const configured of configuredSources) {
       const { url } = configured;
       const prior = known.get(canonicalSourceUrl(url));
-      const refreshMs = configured.refreshMinutes ? configured.refreshMinutes * 60_000 : undefined;
+      const refreshMs = competitionSourceRefreshMs(configured);
       if (prior && sourceIsFresh(prior, refreshMs)) continue;
       setProgress(`Challenge research · retrieving ${new URL(url).hostname}...`);
       try {
@@ -1128,12 +1140,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const distributionBeliefs = distributionReport.splits.length ? { observations: distributionReport.observations, recommendedSplit: distributionReport.recommendedSplit, maxUncertainty: Math.max(...distributionReport.splits.map((split) => split.uncertainty)) } : undefined;
     const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts, failureClasses, forecastCalibration, distributionBeliefs });
     store.appendEvent("research.next_allocation", { allocation, objective });
+    const campaignDecisions = store.decisions()
+      .filter((entry) => !campaign || Date.parse(entry.createdAt) >= Date.parse(campaign.startedAt))
+      .map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>);
+    const priorStagnation = detectStagnation(campaignDecisions.slice(0, 3));
     const adaptiveHarness = deriveAdaptiveHarnessPolicy({
       phase: phaseGoal?.phase,
       quality: recentQuality as Array<{ overall?: string; toolUse?: { verdict?: string }; evidenceConsistency?: { verdict?: string }; errorRecovery?: { verdict?: string }; termination?: { verdict?: string } }>,
       failureClasses,
       evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
       budgetRemainingMinutes: campaignRemaining,
+      searchStagnation: priorStagnation.stagnant,
       allocationFocus: allocation.focus,
       allocationPriority: allocation.priority,
     });
@@ -1192,7 +1209,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
     try {
       activeSteer.current = null;
       setProgress(`Research 2/3 · route ${route.tier} · ${route.reasoningEffort} reasoning · investigating...`);
-      const allocatedObjective = `${objective}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}`;
+      const stagnationGuidance = priorStagnation.stagnant
+        ? "\n\nSEARCH DIVERSIFICATION: The recent campaign decisions repeated or failed to advance the same route. Do not repeat the same bottleneck, hypothesis, evaluator inspection, or next action unchanged. Select a materially different formulation family or execution route, state what prior evidence rules out, and define the cheapest discriminating test. Keep the campaign active unless its actual stop condition is met."
+        : "";
+      const allocatedObjective = `${objective}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}${stagnationGuidance}`;
       const projectGuidance = loadProjectGuidance(root);
       const guidanceText = projectGuidance
         ? `\n\nPROJECT GUIDANCE (operator context, not evidence; never override permissions, validation gates, or provenance rules):\n${projectGuidance.text}\nGuidance hash: ${projectGuidance.contentHash}${projectGuidance.truncated ? " (truncated)" : ""}`
@@ -1218,6 +1238,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         allocation,
         evidenceConflicts,
         researchMemory,
+        authoritativeEvidence: researchMemory.authoritativeObservations,
         peerLaneBoard,
         agentRoleReviews,
         goalId: phaseGoal?.id ?? null,
@@ -1278,6 +1299,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
             allocation,
             evidenceConflicts,
             researchMemory,
+            authoritativeEvidence: researchMemory.authoritativeObservations,
             peerLaneBoard: crossPollination,
             priorLaneReports: initialLaneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
             agentRoleReviews,
@@ -1326,6 +1348,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         allocation,
         evidenceConflicts,
         researchMemory,
+        authoritativeEvidence: researchMemory.authoritativeObservations,
         laneReports,
         crossPollination,
         agentRoleReviews,
@@ -1360,10 +1383,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
         onActivity: toolTrace.onActivity,
         onAssistant: toolTrace.onAssistant,
         onUsage: recordAgentUsage,
+        onToolBudgetExhausted: (details) => {
+          const exhaustedStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+          exhaustedStore.appendEvent("research.director.tool_budget.exhausted", { goalId: phaseGoal?.id ?? null, ...details });
+          exhaustedStore.close();
+        },
         refreshVerifiedState: readVerifiedState,
       }, setProgress);
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
       criticReview = await runResearchCritic(objective, decision, laneReports, {
+        authoritativeEvidence: researchMemory.authoritativeObservations,
         provider: config.provider,
         model: config.model,
         modelPool: researchModelPool,
@@ -1397,7 +1426,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       });
       semanticAudit = await runResearchSemanticAuditor(objective, decision, {
         observation,
+        authoritativeEvidence: researchMemory.authoritativeObservations,
         phaseGoal,
+        controllerToolObservations: semanticAuditTraceEvidence(toolTrace.events),
         laneReports: laneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
         critic: criticReview,
       }, {
@@ -1431,9 +1462,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         onActivity: toolTrace.onActivity,
         onAssistant: toolTrace.onAssistant,
         onUsage: recordAgentUsage,
-      }, phaseGoal?.completionCriteria.map((description, index) => ({ id: `criterion_${index + 1}`, description })) ?? []);
+      }, phaseCompletionCriteriaForAudit(phaseGoal, decision.goalStatus));
       if (semanticAudit.verdict !== "pass") {
-        decision = { ...decision, decision: "inspect", goalStatus: "active", nextAction: `${decision.nextAction} (semantic audit: ${[...semanticAudit.findings, ...semanticAudit.requiredChecks].join(", ")})` };
+        decision = { ...decision, phase: phaseGoal?.phase ?? decision.phase, decision: "inspect", goalStatus: "active", nextAction: `${decision.nextAction} (semantic audit: ${[...semanticAudit.findings, ...semanticAudit.requiredChecks].join(", ")})` };
         const auditStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
         auditStore.appendEvent("research.semantic_audit.gated", { verdict: semanticAudit.verdict, findings: semanticAudit.findings, requiredChecks: semanticAudit.requiredChecks });
         auditStore.close();
@@ -1515,7 +1546,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       phaseAuditComplete: phaseGoal ? decisionStore.latestSubtaskAudit(phaseGoal.id)?.complete : undefined,
     });
     decisionStore.appendEvent("research.decision.audit", { ...decisionAudit, phase: phaseGoal?.phase ?? null, decision: effectiveDecision.decision });
-    decision = downgradeUnauditedDecision(effectiveDecision, decisionAudit);
+    decision = downgradeUnauditedDecision(effectiveDecision, decisionAudit, phaseGoal?.phase);
     materializeResearchDecision(decisionStore, decision);
     if (phaseGoal) {
       const now = new Date().toISOString();
@@ -1615,7 +1646,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const commit = await runProcess(["git", "rev-parse", "HEAD"], root);
     if (commit.exitCode !== 0) { store.close(); throw new Error(`Cannot create manifest: ${commit.stderr || commit.stdout}`); }
     const id = `exp_${Date.now()}_${hypothesis.id.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32)}`;
-    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis.id, outcomeType: (hypothesis.payload as { outcomeType?: "metric" | "artifact" | "proof" | "behavior" | "system" | "other" }).outcomeType, searchOperator: typeof (hypothesis.payload as { searchOperator?: unknown }).searchOperator === "string" ? (hypothesis.payload as { searchOperator: string }).searchOperator : undefined, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: config.experimentExecutor, configPatch: { estimatorPath: candidateEstimatorPath(hypothesis.payload) ?? adapter.config.evaluator.estimatorPath } }, adapter.config);
+    const hypothesisPayload = hypothesis.payload as { outcomeType?: "metric" | "artifact" | "proof" | "behavior" | "system" | "other"; implementationMode?: "modify" | "verify"; implementationSource?: { path: string; sha256: string; targetPath?: string | null } | null; experimentEnvironment?: Array<{ name: string; value: string }>; verificationCommands?: string[][] };
+    const manifest = createExperimentManifest({ id, hypothesisId: hypothesis.id, outcomeType: hypothesisPayload.outcomeType, implementationMode: hypothesisPayload.implementationMode, environment: hypothesisPayload.experimentEnvironment?.length ? Object.fromEntries(hypothesisPayload.experimentEnvironment.map(({ name, value }) => [name, value])) : undefined, verificationCommands: hypothesisPayload.verificationCommands, searchOperator: typeof (hypothesis.payload as { searchOperator?: unknown }).searchOperator === "string" ? (hypothesis.payload as { searchOperator: string }).searchOperator : undefined, gitCommit: commit.stdout.trim(), datasetVersion: adapter.config.datasetRevision, executor: config.experimentExecutor, configPatch: { estimatorPath: candidateEstimatorPath(hypothesis.payload) ?? adapter.config.evaluator.estimatorPath, ...(hypothesisPayload.implementationSource ? { implementationSource: hypothesisPayload.implementationSource } : {}) } }, adapter.config);
     store.saveExperiment({ id, payload: { ...manifest, status: "proposed", executionPlan: createExecutionPlan(manifest) } });
     store.appendEvent("experiment.priority.selected", { experimentId: id, hypothesisId: hypothesis.id, priority: ranked[0].priority, novelty: ranked[0].novelty, score: ranked[0] });
     store.close();
@@ -1786,11 +1818,32 @@ export function App({ root }: { root: string }): React.JSX.Element {
     store.saveExperiment({ id, payload: { ...entryPayload, status: "running", executionPlan } });
     store.close();
     try {
+    const sourcePinFailure = verificationSourcePinError(manifest);
+    if (sourcePinFailure) throw new Error(sourcePinFailure);
     setProgress(`Experiment ${id} · creating isolated worktree...`);
     const worktree = await ensureWorktree(root, root, id);
     const experimentCwd = join(worktree, relative(root, adapter.workspacePath(root)));
     const experimentEnvironment = prepareExperimentEnvironment(manifest, experimentCwd);
-    if (config.provider === "codex") {
+    let verificationSnapshot: ImplementationSnapshot | undefined;
+    const sourceConfig = (manifest.change.configPatch as { implementationSource?: { path: string; sha256: string; targetPath?: string | null }; estimatorPath?: unknown }).implementationSource;
+    if (manifest.implementationMode === "verify") {
+      if (sourceConfig) {
+        const estimatorPath = (manifest.change.configPatch as { estimatorPath?: unknown }).estimatorPath;
+        const targetPath = sourceConfig.targetPath?.trim() || (typeof estimatorPath === "string" ? estimatorPath.trim() : "");
+        if (!targetPath) throw new Error("Verification-only source pin requires a targetPath or evaluator estimatorPath.");
+        const seeded = seedVerificationImplementation(root, worktree, relative(root, adapter.workspacePath(root)), sourceConfig.path, targetPath, sourceConfig.sha256);
+        verificationSnapshot = seeded.snapshot;
+        const sourceStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        sourceStore.appendEvent("experiment.implementation.seeded", { experimentId: id, sourcePath: relative(root, seeded.sourcePath), sha256: seeded.sourceSha256, targetPath: relative(worktree, seeded.targetPath), implementationMode: "verify" });
+        sourceStore.appendEvent("experiment.implementation.completed", { experimentId: id, ...seeded.snapshot, implementationMode: "verify", seeded: true });
+        sourceStore.close();
+        setProgress(`Experiment ${id} · verified pinned source ${seeded.sourceSha256.slice(0, 19)}…`);
+      } else {
+        const sourceStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        sourceStore.appendEvent("experiment.implementation.skipped", { experimentId: id, reason: "verification-only experiment has no file-backed source target", implementationMode: "verify" });
+        sourceStore.close();
+      }
+    } else if (config.provider === "codex") {
       setProgress(`Experiment ${id} · experiment engineer implementing the hypothesis...`);
       activeSteer.current = null;
       const engineerResult = await runWithLocalFallback({
@@ -1819,7 +1872,17 @@ export function App({ root }: { root: string }): React.JSX.Element {
       smokeStore.appendEvent("experiment.stage.smoke.completed", { experimentId: id, implementation: "local-unified-diff" });
       smokeStore.close();
     }
-    const protectedReference = captureProtectedFiles(adapter.workspacePath(root), [adapter.config.evaluator.command]);
+    const assertPinnedImplementation = () => {
+      if (!verificationSnapshot) return;
+      const mismatches = verifyImplementationSnapshot(verificationSnapshot);
+      if (!mismatches.length) return;
+      const invalidStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      invalidStore.appendEvent("experiment.implementation.invalid", { experimentId: id, mismatches });
+      invalidStore.close();
+      throw new Error(`Verification-only experiment ${id} refused to evaluate because its pinned source changed: ${mismatches.join("; ")}`);
+    };
+    assertPinnedImplementation();
+    const protectedReference = captureProtectedFiles(adapter.workspacePath(root), [adapter.config.evaluator.command], [], [adapter.config.evaluator.estimatorPath]);
     const changedProtected = changedProtectedFiles(protectedReference, experimentCwd);
     if (changedProtected.length) {
       const integrityStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -1853,7 +1916,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         throw new Error(`Smoke feasibility check failed:\n${smokeContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
       }
       const smoke = await withExecutionHeartbeat(
-        () => runReducedValidation(executor, manifest, experimentCwd, smokeCommand, primaryMetricName, registerProcess),
+        () => { assertPinnedImplementation(); return runReducedValidation(executor, manifest, experimentCwd, smokeCommand, primaryMetricName, registerProcess); },
         { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, stage: "smoke", executor: manifest.resources.executor },
       );
       clearActiveProcess();
@@ -1878,7 +1941,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         throw new Error(`Reduced validation feasibility check failed:\n${reducedContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
       }
       const reduced = await withExecutionHeartbeat(
-        () => runReducedValidation(executor, manifest, experimentCwd, reducedCommand, primaryMetricName, registerProcess),
+        () => { assertPinnedImplementation(); return runReducedValidation(executor, manifest, experimentCwd, reducedCommand, primaryMetricName, registerProcess); },
         { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, stage: "reduced_validation", executor: manifest.resources.executor },
       );
       clearActiveProcess();
@@ -1920,9 +1983,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
       attemptStore.close();
     };
     let attempt = 1;
+    assertPinnedImplementation();
     recordAttemptStarted(attempt);
     let result = await withExecutionHeartbeat(
-      () => executor.run(manifest, experimentCwd, command, registerProcess, primaryMetricName),
+      () => { assertPinnedImplementation(); return executor.run(manifest, experimentCwd, command, registerProcess, primaryMetricName); },
       { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
     );
     if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [primaryMetricName]);
@@ -1938,9 +2002,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
       setProgress(`Experiment ${id} · retry ${attempt + 1}/${plan.maxAttempts} after ${plan.action}...`);
       await new Promise<void>((resolve) => setTimeout(resolve, delay * 1000));
       attempt += 1;
+      assertPinnedImplementation();
       recordAttemptStarted(attempt);
       result = await withExecutionHeartbeat(
-        () => executor.run(manifest, experimentCwd, command, registerProcess, primaryMetricName),
+        () => { assertPinnedImplementation(); return executor.run(manifest, experimentCwd, command, registerProcess, primaryMetricName); },
         { storePath: join(root, ".sota", "database.sqlite"), experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
       );
       if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [primaryMetricName]);
@@ -2674,6 +2739,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request === "/clear") {
       setMessages([]);
+      setTranscriptOffset(0);
       return;
     }
     if (request === "/new") {
@@ -2685,7 +2751,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       sessionId.current = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       activeCodexThread.current = undefined;
       setConfig((current) => ({ ...current, campaign: undefined, codexThreadId: undefined }));
-      setSetupStep(null); setSetupDraft({}); setMessages([{ role: "system", text: "New Evidra session. Previous work remains available with /resume." }]);
+      setSetupStep(null); setSetupDraft({}); setMessages([{ role: "system", text: "New Evidra session. Previous work remains available with /resume." }]); setTranscriptOffset(0);
       const fresh = new ResearchStore(join(root, ".sota", "database.sqlite"));
       fresh.startSession(sessionId.current, { pid: process.pid, config: configRef.current, messages: [] });
       fresh.close();
@@ -2721,7 +2787,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       // campaign so restart is an explicit, provider-gated action below.
       resumedConfig.autonomy = config.autonomy;
       resumedConfig.codexThreadId = typeof storedConfig.codexThreadId === "string" ? storedConfig.codexThreadId : undefined;
-      setMessages([...resumedMessages, { role: "system", text: `Resumed ${saved.id} · permissions remain ${config.autonomy.toUpperCase()} for this terminal.` }]);
+      setMessages([...resumedMessages, { role: "system", text: `Resumed ${saved.id} · permissions remain ${config.autonomy.toUpperCase()} for this terminal.` }]); setTranscriptOffset(0);
       setConfig(resumedConfig);
       const campaign = resumedConfig.campaign;
       providerCheckId.current += 1;
@@ -2816,6 +2882,27 @@ export function App({ root }: { root: string }): React.JSX.Element {
       append("assistant", `Agent token ceiling ${parsed > 0 ? `set to ${parsed} tokens` : "removed (unlimited)"}. Current attributed usage: ${usedTokens} tokens.`);
       return;
     }
+    const budgetExtensionMatch = request.match(/^\/(research|challenge)\s+budget\s+add\s+(\S+)$/i);
+    if (budgetExtensionMatch) {
+      const requestedMode = budgetExtensionMatch[1].toLowerCase() as "research" | "challenge";
+      const addedMinutes = parseBudgetMinutes(budgetExtensionMatch[2]);
+      if (!addedMinutes) { append("assistant", "Invalid duration. Use /research budget add 90m, 4h, or 2d."); return; }
+      const budgetStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+      const saved = budgetStore.campaign() as ResearchCampaign | undefined;
+      if (!saved) { budgetStore.close(); append("assistant", `No campaign exists. Start one with /${requestedMode} start.`); return; }
+      const savedMode = resolveCampaignMode(saved.runtime?.mode, budgetStore.schedulerState().mode);
+      if (savedMode !== requestedMode) { budgetStore.close(); append("assistant", `The saved campaign uses ${savedMode} mode. Use that mode's budget command.`); return; }
+      if (budgetStore.liveControllerLease()) { budgetStore.close(); append("assistant", `The controller is still alive. Pause and stop it before changing its saved budget; then use /${requestedMode} budget add ${budgetExtensionMatch[2]} and resume.`); return; }
+      if (saved.status !== "paused") { budgetStore.close(); append("assistant", "Only a paused campaign can have its budget extended. Pause it first; stopped campaigns remain stopped."); return; }
+      const extended = extendCampaignBudget(saved, addedMinutes);
+      budgetStore.saveCampaign(extended);
+      budgetStore.setSchedulerState({ status: "paused", mode: requestedMode, currentStep: "budget-extended" });
+      budgetStore.appendEvent("research.campaign.budget.extended", { mode: requestedMode, addedMinutes, budgetMinutes: extended.budgetMinutes, source: "operator" });
+      budgetStore.close();
+      setConfig((current) => ({ ...current, mode: requestedMode, campaign: extended }));
+      append("assistant", `${requestedMode === "challenge" ? "Challenge" : "Research"} budget extended by ${addedMinutes} minutes (total ${extended.budgetMinutes} minutes). Resume with /${requestedMode} resume when ready.`);
+      return;
+    }
     const targetedResumeMatch = request.match(/^\/(research|challenge)\s+resume\s+(\S+)$/i);
     if (targetedResumeMatch) {
       const requestedMode = targetedResumeMatch[1].toLowerCase() as "research" | "challenge";
@@ -2827,6 +2914,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const historicalMode = historical.campaign.runtime && typeof historical.campaign.runtime === "object" && !Array.isArray(historical.campaign.runtime) && (historical.campaign.runtime as Record<string, unknown>).mode === "challenge" ? "challenge" : "research";
       if (historicalMode !== requestedMode) { historyStore.close(); append("assistant", `That run belongs to ${historicalMode}. Use /${historicalMode} resume ${requestedStartedAt}.`); return; }
       if (historical.status === "completed") { historyStore.close(); append("assistant", "Completed campaign runs are immutable. Start a new campaign instead."); return; }
+      if ((historical.campaign as ResearchCampaign).budgetExhausted) { historyStore.close(); append("assistant", `This run exhausted its time budget. Extend the active saved campaign with /${requestedMode} budget add 90m before resuming.`); return; }
       if (current?.status === "running" && current.startedAt !== requestedStartedAt) { historyStore.close(); append("assistant", "Another campaign is running. Pause or stop it before resuming a historical run."); return; }
       const resumed = { ...(historical.campaign as ResearchCampaign), status: "running" as const, nextAttemptAt: undefined, limitMessage: undefined };
       historyStore.saveCampaign(resumed); historyStore.setSchedulerState({ status: "running", mode: requestedMode, currentStep: "resuming" }); historyStore.close();
@@ -2861,6 +2949,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", `${actualMode === "challenge" ? "Challenge" : "Research"} campaign is completed/stopped. Start a new campaign with /${actualMode} start.`);
         return;
       }
+      if (action === "resume" && saved.budgetExhausted) {
+        store.close();
+        append("assistant", `The campaign's time budget is exhausted. Extend it first with /${actualMode} budget add 90m, then resume.`);
+        return;
+      }
       if (action === "pause") {
         pauseActiveProcesses();
         if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
@@ -2881,6 +2974,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", `${actualMode === "challenge" ? "Challenge" : "Research"} stopped. It remains saved for inspection, but will not resume automatically.`);
         return;
       }
+      if (action === "resume" && saved.budgetExhausted) {
+        store.close();
+        append("assistant", `The campaign's time budget is exhausted. Extend it first with /${actualMode} budget add 90m, then resume.`);
+        return;
+      }
       const resumed = { ...resumeCampaign(saved), nextAttemptAt: undefined, limitMessage: undefined };
       store.saveCampaign(resumed); store.setSchedulerState({ status: "running", mode: actualMode, currentStep: "resuming" }); store.close();
       setConfig((current) => ({ ...current, mode: actualMode, campaign: resumed }));
@@ -2895,6 +2993,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const savedCampaign = store.campaign() as ResearchCampaign | undefined;
       const controlMode = resolveCampaignMode(savedCampaign?.runtime?.mode, store.schedulerState().mode);
+      if (request === "/resume" && savedCampaign?.budgetExhausted) { store.close(); append("assistant", `The campaign's time budget is exhausted. Extend it with /${controlMode} budget add 90m before resuming.`); return; }
       store.setSchedulerState({ status: request === "/pause" ? "paused" : "running", mode: controlMode, currentStep: null });
       const campaign = savedCampaign
         ? request === "/pause" ? pauseCampaign(savedCampaign) : resumeCampaign(savedCampaign)
@@ -4847,7 +4946,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
       <Text color={UI.paper} bold>EVIDRA</Text><Text color={UI.muted}>  RESEARCH DIRECTOR</Text><Text color={UI.rule}>  │  </Text><Text color={UI.purple} bold>{config.mode.toUpperCase()}</Text><Text color={UI.rule}>  │  </Text><Text color={UI.amber} bold>THINKING: {config.reasoningEffort.toUpperCase()}</Text><Text color={UI.rule}>  │  </Text><Text color={UI.lime} bold>{config.autonomy.toUpperCase()}</Text>
     </Box>
     <Box flexDirection="column" marginTop={1} paddingX={1}>
-      {messages.slice(-16).map((message, index) => {
+      {transcriptOffset > 0 && <Text color={UI.muted}>↑ PageUp · older messages · {transcriptOffset} from latest</Text>}
+      {(() => {
+        const end = Math.max(0, messages.length - transcriptOffset);
+        const start = Math.max(0, end - 16);
+        const visible = messages.slice(start, end).map((message, index) => {
         if (message.role === "assistant" && /^Interrupted\b/i.test(message.text)) {
           const detail = message.text.replace(/^Interrupted\s*[·:-]?\s*/i, "");
           return <Box key={`${index}-${message.text}`} marginBottom={1} paddingX={1}>
@@ -4869,7 +4972,10 @@ export function App({ root }: { root: string }): React.JSX.Element {
           <Text color={accent} bold>{message.role === "user" ? "›" : message.role === "assistant" ? "•" : "·"}{label ? ` ${label}` : ""}</Text>
           <RichText text={body} />
         </Box>;
-      })}
+        });
+        return <>{visible}{messages.length > 16 && transcriptOffset === 0 && <Text color={UI.muted}>PgUp · older messages · {messages.length} in transcript</Text>}</>;
+      })()}
+      {transcriptOffset > 0 && <Text color={UI.muted}>↓ PageDown · return to latest</Text>}
     </Box>
     {queuedRequests.length > 0 && <Box flexDirection="column" paddingX={1} marginTop={1}>
       <Text color={UI.amber} bold>• QUEUED · {queuedRequests.length} waiting</Text>

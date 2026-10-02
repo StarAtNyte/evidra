@@ -8,6 +8,14 @@
  */
 export function candidateChangePath(value: unknown): string | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined;
+  // The change description can mention datasets (for example `valid.parquet`)
+  // before it names the source being edited. Only source-code paths can be
+  // passed to an evaluator's `--estimator` argument.
+  const sourceExtensions = new Set([
+    ".py", ".pyi", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts",
+    ".rs", ".go", ".java", ".kt", ".kts", ".scala", ".c", ".cc", ".cpp", ".h", ".hh",
+    ".hpp", ".cs", ".rb", ".php", ".swift", ".sh",
+  ]);
   const tokenPattern = /(?:\.\/)?[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\.[A-Za-z0-9_-]+/g;
   for (const match of value.matchAll(tokenPattern)) {
     const token = match[0];
@@ -22,6 +30,8 @@ export function candidateChangePath(value: unknown): string | undefined {
     // Numeric literals such as `0.5` are common in hypotheses and must never
     // be interpreted as candidate file paths.
     if (/^\d+(?:\.\d+)?$/.test(normalized)) continue;
+    const extension = normalized.slice(normalized.lastIndexOf(".")).toLowerCase();
+    if (!sourceExtensions.has(extension)) continue;
     const parts = normalized.split("/");
     if (!normalized || parts.some((part) => !part || part === "." || part === "..")) continue;
     return normalized;

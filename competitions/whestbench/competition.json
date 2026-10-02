@@ -5,44 +5,52 @@
   "datasetRevision": "v2-phase2",
   "workspacePath": "competitions/whestbench/starterkit",
   "metric": {
-    "name": "final_layer_mse",
+    "name": "adjusted_final_layer_score",
     "direction": "minimize"
   },
+  "secondaryMetrics": [
+    {
+      "name": "final_layer_mse",
+      "direction": "minimize",
+      "minimumDelta": 0,
+      "maximumRegression": 0
+    }
+  ],
   "evaluator": {
     "command": [
       "uv",
       "run",
-      "whest",
-      "run",
+      "python",
+      "evaluate_batched.py",
       "--estimator",
       "estimator.py",
       "--dataset",
       ".whest-data",
       "--split",
-      "mini",
-      "--runner",
-      "subprocess"
+      "mini"
     ],
     "estimatorPath": "estimator.py"
   },
-  "baselineCommand": ["uv", "run", "whest", "run", "--estimator", "examples/02_mean_propagation.py", "--dataset", ".whest-data", "--split", "mini", "--runner", "subprocess"],
-  "experimentCommand": ["uv", "run", "whest", "run", "--estimator", "estimator.py", "--dataset", ".whest-data", "--split", "mini", "--runner", "subprocess"],
+  "baselineCommand": ["uv", "run", "whest", "run", "--estimator", "examples/02_mean_propagation.py", "--dataset", ".whest-data", "--split", "mini", "--runner", "subprocess", "--max-threads", "2"],
+  "experimentCommand": ["uv", "run", "python", "evaluate_batched.py", "--estimator", "estimator.py", "--dataset", ".whest-data", "--split", "mini"],
   "execution": {
     "reducedValidationCommand": [
-      "uv", "run", "whest", "run",
+      "uv", "run", "python", "evaluate_batched.py",
       "--estimator", "estimator.py",
       "--dataset", ".whest-data",
       "--split", "mini",
-      "--runner", "local",
-      "--n-mlps", "1",
-      "--format", "json"
+      "--limit", "4"
     ],
-    "reducedPromotion": {
-      "enabled": true,
-      "minimumDelta": 0,
-      "tolerance": 0
+    "environment": {
+      "V26_STRASSEN": "5",
+      "OPENBLAS_NUM_THREADS": "2",
+      "OMP_NUM_THREADS": "2",
+      "MKL_NUM_THREADS": "2",
+      "VECLIB_MAXIMUM_THREADS": "2",
+      "NUMEXPR_NUM_THREADS": "2"
     },
-    "dataPaths": [".whest-data"]
+    "dataPaths": [".whest-data/metadata.json", ".whest-data/data"],
+    "supportFiles": ["evaluate_batched.py"]
   },
   "researchSources": [
     "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026",
@@ -51,11 +59,22 @@
     "https://github.com/AIcrowd/whest-starterkit",
     "https://github.com/AIcrowd/whestbench"
   ],
-  "evaluatorTimeoutMinutes": 60,
+  "researchChannels": [
+    { "kind": "rules", "url": "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026", "refreshMinutes": 60 },
+    { "kind": "other", "url": "https://www.aicrowd.com/participants/mohanty", "refreshMinutes": 60 },
+    { "kind": "discussion", "url": "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026/discussion", "refreshMinutes": 30 },
+    { "kind": "leaderboard", "url": "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026/leaderboards", "refreshMinutes": 15 }
+  ],
+  "evaluatorTimeoutMinutes": 240,
   "submission": {
     "platform": "command",
     "source": "workspace",
     "workingDirectory": "competitions/whestbench/starterkit",
-    "submitCommand": ["uv", "run", "whest", "submit", "--estimator", "estimator.py", "--watch"]
+    "artifactPaths": ["submission.tar.gz"],
+    "submitCommand": ["uv", "run", "whest", "submit", "{artifact:submission.tar.gz}", "--yes", "--watch"]
+  },
+  "submissionPolicy": {
+    "requireHumanApproval": true,
+    "dailyLimit": 10
   }
 }

@@ -1,10 +1,30 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
 import { EvidenceGateSchema, RunResultSchema, type EvidenceGate, type ExperimentManifest, type RunResult } from "./types.js";
 
 export function sha256File(path: string): string {
   if (!existsSync(path)) throw new Error(`Artifact does not exist: ${path}`);
-  return `sha256:${createHash("sha256").update(readFileSync(path)).digest("hex")}`;
+  const descriptor = openSync(path, "r");
+  try {
+    const before = fstatSync(descriptor);
+    if (!before.isFile()) throw new Error(`Artifact is not a regular file: ${path}`);
+    const digest = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    let bytesRead = 0;
+    while (true) {
+      const count = readSync(descriptor, buffer, 0, buffer.length, null);
+      if (count === 0) break;
+      digest.update(buffer.subarray(0, count));
+      bytesRead += count;
+    }
+    const after = fstatSync(descriptor);
+    if (bytesRead !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) {
+      throw new Error(`Artifact changed while it was being checksummed: ${path}`);
+    }
+    return `sha256:${digest.digest("hex")}`;
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 export function validateRunResult(value: unknown): RunResult {

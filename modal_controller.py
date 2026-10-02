@@ -39,8 +39,15 @@ image = (
     # the official Node 22 image and add Python only for Modal's runtime and
     # user experiment tooling.
     modal.Image.from_registry("node:22-bookworm-slim")
-    .apt_install("python3", "python3-pip", "python-is-python3")
-    .pip_install("uv", "modal")
+    .apt_install("python3", "python3-venv", "python-is-python3")
+    # Debian marks its system Python as externally managed (PEP 668), so
+    # Modal's pip_install helper fails when it invokes `python -m pip` here.
+    # Keep controller tooling isolated and expose it on PATH for child tasks.
+    .run_commands(
+        "python3 -m venv /opt/evidra-python",
+        "/opt/evidra-python/bin/pip install --no-cache-dir uv modal",
+    )
+    .env({"PATH": "/opt/evidra-python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"})
     .add_local_dir(WORKSPACE, remote_path=str(REMOTE_WORKSPACE), ignore=ignore_workspace_path)
 )
 app = modal.App("evidra-controller")

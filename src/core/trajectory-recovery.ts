@@ -5,7 +5,7 @@ import { MAX_TRACE_BYTES, parsePersistedTrace } from "./trajectories.js";
 import type { ResearchStore } from "./store.js";
 
 /** Register crash-surviving traces exactly once for either controller surface. */
-export function recoverUncommittedTraceFiles(root: string, store: ResearchStore, maxFiles = 100): number {
+export function recoverUncommittedTraceFiles(root: string, store: ResearchStore, maxFiles = 100, stateDirectory = join(root, ".sota")): number {
   const recoveredTrajectoryPaths = new Set(store.trajectories().flatMap((entry) => {
     const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { tracePath?: unknown } : {};
     return typeof payload.tracePath === "string" ? [payload.tracePath] : [];
@@ -14,7 +14,7 @@ export function recoverUncommittedTraceFiles(root: string, store: ResearchStore,
     const payload = event.payload && typeof event.payload === "object" ? event.payload as { path?: unknown; checksum?: unknown } : {};
     return typeof payload.path === "string" && typeof payload.checksum === "string" ? [`${payload.path}:${payload.checksum}`] : [];
   }));
-  const traceDirectory = join(root, ".sota", "traces");
+  const traceDirectory = join(stateDirectory, "traces");
   if (!existsSync(traceDirectory)) return 0;
   let recovered = 0;
   for (const name of readdirSync(traceDirectory).filter((entry) => entry.endsWith(".jsonl")).slice(-Math.max(1, Math.min(maxFiles, 500)))) {

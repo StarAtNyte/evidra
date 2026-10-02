@@ -104,7 +104,7 @@ export function guardWorkspaceCommand(command: string[], root: string): CommandG
   if (executable === "git") {
     for (let index = 1; index < command.length - 1; index += 1) if (command[index] === "-C" || command[index] === "--work-tree") pathArguments.add(index + 1);
   }
-  if (["rg", "grep", "find", "sed", "head", "tail", "cat", "du", "file", "wc", "awk"].includes(executable)) {
+  if (["rg", "grep", "find", "sed", "head", "tail", "cat", "du", "file", "wc", "awk", "sha256sum", "shasum", "md5sum"].includes(executable)) {
     for (let index = 1; index < command.length; index += 1) {
       const value = command[index] ?? "";
       if (!value.startsWith("-")) pathArguments.add(index);
@@ -129,7 +129,7 @@ export function guardWorkspaceCommand(command: string[], root: string): CommandG
  */
 export function guardReadOnlyInspection(command: string[]): CommandGuard {
   const executable = basename(command[0] ?? "").toLowerCase();
-  const readOnly = new Set(["true", "pwd", "ls", "find", "rg", "grep", "head", "tail", "sed", "awk", "wc", "du", "file", "which"]);
+  const readOnly = new Set(["true", "pwd", "ls", "find", "rg", "grep", "head", "tail", "sed", "awk", "wc", "du", "file", "which", "sha256sum", "shasum", "md5sum"]);
   if (executable === "git") {
     const allowed = new Set(["status", "rev-parse", "log", "diff", "show", "ls-files", "branch"]);
     if (!allowed.has(command[1]?.toLowerCase() ?? "")) return { allowed: false, reason: "SAFE mode only permits read-only Git inspection commands." };

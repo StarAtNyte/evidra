@@ -18,9 +18,12 @@ export async function applyUnifiedDiff(worktree: string, diff: string): Promise<
   const patchPath = join(worktree, ".evidra-local-engineer.diff");
   writeFileSync(patchPath, `${diff.trim()}\n`);
   try {
-    const check = await runProcess(["git", "apply", "--check", patchPath], worktree, 60_000);
+    // Model-generated unified diffs often preserve the actual changed lines
+    // but miscount the @@ hunk lengths. Ask Git to recount those lengths, then
+    // still run its ordinary applicability check before touching the worktree.
+    const check = await runProcess(["git", "apply", "--recount", "--check", patchPath], worktree, 60_000);
     if (check.exitCode !== 0) throw new Error(`Local engineer patch failed validation: ${check.stderr || check.stdout}`);
-    const applied = await runProcess(["git", "apply", "--whitespace=nowarn", patchPath], worktree, 60_000);
+    const applied = await runProcess(["git", "apply", "--recount", "--whitespace=nowarn", patchPath], worktree, 60_000);
     if (applied.exitCode !== 0) throw new Error(`Local engineer patch could not be applied: ${applied.stderr || applied.stdout}`);
   } finally {
     try { unlinkSync(patchPath); } catch { /* patch cleanup is best effort */ }

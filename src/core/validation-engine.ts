@@ -35,6 +35,7 @@ export interface ValidationAcceptance {
   accepted: boolean;
   comparison: RunComparison;
   gates: {
+    runIntegrity: boolean;
     minimumDelta: boolean;
     statisticalConfidence: boolean;
     permutationConfidence: boolean;
@@ -67,6 +68,18 @@ export interface SplitRunPair {
   split: string;
   baseline: RunResult;
   candidate: RunResult;
+}
+
+/** Fail closed on unsuccessful runs and common, explicitly named failure counters.
+ * The metric-name check is intentionally generic: challenge adapters can expose
+ * counts such as n_failed_examples without teaching the core about a domain.
+ */
+function runHasEvaluationFailures(run: RunResult): boolean {
+  if (run.status !== "completed" || run.exitCode !== 0 || run.failureClass !== undefined) return true;
+  if ((run.verification?.failed ?? 0) > 0) return true;
+  return Object.entries(run.metrics).some(([name, value]) =>
+    value > 0 && /^(?:(?:n|num|total)_)?(?:failed|failures)(?:_|$)|^(?:failure_count|failed_count)$/i.test(name),
+  );
 }
 
 /** Re-open only the replication gate after a verified child confirms the improvement. */
@@ -135,6 +148,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
     return { name: objective.name, direction: objective.direction, normalizedDelta: normalized, minimumDelta, maximumRegression, evidence: secondary.evidence, passed: normalized !== null && normalized >= minimumDelta - maximumRegression };
   });
   const gates = {
+    runIntegrity: !runHasEvaluationFailures(input.baseline) && !runHasEvaluationFailures(input.candidate),
     minimumDelta: normalizedDelta !== null && normalizedDelta >= input.minimumDelta,
     statisticalConfidence: comparison.evidence === "replicated" && (comparison.probabilityImproved ?? 0) >= adjustedProbabilityThreshold,
     permutationConfidence: !input.requirePermutationTest || (comparison.permutationPValue !== undefined && comparison.permutationPValue <= (1 - adjustedProbabilityThreshold)),
@@ -149,6 +163,7 @@ export function evaluateValidationAcceptance(input: ValidationAcceptanceInput): 
   };
   const worstSubgroupDelta = input.subgroupDeltas?.length ? Math.min(...input.subgroupDeltas) : null;
   const reasons: string[] = [];
+  if (!gates.runIntegrity) reasons.push("baseline and candidate must complete with zero reported evaluation failures");
   if (!gates.minimumDelta) reasons.push(`normalized delta ${normalizedDelta ?? "missing"} is below required ${input.minimumDelta}`);
   if (!gates.statisticalConfidence) reasons.push(`replicated improvement probability ${(comparison.probabilityImproved ?? 0).toFixed(3)} is below family-wise threshold ${adjustedProbabilityThreshold.toFixed(3)} across ${comparisonCount} comparison(s)`);
   if (!gates.permutationConfidence) reasons.push(`paired sign-permutation p-value ${(comparison.permutationPValue ?? 1).toFixed(4)} exceeds family-wise alpha ${(1 - adjustedProbabilityThreshold).toFixed(4)}`);

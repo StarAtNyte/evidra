@@ -63,7 +63,7 @@ user prompt
 
 ## First-run setup
 
-Use Node 22 and the official Codex CLI authentication flow:
+Use Node.js 22.19.0 or newer and the official Codex CLI authentication flow:
 
 ```bash
 nvm install 22

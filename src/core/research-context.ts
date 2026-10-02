@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ResearchStore } from "./store.js";
+import { compareClaims } from "./claim-consistency.js";
 import { transferableMethodsFromEvents, type TransferTarget, type TransferableMethod } from "./method-transfer.js";
 import { ablationPlansFromEvents, type AblationPlan } from "./ablation.js";
 import { verifiedPlaybooksFromEvents, type VerifiedPlaybook } from "./playbooks.js";
@@ -47,22 +48,43 @@ export function activeClaimIds(store: ResearchStore): Set<string> {
 /** Return only contradictions whose two claim endpoints are still active. */
 export function activeContradictionEdges(store: ResearchStore): ReturnType<ResearchStore["edges"]> {
   const active = activeClaimIds(store);
-  return store.edges().filter((edge) => edge.relation === "contradicts" && active.has(edge.fromId) && active.has(edge.toId));
+  const claims = new Map(store.claims().map((claim) => [claim.id, claim.payload && typeof claim.payload === "object" && !Array.isArray(claim.payload) ? claim.payload as Record<string, unknown> : {}]));
+  return store.edges().filter((edge) => {
+    if (edge.relation !== "contradicts" || !active.has(edge.fromId) || !active.has(edge.toId)) return false;
+    const left = claims.get(edge.fromId);
+    const right = claims.get(edge.toId);
+    if (!left || !right || typeof left.statement !== "string" || typeof right.statement !== "string") return false;
+    return compareClaims(
+      { id: edge.fromId, statement: left.statement, sourceType: String(left.sourceType ?? "unknown"), confidence: Number(left.confidence ?? 0) },
+      { id: edge.toId, statement: right.statement, sourceType: String(right.sourceType ?? "unknown"), confidence: Number(right.confidence ?? 0) },
+    )?.relation === "contradicts";
+  });
 }
 
-/** Count duplicate findings that still involve an active claim. */
+/** Count distinct duplicate claims that still involve active endpoints.
+ * A single claim may match several earlier claims, so counting every pair
+ * overstates the number of distinct findings and can keep adaptive allocation
+ * stuck in evidence-review mode.
+ */
 export function activeDuplicateClaimCount(store: ResearchStore): number {
   const activeClaims = activeClaimIds(store);
-  return store.eventsByType("evidence.claim.duplicate_detected").filter((event) => {
+  const duplicateClaims = new Set<string>();
+  for (const event of store.eventsByType("evidence.claim.duplicate_detected")) {
     const payload = event.payload && typeof event.payload === "object" ? event.payload as { claimId?: unknown; duplicateOf?: unknown } : {};
     const claimActive = typeof payload.claimId !== "string" || activeClaims.has(payload.claimId);
     const duplicateActive = typeof payload.duplicateOf !== "string" || activeClaims.has(payload.duplicateOf);
-    return claimActive && duplicateActive;
-  }).length;
+    if (claimActive && duplicateActive) {
+      const eventIdentity = event.eventHash ?? `${event.createdAt}:${JSON.stringify(event.payload)}`;
+      duplicateClaims.add(typeof payload.claimId === "string" ? payload.claimId : `event:${eventIdentity}`);
+    }
+  }
+  return duplicateClaims.size;
 }
 
 export interface ResearchMemoryContext {
   claims: Array<{ id: string; statement: string; scope: string; confidence: number; sourceType: string; sourceId: string; status: string }>;
+  /** Current, content-addressed operator/runtime observations, kept separate from learned memory. */
+  authoritativeObservations: Array<{ claimId: string; sourceId: string; statement: string; sourceTitle: string; contentHash: string }>;
   /** Retained for audit and negative evidence, but never mixed into active claims. */
   quarantinedClaims: Array<{ id: string; statement: string; scope: string; confidence: number; sourceType: string; sourceId: string; status: string }>;
   hypotheses: Array<{ id: string; title: string; status: string; mechanism?: string }>;
@@ -80,6 +102,8 @@ export interface ResearchMemoryContext {
     limit: number;
     routing: MemoryRetrievalRouting;
     activeClaimIds: string[];
+    /** Fresh, content-addressed runtime evidence pinned ahead of stale summaries. */
+    pinnedObservationClaimIds: string[];
     quarantinedClaimIds: string[];
     hypothesisIds: string[];
     falsificationHypothesisIds: string[];
@@ -191,13 +215,54 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
   const activeIds = activeClaimIds(store);
   const activeClaimEntries = claimEntries.filter((entry) => activeIds.has(entry.id));
   const quarantinedClaimEntries = claimEntries.filter((entry) => !activeIds.has(entry.id));
+  const verifiedObservationSources = new Set(store.sources().flatMap((entry) => {
+    const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { evidenceClass?: unknown; contentHash?: unknown; claims?: unknown } : {};
+    const hash = typeof payload.contentHash === "string" && /^(?:sha256:)?[a-f0-9]{64}$/i.test(payload.contentHash);
+    const hasEvidenceSummary = Array.isArray(payload.claims) && payload.claims.some((claim) => typeof claim === "string" && claim.trim().length > 0);
+    return payload.evidenceClass === "implementation" && hash && hasEvidenceSummary ? [entry.id] : [];
+  }));
   const claimValue = (entry: { id: string; payload: unknown }): ResearchMemoryContext["claims"][number] | undefined => {
     const value = entry.payload as Partial<ResearchMemoryContext["claims"][number]>;
     return typeof value.statement === "string" && typeof value.scope === "string" && typeof value.confidence === "number" && typeof value.sourceType === "string" && typeof value.sourceId === "string"
       ? { id: entry.id, statement: value.statement.slice(0, 800), scope: value.scope, confidence: value.confidence, sourceType: value.sourceType, sourceId: value.sourceId, status: value.status ?? "active" }
       : undefined;
   };
-  const claims = rankedMemory(store, activeClaimEntries, query, (entry) => JSON.stringify(entry.payload)).slice(0, bounded).flatMap((entry) => claimValue(entry) ?? []);
+  // A run result, file audit, or other direct observation should not disappear
+  // just because a campaign has accumulated many highly repetitive agent
+  // summaries. Pin a small, recent set of content-addressed observations, then
+  // fill the remaining budget using normal relevance ranking. Model-authored
+  // claims and unlinked observations remain relevance-ranked as before.
+  const observationPinLimit = Math.min(8, Math.max(1, Math.ceil(bounded * 0.25)));
+  const isRoutineWorkspaceSnapshot = (entry: { payload: unknown }): boolean => {
+    const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { scope?: unknown } : {};
+    return payload.scope === "current-workspace";
+  };
+  const pinnedObservationEntries = activeClaimEntries
+    .filter((entry) => {
+      const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { sourceType?: unknown; sourceId?: unknown } : {};
+      return payload.sourceType === "observation" && typeof payload.sourceId === "string" && verifiedObservationSources.has(payload.sourceId);
+    })
+    // Per-cycle repository snapshots are useful freshness signals, but must not
+    // evict more specific run, artifact, or evaluator-boundary observations.
+    .sort((a, b) => Number(isRoutineWorkspaceSnapshot(a)) - Number(isRoutineWorkspaceSnapshot(b)) || b.createdAt.localeCompare(a.createdAt))
+    .slice(0, observationPinLimit);
+  const sourceById = new Map(store.sources().map((entry) => [entry.id, entry]));
+  const authoritativeObservations = pinnedObservationEntries.flatMap((entry) => {
+    const claim = claimValue(entry);
+    const source = claim ? sourceById.get(claim.sourceId) : undefined;
+    if (!claim || !source) return [];
+    const payload = source.payload && typeof source.payload === "object" ? source.payload as { title?: unknown; contentHash?: unknown } : {};
+    return [{
+      claimId: entry.id,
+      sourceId: claim.sourceId,
+      statement: claim.statement,
+      sourceTitle: typeof payload.title === "string" ? payload.title.slice(0, 240) : claim.sourceId,
+      contentHash: typeof payload.contentHash === "string" ? payload.contentHash : "",
+    }];
+  });
+  const pinnedObservationIds = new Set(pinnedObservationEntries.map((entry) => entry.id));
+  const rankedClaims = rankedMemory(store, activeClaimEntries.filter((entry) => !pinnedObservationIds.has(entry.id)), query, (entry) => JSON.stringify(entry.payload));
+  const claims = [...pinnedObservationEntries, ...rankedClaims.slice(0, Math.max(0, bounded - pinnedObservationEntries.length))].flatMap((entry) => claimValue(entry) ?? []);
   const quarantinedClaims = rankedMemory(store, quarantinedClaimEntries, query, (entry) => JSON.stringify(entry.payload)).slice(0, routing.quotas.quarantinedClaims).flatMap((entry) => claimValue(entry) ?? []);
   const hypotheses = rankedMemory(store, store.hypotheses(), query, (entry) => JSON.stringify(entry.payload)).slice(0, routing.quotas.hypotheses).flatMap((entry) => {
     const value = entry.payload as { title?: unknown; status?: unknown; mechanism?: unknown };
@@ -225,6 +290,7 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
     limit: bounded,
     routing,
     activeClaimIds: claims.map((claim) => claim.id),
+    pinnedObservationClaimIds: pinnedObservationEntries.map((entry) => entry.id),
     quarantinedClaimIds: quarantinedClaims.map((claim) => claim.id),
     hypothesisIds: hypotheses.map((hypothesis) => hypothesis.id),
     executionPlaybookIds: executionPlaybooks.map((playbook) => playbook.id),
@@ -234,5 +300,5 @@ export function researchMemoryContext(store: ResearchStore, limit = 30, query?: 
   // Keep the actionable agenda near the front of the packet. Context packing
   // is key-order aware, so this prevents historical prose from crowding out
   // the next falsifiable test when a prompt is tightly bounded.
-  return { claims, quarantinedClaims, hypotheses, falsificationAgenda, contradictions, transferableMethods, verifiedPlaybooks, executionPlaybooks, failedDirections, repositoryLeads, ablationPlans, retrieval: { ...retrievalBasis, fingerprint } };
+  return { claims, authoritativeObservations, quarantinedClaims, hypotheses, falsificationAgenda, contradictions, transferableMethods, verifiedPlaybooks, executionPlaybooks, failedDirections, repositoryLeads, ablationPlans, retrieval: { ...retrievalBasis, fingerprint } };
 }

@@ -72,12 +72,13 @@ export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: 
       executor: manifest.resources.executor,
       gpu: manifest.resources.gpu ?? null,
       timeoutMinutes: manifest.resources.timeoutMinutes,
+      environment: manifest.resources.environment ?? {},
     },
     configPatch: manifest.change?.configPatch ?? {},
   });
   writeFileSync(configPath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
   return {
-    ...safeWorkerEnvironment({ ...overrides, HOME: workerHome }),
+    ...safeWorkerEnvironment({ ...(manifest.resources.environment ?? {}), ...overrides, HOME: workerHome }),
     EVIDRA_EXPERIMENT_ID: manifest.id,
     EVIDRA_EXPERIMENT_CONFIG: configPath,
     EVIDRA_DATASET_VERSION: datasetVersion,
@@ -88,12 +89,18 @@ export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: 
 
 export function classifyProcessFailure(result: ProcessResult, remote = false): RunResult["failureClass"] {
   const text = `${result.stdout}\n${result.stderr}`.toLowerCase();
+  // WhestBench emits structured runner errors on stdout and may exit before
+  // producing its normal metrics JSON. Preserve the failure semantics so the
+  // recovery planner can retry transient scoring-worker/dataset-generation
+  // faults, rather than misclassifying them as candidate regressions.
+  if (/scoring_runtime_error/.test(text) && /generating (?:the )?dataset|dataset generation/.test(text)) return "transient_cloud";
   if (/early stopped by evidra/.test(text)) return "early_stopped";
-  if (/out of memory|cuda oom|cuda.*memory/.test(text)) return "cuda_oom";
+  if (/cuda oom|cuda.*memory/.test(text)) return "cuda_oom";
+  if (/out of memory|unable to allocate\s+\d+(?:\.\d+)?\.?\s*(?:kib|mib|gib|kb|mb|gb)|memoryerror|cannot allocate memory|can't allocate memory|failed to allocate|allocation failed|not enough memory|std::bad_alloc|oom[- ]kill(?:er)?|memory limit exceeded/.test(text)) return "memory_exhausted";
   if (/nan|inf loss/.test(text)) return "nan_loss";
   if (/timed out|timeout/.test(text)) return "timeout";
   if (/no such file|file not found|missing data/.test(text)) return "data_missing";
-  if (/enoent|eacces|permission denied|module not found|modul enotfound|cannot import|no module named|dependency/.test(text)) return "dependency";
+  if (/enoent|eacces|permission denied|module not found|modul enotfound|err_module_not_found|cannot find (?:package|module)|cannot import|no module named|dependency|\b(?:command|executable) not found\b|(?:^|\n)\s*(?:sh|bash|zsh):\s*\d+:\s*[^:\n]+:\s*not found\b/.test(text)) return "dependency";
   if (/no space left on device|disk quota|enospc|out of disk space/.test(text)) return "disk";
   if (/rate limit|429|usage limit/.test(text)) return "rate_limit";
   if (/auth|unauthorized|forbidden/.test(text)) return "auth";
@@ -247,7 +254,9 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
     if (Array.isArray(subgroup)) subgroupDeltas = subgroup.map(finiteMetricValue).filter((item): item is number => item !== undefined);
   };
   try { addObject(JSON.parse(stdout)); } catch { /* output may be a log stream */ }
-  for (const line of stdout.split("\n")) {
+  const lines = stdout.split("\n");
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex] ?? "";
     try { addObject(JSON.parse(line)); } catch { /* non-JSON log line */ }
     const escapedMetric = metricName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");
     const keyed = line.match(new RegExp(`(?:^|\\s)[\\\"']?${escapedMetric}[\\\"']?\\s*[:=]\\s*(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)(%)?`, "i"));
@@ -263,13 +272,21 @@ export function parseMetricOutput(stdout: string, metricName: string): { metrics
       const value = Number(genericKeyed[2]);
       if (Number.isFinite(value)) setMetric(genericKeyed[1], genericKeyed[3] ? value / 100 : value);
     }
-    // Human-readable evaluator tables often render a stable machine label in
-    // brackets, e.g. `Raw MSE [final_layer_mse] 2.22e-04`. Keep this parser
-    // generic so competition adapters do not need to know the table's prose.
-    const bracketed = line.match(new RegExp(`\\[${escapedMetric}\\]\\s+(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)(%)?`, "i"));
-    if (bracketed) {
-      const value = Number(bracketed[1]);
-      if (Number.isFinite(value)) setMetric(metricName, bracketed[2] ? value / 100 : value);
+    // Human-readable tables can put a machine label either beside its value
+    // or on the following line. Preserve every labeled scalar so competition
+    // adapters can declare the official metric plus independent guardrails.
+    for (const match of line.matchAll(/\[([A-Za-z][A-Za-z0-9_./-]*)\]/g)) {
+      const name = match[1];
+      if (!name) continue;
+      const afterLabel = line.slice((match.index ?? 0) + name.length + 2);
+      const inline = afterLabel.match(/^\s+(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(%)?/);
+      const preceding = inline ? undefined : lines[lineIndex - 1]?.match(/(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(%)?\s*[^\d]*$/);
+      const valueText = inline?.[1] ?? preceding?.[1];
+      const isPercent = inline?.[2] ?? preceding?.[2];
+      if (valueText !== undefined) {
+        const value = Number(valueText);
+        if (Number.isFinite(value)) setMetric(name, isPercent ? value / 100 : value);
+      }
     }
     const columns = line.split("|").map((column) => column.trim());
     if (columns.length >= 5 && /^\d[\d,]*$/.test(columns[0])) {

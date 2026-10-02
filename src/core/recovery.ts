@@ -5,7 +5,7 @@ export interface RecoveryPlan {
   maxAttempts: number;
   backoffSeconds: number;
   action: string;
-  route: "retry" | "reduce_resources" | "refresh_data" | "repair_code" | "change_hypothesis" | "reauthenticate";
+  route: "retry" | "reduce_resources" | "refresh_data" | "repair_code" | "provision_environment" | "change_hypothesis" | "reauthenticate";
 }
 
 export interface RecoveryRouteDirective {
@@ -27,12 +27,13 @@ export function experimentReplayDecision(status: unknown): { allowed: boolean; r
 export function recoveryPlan(failureClass: RunResult["failureClass"]): RecoveryPlan {
   switch (failureClass) {
     case "cuda_oom": return { retry: true, maxAttempts: 2, backoffSeconds: 2, action: "retry with the same immutable manifest; then reduce memory pressure", route: "reduce_resources" };
+    case "memory_exhausted": return { retry: true, maxAttempts: 2, backoffSeconds: 2, action: "retry once after releasing worker memory; then reduce peak memory or split the workload", route: "reduce_resources" };
     case "transient_cloud": return { retry: true, maxAttempts: 3, backoffSeconds: 5, action: "retry the unchanged worker", route: "retry" };
     case "timeout": return { retry: true, maxAttempts: 2, backoffSeconds: 2, action: "retry once; then reduce runtime or split the workload", route: "reduce_resources" };
     case "disk": return { retry: true, maxAttempts: 2, backoffSeconds: 2, action: "retry after the worker releases temporary space", route: "refresh_data" };
     case "rate_limit": return { retry: true, maxAttempts: 2, backoffSeconds: 15, action: "retry after provider backoff", route: "retry" };
     case "data_missing": return { retry: false, maxAttempts: 1, backoffSeconds: 0, action: "refresh or repair the data contract before trying another experiment", route: "refresh_data" };
-    case "dependency": return { retry: false, maxAttempts: 1, backoffSeconds: 0, action: "repair the dependency or execution environment before trying another experiment", route: "repair_code" };
+    case "dependency": return { retry: false, maxAttempts: 1, backoffSeconds: 0, action: "provision the declared dependencies in an isolated, reproducible environment before trying another experiment", route: "provision_environment" };
     case "auth": return { retry: false, maxAttempts: 1, backoffSeconds: 0, action: "reauthenticate the provider before trying another experiment", route: "reauthenticate" };
     case "sandbox": return { retry: false, maxAttempts: 1, backoffSeconds: 0, action: "repair or change the execution sandbox before trying another experiment", route: "repair_code" };
     case "corrupt_artifact": return { retry: false, maxAttempts: 1, backoffSeconds: 0, action: "repair the artifact contract and rerun independently", route: "repair_code" };
@@ -58,6 +59,8 @@ export function recoveryRouteDirective(failureClass: RunResult["failureClass"]):
   const plan = recoveryPlan(failureClass);
   const instruction = normalized === "sandbox"
     ? "Repair the execution sandbox or select a verified alternate executor; do not repeat the blocked launcher unchanged."
+    : plan.route === "provision_environment"
+      ? "Provision only dependencies declared by the project's lockfile in an isolated execution environment. Do not edit application source to mask missing packages, do not install unpinned dependencies, and do not bypass the dependency-install permission gate; request approval or use a prebuilt environment when provisioning is not authorized."
     : plan.route === "reduce_resources"
       ? "Create a lower-resource or split-workload experiment; do not rerun the same resource manifest."
       : plan.route === "refresh_data"

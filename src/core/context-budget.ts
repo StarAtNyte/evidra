@@ -11,12 +11,12 @@ export interface BoundedContext {
 }
 
 const priority = [
-  "observation", "phaseGoal", "allocation", "evidenceConflicts", "toolResults",
-  "crossPollination", "laneReports", "researchMemory", "experienceReplay",
+  "observation", "authoritativeEvidence", "phaseGoal", "allocation", "availableTools", "evidenceConflicts", "toolResults", "laneToolResults",
+  "crossPollination", "peerLaneBoard", "laneReports", "priorLaneReports", "researchMemory", "experienceReplay",
   "literatureFrontier", "literatureBenchmarkEvidence", "openCriticConstraint", "adaptiveHarnessPolicy",
   "harnessAdaptationAgenda", "harnessEvolutionPlan", "harnessBenchmarkEvidence",
   "harnessChangeHistory",
-  "recentEvents", "researchSources", "availableTools",
+  "recentEvents", "researchSources",
 ];
 
 // Keep the controller's authoritative state visible even when a provider or
@@ -24,12 +24,20 @@ const priority = [
 // storage caps: the complete values remain durable in the store/artifacts.
 const sectionCaps: Record<string, number> = {
   observation: 12_000,
+  authoritativeEvidence: 6_000,
   phaseGoal: 6_000,
   allocation: 6_000,
   evidenceConflicts: 4_000,
   toolResults: 12_000,
   crossPollination: 6_000,
   laneReports: 10_000,
+  priorLaneReports: 24_000,
+  peerLaneBoard: 8_000,
+  // Tool evidence is a collection of independently useful observations. A
+  // fair per-item split makes a large but decisive file read unusable once a
+  // lane has also run inventory/search tools. Reserve a larger section and
+  // pack its observations by evidential value below.
+  laneToolResults: 32_000,
   researchMemory: 8_000,
   experienceReplay: 8_000,
   literatureFrontier: 6_000,
@@ -37,11 +45,19 @@ const sectionCaps: Record<string, number> = {
   researchSources: 8_000,
   availableTools: 8_000,
 };
-const protectedSections = new Set(["observation", "phaseGoal", "allocation", "evidenceConflicts"]);
+const protectedSections = new Set(["observation", "authoritativeEvidence", "phaseGoal", "allocation", "evidenceConflicts"]);
 const protectedSectionReserve = 512;
 
 function size(value: unknown): number {
   try { return JSON.stringify(value).length; } catch { return 0; }
+}
+
+function laneObservationDetails(value: unknown): { substantive: boolean; readableBytes: number } {
+  const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const tool = typeof record.name === "string" ? record.name : typeof record.tool === "string" ? record.tool : "";
+  const output = record.output && typeof record.output === "object" && !Array.isArray(record.output) ? record.output as Record<string, unknown> : {};
+  const readableBytes = typeof output.text === "string" ? output.text.length : typeof output.matches === "string" ? output.matches.length : 0;
+  return { substantive: tool === "workspace.read" || tool === "data.audit" || tool === "artifact.audit", readableBytes };
 }
 
 function boundValue(value: unknown, budget: number, path: string, truncated: string[]): unknown {
@@ -53,6 +69,68 @@ function boundValue(value: unknown, budget: number, path: string, truncated: str
   }
   if (Array.isArray(value)) {
     const output: unknown[] = [];
+    if (path === "laneToolResults" || path === "priorLaneReports") {
+      const laneBundles = value.some((item) => item && typeof item === "object" && !Array.isArray(item) && Array.isArray((item as Record<string, unknown>).observations));
+      if (laneBundles) {
+        // Allocate the aggregate budget across lanes first, then let each
+        // lane's observations prioritize readable evidence. A greedy first
+        // lane must not crowd every independent lane out of the director's
+        // context.
+        let remaining = budget;
+        for (let index = 0; index < value.length; index += 1) {
+          const lanesLeft = value.length - index;
+          if (remaining < 512) { truncated.push(path); break; }
+          const itemBudget = Math.max(512, Math.floor(remaining / lanesLeft));
+          const bounded = boundValue(value[index], itemBudget, `${path}[${index}]`, truncated);
+          if (bounded !== undefined) output.push(bounded);
+          remaining -= size(bounded);
+        }
+        if (output.length < value.length) truncated.push(path);
+        return output;
+      }
+      const entries = value.map((item, index) => {
+        return { item, index, ...laneObservationDetails(item) };
+      }).sort((left, right) => Number(right.substantive) - Number(left.substantive) || right.readableBytes - left.readableBytes || left.index - right.index);
+      let remaining = budget;
+      const retained = new Map<number, unknown>();
+      for (const entry of entries) {
+        if (remaining < 256) break;
+        // Preserve a meaningful slice of primary observations; keep only a
+        // compact status/result preview for the many routine search calls.
+        const itemBudget = entry.substantive ? Math.min(24_500, remaining) : Math.min(1_500, remaining);
+        const bounded = boundValue(entry.item, itemBudget, `${path}[${entry.index}]`, truncated);
+        if (bounded === undefined) continue;
+        const used = size(bounded);
+        retained.set(entry.index, bounded);
+        remaining -= used;
+      }
+      for (const entry of [...entries].sort((left, right) => left.index - right.index)) {
+        const bounded = retained.get(entry.index);
+        if (bounded !== undefined) output.push(bounded);
+      }
+      if (retained.size < value.length) truncated.push(path);
+      return output;
+    }
+    if (path.endsWith(".observations")) {
+      const entries = value.map((item, index) => ({ item, index, ...laneObservationDetails(item) }))
+        .sort((left, right) => Number(right.substantive) - Number(left.substantive) || right.readableBytes - left.readableBytes || left.index - right.index);
+      let remaining = budget;
+      const retained = new Map<number, unknown>();
+      for (const entry of entries) {
+        if (remaining < 192) break;
+        const itemBudget = entry.substantive ? Math.min(6_500, remaining) : Math.min(1_200, remaining);
+        const bounded = boundValue(entry.item, itemBudget, `${path}[${entry.index}]`, truncated);
+        if (bounded === undefined) continue;
+        retained.set(entry.index, bounded);
+        remaining -= size(bounded);
+      }
+      for (const entry of [...entries].sort((left, right) => left.index - right.index)) {
+        const bounded = retained.get(entry.index);
+        if (bounded !== undefined) output.push(bounded);
+      }
+      if (retained.size < value.length) truncated.push(path);
+      return output;
+    }
     // Feedback-bearing histories are append-only; preserve the newest entries
     // when the provider context is too small, then restore chronological order.
     const newestFirst = path === "toolResults" || path === "recentEvents";
@@ -80,9 +158,9 @@ function boundValue(value: unknown, budget: number, path: string, truncated: str
         if (Object.keys(output).length < Object.keys(value as Record<string, unknown>).length) truncated.push(path);
         break;
       }
+      }
+      return output;
     }
-    return output;
-  }
   return value;
 }
 

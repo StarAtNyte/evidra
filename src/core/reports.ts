@@ -5,7 +5,7 @@ import { auditClaims, selfDescribingClaimEvidenceIds } from "./claim-audit.js";
 import { redactCommand } from "./redaction.js";
 import { activeContradictionEdges, activeDuplicateClaimCount, researchMemoryContext } from "./research-context.js";
 import { sourceFrontier } from "./sources.js";
-import { evaluatePhaseGoalEvidence, phaseGoalEventsSince, phaseGoalRecordsSince, PHASE_GOAL_EVENT_TYPES, phaseGoalsForMode, researchStageProgress } from "./phase-goals.js";
+import { evaluatePhaseGoalEvidence, phaseGoalEventsSince, phaseGoalRecordsSince, PHASE_GOAL_EVENT_TYPES, phaseGoalsForCurrentSet, phaseGoalsForMode, researchStageProgress } from "./phase-goals.js";
 import { PhaseGoalSchema } from "./types.js";
 
 export type ReportKind = "research" | "challenge" | "final";
@@ -81,7 +81,13 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
   });
   const title = kind === "research" ? "Research report" : kind === "challenge" ? "Challenge report" : "Final provenance report";
   const stageMode = kind === "challenge" ? "challenge" as const : "research" as const;
-  const stageGoals = phaseGoalsForMode(goals.map((goal) => PhaseGoalSchema.parse(goal.payload)), stageMode);
+  const persistedCampaign = store.campaign() as { goalSetId?: unknown; runtime?: { mode?: unknown } } | undefined;
+  const campaignGoalSet = persistedCampaign?.runtime?.mode === stageMode && typeof persistedCampaign.goalSetId === "string"
+    ? persistedCampaign.goalSetId
+    : undefined;
+  const stageGoals = phaseGoalsForCurrentSet(goals.map((goal) => PhaseGoalSchema.parse(goal.payload)), stageMode, campaignGoalSet);
+  const stageGoalIds = new Set(stageGoals.map((goal) => goal.id));
+  const reportGoals = goals.filter((goal) => stageGoalIds.has(PhaseGoalSchema.parse(goal.payload).id));
   const stageProgress = researchStageProgress(stageGoals);
   const sections = [
     `# ${title}`,
@@ -103,7 +109,7 @@ export function renderReport(store: ResearchStore, kind: ReportKind): string {
     "",
     "## Phase goals",
     "",
-    goals.length ? goals.map((goal) => {
+    reportGoals.length ? reportGoals.map((goal) => {
       const payload = goal.payload as { title?: string; objective?: string; status?: string; attempts?: number; goalSetId?: string };
       const gate = phaseEvidence(goal);
       const progress = `${gate.progress.completed}/${gate.progress.total} checks (${(gate.progress.ratio * 100).toFixed(0)}%)`;

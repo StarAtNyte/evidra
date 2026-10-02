@@ -31,6 +31,25 @@ export interface SourceSearchResult {
 
 export type SourceSearchDepth = "shallow" | "deep";
 
+/** Bump when topical ranking semantics change so durable search caches are invalidated. */
+export const SOURCE_SEARCH_RANKING_VERSION = 3;
+/** Below this lexical/provenance score, search results are discovery leads only. */
+export const SOURCE_SEARCH_MIN_RELEVANCE_SCORE = 0.25;
+
+export function sourceSearchNeedsRefinement(results: SourceSearchResult[]): boolean {
+  return !results.some((result) => typeof result.qualityScore === "number"
+    && result.qualityScore >= SOURCE_SEARCH_MIN_RELEVANCE_SCORE);
+}
+
+export function sourceSearchCacheIsCurrent(payload: unknown, query: string, depth: SourceSearchDepth): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const record = payload as { query?: unknown; depth?: unknown; rankingPolicyVersion?: unknown; results?: unknown };
+  return record.query === query
+    && record.rankingPolicyVersion === SOURCE_SEARCH_RANKING_VERSION
+    && (depth === "shallow" || record.depth === "deep")
+    && Array.isArray(record.results);
+}
+
 /** Classify a URL when it enters the system without a search-provider record. */
 export function sourceEvidenceClass(url: string, provider?: SourceSearchResult["provider"], doi?: string): SourceEvidenceClass {
   let host = "";
@@ -51,13 +70,23 @@ export function sourceEvidenceQuality(input: Pick<SourceSearchResult, "url" | "p
 }
 
 /**
- * Rank candidates by provenance before relevance. Search engines and indexes
- * are useful for discovery, but they must not crowd out a retrievable paper,
- * official specification, or implementation repository. The score is only a
- * routing heuristic; retrieved content and claims remain independently audited.
+ * Rank by topical match for multi-term queries, then provenance. Search
+ * engines and indexes are useful for discovery, but must not crowd out a
+ * retrievable paper, official specification, or implementation repository.
+ * The score is only a routing heuristic; content and claims remain audited.
  */
 export function rankSourceSearchResults(results: SourceSearchResult[], query?: string, limit = 20): SourceSearchResult[] {
-  const queryTokens = new Set((query ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3));
+  const queryStopwords = new Set(["about", "after", "also", "among", "and", "are", "based", "best", "between", "both", "challenge", "current", "evidra", "for", "from", "general", "generalpurpose", "has", "have", "how", "into", "more", "our", "research", "same", "that", "the", "their", "them", "then", "this", "through", "with", "without", "work"]);
+  const tokenize = (value: string): Set<string> => new Set(value.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3 && !queryStopwords.has(token)));
+  const queryTokens = tokenize(query ?? "");
+  // Acronyms often carry the entity/topic identity (ARC, GEMS, MLP). Search
+  // indexes can return papers matching generic fragments such as "white-box"
+  // and "estimation" while missing that anchor. Keep those results available
+  // for discovery, but sharply lower their rank when they omit every explicit
+  // acronym from a multi-term query.
+  const queryAcronyms = [...new Set([...(query ?? "").matchAll(/\b[A-Z][A-Z0-9]{1,}\b/g)]
+    .map(([acronym]) => acronym.toLowerCase())
+    .filter((acronym) => !queryStopwords.has(acronym)))];
   const seen = new Set<string>();
   const scored = results.flatMap((result, index) => {
     const key = (result.doi ?? canonicalSourceUrl(result.url)).toLowerCase();
@@ -66,8 +95,23 @@ export function rankSourceSearchResults(results: SourceSearchResult[], query?: s
     const evidenceClass = sourceEvidenceClass(result.url, result.provider, result.doi);
     const base = evidenceClass === "scholarly" ? 0.72 : evidenceClass === "official" ? 0.62 : evidenceClass === "implementation" ? 0.52 : 0.2;
     const metadata = (result.doi ? 0.08 : 0) + (result.abstract ? 0.06 : 0) + (result.authors.length ? 0.04 : 0) + (result.venue ? 0.03 : 0);
-    const overlap = queryTokens.size ? [...queryTokens].filter((token) => `${result.title} ${result.abstract ?? ""}`.toLowerCase().includes(token)).length / queryTokens.size : 0;
-    const score = Math.max(0, Math.min(1, base + metadata + overlap * 0.07 + (result.queries?.length ?? 0) * 0.01));
+    const candidateTokens = tokenize(`${result.title} ${result.abstract ?? ""}`);
+    const overlap = queryTokens.size ? [...queryTokens].filter((token) => candidateTokens.has(token)).length / queryTokens.size : 0;
+    const acronymCoverage = queryAcronyms.length
+      ? queryAcronyms.filter((acronym) => candidateTokens.has(acronym)).length / queryAcronyms.length
+      : 1;
+    // Provenance is important, but a well-indexed irrelevant paper must not
+    // outrank a genuinely on-topic result. Relevance dominates; source class
+    // and metadata break ties rather than substituting for topical fit.
+    const provenance = Math.max(0, Math.min(1, base + metadata));
+    // A single-word query has too little signal for relevance to dominate;
+    // retain provenance/diversity ordering until the query contains a useful
+    // multi-term topic.
+    const topicalScore = queryTokens.size > 1
+      ? overlap * 0.85 + provenance * 0.12
+      : provenance + overlap * 0.07 + Math.min(result.queries?.length ?? 0, 3) * 0.01;
+    const anchorWeight = queryTokens.size > 1 && queryAcronyms.length > 0 ? 0.3 + 0.7 * acronymCoverage : 1;
+    const score = Math.max(0, Math.min(1, topicalScore * anchorWeight));
     return [{ ...result, evidenceClass, qualityScore: Number(score.toFixed(4)), _rank: score, _index: index }];
   }).sort((left, right) => right._rank - left._rank || right.qualityScore - left.qualityScore || left._index - right._index);
   const selected: typeof scored = [];
@@ -122,6 +166,10 @@ export interface RepositorySearchResult {
 }
 
 const MAX_BYTES = 2 * 1024 * 1024;
+// The lightweight regex extractor is intended for short technical notes, not
+// arbitrarily complex full-paper PDFs. Large PDFs remain hash/provenance
+// records, but their text must be obtained through a bounded parser upstream.
+const MAX_PDF_PARSE_BYTES = 256 * 1024;
 const MAX_REDIRECTS = 5;
 export const SOURCE_REQUEST_TIMEOUT_MS = 30_000;
 export const SOURCE_DNS_TIMEOUT_MS = 5_000;
@@ -424,7 +472,7 @@ async function assertPublicUrl(url: URL): Promise<void> {
 }
 
 /** Read a response incrementally so an unadvertised large body cannot exhaust the controller. */
-async function boundedResponseBytes(response: Response): Promise<Uint8Array> {
+async function boundedResponseBytes(response: Response, signal?: AbortSignal): Promise<Uint8Array> {
   if (!response.body) {
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.byteLength > MAX_BYTES) throw new Error(`Source is larger than the ${MAX_BYTES} byte retrieval limit.`);
@@ -435,7 +483,25 @@ async function boundedResponseBytes(response: Response): Promise<Uint8Array> {
   let total = 0;
   try {
     while (true) {
-      const next = await reader.read();
+      const next = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+        let settled = false;
+        const finish = (callback: () => void): void => {
+          if (settled) return;
+          settled = true;
+          signal?.removeEventListener("abort", onAbort);
+          callback();
+        };
+        const onAbort = (): void => {
+          void reader.cancel(signal?.reason).catch(() => undefined);
+          finish(() => reject(signal?.reason instanceof Error ? signal.reason : new Error("Source retrieval aborted.")));
+        };
+        if (signal?.aborted) { onAbort(); return; }
+        signal?.addEventListener("abort", onAbort, { once: true });
+        reader.read().then(
+          (value) => finish(() => resolve(value)),
+          (error: unknown) => finish(() => reject(error)),
+        );
+      });
       if (next.done) break;
       const chunk = next.value;
       total += chunk.byteLength;
@@ -473,12 +539,42 @@ function sourceId(url: string, contentHash: string): string {
   return `src_${createHash("sha256").update(`${canonicalSourceUrl(url)}\n${contentHash}`).digest("hex").slice(0, 20)}`;
 }
 
-function stripMarkup(input: string): string {
+function stripTableCellMarkup(input: string): string {
+  const decodeCodePoint = (digits: string, radix: number): string => {
+    const codePoint = Number.parseInt(digits, radix);
+    return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : " ";
+  };
   return input
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<br\s*\/?\s*>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#x27;|&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#(\d+);/g, (_match, digits: string) => decodeCodePoint(digits, 10))
+    .replace(/&#x([0-9a-f]+);/gi, (_match, digits: string) => decodeCodePoint(digits, 16))
+    .replace(/[\s\u00a0]+/g, " ")
+    .trim();
+}
+
+function preserveTableRows(input: string): string {
+  return input.replace(/<tr\b[^>]*>([\s\S]*?)<\/tr\s*>/gi, (_match, row: string) => {
+    const cells = [...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]\s*>/gi)]
+      .map((cell) => stripTableCellMarkup(cell[1] ?? ""));
+    return cells.length ? `\n| ${cells.join(" | ")} |\n` : `\n${row}\n`;
+  });
+}
+
+function stripMarkup(input: string): string {
+  return preserveTableRows(input)
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     // Preserve document structure for channel parsers and human inspection.
     .replace(/<h[1-6][^>]*>/gi, "\n# ")
+    .replace(/<t[dh]\b[^>]*>/gi, " | ")
+    .replace(/<\/t[dh]\s*>/gi, "")
     .replace(/<\/(?:br|p|div|li|tr|h[1-6]|section|article|pre|blockquote|dt|dd)>/gi, "\n")
     .replace(/<br\s*\/?\s*>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
@@ -511,16 +607,25 @@ function decodePdfLiteral(value: string): string {
 
 /** Extract common PDF text operators without treating binary PDF bytes as prose. */
 export function extractPdfText(bytes: Uint8Array): string {
+  // A compressed PDF stream can expand dramatically beyond the bounded HTTP
+  // body, and regex parsing itself can be pathological on complex PDFs. This
+  // lightweight extractor therefore declines oversized files altogether.
+  if (bytes.byteLength > MAX_PDF_PARSE_BYTES) return "";
+  let remainingBytes = MAX_PDF_PARSE_BYTES;
   const document = Buffer.from(bytes).toString("latin1");
   const extracted: string[] = [];
   const streamPattern = /stream(?:\r\n|\n|\r)([\s\S]*?)(?:\r\n|\n|\r)endstream/g;
   for (const match of document.matchAll(streamPattern)) {
+    if (remainingBytes <= 0) break;
     const start = match.index ?? 0;
     const header = document.slice(Math.max(0, start - 500), start);
     let content = Buffer.from(match[1], "latin1");
     if (/\/FlateDecode\b/.test(header)) {
-      try { content = inflateSync(content); } catch { continue; }
+      try { content = inflateSync(content, { maxOutputLength: remainingBytes }); } catch { continue; }
+    } else if (content.byteLength > remainingBytes) {
+      content = content.subarray(0, remainingBytes);
     }
+    remainingBytes -= content.byteLength;
     const stream = content.toString("latin1");
     for (const literal of stream.matchAll(/\(((?:\\[\s\S]|[^\\)])*)\)\s*Tj/g)) extracted.push(decodePdfLiteral(literal[1]));
     for (const array of stream.matchAll(/\[((?:\([^\)]*\)|<[^>]*>|[^\]])*)\]\s*TJ/g)) {
@@ -558,7 +663,13 @@ export async function retrieveSource(url: string, signal?: AbortSignal): Promise
   const contentType = response.headers.get("content-type") ?? "application/octet-stream";
   const length = Number(response.headers.get("content-length") ?? 0);
   if (length > MAX_BYTES) throw new Error(`Source is larger than the ${MAX_BYTES} byte retrieval limit.`);
-  const bytes = await boundedResponseBytes(response);
+  let bytes: Uint8Array;
+  try {
+    bytes = await boundedResponseBytes(response, requestSignal);
+  } catch (error) {
+    if (timeoutSignal.aborted && !signal?.aborted) throw new Error(`Source retrieval timed out after ${SOURCE_REQUEST_TIMEOUT_MS}ms.`);
+    throw error;
+  }
   const contentHash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   const raw = new TextDecoder().decode(bytes);
   const isPdf = contentType.toLowerCase().includes("pdf") || raw.startsWith("%PDF-");
@@ -681,6 +792,11 @@ export function sourceFrontier(events: Array<{ type: string; payload: unknown }>
   const retrievedClaimCounts = new Map<string, number>();
   for (const event of events) {
     const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    // Search results are durable, but their ranking can change as retrieval
+    // policy improves. Do not let legacy source-search events silently
+    // repopulate the active frontier; web-search events have their own policy.
+    if (event.type === "research.source.search.completed"
+      && payload.rankingPolicyVersion !== SOURCE_SEARCH_RANKING_VERSION) continue;
     if (event.type === "research.source.search.completed" || event.type === "research.web.search.completed") {
       const query = typeof payload.query === "string" ? payload.query.trim() : "";
       const eventQueries = Array.isArray(payload.queries) ? payload.queries.filter((value): value is string => typeof value === "string" && value.trim().length > 0) : [];
@@ -690,6 +806,11 @@ export function sourceFrontier(events: Array<{ type: string; payload: unknown }>
         if (!value || typeof value !== "object") continue;
         const result = value as Partial<SourceSearchResult>;
         if (typeof result.title !== "string" || typeof result.url !== "string") continue;
+        // Keep weak provider hits out of coverage/priority calculations. They
+        // remain in the raw event for inspection, but must not make the
+        // durable evidence frontier look like useful discovery occurred.
+        if (typeof result.qualityScore === "number"
+          && result.qualityScore < SOURCE_SEARCH_MIN_RELEVANCE_SCORE) continue;
         const key = sourceWorkKey({ url: result.url, doi: typeof result.doi === "string" ? result.doi : undefined });
         const prior = byKey.get(key);
         const provider = result.provider;

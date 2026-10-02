@@ -1,5 +1,34 @@
 import { z } from "zod";
 
+/** Bounded environment overrides for reproducible experiments; secrets use dedicated secret refs instead. */
+export const ExperimentEnvironmentSchema = z.record(z.string(), z.string().max(4096)).default({}).superRefine((environment, context) => {
+  const entries = Object.entries(environment);
+  if (entries.length > 64) context.addIssue({ code: z.ZodIssueCode.custom, message: "experiment environment may contain at most 64 variables" });
+  for (const [key] of entries) {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) context.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: "environment variable names must use uppercase letters, digits, and underscores" });
+    if (/(TOKEN|KEY|SECRET|PASSWORD|COOKIE|AUTH|CREDENTIAL|PASS)/i.test(key)) context.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: "secrets must be supplied through the designated secret mechanism, not experiment environment" });
+    if (/^(PATH|HOME|PWD|TMPDIR|TMP|TEMP|SHELL|EVIDRA_)/i.test(key) || key.startsWith("LD_")) context.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: "protected process environment variables cannot be overridden" });
+  }
+});
+export const ExperimentEnvironmentOverridesSchema = z.array(z.object({ name: z.string().trim().min(1).max(120), value: z.string().max(4096) }).strict()).max(64).superRefine((entries, context) => {
+  const environment = Object.fromEntries(entries.map(({ name, value }) => [name, value]));
+  const seen = new Set<string>();
+  for (const [index, { name }] of entries.entries()) {
+    if (seen.has(name)) context.addIssue({ code: z.ZodIssueCode.custom, path: [index, "name"], message: "experiment environment override names must be unique" });
+    seen.add(name);
+  }
+  const parsed = ExperimentEnvironmentSchema.safeParse(environment);
+  if (!parsed.success) for (const issue of parsed.error.issues) context.addIssue({ ...issue, path: ["environment", ...issue.path] });
+});
+
+export const ImplementationArtifactSchema = z.object({
+  /** Project-relative, checksum-pinned source artifact; may live under .sota/. */
+  path: z.string().trim().min(1).max(1_000),
+  sha256: z.string().regex(/^sha256:[a-f0-9]{64}$/i),
+  /** Relative path inside the adapter workspace in the isolated worktree. */
+  targetPath: z.string().trim().min(1).max(1_000),
+}).strict();
+
 export const CompetitionConfigSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -37,6 +66,8 @@ export const CompetitionConfigSchema = z.object({
     competition: z.string().optional(),
     predictionFile: z.string().optional(),
     workingDirectory: z.string().optional(),
+    /** Workspace-relative immutable files consumed by a submission command. */
+    artifactPaths: z.array(z.string().min(1)).default([]),
     submitCommand: z.array(z.string()).optional(),
     scoreCommand: z.array(z.string()).optional(),
     submitUrl: z.string().url().optional(),
@@ -57,6 +88,8 @@ export const CompetitionConfigSchema = z.object({
   }).optional(),
   execution: z.object({
     matrixRequired: z.boolean().default(false),
+    /** Secret-free, reproducible environment passed to isolated experiment workers. */
+    environment: ExperimentEnvironmentSchema,
     smokeCommand: z.array(z.string()).min(1).optional(),
     reducedValidationCommand: z.array(z.string()).min(1).optional(),
     reducedPromotion: z.object({
@@ -69,6 +102,8 @@ export const CompetitionConfigSchema = z.object({
     requiredArtifacts: z.array(z.string()).default([]),
     /** Workspace-relative datasets staged into isolated experiment worktrees. */
     dataPaths: z.array(z.string().min(1)).default([]),
+    /** Immutable workspace-local files needed by evaluators but absent from Git worktrees. */
+    supportFiles: z.array(z.string().min(1)).default([]),
   }).optional(),
   validation: z.object({
     primarySplit: z.string().min(1).default("mini"),
@@ -102,6 +137,8 @@ export const ResearchHypothesisSchema = z.object({
   formulationFamily: z.string().min(1).max(80).default("unspecified"),
   outcomeType: z.enum(["metric", "artifact", "proof", "behavior", "system", "other"]).default("metric"),
   implementationMode: z.enum(["modify", "verify"]).default("modify"),
+  /** Secret-free per-experiment parameter overrides passed to the isolated executor. */
+  experimentEnvironment: ExperimentEnvironmentOverridesSchema.optional(),
   expectedOutcome: z.string().trim().min(1).optional(),
   mechanism: z.string().min(1),
   /** Conditions that must hold for the mechanism or transfer claim to be plausible. */
@@ -120,6 +157,27 @@ export const ResearchHypothesisSchema = z.object({
     competitionDifference: z.string().min(1).max(1_000),
     expectedFailureModes: z.array(z.string().min(1).max(300)).min(1).max(8),
   }).optional(),
+  /** Optional checksum-pinned implementation seed copied into the isolated candidate worktree. */
+  implementationSource: z.object({
+    path: z.string().trim().min(1).max(1_000),
+    sha256: z.string().regex(/^sha256:[a-f0-9]{64}$/i),
+    /** Optional adapter-workspace-relative candidate destination. */
+    targetPath: z.string().trim().min(1).max(1_000).nullable().optional(),
+  }).nullable().optional(),
+  /** Additional immutable inputs needed to implement a hypothesis, staged only by exact hash. */
+  implementationArtifacts: z.array(ImplementationArtifactSchema).max(8).default([]).superRefine((artifacts, context) => {
+    const targets = new Set<string>();
+    for (const [index, artifact] of artifacts.entries()) {
+      const normalized = artifact.targetPath.replaceAll("\\", "/").replace(/\/+$/, "");
+      if (normalized.startsWith("/") || normalized.split("/").some((part) => part === ".." || part === ".")) {
+        context.addIssue({ code: z.ZodIssueCode.custom, path: [index, "targetPath"], message: "implementation artifact target must stay inside the adapter workspace" });
+      }
+      if (targets.has(normalized)) context.addIssue({ code: z.ZodIssueCode.custom, path: [index, "targetPath"], message: "implementation artifact target paths must be unique" });
+      targets.add(normalized);
+    }
+  }),
+  /** Executable, bounded verification steps for non-metric outcomes in generic research. */
+  verificationCommands: z.array(z.array(z.string().trim().min(1).max(2_000)).min(1).max(32)).max(4).default([]),
   proposedChange: z.string().min(1),
   falsificationTest: z.string().trim().min(1),
   expectedMetricDelta: z.object({ low: z.number(), median: z.number(), high: z.number() }).default({ low: 0, median: 0, high: 0 }).superRefine((forecast, context) => {
@@ -137,6 +195,18 @@ export const ResearchHypothesisSchema = z.object({
     disabledValue: z.unknown(),
   })).max(8).default([]),
 }).superRefine((hypothesis, context) => {
+  const verificationCommands = new Set<string>();
+  for (const [index, command] of hypothesis.verificationCommands.entries()) {
+    const key = JSON.stringify(command);
+    if (verificationCommands.has(key)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["verificationCommands", index],
+        message: "verification commands must be exact-unique; duplicate commands are not independent evidence",
+      });
+    }
+    verificationCommands.add(key);
+  }
   if (hypothesis.outcomeType !== "metric" && !hypothesis.expectedOutcome) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -262,11 +332,12 @@ export const ExperimentManifestSchema = z.object({
   parentHypothesisIds: z.array(z.string().min(1)).max(2).default([]),
   hypothesisId: z.string().min(1),
   outcomeType: z.enum(["metric", "artifact", "proof", "behavior", "system", "other"]).default("metric"),
+  implementationMode: z.enum(["modify", "verify"]).default("modify"),
   gitCommit: z.string().min(1),
   datasetVersion: z.string().min(1),
   splitVersion: z.string().min(1),
   change: z.object({ configPatch: z.record(z.string(), z.unknown()) }),
-  resources: z.object({ executor: ExperimentExecutorKindSchema, image: z.string().min(1).optional(), gpu: z.string().optional(), timeoutMinutes: z.number().positive(), earlyStopping: z.object({ enabled: z.boolean(), metric: z.string().min(1), direction: z.enum(["maximize", "minimize"]), warmupSteps: z.number().int().nonnegative(), patience: z.number().int().positive(), minimumImprovement: z.number().nonnegative(), reference: z.array(z.object({ step: z.number().finite(), metric: z.number().finite() })).default([]) }).optional() }),
+  resources: z.object({ executor: ExperimentExecutorKindSchema, image: z.string().min(1).optional(), gpu: z.string().optional(), timeoutMinutes: z.number().positive(), environment: ExperimentEnvironmentSchema, earlyStopping: z.object({ enabled: z.boolean(), metric: z.string().min(1), direction: z.enum(["minimize", "maximize"]), warmupSteps: z.number().int().nonnegative(), patience: z.number().int().positive(), minimumImprovement: z.number().nonnegative(), reference: z.array(z.object({ step: z.number().finite(), metric: z.number().finite() })).default([]) }).optional() }),
   evaluation: z.object({ folds: z.array(z.number().int().nonnegative()), seeds: z.array(z.number().int()), requiredArtifacts: z.array(z.string()), matrixRequired: z.boolean().default(false), metrics: z.array(z.object({ name: z.string().min(1), direction: z.enum(["minimize", "maximize"]), minimumDelta: z.number().nonnegative().default(0), maximumRegression: z.number().nonnegative().default(0) })).default([]), verificationCommand: z.array(z.string()).min(1).optional(), verificationCommands: z.array(z.array(z.string()).min(1)).min(1).optional() }).superRefine((evaluation, context) => {
     const metricNames = new Set<string>();
     for (const [index, metric] of evaluation.metrics.entries()) {
@@ -315,7 +386,7 @@ export const RunResultSchema = z.object({
   stderr: z.string().optional(),
   command: z.array(z.string()).optional(),
   cwd: z.string().optional(),
-  failureClass: z.enum(["cuda_oom", "transient_cloud", "data_missing", "nan_loss", "dependency", "timeout", "early_stopped", "corrupt_artifact", "invalid_metric", "code_regression", "auth", "rate_limit", "disk", "sandbox", "unknown"]).optional(),
+  failureClass: z.enum(["cuda_oom", "memory_exhausted", "transient_cloud", "data_missing", "nan_loss", "dependency", "timeout", "early_stopped", "corrupt_artifact", "invalid_metric", "code_regression", "auth", "rate_limit", "disk", "sandbox", "unknown"]).optional(),
 });
 
 export type RunResult = z.infer<typeof RunResultSchema>;

@@ -127,8 +127,8 @@ export function isProviderUsageLimit(error: unknown): boolean {
   return error instanceof ProviderUsageLimitError || /rate limit|usage limit|quota|too many requests|not enough credits|at capacity|overloaded|server busy/i.test(error instanceof Error ? error.message : String(error));
 }
 
-/** Detect the host-level launcher failures that can be repaired by moving a
- * read-only turn into Evidra's disposable isolated workspace. */
+/** Detect host-level sandbox failures so callers can report the actual
+ * execution boundary instead of treating them as missing project evidence. */
 export function isCodexSandboxFailure(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error);
   return /bwrap|loopback|network namespace|sandbox.*(?:denied|failed)|(?:network|namespace).*(?:operation not permitted|permission denied)/i.test(text);
@@ -138,7 +138,7 @@ export function isCodexSandboxFailure(error: unknown): boolean {
 export function isProviderFallbackEligible(error: unknown): boolean {
   if (isProviderUsageLimit(error)) return true;
   const text = error instanceof Error ? error.message : String(error);
-  return /not logged in|unreachable|network|connection|temporarily unavailable|failed its health check/i.test(text);
+  return /not logged in|unreachable|network|connection|temporarily unavailable|failed its health check|timed out|timeout|deadline|stream disconnected|connection termination|econnreset|epipe|\b50[234]\b/i.test(text);
 }
 
 export function isRetryableAgentError(error: unknown): boolean {
@@ -296,16 +296,12 @@ export interface AvailableModel {
   supportedReasoningEfforts?: string[];
 }
 
-/** Build a small heterogeneous Codex pool without silently selecting costly
- * preview models. The requested model remains the primary route. */
-export function codexResearchModelPool(primary: string, models: AvailableModel[], maxModels = 4, reasoningEffort?: string): Array<{ provider: "codex"; model: string }> {
-  const selected = [primary, ...models
-    .filter((model) => !model.hidden && !/astra/i.test(model.id)
-      && (!reasoningEffort || !model.supportedReasoningEfforts?.length || model.supportedReasoningEfforts.includes(reasoningEffort)))
-    .map((model) => model.id)]
-    .filter((model, index, values) => model.trim().length > 0 && values.indexOf(model) === index)
-    .slice(0, Math.max(1, Math.min(6, Number.isFinite(maxModels) ? Math.floor(maxModels) : 4)));
-  return selected.map((model) => ({ provider: "codex" as const, model }));
+/** Keep every research lane on the operator-selected model by default.
+ * Role diversity comes from lane specialization; model diversity must be an
+ * explicit policy rather than an invisible override of /model or --model. */
+export function codexResearchModelPool(primary: string, _models: AvailableModel[], _maxModels = 4, _reasoningEffort?: string): Array<{ provider: "codex"; model: string }> {
+  const model = primary.trim();
+  return model ? [{ provider: "codex", model }] : [];
 }
 
 /** Normalize the app-server model schema for the TUI's string-based picker. */
@@ -558,21 +554,7 @@ export class CodexExecAgent {
   }
 
   private async runCodexSdk(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void, outputSchemaText?: string, role = "conversation assistant"): Promise<AgentResult> {
-    try {
-      return await this.runCodexSdkAttempt(prompt, onProgress, onProcess, outputSchemaText, role);
-    } catch (error) {
-      // Research/chat turns are read-only and may safely use a disposable
-      // copy if the host cannot create Codex's normal bwrap namespace. Never
-      // apply this to workspace-write experiment engineers.
-      if (this.options.sandbox === "read-only" && isCodexSandboxFailure(error)) {
-        const fallbackActivity = "Codex sandbox unavailable · changing route to a disposable isolated workspace";
-        onProgress?.(`${fallbackActivity}...`);
-        this.options.onActivity?.("codex", fallbackActivity);
-        const retryOptions = { ...this.options, threadId: undefined, sandbox: "danger-full-access" as const };
-        return await new CodexExecAgent(retryOptions, this.dependencies).runCodexSdkAttempt(prompt, onProgress, onProcess, outputSchemaText, role, "danger-full-access");
-      }
-      throw error;
-    }
+    return await this.runCodexSdkAttempt(prompt, onProgress, onProcess, outputSchemaText, role);
   }
 
   private async runCodexSdkAttempt(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void, outputSchemaText?: string, role = "conversation assistant", sandboxOverride?: CodexSandboxMode): Promise<AgentResult> {
@@ -605,9 +587,16 @@ export class CodexExecAgent {
     const model = effectiveCodexModel(this.options.model);
 
     try {
+      // In safe/read-only mode, shell execution must go through Evidra's
+      // permission-checked tool registry. Codex's native shell may require a
+      // host bwrap namespace that is unavailable in containers and remote
+      // workspaces; retrying it with broader access would silently weaken the
+      // user's permission choice. Preserve native shell only for explicitly
+      // writable modes.
+      const codexConfig = sandboxMode === "read-only" ? { features: { shell_tool: false } } : undefined;
       const codex = this.dependencies.createClient
-        ? this.dependencies.createClient({ codexPathOverride: resolveCodexBinary() })
-        : new Codex({ codexPathOverride: resolveCodexBinary() });
+        ? this.dependencies.createClient({ codexPathOverride: resolveCodexBinary(), ...(codexConfig ? { config: codexConfig } : {}) })
+        : new Codex({ codexPathOverride: resolveCodexBinary(), ...(codexConfig ? { config: codexConfig } : {}) });
       const thread = this.options.threadId
         ? codex.resumeThread(this.options.threadId, {
           threadSource: role === "research director" ? "evidra-research" : role === "experiment engineer" ? "evidra-experiment" : "evidra-chat",

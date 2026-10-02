@@ -51,7 +51,7 @@ export function allocateNextResearch(input: AllocationInput): ResearchAllocation
         : failureClass === "auth" || failureClass === "rate_limit" ? ["recovery", "Repair provider access or route to the configured alternate provider before retrying."]
           : failureClass === "sandbox" ? ["recovery", "Repair the execution sandbox or select an alternate executor before retrying; do not repeat the blocked launcher unchanged."]
           : failureClass === "invalid_metric" || failureClass === "corrupt_artifact" ? ["evidence-validation", "Repair the output contract and run the independent artifact/metric verifier before changing the hypothesis."]
-            : failureClass === "cuda_oom" || failureClass === "timeout" || failureClass === "disk" || failureClass === "transient_cloud" ? ["recovery", "Change the resource route or bounded retry policy; do not repeat the same failed execution unchanged."]
+            : failureClass === "cuda_oom" || failureClass === "memory_exhausted" || failureClass === "timeout" || failureClass === "disk" || failureClass === "transient_cloud" ? ["recovery", "Change the resource route or bounded retry policy; do not repeat the same failed execution unchanged."]
               : ["recovery", "Classify and reproduce the failure with one controlled environmental change before selecting another expensive experiment."];
     return {
       focus: route[0] as AllocationFocus,
@@ -61,12 +61,16 @@ export function allocateNextResearch(input: AllocationInput): ResearchAllocation
       reasons: [`${count} recent run(s) classified as ${failureClass}`, ...(input.phase ? [`active phase: ${input.phase}`] : [])],
     };
   }
-  if (contradictions > 0 || duplicates > 0) return {
+  // Repeated claims are useful provenance diagnostics, but they are not
+  // disagreements and should not pin an autonomous campaign in review mode.
+  // Only an explicit contradictory pair is a blocking evidence-validation
+  // signal; duplicates remain available to reports and memory maintenance.
+  if (contradictions > 0) return {
     focus: "evidence-validation",
     priority: contradictions > 0 ? "critical" : "high",
     failedTrajectories: input.trajectories.filter((entry) => (entry.quality as { overall?: string } | null)?.overall === "FAIL").length,
     strategy: "Resolve conflicting or duplicate evidence with source-level review and an independent falsification check before selecting another expensive experiment.",
-    reasons: [`${contradictions} contradiction(s) and ${duplicates} duplicate claim(s) require review`, ...(input.phase ? [`active phase: ${input.phase}`] : [])],
+    reasons: [`${contradictions} contradictory evidence pair(s) require review`, ...(duplicates > 0 ? [`${duplicates} duplicate claim(s) are non-blocking provenance diagnostics`] : []), ...(input.phase ? [`active phase: ${input.phase}`] : [])],
   };
   const predictionAnalysis = input.predictionAnalysis;
   const hasTargetedPredictionFailure = (predictionAnalysis?.worstSlices ?? 0) > 0 || (predictionAnalysis?.worstGroups ?? 0) > 0;

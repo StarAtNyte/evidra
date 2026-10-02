@@ -15,7 +15,26 @@ export function decisionSignature(decision: Pick<ResearchDecision, "phase" | "de
 export function detectStagnation(decisions: Array<Pick<ResearchDecision, "phase" | "decision" | "bottleneck" | "selectedHypothesis" | "nextAction" | "goalStatus">>, threshold = 3): StagnationResult {
   const required = Math.max(2, Math.min(threshold, 10));
   const recent = decisions.slice(0, required);
+
+  // Exact prose signatures miss a common agent loop: the controller explicitly
+  // tells the director that a read-only request returned the same observation,
+  // but the director rewrites its hypothesis/action and asks to inspect again.
+  // Two consecutive inspect decisions carrying that explicit no-new-evidence
+  // signal are stronger evidence of a loop than lexical similarity is. Trigger
+  // the existing diversify-then-pause recovery without classifying ordinary
+  // multi-step research inspections as stagnant.
+  const noNewEvidence = /(?:same\s+(?:observation|result|output).{0,100}(?:earlier|previous|prior)|no\s+new\s+evidence|unchanged\s+(?:observation|result|output))/i;
+  const repeatedNoEvidence = decisions.slice(0, 2);
+  if (repeatedNoEvidence.length === 2
+      && repeatedNoEvidence.every((decision) => decision.goalStatus === "active"
+        && decision.decision === "inspect"
+        && decision.phase === repeatedNoEvidence[0]!.phase
+        && noNewEvidence.test(decision.nextAction))) {
+    return { stagnant: true, cycles: 2, signature: `${repeatedNoEvidence[0]!.phase}|inspect|explicit-no-new-evidence` };
+  }
+
   if (recent.length < required || recent.some((decision) => decision.goalStatus !== "active" || decision.decision === "run" || decision.decision === "replicate")) return { stagnant: false, cycles: recent.length, signature: recent[0] ? decisionSignature(recent[0]) : "" };
+
   const signature = decisionSignature(recent[0]);
   return { stagnant: recent.every((decision) => decisionSignature(decision) === signature), cycles: recent.length, signature };
 }

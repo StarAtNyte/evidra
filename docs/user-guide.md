@@ -16,7 +16,7 @@ normal text       → conversational Codex turn
 
 ## 1. Install and start
 
-Evidra requires Node.js 22.19 or newer. With `nvm`:
+Evidra requires Node.js 22.19.0 or newer. With `nvm`:
 
 ```bash
 nvm install 22
@@ -376,6 +376,11 @@ Pause and resume are first-class for challenges as well as research:
 /challenge stop
 ```
 
+The CLI also supports an explicit autonomy-only override when resuming:
+`evidra challenge resume --autonomy fast`. The provider, model, effort,
+budgets, lanes, and executor remain fixed and the permission change is recorded
+in the audit history. External submissions remain separately gated.
+
 The initial WhestBench adapter is only a trial adapter. The contract is generic
 enough for ML, data science, algorithmic, scientific, software, and other
 challenge workspaces.
@@ -542,6 +547,13 @@ evidra agents contract "geospatial specialist" \
 The allowlist is enforced at the tool boundary, survives contract rollback,
 and is revalidated when imported from a portable bundle. Omitting it preserves
 the role's authority-based defaults for backward compatibility.
+
+`data.audit` reports checksum coverage separately from content diagnostics.
+Its built-in row/column analysis currently covers CSV, TSV, and JSONL; common
+dataset containers such as Parquet, Arrow, Excel, NumPy, and JSON are listed as
+`uninspectedDataFiles` until a format-aware reader is used. A clean or empty
+diagnostic result is not evidence about files in that list, nor about files
+skipped by size or count limits.
 
 Role memory is recency-aware: the next lane prompt receives the newest bounded
 historical observations first, while still labeling them as context rather

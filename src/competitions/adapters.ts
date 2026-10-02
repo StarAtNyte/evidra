@@ -19,6 +19,12 @@ export const localResearchConfig: CompetitionConfig = {
   experimentCommand: ["true"],
 };
 
+/** Resolve the runtime adapter without letting research inherit a competition
+ * merely because its workspace was previously initialized for one. */
+export function competitionIdForMode(mode: "research" | "challenge", configuredCompetitionId?: string | null): string {
+  return mode === "research" ? "local-research" : configuredCompetitionId?.trim() || "local-research";
+}
+
 /**
  * The canonical Karpathy autoresearch checkout is intentionally small and
  * stable: prepare.py materializes the data and train.py is the editable
@@ -48,6 +54,27 @@ export interface CompetitionAdapter {
   workspacePath(projectRoot: string): string;
   baselineCommand(): string[];
   experimentCommand(): string[];
+}
+
+/** Return the competition's declared metric evaluator, optionally targeting a
+ * proposed estimator. This must stay distinct from experimentCommand(), which
+ * may train, prepare, or otherwise mutate the candidate rather than measure it.
+ */
+export function declaredEvaluatorCommand(adapter: Pick<CompetitionAdapter, "config">, estimatorPath?: string): string[] {
+  const command = [...adapter.config.evaluator.command];
+  if (estimatorPath) {
+    const index = command.indexOf("--estimator");
+    if (index >= 0 && command[index + 1]) command[index + 1] = estimatorPath;
+  }
+  return command;
+}
+
+/** Persist the adapter's resolved workspace explicitly so its generated
+ * manifest cannot shadow a registered adapter with a different default path.
+ */
+export function competitionManifestForInitialization(adapter: CompetitionAdapter, projectRoot: string): CompetitionConfig {
+  const workspacePath = relative(projectRoot, adapter.workspacePath(projectRoot)) || ".";
+  return { ...adapter.config, workspacePath };
 }
 
 const whestbenchAdapter: CompetitionAdapter = {

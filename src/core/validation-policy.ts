@@ -45,9 +45,11 @@ export function createValidationPolicy(competition: CompetitionConfig): Validati
     seeds,
     metric: competition.metric,
     secondaryMetrics: competition.secondaryMetrics ?? [],
-    // Validation acceptance compares direction-normalized improvement, so a
-    // useful improvement is positive for both maximize and minimize metrics.
-    acceptance: { minimumDelta: 0.002, requireReplication: true, requireLeakageAudit: true, requireReview: true },
+    // Do not impose a unit-bearing global effect threshold: 0.002 is sensible
+    // for a bounded rate, but makes valid improvements impossible for metrics
+    // such as WhestBench MSE in the 1e-9 range. Evidence and replication gates
+    // establish direction; projects may declare a domain-specific minimum.
+    acceptance: { minimumDelta: 0, requireReplication: true, requireLeakageAudit: true, requireReview: true },
     createdAt: new Date().toISOString(),
   });
 }

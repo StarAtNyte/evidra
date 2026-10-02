@@ -47,6 +47,48 @@ function approvalSeverity(item: ApprovalInboxItem): AttentionSeverity {
   return "info";
 }
 
+/** Keep historical queue failures from degrading an unrelated active campaign. */
+function queueTasksForActiveCampaign(store: ResearchStore): ReturnType<ResearchStore["queueTasks"]> {
+  const tasks = store.queueTasks();
+  const campaign = store.campaign() as { status?: unknown; startedAt?: unknown; currentCycle?: unknown } | undefined;
+  if (campaign?.status !== "running" && campaign?.status !== "paused") return tasks;
+  if (typeof campaign.startedAt !== "string" || !campaign.startedAt.trim()) return tasks;
+  const startedAt = campaign.startedAt.trim();
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const activeCycle = typeof campaign.currentCycle === "number" && Number.isInteger(campaign.currentCycle) ? campaign.currentCycle : null;
+  return tasks.filter((task) => {
+    const payload = task.payload && typeof task.payload === "object" && !Array.isArray(task.payload)
+      ? task.payload as { campaignStartedAt?: unknown }
+      : {};
+    if (typeof payload.campaignStartedAt === "string" && payload.campaignStartedAt !== startedAt) return false;
+    if (activeCycle !== null) {
+      let ancestor: typeof task | undefined = task;
+      const visited = new Set<string>();
+      for (let depth = 0; ancestor && depth < 32; depth += 1) {
+        const ancestorPayload = ancestor.payload && typeof ancestor.payload === "object" && !Array.isArray(ancestor.payload)
+          ? ancestor.payload as { cycle?: unknown }
+          : {};
+        if (ancestor.kind === "research.cycle" && typeof ancestorPayload.cycle === "number") {
+          if (ancestorPayload.cycle !== activeCycle) return false;
+          break;
+        }
+        if (!ancestor.parentTaskId || visited.has(ancestor.parentTaskId)) break;
+        visited.add(ancestor.parentTaskId);
+        ancestor = taskById.get(ancestor.parentTaskId);
+      }
+    }
+    if (typeof payload.campaignStartedAt === "string") return true;
+    // Legacy, unscoped tasks remain visible while live if they were updated
+    // during this campaign; old terminal failures are historical, not current health.
+    if (["queued", "running", "paused"].includes(task.status)) {
+      const updatedAt = Date.parse(task.updatedAt);
+      const boundary = Date.parse(startedAt);
+      return Number.isFinite(updatedAt) && Number.isFinite(boundary) && updatedAt >= boundary;
+    }
+    return false;
+  });
+}
+
 /** One bounded campaign-health projection shared by every operator surface. */
 export function controlPlaneHealth(store: ResearchStore): ControlPlaneHealth {
   const campaignValue = store.campaign();
@@ -56,7 +98,7 @@ export function controlPlaneHealth(store: ResearchStore): ControlPlaneHealth {
   const campaign: ControlPlaneHealth["campaign"] = campaignStatus === "running" || campaignStatus === "paused" || campaignStatus === "completed" ? campaignStatus : "idle";
   const rawLease = store.controllerLease();
   const controller: ControlPlaneHealth["controller"] = store.liveControllerLease() ? "running" : rawLease?.status === "running" ? "stale" : "idle";
-  const tasks = store.queueTasks();
+  const tasks = queueTasksForActiveCampaign(store);
   const routines = store.routines();
   const staleRoutines = routines.filter((routine) => routine.status === "running" && routine.leaseExpiresAt !== null && Date.parse(routine.leaseExpiresAt) <= Date.now()).length;
   const failedRoutines = routines.filter((routine) => routine.status === "failed" || routine.lastResult === "failed").length;
@@ -108,11 +150,13 @@ export function controlPlaneHealth(store: ResearchStore): ControlPlaneHealth {
  */
 export function operatorAttention(store: ResearchStore, root?: string): OperatorAttention {
   const items: OperatorAttentionItem[] = [];
+  const queue = queueTasksForActiveCampaign(store);
+  const currentQueueIds = new Set(queue.map((task) => task.id));
   for (const approval of approvalInbox(store, root)) {
+    if (approval.kind === "queue-recovery" && !currentQueueIds.has(approval.id)) continue;
     items.push({ id: `${approval.kind}:${approval.id}`, severity: approvalSeverity(approval), kind: approval.kind, summary: `${approval.id} · ${approval.detail}`, next: approval.next });
   }
 
-  const queue = store.queueTasks();
   const taskById = new Map(queue.map((task) => [task.id, task]));
   for (const task of queue) {
     if (!["queued", "running"].includes(task.status)) continue;

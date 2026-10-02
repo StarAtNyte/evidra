@@ -1,5 +1,6 @@
 import { agentOrganization, type AgentRoleContract } from "./agent-organization.js";
 import { phaseGoalSetId, researchStageProgress, type ResearchStageProgress } from "./phase-goals.js";
+import { recordsForGoalSet } from "./campaign-scope.js";
 import type { ResearchPhase } from "./types.js";
 import type { ResearchStore } from "./store.js";
 
@@ -107,11 +108,6 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
   const campaignGoal = text(campaign?.goal);
   const campaignStartedAt = text(campaign?.startedAt);
   const activeGoalSetId = typeof campaign?.goalSetId === "string" && campaign.goalSetId.trim() ? campaign.goalSetId.trim() : campaignGoal ? phaseGoalSetId(campaignGoal, mode) : null;
-  const belongsToCampaign = (entry: { payload: unknown }): boolean => {
-    if (activeGoalSetId === null) return true;
-    const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { goalSetId?: unknown } : {};
-    return typeof payload.goalSetId !== "string" || payload.goalSetId === activeGoalSetId;
-  };
   const taskCampaignStartedAt = (task: { payload: unknown }): string | null => {
     const payload = task.payload && typeof task.payload === "object" && !Array.isArray(task.payload) ? task.payload as Record<string, unknown> : {};
     const nested = payload.campaign && typeof payload.campaign === "object" && !Array.isArray(payload.campaign) ? payload.campaign as Record<string, unknown> : {};
@@ -128,7 +124,7 @@ export function campaignOrganization(store: ResearchStore): CampaignOrganization
     return taskStartedAt === campaignStartedAt;
   };
   const campaignTasks = tasks.filter(taskBelongsToCampaign);
-  const campaignGoals = goals.filter(belongsToCampaign);
+  const campaignGoals = recordsForGoalSet(goals, activeGoalSetId, mode);
   const phaseById = new Map(campaignGoals.map((goal) => [goal.id, goal]));
   const phaseRows = campaignGoals.slice(0, 24).map((entry) => {
     const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as Record<string, unknown> : {};

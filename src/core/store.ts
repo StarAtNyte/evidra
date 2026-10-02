@@ -446,6 +446,11 @@ export interface ExternalWorkerHealth {
 }
 
 export type ExternalActionStatus = "in_flight" | "completed" | "unknown" | "retryable";
+
+/** Only possibly executed or ambiguous actions require operator reconciliation. */
+export function externalActionNeedsReconciliation(status: ExternalActionStatus): boolean {
+  return status === "in_flight" || status === "unknown";
+}
 export interface ExternalActionIntent {
   id: string;
   kind: string;
@@ -823,6 +828,11 @@ export class ResearchStore {
         updated_at TEXT NOT NULL
       );
     `);
+    // Queue projections filter immutable activity/usage events by both family
+    // and task ID. Without this expression index, each ticket scans every
+    // event in its family and large research campaigns make status O(tasks ×
+    // events). Retain the bounded scan fallback on SQLite builds without JSON1.
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_type_task_id_id ON events(type, json_extract(payload_json, '$.taskId'), id)"); } catch { /* JSON1 unavailable; event APIs retain their compatibility fallback */ }
     this.db.prepare("INSERT OR IGNORE INTO workspace_identity (id, workspace_id, created_at) VALUES (1, ?, ?)").run(`ws_${randomUUID()}`, new Date().toISOString());
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_experiments_created_at ON experiments(created_at);
@@ -1296,10 +1306,20 @@ export class ResearchStore {
     const id = reference.trim();
     if (!id) return false;
     if (this.eventsByType(id, 1).length > 0) return true;
-    const prefixed = id.match(/^(event|run|artifact|claim|source|hypothesis|submission):(.+)$/);
+    const prefixed = id.match(/^(event|run|artifact|claim|source|hypothesis|submission|replication):(.+)$/);
     const value = prefixed?.[2] ?? id;
     const references = [...new Set([id, value])];
     if (prefixed?.[1] === "event") return this.eventsByType(value, 1).length > 0;
+    if (prefixed?.[1] === "replication") {
+      const experiment = this.db.prepare("SELECT payload_json FROM experiments WHERE id = ? LIMIT 1").get(value) as { payload_json: string } | undefined;
+      if (!experiment) return false;
+      const payload = JSON.parse(experiment.payload_json) as { parent?: unknown; replicationOf?: unknown; runId?: unknown };
+      if (typeof payload.parent !== "string" && typeof payload.replicationOf !== "string") return false;
+      const run = typeof payload.runId === "string"
+        ? this.db.prepare("SELECT 1 FROM runs WHERE id = ? AND experiment_id = ? AND status = 'completed' LIMIT 1").get(payload.runId, value)
+        : this.db.prepare("SELECT 1 FROM runs WHERE experiment_id = ? AND status = 'completed' LIMIT 1").get(value);
+      return Boolean(run);
+    }
     if (prefixed?.[1] === "run" || !prefixed) {
       if (references.some((reference) => this.db.prepare("SELECT 1 FROM runs WHERE id = ? LIMIT 1").get(reference))) return true;
     }
@@ -1713,6 +1733,46 @@ export class ResearchStore {
     return true;
   }
 
+  /** Suspend live queue work owned by other durable campaign runs, preserving its payload for later recovery. */
+  pauseTasksForOtherCampaigns(campaignStartedAt: string, actorId = "campaign-controller"): string[] {
+    const currentCampaign = campaignStartedAt.trim();
+    if (!currentCampaign) throw new Error("A campaign start timestamp is required to scope queue work.");
+    const rows = this.db.prepare("SELECT id, kind, status, owner_id, goal_id, parent_task_id, payload_json FROM work_queue WHERE status IN ('queued', 'running')").all() as Array<{ id: string; kind: string; status: QueueTaskStatus; owner_id: string | null; goal_id: string | null; parent_task_id: string | null; payload_json: string }>;
+    const now = new Date().toISOString();
+    const priorCampaignRoots = new Set<string>();
+    for (const row of rows) {
+      try {
+        const payload: unknown = JSON.parse(row.payload_json);
+        if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+          const ownerCampaign = (payload as Record<string, unknown>).campaignStartedAt;
+          if (typeof ownerCampaign === "string" && ownerCampaign !== currentCampaign) priorCampaignRoots.add(row.id);
+        }
+      } catch { /* Malformed and unscoped tasks are not implicitly reassigned. */ }
+    }
+    const priorCampaignTasks = new Set(priorCampaignRoots);
+    for (const rootId of priorCampaignRoots) for (const descendantId of this.taskDescendantIds(rootId)) priorCampaignTasks.add(descendantId);
+    const paused = this.db.transaction(() => {
+      const result: Array<{ id: string; kind: string; priorStatus: QueueTaskStatus; priorOwnerId: string | null; goalId: string | null; parentTaskId: string | null; priorCampaignStartedAt: string | null }> = [];
+      for (const row of rows) {
+        if (!priorCampaignTasks.has(row.id)) continue;
+        let payload: Record<string, unknown>;
+        try {
+          const parsed: unknown = JSON.parse(row.payload_json);
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+          payload = parsed as Record<string, unknown>;
+        } catch { continue; }
+        const ownerCampaign = typeof payload.campaignStartedAt === "string" ? payload.campaignStartedAt : null;
+        const changed = this.db.prepare("UPDATE work_queue SET status = 'paused', claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status IN ('queued', 'running')").run(now, row.id).changes;
+        if (changed === 1) result.push({ id: row.id, kind: row.kind, priorStatus: row.status, priorOwnerId: row.owner_id, goalId: row.goal_id, parentTaskId: row.parent_task_id, priorCampaignStartedAt: ownerCampaign });
+      }
+      return result;
+    })();
+    for (const entry of paused) {
+      this.appendEvent("queue.task.paused", { id: entry.id, kind: entry.kind, priorStatus: entry.priorStatus, priorOwnerId: entry.priorOwnerId, goalId: entry.goalId, parentTaskId: entry.parentTaskId, reason: "new campaign started; prior campaign work retained", actorId: actorId.trim().slice(0, 200) || "campaign-controller", pausedAt: now, priorCampaignStartedAt: entry.priorCampaignStartedAt });
+    }
+    return paused.map((entry) => entry.id);
+  }
+
   /** Resume a suspended ticket and descendants paused by that ticket. */
   resumeTask(id: string, actorId = "operator"): boolean {
     const now = new Date().toISOString();
@@ -2082,10 +2142,20 @@ export class ResearchStore {
   }
 
   updateSubmissionStatus(id: string, status: "prepared" | "approved" | "rejected" | "submitted" | "scored", payload?: unknown): boolean {
-    const result = this.db.prepare("UPDATE submissions SET status = ?, payload_json = COALESCE(?, payload_json), updated_at = ? WHERE id = ?")
-      .run(status, payload === undefined ? null : safeJson(payload), new Date().toISOString(), id);
-    if (result.changes) this.appendEvent("submission.updated", { id, status, payload });
-    return result.changes === 1;
+    const update = this.db.transaction(() => {
+      const row = this.db.prepare("SELECT payload_json FROM submissions WHERE id = ?").get(id) as { payload_json: string } | undefined;
+      if (!row) return false;
+      const previous: unknown = JSON.parse(row.payload_json);
+      const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
+      const next = payload === undefined
+        ? previous
+        : isRecord(previous) && isRecord(payload) ? { ...previous, ...payload } : payload;
+      const result = this.db.prepare("UPDATE submissions SET status = ?, payload_json = ?, updated_at = ? WHERE id = ?")
+        .run(status, safeJson(next), new Date().toISOString(), id);
+      if (result.changes) this.appendEvent("submission.updated", { id, status, payload: next });
+      return result.changes === 1;
+    });
+    return update();
   }
 
   submissions(): Array<{ id: string; experimentId: string; path: string; status: string; payload: unknown; createdAt: string; updatedAt: string }> {
@@ -2439,8 +2509,8 @@ export class ResearchStore {
   }
 
   /** Resolve a bounded parent-task chain for audit, display, and recovery. */
-  taskLineage(id: string, maxDepth = 32): QueuedTaskLineage | undefined {
-    const tasks = new Map(this.queueTasks().map((task) => [task.id, task]));
+  taskLineage(id: string, maxDepth = 32, knownTasks?: readonly QueuedTask[]): QueuedTaskLineage | undefined {
+    const tasks = new Map((knownTasks ?? this.queueTasks()).map((task) => [task.id, task]));
     if (!tasks.has(id)) return undefined;
     const taskIds: string[] = [];
     const goalIds: string[] = [];
@@ -2487,8 +2557,8 @@ export class ResearchStore {
   }
 
   /** Return a bounded status roll-up for direct delegated children. */
-  queueChildSummary(id: string): QueueChildSummary | undefined {
-    const tasks = this.queueTasks();
+  queueChildSummary(id: string, knownTasks?: readonly QueuedTask[]): QueueChildSummary | undefined {
+    const tasks = knownTasks ?? this.queueTasks();
     if (!tasks.some((task) => task.id === id)) return undefined;
     const summary: QueueChildSummary = { total: 0, unfinished: 0, queued: 0, running: 0, paused: 0, completed: 0, failed: 0, cancelled: 0 };
     for (const task of tasks) {
@@ -2615,7 +2685,7 @@ export class ResearchStore {
     }
     const current = this.queueTasks().find((task) => task.id === id);
     const now = new Date().toISOString();
-    this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), owner_id = CASE WHEN ? IN ('completed', 'failed', 'cancelled') THEN NULL ELSE owner_id END, claim_token = CASE WHEN ? IN ('completed', 'failed', 'cancelled') THEN NULL ELSE claim_token END, updated_at = ? WHERE id = ?").run(status, payload === undefined ? null : safeJson(status === "completed" ? preserveQueuePayload(current?.payload, payload) : payload), status, status, now, id);
+    this.db.prepare("UPDATE work_queue SET status = ?, payload_json = COALESCE(?, payload_json), owner_id = CASE WHEN ? IN ('completed', 'failed', 'cancelled') THEN NULL ELSE owner_id END, claim_token = CASE WHEN ? IN ('completed', 'failed', 'cancelled') THEN NULL ELSE claim_token END, updated_at = ? WHERE id = ?").run(status, payload === undefined ? null : safeJson(preserveQueuePayload(current?.payload, payload)), status, status, now, id);
     this.appendEvent(`queue.${status}`, { id, payload });
   }
 
@@ -2851,7 +2921,12 @@ export class ResearchStore {
   queueProgress(taskId: string, now = Date.now(), staleAfterMs = 15 * 60_000): QueueProgress | undefined {
     const task = this.queueTasks().find((entry) => entry.id === taskId);
     if (!task) return undefined;
-    const activities = this.queueActivities(taskId, 32);
+    return this.queueProgressForTask(task, now, staleAfterMs);
+  }
+
+  /** Reuse a task already loaded by a queue snapshot instead of rescanning the queue. */
+  queueProgressForTask(task: QueuedTask, now = Date.now(), staleAfterMs = 15 * 60_000): QueueProgress {
+    const activities = this.queueActivities(task.id, 32);
     const latest = activities.at(-1);
     const progressActivity = activities.slice().reverse().find((entry) => {
       const metadata = entry.metadata && typeof entry.metadata === "object" && !Array.isArray(entry.metadata) ? entry.metadata as Record<string, unknown> : {};
@@ -3104,6 +3179,12 @@ export class ResearchStore {
   queueUsageState(taskId: string): { usedTokens: number; budgetTokens: number | null; remainingTokens: number | null; usedCostUsd: number; budgetCostUsd: number | null; remainingCostUsd: number | null; exhausted: boolean } | undefined {
     const task = this.queueTasks().find((entry) => entry.id === taskId);
     if (!task) return undefined;
+    return this.queueUsageStateForTask(task);
+  }
+
+  /** Reuse a task from an existing queue snapshot during batched status reads. */
+  queueUsageStateForTask(task: QueuedTask): { usedTokens: number; budgetTokens: number | null; remainingTokens: number | null; usedCostUsd: number; budgetCostUsd: number | null; remainingCostUsd: number | null; exhausted: boolean } {
+    const taskId = task.id;
     const totals = this.queueUsageTotals(taskId);
     const usedTokens = (totals?.inputTokens ?? 0) + (totals?.outputTokens ?? 0);
     const budgetTokens = task.tokenBudget;
@@ -3327,6 +3408,43 @@ export class ResearchStore {
     return result.requeued;
   }
 
+  /** Fail only abandoned controller-owned cycle tickets for the campaign being resumed.
+   * A resumed controller restarts work from its durable checkpoint and creates a
+   * fresh cycle ticket; leaving the previous ticket live makes status report
+   * phantom active work and can cause duplicate execution by queue workers.
+   */
+  recoverAbandonedCampaignCycles(campaignStartedAt: string): string[] {
+    const startedAt = campaignStartedAt.trim();
+    if (!startedAt) throw new Error("A campaign start timestamp is required to recover cycle tickets.");
+    const now = new Date().toISOString();
+    const rows = this.db.prepare("SELECT id, owner_id, payload_json FROM work_queue WHERE kind = 'research.cycle' AND status = 'running' AND owner_id LIKE 'controller-cycle-%'").all() as Array<{ id: string; owner_id: string | null; payload_json: string }>;
+    const recovered: string[] = [];
+    for (const row of rows) {
+      let payload: Record<string, unknown>;
+      try {
+        const parsed = JSON.parse(row.payload_json);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+        payload = parsed as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      if (payload.campaignStartedAt !== startedAt || payload.ownerId !== row.owner_id) continue;
+      const failure = {
+        error: "controller restarted; durable campaign checkpoint supersedes the abandoned cycle ticket",
+        failureClass: "controller_restarted",
+        retryableOnResume: false,
+        recoveredAt: now,
+      };
+      const changed = this.db.prepare("UPDATE work_queue SET status = 'failed', payload_json = ?, claimed_at = NULL, claim_token = NULL, owner_id = NULL, updated_at = ? WHERE id = ? AND status = 'running' AND owner_id = ?")
+        .run(safeJson({ ...payload, ...failure }), now, row.id, row.owner_id).changes;
+      if (!changed) continue;
+      recovered.push(row.id);
+      this.appendEvent("queue.campaign_cycle.abandoned", { id: row.id, ownerId: row.owner_id, campaignStartedAt: startedAt, ...failure });
+      this.appendEvent("queue.failed", { id: row.id, payload: failure });
+    }
+    return recovered;
+  }
+
   startSession(id: string, payload: unknown): void {
     const now = new Date().toISOString();
     const active = this.db.prepare("SELECT payload_json FROM sessions WHERE status = 'active'").all() as Array<{ payload_json: string }>;
@@ -3443,6 +3561,33 @@ export class ResearchStore {
     this.db.prepare(`INSERT OR REPLACE INTO evidence_claims (id, payload_json, created_at) VALUES (?, ?, ?)`).run(claim.id, durablePayload, createdAt);
     this.indexMemory("claim", claim.id, durablePayload, createdAt);
     this.appendEvent("evidence.claim.created", safeCandidate);
+  }
+
+  /** Retire superseded claims for the same external identifier without deleting their audit history. */
+  supersedeClaimsBySource(sourceId: string, sourceType?: string, platform?: string): string[] {
+    const normalizedSource = sourceId.trim();
+    if (!normalizedSource) throw new Error("A claim source identifier is required.");
+    const retired: string[] = [];
+    for (const claim of this.claims()) {
+      const payload = claim.payload && typeof claim.payload === "object" && !Array.isArray(claim.payload)
+        ? claim.payload as Record<string, unknown>
+        : undefined;
+      if (payload?.sourceId !== normalizedSource || payload.status !== "active") continue;
+      if (sourceType && payload.sourceType !== sourceType) continue;
+      if (platform && payload.platform !== platform) continue;
+      const next = safeJson({ ...payload, status: "superseded" });
+      this.db.prepare("UPDATE evidence_claims SET payload_json = ? WHERE id = ?").run(next, claim.id);
+      this.indexMemory("claim", claim.id, next, claim.createdAt);
+      retired.push(claim.id);
+    }
+    if (retired.length) this.appendEvent("research.claims.retired", {
+      sourceId: normalizedSource,
+      status: "superseded",
+      sourceType: sourceType ?? null,
+      platform: platform ?? null,
+      claimIds: retired,
+    });
+    return retired;
   }
 
   private indexMemory(kind: "claim" | "hypothesis" | "source", id: string, content: string, createdAt: string): void {

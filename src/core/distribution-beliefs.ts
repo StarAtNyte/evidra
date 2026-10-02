@@ -32,6 +32,29 @@ export function distributionObservationsFromSubmissions(entries: Array<{ id?: st
   });
 }
 
+/** Merge adapter records with manually observed external feedback. */
+export function distributionObservationsFromFeedback(
+  submissions: Array<{ id?: string; payload: unknown }>,
+  claims: Array<{ id?: string; payload: unknown }>,
+): ExternalValidationObservation[] {
+  const observations = distributionObservationsFromSubmissions(submissions);
+  const seen = new Set(observations.map((entry) => entry.id));
+  for (const claim of claims) {
+    const payload = claim.payload && typeof claim.payload === "object" ? claim.payload as {
+      sourceType?: unknown; sourceId?: unknown; score?: unknown; validationScores?: unknown;
+    } : {};
+    if (payload.sourceType !== "external_score" || typeof payload.score !== "number" || !Number.isFinite(payload.score)
+      || !payload.validationScores || typeof payload.validationScores !== "object" || Array.isArray(payload.validationScores)) continue;
+    const id = typeof payload.sourceId === "string" && payload.sourceId ? payload.sourceId : claim.id ?? `external-${observations.length}`;
+    if (seen.has(id)) continue;
+    const validationScores = Object.fromEntries(Object.entries(payload.validationScores).filter(([, value]) => typeof value === "number" && Number.isFinite(value)) as Array<[string, number]>);
+    if (!Object.keys(validationScores).length) continue;
+    observations.push({ id, externalScore: payload.score, validationScores });
+    seen.add(id);
+  }
+  return observations;
+}
+
 function correlation(left: number[], right: number[]): number | null {
   if (left.length < 3 || right.length < 3 || left.length !== right.length) return null;
   const leftMean = left.reduce((sum, value) => sum + value, 0) / left.length;

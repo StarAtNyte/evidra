@@ -1,5 +1,6 @@
 import type { ResearchStore } from "./store.js";
 import { phaseGoalSetId } from "./phase-goals.js";
+import { recordsForGoalSet } from "./campaign-scope.js";
 
 export type GoalAlignmentCheck = {
   id: string;
@@ -61,17 +62,20 @@ function campaignGoal(store: ResearchStore): { goal: string | null; goalSetId: s
 /** Check whether durable work still has a visible path to the campaign goal. */
 export function goalAlignment(store: ResearchStore): GoalAlignmentReport {
   const campaign = campaignGoal(store);
-  const phases = store.phaseGoals();
+  const allPhases = store.phaseGoals();
   const activeGoalSetId = campaign.goalSetId;
-  const belongsToActiveCampaign = (phase: { payload: unknown }): boolean => {
-    if (activeGoalSetId === null) return true;
-    const payload = phase.payload && typeof phase.payload === "object" ? phase.payload as { goalSetId?: unknown } : {};
-    return typeof payload.goalSetId !== "string" || payload.goalSetId === activeGoalSetId;
-  };
-  const active = phases.find((phase) => phase.status === "active" && belongsToActiveCampaign(phase)) ?? null;
+  const phases = recordsForGoalSet(allPhases, activeGoalSetId, campaign.mode);
+  // The durable transition may persist the previous phase as met before the
+  // next phase is promoted to active. A scoped pending phase is still a valid
+  // next step (and activePhaseGoal uses the same ordering); treating it as
+  // absent deadlocks otherwise recoverable campaigns on resume.
+  const active = phases.find((phase) => phase.status === "active")
+    ?? phases.find((phase) => phase.status === "blocked")
+    ?? phases.find((phase) => phase.status === "pending")
+    ?? null;
   const tasks = store.queueTasks();
   const liveTasks = tasks.filter((task) => task.status === "queued" || task.status === "running");
-  const phaseById = new Map(phases.map((phase) => [phase.id, phase]));
+  const phaseById = new Map(allPhases.map((phase) => [phase.id, phase]));
   const orphanedTasks = liveTasks.filter((task) => {
     if (task.goalId === null) return false;
     const phase = phaseById.get(task.goalId);
@@ -94,7 +98,7 @@ export function goalAlignment(store: ResearchStore): GoalAlignmentReport {
     {
       id: "active-phase-goal",
       status: active ? "pass" : campaign.running ? "blocked" : "warn",
-      detail: active ? `Active phase: ${active.phase}` : campaign.running ? "The campaign has no active internal phase goal." : "No active phase goal is required while idle.",
+      detail: active ? `${active.status === "active" ? "Active" : active.status === "blocked" ? "Blocked" : "Next pending"} phase: ${active.phase}` : campaign.running ? "The campaign has no remaining internal phase goal." : "No active phase goal is required while idle.",
       count: active ? 1 : 0,
     },
     {

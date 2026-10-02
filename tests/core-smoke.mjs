@@ -4,13 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
+import { sha256File } from "../dist/core/evidence.js";
+import { deflateSync } from "node:zlib";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
 import Database from "better-sqlite3";
 import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../dist/core/statistics.js";
 import { failedAutonomousExperimentPayload } from "../dist/core/experiment-finalization.js";
 import { experimentReplayDecision, recoveryPlan, recoveryRouteDirective } from "../dist/core/recovery.js";
-import { ResearchStore, queueEffectivePriority } from "../dist/core/store.js";
+import { planVerificationExecution } from "../dist/core/verification-execution.js";
+import { externalActionNeedsReconciliation, ResearchStore, queueEffectivePriority } from "../dist/core/store.js";
 import { approvalInbox } from "../dist/core/approvals.js";
 import { controlPlaneHealth, operatorAttention } from "../dist/core/attention.js";
 import { goalAlignment, pauseForGoalAlignment } from "../dist/core/goal-alignment.js";
@@ -20,21 +23,23 @@ import { agentRoleInterventions, applyAgentCoaching, evaluateAgentCoachingProgre
 import { externalEventPayload, parseExternalAgentHeartbeat, parseExternalEventPayload, validateExternalEventType } from "../dist/core/external-events.js";
 import { createPortableBundle, portableAgentContracts, PORTABLE_BUNDLE_TYPE, validatePortableBundle } from "../dist/core/portable-bundle.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../dist/core/submissions.js";
-import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, SOURCE_REQUEST_TIMEOUT_MS, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaimRecords, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh } from "../dist/core/sources.js";
+import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, SOURCE_REQUEST_TIMEOUT_MS, SOURCE_SEARCH_MIN_RELEVANCE_SCORE, SOURCE_SEARCH_RANKING_VERSION, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaimRecords, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh, sourceSearchCacheIsCurrent, sourceSearchNeedsRefinement } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { CompetitionConfigSchema, ExperimentManifestSchema } from "../dist/core/types.js";
-import { competitionResearchClaimType, competitionResearchSources } from "../dist/core/competition-sources.js";
+import { competitionResearchClaimType, competitionResearchSources, competitionSourceRefreshMs } from "../dist/core/competition-sources.js";
 import { extractCompetitionInsights } from "../dist/core/competition-insights.js";
 import { dashboardHtml, dashboardSnapshot } from "../dist/core/dashboard.js";
+import { workbenchHtml } from "../dist/core/dashboard-web.js";
 import { processFailureResult, runProcess } from "../dist/core/process.js";
-import { loadCompetitionAdapter } from "../dist/competitions/adapters.js";
+import { competitionIdForMode, competitionManifestForInitialization, declaredEvaluatorCommand, loadCompetitionAdapter } from "../dist/competitions/adapters.js";
+import { whestbenchConfig } from "../dist/competitions/whestbench.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
 import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInspection, guardWorkspaceCommand } from "../dist/core/permissions.js";
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { queueRecoveryAction } from "../dist/core/queue-recovery.js";
-import { executeResearchTool, normalizeResearchToolResult, availableResearchTools, RESEARCH_TOOLS, selectResearchTools, toolFailureTrust, untrustedContentWarnings } from "../dist/core/tools.js";
+import { executeResearchTool, normalizeResearchToolResult, availableResearchTools, RESEARCH_TOOLS, selectResearchTools, toolFailureTrust, untrustedContentWarnings, workspaceSearchFallbackTerms } from "../dist/core/tools.js";
 import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "../dist/core/external-tools.js";
-import { normalizeResearchDecisionPayload, normalizeResearchToolCall, runResearchDirector } from "../dist/agents/research-director.js";
+import { normalizeResearchDecisionPayload, normalizeResearchToolCall, researchDirectorAvailableTools, runResearchDirector } from "../dist/agents/research-director.js";
 import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, slurmCommand, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
@@ -44,20 +49,24 @@ import { formatResearchStarterBriefs, RESEARCH_STARTER_BRIEFS, selectResearchSta
 import { classifyResearchSetupInput } from "../dist/core/research-setup.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
-import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatResearchStagePlan, mergePhaseGoalAudits, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageForPhase, researchStageProgress, RESEARCH_STAGE_PLAN } from "../dist/core/phase-goals.js";
+import { hasExperimentInputStagingCapacity, stageExperimentInputs } from "../dist/core/experiment-inputs.js";
+import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatResearchStagePlan, mergePhaseGoalAudits, phaseCompletionCriteriaForAudit, phaseGoalCanAdvance, phaseGoalCycleAudit, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForCurrentSet, phaseGoalsForMode, researchStageForPhase, researchStageProgress, RESEARCH_STAGE_PLAN } from "../dist/core/phase-goals.js";
 import { assertSubtaskContract, auditSubtask, projectVerifiedSubtaskState, subtaskAuditFingerprint, subtaskStateFromAudit, validateSubtaskContract } from "../dist/core/subtask-state.js";
-import { auditResearchDecision, downgradeUnauditedDecision } from "../dist/core/decision-auditor.js";
-import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, submitApprovedBundle } from "../dist/core/submission-adapters.js";
+import { alignResearchDecisionPhase, auditResearchDecision, downgradeUnauditedDecision } from "../dist/core/decision-auditor.js";
+import { captureImplementationSnapshot, captureVerificationSourcePin, implementationChanged, implementationEditRetryPrompt, implementationRetryPrompt, resolveImplementationPaths, seedImplementationArtifacts, seedImplementationSource, seedVerificationImplementation, verifyImplementationSnapshot } from "../dist/core/implementation-guard.js";
+import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, responseSubmissionId, submissionConfigForWorktree, submitApprovedBundle } from "../dist/core/submission-adapters.js";
+import { externalScoreEvidenceContext, hashExternalArtifact } from "../dist/core/submission-feedback.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
 import { loadProjectGuidance } from "../dist/core/project-guidance.js";
-import { researchLaneConcurrency } from "../dist/agents/research-lanes.js";
+import { researchLaneConcurrency, semanticAuditNeedsFreshInspection, RESEARCH_SCREENING_DECISION_POLICY } from "../dist/agents/research-lanes.js";
+import { workspaceReadPathsFromSearchResult } from "../dist/agents/research-lanes.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../dist/core/experiment-manifest.js";
-import { distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.js";
-import { auditData, dataAuditFingerprint } from "../dist/core/data-audit.js";
+import { distributionObservationsFromFeedback, distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.js";
+import { auditData, dataAuditFingerprint, dataAuditManifestFingerprint } from "../dist/core/data-audit.js";
 import { discoverAutoLabTasks, parseAutoLabDiscovery } from "../dist/core/autolab.js";
-import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, validateExecutionContract } from "../dist/core/execution-stages.js";
-import { runReducedValidation } from "../dist/core/stage-executor.js";
-import { createToolTraceRecorder, evaluateTrajectory, MAX_TRACE_BYTES, MAX_TRACE_EVENTS, parsePersistedTrace, capabilityGaps, providerActivityFailureClass, researchToolFailureClass, validateTrajectoryStructure } from "../dist/core/trajectories.js";
+import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, trivialSuccessCommand, validateExecutionContract } from "../dist/core/execution-stages.js";
+import { persistExecutionStageResult, runReducedValidation } from "../dist/core/stage-executor.js";
+import { createToolTraceRecorder, evaluateTrajectory, MAX_TRACE_BYTES, MAX_TRACE_EVENTS, parsePersistedTrace, capabilityGaps, providerActivityFailureClass, researchToolFailureClass, semanticAuditTraceEvidence, validateTrajectoryStructure } from "../dist/core/trajectories.js";
 import { recoverUncommittedTraceFiles } from "../dist/core/trajectory-recovery.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "../dist/core/capability-router.js";
 import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, selectCurriculum, selectRetrospectiveCoreset } from "../dist/core/experience.js";
@@ -75,12 +84,13 @@ import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js"
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { materializeResearchDecision } from "../dist/core/research-graph.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
-import { bindCampaignRuntime, campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, nextCampaignCycle, parseRoleTokenBudgets, pauseCampaign, readCampaignCheckpoint, readDurableCampaignRuntime, researchTurnTimeoutMs, resolveCampaignMode, resumeCampaign, serializeRoleTokenBudgets, withCampaignCheckpoint } from "../dist/core/campaign.js";
+import { activeCampaignTaskIds, bindCampaignRuntime, campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, campaignRuntimeMatchesExceptAutonomy, extendCampaignBudget, nextCampaignCycle, parseRoleTokenBudgets, pauseCampaign, pauseCampaignForBudget, readCampaignCheckpoint, readDurableCampaignRuntime, recoverCompletedBudgetPause, recoverFalseBudgetExhaustion, researchTurnTimeoutMs, resolveCampaignMode, resumeCampaign, serializeRoleTokenBudgets, withCampaignCheckpoint } from "../dist/core/campaign.js";
 import { readCampaignRuntime } from "../dist/core/campaign.js";
-import { applyCriticGate, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
-import { recordBaselineEvidence } from "../dist/core/baseline.js";
+import { campaignEvidenceConflictCounts, mergeCampaignToolFailures, recordsForCampaign, recordsForGoalSet } from "../dist/core/campaign-scope.js";
+import { applyCriticGate, formatOpenCriticConstraintGuidance, latestOpenCriticConstraint, promoteExplicitExploratoryRun, promoteOperatorSteeredExploration } from "../dist/core/critic-gate.js";
+import { recordBaselineEvidence, recordBaselineReuse } from "../dist/core/baseline.js";
 import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
-import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, createLaneToolExecutor, laneHandoffBoard, lanePrompt, laneToolCalls, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneSessionScope, researchLaneTeamSize, researchLiteratureQueries, roleMemoryFromTrajectories, runResearchLanes, selectResearchLaneRoles } from "../dist/agents/research-lanes.js";
+import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, compactResearchQuery, createLaneToolExecutor, explicitWorkspaceReadPaths, laneHandoffBoard, lanePrompt, laneToolCalls, laneToolObservationContext, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneSessionScope, researchLaneTeamSize, researchLiteratureQueries, researchToolObservationAnchor, roleMemoryFromTrajectories, runResearchLanes, selectResearchLaneRoles, workspaceReadCallsFromSearchResult } from "../dist/agents/research-lanes.js";
 import { isSensitiveWorkspacePath, redactCommand, redactSecrets, redactStructured } from "../dist/core/redaction.js";
 import { enforceClaimTermination, enforceGoalTermination } from "../dist/core/termination.js";
 import { agentBudgetLedger, campaignAgentTokens, campaignRoleAgentTokens, roleBudgetLedger, summarizeAgentUsage, summarizeAgentUsageBy, summarizeAgentUsageByScope, summarizeUsage } from "../dist/core/usage.js";
@@ -98,6 +108,7 @@ import { evaluateGpuBudget, observedGpuHours } from "../dist/core/compute-budget
 import { collaborationUtility } from "../dist/core/adaptive-harness.js";
 import { assessCodeHealth, assessCodeHealthTrend, snapshotCodeHealth } from "../dist/core/code-health.js";
 import { selectRatchetReference } from "../dist/core/ratchet.js";
+
 test("failed autonomous screening persists a retryable failed experiment instead of stranding it running", () => {
   const failed = failedAutonomousExperimentPayload({ id: "exp-1", status: "running", manifest: { immutable: true } }, {
     exitCode: 1,
@@ -191,11 +202,11 @@ import { parseAutoResearchBenchEvaluation, parseAutoResearchBenchInput } from ".
 import { buildMlflowRunExports } from "../dist/core/mlflow.js";
 import { planSuccessiveHalving, promoteHalvingStage } from "../dist/core/successive-halving.js";
 import { estimateCost } from "../dist/core/cost-model.js";
-import { synthesizeLaneReports } from "../dist/core/cross-pollination.js";
+import { shouldRunPeerReview, synthesizeLaneReports } from "../dist/core/cross-pollination.js";
 import { learnPromotionPolicy, promotionObservations } from "../dist/core/promotion-learning.js";
 import { captureProtectedFiles, changedProtectedFiles } from "../dist/core/integrity.js";
 import { assessHypothesisQuality } from "../dist/core/hypothesis-quality.js";
-import { ResearchDecisionSchema, RunResultSchema } from "../dist/core/types.js";
+import { ExperimentEnvironmentOverridesSchema, ResearchDecisionSchema, ResearchHypothesisSchema, RunResultSchema } from "../dist/core/types.js";
 import { evidraVersion } from "../dist/version.js";
 import { assessResearchDecisionRubric } from "../dist/core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../dist/core/validation-lock.js";
@@ -207,6 +218,7 @@ import { assessStopPolicy, betaPosteriorTail } from "../dist/core/stop-policy.js
 import { classifyVerifier, verifierKind } from "../dist/core/formal-verification.js";
 import { detectRouteDrift } from "../dist/core/drift-detection.js";
 import { boundResearchContext } from "../dist/core/context-budget.js";
+import { workspaceObservationEvidence } from "../dist/core/observation-evidence.js";
 
 test("runtime version is sourced from package metadata", () => {
   assert.equal(evidraVersion(), "0.1.0");
@@ -225,6 +237,17 @@ test("research context packing preserves priority and records truncation", () =>
   assert.ok(packed.context.contextBudget);
 });
 
+test("current authoritative evidence survives context packing ahead of learned-memory summaries", () => {
+  const evidence = [{ claimId: "claim-current", sourceId: "src-current", statement: "All 100 validation rows completed with zero failures; artifact: runs/current.json", sourceTitle: "Current evaluator run", contentHash: `sha256:${"a".repeat(64)}` }];
+  const packed = boundResearchContext({
+    researchMemory: { claims: Array.from({ length: 100 }, (_, index) => ({ id: `old-${index}`, statement: "Repeated historical prose ".repeat(150) })) },
+    authoritativeEvidence: evidence,
+    recentEvents: Array.from({ length: 100 }, (_, index) => ({ text: `event ${index} `.repeat(200) })),
+  }, 4_000);
+  assert.deepEqual(packed.context.authoritativeEvidence, evidence);
+  assert.ok(packed.report.usedChars <= packed.report.maxChars);
+});
+
 test("research context caps oversized observations without evicting phase state", () => {
   const packed = boundResearchContext({
     observation: { output: "x".repeat(100_000) },
@@ -238,6 +261,23 @@ test("research context caps oversized observations without evicting phase state"
   assert.ok(JSON.stringify(packed.context).length <= packed.report.maxChars);
 });
 
+test("research context keeps executable tool contracts ahead of expendable lane history", () => {
+  const tools = [
+    { name: "workspace.files", description: "List workspace evidence." },
+    { name: "workspace.read", description: "Read bounded workspace files." },
+    { name: "shell.exec", description: "Run a bounded read-only inspection command." },
+  ];
+  const packed = boundResearchContext({
+    observation: "o".repeat(10_000),
+    phaseGoal: { phase: "hypothesis", objective: "select a falsifiable test" },
+    allocation: { focus: "evidence-validation" },
+    availableTools: tools,
+    laneReports: [{ summary: "old lane history ".repeat(1_000) }],
+  }, 16_000);
+  assert.deepEqual(packed.context.availableTools.map((tool) => tool.name), tools.map((tool) => tool.name));
+  assert.ok(packed.report.dropped.includes("laneReports") || packed.report.truncated.some((path) => path.startsWith("laneReports")), "large historical lane summaries yield before executable capabilities");
+});
+
 test("research context retains newest tool feedback when history is oversized", () => {
   const packed = boundResearchContext({
     toolResults: [
@@ -247,6 +287,69 @@ test("research context retains newest tool feedback when history is oversized", 
     phaseGoal: { phase: "execution", objective: "use the latest result" },
   }, 4_000);
   assert.equal(packed.context.toolResults.at(-1).name, "latest");
+});
+
+test("lane observation evidence survives specialist and director handoffs", () => {
+  const laneContext = laneToolObservationContext([{
+    role: "validation scientist",
+    summary: "Evaluator returned a reproducible result.",
+    findings: ["The command ran."],
+    uncertainties: [],
+    evidence: ["exit code 0"],
+    evidenceSourceIds: ["src_example"],
+    verifiedEvidenceIds: ["observation_example"],
+    toolResults: [{ name: "shell.exec", ok: true, trust: "controller_observation", output: { stdout: "PASS: score=0.42" } }],
+  }]);
+  assert.equal(laneContext[0].verifiedEvidenceIds[0], "observation_example");
+  assert.equal(laneContext[0].observations[0].tool, "shell.exec");
+  assert.equal(laneContext[0].observations[0].output.stdout, "PASS: score=0.42");
+
+  const packed = boundResearchContext({ observation: "x".repeat(12_000), laneReports: [{ summary: "large".repeat(2_000) }], laneToolResults: laneContext }, 16_000);
+  assert.equal(packed.context.laneToolResults[0].observations[0].tool, "shell.exec");
+  assert.ok(packed.context.laneToolResults[0].verifiedEvidenceIds.includes("observation_example"));
+});
+
+test("lane handoff preserves structured report evidence beyond the old preview cutoff", () => {
+  const reportText = `metric=2.00e-9\n${"verified per-case observation ".repeat(180)}`;
+  const laneContext = laneToolObservationContext([{
+    role: "validation scientist",
+    toolResults: [
+      { name: "workspace.files", ok: true, trust: "controller_observation", output: { files: Array.from({ length: 100 }, (_, index) => `reports/noise-${index}.md`) } },
+      { name: "workspace.search", ok: true, trust: "controller_observation", output: { matches: "routine match\n".repeat(200) } },
+      { name: "workspace.read", ok: true, trust: "controller_observation", output: { path: "reports/result.md", truncated: false, text: reportText } },
+      { name: "data.audit", ok: true, trust: "controller_observation", output: { skippedFiles: ["mini-shard-1.parquet"], warnings: ["content not inspected"] } },
+    ],
+  }]);
+  const read = laneContext[0].observations.find((observation) => observation.tool === "workspace.read");
+  assert.equal(read.output.path, "reports/result.md");
+  assert.equal(read.output.truncated, false);
+  assert.match(read.output.text, /metric=2\.00e-9/);
+  assert.ok(read.output.text.length > 3_000, "the model should receive usable report content, not a 600-character JSON fragment");
+  const packed = boundResearchContext({ laneToolResults: laneContext }, 12_000);
+  const packedRead = packed.context.laneToolResults[0].observations.find((observation) => observation.tool === "workspace.read");
+  assert.ok(packedRead, "substantive lane evidence survives aggregate context packing");
+  assert.match(packedRead.output.text, /metric=2\.00e-9/);
+  assert.ok(packed.context.laneToolResults[0].observations.some((observation) => observation.tool === "data.audit"), "structured audits are prioritized with file reads");
+});
+
+test("director context budgets primary observations fairly across independent lanes", () => {
+  const lanes = ["domain researcher", "data detective", "validation scientist"].map((role, index) => ({
+    role,
+    observations: [
+      { tool: "workspace.search", ok: true, output: { matches: "low-value search chatter ".repeat(30) } },
+      { tool: "workspace.read", ok: true, output: { path: `reports/lane-${index}.md`, truncated: false, text: `LANE_${index}_PRIMARY ` + "verified evidence ".repeat(260) } },
+    ],
+  }));
+  const packed = boundResearchContext({ laneToolResults: lanes }, 28_000);
+  assert.equal(packed.context.laneToolResults.length, 3, "every independent lane remains visible");
+  for (let index = 0; index < 3; index += 1) {
+    const read = packed.context.laneToolResults[index].observations.find((observation) => observation.tool === "workspace.read");
+    assert.ok(read, `lane ${index} primary read remains visible`);
+    assert.match(read.output.text, new RegExp(`LANE_${index}_PRIMARY`));
+  }
+  const priorPacked = boundResearchContext({ priorLaneReports: lanes }, 28_000);
+  assert.equal(priorPacked.context.priorLaneReports.length, 3, "peer-review handoffs are prioritized like direct lane evidence");
+  assert.match(lanePrompt("validation scientist", "review evidence"), /context\.priorLaneReports and context\.peerLaneBoard/);
 });
 
 test("project runtime guidance is bounded, hashed, and separated from evidence", () => {
@@ -297,12 +400,103 @@ test("strict Codex research output normalizes nullable optional fields", () => {
   assert.equal(payload.selectedHypothesis, null);
 });
 
-test("provider-native exec_command calls map to the bounded shell research tool", () => {
+test("provider-native command aliases map to the bounded shell research tool", () => {
   assert.deepEqual(normalizeResearchToolCall({ name: "exec_command", arguments: { cmd: ["rg", "needle"], timeout: 5000, workdir: "/tmp/ignored" } }), {
     name: "shell.exec",
     arguments: { command: ["rg", "needle"], timeoutMs: 5000 },
   });
+  assert.deepEqual(normalizeResearchToolCall({ name: "workspace.command", arguments: { command: ["rg", "needle"], timeoutMs: 5000, kind: "research" } }), {
+    name: "shell.exec",
+    arguments: { command: ["rg", "needle"], timeoutMs: 5000 },
+  });
   assert.deepEqual(normalizeResearchToolCall({ name: "workspace.files", arguments: {} }), { name: "workspace.files", arguments: {} });
+});
+
+test("common research-tool argument aliases normalize without weakening canonical validation", () => {
+  assert.deepEqual(normalizeResearchToolCall({ name: "workspace.search", arguments: { pattern: "activation_error", search_term: "ignored" } }), {
+    name: "workspace.search", arguments: { pattern: "activation_error", search_term: "ignored", query: "activation_error" },
+  });
+  assert.deepEqual(normalizeResearchToolCall({ name: "workspace.read", arguments: { file_path: "docs/guide.md" } }), {
+    name: "workspace.read", arguments: { file_path: "docs/guide.md", path: "docs/guide.md" },
+  });
+  assert.deepEqual(normalizeResearchToolCall({ name: "workspace.read", arguments: { paths: "docs/guide.md" } }), {
+    name: "workspace.read", arguments: { paths: ["docs/guide.md"] },
+  });
+  assert.deepEqual(normalizeResearchToolCall({ name: "workspace.read", arguments: { command: ["src/a.ts", "src/b.ts"] } }), {
+    name: "workspace.read", arguments: { command: ["src/a.ts", "src/b.ts"], paths: ["src/a.ts", "src/b.ts"] },
+  });
+  assert.deepEqual(normalizeResearchToolCall({ name: "artifact.audit", arguments: { path: "data/manifest.json" } }), {
+    name: "artifact.audit", arguments: { path: "data/manifest.json", paths: ["data/manifest.json"] },
+  });
+  assert.deepEqual(normalizeResearchToolCall({ name: "artifact.audit", arguments: { command: ["src/a.ts", "src/b.ts"] } }), {
+    name: "artifact.audit", arguments: { command: ["src/a.ts", "src/b.ts"], paths: ["src/a.ts", "src/b.ts"] },
+  });
+  assert.deepEqual(normalizeResearchToolCall({ name: "workspace.search", arguments: {} }), {
+    name: "workspace.search", arguments: {},
+  }, "an empty malformed call remains invalid rather than guessing a query");
+});
+
+test("workspace read accepts larger source batches under its aggregate output bound", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-workspace-read-batch-"));
+  try {
+    const paths = Array.from({ length: 10 }, (_, index) => `source-${index}.ts`);
+    for (const [index, path] of paths.entries()) writeFileSync(join(root, path), `export const value${index} = ${index};\n`);
+    const result = await executeResearchTool({ name: "workspace.read", arguments: { paths } }, {
+      root, storePath: join(root, "state.sqlite"), autonomy: "safe",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.output.files.length, 10);
+    assert.equal(result.output.truncated, false);
+    assert.match(result.output.files[9].text, /value9/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("file-operation intents on the inventory alias route to the requested read or search tool", () => {
+  assert.deepEqual(normalizeResearchToolCall({ name: "workspace.files", arguments: {
+    command: "read", path: "reports/result.md", maxBytes: 12000,
+  } }), {
+    name: "workspace.read", arguments: { path: "reports/result.md", maxBytes: 12000 },
+  });
+  assert.deepEqual(normalizeResearchToolCall({ name: "workspace.files", arguments: {
+    action: "search", path: "src", query: "minimumDelta", limit: 700,
+  } }), {
+    name: "workspace.search", arguments: { query: "minimumDelta", path: "src", limit: 500 },
+  });
+});
+
+test("plausible research retrieval alias maps to the canonical source tool safely", () => {
+  assert.deepEqual(normalizeResearchToolCall({ name: "research.retrieve", arguments: {
+    url: "https://example.org/paper", kind: "research", refresh: false, depth: "deep",
+  } }), {
+    name: "source.retrieve",
+    arguments: { url: "https://example.org/paper", kind: "general", refresh: false },
+  });
+  assert.deepEqual(normalizeResearchToolCall({ name: "research.retrieve", arguments: { url: "https://example.org/" } }), {
+    name: "source.retrieve", arguments: { url: "https://example.org/" },
+  });
+});
+
+test("common literature search aliases map to the bounded source-search contract", () => {
+  assert.deepEqual(normalizeResearchToolCall({ name: "research.sources", arguments: {
+    query: "topic-specific paper", limit: 100, depth: "deep", kind: "research",
+  } }), {
+    name: "source.search", arguments: { query: "topic-specific paper", limit: 20, depth: "deep" },
+  });
+  assert.deepEqual(normalizeResearchToolCall({ name: "literature.search", arguments: { query: "methods" } }), {
+    name: "source.search", arguments: { query: "methods" },
+  });
+});
+
+test("model-generated inventory limits are normalized to the public tool bounds", () => {
+  assert.deepEqual(normalizeResearchToolCall({ name: "workspace.files", arguments: { path: "src", limit: 1000 } }), {
+    name: "workspace.files", arguments: { path: "src", limit: 500 },
+  });
+  assert.deepEqual(normalizeResearchToolCall({ name: "workspace.search", arguments: { query: "needle", limit: 0 } }), {
+    name: "workspace.search", arguments: { query: "needle", limit: 1 },
+  });
+  assert.deepEqual(normalizeResearchToolCall({ name: "web.search", arguments: { query: "papers", limit: 8.7 } }), {
+    name: "web.search", arguments: { query: "papers", limit: 8 },
+  });
 });
 
 test("route drift requires adjacent windows before changing policy", () => {
@@ -679,6 +873,13 @@ test("external action intents prevent restart-time replay and support explicit r
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("only uncertain external actions require reconciliation before retry", () => {
+  assert.equal(externalActionNeedsReconciliation("in_flight"), true);
+  assert.equal(externalActionNeedsReconciliation("unknown"), true);
+  assert.equal(externalActionNeedsReconciliation("retryable"), false);
+  assert.equal(externalActionNeedsReconciliation("completed"), false);
+});
+
 test("approval inbox unifies pending work without mutating any gate", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-approval-inbox-"));
   try {
@@ -739,6 +940,39 @@ test("agent admission commands accept human-readable roles with spaces", async (
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("active campaign health excludes failed queue tasks from prior campaign runs", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-campaign-attention-scope-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    const startedAt = new Date(Date.now() - 60_000).toISOString();
+    const priorStartedAt = new Date(Date.now() - 120_000).toISOString();
+    store.saveCampaign({ goal: "current campaign", goalSetId: "current-goal-set", status: "running", startedAt, currentCycle: 9, runtime: { mode: "challenge" } });
+    store.savePhaseGoal({ id: "current-orientation", phase: "orientation", status: "active", payload: { id: "current-orientation", phase: "orientation", goalSetId: "current-goal-set" } });
+    store.enqueueTask({ id: "prior-failure", kind: "research.lane", priority: 1, payload: { campaignStartedAt: priorStartedAt } });
+    store.updateTask("prior-failure", "failed", { error: "old provider failure" });
+    store.enqueueTask({ id: "current-failure", kind: "research.lane", priority: 1, payload: { campaignStartedAt: startedAt } });
+    store.updateTask("current-failure", "failed", { error: "current evaluator failure" });
+    store.enqueueTask({ id: "prior-cycle-failure", kind: "research.cycle", priority: 1, payload: { campaignStartedAt: startedAt, cycle: 4 } });
+    store.updateTask("prior-cycle-failure", "failed", { error: "superseded cycle failure" });
+    store.appendEvent("queue.recovery_required", { taskId: "prior-cycle-failure", route: "restart_worker", action: "inspect failure" });
+    store.enqueueTask({ id: "current-cycle-failure", kind: "research.cycle", priority: 1, payload: { campaignStartedAt: startedAt, cycle: 9 } });
+    store.updateTask("current-cycle-failure", "failed", { error: "current cycle failure" });
+    store.appendEvent("queue.recovery_required", { taskId: "current-cycle-failure", route: "change_route", action: "inspect current failure" });
+    assert.equal(store.acquireControllerLease("current-campaign-controller", process.pid, "challenge", "validation").acquired, true);
+
+    const attention = operatorAttention(store);
+    assert.equal(attention.items.some((item) => item.id === "queue-failed:prior-failure"), false);
+    assert.equal(attention.items.some((item) => item.id === "queue-failed:prior-cycle-failure"), false);
+    assert.equal(attention.items.some((item) => item.id === "queue-recovery:prior-cycle-failure"), false);
+    assert.equal(attention.items.some((item) => item.id === "queue-failed:current-failure"), true);
+    assert.equal(attention.items.some((item) => item.id === "queue-failed:current-cycle-failure"), true);
+    assert.equal(attention.items.some((item) => item.id === "queue-recovery:current-cycle-failure"), true);
+    assert.equal(attention.health.status, "degraded");
+    assert.match(attention.health.reason, /^2 queue task/);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("operator attention consolidates durable intervention signals", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-operator-attention-"));
   try {
@@ -788,7 +1022,7 @@ test("goal alignment traces live work to a durable campaign phase", () => {
     assert.equal(goalAlignment(store).status, "blocked");
     store.savePhaseGoal({ id: "phase-1", phase: "validation", status: "pending", payload: { id: "phase-1", phase: "validation" } });
     store.savePhaseGoal({ id: "foreign-active", phase: "hypothesis", status: "active", payload: { id: "foreign-active", phase: "hypothesis", goalSetId: "old-campaign" } });
-    assert.equal(goalAlignment(store).checks.find((check) => check.id === "active-phase-goal")?.status, "blocked");
+    assert.equal(goalAlignment(store).checks.find((check) => check.id === "active-phase-goal")?.status, "pass", "the next pending goal in the active campaign is resumable even if not yet promoted to active");
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -1268,6 +1502,9 @@ test("Codex steering is asynchronous and uses the configured binary", async () =
 test("startup fallback eligibility distinguishes route failures from account model errors", () => {
   assert.equal(isProviderFallbackEligible(new Error("Codex is not logged in")), true);
   assert.equal(isProviderFallbackEligible(new Error("Codex is unreachable right now")), true);
+  assert.equal(isProviderFallbackEligible(new Error("Codex request timed out.")), true);
+  assert.equal(isProviderFallbackEligible(new Error("Codex stream disconnected")), true);
+  assert.equal(isProviderFallbackEligible(new Error("upstream returned HTTP 504")), true);
   assert.equal(isProviderUsageLimit(new Error("Selected model is at capacity")), true);
   assert.equal(isProviderFallbackEligible(new Error("Selected model is at capacity")), true);
   assert.equal(isProviderFallbackEligible(new Error("The selected model is not available for your account")), false);
@@ -1280,13 +1517,58 @@ test("sandbox launcher failures are classified separately from unknown execution
   assert.match(recoveryRouteDirective("sandbox").instruction, /sandbox|alternate executor/i);
 });
 
+test("structured evaluator dataset-generation failures enter bounded transient recovery", () => {
+  const failure = processFailureResult(
+    ["uv", "run", "python", "evaluate_batched.py"],
+    "/tmp/isolated-worktree",
+    new Error('{"ok":false,"error":{"stage":"run","code":"SCORING_RUNTIME_ERROR","message":"An error occurred while generating the dataset"}}'),
+  );
+  assert.equal(classifyProcessFailure(failure), "transient_cloud");
+  assert.equal(recoveryPlan("transient_cloud").retry, true);
+  assert.equal(recoveryPlan("transient_cloud").maxAttempts, 3);
+  assert.match(recoveryRouteDirective("transient_cloud").instruction, /distinct execution route/i);
+});
+
+test("missing package and executable errors route to locked environment provisioning", () => {
+  const result = processFailureResult(
+    ["node", "--test", "tests/core-smoke.mjs"],
+    "/tmp/isolated-worktree",
+    new Error("Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'better-sqlite3' imported from tests/core-smoke.mjs"),
+  );
+  assert.equal(classifyProcessFailure(result), "dependency");
+  assert.equal(recoveryPlan("dependency").route, "provision_environment");
+  assert.equal(recoveryPlan("dependency").retry, false);
+  assert.match(recoveryRouteDirective("dependency").instruction, /lockfile/i);
+  assert.match(recoveryRouteDirective("dependency").instruction, /permission gate/i);
+  const missingExecutable = processFailureResult(["npm", "test"], "/tmp/isolated-worktree", new Error("sh: 1: tsc: not found"));
+  assert.equal(classifyProcessFailure(missingExecutable), "dependency");
+});
+
+test("host-memory allocation failures use the general resource-reduction recovery route", () => {
+  const errors = [
+    "Unable to allocate 375. MiB for an array with shape (10, 7, 343, 64, 64) and data type float32",
+    "DefaultCPUAllocator: not enough memory: you tried to allocate a tensor",
+    "std::bad_alloc",
+  ];
+  for (const error of errors) {
+    const result = processFailureResult(["uv", "run", "evaluator"], "/tmp/workspace", new Error(error));
+    assert.equal(classifyProcessFailure(result), "memory_exhausted", error);
+  }
+  assert.equal(classifyProcessFailure(processFailureResult(["python", "run.py"], "/tmp", new Error("CUDA out of memory"))), "cuda_oom");
+  assert.equal(recoveryPlan("memory_exhausted").route, "reduce_resources");
+  assert.match(recoveryRouteDirective("memory_exhausted").instruction, /lower-resource|split-workload/i);
+});
+
 test("active Codex fallback changes route only under auto or fallback policy", () => {
   const network = new Error("Codex is unreachable right now");
+  const timeout = new Error("Codex request timed out.");
   const quota = new Error("Codex usage limit reached");
   assert.equal(shouldUseLocalFallback(network, { provider: "codex", limitPolicy: "auto" }, "auto"), true);
+  assert.equal(shouldUseLocalFallback(timeout, { provider: "codex", limitPolicy: "auto" }, "auto"), true);
   assert.equal(shouldUseLocalFallback(quota, { provider: "codex", limitPolicy: "fallback" }, "qwen"), true);
   assert.equal(shouldUseLocalFallback(network, { provider: "codex", limitPolicy: "wait" }, "qwen"), false);
   assert.equal(shouldUseLocalFallback(network, { provider: "codex", limitPolicy: "stop" }, "qwen"), false);
+  assert.equal(shouldUseLocalFallback(timeout, { provider: "codex", limitPolicy: "stop" }, "qwen"), false);
   assert.equal(shouldUseLocalFallback(network, { provider: "local", limitPolicy: "auto" }, "qwen"), false);
   assert.equal(shouldUseLocalFallback(new Error("selected model is unavailable for this account"), { provider: "codex", limitPolicy: "auto" }, "qwen"), false);
 });
@@ -1351,6 +1633,12 @@ test("pre-registered experiment manifests cannot be changed in place", () => {
     assert.equal(store.recentEvents(5).at(-1)?.type, "experiment.manifest.mutation.rejected");
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("experiment proposal exposes a generic per-run timeout option", () => {
+  const help = execFileSync(process.execPath, ["dist/cli.js", "experiment", "propose", "--help"], { encoding: "utf8" });
+  assert.match(help, /--timeout-minutes <minutes>/);
+  assert.match(help, /1–1440 minutes/);
 });
 
 test("critic revision is not recorded as evidence-consistent", () => {
@@ -1437,6 +1725,21 @@ test("failed research cycles close in-flight tool calls as aborted results", () 
   assert.equal(failure.quality.toolUse.verdict, "WARN");
 });
 
+test("failed research cycles preserve completed lane findings and evidence for resume", () => {
+  const failure = researchFailureRecord(6, new Error("director timed out"), [], [
+    { role: "model researcher", status: "completed", summary: "A bounded analytic route is feasible.", findings: ["The input boundary excludes labels."], recommendations: ["Try a weights-only correction."], uncertainties: ["Cross-split overlap remains unknown."], evidence: ["trace:input-boundary"], evidenceSourceIds: ["source-input-boundary"] },
+    { role: "validation scientist", status: "failed", error: "provider timeout", summary: "Partial shard audit completed.", evidence: ["trace:shard-audit"] },
+  ]);
+  const laneEvents = failure.events.filter((event) => event.payload.stage === "research_lane");
+  assert.equal(laneEvents.length, 2);
+  assert.equal(laneEvents[0].payload.status, "completed");
+  assert.deepEqual(laneEvents[0].payload.findings, ["The input boundary excludes labels."]);
+  assert.deepEqual(laneEvents[0].payload.evidenceSourceIds, ["source-input-boundary"]);
+  assert.equal(laneEvents[1].payload.status, "failed");
+  assert.deepEqual(laneEvents[1].payload.evidence, ["trace:shard-audit"]);
+  assert.equal(failure.events.at(-1).payload.status, "failed");
+});
+
 test("tool trace recorder preserves causal call/result pairs and redacts secrets", () => {
   const persisted = [];
   const trace = createToolTraceRecorder("smoke", { onEvent: (event) => persisted.push(event) });
@@ -1474,10 +1777,27 @@ test("tool trace recorder preserves causal call/result pairs and redacts secrets
   assert.equal(evaluateTrajectory(failedTool.events).toolUse.verdict, "WARN");
 });
 
+test("semantic audits receive exact bounded anchors for controller tool results and budget telemetry", () => {
+  const observations = semanticAuditTraceEvidence([
+    { id: "call-1-result", kind: "tool_result", callId: "call-1", payload: { tool: "workspace.read", source: "director", ok: true, output: { text: "verified file" } } },
+    { id: "budget-event", kind: "process", payload: { activity: "Tool-round budget exhausted (6); retaining observations." } },
+    { id: "unrelated", kind: "process", payload: { activity: "thinking" } },
+  ]);
+  assert.deepEqual(observations.map((entry) => entry.evidenceAnchor), ["trace:call-1-result", "trace:budget-event"]);
+  assert.equal(observations[0].tool, "workspace.read");
+  assert.equal(observations[0].ok, true);
+  assert.match(observations[1].activity, /budget exhausted/);
+});
+
 test("typed tool failures share recovery classification with provider failures", () => {
   assert.equal(researchToolFailureClass({ ok: false, error: "connection refused", trust: "untrusted_content" }), "timeout");
   assert.equal(researchToolFailureClass({ ok: false, error: "permission denied", trust: "permission_boundary" }), undefined);
+  assert.equal(researchToolFailureClass({ ok: false, error: "Unknown research tool: recovery.failures", trust: "controller_observation" }), undefined);
+  assert.equal(researchToolFailureClass({ ok: false, error: "Tool argument 'path' is required and must be a non-empty string.", trust: "controller_observation" }), undefined);
+  assert.equal(researchToolFailureClass({ ok: false, error: "EISDIR: illegal operation, read", trust: "controller_observation" }), undefined);
+  assert.equal(researchToolFailureClass({ ok: false, error: "File does not exist: reports/a.md reports/b.md", trust: "controller_observation" }), undefined);
   assert.equal(researchToolFailureClass({ ok: false, error: "No space left on device", trust: "controller_observation" }), "disk");
+  assert.equal(researchToolFailureClass({ ok: false, error: "Cannot create a string longer than 0x1fffffe8 characters", trust: "controller_observation" }), "memory_exhausted");
   assert.equal(researchToolFailureClass({ ok: true, trust: "untrusted_content" }), undefined);
 });
 
@@ -1526,6 +1846,16 @@ test("shared trace recovery registers orphaned traces once", () => {
   assert.equal(recoverUncommittedTraceFiles(root, store), 0);
   assert.equal(store.eventsByType("research.trace.recovered").length, 1);
   store.close();
+
+  const isolatedState = join(root, "isolated-state");
+  mkdirSync(join(isolatedState, "traces"), { recursive: true });
+  const isolatedStore = new ResearchStore(join(isolatedState, "database.sqlite"));
+  assert.equal(recoverUncommittedTraceFiles(root, isolatedStore, 100, isolatedState), 0, "a separate state directory must not import project-default traces");
+  writeFileSync(join(isolatedState, "traces", "isolated.jsonl"), `${JSON.stringify({ id: "isolated-event", kind: "process", payload: { activity: "isolated campaign" } })}\n`);
+  assert.equal(recoverUncommittedTraceFiles(root, isolatedStore, 100, isolatedState), 1);
+  const recoveredPath = isolatedStore.eventsByType("research.trace.recovered")[0].payload.path;
+  assert.equal(recoveredPath, "isolated-state/traces/isolated.jsonl");
+  isolatedStore.close();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -1604,7 +1934,7 @@ test("retrospective replay selects difficult and diverse experiences determinist
   assert.deepEqual(selectRetrospectiveCoreset(records, 2).map((record) => record.trajectoryId), selectRetrospectiveCoreset(records, 2).map((record) => record.trajectoryId));
 });
 
-test("critic gate converts terminal and execution decisions into inspection", () => {
+test("critic revision permits falsifiable exploration but blocks unsupported stopping and rejection", () => {
   const decision = { phase: "evaluation", goalStatus: "met", decision: "run", bottleneck: "b", rationale: "r", hypotheses: [], selectedHypothesis: null, nextAction: "run it", toolCalls: [] };
   const gated = applyCriticGate(decision, { verdict: "revise" });
   assert.equal(gated.blocked, true);
@@ -1613,10 +1943,57 @@ test("critic gate converts terminal and execution decisions into inspection", ()
   assert.match(gated.decision.nextAction, /critic verdict is revise/i);
   assert.equal(applyCriticGate(decision, { verdict: "proceed" }).blocked, false);
   const concreteRun = { ...decision, goalStatus: "active", selectedHypothesis: "candidate" };
-  const revisedRun = applyCriticGate(concreteRun, { verdict: "revise" });
-  assert.equal(revisedRun.blocked, true);
-  assert.equal(revisedRun.decision.decision, "inspect");
-  assert.match(revisedRun.decision.nextAction, /critic verdict is revise/i);
+  assert.equal(applyCriticGate(concreteRun, { verdict: "revise" }).blocked, true, "a selected name without a falsification contract cannot run");
+  const falsifiableRun = { ...concreteRun, hypotheses: [{ title: "candidate", falsificationTest: "Run paired fixed inputs and reject if the metric does not improve." }] };
+  const revisedRun = applyCriticGate(falsifiableRun, { verdict: "revise" });
+  assert.equal(revisedRun.blocked, false);
+  assert.equal(revisedRun.decision.decision, "run");
+  assert.match(revisedRun.decision.nextAction, /exploratory run only.*do not claim validation/i);
+  assert.equal(applyCriticGate(falsifiableRun, { verdict: "reject" }).blocked, true, "explicit rejection remains a hard veto");
+  const mislabeledExploration = { ...falsifiableRun, decision: "inspect", rationale: "Run this selected hypothesis only as a bounded exploratory test.", nextAction: "Run the official evaluator on the public mini split.", selectedHypothesis: "candidate" };
+  const promoted = promoteExplicitExploratoryRun(mislabeledExploration, { verdict: "revise", summary: "A bounded exploratory run is defensible; promotion remains blocked." }, true);
+  assert.equal(promoted.promoted, true);
+  assert.equal(promoted.decision.decision, "run");
+  assert.match(promoted.decision.nextAction, /unresolved critic objections still block validation, promotion, and submission/i);
+  assert.equal(promoteExplicitExploratoryRun(mislabeledExploration, { verdict: "revise", summary: "Resolve prerequisites before execution." }, true).promoted, false);
+  assert.equal(promoteExplicitExploratoryRun(mislabeledExploration, { verdict: "revise", summary: "A bounded exploratory run is defensible." }, false).promoted, false);
+  assert.equal(promoteExplicitExploratoryRun(mislabeledExploration, { verdict: "reject", summary: "No exploratory run is allowed." }, true).promoted, false);
+  const auditDecision = {
+    ...mislabeledExploration,
+    decision: "inspect",
+    selectedHypothesis: "Reconcile score provenance",
+    hypotheses: [{ title: "Reconcile score provenance", formulationFamily: "validation", outcomeType: "proof", mechanism: "Compare records.", proposedChange: "Read run artifacts.", falsificationTest: "The records are unavailable." }],
+  };
+  const storedEstimatorHypothesis = {
+    id: "hyp-existing-estimator",
+    payload: {
+      id: "hyp-existing-estimator",
+      status: "proposed",
+      title: "Exploratory covariance propagation estimator",
+      formulationFamily: "inference",
+      outcomeType: "metric",
+      mechanism: "Propagating moments may improve the estimate.",
+      proposedChange: "Implement covariance propagation in an isolated worktree and run the locked mini evaluator.",
+      falsificationTest: "Reject if any row fails or the complete score does not improve.",
+      expectedMetricDelta: { low: -1e-9, median: -1e-10, high: 0 },
+      implementationRisk: "medium",
+      leakageRisk: "low",
+      decisionId: 12,
+    },
+  };
+  const operatorInstruction = "Run one isolated exploratory experiment even though unresolved data checks are blockers to validation and submission only.";
+  const steered = promoteOperatorSteeredExploration(auditDecision, { verdict: "revise" }, true, [operatorInstruction], [storedEstimatorHypothesis]);
+  assert.equal(steered.promoted, true);
+  assert.equal(steered.hypothesisId, "hyp-existing-estimator");
+  assert.equal(steered.decision.decision, "run");
+  assert.equal(steered.decision.selectedHypothesis, "Exploratory covariance propagation estimator");
+  assert.ok(steered.decision.hypotheses.some((hypothesis) => hypothesis.title === steered.decision.selectedHypothesis));
+  assert.match(steered.decision.nextAction, /unresolved checks as blockers to validation, promotion, and submission/i);
+  assert.equal(promoteOperatorSteeredExploration(auditDecision, { verdict: "revise" }, false, [operatorInstruction], [storedEstimatorHypothesis]).promoted, false, "safe permissions still block execution");
+  assert.equal(promoteOperatorSteeredExploration(auditDecision, { verdict: "reject" }, true, [operatorInstruction], [storedEstimatorHypothesis]).promoted, false, "critic rejection remains a hard veto");
+  assert.equal(promoteOperatorSteeredExploration(auditDecision, { verdict: "revise" }, true, [operatorInstruction], [storedEstimatorHypothesis], new Set(["hyp-existing-estimator"])).promoted, false, "already scheduled hypotheses are not duplicated");
+  const auditOnly = { ...storedEstimatorHypothesis, id: "hyp-audit", payload: { ...storedEstimatorHypothesis.payload, id: "hyp-audit", formulationFamily: "validation" } };
+  assert.equal(promoteOperatorSteeredExploration(auditDecision, { verdict: "revise" }, true, [operatorInstruction], [auditOnly]).promoted, false, "validation-only proposals are never executed as experiments");
 });
 
 test("critic constraints survive short event windows until a later proceed result", () => {
@@ -1625,6 +2002,11 @@ test("critic constraints survive short event windows until a later proceed resul
     { type: "research.observation", payload: {} },
   ]);
   assert.deepEqual(open, { verdict: "revise", summary: "check leakage", objections: ["split is unverified"], requiredChecks: ["run grouped audit"] });
+  const guidance = formatOpenCriticConstraintGuidance(open);
+  assert.match(guidance, /bounded internal phase goal may be marked met only when its own deterministic domain gate and durable subtask audit pass/i);
+  assert.match(guidance, /not a claim that the ultimate objective or candidate is complete or validated/i);
+  assert.match(guidance, /do not claim ultimate-goal completion, final-candidate validation, promotion, or submission/i);
+  assert.match(guidance, /explicit reject verdict still blocks execution/i);
   assert.equal(latestOpenCriticConstraint([
     { type: "research.critic.completed", payload: { review: { verdict: "revise", summary: "old", objections: [], requiredChecks: ["old check"] } } },
     { type: "research.critic.completed", payload: { review: { verdict: "proceed", summary: "resolved", objections: [], requiredChecks: [] } } },
@@ -1663,6 +2045,19 @@ test("local engineer patches are checked and applied inside the worktree", async
     await runProcess(["git", "add", "example.txt"], root);
     await runProcess(["git", "-c", "user.name=Evidra", "-c", "user.email=evidra@example.invalid", "commit", "-q", "-m", "base"], root);
     await applyUnifiedDiff(root, "diff --git a/example.txt b/example.txt\n--- a/example.txt\n+++ b/example.txt\n@@ -1 +1 @@\n-before\n+after\n");
+    assert.equal(readFileSync(join(root, "example.txt"), "utf8"), "after\n");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("local engineer patch recovery recounts malformed unified-diff hunk lengths safely", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-patch-recount-"));
+  try {
+    await runProcess(["git", "init", "-q"], root);
+    writeFileSync(join(root, "example.txt"), "before\n");
+    await runProcess(["git", "add", "example.txt"], root);
+    await runProcess(["git", "-c", "user.name=Evidra", "-c", "user.email=evidra@example.invalid", "commit", "-q", "-m", "base"], root);
+    const badCounts = "diff --git a/example.txt b/example.txt\n--- a/example.txt\n+++ b/example.txt\n@@ -1,3 +1,3 @@\n-before\n+after\n";
+    await applyUnifiedDiff(root, badCounts);
     assert.equal(readFileSync(join(root, "example.txt"), "utf8"), "after\n");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -1709,6 +2104,115 @@ test("paused campaign time is excluded from the autonomous budget", () => {
   assert.equal(Math.round(campaignElapsedMinutes(resumed, Date.parse("2026-01-01T01:10:00.000Z"))), 20);
 });
 
+test("budget exhaustion pauses unfinished work and an extension preserves its checkpoint state", () => {
+  const campaign = { startedAt: "2026-01-01T00:00:00.000Z", status: "running", budgetMinutes: 30, currentCycle: 7, currentStep: "research-critic", checkpointedAt: "2026-01-01T00:29:00.000Z", stopCondition: "validated result" };
+  const paused = pauseCampaignForBudget(campaign, "2026-01-01T00:30:00.000Z");
+  assert.equal(paused.status, "paused");
+  assert.equal(paused.budgetExhausted, true);
+  assert.equal(paused.currentCycle, 7);
+  assert.equal(paused.currentStep, "research-critic");
+  assert.equal(paused.stopCondition, "validated result");
+  const extended = extendCampaignBudget(paused, 90);
+  assert.equal(extended.status, "paused");
+  assert.equal(extended.budgetMinutes, 120);
+  assert.equal(extended.budgetExhausted, false);
+  assert.equal(extended.pausedAt, paused.pausedAt);
+  assert.equal(extended.checkpointedAt, paused.checkpointedAt);
+  assert.throws(() => extendCampaignBudget(paused, 0), /positive number/);
+});
+
+test("stale budget exhaustion markers are cleared only while saved campaign time remains", () => {
+  const paused = { startedAt: "2026-01-01T00:00:00.000Z", status: "paused", pausedAt: "2026-01-01T00:50:00.000Z", budgetMinutes: 60, budgetExhausted: true };
+  const recovered = recoverFalseBudgetExhaustion(paused, Date.parse("2026-01-01T02:00:00.000Z"));
+  assert.equal(recovered?.budgetExhausted, false);
+  assert.equal(campaignElapsedMinutes(recovered, Date.parse("2026-01-01T02:00:00.000Z")), 50);
+  const trulyExhausted = { ...paused, status: "running", pausedAt: undefined };
+  assert.equal(recoverFalseBudgetExhaustion(trulyExhausted, Date.parse("2026-01-01T01:01:00.000Z")), undefined);
+});
+
+test("legacy budget exhaustion is recoverable but real goal completion is not", () => {
+  const campaign = { startedAt: "2026-01-01T00:00:00.000Z", status: "completed", budgetMinutes: 30, currentCycle: 7 };
+  const recovered = recoverCompletedBudgetPause(campaign, { decision: "inspect", goalStatus: "active" }, "continue", "2026-01-01T00:31:00.000Z");
+  assert.equal(recovered?.status, "paused");
+  assert.equal(recovered?.budgetExhausted, true);
+  assert.equal(recoverCompletedBudgetPause(campaign, { decision: "stop", goalStatus: "met" }, "continue", "2026-01-01T00:31:00.000Z"), undefined);
+  assert.equal(recoverCompletedBudgetPause(campaign, { decision: "inspect", goalStatus: "active" }, "continue", "2026-01-01T00:29:00.000Z"), undefined);
+  assert.equal(recoverCompletedBudgetPause(campaign, { decision: "inspect", goalStatus: "active" }, "stop", "2026-01-01T00:31:00.000Z"), undefined);
+});
+
+test("research and challenge CLI budget extensions update the paused durable campaign", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-campaign-budget-"));
+  try {
+    for (const mode of ["research", "challenge"]) {
+      const stateDir = join(root, mode);
+      const store = new ResearchStore(join(stateDir, "database.sqlite"));
+      store.saveCampaign({ goal: "unfinished test goal", stopCondition: "verified outcome", startedAt: "2026-01-01T00:00:00.000Z", status: "paused", pausedAt: "2026-01-01T00:30:00.000Z", budgetMinutes: 30, budgetExhausted: true, currentCycle: 4, currentStep: "research-critic", checkpointedAt: "2026-01-01T00:29:00.000Z", runtime: { mode, provider: "codex", model: "gpt-6-luna", thinking: "medium", lanes: 3, autonomy: "safe", limitPolicy: "auto", executor: "local" } });
+      store.close();
+      execFileSync(process.execPath, [join(process.cwd(), "dist", "cli.js"), mode, "budget", "add", "90m"], { cwd: process.cwd(), env: { ...process.env, EVIDRA_STATE_DIR: stateDir }, encoding: "utf8", timeout: 30_000 });
+      const reopened = new ResearchStore(join(stateDir, "database.sqlite"));
+      const saved = reopened.campaign();
+      assert.equal(saved.status, "paused");
+      assert.equal(saved.budgetMinutes, 120);
+      assert.equal(saved.budgetExhausted, false);
+      assert.equal(saved.currentCycle, 4);
+      assert.equal(saved.currentStep, "research-critic");
+      assert.equal(saved.checkpointedAt, "2026-01-01T00:29:00.000Z");
+      assert.equal(reopened.eventsByType("research.campaign.budget.extended", 1).at(-1)?.payload?.addedMinutes, 90);
+      execFileSync(process.execPath, [join(process.cwd(), "dist", "cli.js"), mode, "budget", "tokens", "5000"], { cwd: process.cwd(), env: { ...process.env, EVIDRA_STATE_DIR: stateDir }, encoding: "utf8", timeout: 30_000 });
+      const tokenBudgeted = reopened.campaign();
+      assert.equal(tokenBudgeted.runtime.agentTokenBudget, 5000);
+      assert.equal(tokenBudgeted.runtime.mode, mode);
+      assert.equal(tokenBudgeted.status, "paused");
+      assert.equal(readDurableCampaignRuntime(tokenBudgeted)?.agentTokenBudget, 5000, "CLI token-budget edits must refresh the runtime fingerprint so resume preserves the ceiling");
+      assert.equal(reopened.eventsByType("research.campaign.token_budget.updated", 1).at(-1)?.payload?.tokenBudget, 5000);
+      reopened.close();
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("adaptive campaign records exclude stale failures from prior sessions", () => {
+  const records = [
+    { id: "old-failure", createdAt: "2026-01-01T00:00:00.000Z" },
+    { id: "current-observation", createdAt: "2026-01-02T00:00:00.000Z" },
+    { id: "malformed-time", createdAt: "not-a-time" },
+  ];
+  assert.deepEqual(recordsForCampaign(records, "2026-01-02T00:00:00.000Z").map((entry) => entry.id), ["current-observation"]);
+  assert.deepEqual(recordsForCampaign(records, "invalid-start"), []);
+});
+
+test("campaign context retains recent tool failures beyond the ordinary telemetry window", () => {
+  const recent = Array.from({ length: 20 }, (_, index) => ({ type: "agent.activity", payload: { index }, createdAt: `2026-01-02T00:00:${String(index).padStart(2, "0")}.000Z`, eventHash: `recent-${index}` }));
+  const failures = [
+    { type: "research.tool.failed", payload: { name: "workspace.search", error: "query required" }, createdAt: "2026-01-01T23:59:59.000Z", eventHash: "old-failure" },
+    { type: "research.tool.failed", payload: { name: "workspace.search", error: "query required" }, createdAt: "2026-01-02T00:00:05.000Z", eventHash: "campaign-failure" },
+  ];
+  const merged = mergeCampaignToolFailures(recent, failures, "2026-01-02T00:00:00.000Z");
+  assert(merged.some((event) => event.eventHash === "campaign-failure"), "same-campaign failure stays available after twenty noisy events");
+  assert(!merged.some((event) => event.eventHash === "old-failure"), "a prior campaign failure cannot steer the current campaign");
+  assert.equal(merged.length, 21);
+  assert.deepEqual(merged.map((event) => event.createdAt), [...merged.map((event) => event.createdAt)].sort());
+});
+
+test("evidence-pressure allocation counts only conflicts touching this campaign's claims", () => {
+  const counts = campaignEvidenceConflictCounts({
+    claimIds: new Set(["current-a", "current-b"]),
+    contradictions: [
+      { fromId: "old-a", toId: "old-b" },
+      { fromId: "current-a", toId: "old-b" },
+      { fromId: "current-a", toId: "current-b" },
+      { fromId: "current-a", toId: "current-b" },
+    ],
+    duplicates: [
+      { claimId: "old-a", duplicateOf: "old-b" },
+      { claimId: "current-a", duplicateOf: "old-a" },
+      { claimId: "current-a", duplicateOf: "old-a" },
+      { claimId: "current-b", duplicateOf: "current-a" },
+      { claimId: "invalid", duplicateOf: null },
+    ],
+  });
+  assert.deepEqual(counts, { contradictions: 2, duplicates: 2 });
+});
+
 test("campaign child timeout is bounded by remaining active budget", () => {
   const campaign = { startedAt: "2026-01-01T00:00:00.000Z", status: "running", budgetMinutes: 30 };
   assert.equal(campaignRemainingMs(campaign, Date.parse("2026-01-01T00:10:00.000Z")), 20 * 60_000);
@@ -1746,6 +2250,31 @@ test("campaign checkpoints accept known phases and reject corrupted metadata", (
   assert.throws(() => withCampaignCheckpoint({}, "cycle-start", -1), /non-negative integer/);
 });
 
+test("campaign active-work projections exclude paused and terminal resumable tasks", () => {
+  assert.deepEqual(activeCampaignTaskIds([
+    { id: "running-1", status: "running" },
+    { id: "queued-1", status: "queued" },
+    { id: "paused-resumable", status: "paused" },
+    { id: "done", status: "completed" },
+    { id: "running-1", status: "running" },
+  ]), ["running-1", "queued-1"]);
+  assert.deepEqual(activeCampaignTaskIds([{ id: "running", status: "running" }], 0), []);
+});
+
+test("campaign checkpoint survives durable pause and resume boundaries", () => {
+  const checkpointed = withCampaignCheckpoint({ goal: "long-running research", status: "running" }, "research-lanes", 12, "2026-09-26T00:00:00.000Z", ["task-live"]);
+  const paused = pauseCampaign(checkpointed, "2026-09-26T00:05:00.000Z");
+  assert.deepEqual(readCampaignCheckpoint(paused), {
+    currentCycle: 12,
+    currentStep: "research-lanes",
+    checkpointedAt: "2026-09-26T00:00:00.000Z",
+    activeTaskIds: ["task-live"],
+  });
+  const resumed = resumeCampaign(paused, "2026-09-26T00:20:00.000Z");
+  assert.deepEqual(readCampaignCheckpoint(resumed), readCampaignCheckpoint(paused));
+  assert.equal(nextCampaignCycle(readCampaignCheckpoint(resumed)), 12, "an interrupted cycle resumes at the same cycle instead of restarting at zero");
+});
+
 test("durable campaign runtime settings are validated before resume", () => {
   const runtime = {
     mode: "challenge",
@@ -1769,6 +2298,8 @@ test("durable campaign runtime settings are validated before resume", () => {
   assert.equal(readCampaignRuntime({ goal: "legacy campaign" }), undefined);
   assert.equal(campaignRuntimeFingerprint(runtime), campaignRuntimeFingerprint({ ...runtime }));
   assert.notEqual(campaignRuntimeFingerprint(runtime), campaignRuntimeFingerprint({ ...runtime, autonomy: "yolo" }));
+  assert.equal(campaignRuntimeMatchesExceptAutonomy(runtime, { ...runtime, autonomy: "yolo" }), true);
+  assert.equal(campaignRuntimeMatchesExceptAutonomy(runtime, { ...runtime, autonomy: "yolo", executor: "local" }), false, "an autonomy override must not silently change the compute route");
   const bound = bindCampaignRuntime({ goal: "route-bound" }, runtime);
   assert.equal(bound.runtime.fingerprint, campaignRuntimeFingerprint(runtime));
   assert.equal(bound.runtimeFingerprint, campaignRuntimeFingerprint(runtime));
@@ -2006,6 +2537,21 @@ test("sparse external feedback creates conservative validation pressure", () => 
   assert.equal(pressured.focus, "evidence-validation");
   assert.equal(pressured.priority, "critical");
   assert.match(pressured.strategy, /multi-split|alignment|uncertain/i);
+});
+
+test("manually observed external scores feed generic split calibration without double counting", () => {
+  const submissions = [{ id: "sub-1", payload: { publicScore: 0.7, validationScores: { public_proxy: 0.65 } } }];
+  const claims = [
+    { id: "claim-1", payload: { sourceType: "external_score", sourceId: "sub-1", score: 0.7, validationScores: { public_proxy: 0.65 } } },
+    { id: "claim-2", payload: { sourceType: "external_score", sourceId: "run-2", score: 0.8, validationScores: { public_proxy: 0.78 } } },
+    { id: "claim-3", payload: { sourceType: "external_score", sourceId: "unpaired", score: 0.9 } },
+    { id: "claim-4", payload: { sourceType: "literature", score: 1, validationScores: { public_proxy: 1 } } },
+  ];
+  const feedback = distributionObservationsFromFeedback(submissions, claims);
+  assert.deepEqual(feedback, [
+    { id: "sub-1", externalScore: 0.7, validationScores: { public_proxy: 0.65 } },
+    { id: "run-2", externalScore: 0.8, validationScores: { public_proxy: 0.78 } },
+  ]);
 });
 
 test("harness comparison failures become a locked adaptive retest agenda", () => {
@@ -2248,7 +2794,8 @@ test("collaboration utility gates repeated no-value peer review but preserves ha
   assert.match(forced.rationale, /hard evidence pressure/);
 });
 
-test("code health detects severe test deletion and untested structural growth", () => {
+test("code health detects severe test deletion and untested structural growth", async () => {
+  const { assessScopedCodeHealthTrend } = await import("../dist/core/code-health.js");
   const before = snapshotCodeHealth([
     { path: "src/app.ts", content: "export const app = true;\\n" },
     { path: "tests/app.test.ts", content: "test('app', () => {});\\n" },
@@ -2495,6 +3042,14 @@ test("validation acceptance requires replicated evidence and safety gates", () =
   assert.deepEqual(applyIndependentReplicationEvidence(blocked, false), blocked);
   const accepted = evaluateValidationAcceptance({ baseline: base, candidate, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
   assert.equal(accepted.accepted, true);
+  const failedRun = evaluateValidationAcceptance({ baseline: base, candidate: { ...candidate, status: "failed", exitCode: 1 }, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: false, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
+  assert.equal(failedRun.accepted, false, "a promising metric cannot promote an unsuccessful candidate run");
+  assert.equal(failedRun.gates.runIntegrity, false);
+  const partialEvaluation = evaluateValidationAcceptance({ baseline: base, candidate: { ...candidate, metrics: { ...candidate.metrics, n_failed_examples: 1 } }, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: false, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
+  assert.equal(partialEvaluation.accepted, false, "a completed process that reports failed examples is not promotion-eligible");
+  assert.equal(partialEvaluation.gates.runIntegrity, false);
+  const verifierFailure = evaluateValidationAcceptance({ baseline: base, candidate: { ...candidate, verification: { declared: 2, executed: 2, passed: 1, failed: 1, independent: false, details: [] } }, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: false, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
+  assert.equal(verifierFailure.accepted, false, "reported verifier failures block promotion even when the worker exits successfully");
   const suspiciousGain = evaluateValidationAcceptance({ baseline: base, candidate: { ...base, runId: "large-candidate", metrics: { score: 0.95 }, metricsByFold: { score: [0.94, 0.95, 0.96] } }, metric: "score", direction: "maximize", minimumDelta: 0.002, maximumRegressionShift: 0.005, requireReplication: false, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: false });
   assert.equal(suspiciousGain.gates.unexpectedGainReview, false);
   assert.match(suspiciousGain.reasons.join(" "), /unexpectedly large/i);
@@ -2590,8 +3145,51 @@ test("execution stages reject invalid contracts before expensive work", () => {
   assert.equal(nextExecutionStage(plan).id, "feasibility");
   assert.equal(validateExecutionContract(manifest, "/tmp/evidra-worktree", ["python", "run.py"]).valid, true);
   assert.equal(validateExecutionContract({ ...manifest, evaluation: { requiredArtifacts: ["../secret.txt"] } }, "/tmp/evidra-worktree", ["python", "run.py"]).valid, false);
+  assert.equal(trivialSuccessCommand(["true"]), true);
+  assert.equal(trivialSuccessCommand(["/usr/bin/true", "ignored"]), true);
+  assert.equal(trivialSuccessCommand(["python", "run.py"]), false);
+  const unverifiedBehavior = { ...manifest, outcomeType: "behavior", evaluation: { requiredArtifacts: [], metrics: [] } };
+  const noOp = validateExecutionContract(unverifiedBehavior, "/tmp/evidra-worktree", ["true"]);
+  assert.equal(noOp.valid, false);
+  assert.match(noOp.reasons.join(" "), /placeholder success command/);
+  assert.match(noOp.reasons.join(" "), /must declare required artifacts or verification commands/);
+  const verifiedBehavior = { ...unverifiedBehavior, evaluation: { requiredArtifacts: [], metrics: [], verificationCommand: ["node", "verify.js"] } };
+  assert.equal(validateExecutionContract(verifiedBehavior, "/tmp/evidra-worktree", ["python", "run.py"]).valid, true);
+  const unverifiedNoEdit = { ...unverifiedBehavior, implementationMode: "verify" };
+  assert.equal(validateExecutionContract(unverifiedNoEdit, "/tmp/evidra-worktree", ["python", "run.py"]).valid, false);
+  assert.match(validateExecutionContract(unverifiedNoEdit, "/tmp/evidra-worktree", ["python", "run.py"]).reasons.join(" "), /verification-only experiment must declare/);
+  const metricControl = { ...unverifiedNoEdit, outcomeType: "metric", evaluation: { requiredArtifacts: [], metrics: [{ name: "score", direction: "minimize" }] } };
+  assert.equal(validateExecutionContract(metricControl, "/tmp/evidra-worktree", ["python", "evaluate.py"]).valid, true, "a real declared metric evaluator is evidence for an unchanged-code control");
+  assert.equal(validateExecutionContract(metricControl, "/tmp/evidra-worktree", ["true"]).valid, false, "a placeholder command cannot verify a metric control");
+  assert.equal(validateExecutionContract(metricControl, "/tmp/evidra-worktree", []).valid, false, "a verification-only metric still requires an evaluator command");
+  const unpinnedEstimatorControl = { ...metricControl, change: { configPatch: { estimatorPath: "estimator.py" } } };
+  const unpinnedResult = validateExecutionContract(unpinnedEstimatorControl, "/tmp/evidra-worktree", ["python", "evaluate.py"]);
+  assert.equal(unpinnedResult.valid, false, "file-backed verification must not evaluate whichever source happens to be in the worktree");
+  assert.match(unpinnedResult.reasons.join(" "), /require implementationSource\.path and a SHA-256 pin/);
+  for (const outcomeType of ["proof", "behavior"]) {
+    const mislabeledMetricControl = { ...unpinnedEstimatorControl, outcomeType };
+    const result = validateExecutionContract(mislabeledMetricControl, "/tmp/evidra-worktree", ["python", "evaluate.py"]);
+    assert.equal(result.valid, false, `${outcomeType} verification with score metrics still requires a pinned estimator source`);
+    assert.match(result.reasons.join(" "), /require implementationSource\.path and a SHA-256 pin/);
+  }
+  const pinnedEstimatorControl = { ...unpinnedEstimatorControl, change: { configPatch: { estimatorPath: "estimator.py", implementationSource: { path: ".sota/candidates/estimator.py", sha256: `sha256:${"a".repeat(64)}`, targetPath: "estimator.py" } } } };
+  assert.equal(validateExecutionContract(pinnedEstimatorControl, "/tmp/evidra-worktree", ["python", "evaluate.py"]).valid, true, "a source-pinned file-backed verification retains the normal evaluator gate");
+  const wrongTargetControl = { ...pinnedEstimatorControl, change: { configPatch: { ...pinnedEstimatorControl.change.configPatch, implementationSource: { ...pinnedEstimatorControl.change.configPatch.implementationSource, targetPath: "other.py" } } } };
+  assert.match(validateExecutionContract(wrongTargetControl, "/tmp/evidra-worktree", ["python", "evaluate.py"]).reasons.join(" "), /does not match evaluator estimatorPath/);
+  const behaviorVerification = { ...verifiedBehavior, implementationMode: "verify", change: { configPatch: { estimatorPath: "default-placeholder.py" } } };
+  assert.equal(validateExecutionContract(behaviorVerification, "/tmp/evidra-worktree", ["python", "run.py"]).valid, true, "non-metric behavior verification does not inherit an unrelated default estimator path as a source pin requirement");
   const progressed = advanceExecutionStage(plan, "feasibility", "completed");
   assert.equal(nextExecutionStage(progressed).id, "smoke");
+});
+
+test("non-metric verification runs declared checks standalone for every adapter", () => {
+  const plan = planVerificationExecution({ outcomeType: "behavior", verificationCommands: [["npm", "test"], ["npm", "run", "check"]] });
+  assert.equal(plan.standalone, true);
+  assert.deepEqual(plan.primaryCommand, ["npm", "test"]);
+  assert.deepEqual(plan.commands, [["npm", "test"], ["npm", "run", "check"]]);
+  assert.equal(planVerificationExecution({ outcomeType: "proof", verificationCommand: ["node", "verify.mjs"] }).standalone, true);
+  assert.equal(planVerificationExecution({ outcomeType: "metric", verificationCommands: [["npm", "test"]] }).standalone, false);
+  assert.equal(planVerificationExecution({ outcomeType: "behavior" }).standalone, false);
 });
 
 test("reduced validation runs with a cheap artifact contract", async () => {
@@ -2603,6 +3201,61 @@ test("reduced validation runs with a cheap artifact contract", async () => {
     assert.equal(result.metrics.macro_f1, 0.42);
     assert.deepEqual(result.artifacts, {});
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("failed reduced-stage results persist full redacted telemetry and checksummed artifacts", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-stage-evidence-"));
+  const store = new ResearchStore(join(root, "state.sqlite"));
+  try {
+    const run = persistExecutionStageResult({
+      store,
+      experimentId: "exp-stage-failed",
+      stage: "reduced_validation",
+      primaryMetricName: "score",
+      command: ["python", "evaluate.py", "--limit", "4"],
+      cwd: root,
+      executor: "local",
+      artifactRoot: join(root, "artifacts"),
+      environment: { environment: { API_TOKEN: "must-not-be-copied" } },
+      result: {
+        runId: "run-stage-failed",
+        status: "failed",
+        exitCode: 1,
+        durationSeconds: 12,
+        metrics: { score: 0.5887, n_mlps: 4, n_failed_mlps: 1 },
+        metricsByFold: {},
+        subgroupDeltas: [],
+        artifacts: {},
+        command: ["python", "evaluate.py", "--limit", "4"],
+        cwd: root,
+        failureClass: "unknown",
+        stdout: JSON.stringify({ rows: [{ index: 0, failed: true, error: "worker allocation failed" }] }),
+        stderr: "failure detail",
+      },
+    });
+    assert.equal(store.runs("exp-stage-failed")[0].status, "failed");
+    assert.equal(store.runs()[0].payload.metrics.n_failed_mlps, 1);
+    assert.match(readFileSync(run.artifacts["stdout.log"], "utf8"), /worker allocation failed/);
+    assert.match(readFileSync(run.artifacts["evaluator-result.json"], "utf8"), /worker allocation failed/);
+    assert.doesNotMatch(readFileSync(run.artifacts["environment.json"], "utf8"), /must-not-be-copied/);
+    const attempt = store.runAttempts("exp-stage-failed")[0];
+    assert.equal(attempt.stage, "reduced_validation");
+    assert.equal(attempt.status, "failed");
+    assert.equal(attempt.failureClass, "unknown");
+    assert.equal(attempt.metric, null, "a metric from a failed stage must not enter comparisons");
+    assert.equal(attempt.metrics.score, 0.5887, "retain reported metrics for diagnosis");
+    assert.deepEqual(attempt.command, ["python", "evaluate.py", "--limit", "4"]);
+    const artifacts = store.artifacts(run.runId);
+    assert.ok(artifacts.some((artifact) => artifact.name === "stdout.log" && artifact.checksum === sha256File(artifact.path)));
+    assert.ok(store.eventsByType("experiment.stage.result_recorded").some((event) => event.payload.runId === run.runId));
+    const stageEvent = store.eventsByType("experiment.stage.result_recorded").find((event) => event.payload.runId === run.runId);
+    assert.equal(stageEvent.payload.metricEligible, false);
+    assert.equal(stageEvent.payload.metric, null);
+    assert.equal(stageEvent.payload.reportedMetric, 0.5887);
+  } finally {
+    store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("reduced validation rejects a successful worker without its primary metric", async () => {
@@ -2722,6 +3375,73 @@ test("data audit reports bounded tabular duplicate and missingness diagnostics",
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("data audit distinguishes checksum coverage from content inspection for common dataset formats", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-data-audit-coverage-"));
+  try {
+    writeFileSync(join(root, "records.parquet"), "parquet-placeholder");
+    writeFileSync(join(root, "metadata.json"), '{"rows":10}');
+    writeFileSync(join(root, "train.csv"), "id,value\n1,a\n2,b\n");
+    const report = auditData(root);
+    assert.equal(report.scannedFiles, 3, "all files were checksummed");
+    assert.equal(report.tabularDiagnostics.length, 1, "only the supported CSV parser emits content diagnostics");
+    assert.deepEqual(report.uninspectedDataFiles.map((entry) => [entry.file, entry.format]).sort(), [["metadata.json", "JSON"], ["records.parquet", "Parquet"]]);
+    assert.ok(report.warnings.some((warning) => /empty tabular diagnostics do not establish absence/i.test(warning)));
+    assert.match(dataAuditFingerprint(report), /^sha256:/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("data audit names oversized dataset files whose contents and checksums were skipped", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-data-audit-oversize-"));
+  try {
+    writeFileSync(join(root, "shard.parquet"), "parquet content exceeds small test limit");
+    writeFileSync(join(root, "small.csv"), "x\n1\n");
+    const report = auditData(root, 10, 10);
+    assert.deepEqual(report.skippedFiles, ["shard.parquet"]);
+    assert.deepEqual(report.uninspectedDataFiles, [{ file: "shard.parquet", format: "Parquet", reason: "file size 40 exceeds the 10-byte audit limit; content and checksum were not inspected" }]);
+    assert.ok(report.warnings.some((warning) => /empty tabular diagnostics do not establish absence/i.test(warning)));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("data audit manifest fingerprint is stable and invalidates on input change while ignoring runtime state", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-data-audit-manifest-"));
+  try {
+    writeFileSync(join(root, "train.csv"), "id,value\n1,a\n");
+    const first = dataAuditManifestFingerprint(root);
+    assert.equal(dataAuditManifestFingerprint(root), first);
+    mkdirSync(join(root, ".sota"));
+    writeFileSync(join(root, ".sota", "events.sqlite"), "campaign state");
+    assert.equal(dataAuditManifestFingerprint(root), first, "runtime state does not invalidate a dataset audit");
+    writeFileSync(join(root, "train.csv"), "id,value\n1,changed\n");
+    assert.notEqual(dataAuditManifestFingerprint(root), first, "a changed dataset invalidates cached audit results");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("large-file SHA-256 streams content and artifact audit supports explicit large-file budgets", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-large-artifact-audit-"));
+  try {
+    const bytes = Buffer.alloc(3 * 1024 * 1024 + 17, 0x5a);
+    writeFileSync(join(root, "shard.parquet"), bytes);
+    const expected = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    assert.equal(sha256File(join(root, "shard.parquet")), expected);
+    const db = join(root, ".sota", "database.sqlite");
+    mkdirSync(join(root, ".sota"), { recursive: true });
+    const audited = await executeResearchTool({
+      name: "artifact.audit",
+      arguments: { paths: ["shard.parquet"], maxBytes: 2_000_000_000, maxTotalBytes: 8_000_000_000 },
+    }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(audited.ok, true);
+    assert.equal(audited.output.valid, true);
+    assert.equal(audited.output.hashedBytes, bytes.length);
+    assert.equal(audited.output.artifacts[0].checksum, expected);
+    const bounded = await executeResearchTool({
+      name: "artifact.audit",
+      arguments: { paths: ["shard.parquet"], maxBytes: 2_000_000_000, maxTotalBytes: 100 },
+    }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(bounded.output.valid, false);
+    assert.match(bounded.output.artifacts[0].reason, /aggregate hashing limit/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("data audit parses quoted delimiters, escaped quotes, and multiline fields", () => {
     const root = mkdtempSync(join(tmpdir(), "evidra-audit-quoted-"));
     writeFileSync(join(root, "quoted.csv"), 'id,description,kind\n1,"Toronto, Canada","a ""quoted"" value"\n2,"line one\nline two",b\n');
@@ -2757,6 +3477,17 @@ test("submission policy enforces budgets, spacing, and final reserve", () => {
         isFinalEnsemble: true,
     });
     assert.equal(final.allowed, true);
+});
+
+test("WhestBench submission policy enforces the operator-authorized daily cap", () => {
+  assert.equal(whestbenchConfig.submissionPolicy?.dailyLimit, 10);
+  assert.equal(whestbenchConfig.submissionPolicy?.requireHumanApproval, true);
+  const exhausted = evaluateSubmissionPolicy(whestbenchConfig.submissionPolicy, {
+    now: new Date("2026-09-30T12:00:00.000Z"),
+    submittedAt: Array.from({ length: 10 }, (_, index) => new Date(Date.UTC(2026, 8, 30, index)).toISOString()),
+  });
+  assert.equal(exhausted.allowed, false);
+  assert.ok(exhausted.reasons.some((reason) => reason.includes("daily submission limit reached (10)")));
 });
 
 test("workspace root discovery keeps nested CLI invocations on the project state", () => {
@@ -2801,26 +3532,20 @@ test("research lane recovery selects an untried route before repeating", () => {
   assert.equal(alternateResearchLaneRoute({ provider: "local", model: "fallback" }, pool, new Set(pool.map((route) => `${route.provider}\u0000${route.model}`))), undefined);
 });
 
-test("Codex research model pools preserve the primary route and exclude Astra by default", () => {
+test("Codex research lanes remain pinned to the explicitly selected model", () => {
   assert.deepEqual(codexResearchModelPool("gpt-5.6-luna", [
     { id: "gpt-6-astra", displayName: "Astra" },
     { id: "gpt-5.6-sol", displayName: "Sol" },
     { id: "gpt-5.6-terra", displayName: "Terra", hidden: true },
     { id: "gpt-5.5", displayName: "Legacy", supportedReasoningEfforts: ["low"] },
-  ], 4, "medium"), [
-    { provider: "codex", model: "gpt-5.6-luna" },
-    { provider: "codex", model: "gpt-5.6-sol" },
-  ]);
+  ], 4, "medium"), [{ provider: "codex", model: "gpt-5.6-luna" }]);
   assert.deepEqual(codexResearchModelPool("gpt-5.6-luna", [
     { id: "gpt-5.5", displayName: "Legacy", supportedReasoningEfforts: ["low"] },
   ], 4, "medium"), [{ provider: "codex", model: "gpt-5.6-luna" }]);
   assert.deepEqual(codexResearchModelPool("gpt-6-astra", [
     { id: "gpt-6-astra", displayName: "Astra" },
     { id: "gpt-5.6-sol", displayName: "Sol" },
-  ], 4, "medium"), [
-    { provider: "codex", model: "gpt-6-astra" },
-    { provider: "codex", model: "gpt-5.6-sol" },
-  ]);
+  ], 4, "medium"), [{ provider: "codex", model: "gpt-6-astra" }]);
 });
 
 test("research lane pools expose ensemble and reproducibility specialties when capacity allows", () => {
@@ -2856,7 +3581,7 @@ test("research lane pools expose ensemble and reproducibility specialties when c
     "reproducibility engineer",
     "formal methods specialist",
   ]);
-  assert.equal(researchLaneTeamSize("prove a new theorem", 2, { autonomy: "fast", customRoles: ["formal methods specialist"] }), 5);
+  assert.equal(researchLaneTeamSize("prove a new theorem", 2, { autonomy: "fast", customRoles: ["formal methods specialist"] }), 3);
 });
 
 test("peer research board is bounded and keeps provenance-shaped evidence", () => {
@@ -2880,6 +3605,7 @@ test("replication manifests preserve provenance while changing the independent s
     datasetRevision: "data-v1",
     metric: { name: "score", direction: "maximize" },
     evaluator: { command: ["true"], estimatorPath: "" },
+    execution: { environment: { OMP_NUM_THREADS: "2" } },
   };
   const parent = createExperimentManifest({ id: "exp-parent", hypothesisId: "hyp-1", gitCommit: "abc", datasetVersion: "data-v1", seeds: [17], requiredArtifacts: ["metrics.json"], requireReplication: true }, competition);
   const child = createReplicationManifest(parent, competition);
@@ -2888,6 +3614,16 @@ test("replication manifests preserve provenance while changing the independent s
   assert.equal(child.datasetVersion, parent.datasetVersion);
   assert.deepEqual(child.evaluation.seeds.slice(0, 1), parent.evaluation.seeds);
   assert.equal(child.acceptance.requireReplication, false);
+  assert.deepEqual(child.resources.environment, { OMP_NUM_THREADS: "2" });
+});
+
+test("experiment and replication manifests preserve checksum-pinned implementation artifacts", () => {
+  const artifact = { path: ".sota/models/fitted.npz", sha256: `sha256:${"a".repeat(64)}`, targetPath: ".evidra-inputs/fitted.npz" };
+  const competition = { id: "artifact-pin", name: "Artifact Pin", taskType: "metric", datasetRevision: "v1", metric: { name: "score", direction: "minimize" }, evaluator: { command: ["python", "evaluate.py"], estimatorPath: "estimator.py" } };
+  const parent = createExperimentManifest({ id: "artifact-parent", hypothesisId: "hyp-artifact", gitCommit: "abc", datasetVersion: "v1", configPatch: { estimatorPath: "estimator.py", implementationArtifacts: [artifact] } }, competition);
+  assert.deepEqual(parent.change.configPatch.implementationArtifacts, [artifact]);
+  const child = createReplicationManifest(parent, competition);
+  assert.deepEqual(child.change.configPatch.implementationArtifacts, [artifact]);
 });
 
 test("replication lineage is represented explicitly in the research graph", () => {
@@ -2901,18 +3637,41 @@ test("replication lineage is represented explicitly in the research graph", () =
 });
 
 test("generic experiment manifests do not assume ML-specific artifacts", () => {
-  const manifest = createExperimentManifest({ id: "generic", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "workspace" }, {
+  const manifest = createExperimentManifest({ id: "generic", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "workspace", timeoutMinutes: 95 }, {
     id: "general", name: "General", taskType: "scientific", datasetRevision: "workspace",
     metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" },
   });
   assert.deepEqual(manifest.evaluation.requiredArtifacts, []);
+  assert.equal(manifest.resources.timeoutMinutes, 95);
   const configured = createExperimentManifest({ id: "configured", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "data" }, {
     id: "configured", name: "Configured", taskType: "regression", datasetRevision: "data",
     metric: { name: "rmse", direction: "minimize" }, evaluator: { command: ["true"], estimatorPath: "" },
-    execution: { requiredArtifacts: ["metrics.json"], verificationCommand: ["python", "verify.py"] },
+    execution: { requiredArtifacts: ["metrics.json"], verificationCommand: ["python", "verify.py"], environment: { OPENBLAS_NUM_THREADS: "2" } },
   });
   assert.deepEqual(configured.evaluation.requiredArtifacts, ["metrics.json"]);
   assert.deepEqual(configured.evaluation.verificationCommand, ["python", "verify.py"]);
+  assert.deepEqual(configured.resources.environment, { OPENBLAS_NUM_THREADS: "2" });
+  const parameterOverride = createExperimentManifest({ id: "parameter-override", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "data", environment: { V26_STRASSEN: "3" } }, {
+    id: "configured", name: "Configured", taskType: "regression", datasetRevision: "data",
+    metric: { name: "rmse", direction: "minimize" }, evaluator: { command: ["true"], estimatorPath: "" },
+    execution: { environment: { OPENBLAS_NUM_THREADS: "2", V26_STRASSEN: "1" } },
+  });
+  assert.deepEqual(parameterOverride.resources.environment, { OPENBLAS_NUM_THREADS: "2", V26_STRASSEN: "3" }, "per-experiment overrides should replace only declared keys and retain the campaign's reproducible environment");
+  const behavior = createExperimentManifest({ id: "behavior-with-verifier", hypothesisId: "hyp", outcomeType: "behavior", gitCommit: "abc", datasetVersion: "workspace", verificationCommands: [["node", "--test", "tests/core-smoke.mjs"]] }, {
+    id: "local-research", name: "Local Research", taskType: "scientific", datasetRevision: "workspace",
+    metric: { name: "custom", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" },
+  });
+  assert.deepEqual(behavior.evaluation.verificationCommands, [["node", "--test", "tests/core-smoke.mjs"]]);
+  assert.equal(validateExecutionContract(behavior, process.cwd(), ["node", "--test", "tests/core-smoke.mjs"]).valid, true);
+  assert.equal(validateExecutionContract(behavior, process.cwd(), ["true"]).valid, false);
+  const verificationOnly = createExperimentManifest({ id: "verify-existing", hypothesisId: "hyp", outcomeType: "behavior", implementationMode: "verify", gitCommit: "abc", datasetVersion: "workspace", verificationCommands: [["node", "--test", "tests/core-smoke.mjs"]] }, {
+    id: "local-research", name: "Local Research", taskType: "scientific", datasetRevision: "workspace",
+    metric: { name: "custom", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" },
+  });
+  assert.equal(verificationOnly.implementationMode, "verify");
+  assert.equal(validateExecutionContract(verificationOnly, process.cwd(), ["node", "--test", "tests/core-smoke.mjs"]).valid, true);
+  const inheritedVerification = createReplicationManifest(verificationOnly, { id: "local-research", name: "Local Research", taskType: "scientific", datasetRevision: "workspace", metric: { name: "custom", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } });
+  assert.equal(inheritedVerification.implementationMode, "verify");
 });
 
 test("competition matrix policy propagates into generated experiment manifests", () => {
@@ -2957,8 +3716,10 @@ test("submission approval is durable and cannot approve an invalid bundle", () =
     assert.equal(store.submissions()[0].status, "prepared");
     assert.equal(store.updateSubmissionStatus("sub-1", "approved", { approvedAt: "now" }), true);
     assert.equal(store.submissions()[0].status, "approved");
+    assert.deepEqual(store.submissions()[0].payload, { approvedAt: "now" });
     assert.equal(store.updateSubmissionStatus("sub-1", "scored", { publicScore: 0.84 }), true);
     assert.equal(store.submissions()[0].payload.publicScore, 0.84);
+    assert.equal(store.submissions()[0].payload.approvedAt, "now", "status changes preserve provenance and prior metadata");
     assert.equal(store.updateSubmissionStatus("missing", "approved"), false);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -3001,6 +3762,8 @@ test("source adaptation preserves literature provenance through the research gra
   const root = mkdtempSync(join(tmpdir(), "evidra-source-adaptation-"));
   try {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.saveExperiment({ id: "failed-score-must-not-become-evidence", payload: { status: "failed", runId: "run-failed-score", metric: 0.5887, title: "Partial failed evaluation" } });
+    store.saveRun({ id: "run-failed-score", experimentId: "failed-score-must-not-become-evidence", status: "failed", payload: { metrics: { metric: 0.5887 } } });
     store.saveSource({ id: "paper-adapt", payload: { title: "Paper", url: "https://example.com/paper", claims: ["test claim"] } });
     store.saveSource({ id: "paper-adapt-v2", payload: { title: "Paper", url: "https://example.com/paper", claims: ["updated claim"] } });
     assert.ok(store.edges().some((edge) => edge.fromId === "paper-adapt-v2" && edge.toId === "paper-adapt" && edge.relation === "supersedes"));
@@ -3034,6 +3797,7 @@ test("source adaptation preserves literature provenance through the research gra
       nextAction: "Run the controlled test",
       toolCalls: [],
     }, { evidenceSourceId: "paper-adapt-v2", evidenceScope: "paper" });
+    assert.equal(store.sources().some((source) => source.id === "failed-score-must-not-become-evidence"), false, "failed/partial runs must not be backfilled as score evidence");
     const claim = store.claims().find((entry) => entry.id === materialized.claimIds[0]);
     assert.equal(claim?.payload.sourceType, "literature");
     assert.equal(claim?.payload.sourceId, "paper-adapt-v2");
@@ -3069,6 +3833,30 @@ test("source adaptation preserves literature provenance through the research gra
     });
     assert.ok(store.edges().some((edge) => edge.fromId === offspring.hypothesisIds[0] && edge.toId === materialized.hypothesisIds[0] && edge.relation === "depends_on"));
     assert.equal(store.edges().some((edge) => edge.fromId === offspring.hypothesisIds[0] && edge.toId === "invented-parent"), false);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("registered bundles and provider IDs become durable external-score sources, not literature", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-score-source-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.saveSubmission({ id: "bundle-score-1", experimentId: "exp-score-1", path: root, status: "scored", payload: { publicScore: 0.41, platform: "example-eval", recordedAt: "2026-09-27T08:00:00.000Z", receipt: { stdout: "✓ Submitted (submission id provider-42)\n" } } });
+    store.appendEvent("submission.score.recorded", { id: "bundle-score-1", score: 0.41, platform: "example-eval", recordedAt: "2026-09-27T08:00:00.000Z" });
+    store.appendEvent("submission.score.observed", { externalId: "provider-42", score: 0.41, platform: "example-eval", sourceUrl: "https://example.org/submissions/42", observedAt: "2026-09-27T08:00:00.000Z" });
+    store.appendEvent("submission.score.recorded", { id: "bundle-score-1", score: 0.41, platform: "example-eval", recordedAt: "2026-09-27T08:00:00.000Z" });
+    const result = materializeResearchDecision(store, {
+      phase: "hypothesis", goalStatus: "active", decision: "propose", bottleneck: "Need a locally testable next step", rationale: "The external score is an outcome comparator, not a mechanism source.",
+      hypotheses: [{ title: "Use external score as a comparator", mechanism: "A measurable change may improve the local metric.", evidence: ["The prior registered artifact received external score 0.41."], evidenceSourceIds: ["bundle-score-1", "provider-42"], proposedChange: "Make one isolated change.", falsificationTest: "The matched local run does not improve the declared metric.", expectedMetricDelta: { low: 0, median: 0, high: 0 } }],
+      selectedHypothesis: null, nextAction: "Run the matched local test", toolCalls: [],
+    });
+    assert.ok(result.claimIds.length > 0);
+    const sources = store.sources().filter((source) => source.payload && typeof source.payload === "object" && source.payload.sourceType === "external_score");
+    assert.ok(sources.some((source) => source.id === "bundle-score-1"));
+    assert.ok(sources.some((source) => source.id === "bundle-score-1" && source.payload.externalId === "provider-42"));
+    const linked = store.claims().find((claim) => claim.id === result.claimIds[0]);
+    assert.equal(linked?.payload.sourceType, "external_score");
+    assert.equal(linked?.payload.sourceId, "bundle-score-1");
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -3113,10 +3901,56 @@ test("research graph preserves formulation-family diversity between hypotheses",
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("durable research observations are materialized before hypothesis provenance is validated", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-observation-source-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.appendEvent("research.observation", {
+      id: "obs-mini-audit",
+      objective: "Check stable identifiers in the public benchmark sample",
+      result: "100 rows had unique identifiers.",
+      split: "public-mini",
+    });
+    const materialized = materializeResearchDecision(store, {
+      phase: "hypothesis",
+      goalStatus: "active",
+      decision: "propose",
+      bottleneck: "Test whether the measured condition changes the outcome.",
+      rationale: "The persisted observation provides local, non-literature evidence.",
+      hypotheses: [{
+        title: "Observation-grounded test",
+        mechanism: "The observed identifier property may affect the measured result.",
+        evidence: ["The public sample contains 100 unique identifiers."],
+        evidenceSourceIds: ["obs-mini-audit"],
+        proposedChange: "Run a bounded diagnostic that isolates this condition.",
+        falsificationTest: "The paired diagnostic shows no difference under the condition.",
+        expectedMetricDelta: { low: 0, median: 0, high: 0 },
+        computeCostGpuHours: 0,
+        implementationRisk: "low",
+        leakageRisk: "low",
+        dependencies: [],
+        ablationFactors: [],
+      }],
+      searchOperator: "audit",
+      selectedHypothesis: null,
+      nextAction: "Run the bounded diagnostic",
+      toolCalls: [],
+    });
+    const source = store.sources().find((entry) => entry.id === "obs-mini-audit");
+    assert.equal(source?.payload.sourceType, "observation");
+    assert.equal(source?.payload.observation.result, "100 rows had unique identifiers.");
+    assert.equal(store.hypotheses().find((entry) => entry.id === materialized.hypothesisIds[0])?.payload.evidenceSourceIds[0], "obs-mini-audit");
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("claim consistency surfaces duplicates and only explicit contradictions", () => {
   const base = { id: "a", sourceType: "observation", confidence: 0.8 };
   assert.equal(compareClaims({ ...base, statement: "Group holdout reduces leakage risk" }, { ...base, id: "b", statement: "Group holdout reduces leakage risk" }).relation, "duplicate");
   assert.equal(compareClaims({ ...base, statement: "Group holdout is valid" }, { ...base, id: "b", statement: "Group holdout is not valid" }).relation, "contradicts");
+  assert.equal(compareClaims({ ...base, statement: "The old source reports a reproducible validation result." }, { ...base, id: "b", statement: "The old source does not report a reproducible validation result." }).relation, "contradicts");
+  assert.equal(compareClaims({ ...base, statement: "A control score was 2.2e-8." }, { ...base, id: "b", statement: "A control score was 2.2e-8; it is not a new locked comparison." }), undefined);
+  assert.equal(compareClaims({ ...base, statement: "Both files contain identical seed 0 commands." }, { ...base, id: "b", statement: "Both files contain identical seed 0 commands, with no evaluator fields." }), undefined);
   assert.equal(compareClaims({ ...base, statement: "Group holdout reduces leakage risk" }, { ...base, id: "b", statement: "Temporal validation improves robustness" }), undefined);
 });
 
@@ -3125,6 +3959,11 @@ test("evidence conflicts take priority in research allocation", () => {
   assert.equal(allocation.focus, "evidence-validation");
   assert.equal(allocation.priority, "critical");
   assert.match(allocation.strategy, /conflicting/);
+});
+
+test("duplicate claims are diagnostic and cannot stall autonomous allocation", () => {
+  const allocation = allocateNextResearch({ trajectories: [], evidenceConflicts: { contradictions: 0, duplicates: 2591 }, phase: "experiment" });
+  assert.notEqual(allocation.focus, "evidence-validation");
 });
 
 test("research memory context remains bounded and cumulative", () => {
@@ -3168,6 +4007,79 @@ test("research memory ranks relevant claims and hypotheses before merely recent 
     assert.equal(context.hypotheses[0].id, "h-relevant");
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("research memory pins recent content-addressed observations ahead of repeated lane summaries", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-pinned-observations-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    for (let index = 0; index < 45; index += 1) {
+      store.saveClaim({ id: `lane-summary-${index}`, payload: {
+        statement: `WhestBench evaluator dataset score review summary ${index}; source integrity remains unclear.`,
+        scope: "challenge", confidence: 0.9, sourceType: "observation", sourceId: `lane-observation-${index}`, status: "active",
+      } });
+    }
+    const observedClaimIds = [];
+    for (let index = 0; index < 4; index += 1) {
+      const sourceId = `direct-observation-${index}`;
+      const claimId = `direct-observation-claim-${index}`;
+      observedClaimIds.push(claimId);
+      store.saveSource({ id: sourceId, payload: {
+        id: sourceId, title: `Verified evaluator observation ${index}`, url: `https://evidra.local/observation/${sourceId}`,
+        contentHash: String(index + 1).padStart(64, "0"), evidenceClass: "implementation", claims: ["Direct run evidence"], observation: { artifact: `run-${index}.json` },
+      } });
+      store.saveClaim({ id: claimId, payload: {
+        statement: `WhestBench evaluator direct run ${index} has verified source artifact run-${index}.json.`,
+        scope: "challenge", confidence: 1, sourceType: "observation", sourceId, status: "active",
+      } });
+    }
+    for (let index = 0; index < 12; index += 1) {
+      const snapshot = workspaceObservationEvidence({ gitStatus: [], repositoryFiles: [`src/current-${index}.ts`] }, { sourceId: `routine-snapshot-${index}`, retrievedAt: new Date(Date.now() + index * 1_000).toISOString() });
+      store.saveSource({ id: snapshot.sourceId, payload: snapshot.sourcePayload });
+      store.saveClaim({ id: `claim_${snapshot.sourceId}`, payload: { ...snapshot.claimPayload, scope: "current-workspace" } });
+    }
+
+    const context = researchMemoryContext(store, 30, "WhestBench evaluator dataset score validation", { context: "challenge" });
+    for (const id of observedClaimIds) assert.ok(context.claims.some((claim) => claim.id === id), `missing pinned direct observation ${id}`);
+    for (const id of observedClaimIds) assert.ok(context.retrieval.pinnedObservationClaimIds.includes(id), `specific evidence was displaced by routine snapshots: ${id}`);
+    assert.equal(context.retrieval.pinnedObservationClaimIds.length, 8);
+    for (const id of observedClaimIds) assert.ok(context.authoritativeObservations.some((item) => item.claimId === id), `specific evidence missing from authoritative channel: ${id}`);
+    assert.ok(context.authoritativeObservations.filter((item) => observedClaimIds.includes(item.claimId)).every((item) => item.contentHash.length === 64 && item.sourceId.startsWith("direct-observation-")));
+    assert.equal(context.claims.length, 30);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("automatic workspace observations are hash-addressed, summarized, and retrievable as primary evidence", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-workspace-observation-evidence-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const observation = { gitStatus: ["M src/core/campaign.ts"], repositoryFiles: ["src/cli.ts", "src/core/campaign.ts"], dataAudit: { scannedFiles: 2, duplicateGroups: 0, warnings: [] } };
+    const evidence = workspaceObservationEvidence(observation, { sourceId: "observation-test", retrievedAt: "2026-09-27T00:00:00.000Z" });
+    assert.match(evidence.contentHash, /^[a-f0-9]{64}$/);
+    assert.equal(evidence.contentHash, createHash("sha256").update(JSON.stringify(observation)).digest("hex"));
+    assert.ok(evidence.sourcePayload.claims.length > 0);
+    store.saveSource({ id: evidence.sourceId, payload: evidence.sourcePayload });
+    store.saveClaim({ id: `claim_${evidence.sourceId}`, payload: evidence.claimPayload });
+    const memory = researchMemoryContext(store, 10, "current workspace recovery", { context: "challenge" });
+    assert.equal(memory.authoritativeObservations[0]?.sourceId, evidence.sourceId);
+    assert.equal(memory.authoritativeObservations[0]?.contentHash, evidence.contentHash);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("semantic auditor avoids repeating generic inspection when current evidence is present", () => {
+  assert.equal(semanticAuditNeedsFreshInspection({ observation: { gitStatus: [] } }), true);
+  assert.equal(semanticAuditNeedsFreshInspection({ authoritativeEvidence: [] }), true);
+  assert.equal(semanticAuditNeedsFreshInspection({ authoritativeEvidence: [{ sourceId: "sha", contentHash: "a".repeat(64) }] }), false);
+});
+
+test("research reviewers separate bounded screening gates from promotion gates", () => {
+  assert.match(RESEARCH_SCREENING_DECISION_POLICY, /must not block a new low-cost screen/);
+  assert.match(RESEARCH_SCREENING_DECISION_POLICY, /Require historical provenance before relying on that method as comparator/);
+  assert.match(RESEARCH_SCREENING_DECISION_POLICY, /full-split parity plus replication before promotion/);
+  assert.match(RESEARCH_SCREENING_DECISION_POLICY, /concrete immediate blocker/);
+  assert.ok(lanePrompt("validation scientist", "run a bounded screening experiment").includes(RESEARCH_SCREENING_DECISION_POLICY));
 });
 
 test("research memory routes discovery and execution contexts with durable quotas", () => {
@@ -3216,6 +4128,12 @@ test("autonomous loop detects repeated unresolved decisions", () => {
   assert.equal(detectStagnation([decision, decision, decision]).stagnant, true);
   assert.equal(detectStagnation([{ ...decision, decision: "run" }, decision, decision]).stagnant, false);
   assert.equal(detectStagnation([decision, { ...decision, nextAction: "inspect data" }, decision]).stagnant, false);
+  const duplicateObservation = { ...decision, nextAction: "A successful read-only request returned the same observation as an earlier request. Treat it as no new evidence." };
+  const paraphrasedDuplicate = { ...duplicateObservation, selectedHypothesis: "Reconcile evidence sources", nextAction: "No new evidence: the repeated output is unchanged from the previous inspection." };
+  assert.equal(detectStagnation([paraphrasedDuplicate, duplicateObservation]).stagnant, true, "explicit repeated observations should catch paraphrased inspect loops");
+  assert.equal(detectStagnation([paraphrasedDuplicate, duplicateObservation, { ...decision, decision: "run" }]).stagnant, true, "an older run must not mask two newest unchanged inspections");
+  assert.equal(detectStagnation([paraphrasedDuplicate, decision]).stagnant, false, "ordinary inspection without a no-progress signal should remain exploratory");
+  assert.equal(detectStagnation([{ ...duplicateObservation, phase: "implementation" }, duplicateObservation]).stagnant, false, "phase changes should reset the no-progress route");
 });
 
 test("phase completion requires durable evidence instead of model status alone", () => {
@@ -3239,6 +4157,14 @@ test("phase completion requires durable evidence instead of model status alone",
   assert.equal(researchGoal.title, "Establish a trusted reference");
   assert.equal(evaluatePhaseGoalEvidence(researchGoal, { mode: "research", eventTypes: ["research.observation"], eventPayloads: [], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, true);
   assert.equal(evaluatePhaseGoalEvidence(researchGoal, { mode: "research", eventTypes: [], eventPayloads: [], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, false);
+});
+
+test("phase closure criteria do not block valid intermediate research actions", () => {
+  const goal = definePhaseGoals("improve a measurable system", "challenge").find((entry) => entry.phase === "orientation");
+  assert.deepEqual(phaseCompletionCriteriaForAudit(goal, "active"), []);
+  assert.deepEqual(phaseCompletionCriteriaForAudit(goal, "blocked"), []);
+  assert.equal(phaseCompletionCriteriaForAudit(goal, "met").length, goal.completionCriteria.length);
+  assert.deepEqual(phaseCompletionCriteriaForAudit(undefined, "met"), []);
 });
 
 test("generic subtask auditing requires verifier evidence and preserves unmet criteria", () => {
@@ -3294,6 +4220,25 @@ test("phase goals expose the same auditable contract used by generic work", () =
   assert.equal(semanticFailure.complete, false);
 });
 
+test("phase advancement uses shared domain evidence for both research and challenge campaigns", () => {
+  for (const mode of ["research", "challenge"]) {
+    const goal = definePhaseGoals("complete a measurable project", mode)[0];
+    const domain = auditPhaseGoalGate(goal, { met: true, missing: [] }, ["research.observation"]);
+
+    // An intermediate semantic review with no closure criteria is not a veto.
+    const audit = phaseGoalCycleAudit(goal, domain, []);
+    assert.equal(audit.complete, true, `${mode} domain audit should remain authoritative`);
+    assert.equal(phaseGoalCanAdvance(true, audit), true, `${mode} should advance after durable evidence`);
+    assert.equal(phaseGoalCanAdvance(false, audit), false, `${mode} must not advance if its domain gate fails`);
+
+    const failedSemanticAudit = phaseGoalCycleAudit(goal, domain, [
+      { criterionId: "criterion_1", verdict: "reject", reasoning: "evidence contradicts completion" },
+    ]);
+    assert.equal(failedSemanticAudit.complete, false, `${mode} must respect explicit semantic rejection`);
+    assert.equal(phaseGoalCanAdvance(true, failedSemanticAudit), false, `${mode} must not advance after rejection`);
+  }
+});
+
 test("hypothesis phase gates require a falsifiable selected direction", () => {
   const goal = definePhaseGoals("test", "research").find((entry) => entry.phase === "hypothesis");
   const base = { eventTypes: ["experiment.created"], eventPayloads: [], hypotheses: 1, experiments: 1, runs: 0, artifacts: 0, candidateHypotheses: 1, falsifiableHypotheses: 0, selectedHypothesisFalsifiable: false };
@@ -3318,6 +4263,15 @@ test("subtask audits are durable controller evidence", () => {
     store.recordSubtaskAudit(audit);
     assert.equal(store.evidenceReferenceExists("run:1"), true);
     assert.equal(store.evidenceReferenceExists("run:missing"), false);
+    assert.equal(store.evidenceReferenceExists("replication:rep-1"), false);
+    store.saveExperiment({ id: "rep-1", payload: { id: "rep-1", replicationOf: "exp", runId: "run:rep-1" } });
+    assert.equal(store.evidenceReferenceExists("replication:rep-1"), false);
+    store.saveRun({ id: "run:rep-1", experimentId: "rep-1", status: "running", payload: {} });
+    assert.equal(store.evidenceReferenceExists("replication:rep-1"), false);
+    store.saveRun({ id: "run:rep-1", experimentId: "rep-1", status: "completed", payload: {} });
+    assert.equal(store.evidenceReferenceExists("replication:rep-1"), true);
+    const replicationAudit = auditSubtask({ id: "replication-audit", objective: "check independent replication", acceptanceCriteria: [{ id: "replicated", description: "replication completed" }] }, [{ criterionId: "replicated", satisfied: true, source: "verifier", evidenceIds: ["replication:rep-1"] }]);
+    store.recordSubtaskAudit(replicationAudit);
     assert.throws(() => store.recordSubtaskAudit({ ...audit, criteria: [{ ...audit.criteria[0], evidenceIds: ["run:missing"] }] }), /state fingerprint/);
     assert.throws(() => store.recordSubtaskAudit({ ...audit, stateFingerprint: undefined, criteria: [{ ...audit.criteria[0], evidenceIds: ["run:missing"] }] }), /unavailable evidence/);
     assert.throws(() => store.recordSubtaskAudit({ ...audit, stateFingerprint: "sha256:bad" }), /state fingerprint/);
@@ -3325,7 +4279,7 @@ test("subtask audits are durable controller evidence", () => {
     store.close();
     const reopened = new ResearchStore(join(root, "state.sqlite"));
     const events = reopened.eventsByType("subtask.audit");
-    assert.equal(events.length, 1);
+    assert.equal(events.length, 2);
     assert.equal(events[0].payload.subtaskId, "durable-1");
     assert.equal(events[0].payload.complete, true);
     assert.equal(reopened.latestSubtaskAudit("durable-1").status, "completed");
@@ -3343,6 +4297,17 @@ test("controller decision auditor independently downgrades unaudited completion 
   const missing = auditResearchDecision(base, { currentPhase: "evaluation", phaseAuditComplete: false });
   assert.equal(missing.verdict, "reject");
   assert.equal(downgradeUnauditedDecision({ ...base, nextAction: "finish" }, missing).decision, "inspect");
+  const phaseDrift = { ...base, phase: "data_audit", decision: "inspect", goalStatus: "active", nextAction: "inspect evidence" };
+  const phaseMismatch = auditResearchDecision(phaseDrift, { currentPhase: "baseline", phaseAuditComplete: false });
+  const recovered = downgradeUnauditedDecision(phaseDrift, phaseMismatch, "baseline");
+  assert.equal(recovered.decision, "inspect");
+  assert.equal(recovered.phase, "baseline", "a rejected phase label must not make a safe inspection fail the active-phase gate");
+  assert.equal(auditResearchDecision(recovered, { currentPhase: "baseline", phaseAuditComplete: false }).verdict, "pass");
+  const selectedRun = { ...phaseDrift, phase: "hypothesis", decision: "run", selectedHypothesis: "bounded screen", hypotheses: [{ title: "bounded screen" }] };
+  const alignedRun = alignResearchDecisionPhase(selectedRun, "data_audit");
+  assert.equal(alignedRun.phase, "data_audit");
+  assert.equal(alignedRun.decision, "run", "phase-label drift should not downgrade an otherwise valid controller action");
+  assert.equal(auditResearchDecision(alignedRun, { currentPhase: "data_audit", phaseAuditComplete: false }).verdict, "pass");
   const mismatched = auditResearchDecision({ ...base, goalStatus: "active" }, { currentPhase: "evaluation", phaseAuditComplete: true });
   assert.equal(mismatched.verdict, "reject");
   const valid = auditResearchDecision({ ...base, goalStatus: "met" }, { currentPhase: "evaluation", phaseAuditComplete: true });
@@ -3356,6 +4321,150 @@ test("controller decision auditor independently downgrades unaudited completion 
   assert.match(duplicateSelection.reasons.join(" "), /duplicate hypothesis/);
 });
 
+test("experiment implementation guard rejects no-op edits and constrains patch recovery", () => {
+  assert.equal(implementationChanged("sha256:before", "sha256:before", ["estimator.py"], true), false);
+  assert.equal(implementationChanged("sha256:before", "sha256:after", [], true), true);
+  assert.equal(implementationChanged(undefined, undefined, ["README.md", "reports/result.json"], false), false);
+  assert.equal(implementationChanged(undefined, undefined, ["src/solver.py"], false), true);
+  const prompt = implementationRetryPrompt("Implement the experiment", "src/solver.py");
+  assert.match(prompt, /worktree-relative paths only/i);
+  assert.match(prompt, /src\/solver\.py/);
+  const corrected = implementationRetryPrompt("Implement the experiment", "src/solver.py", "corrupt patch at line 16");
+  assert.match(corrected, /fix this exact validation error/i);
+  assert.match(corrected, /corrupt patch at line 16/);
+  const missingTarget = implementationRetryPrompt("Implement the experiment", undefined, "estimator.py: No such file or directory");
+  assert.match(missingTarget, /Change the relevant implementation source file/);
+  assert.doesNotMatch(missingTarget, /evaluator entrypoint that must change is: estimator\.py/);
+  const directEdit = implementationEditRetryPrompt("Test covariance propagation", "estimator.py", "initial attempt made no changes");
+  assert.match(directEdit, /isolated writable worktree with tools enabled/i);
+  assert.match(directEdit, /do not answer with a plan, explanation, or unified diff/i);
+  assert.match(directEdit, /estimator\.py/);
+  assert.match(directEdit, /initial attempt made no changes/);
+  assert.match(directEdit, /Do not run the competition evaluator/);
+});
+
+test("experiment implementation resolves adapter-relative targets without escaping its worktree", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-implementation-paths-"));
+  try {
+    mkdirSync(join(root, "challenge", "nested"), { recursive: true });
+    writeFileSync(join(root, "challenge", "nested", "solver.py"), "value = 1\n");
+    const paths = resolveImplementationPaths(root, "challenge/nested", "solver.py");
+    assert.equal(paths.targetRelativeToWorktree, "challenge/nested/solver.py");
+    assert.equal(readFileSync(paths.targetPath, "utf8"), "value = 1\n");
+    const sourcePin = captureVerificationSourcePin(root, "challenge/nested", "solver.py");
+    assert.equal(sourcePin.path, "challenge/nested/solver.py");
+    assert.equal(sourcePin.targetPath, "solver.py");
+    assert.match(sourcePin.sha256, /^sha256:[a-f0-9]{64}$/);
+    assert.throws(() => resolveImplementationPaths(root, "../outside", "solver.py"), /escapes its isolated worktree/);
+    assert.throws(() => captureVerificationSourcePin(root, "challenge/nested", "../../outside.py"), /escapes its adapter workspace/);
+    assert.throws(() => resolveImplementationPaths(root, "challenge/nested", "../../outside.py"), /escapes its adapter workspace/);
+    const outside = join(root, "outside.py");
+    writeFileSync(outside, "secret = True\n");
+    symlinkSync(outside, join(root, "challenge", "nested", "linked.py"));
+    assert.throws(() => resolveImplementationPaths(root, "challenge/nested", "linked.py"), /outside its adapter workspace/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("experiment implementation snapshot pins source identity across resume", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-implementation-snapshot-"));
+  const outside = `${root}-outside.py`;
+  try {
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "src", "solver.py"), "answer = 42\n");
+    const snapshot = captureImplementationSnapshot(root, ["src/solver.py"]);
+    assert.deepEqual(verifyImplementationSnapshot(snapshot), []);
+    writeFileSync(outside, "answer = 42\n");
+    rmSync(join(root, "src", "solver.py"));
+    symlinkSync(outside, join(root, "src", "solver.py"));
+    assert.deepEqual(verifyImplementationSnapshot(snapshot), ["src/solver.py resolves outside the recorded worktree"]);
+    rmSync(join(root, "src", "solver.py"));
+    writeFileSync(join(root, "src", "solver.py"), "answer = 0\n");
+    assert.deepEqual(verifyImplementationSnapshot(snapshot), ["src/solver.py checksum changed"]);
+    rmSync(join(root, "src", "solver.py"));
+    assert.deepEqual(verifyImplementationSnapshot(snapshot), ["src/solver.py is missing"]);
+    assert.throws(() => captureImplementationSnapshot(root, ["README.md"]), /no existing source files/);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(outside, { force: true }); }
+});
+
+test("implementation seeds are copied only from workspace-contained checksum-pinned files", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-implementation-seed-"));
+  const outside = `${root}-outside.py`;
+  try {
+    mkdirSync(join(root, ".sota", "research"), { recursive: true });
+    mkdirSync(join(root, "candidate"), { recursive: true });
+    writeFileSync(join(root, ".sota", "research", "seed.py"), "answer = 42\n");
+    writeFileSync(join(root, "candidate", "estimator.py"), "answer = 0\n");
+    const source = join(root, ".sota", "research", "seed.py");
+    const digest = sha256File(source);
+    const copied = seedImplementationSource(root, join(root, "candidate", "estimator.py"), ".sota/research/seed.py", digest);
+    assert.equal(copied.sourceSha256, digest);
+    assert.equal(readFileSync(join(root, "candidate", "estimator.py"), "utf8"), "answer = 42\n");
+    assert.throws(() => seedImplementationSource(root, join(root, "candidate", "estimator.py"), ".sota/research/seed.py", `sha256:${"0".repeat(64)}`), /checksum mismatch/);
+    assert.throws(() => seedImplementationSource(root, join(root, "candidate", "estimator.py"), "../outside.py", digest), /escapes the workspace/);
+    writeFileSync(outside, "secret = True\n");
+    symlinkSync(outside, join(root, ".sota", "research", "linked.py"));
+    assert.throws(() => seedImplementationSource(root, join(root, "candidate", "estimator.py"), ".sota/research/linked.py", sha256File(outside)), /resolves outside the workspace/);
+    const parsedHypothesis = ResearchHypothesisSchema.parse({ title: "seed", mechanism: "m", proposedChange: "c", falsificationTest: "f", implementationSource: { path: ".sota/research/seed.py", sha256: digest, targetPath: "src/solver.py" }, verificationCommands: [["python3", "-m", "pytest", "-q"]] });
+    assert.equal(parsedHypothesis.implementationSource.sha256, digest);
+    assert.equal(parsedHypothesis.implementationSource.targetPath, "src/solver.py");
+    assert.deepEqual(parsedHypothesis.verificationCommands, [["python3", "-m", "pytest", "-q"]]);
+    const parameterHypothesis = ResearchHypothesisSchema.parse({ title: "one-factor compute-level sweep", mechanism: "A different Strassen level changes the compute/accuracy tradeoff.", proposedChange: "Run V29 with V26_STRASSEN=3 and compare against level 1.", falsificationTest: "Reject if any row fails or mean adjusted score does not improve.", experimentEnvironment: [{ name: "V26_STRASSEN", value: "3" }] });
+    assert.deepEqual(parameterHypothesis.experimentEnvironment, [{ name: "V26_STRASSEN", value: "3" }]);
+    assert.throws(() => ExperimentEnvironmentOverridesSchema.parse([{ name: "OPENAI_API_KEY", value: "must-not-enter-manifest" }]), /secrets must be supplied through the designated secret mechanism/);
+    assert.throws(() => ExperimentEnvironmentOverridesSchema.parse([{ name: "V26_STRASSEN", value: "3" }, { name: "V26_STRASSEN", value: "5" }]), /names must be unique/);
+    assert.throws(() => ResearchHypothesisSchema.parse({ title: "bad verification", mechanism: "m", proposedChange: "c", falsificationTest: "f", verificationCommands: [[" "]] }));
+    assert.throws(() => ResearchHypothesisSchema.parse({ title: "duplicate verification", mechanism: "m", proposedChange: "c", falsificationTest: "f", verificationCommands: [["npm", "test"], ["npm", "test"]] }), /duplicate commands are not independent evidence/);
+    assert.throws(() => ResearchHypothesisSchema.parse({ title: "seed", mechanism: "m", proposedChange: "c", falsificationTest: "f", implementationSource: { path: "seed.py", sha256: "not-a-hash" } }));
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(outside, { force: true }); }
+});
+
+test("auxiliary implementation artifacts are checksum staged into isolated worktrees and pinned", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-implementation-artifacts-"));
+  const worktree = join(root, "worktree");
+  try {
+    mkdirSync(join(root, ".sota", "research"), { recursive: true });
+    mkdirSync(join(worktree, "challenge"), { recursive: true });
+    writeFileSync(join(root, ".sota", "research", "fit.bin"), "fitted-parameters\n");
+    writeFileSync(join(worktree, "challenge", "estimator.py"), "# estimator\n");
+    const source = join(root, ".sota", "research", "fit.bin");
+    const digest = sha256File(source);
+    const staged = seedImplementationArtifacts(root, worktree, "challenge", [{ path: ".sota/research/fit.bin", sha256: digest, targetPath: ".evidra-inputs/fit.bin" }]);
+    const target = join(worktree, "challenge", ".evidra-inputs", "fit.bin");
+    assert.equal(staged.length, 1);
+    assert.equal(staged[0].sourceSha256, digest);
+    assert.equal(readFileSync(target, "utf8"), "fitted-parameters\n");
+    const snapshot = captureImplementationSnapshot(worktree, ["challenge/.evidra-inputs/fit.bin"]);
+    assert.deepEqual(verifyImplementationSnapshot(snapshot), []);
+    writeFileSync(target, "changed\n");
+    assert.deepEqual(verifyImplementationSnapshot(snapshot), ["challenge/.evidra-inputs/fit.bin checksum changed"]);
+    assert.throws(() => seedImplementationArtifacts(root, worktree, "challenge", [{ path: ".sota/research/fit.bin", sha256: `sha256:${"0".repeat(64)}`, targetPath: ".evidra-inputs/other.bin" }]), /checksum mismatch/);
+    assert.throws(() => seedImplementationArtifacts(root, worktree, "challenge", [{ path: ".sota/research/fit.bin", sha256: digest, targetPath: "../escape.bin" }]), /escapes the adapter workspace/);
+    const parsed = ResearchHypothesisSchema.parse({ title: "staged auxiliary input", mechanism: "Use fitted correction", proposedChange: "Apply model", falsificationTest: "Holdout improves", implementationArtifacts: [{ path: ".sota/research/fit.bin", sha256: digest, targetPath: ".evidra-inputs/fit.bin" }] });
+    assert.equal(parsed.implementationArtifacts[0].sha256, digest);
+    assert.throws(() => ResearchHypothesisSchema.parse({ title: "duplicate targets", mechanism: "m", proposedChange: "c", falsificationTest: "f", implementationArtifacts: [{ path: "a", sha256: digest, targetPath: "same.bin" }, { path: "b", sha256: digest, targetPath: "same.bin" }] }), /target paths must be unique/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("verification-only experiments seed and pin checksum-prefixed implementation sources", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-verification-seed-"));
+  try {
+    const worktree = join(root, "worktree");
+    mkdirSync(join(root, ".sota", "research"), { recursive: true });
+    mkdirSync(join(worktree, "challenge", "starter"), { recursive: true });
+    writeFileSync(join(root, ".sota", "research", "candidate.py"), "answer = 42\n");
+    writeFileSync(join(worktree, "challenge", "starter", "estimator.py"), "answer = 0\n");
+    const digest = sha256File(join(root, ".sota", "research", "candidate.py"));
+
+    const seeded = seedVerificationImplementation(root, worktree, "challenge/starter", ".sota/research/candidate.py", "estimator.py", digest);
+
+    assert.equal(seeded.sourceSha256, digest);
+    assert.equal(readFileSync(join(worktree, "challenge", "starter", "estimator.py"), "utf8"), "answer = 42\n");
+    assert.deepEqual(verifyImplementationSnapshot(seeded.snapshot), []);
+    writeFileSync(join(worktree, "challenge", "starter", "estimator.py"), "answer = 7\n");
+    assert.deepEqual(verifyImplementationSnapshot(seeded.snapshot), ["challenge/starter/estimator.py checksum changed"]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("semantic auditor output is grounded before it can pass", () => {
   const parsed = ResearchSemanticAuditSchema.parse({ verdict: "pass", summary: "checked", findings: [], requiredChecks: [], evidence: ["run:known", "invented"], criteria: [{ criterionId: "metric", verdict: "pass", evidence: ["run:known"], reasoning: "verified" }], confidence: 0.9 });
   const normalized = normalizeResearchSemanticAudit(parsed, new Set(["run:known"]));
@@ -3367,16 +4476,22 @@ test("semantic auditor output is grounded before it can pass", () => {
   const incomplete = normalizeResearchSemanticAudit(parsed, new Set(["run:known"]), [{ id: "metric", description: "metric parsed" }, { id: "artifact", description: "artifact checked" }]);
   assert.equal(incomplete.verdict, "revise");
   assert.match(incomplete.requiredChecks.join(" "), /missing criteria/);
+  const toolAnchor = researchToolObservationAnchor(0, { name: "workspace.files" });
+  const toolGrounded = normalizeResearchSemanticAudit({ ...parsed, evidence: [toolAnchor], criteria: [] }, new Set([toolAnchor]));
+  assert.equal(toolGrounded.verdict, "pass", "fresh auditor observations must be citable through their controller-issued anchor");
+  assert.deepEqual(toolGrounded.evidence, ["tool-observation:0:workspace.files"]);
 });
 
 test("validation phase completion requires the latest policy lifecycle event to be a lock", () => {
   const goal = definePhaseGoals("lock a trustworthy split", "challenge").find((entry) => entry.phase === "validation");
   const created = { type: "validation.policy.created", payload: { checksum: "sha256:policy" } };
+  const reused = { type: "validation.policy.reused", payload: { checksum: "sha256:policy", locked: true, version: "policy-v1" } };
   const locked = { type: "validation.policy.locked", payload: { checksum: "sha256:policy" } };
   const unlocked = { type: "validation.policy.unlocked", payload: { reason: "repair" } };
   const notLocked = evaluatePhaseGoalEvidence(goal, { eventTypes: [created.type], eventPayloads: [created], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
   assert.deepEqual(notLocked.missing, ["validation policy locked"]);
   assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [created.type, locked.type], eventPayloads: [created, locked], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, true);
+  assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [reused.type], eventPayloads: [reused], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, true, "a checksum-verified, still-locked policy can satisfy a new campaign's gate without mutation");
   const reopened = evaluatePhaseGoalEvidence(goal, { eventTypes: [created.type, locked.type, unlocked.type], eventPayloads: [created, locked, unlocked], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
   assert.deepEqual(reopened.missing, ["validation policy locked"]);
 });
@@ -3394,6 +4509,24 @@ test("baseline evidence is persisted as checksummed artifacts", () => {
     assert.deepEqual(baseline.payload.metricsByFold.safety, [0.89, 0.9]);
     assert.doesNotMatch(String(baseline.payload.stdout), /sk-test_/);
     assert.doesNotMatch(JSON.stringify(baseline.payload), /sk-test_/);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("baseline phase accepts a reused run only after its durable artifacts verify", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-baseline-reuse-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const prior = recordBaselineEvidence(store, root, { command: ["python", "baseline.py"], cwd: root, exitCode: 0, durationMs: 12, stdout: "metric: 0.42\n", stderr: "" }, 0.42, { score: 0.42 });
+    assert.equal(recordBaselineReuse(store, root, prior, "2026-09-27T00:00:00.000Z"), true);
+    const reused = store.eventsByType("baseline.reused").at(-1);
+    assert.equal(reused.payload.sourceRunId, prior.runId);
+    const baselineGoal = definePhaseGoals("measure a challenge", "challenge").find((goal) => goal.phase === "baseline");
+    const gate = evaluatePhaseGoalEvidence(baselineGoal, { mode: "challenge", eventTypes: ["baseline.reused"], eventPayloads: [{ type: "baseline.reused", payload: reused.payload }], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
+    assert.equal(gate.met, true);
+    writeFileSync(prior.artifactPaths["metrics.json"], "tampered\n");
+    assert.equal(recordBaselineReuse(store, root, prior, "2026-09-27T00:00:00.000Z"), false);
+    assert.equal(store.eventsByType("baseline.reused").length, 1);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -3437,6 +4570,43 @@ test("research and challenge phase machines remain isolated in one durable proje
   assert.equal(phaseGoalsForMode(mixed, "challenge").length, challenge.length);
   const completedResearch = research.map((goal) => ({ ...goal, status: "met" }));
   assert.equal(activePhaseGoal([...completedResearch, ...challenge], "challenge")?.id, challenge[0].id);
+});
+
+test("current campaign goal progress ignores prior campaign goal sets", () => {
+  const earlier = definePhaseGoals("earlier campaign", "challenge").map((goal) => ({ ...goal, createdAt: "2026-09-20T00:00:00.000Z" }));
+  const current = definePhaseGoals("current campaign", "challenge").map((goal) => ({ ...goal, createdAt: "2026-09-29T00:00:00.000Z" }));
+  const historical = earlier.map((goal) => ({ ...goal, status: "met" }));
+  const combined = [...historical, ...current];
+  const currentGoals = phaseGoalsForCurrentSet(combined, "challenge", current[0].goalSetId);
+  assert.equal(currentGoals.length, current.length);
+  assert.ok(currentGoals.every((goal) => goal.goalSetId === current[0].goalSetId));
+  assert.deepEqual(researchStageProgress(currentGoals).map((stage) => [stage.completed, stage.total]), [[0, 3], [0, 3], [0, 3]]);
+  const newest = phaseGoalsForCurrentSet(combined, "challenge");
+  assert.ok(newest.every((goal) => goal.goalSetId === current[0].goalSetId));
+});
+
+test("goals CLI scopes by the active campaign and makes historical sets opt-in", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-goals-cli-scope-"));
+  try {
+    const state = join(root, ".sota");
+    const store = new ResearchStore(join(state, "database.sqlite"));
+    const older = definePhaseGoals("completed historical campaign", "challenge").map((goal) => ({ ...goal, status: "met" }));
+    const current = definePhaseGoals("active current campaign", "challenge");
+    store.saveCampaign({ goal: "active current campaign", goalSetId: current[0].goalSetId, startedAt: current[0].createdAt, status: "running", runtime: { mode: "challenge" } });
+    for (const goal of [...older, ...current]) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
+    store.close();
+    const cli = join(process.cwd(), "dist", "cli.js");
+    const env = { ...process.env, EVIDRA_STATE_DIR: state };
+    const currentReport = JSON.parse(execFileSync(process.execPath, [cli, "goals", "--mode", "challenge", "--json"], { cwd: root, env, encoding: "utf8" }));
+    assert.equal(currentReport.goals.length, 9);
+    assert.ok(currentReport.goals.every((goal) => goal.goalSetId === current[0].goalSetId));
+    assert.ok(currentReport.stages.every((stage) => stage.completed <= stage.total));
+    assert.equal(currentReport.stages[0].completed, 0, "completed history must not advance the active campaign");
+    const historyReport = JSON.parse(execFileSync(process.execPath, [cli, "goals", "--mode", "challenge", "--all", "--json"], { cwd: root, env, encoding: "utf8" }));
+    assert.equal(historyReport.goals.length, 18);
+    assert.equal(new Set(historyReport.goals.map((goal) => goal.goalSetId)).size, 2);
+    assert.deepEqual(historyReport.stages, currentReport.stages, "history view keeps stage progress tied to the active campaign");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("three-stage research progress is derived from detailed durable goals", () => {
@@ -3511,6 +4681,16 @@ test("phase goal sets isolate separate objectives within one mode", () => {
   assert.notEqual(definePhaseGoals("study optimizer stability", "research", runA)[0].id, definePhaseGoals("study optimizer stability", "research", runB)[0].id);
 });
 
+test("active campaign projections prefer their explicit phase goal set over legacy goals", () => {
+  const records = [
+    { id: "legacy-baseline", payload: { phase: "baseline", status: "active" } },
+    { id: "goal_challenge-current-orientation", payload: { phase: "orientation", goalSetId: "current" } },
+    { id: "foreign-hypothesis", payload: { phase: "hypothesis", goalSetId: "foreign" } },
+  ];
+  assert.deepEqual(recordsForGoalSet(records, "current", "challenge").map((record) => record.id), ["goal_challenge-current-orientation"]);
+  assert.deepEqual(recordsForGoalSet([{ id: "legacy-phase", payload: { phase: "baseline" } }], "current", "challenge").map((record) => record.id), ["legacy-phase"], "legacy fallback remains available when no scoped goal-set exists");
+});
+
 test("phase evidence excludes records from before the objective goal set", () => {
   const goal = definePhaseGoals("new objective", "research")[0];
   const before = new Date(Date.parse(goal.createdAt) - 1_000).toISOString();
@@ -3527,6 +4707,25 @@ test("reports expose the objective identity for phase goals", () => {
     const report = renderReport(store, "research");
     assert.match(report, /goal-set [a-z0-9]+/);
     assert.match(report, /Gate progress: 0\/1 checks \(0%\)/);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("reports scope phase goals to the active campaign instead of historical goal sets", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-scoped-goal-report-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    const oldGoals = definePhaseGoals("historical challenge objective", "challenge");
+    const activeGoals = definePhaseGoals("active challenge objective", "challenge");
+    for (const goal of [...oldGoals, ...activeGoals]) {
+      store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
+    }
+    store.saveCampaign({ status: "running", goal: "active challenge objective", goalSetId: activeGoals[0].goalSetId, runtime: { mode: "challenge" } });
+
+    const report = renderReport(store, "challenge");
+    assert.match(report, /active challenge objective/);
+    assert.doesNotMatch(report, /historical challenge objective/);
+    assert.equal((report.match(/goal-set /g) ?? []).length, activeGoals.length);
     store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -3650,11 +4849,68 @@ test("project-local competition manifests replace hardcoded adapters", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("research runtime always uses the general adapter while challenge preserves project adapter", () => {
+  assert.equal(competitionIdForMode("research", "whestbench"), "local-research");
+  assert.equal(competitionIdForMode("research", "autoresearch"), "local-research");
+  assert.equal(competitionIdForMode("challenge", "whestbench"), "whestbench");
+  assert.equal(competitionIdForMode("challenge", undefined), "local-research");
+});
+
+test("metric verification gates use the declared evaluator rather than the candidate experiment command", () => {
+  const adapter = {
+    config: { evaluator: { command: ["python", "score.py", "--estimator", "baseline.py"] } },
+    experimentCommand: ["python", "train_candidate.py"],
+  };
+  const evaluator = declaredEvaluatorCommand(adapter, "candidate.py");
+  assert.deepEqual(evaluator, ["python", "score.py", "--estimator", "candidate.py"]);
+  assert.notDeepEqual(evaluator, adapter.experimentCommand, "training/experiment commands must not stand in for metric evaluation");
+  assert.deepEqual(declaredEvaluatorCommand({ config: { evaluator: { command: ["true"] } } }), ["true"]);
+});
+
 test("included WhestBench manifest resolves its starter-kit workspace", () => {
   const adapter = loadCompetitionAdapter(process.cwd(), "whestbench");
   assert.equal(adapter.workspacePath(process.cwd()), join(process.cwd(), "competitions/whestbench/starterkit"));
-  assert.deepEqual(adapter.baselineCommand(), ["uv", "run", "whest", "run", "--estimator", "examples/02_mean_propagation.py", "--dataset", ".whest-data", "--split", "mini", "--runner", "subprocess"]);
-  assert.deepEqual(adapter.experimentCommand(), ["uv", "run", "whest", "run", "--estimator", "estimator.py", "--dataset", ".whest-data", "--split", "mini", "--runner", "subprocess"]);
+  assert.equal(adapter.config.evaluatorTimeoutMinutes, 240, "the full 100-MLP mini gate needs more than the 60-minute legacy timeout");
+  assert.equal(adapter.config.execution.environment.V26_STRASSEN, "5");
+  assert.equal(adapter.config.execution.environment.OPENBLAS_NUM_THREADS, "2");
+  assert.deepEqual(adapter.baselineCommand(), ["uv", "run", "whest", "run", "--estimator", "examples/02_mean_propagation.py", "--dataset", ".whest-data", "--split", "mini", "--runner", "subprocess", "--max-threads", "2"]);
+  assert.deepEqual(adapter.experimentCommand(), ["uv", "run", "python", "evaluate_batched.py", "--estimator", "estimator.py", "--dataset", ".whest-data", "--split", "mini"]);
+  assert.deepEqual(adapter.config.evaluator.command, adapter.experimentCommand(), "the isolated official evaluator is authoritative; do not repeat it monolithically");
+  assert.deepEqual(adapter.config.submission.artifactPaths, ["submission.tar.gz"]);
+  assert.deepEqual(adapter.config.submission.submitCommand, ["uv", "run", "whest", "submit", "{artifact:submission.tar.gz}", "--yes", "--watch"]);
+});
+
+test("initialized built-in competition manifests preserve the adapter workspace on reload", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-initialized-adapter-"));
+  try {
+    const adapter = loadCompetitionAdapter(root, "whestbench");
+    const manifestPath = join(root, "competitions", adapter.id, "competition.json");
+    mkdirSync(join(root, "competitions", adapter.id), { recursive: true });
+    writeFileSync(manifestPath, JSON.stringify(competitionManifestForInitialization(adapter, root)));
+    const reloaded = loadCompetitionAdapter(root, adapter.id);
+    assert.equal(reloaded.workspacePath(root), join(root, "competitions/whestbench/starterkit"));
+    assert.deepEqual(reloaded.baselineCommand(), adapter.baselineCommand());
+    assert.deepEqual(reloaded.experimentCommand(), adapter.experimentCommand());
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("WhestBench refreshes mutable rules and organizer announcements", () => {
+  const volatile = whestbenchConfig.researchChannels.filter((channel) => ["rules", "other"].includes(channel.kind));
+  assert.equal(volatile.length, 2);
+  assert.ok(volatile.every((channel) => channel.refreshMinutes !== undefined && channel.refreshMinutes <= 60));
+  assert.ok(volatile.some((channel) => channel.url === "https://www.aicrowd.com/participants/mohanty"));
+});
+
+test("WhestBench local evaluator pins the estimator's submission-default Strassen level", () => {
+  assert.equal(whestbenchConfig.execution.environment.V26_STRASSEN, "5");
+  assert.equal(whestbenchConfig.evaluatorTimeoutMinutes, 240);
+  assert.deepEqual(whestbenchConfig.execution.reducedValidationCommand, ["uv", "run", "python", "evaluate_batched.py", "--estimator", "estimator.py", "--dataset", ".whest-data", "--split", "mini", "--limit", "4"]);
+  assert.equal(whestbenchConfig.experimentCommand?.includes("--limit"), false, "the reduced prefix must not silently replace full validation");
+  assert.deepEqual(CompetitionConfigSchema.parse(whestbenchConfig).execution?.reducedValidationCommand, whestbenchConfig.execution.reducedValidationCommand);
+  const initialized = loadCompetitionAdapter(process.cwd(), whestbenchConfig.id);
+  assert.deepEqual(initialized.experimentCommand(), whestbenchConfig.experimentCommand, "full validation remains the canonical evaluator");
+  assert.deepEqual(initialized.config.execution?.reducedValidationCommand, whestbenchConfig.execution.reducedValidationCommand, "the persisted adapter contract must expose its bounded screen");
+  assert.equal(initialized.config.submissionPolicy?.dailyLimit, 10, "the local challenge manifest must preserve the operator-authorized daily cap");
 });
 
 test("detected Karpathy autoresearch workspaces get a usable adapter without a hand-written manifest", () => {
@@ -3680,8 +4936,22 @@ test("validation policy is manifest-driven and split strategies are discoverable
   assert.equal(policy.primarySplit, "stratified_group_kfold");
   assert.deepEqual(policy.folds, [0, 1, 2, 3, 4]);
   assert.equal(policy.version, "toy:data-v2:stratified_group_kfold-v1");
+  assert.equal(policy.acceptance.minimumDelta, 0, "the generic default must not apply a unit-specific absolute effect size");
   assert.equal(splitStrategy("stratified_group_kfold").id, "stratified_group_kfold");
   assert.equal(splitStrategy("workspace_custom").id, "workspace_custom");
+
+  const tinyScalePolicy = createValidationPolicy({
+    id: "tiny-scale", name: "Tiny-scale metric", taskType: "regression", datasetRevision: "tiny-v1",
+    metric: { name: "adjusted_mse", direction: "minimize" }, evaluator: { command: ["true"], estimatorPath: "" },
+  });
+  const base = { runId: "tiny-base", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { adjusted_mse: 5.4e-9 }, metricsByFold: { adjusted_mse: [5.4e-9, 5.5e-9, 5.3e-9] }, artifacts: {} };
+  const candidate = { ...base, runId: "tiny-candidate", metrics: { adjusted_mse: 5.3e-9 }, metricsByFold: { adjusted_mse: [5.3e-9, 5.4e-9, 5.2e-9] } };
+  const tinyAcceptance = evaluateValidationAcceptance({
+    baseline: base, candidate, metric: tinyScalePolicy.metric.name, direction: tinyScalePolicy.metric.direction,
+    minimumDelta: tinyScalePolicy.acceptance.minimumDelta, maximumRegressionShift: 0,
+    requireReplication: true, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true,
+  });
+  assert.equal(tinyAcceptance.gates.minimumDelta, true, "a real 1e-10-scale gain must not fail a generic 0.002 absolute threshold");
 });
 
 test("autonomy policy and shell guard enforce hard safety boundaries", () => {
@@ -3700,6 +4970,8 @@ test("autonomy policy and shell guard enforce hard safety boundaries", () => {
   assert.equal(guardAutonomousCommand(["curl", "--head", "https://example.com"]).allowed, true);
   assert.equal(guardAutonomousCommand(["git", "status", "--short"]).allowed, true);
   assert.equal(guardReadOnlyInspection(["true"]).allowed, true);
+  assert.equal(guardReadOnlyInspection(["sha256sum", "estimator.py"]).allowed, true, "read-only content hashes should be available to autonomous provenance checks");
+  assert.equal(guardReadOnlyInspection(["shasum", "-a", "256", "estimator.py"]).allowed, true);
   assert.equal(guardReadOnlyInspection(["git", "status", "--short"]).allowed, true);
   assert.equal(guardReadOnlyInspection(["git", "diff", "--output", "report.txt"]).allowed, false);
   assert.equal(guardReadOnlyInspection(["git", "branch", "-D", "main"]).allowed, false);
@@ -3711,7 +4983,9 @@ test("autonomy policy and shell guard enforce hard safety boundaries", () => {
   const workspace = mkdtempSync(join(tmpdir(), "evidra-permissions-"));
   try {
     assert.equal(guardWorkspaceCommand(["rg", "needle", workspace], workspace).allowed, true);
+    assert.equal(guardWorkspaceCommand(["sha256sum", join(workspace, "estimator.py")], workspace).allowed, true);
     assert.equal(guardWorkspaceCommand(["rg", "needle", "/etc"], workspace).allowed, false);
+    assert.equal(guardWorkspaceCommand(["sha256sum", "/etc/passwd"], workspace).allowed, false, "hash tools must remain workspace-scoped");
     assert.equal(guardWorkspaceCommand(["git", "-C", "/tmp", "status"], workspace).allowed, false);
     assert.equal(guardWorkspaceCommand(["rg", "needle", "../outside"], workspace).allowed, false);
   } finally { rmSync(workspace, { recursive: true, force: true }); }
@@ -3944,6 +5218,9 @@ test("research lanes use bounded role-specific workspace observations", () => {
   assert.match(String(dataCalls[1].arguments.query), /leak|duplicate/i);
   assert.match(String(validationCalls[1].arguments.query), /split|metric/i);
   assert.match(String(modelCalls[1].arguments.query), /model|estimator/i);
+  const topicSearch = laneToolCalls("validation scientist", "compare robust validation methods", "WhestBench white-box estimator").find((call) => call.name === "workspace.search");
+  assert.match(String(topicSearch.arguments.query), /WhestBench/i, "workspace search keeps task-specific terms ahead of generic role keywords");
+  assert.doesNotMatch(String(topicSearch.arguments.query), /\|/, "generic role terms are not expanded into an overbroad regex OR");
   assert.equal(modelCalls.some((call) => call.name === "source.search" && call.arguments.depth === "deep"), true);
   assert.equal(modelCalls.some((call) => call.name === "repository.search"), true);
   assert.equal(laneToolCalls("validation scientist", "compare robust validation methods").some((call) => call.name === "source.search"), true);
@@ -3962,11 +5239,87 @@ test("research lanes use bounded role-specific workspace observations", () => {
   assert.match(String(domainCalls.at(-1).arguments.query), /theorem-informed/);
   assert.equal(methodCalls.some((call) => call.name === "repository.search"), true);
   assert.equal(domainCalls.filter((call) => call.name === "source.retrieve").length, 0, "retrieval is queued only after a successful search result");
+  const campaignGoal = "Beat the ARC WhestBench Phase 2 public best: drive externally graded adjusted final-layer MSE to 2.00e-9 or lower with reproducible, rule-compliant estimator experiments. Use the current 7.126664527768703e-9 submission as the baseline and keep harness-wide improvements separately attributed.";
+  const condensed = compactResearchQuery(campaignGoal);
+  assert.match(condensed, /ARC WhestBench/);
+  assert.doesNotMatch(condensed, /2\.00e-9|7\.126664|baseline|separately/);
+  assert.doesNotMatch(compactResearchQuery("Measure. track: metric."), /measure|track|metric/i, "terminal punctuation must not bypass generic-query stopwords");
+  assert.ok(condensed.length < campaignGoal.length / 3);
+  const crossTrackGoal = "Improve Evidra as a general-purpose autonomous research and challenge harness, while improving the ARC WhestBench Phase 2 score as the external outcome measure. Track A: find and fix broadly applicable harness failures using reproducible tests and measured matched task outcomes; Track B: develop changed WhestBench estimator candidates informed by current public evidence.";
+  const focusedQuery = compactResearchQuery("ARC White-Box Estimation Challenge white_box_estimation " + crossTrackGoal);
+  assert.match(focusedQuery, /ARC/);
+  assert.match(focusedQuery, /WhestBench/);
+  assert.match(focusedQuery, /White-Box|Estimation/);
+  assert.doesNotMatch(focusedQuery, /Evidra|general-purpose|autonomous|research|harness|outcome|Track/);
+  const campaignLaneSearches = laneToolCalls("model researcher", campaignGoal).filter((call) => call.name === "source.search" || call.name === "repository.search");
+  assert.ok(campaignLaneSearches.every((call) => String(call.arguments.query).length < 260), "search calls should use compact topic terms rather than the full objective");
+  const domainAnchoredSearches = laneToolCalls("model researcher", campaignGoal, "ARC White-Box Estimation Challenge white_box_estimation").filter((call) => call.name === "source.search" || call.name === "repository.search");
+  assert.ok(domainAnchoredSearches.every((call) => /WhestBench|White-Box|estimation/i.test(String(call.arguments.query))), "generated searches should preserve the active project or competition domain");
+  assert.ok(domainAnchoredSearches.every((call) => !/2\.00e-9|7\.126664|adjusted final-layer/i.test(String(call.arguments.query))), "metric thresholds and generic scoring boilerplate should not dominate research retrieval");
+  assert.ok(domainAnchoredSearches.every((call) => !/external|reported tracks|parallel|stale context|pause\/resume/i.test(String(call.arguments.query))), "cross-track campaign boilerplate must not pollute topic-anchored literature and repository searches");
   assert.deepEqual(selectResearchLaneRoles("prove a new theorem about fluid dynamics", 3), ["domain researcher", "validation scientist", "method researcher"]);
   assert.deepEqual(selectResearchLaneRoles("win a dataset competition with a robust model", 3), ["data detective", "validation scientist", "model researcher"]);
-  const bounded = boundLaneToolResult({ name: "workspace.search", ok: true, output: "x".repeat(20_000) });
-  assert.match(String(bounded.output), /lane observation truncated/);
-  assert.ok(Buffer.byteLength(String(bounded.output)) <= 12_100);
+  const bounded = boundLaneToolResult({ name: "workspace.search", ok: true, output: "x".repeat(30_000) });
+  assert.match(String(bounded.output), /tool output truncated/);
+  assert.ok(Buffer.byteLength(String(bounded.output)) <= 24_100);
+  const boundedRead = boundLaneToolResult({ name: "workspace.read", ok: true, output: { path: "results/report.md", truncated: false, text: "important evidence ".repeat(2_000) } });
+  assert.equal(typeof boundedRead.output, "object", "oversized structured outputs remain structured JSON values");
+  assert.equal(boundedRead.output.path, "results/report.md");
+  assert.equal(boundedRead.output.truncated, true);
+  assert.match(boundedRead.output.text, /important evidence/);
+  assert.doesNotThrow(() => JSON.parse(JSON.stringify(boundedRead.output)));
+  assert.ok(Buffer.byteLength(JSON.stringify(boundedRead.output)) <= 24_000);
+  const boundedArray = boundLaneToolResult({ name: "custom", ok: true, output: Array.from({ length: 2_000 }, (_, index) => `row-${index}-${"x".repeat(30)}`) });
+  assert.equal(boundedArray.output._evidraTruncated, true, "truncated top-level arrays carry an explicit integrity marker");
+});
+
+test("lane context reserves readable space for primary observations over routine tool chatter", () => {
+  const document = "PRIMARY_EVIDENCE ".repeat(900);
+  const packed = boundResearchContext({
+    laneToolResults: [
+      { name: "workspace.files", ok: true, output: { files: Array.from({ length: 500 }, (_, index) => `src/file-${index}.ts`) } },
+      { name: "workspace.search", ok: true, output: { matches: "routine search result ".repeat(800) } },
+      { name: "workspace.read", ok: true, trust: "untrusted_content", output: { path: "reports/result.md", truncated: false, text: document } },
+    ],
+  });
+  const observations = packed.context.laneToolResults;
+  const read = observations.find((entry) => entry.name === "workspace.read");
+  assert.ok(read, "primary file read remains in the model context");
+  assert.equal(read.output.truncated, false);
+  assert.equal(read.output.text, document);
+  assert.ok(observations.some((entry) => entry.name === "workspace.search"), "routine evidence status is also retained");
+  assert.ok(JSON.stringify(packed.context).length <= packed.report.maxChars);
+});
+
+test("research lanes prefetch explicitly named workspace evidence without permitting hidden paths", () => {
+  const objective = "Read `reports/research/result-note.md`, inspect src/core/tools.ts; ignore .sota/private.json and /tmp/secret.md";
+  assert.deepEqual(explicitWorkspaceReadPaths(objective), ["reports/research/result-note.md", "src/core/tools.ts"]);
+  const reads = laneToolCalls("validation scientist", objective).filter((call) => call.name === "workspace.read");
+  assert.deepEqual(reads.map((call) => call.arguments.path), ["reports/research/result-note.md", "src/core/tools.ts"]);
+  assert.deepEqual(explicitWorkspaceReadPaths("reports/result.md reports/result.md", 1), ["reports/result.md"]);
+  assert.deepEqual(explicitWorkspaceReadPaths(".private/result.md /tmp/result.md ../outside.md"), []);
+});
+
+test("research lanes turn bounded search hits into source-body reads", () => {
+  const paths = workspaceReadPathsFromSearchResult({ matches: [
+    "src/core/validation-engine.ts:103: Apply the promotion policy",
+    "tests/core-smoke.mjs:2649:test validation acceptance",
+    "package-lock.json:44: noisy dependency metadata",
+    "../outside.ts:1: unsafe path",
+    "/tmp/external.ts:1: absolute path",
+    "docs/guide.md:1: later than the bounded limit",
+  ].join("\n") });
+  assert.deepEqual(paths, ["src/core/validation-engine.ts", "tests/core-smoke.mjs"]);
+  assert.deepEqual(workspaceReadPathsFromSearchResult({ matches: "src/a.ts:1: hit" }, 0), []);
+  assert.deepEqual(workspaceReadPathsFromSearchResult("not a structured search result"), []);
+  assert.deepEqual(workspaceReadCallsFromSearchResult({ matches: [
+    "reports/research/parity.md:12: fixed-input result",
+    "tests/core-smoke.mjs:100: matching test",
+    "docs/other.md:4: beyond the read cap",
+  ].join("\n") }), [
+    { name: "workspace.read", arguments: { path: "reports/research/parity.md", maxBytes: 24_000 } },
+    { name: "workspace.read", arguments: { path: "tests/core-smoke.mjs", maxBytes: 24_000 } },
+  ]);
 });
 
 test("lane literature claims link only to durable source IDs", () => {
@@ -3987,10 +5340,12 @@ test("research tool boundaries protect sensitive paths and credentials", () => {
   assert.equal(isSensitiveWorkspacePath("config/credentials.json"), true);
   assert.equal(isSensitiveWorkspacePath("src/model.py"), false);
   assert.match(redactSecrets("OPENAI_API_KEY=sk-test_12345678901234567890"), /REDACTED/);
-  assert.match(redactSecrets("authorization: Bearer very-secret-value"), /REDACTED/);
+  assert.doesNotMatch(redactSecrets('"api_key":"very-secret-json-value"'), /very-secret-json-value/);
+  assert.doesNotMatch(redactSecrets("authorization: Bearer very-secret-value"), /very-secret-value/);
   assert.equal(redactStructured({ nested: "OPENAI_API_KEY=sk-test_12345678901234567890" }).nested.includes("sk-test_"), false);
   assert.deepEqual(redactStructured({ command: ["submit", "--token", "secret-value"] }).command, ["submit", "--token", "[REDACTED_ARGUMENT]"]);
   assert.deepEqual(redactStructured({ alternateCommands: [["submit", "--token", "secret-value"]] }).alternateCommands, [["submit", "--token", "[REDACTED_ARGUMENT]"]]);
+  assert.deepEqual(redactStructured({ environment: { API_TOKEN: "secret-value", OPENAI_API_KEY: "key-value", harmless: "visible" } }), { environment: { API_TOKEN: "[REDACTED]", OPENAI_API_KEY: "[REDACTED]", harmless: "visible" } });
   const storeRoot = mkdtempSync(join(tmpdir(), "evidra-redaction-store-"));
   const store = new ResearchStore(join(storeRoot, ".sota", "database.sqlite"));
   store.appendEvent("test.secret", { output: "token=sk-test_12345678901234567890" });
@@ -4523,6 +5878,28 @@ test("individual queue tasks can pause cooperatively and resume without retry pe
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("starting a campaign suspends prior campaign work without touching unscoped tasks", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-campaign-queue-isolation-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "old-running", kind: "research.cycle", priority: 1, goalId: "old-phase", payload: { campaignStartedAt: "2026-09-26T10:00:00.000Z", checkpoint: { cycle: 4 } } });
+    store.claimTask("old-running", undefined, "old-controller");
+    store.enqueueTask({ id: "old-queued", kind: "research.lane", priority: 1, goalId: "old-phase", payload: { campaignStartedAt: "2026-09-26T10:00:00.000Z" } });
+    store.enqueueTask({ id: "old-child", kind: "research.review", priority: 1, parentTaskId: "old-running", goalId: "old-phase", payload: { checkpoint: "child work" } });
+    store.enqueueTask({ id: "unscoped", kind: "research.review", priority: 1, payload: { note: "operator-created" } });
+    assert.deepEqual(store.pauseTasksForOtherCampaigns("2026-09-27T10:00:00.000Z"), ["old-running", "old-queued", "old-child"]);
+    const tasks = new Map(store.queueTasks().map((task) => [task.id, task]));
+    assert.equal(tasks.get("old-running")?.status, "paused");
+    assert.equal(tasks.get("old-running")?.ownerId, null);
+    assert.equal(tasks.get("old-running")?.payload.checkpoint.cycle, 4);
+    assert.equal(tasks.get("old-queued")?.status, "paused");
+    assert.equal(tasks.get("old-child")?.status, "paused");
+    assert.equal(tasks.get("unscoped")?.status, "queued");
+    assert.equal(store.eventsByType("queue.task.paused").length, 3);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("queue priority can be revised without mutating a live claim", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-task-priority-"));
   try {
@@ -4659,6 +6036,56 @@ test("queue status JSON exposes exact budget and usage state", async () => {
     });
     assert.equal(usageResult.code, 0, usageResult.stderr);
     assert.deepEqual(JSON.parse(usageResult.stdout).totals, { inputTokens: 8, outputTokens: 7, costUsd: 0 });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("human queue status is bounded by default and supports an explicit history view", async () => {
+  const { spawn } = await import("node:child_process");
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-status-limit-"));
+  try {
+    const state = join(root, ".sota");
+    const store = new ResearchStore(join(state, "database.sqlite"));
+    for (let index = 0; index < 45; index += 1) {
+      store.enqueueTask({ id: `status-history-${index}`, kind: "research.lane", priority: 1, payload: {} });
+    }
+    store.close();
+    const run = (args) => new Promise((resolve) => {
+      const child = spawn(process.execPath, [join(process.cwd(), "dist", "cli.js"), "queue", "status", ...args], { cwd: root, env: { ...process.env, EVIDRA_STATE_DIR: state }, stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.on("close", (code) => resolve({ code, stdout, stderr }));
+    });
+    const bounded = await run([]);
+    assert.equal(bounded.code, 0, bounded.stderr);
+    assert.match(bounded.stdout, /Showing 40 of 45 tasks/);
+    assert.equal((bounded.stdout.match(/^queued /gm) ?? []).length, 40);
+    const full = await run(["--all"]);
+    assert.equal(full.code, 0, full.stderr);
+    assert.equal((full.stdout.match(/^queued /gm) ?? []).length, 45);
+    const invalid = await run(["--limit", "0"]);
+    assert.notEqual(invalid.code, 0);
+    assert.match(invalid.stderr, /--limit must be a whole number between 1 and 10000/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("queue status projections can reuse one loaded snapshot without rescanning it per task", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-queue-snapshot-projection-"));
+  try {
+    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+    store.enqueueTask({ id: "snapshot-parent", kind: "research.lane", priority: 1, payload: {} });
+    store.enqueueTask({ id: "snapshot-child", kind: "research.review", priority: 1, parentTaskId: "snapshot-parent", payload: {} });
+    const snapshot = store.queueTasks();
+    const parent = snapshot.find((task) => task.id === "snapshot-parent");
+    const child = snapshot.find((task) => task.id === "snapshot-child");
+    assert.ok(parent && child);
+    store.queueTasks = () => { throw new Error("projection rescanned the complete queue"); };
+    assert.equal(store.queueProgressForTask(child).state, "queued");
+    assert.equal(store.queueUsageStateForTask(child).usedTokens, 0);
+    assert.deepEqual(store.taskLineage(child.id, 32, snapshot)?.taskIds, [child.id, parent.id]);
+    assert.equal(store.queueChildSummary(parent.id, snapshot)?.total, 1);
+    store.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -5088,6 +6515,33 @@ test("stale queue recovery stops retrying a task after its attempt budget", () =
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("campaign resume retires only its abandoned controller cycle tickets", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-abandoned-cycle-"));
+  const dbPath = join(root, ".sota", "database.sqlite");
+  const campaignStartedAt = "2026-09-29T16:25:09.529Z";
+  try {
+    const store = new ResearchStore(dbPath);
+    for (const [id, ownerId, startedAt] of [
+      ["abandoned-cycle", "controller-cycle-old", campaignStartedAt],
+      ["other-campaign-cycle", "controller-cycle-other", "2026-09-28T00:00:00.000Z"],
+    ]) {
+      store.enqueueTask({ id, kind: "research.cycle", priority: 1, payload: { ownerId, campaignStartedAt: startedAt } });
+      assert.equal(store.claimTask(id, ["research.cycle"], ownerId)?.ownerId, ownerId);
+    }
+
+    assert.deepEqual(store.recoverAbandonedCampaignCycles(campaignStartedAt), ["abandoned-cycle"]);
+    const abandoned = store.queueTasks().find((task) => task.id === "abandoned-cycle");
+    assert.equal(abandoned?.status, "failed");
+    assert.equal(abandoned?.payload.failureClass, "controller_restarted");
+    assert.equal(abandoned?.payload.retryableOnResume, false);
+    assert.equal(abandoned?.ownerId, null);
+    assert.equal(store.queueTasks().find((task) => task.id === "other-campaign-cycle")?.status, "running");
+    assert.deepEqual(store.recoverAbandonedCampaignCycles(campaignStartedAt), []);
+    assert.equal(store.eventsByType("queue.campaign_cycle.abandoned").length, 1);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("stale assigned queue work creates an explicit reassignment approval", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-stale-assignment-"));
   const dbPath = join(root, ".sota", "database.sqlite");
@@ -5110,6 +6564,24 @@ test("stale assigned queue work creates an explicit reassignment approval", () =
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("workspace search fallback prioritizes identifiers over generic OR terms", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-search-signal-"));
+  try {
+    writeFileSync(join(root, "noise.txt"), "persistent telemetry package-lock generic tool results\n");
+    writeFileSync(join(root, "failure.md"), "V29 replay failed on nathan-moore at index 93; submission 332337.\n");
+    assert.deepEqual(workspaceSearchFallbackTerms("failed persistent V29 STRASSEN=3 index 93 nathan-moore manifest ordered inputs telemetry submission 332337 provenance"), {
+      terms: ["V29", "STRASSEN=3", "nathan-moore", "332337"], mode: "identifier fallback",
+    });
+    const result = await executeResearchTool({ name: "workspace.search", arguments: { query: "failed persistent V29 STRASSEN=3 index 93 nathan-moore manifest ordered inputs telemetry submission 332337 provenance" } }, {
+      root, storePath: join(root, ".sota", "database.sqlite"), autonomy: "safe",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.output.searchMode, "identifier fallback");
+    assert.match(result.output.matches, /failure\.md.*V29/);
+    assert.doesNotMatch(result.output.matches, /noise\.txt/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("research tool registry exposes safe workspace tools", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-tools-"));
   try {
@@ -5122,6 +6594,17 @@ test("research tool registry exposes safe workspace tools", async () => {
     execFileSync("git", ["add", "notes.txt"], { cwd: root });
     execFileSync("git", ["commit", "-qm", "baseline"], { cwd: root });
     writeFileSync(join(root, "notes.txt"), "hypothesis: tool registry\nupdated observation\n");
+    writeFileSync(join(root, "package-lock.json"), '{"note":"hypothesis: generated lockfile noise"}\n');
+    writeFileSync(join(root, "scores.txt"), "Incumbent 332337 remains unverified against this result.\n");
+    writeFileSync(join(root, "recovery.md"), "Use idempotent operation ids; reconcile timeouts before retrying remote workers.\n");
+    writeFileSync(join(root, "many.txt"), "match token alpha\nmatch token beta\n");
+    mkdirSync(join(root, ".sota", "worktrees", "exp-1", "src"), { recursive: true });
+    writeFileSync(join(root, ".sota", "worktrees", "exp-1", "src", "estimator.py"), "score = predict(inputs)\n");
+    writeFileSync(join(root, ".sota", "worktrees", "exp-1", ".env"), "API_TOKEN=secret-value\n");
+    mkdirSync(join(root, ".sota", "runs"), { recursive: true });
+    writeFileSync(join(root, ".sota", "runs", "verified-run.json"), JSON.stringify({ metrics: { score: 0.42 }, failedCases: 0, api_key: "do-not-leak" }));
+    mkdirSync(join(root, ".sota", "traces"), { recursive: true });
+    writeFileSync(join(root, ".sota", "traces", "research.jsonl"), "private controller trace\n");
     execFileSync("git", ["add", "notes.txt"], { cwd: root });
     const db = join(root, ".sota", "database.sqlite");
     const files = await executeResearchTool({ name: "workspace.files" }, { root, storePath: db, autonomy: "safe" });
@@ -5129,9 +6612,83 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.equal(files.trust, "controller_observation");
     assert.equal(files.output.files.includes("notes.txt"), true);
     assert.equal(files.output.files.includes(".github/workflow.yml"), true);
+    assert.equal(files.output.files.some((file) => file.startsWith(".sota/")), false, "internal research artifacts remain hidden from default inventory");
+    const runFiles = await executeResearchTool({ name: "workspace.files", arguments: { path: ".sota/runs" } }, { root, storePath: db, autonomy: "safe" });
+    assert.deepEqual(runFiles.output.files, [".sota/runs/verified-run.json"], "only the bounded run-artifact scope is exposed, not traces or the database");
+    const runRead = await executeResearchTool({ name: "workspace.read", arguments: { path: ".sota/runs/verified-run.json" } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(runRead.ok, true);
+    assert.match(runRead.output.text, /\"score\":0\.42/);
+    assert.doesNotMatch(runRead.output.text, /do-not-leak/);
+    const traceRead = await executeResearchTool({ name: "workspace.read", arguments: { path: ".sota/traces/research.jsonl" } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(traceRead.ok, false);
+    assert.match(traceRead.error, /internal state/);
+    const experimentFiles = await executeResearchTool({ name: "workspace.files", arguments: { path: ".sota/worktrees/exp-1" } }, { root, storePath: db, autonomy: "safe" });
+    assert.deepEqual(experimentFiles.output.files, [".sota/worktrees/exp-1/src/estimator.py"]);
+    const experimentSearch = await executeResearchTool({ name: "workspace.search", arguments: { query: "predict", path: ".sota/worktrees/exp-1" } }, { root, storePath: db, autonomy: "safe" });
+    assert.match(experimentSearch.output.matches, /estimator\.py:1:score = predict/);
+    const experimentSource = await executeResearchTool({ name: "workspace.read", arguments: { path: ".sota/worktrees/exp-1/src/estimator.py" } }, { root, storePath: db, autonomy: "safe" });
+    assert.match(experimentSource.output.text, /score = predict/);
+    assert.doesNotMatch(experimentFiles.output.files.join("\n"), /\.env/);
+    const boundedFiles = await executeResearchTool({ name: "workspace.files", arguments: { limit: 2 } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(boundedFiles.output.files.length, 2);
+    assert.equal(boundedFiles.output.truncated, true);
+    const intendedRead = await executeResearchTool(normalizeResearchToolCall({ name: "workspace.files", arguments: { command: "read", path: "scores.txt" } }), { root, storePath: db, autonomy: "safe" });
+    assert.equal(intendedRead.name, "workspace.read");
+    assert.equal(intendedRead.ok, true);
+    assert.match(intendedRead.output.text, /Incumbent 332337/);
+    const multiRead = await executeResearchTool({ name: "workspace.read", arguments: { paths: ["scores.txt", "recovery.md"], maxBytes: 4096 } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(multiRead.ok, true);
+    assert.deepEqual(multiRead.output.files.map((file) => file.path), ["scores.txt", "recovery.md"]);
+    assert.match(multiRead.output.files[1].text, /idempotent operation ids/);
+    const excessiveMultiRead = await executeResearchTool({ name: "workspace.read", arguments: { paths: Array.from({ length: 65 }, (_, index) => `file-${index}.txt`) } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(excessiveMultiRead.ok, false);
+    assert.match(excessiveMultiRead.error, /one to 64/);
+    const scopedFiles = await executeResearchTool({ name: "workspace.files", arguments: { path: ".github" } }, { root, storePath: db, autonomy: "safe" });
+    assert.deepEqual(scopedFiles.output.files, [".github/workflow.yml"]);
     const search = await executeResearchTool({ name: "workspace.search", arguments: { query: "hypothesis" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(search.ok, true);
     assert.equal(search.trust, "untrusted_content");
+    assert.match(search.output.matches, /notes\.txt/);
+    assert.doesNotMatch(search.output.matches, /package-lock\.json/);
+    const naturalSearch = await executeResearchTool({ name: "workspace.search", arguments: { query: "332337 incumbent unverified comparison" } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(naturalSearch.ok, true);
+    assert.equal(naturalSearch.output.searchMode, "identifier fallback");
+    assert.match(naturalSearch.output.matches, /scores\.txt.*332337/);
+    const generalSearch = await executeResearchTool({ name: "workspace.search", arguments: { query: "idempotent retries reconcile remote worker" } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(generalSearch.ok, true);
+    assert.equal(generalSearch.output.searchMode, "ranked-term fallback");
+    assert.match(generalSearch.output.matches, /recovery\.md.*idempotent/);
+    const commandAlias = await executeResearchTool(normalizeResearchToolCall({ name: "workspace.command", arguments: { command: ["rg", "hypothesis", "notes.txt"] } }), { root, storePath: db, autonomy: "safe" });
+    assert.equal(commandAlias.ok, true);
+    assert.match(commandAlias.output.stdout, /hypothesis: tool registry/);
+    const boundedSearch = await executeResearchTool({ name: "workspace.search", arguments: { query: "match token", limit: 1 } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(boundedSearch.output.returned, 1);
+    assert.equal(boundedSearch.output.truncated, true);
+    assert.match(boundedSearch.output.matches, /many\.txt:1:match token alpha/);
+    // Default task-facing inspection follows the adapter workspace, while
+    // paths already present at project root retain their established meaning.
+    mkdirSync(join(root, "task-workspace", "examples"), { recursive: true });
+    writeFileSync(join(root, "task-workspace", "examples", "estimator.py"), "def predict(weights):\n    return weights\n");
+    const taskContext = { root, storePath: db, autonomy: "safe", competition: { workspacePath: "task-workspace" } };
+    const taskFiles = await executeResearchTool({ name: "workspace.files" }, taskContext);
+    assert.equal(taskFiles.ok, true);
+    assert.deepEqual(taskFiles.output.files, ["examples/estimator.py"]);
+    assert.equal(taskFiles.output.scope, "task-workspace");
+    const taskRead = await executeResearchTool({ name: "workspace.read", arguments: { path: "examples/estimator.py" } }, taskContext);
+    assert.equal(taskRead.ok, true);
+    assert.match(taskRead.output.text, /def predict/);
+    const taskSearch = await executeResearchTool({ name: "workspace.search", arguments: { query: "def predict" } }, taskContext);
+    assert.equal(taskSearch.ok, true);
+    assert.match(taskSearch.output.matches, /examples\/estimator\.py:1/);
+    const projectArtifactRead = await executeResearchTool({ name: "workspace.read", arguments: { path: "scores.txt" } }, taskContext);
+    assert.equal(projectArtifactRead.ok, true);
+    assert.match(projectArtifactRead.output.text, /Incumbent 332337/);
+    mkdirSync(join(root, "competitions", "whestbench", "starterkit", "examples"), { recursive: true });
+    writeFileSync(join(root, "competitions", "whestbench", "starterkit", "examples", "registered.py"), "registered adapter workspace\n");
+    const registeredContext = { root, storePath: db, autonomy: "safe", competition: { id: "arc-whestbench-2026" } };
+    const registeredFiles = await executeResearchTool({ name: "workspace.files" }, registeredContext);
+    assert.equal(registeredFiles.ok, true);
+    assert.deepEqual(registeredFiles.output.files, ["examples/registered.py"], "registered adapters use their workspacePath even when config omits it");
     const diff = await executeResearchTool({ name: "git.diff" }, { root, storePath: db, autonomy: "safe" });
     assert.equal(diff.ok, true);
     assert.equal(diff.trust, "untrusted_content");
@@ -5142,6 +6699,14 @@ test("research tool registry exposes safe workspace tools", async () => {
     const malformedShape = await executeResearchTool({ name: "workspace.read", arguments: "notes.txt" }, { root, storePath: db, autonomy: "safe" });
     assert.equal(malformedShape.ok, false);
     assert.match(malformedShape.error, /arguments must be an object/);
+    const protectedState = await executeResearchTool({ name: "workspace.read", arguments: { path: ".sota/database.sqlite" } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(protectedState.ok, false);
+    assert.match(protectedState.error, /internal state/);
+    const unsupportedTool = await executeResearchTool({ name: "workspace.commands", arguments: { command: ["inspect data"] } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(unsupportedTool.ok, false);
+    assert.match(unsupportedTool.error, /Use shell\.exec/);
+    assert.match(unsupportedTool.error, /workspace\.files/);
+    assert.match(unsupportedTool.error, /source\.search/);
     writeFileSync(join(root, "result.json"), JSON.stringify({ score: 0.9 }));
     const audited = await executeResearchTool({ name: "artifact.audit", arguments: { paths: ["result.json", "notes.txt"] } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(audited.ok, true);
@@ -5208,15 +6773,32 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.match(sourceBoundary.error, /private or loopback/);
     const invalidSourceKind = await executeResearchTool({ name: "source.retrieve", arguments: { url: "https://example.org/source", kind: "made-up" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(invalidSourceKind.ok, false);
-    assert.match(invalidSourceKind.error, /supported research channel kind/);
+    assert.match(invalidSourceKind.error, /must be one of:.*rules.*discussion.*leaderboard/);
     const channelStore = new ResearchStore(db);
     channelStore.saveSource({ id: "cached-discussion", payload: { id: "cached-discussion", url: "https://example.org/discussion", title: "Cached discussion", retrievedAt: new Date().toISOString(), contentHash: "sha256:discussion", channelKind: "discussion", claims: [] } });
+    channelStore.saveSource({ id: "cached-rules", payload: { id: "cached-rules", url: "https://example.org/rules", title: "Cached rules", retrievedAt: new Date().toISOString(), contentHash: "sha256:rules", channelKind: "rules", claims: [] } });
+    channelStore.saveSource({ id: "cached-leaderboard", payload: { id: "cached-leaderboard", url: "https://example.org/leaderboard", title: "Cached leaderboard", retrievedAt: new Date().toISOString(), contentHash: "sha256:leaderboard", channelKind: "leaderboard", claims: [] } });
+    channelStore.saveSource({ id: "cached-general", payload: { id: "cached-general", url: "https://example.org/research", title: "Cached general source", retrievedAt: new Date().toISOString(), contentHash: "sha256:general", channelKind: "general", claims: [] } });
     channelStore.close();
+    const retrievedChallengeAlias = await executeResearchTool({ name: "source.retrieve", arguments: { url: "https://example.org/rules", kind: "challenge" } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(retrievedChallengeAlias.ok, true);
+    assert.equal(retrievedChallengeAlias.output.channelKind, "rules", "source.retrieve and competition.observe share generic channel aliases");
+    assert.equal(retrievedChallengeAlias.output.cached, true);
+    const retrievedResearchAlias = await executeResearchTool({ name: "source.retrieve", arguments: { url: "https://example.org/research", kind: "research" } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(retrievedResearchAlias.ok, true);
+    assert.equal(retrievedResearchAlias.output.channelKind, "general", "research is normalized to the general evidence channel");
+    assert.equal(retrievedResearchAlias.output.cached, true);
     const channel = await executeResearchTool({ name: "competition.observe", arguments: { kind: "discussion" } }, { root, storePath: db, autonomy: "safe", competition: { id: "tool-competition", name: "Tool competition", taskType: "generic", datasetRevision: "v1", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "estimator.py" }, researchSources: [], researchChannels: [{ kind: "discussion", url: "https://example.org/discussion", refreshMinutes: 30 }] } });
     assert.equal(channel.ok, true);
     assert.equal(channel.trust, "untrusted_content");
     assert.equal(channel.output.cached, true);
     assert.equal(channel.output.channelKind, "discussion");
+    const challengeAlias = await executeResearchTool({ name: "competition.observe", arguments: { kind: "challenge" } }, { root, storePath: db, autonomy: "safe", competition: { id: "tool-competition", name: "Tool competition", taskType: "generic", datasetRevision: "v1", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "estimator.py" }, researchSources: [], researchChannels: [{ kind: "rules", url: "https://example.org/rules" }] } });
+    assert.equal(challengeAlias.ok, true);
+    assert.equal(challengeAlias.output.channelKind, "rules", "common challenge terminology normalizes to the configured rules channel");
+    const finalAlias = await executeResearchTool({ name: "competition.observe", arguments: { kind: "final" } }, { root, storePath: db, autonomy: "safe", competition: { id: "tool-competition", name: "Tool competition", taskType: "generic", datasetRevision: "v1", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "estimator.py" }, researchSources: [], researchChannels: [{ kind: "leaderboard", url: "https://example.org/leaderboard" }] } });
+    assert.equal(finalAlias.ok, true);
+    assert.equal(finalAlias.output.channelKind, "leaderboard", "common final/ranking terminology normalizes to the configured leaderboard channel");
     const adapterPath = join(root, "adapter.mjs");
     writeFileSync(adapterPath, "const args = JSON.parse(process.env.EVIDRA_TOOL_ARGS_JSON || '{}'); process.stdout.write(JSON.stringify({ echoed: args }));\n");
     mkdirSync(join(root, ".evidra"), { recursive: true });
@@ -5326,6 +6908,16 @@ test("research tool retrieval keeps an inspection core and ranks domain tools", 
   assert(selectResearchTools("general task", 4).length === 4);
 });
 
+test("research director receives executable built-in tools and respects a disabled executor", () => {
+  const tools = researchDirectorAvailableTools("inspect report files and run the evaluator", availableResearchTools());
+  const names = new Set(tools.map((tool) => tool.name));
+  for (const coreTool of ["workspace.files", "workspace.search", "workspace.read", "git.status"]) {
+    assert.ok(names.has(coreTool), `director tool contract includes ${coreTool}`);
+  }
+  assert.ok(names.has("shell.exec"), "task-relevant bounded command execution is advertised when executable");
+  assert.deepEqual(researchDirectorAvailableTools("anything", availableResearchTools(), false), [], "disabled executor exposes no callable tools");
+});
+
 test("autonomous research tools do not inherit controller credentials", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-tool-env-"));
   const db = join(root, ".sota", "database.sqlite");
@@ -5412,6 +7004,53 @@ test("source ranking prefers provenance-rich evidence over web discovery noise",
   assert.equal(diversified[1].provider, "crossref");
 });
 
+test("source ranking does not let irrelevant scholarly provenance outrank topical relevance", () => {
+  const ranked = rankSourceSearchResults([
+    { title: "Deep learning techniques for monocular depth estimation", url: "https://arxiv.org/abs/2010.06626", provider: "arxiv", doi: "https://doi.org/10.1234/depth", venue: "Journal", authors: ["A. Author"], abstract: "CNNs estimate depth maps for autonomous navigation." },
+    { title: "White-box neuron activation estimation for ReLU MLPs", url: "https://example.org/whest-method", provider: "web", authors: [], abstract: "Predict expected neuron activations from neural network weights." },
+  ], "ARC White-Box Estimation white_box_estimation WhestBench external measure fix failures develop estimator candidates", 2);
+  assert.equal(ranked[0].title, "White-box neuron activation estimation for ReLU MLPs");
+});
+
+test("source ranking preserves explicit acronym anchors over generic scholarly matches", () => {
+  const ranked = rankSourceSearchResults([
+    { title: "Software reliability estimation through black-box and white-box testing", url: "https://doi.org/10.1234/generic", provider: "crossref", doi: "https://doi.org/10.1234/generic", venue: "Reliability Journal", authors: ["A. Author"] },
+    { title: "ARC White-Box Estimation Challenge: expected neuron activations", url: "https://arc.example.org/whest", provider: "web", authors: [], abstract: "ARC evaluates methods predicting activations from MLP weights." },
+  ], "ARC White-Box Estimation", 2);
+  assert.equal(ranked[0].title, "ARC White-Box Estimation Challenge: expected neuron activations");
+  assert.ok((ranked[0].qualityScore ?? 0) > (ranked[1].qualityScore ?? 0));
+});
+
+test("ambiguous acronym search is marked weak and excluded from evidence coverage", () => {
+  const query = "ARC White-Box Estimation white_box_estimation representation inductive bias optimization generalization";
+  const results = rankSourceSearchResults([
+    { title: "ARC-AGI-3: A New Challenge for Frontier Agentic Intelligence", url: "https://arxiv.org/abs/2603.24621v2", provider: "arxiv", authors: [], abstract: "An interactive benchmark for studying agentic intelligence in novel environments." },
+  ], query, 6);
+  assert.equal(results.length, 1);
+  assert.ok((results[0].qualityScore ?? 1) < SOURCE_SEARCH_MIN_RELEVANCE_SCORE);
+  assert.equal(sourceSearchNeedsRefinement(results), true);
+  const frontier = sourceFrontier([{ type: "research.source.search.completed", payload: { query, rankingPolicyVersion: SOURCE_SEARCH_RANKING_VERSION, results } }]);
+  assert.equal(frontier.queryCount, 1);
+  assert.equal(frontier.uniqueWorks, 0);
+  assert.equal(frontier.queryCoverage, 0);
+});
+
+test("source search is considered usable when at least one result clears the relevance floor", () => {
+  assert.equal(sourceSearchNeedsRefinement([
+    { title: "On-topic paper", url: "https://arxiv.org/abs/2601.12345", authors: [], qualityScore: SOURCE_SEARCH_MIN_RELEVANCE_SCORE },
+  ]), false);
+  assert.equal(sourceSearchNeedsRefinement([]), true);
+});
+
+test("source search cache ignores results ranked by an older policy", () => {
+  const current = { query: "ARC estimator", depth: "deep", rankingPolicyVersion: SOURCE_SEARCH_RANKING_VERSION, results: [] };
+  assert.equal(sourceSearchCacheIsCurrent(current, "ARC estimator", "shallow"), true);
+  assert.equal(sourceSearchCacheIsCurrent(current, "ARC estimator", "deep"), true);
+  assert.equal(sourceSearchCacheIsCurrent({ ...current, depth: "shallow" }, "ARC estimator", "deep"), false);
+  assert.equal(sourceSearchCacheIsCurrent({ ...current, rankingPolicyVersion: SOURCE_SEARCH_RANKING_VERSION - 1 }, "ARC estimator", "shallow"), false);
+  assert.equal(sourceSearchCacheIsCurrent({ query: "ARC estimator", depth: "deep", results: [] }, "ARC estimator", "shallow"), false);
+});
+
 test("direct source provenance remains classifiable without a search event", () => {
   assert.equal(sourceEvidenceClass("https://arxiv.org/abs/2601.12345"), "scholarly");
   assert.equal(sourceEvidenceClass("https://doi.org/10.1234/example"), "scholarly");
@@ -5495,8 +7134,11 @@ test("research lane literature probes diversify method and model search", () => 
 
 test("research lane teams share only cacheable observations within one invocation", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-lane-cache-"));
+  mkdirSync(join(root, "reports", "research"), { recursive: true });
+  writeFileSync(join(root, "reports", "research", "verified-input-lock.md"), "Fresh, content-addressed evaluator/data lock.\n");
   const previousHost = process.env.OLLAMA_HOST;
   const calls = new Map();
+  const readPaths = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk.toString(); });
@@ -5510,18 +7152,21 @@ test("research lane teams share only cacheable observations within one invocatio
   process.env.OLLAMA_HOST = `http://127.0.0.1:${address.port}`;
   try {
     const directiveStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    const directive = directiveStore.enqueueAgentDirective("domain researcher", "Report the strongest competing explanation", null, "research director");
+    const directive = directiveStore.enqueueAgentDirective("domain researcher", "Read `reports/research/verified-input-lock.md` and report the strongest competing explanation", null, "research director");
     directiveStore.close();
     const reports = await runResearchLanes("prove a theorem", {}, {
       provider: "local", model: "test", autonomy: "fast", maxParallel: 1, laneTeamSize: 2,
       cwd: root, storePath: join(root, ".sota", "database.sqlite"), timeoutMs: 5_000,
       executeTool: async (call) => {
         calls.set(call.name, (calls.get(call.name) ?? 0) + 1);
+        if (call.name === "workspace.read") readPaths.push(call.arguments.path);
+        if (call.name === "workspace.read") return { name: call.name, ok: true, output: { path: call.arguments.path, text: readFileSync(join(root, call.arguments.path), "utf8"), truncated: false }, trust: "controller_observation" };
         return { name: call.name, ok: true, output: { files: [], results: [] }, trust: "controller_observation" };
       },
     });
     assert.equal(reports.length, 2);
     assert.equal(calls.get("workspace.files"), 1);
+    assert.deepEqual(readPaths, ["reports/research/verified-input-lock.md"], "steered workspace paths execute once as bounded reads at the next tool boundary");
     const usageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const laneUsage = usageStore.agentLanes().filter((lane) => lane.usedSeconds > 0);
     assert.equal(laneUsage.length, 2);
@@ -5583,6 +7228,10 @@ test("role reviews become bounded specialist coaching instructions", () => {
   assert.match(trusted, /Preserve its evidence discipline/);
   const newRole = lanePrompt("method researcher", "find a method");
   assert.match(newRole, /insufficient prior evidence/);
+  assert.match(newRole, /context\.laneToolResults/);
+  assert.match(newRole, /context\.priorLaneReports and context\.peerLaneBoard/);
+  assert.match(newRole, /Never say an artifact or workspace tool was unavailable when a successful observation or readable handoff is present/);
+  assert.match(newRole, /distinguish 'no interactive tool interface' from 'no observation'/);
   const guided = lanePrompt("validation scientist", "check the metric", undefined, [], { text: "Require paired replication.", contentHash: "hash", truncated: false });
   assert.match(guided, /Require paired replication/);
   assert.match(guided, /context only/);
@@ -5667,9 +7316,13 @@ test("lane handoff boards are bounded and preserve challengeable evidence", () =
 
 test("lane team size preserves safe single-pass and enables bounded peer waves", () => {
   assert.equal(researchLaneTeamSize("prove a theorem", 1), 1);
-  assert.equal(researchLaneTeamSize("prove a theorem", 2, { autonomy: "fast" }), 4);
+  assert.equal(researchLaneTeamSize("prove a theorem", 2, { autonomy: "fast" }), 3);
+  assert.equal(researchLaneTeamSize("train a model", 1, { autonomy: "fast" }), 2);
+  assert.equal(researchLaneTeamSize("train a model", 2, { autonomy: "yolo" }), 4);
+  assert.equal(researchLaneTeamSize("prove a theorem", 2, { autonomy: "yolo" }), 4);
   assert.equal(researchLaneTeamSize("train a model", 2, { autonomy: "fast", laneTeamSize: 3 }), 3);
   assert.equal(researchLaneTeamSize("train a model", 4, { autonomy: "fast", laneTeamSize: 2 }), 4);
+  assert.equal(researchLaneTeamSize("train a model", 1, { autonomy: "fast", laneTeamSize: 1 }), 1, "peer-review size follows a single-lane device ceiling");
 });
 
 test("literature benchmark separates deep recall, wide recall, grounding, and query budget", () => {
@@ -5738,8 +7391,8 @@ test("repository search parsing preserves implementation leads without trusting 
 
 test("literature search frontier deduplicates works and reports retrieval coverage", () => {
   const report = sourceFrontier([
-    { type: "research.source.search.completed", payload: { query: "agent harness", results: [{ title: "Paper A", url: "https://example.org/a", doi: "10.1/a", authors: [] }, { title: "Paper B", url: "https://example.org/b", authors: [] }] } },
-    { type: "research.source.search.completed", payload: { query: "scientific harness", results: [{ title: "Paper A revised", url: "https://other.example/a", doi: "10.1/a", authors: [] }] } },
+    { type: "research.source.search.completed", payload: { query: "agent harness", rankingPolicyVersion: SOURCE_SEARCH_RANKING_VERSION, results: [{ title: "Paper A", url: "https://example.org/a", doi: "10.1/a", authors: [], qualityScore: 0.8 }, { title: "Paper B", url: "https://example.org/b", authors: [], qualityScore: 0.8 }] } },
+    { type: "research.source.search.completed", payload: { query: "scientific harness", rankingPolicyVersion: SOURCE_SEARCH_RANKING_VERSION, results: [{ title: "Paper A revised", url: "https://other.example/a", doi: "10.1/a", authors: [], qualityScore: 0.8 }] } },
     { type: "research.source.retrieved", payload: { url: "https://example.org/a", claimCount: 3 } },
   ]);
   assert.equal(report.queryCount, 2);
@@ -5756,11 +7409,21 @@ test("literature search frontier deduplicates works and reports retrieval covera
 
 test("literature frontier accounts for deep-search probes", () => {
   const report = sourceFrontier([
-    { type: "research.source.search.completed", payload: { query: "agent harness", queries: ["agent harness", "agent harness evaluation", "harness evaluation"], depth: "deep", results: [{ title: "Paper", url: "https://example.org/paper", queries: ["agent harness"], authors: [] }] } },
+    { type: "research.source.search.completed", payload: { query: "agent harness", rankingPolicyVersion: SOURCE_SEARCH_RANKING_VERSION, queries: ["agent harness", "agent harness evaluation", "harness evaluation"], depth: "deep", results: [{ title: "Paper", url: "https://example.org/paper", queries: ["agent harness"], authors: [], qualityScore: 0.8 }] } },
   ]);
   assert.equal(report.queryCount, 3);
   assert.equal(report.queriesWithCandidates, 1);
   assert.equal(report.queryCoverage, 1 / 3);
+});
+
+test("literature frontier ignores results ranked under an obsolete source policy", () => {
+  const report = sourceFrontier([
+    { type: "research.source.search.completed", payload: { query: "ARC white-box estimation", results: [{ title: "Irrelevant generic paper", url: "https://example.org/old" }] } },
+    { type: "research.source.search.completed", payload: { query: "ARC white-box estimation", rankingPolicyVersion: SOURCE_SEARCH_RANKING_VERSION, results: [{ title: "ARC estimation reference", url: "https://example.org/current", qualityScore: 0.8 }] } },
+  ]);
+  assert.equal(report.queryCount, 1);
+  assert.equal(report.uniqueWorks, 1);
+  assert.equal(report.candidates[0].title, "ARC estimation reference");
 });
 
 test("tool source retrieval preserves the SSRF safety boundary", async () => {
@@ -5791,20 +7454,27 @@ test("source retrieval reuses fresh durable evidence unless explicitly refreshed
     const store = new ResearchStore(db);
     store.saveSource({ id: "cached-source", payload: { id: "cached-source", url, title: "Cached paper", retrievedAt: new Date().toISOString(), text: "A durable source excerpt.", excerpt: "A durable source excerpt.", claims: ["A durable source claim."] } });
     store.close();
-    const result = await executeResearchTool({ name: "source.retrieve", arguments: { url } }, { root, storePath: db, autonomy: "safe" });
+    const result = await executeResearchTool(normalizeResearchToolCall({ name: "research.retrieve", arguments: { url, kind: "research", depth: "deep" } }), { root, storePath: db, autonomy: "safe" });
     assert.equal(result.ok, true);
     assert.equal(result.output.cached, true);
     assert.equal(result.output.id, "cached-source");
+    const canonicalResearchAlias = await executeResearchTool({ name: "source.retrieve", arguments: { url, kind: "research" } }, { root, storePath: db, autonomy: "safe" });
+    assert.equal(canonicalResearchAlias.ok, true);
+    assert.equal(canonicalResearchAlias.output.cached, true);
+    assert.equal(canonicalResearchAlias.output.channelKind, undefined);
     const eventStore = new ResearchStore(db);
     const events = eventStore.recentEvents(10).map((event) => event.type);
     eventStore.close();
     assert(events.includes("research.source.cache_hit"));
     const searchStore = new ResearchStore(db);
-    searchStore.appendEvent("research.source.search.completed", { query: "cached research query", results: [{ title: "Cached result", url }] });
+    searchStore.appendEvent("research.source.search.completed", { query: "cached research query", depth: "shallow", rankingPolicyVersion: SOURCE_SEARCH_RANKING_VERSION, results: [{ title: "Cached result", url, qualityScore: 0.1 }] });
     searchStore.close();
     const search = await executeResearchTool({ name: "source.search", arguments: { query: "cached research query" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(search.ok, true);
     assert.equal(search.output.cached, true);
+    assert.equal(search.output.relevance, "weak");
+    assert.match(search.output.warning, /Treat these only as discovery leads/);
+    assert.equal(search.output.frontier.uniqueWorks, 0);
     const finalStore = new ResearchStore(db);
     assert(finalStore.recentEvents(20).some((event) => event.type === "research.source.search.cache_hit"));
     finalStore.close();
@@ -5830,6 +7500,7 @@ test("research director executes typed tools and reasons over returned evidence"
   let observedSteering = false;
   let observedTriggerContext = false;
   let observedRefreshedState = false;
+  let observedExactToolGuidance = false;
   let refreshes = 0;
   const server = createServer((request, response) => {
     calls += 1;
@@ -5842,6 +7513,7 @@ test("research director executes typed tools and reasons over returned evidence"
       if (body.includes("focus on falsification")) observedSteering = true;
       if (body.includes("routine.completed") && body.includes("external_wakeup_signal")) observedTriggerContext = true;
       if (body.includes("sha256:refreshed-state")) observedRefreshedState = true;
+      if (body.includes("Use only exact tool names") && body.includes("workspace.read")) observedExactToolGuidance = true;
       response.setHeader("content-type", "application/json");
       response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
     });
@@ -5862,8 +7534,102 @@ test("research director executes typed tools and reasons over returned evidence"
     assert.equal(observedTriggerContext, true);
     assert.equal(refreshes, 1);
     assert.equal(observedRefreshedState, true);
+    assert.equal(observedExactToolGuidance, true);
     assert.equal(decision.decision, "propose");
     assert.equal(decision.toolCalls.length, 0);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("research director converts exhausted tool rounds into a durable conservative continuation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-director-tool-budget-"));
+  const previousHost = process.env.OLLAMA_HOST;
+  let calls = 0;
+  let toolExecutions = 0;
+  let exhaustion;
+  const events = [];
+  let finalizationContext;
+  const server = createServer((request, response) => {
+    calls += 1;
+    let body = "";
+    request.on("data", (chunk) => { body += chunk.toString(); });
+    request.on("end", () => {
+      if (calls === 3) finalizationContext = JSON.parse(body).messages?.at(-1)?.content ?? body;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ message: { content: JSON.stringify({
+        phase: "orientation", goalStatus: "active", decision: calls === 3 ? "propose" : "inspect", bottleneck: "Evidence is sufficient to choose a bounded next step",
+        rationale: "The existing workspace inventory and collected search result support a concrete next step.", hypotheses: [], selectedHypothesis: null,
+        nextAction: calls === 3 ? "Run the focused validation check" : "Inspect the next evidence source", toolCalls: calls === 1
+          ? [{ name: "workspace.files", arguments: {} }]
+          : calls === 2 ? [{ name: "workspace.search", arguments: { query: "distinct evidence" } }] : [],
+      }) } }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const decision = await runResearchDirector("Inspect this workspace", {}, {
+      provider: "local", model: "test", cwd: root, maxToolRounds: 1,
+      executeTool: async (call) => { toolExecutions += 1; return { name: call.name, ok: true, output: { files: ["notes.txt"] } }; },
+      onToolBudgetExhausted: (details) => { exhaustion = details; events.push({ type: "research.director.tool_budget.exhausted", ...details }); },
+    });
+    assert.equal(calls, 3);
+    assert.equal(toolExecutions, 1);
+    assert.equal(decision.decision, "propose");
+    assert.equal(decision.goalStatus, "active");
+    assert.deepEqual(decision.toolCalls, []);
+    assert.match(finalizationContext, /finalization-only turn/i);
+    assert.match(finalizationContext, /availableTools.*\[\]/s);
+    assert.match(finalizationContext, /notes\.txt/);
+    assert.match(decision.nextAction, /focused validation check/i);
+    assert.deepEqual(exhaustion, { phase: "orientation", maxToolRounds: 1, requestedTools: ["workspace.search"] });
+    assert.equal(events[0].type, "research.director.tool_budget.exhausted");
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("research director keeps the finalization-only turn inside the hard tool cap", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-director-finalize-cap-"));
+  const previousHost = process.env.OLLAMA_HOST;
+  let calls = 0;
+  let toolExecutions = 0;
+  let exhaustionCount = 0;
+  const server = createServer((request, response) => {
+    calls += 1;
+    request.resume();
+    request.on("end", () => {
+      const decision = {
+        phase: "orientation", goalStatus: "active", decision: "inspect", bottleneck: "Need another observation",
+        rationale: "The model keeps asking for tools, including in the finalization-only turn.", hypotheses: [], selectedHypothesis: null,
+        nextAction: "Inspect another source", toolCalls: [{ name: calls === 1 ? "workspace.files" : "workspace.search", arguments: calls === 1 ? {} : { query: "more" } }],
+      };
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const decision = await runResearchDirector("Inspect this workspace", {}, {
+      provider: "local", model: "test", cwd: root, maxToolRounds: 0,
+      executeTool: async () => { toolExecutions += 1; return { name: "workspace.files", ok: true, output: {} }; },
+      onToolBudgetExhausted: () => { exhaustionCount += 1; },
+    });
+    assert.equal(calls, 2);
+    assert.equal(toolExecutions, 0);
+    assert.equal(exhaustionCount, 1);
+    assert.equal(decision.decision, "inspect");
+    assert.equal(decision.goalStatus, "active");
+    assert.deepEqual(decision.toolCalls, []);
+    assert.match(decision.nextAction, /finalization-only turn requested additional tools/i);
   } finally {
     if (previousHost === undefined) delete process.env.OLLAMA_HOST;
     else process.env.OLLAMA_HOST = previousHost;
@@ -6041,36 +7807,30 @@ test("Codex agent stops after consecutive failed shell commands", async () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("Codex read-only turns recover from an unavailable host sandbox in an isolated copy", async () => {
-  const root = mkdtempSync(join(tmpdir(), "evidra-codex-sandbox-retry-"));
-  writeFileSync(join(root, "notes.txt"), "safe observation\n");
-  const optionsSeen = [];
+test("Codex read-only turns disable native shell and never escalate after sandbox failure", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-codex-sandbox-boundary-"));
+  let clientOptions;
   let attempts = 0;
   try {
     const agent = new CodexExecAgent({ provider: "codex", model: "gpt-test", cwd: root, sandbox: "read-only" }, {
       isLoggedIn: async () => true,
-      createClient: () => ({
+      createClient: (options) => {
+        clientOptions = options;
+        return ({
         startThread: (options) => {
-          optionsSeen.push(options);
+          assert.equal(options.sandboxMode, "read-only");
           return { runStreamed: async () => {
             attempts += 1;
-            if (attempts === 1) throw new Error("bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted");
-            return { events: (async function* () {
-              yield { type: "thread.started", thread_id: "isolated-thread" };
-              yield { type: "item.completed", item: { type: "agent_message", text: "Recovered safely" } };
-              yield { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } };
-            })() };
+            throw new Error("bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted");
           } };
         },
         resumeThread: () => { throw new Error("sandbox retry must start a fresh thread"); },
-      }),
+      });
+      },
     });
-    const result = await agent.run({ role: "research director", objective: "inspect", context: {} });
-    assert.equal(result.output, "Recovered safely");
-    assert.equal(optionsSeen.length, 2);
-    assert.equal(optionsSeen[0].sandboxMode, "read-only");
-    assert.equal(optionsSeen[1].sandboxMode, "danger-full-access");
-    assert.notEqual(optionsSeen[1].workingDirectory, root);
+    await assert.rejects(() => agent.run({ role: "research director", objective: "inspect", context: {} }), /bwrap: loopback/);
+    assert.equal(attempts, 1);
+    assert.deepEqual(clientOptions.config, { features: { shell_tool: false } });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -6268,8 +8028,175 @@ test("research director reuses successful read-only observations within a turn",
       return { name: "workspace.files", ok: true, output: { files: ["notes.txt"] }, trust: "controller_observation" };
     } });
     assert.equal(decision.decision, "inspect");
+    assert.equal(calls, 1);
+    assert.equal(toolCalls, 1);
+    assert.match(decision.nextAction, /same observation|already collected/i);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("research director stops a repeated read-only request instead of burning tool rounds", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-director-duplicate-tool-"));
+  const previousHost = process.env.OLLAMA_HOST;
+  let calls = 0;
+  let toolCalls = 0;
+  let suppressed;
+  const repeated = { phase: "baseline", goalStatus: "active", decision: "inspect", bottleneck: "Need repository inventory", rationale: "The existing workspace observation is available.", hypotheses: [], selectedHypothesis: null, nextAction: "Inspect the workspace again", toolCalls: [{ name: "workspace.files", arguments: {} }] };
+  const server = createServer((_request, response) => {
+    calls += 1;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ message: { content: JSON.stringify(repeated) } }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const decision = await runResearchDirector("Inspect this workspace", {}, {
+      provider: "local", model: "test", cwd: root, maxToolRounds: 6,
+      executeTool: async (call) => { toolCalls += 1; return { name: call.name, ok: true, output: { files: ["notes.txt"] }, trust: "controller_observation" }; },
+      onDuplicateToolsSuppressed: (details) => { suppressed = details; },
+    });
     assert.equal(calls, 2);
     assert.equal(toolCalls, 1);
+    assert.deepEqual(decision.toolCalls, []);
+    assert.match(decision.nextAction, /already collected in this turn/i);
+    assert.deepEqual(suppressed, { phase: "baseline", round: 1, tools: ["workspace.files"] });
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("research director does not rerun an identical read-only shell command within a turn", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-director-shell-dedupe-"));
+  const previousHost = process.env.OLLAMA_HOST;
+  let calls = 0;
+  let executions = 0;
+  const repeated = { phase: "validation", goalStatus: "active", decision: "inspect", bottleneck: "Need to confirm the locked inputs", rationale: "Recheck the exact prior command.", hypotheses: [], selectedHypothesis: null, nextAction: "Hash the locked input again", toolCalls: [{ name: "shell.exec", arguments: { command: ["sha256sum", "mini.parquet"] } }] };
+  const server = createServer((_request, response) => {
+    calls += 1;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ message: { content: JSON.stringify(repeated) } }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const decision = await runResearchDirector("Validate locked inputs", {}, {
+      provider: "local", model: "test", cwd: root, maxToolRounds: 5,
+      executeTool: async (call) => {
+        executions += 1;
+        return { name: call.name, ok: true, output: { sha256: "abc123" }, trust: "controller_observation" };
+      },
+    });
+    assert.equal(calls, 2);
+    assert.equal(executions, 1);
+    assert.deepEqual(decision.toolCalls, []);
+    assert.match(decision.nextAction, /already collected in this turn/i);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("research director does not retry a policy-denied tool route across tool rounds", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-director-policy-denial-"));
+  const previousHost = process.env.OLLAMA_HOST;
+  let calls = 0;
+  let toolExecutions = 0;
+  const deniedTool = { phase: "baseline", goalStatus: "active", decision: "inspect", bottleneck: "Need to run a command", rationale: "Try shell execution again.", hypotheses: [], selectedHypothesis: null, nextAction: "Run the command", toolCalls: [{ name: "shell.exec", arguments: { command: "npm test" } }] };
+  const server = createServer((_request, response) => {
+    calls += 1;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ message: { content: JSON.stringify(deniedTool) } }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const decision = await runResearchDirector("Validate this workspace", {}, {
+      provider: "local", model: "test", cwd: root, maxToolRounds: 8,
+      executeTool: async (call) => {
+        toolExecutions += 1;
+        return { name: call.name, ok: false, error: "Autonomous research tools remain read-only in FAST mode: SAFE mode does not permit 'npm test' for autonomous shell work.", trust: "permission_boundary" };
+      },
+    });
+    assert.equal(calls, 2, "one request plus one evidence-aware replan");
+    assert.equal(toolExecutions, 1, "the policy-denied command is not executed twice");
+    assert.deepEqual(decision.toolCalls, []);
+    assert.match(decision.nextAction, /already denied shell\.exec.*controller-owned isolated execution/i);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("research director suppresses an unchanged malformed tool request after returning its argument error", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-director-invalid-tool-"));
+  const previousHost = process.env.OLLAMA_HOST;
+  let calls = 0;
+  let toolExecutions = 0;
+  const invalidTool = { phase: "orientation", goalStatus: "active", decision: "inspect", bottleneck: "Need the file content", rationale: "Read the file.", hypotheses: [], selectedHypothesis: null, nextAction: "Read the source file", toolCalls: [{ name: "workspace.read", arguments: {} }] };
+  const server = createServer((_request, response) => {
+    calls += 1;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ message: { content: JSON.stringify(invalidTool) } }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const decision = await runResearchDirector("Inspect this workspace", {}, {
+      provider: "local", model: "test", cwd: root, maxToolRounds: 8,
+      executeTool: async (call) => {
+        toolExecutions += 1;
+        return { name: call.name, ok: false, error: "Tool argument 'path' or 'paths' is required.", trust: "controller_observation" };
+      },
+    });
+    assert.equal(calls, 2, "one request plus one evidence-aware replan");
+    assert.equal(toolExecutions, 1, "the unchanged malformed request is not executed twice");
+    assert.deepEqual(decision.toolCalls, []);
+    assert.match(decision.nextAction, /already failed.*path.*Correct its arguments/i);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("research director stops when different read-only searches return no new observation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-director-redundant-result-"));
+  const previousHost = process.env.OLLAMA_HOST;
+  let calls = 0;
+  let toolCalls = 0;
+  let suppressed;
+  const server = createServer((_request, response) => {
+    calls += 1;
+    const query = calls === 1 ? "332302" : "different-term";
+    const decision = { phase: "data_audit", goalStatus: "active", decision: "inspect", bottleneck: "Search yielded no result", rationale: "Try a different query.", hypotheses: [], selectedHypothesis: null, nextAction: "Search again", toolCalls: [{ name: "workspace.search", arguments: { query } }] };
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const decision = await runResearchDirector("Find evidence in this workspace", {}, {
+      provider: "local", model: "test", cwd: root, maxToolRounds: 9,
+      executeTool: async (call) => { toolCalls += 1; return { name: call.name, ok: true, output: { matches: "", exitCode: 1 }, trust: "untrusted_content" }; },
+      onDuplicateToolsSuppressed: (details) => { suppressed = details; },
+    });
+    assert.equal(calls, 2);
+    assert.equal(toolCalls, 2);
+    assert.deepEqual(decision.toolCalls, []);
+    assert.match(decision.nextAction, /same observation/i);
+    assert.deepEqual(suppressed, { phase: "data_audit", round: 1, tools: ["workspace.search"] });
   } finally {
     if (previousHost === undefined) delete process.env.OLLAMA_HOST;
     else process.env.OLLAMA_HOST = previousHost;
@@ -6293,8 +8220,8 @@ test("experiment executor parses the declared metric instead of a competition-sp
 test("experiment executors expose a redacted generic config contract", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-experiment-config-"));
   try {
-    const manifest = { id: "ablation-1", datasetVersion: "data-v1", splitVersion: "split-v1", resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0, 1], seeds: [17, 41], matrixRequired: true }, change: { configPatch: { learningRate: 0.001, apiKey: "sk-test-secret-value-123456789" } } };
-    const script = "const fs=require('node:fs'); const p=process.env.EVIDRA_EXPERIMENT_CONFIG; const c=JSON.parse(fs.readFileSync(p,'utf8')); console.log(JSON.stringify({metrics:{score:c.configPatch.learningRate}, config:c, id:process.env.EVIDRA_EXPERIMENT_ID, matrix:process.env.EVIDRA_MATRIX_REQUIRED}));";
+    const manifest = { id: "ablation-1", datasetVersion: "data-v1", splitVersion: "split-v1", resources: { executor: "local", timeoutMinutes: 1, environment: { OMP_NUM_THREADS: "2" } }, evaluation: { folds: [0, 1], seeds: [17, 41], matrixRequired: true }, change: { configPatch: { learningRate: 0.001, apiKey: "sk-test-secret-value-123456789" } } };
+    const script = "const fs=require('node:fs'); const p=process.env.EVIDRA_EXPERIMENT_CONFIG; const c=JSON.parse(fs.readFileSync(p,'utf8')); console.log(JSON.stringify({metrics:{score:c.configPatch.learningRate}, config:c, id:process.env.EVIDRA_EXPERIMENT_ID, matrix:process.env.EVIDRA_MATRIX_REQUIRED, threads:process.env.OMP_NUM_THREADS}));";
     const result = await new LocalExecutor().run(manifest, root, [process.execPath, "-e", script], undefined, "score");
     assert.equal(result.status, "completed");
     assert.equal(result.metrics.score, 0.001);
@@ -6303,7 +8230,9 @@ test("experiment executors expose a redacted generic config contract", async () 
     assert.equal(config.experimentId, "ablation-1");
     assert.equal(config.datasetVersion, "data-v1");
     assert.deepEqual(config.evaluation, { folds: [0, 1], seeds: [17, 41], matrixRequired: true, metrics: [] });
+    assert.deepEqual(config.resources.environment, { OMP_NUM_THREADS: "2" });
     assert.match(result.stdout, /"matrix":"1"/);
+    assert.match(result.stdout, /"threads":"2"/);
     assert.equal(config.configPatch.apiKey, "[REDACTED_TOKEN]");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -6324,6 +8253,13 @@ test("experiment workers do not inherit controller credentials", () => {
   assert.equal(safe.CUSTOM_PASSWORD, undefined);
   assert.equal(safe.SAFE_WORKER_FLAG, "explicit-runtime-setting");
   assert.equal(safe.UNDECLARED_WORKER_FLAG, undefined);
+});
+
+test("competition and experiment environments reject secrets and protected runtime overrides", () => {
+  const competition = { id: "safe-env", name: "Safe env", taskType: "general", datasetRevision: "v1", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" }, execution: { environment: { OPENAI_API_KEY: "secret" } } };
+  assert.throws(() => CompetitionConfigSchema.parse(competition), /secrets must be supplied through the designated secret mechanism/);
+  const manifest = { schemaVersion: 1, id: "bad-env", parent: null, parentHypothesisIds: [], hypothesisId: "hyp", outcomeType: "metric", gitCommit: "abc", datasetVersion: "v1", splitVersion: "v1", change: { configPatch: {} }, resources: { executor: "local", timeoutMinutes: 1, environment: { PATH: "/tmp/evil" } }, evaluation: { folds: [0], seeds: [0], requiredArtifacts: [], matrixRequired: false, metrics: [] }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 0, requireReplication: false, requireExternalScore: false }, searchOperator: "ucb_portfolio", createdAt: new Date().toISOString() };
+  assert.throws(() => ExperimentManifestSchema.parse(manifest), /protected process environment variables cannot be overridden/);
 });
 
 test("local experiment workers receive a workspace-scoped home", async () => {
@@ -6446,6 +8382,9 @@ test("metric parser accepts evaluator JSON and keyed log output", () => {
   assert.equal(autoresearch.metrics.val_bpb, 1.253616);
   const whest = parseMetricOutput("Raw Final-Layer MSE [final_layer_mse]         2.22e-04\n", "final_layer_mse");
   assert.equal(whest.metrics.final_layer_mse, 2.22e-4);
+  const whestOfficial = parseMetricOutput("Adjusted Final-Layer Score 1.34e-07 ← primary score\n[adjusted_final_layer_score]\nRaw Final-Layer MSE [final_layer_mse] 1.34e-06\n", "adjusted_final_layer_score");
+  assert.equal(whestOfficial.metrics.adjusted_final_layer_score, 1.34e-7);
+  assert.equal(whestOfficial.metrics.final_layer_mse, 1.34e-6);
   const pretty = parseMetricOutput('--- EVALUATION RESULT ---\n{\n  "Accuracy": 0.5260905014268243\n}\n', "Accuracy");
   assert.equal(pretty.metrics.Accuracy, 0.5260905014268243);
 });
@@ -6585,7 +8524,7 @@ test("paired statistics and recovery are deterministic", () => {
   assert.equal(pairedPermutationPValue([1, 2, 3], [0.8, 1.9, 2.7], true), 2 / 9);
   assert(pairedPermutationPValue([1, 2, 3, 4, 5, 6, 7, 8], [0.8, 1.8, 2.8, 3.8, 4.8, 5.8, 6.8, 7.8], true) < 0.05);
   assert.equal(recoveryPlan("dependency").retry, false);
-  assert.equal(recoveryPlan("dependency").route, "repair_code");
+  assert.equal(recoveryPlan("dependency").route, "provision_environment");
   assert.equal(recoveryPlan("cuda_oom").route, "reduce_resources");
   assert.equal(recoveryPlan("unknown").route, "change_hypothesis");
   assert.equal(recoveryPlan("transient_cloud").maxAttempts, 3);
@@ -6762,6 +8701,52 @@ test("source claims and submission provenance are auditable", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("generic workspace submissions snapshot, checksum, and submit the exact declared artifact", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-submission-source-snapshot-"));
+  try {
+    const workspace = join(root, "competition");
+    mkdirSync(workspace, { recursive: true });
+    const artifact = join(workspace, "submission.tar.gz");
+    writeFileSync(artifact, "immutable challenge artifact\n");
+    const competition = {
+      id: "generic", name: "Generic", taskType: "challenge", datasetRevision: "v1",
+      metric: { name: "score", direction: "minimize" }, evaluator: { command: ["true"], estimatorPath: "solution.py" },
+      submission: { platform: "command", source: "workspace", artifactPaths: ["submission.tar.gz"], submitCommand: [process.execPath, "-e", "process.stdout.write(require('node:fs').readFileSync(process.argv[1]))", "{artifact:submission.tar.gz}"] },
+    };
+    const manifest = { schemaVersion: 1, id: "exp-snapshot", parent: null, hypothesisId: "hyp-1", gitCommit: "abc", datasetVersion: "v1", splitVersion: "split", change: { configPatch: {} }, resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0], seeds: [0], requiredArtifacts: [] }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 0, requireReplication: false }, createdAt: new Date().toISOString() };
+    const run = { runId: "run-snapshot", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 0.1 }, artifacts: {} };
+    const bundle = prepareSubmission(root, "exp-snapshot", manifest, run, competition, workspace);
+    const originalHash = createHash("sha256").update("immutable challenge artifact\n").digest("hex");
+    assert.equal(validateSubmissionBundle(bundle.path).valid, true);
+    writeFileSync(artifact, "changed after bundle preparation\n");
+    const attempt = await submitApprovedBundle(root, bundle.path, competition);
+    assert.equal(attempt.receipt.stdout, "immutable challenge artifact\n");
+    assert.deepEqual(attempt.receipt.submittedArtifacts, [{ path: "submission.tar.gz", sha256: originalHash, sizeBytes: Buffer.byteLength("immutable challenge artifact\n") }]);
+    assert.equal(validateSubmissionBundle(bundle.path).valid, true, "later workspace edits cannot mutate the prepared submission");
+    const mutator = join(root, "mutate-artifact.cjs");
+    writeFileSync(mutator, "require('node:fs').writeFileSync(process.argv[2], 'tampered bundle artifact\\n')\n");
+    await assert.rejects(() => submitApprovedBundle(root, bundle.path, { ...competition, submission: { ...competition.submission, submitCommand: [process.execPath, mutator, "{artifact:submission.tar.gz}"] } }), /modified an immutable prepared artifact/);
+    assert.equal(validateSubmissionBundle(bundle.path).valid, false);
+    await assert.rejects(() => submitApprovedBundle(root, bundle.path, competition), /bundle is invalid/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("generic submission source snapshots reject traversal and symlink escapes", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-submission-source-safe-"));
+  const outside = join(tmpdir(), `evidra-submission-outside-${Date.now()}`);
+  try {
+    const workspace = join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(outside, "outside");
+    symlinkSync(outside, join(workspace, "escape.bin"));
+    const competition = { id: "generic", name: "Generic", taskType: "challenge", datasetRevision: "v1", metric: { name: "score", direction: "minimize" }, evaluator: { command: ["true"], estimatorPath: "solution.py" }, submission: { platform: "command", source: "workspace", artifactPaths: ["../escape.bin"] } };
+    const manifest = { schemaVersion: 1, id: "exp-safe", parent: null, hypothesisId: "hyp-1", gitCommit: "abc", datasetVersion: "v1", splitVersion: "split", change: { configPatch: {} }, resources: { executor: "local", timeoutMinutes: 1 }, evaluation: { folds: [0], seeds: [0], requiredArtifacts: [] }, acceptance: { minimumPrimaryDelta: 0, maximumRegressionShift: 0, requireReplication: false }, createdAt: new Date().toISOString() };
+    const run = { runId: "run-safe", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 0.1 }, artifacts: {} };
+    assert.throws(() => prepareSubmission(root, "exp-safe", manifest, run, competition, workspace), /escapes its workspace/);
+    assert.throws(() => prepareSubmission(root, "exp-safe", manifest, run, { ...competition, submission: { ...competition.submission, artifactPaths: ["escape.bin"] } }, workspace), /symbolic link/);
+  } finally { rmSync(outside, { force: true }); rmSync(root, { recursive: true, force: true }); }
+});
+
 test("source refresh retires claims from the superseded source hash", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-source-retirement-"));
   try {
@@ -6770,10 +8755,19 @@ test("source refresh retires claims from the superseded source hash", () => {
     store.saveSource({ id: "source-other", payload: { title: "Other", url: "https://example.com/other", claims: ["other"] } });
     store.saveClaim({ id: "claim-old", payload: { statement: "The old source reports a reproducible validation result.", scope: "https://example.com/paper", confidence: 0.35, sourceType: "literature", sourceId: "source-old", status: "active" } });
     store.saveClaim({ id: "claim-other", payload: { statement: "The old source does not report a reproducible validation result.", scope: "https://example.com/other", confidence: 0.35, sourceType: "literature", sourceId: "source-other", status: "active" } });
-    store.saveEdge({ id: "contradiction-old-other", fromId: "claim-old", toId: "claim-other", relation: "contradicts", confidence: 0.5, evidenceIds: ["claim-old", "claim-other"] });
     store.appendEvent("evidence.claim.duplicate_detected", { claimId: "claim-old", duplicateOf: "claim-other" });
     assert.equal(activeContradictionEdges(store).length, 1);
+    store.saveClaim({ id: "claim-positive", payload: { statement: "The calibration reports a reproducible validation result.", scope: "workspace", confidence: 0.8, sourceType: "observation", sourceId: "obs-positive", status: "active" } });
+    store.saveClaim({ id: "claim-qualified", payload: { statement: "The calibration reports a reproducible validation result; it is not a new locked comparison.", scope: "workspace", confidence: 0.8, sourceType: "observation", sourceId: "obs-qualified", status: "active" } });
+    store.saveEdge({ id: "false-contradiction", fromId: "claim-positive", toId: "claim-qualified", relation: "contradicts", confidence: 0.6, evidenceIds: ["claim-positive", "claim-qualified"] });
+    assert.equal(activeContradictionEdges(store).length, 1, "historical false-positive edges must not remain active contradictions");
     assert.equal(activeDuplicateClaimCount(store), 1);
+    store.appendEvent("evidence.claim.duplicate_detected", { claimId: "claim-old", duplicateOf: "claim-third" });
+    store.appendEvent("evidence.claim.duplicate_detected", { claimId: "claim-old", duplicateOf: "claim-third" });
+    assert.equal(activeDuplicateClaimCount(store), 1, "one claim matching multiple claims is one review item");
+    store.saveClaim({ id: "claim-new", payload: { statement: "A distinct replication used a separately held validation split.", scope: "https://example.com/paper", confidence: 0.35, sourceType: "literature", sourceId: "source-old", status: "active" } });
+    store.appendEvent("evidence.claim.duplicate_detected", { claimId: "claim-new", duplicateOf: "claim-other" });
+    assert.equal(activeDuplicateClaimCount(store), 2, "different duplicated claims remain separate review items");
     store.saveSource({ id: "source-new", payload: { title: "Paper v2", url: "https://example.com/paper", claims: ["new"] } });
     assert.equal(store.claims().find((claim) => claim.id === "claim-old")?.payload.status, "superseded");
     const memory = researchMemoryContext(store, 10);
@@ -6860,10 +8854,11 @@ test("configured command submission requires a valid approved bundle and preserv
     const bundle = prepareSubmission(root, "exp-2", manifest, run, { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } });
     const receipt = await submitApprovedBundle(root, bundle.path, {
       id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" },
-      submission: { platform: "command", submitCommand: [process.execPath, "-e", "console.log(process.argv[1])", "{file}"] },
+      submission: { platform: "command", submitCommand: [process.execPath, "-e", "console.log(JSON.stringify({submission_id:'provider-17',file:process.argv[1]}))", "{file}"] },
     });
     assert.equal(receipt.receipt.platform, "command");
     assert.match(receipt.receipt.stdout, /prediction\.csv/);
+    assert.equal(receipt.receipt.submissionId, "provider-17");
     await assert.rejects(() => submitApprovedBundle(root, bundle.path, { id: "local", name: "Local", taskType: "test", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } }), /Manual submission is configured/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -6953,15 +8948,210 @@ test("generic score polling parses JSON and human-readable adapter output", asyn
   assert.equal(parseSubmissionScore("fileName,date,description,status,publicScore,privateScore\npred.csv,2026-09-15,\"test, with comma\",complete,0.731,0.700"), 0.731);
   assert.equal(parseSubmissionScore("fileName,publicScore\npred.csv,\"0.812\""), 0.812);
   assert.equal(parseSubmissionScore("fileName,description,publicScore\npred.csv,\"score: 0.111\",0.812"), 0.812);
+  assert.equal(parseSubmissionScore("Submitted (submission id 332999)\nPublic score: 5.418168137938331e-9"), 5.418168137938331e-9);
+  assert.equal(parseSubmissionScore("Graded — score 5.418168137938331e-9"), 5.418168137938331e-9);
+  assert.equal(parseSubmissionScore("adjusted_final_layer_score: 5.418168137938331e-9", "adjusted_final_layer_score"), 5.418168137938331e-9);
   assert.equal(parseSubmissionScore("no score here"), undefined);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("submission polling resolves the persisted provider submission id", () => {
   assert.equal(externalSubmissionId({ receipt: { submissionId: "provider-42" } }, "bundle-1"), "provider-42");
+  assert.equal(externalSubmissionId({ receipt: { stdout: "✓ Submitted (submission id 332302)" } }, "bundle-1"), "332302");
+  assert.equal(responseSubmissionId("Submitted job_id: worker-92"), "worker-92");
   assert.equal(externalSubmissionId({ receipt: {} }, "bundle-1"), "bundle-1");
   assert.equal(externalSubmissionId(undefined, "bundle-1"), "bundle-1");
   assert.throws(() => externalSubmissionId(undefined, ""), /bundle identifier/);
+});
+
+test("external score context prefers latest feedback and attaches verified bundle and run provenance", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-score-provenance-"));
+  try {
+    writeFileSync(join(root, "provenance.json"), JSON.stringify({
+      manifest: { id: "manifest-current", gitCommit: "abc123", datasetVersion: "data-v2", splitVersion: "heldout-v3", evaluation: { metrics: [{ name: "loss", direction: "minimize" }] } },
+      run: { runId: "evaluated-run", status: "completed", metrics: { loss: 0.125, count: 12, note: "ok", secret: { token: "must-not-leak" } } },
+      arbitrary: "must-not-leak",
+    }));
+    const context = externalScoreEvidenceContext([
+    { id: "bundle-current", experimentId: "exp-current", status: "scored", path: root, bundleValid: true, payload: { runId: "run-current", platform: "aicrowd", validationScores: { mini: 7.46e-9 }, receipt: { stdout: "Submitted (submission id 332302)" } } },
+  ], [
+    { type: "submission.score.recorded", payload: { id: "bundle-current", score: 9e-9, platform: "aicrowd", recordedAt: "2026-09-25T17:00:00Z" } },
+    { type: "submission.score.recorded", payload: { id: "bundle-current", score: 7.12e-9, platform: "aicrowd", recordedAt: "2026-09-25T17:10:00Z" } },
+    { type: "submission.score.observed", payload: { externalId: "manual-2", experimentId: "exp-other", score: 0.82, platform: "remote-eval", sourceUrl: "https://example.org/scores/42", validationScores: { holdout: 0.8 }, observedAt: "2026-09-27T08:00:00.000Z", artifact: { path: "artifacts/result.tar.gz", sha256: "a".repeat(64), sizeBytes: 4096 } } },
+    { type: "submission.score.observed", payload: { externalId: "manual-3", score: 0.84, platform: "operator-note", observedAt: "2026-09-27T08:01:00.000Z" } },
+    { type: "submission.score.observed", payload: { id: "adapter-4", score: 5.4e-9, platform: "aicrowd", observationSource: "adapter_response", observedAt: "2026-09-27T08:02:00.000Z" } },
+  ]);
+  assert.equal(context.length, 4, "repeated score events for one submission are collapsed to its latest score");
+  assert.match(context[0], /"score":7\.12e-9/);
+  assert.match(context[0], /"providerSubmissionId":"332302"/);
+  assert.match(context[0], /"runId":"run-current"/);
+  assert.match(context[0], /"codeRevision":"abc123"/);
+  assert.match(context[0], /"splitVersion":"heldout-v3"/);
+  assert.match(context[0], /"evaluatedMetrics":\{"loss":0\.125,"count":12,"note":"ok"\}/);
+  assert.doesNotMatch(context[0], /must-not-leak|secret|token/);
+  assert.match(context[0], /"bundleValid":true/);
+  assert.match(context[1], /"externalId":"manual-2"/);
+  assert.match(context[1], /"evidenceLevel":"source_linked_external_observation"/);
+  assert.match(context[1], /"sourceUrl":"https:\/\/example\.org\/scores\/42"/);
+  assert.match(context[1], /"registeredBundle":false/);
+  assert.match(context[1], /"observedAt":"2026-09-27T08:00:00\.000Z"/);
+  assert.match(context[1], /"externalArtifact":\{"path":"artifacts\/result\.tar\.gz","sha256":"a{64}","sizeBytes":4096\}/);
+  assert.match(context[2], /"evidenceLevel":"operator_reported_external_observation"/);
+  assert.match(context[3], /"scoreObservation":"platform_adapter_response"/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("external score artifact provenance hashes regular files and rejects workspace escapes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-external-artifact-"));
+  const outside = mkdtempSync(join(tmpdir(), "evidra-external-artifact-outside-"));
+  try {
+    writeFileSync(join(root, "submission.tar.gz"), "trusted bytes\n");
+    writeFileSync(join(outside, "secret.tar.gz"), "outside bytes\n");
+    symlinkSync(join(outside, "secret.tar.gz"), join(root, "escape.tar.gz"));
+    const reference = await hashExternalArtifact(root, "submission.tar.gz");
+    assert.deepEqual(reference, {
+      path: "submission.tar.gz",
+      sha256: createHash("sha256").update("trusted bytes\n").digest("hex"),
+      sizeBytes: 14,
+    });
+    await assert.rejects(() => hashExternalArtifact(root, "../outside/secret.tar.gz"), /inside the workspace/);
+    await assert.rejects(() => hashExternalArtifact(root, "escape.tar.gz"), /inside the workspace/);
+    await assert.rejects(() => hashExternalArtifact(root, "."), /inside the workspace/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("new external score observations supersede only matching platform claims without deleting history", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-external-score-claim-supersede-"));
+  const store = new ResearchStore(join(root, "state.sqlite"));
+  try {
+    store.saveClaim({ id: "old-a", payload: { statement: "old score", scope: "exp-a", confidence: 1, sourceType: "external_score", sourceId: "332337", status: "active", score: 7.1e-9, platform: "aicrowd" } });
+    store.saveClaim({ id: "other-platform", payload: { statement: "other score", scope: "exp-a", confidence: 1, sourceType: "external_score", sourceId: "332337", status: "active", score: 0.7, platform: "remote" } });
+    store.saveClaim({ id: "unrelated", payload: { statement: "other id", scope: "exp-b", confidence: 1, sourceType: "external_score", sourceId: "332338", status: "active", score: 0.8, platform: "aicrowd" } });
+    assert.deepEqual(store.supersedeClaimsBySource("332337", "external_score", "aicrowd"), ["old-a"]);
+    const claims = new Map(store.claims().map((claim) => [claim.id, claim.payload]));
+    assert.equal(claims.get("old-a").status, "superseded");
+    assert.equal(claims.get("other-platform").status, "active");
+    assert.equal(claims.get("unrelated").status, "active");
+    assert.equal(store.eventsByType("research.claims.retired").length, 1);
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("workspace submissions target the experiment worktree that produced the run", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-submit-worktree-"));
+  try {
+    const worktree = join(root, ".sota", "worktrees", "exp-42");
+    mkdirSync(join(root, "competitions", "generic"), { recursive: true });
+    mkdirSync(join(worktree, "competitions", "generic"), { recursive: true });
+    const experimentWorkspace = join(worktree, "competitions", "generic");
+    const competition = {
+      id: "generic",
+      name: "Generic",
+      taskType: "challenge",
+      datasetRevision: "data",
+      metric: { name: "score", direction: "maximize" },
+      evaluator: { command: ["true"], estimatorPath: "solution.py" },
+      submission: { platform: "command", source: "workspace", workingDirectory: "competitions/generic", submitCommand: ["submit"] },
+    };
+    const bound = submissionConfigForWorktree(root, experimentWorkspace, competition);
+    assert.equal(bound.submission.workingDirectory, ".sota/worktrees/exp-42/competitions/generic");
+    assert.equal(competition.submission.workingDirectory, "competitions/generic", "the shared competition config is immutable");
+    assert.throws(() => submissionConfigForWorktree(root, join(root, "..", "outside"), competition), /inside the Evidra project/);
+    const externalBase = mkdtempSync(join(tmpdir(), "evidra-submit-external-worktrees-"));
+    try {
+      const externalWorktree = join(externalBase, "exp-external");
+      const externalWorkspace = join(externalWorktree, "competitions", "generic");
+      mkdirSync(externalWorkspace, { recursive: true });
+      const externalBound = submissionConfigForWorktree(root, externalWorkspace, competition, externalBase);
+      assert.equal(externalBound.submission.workingDirectory, externalWorkspace);
+    } finally { rmSync(externalBase, { recursive: true, force: true }); }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("experiment worktrees stage declared immutable evaluator support and data inputs", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-stage-inputs-"));
+  try {
+    const workspace = join(root, "challenge");
+    const worktree = join(root, ".sota", "worktrees", "exp-1");
+    mkdirSync(join(workspace, "data"), { recursive: true });
+    mkdirSync(worktree, { recursive: true });
+    writeFileSync(join(workspace, "evaluate.py"), "print('official metric')\n");
+    writeFileSync(join(workspace, "data", "locked.csv"), "id,label\n1,yes\n");
+
+    stageExperimentInputs({ projectRoot: root, workspaceRoot: workspace, worktreeRoot: worktree, supportFiles: ["evaluate.py"], dataPaths: ["data"] });
+    assert.equal(readFileSync(join(worktree, "challenge", "evaluate.py"), "utf8"), "print('official metric')\n");
+    assert.equal(readFileSync(join(worktree, "challenge", "data", "locked.csv"), "utf8"), "id,label\n1,yes\n");
+    writeFileSync(join(workspace, "evaluate.py"), "changed evaluator\n");
+    assert.throws(() => stageExperimentInputs({ projectRoot: root, workspaceRoot: workspace, worktreeRoot: worktree, supportFiles: ["evaluate.py"] }), /Immutable experiment support file differs/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("experiment input staging reserves filesystem headroom before copying", () => {
+  const reserve = 256 * 1024 * 1024;
+  assert.equal(hasExperimentInputStagingCapacity(1024, reserve + 1024, reserve), true);
+  assert.equal(hasExperimentInputStagingCapacity(1024, reserve + 1023, reserve), false);
+  assert.equal(hasExperimentInputStagingCapacity(Number.NaN, reserve + 10, reserve), false);
+  assert.equal(hasExperimentInputStagingCapacity(100, Number.POSITIVE_INFINITY, reserve), false);
+});
+
+test("failed experiment data staging removes its new partial destination", (t) => {
+  if (typeof process.getuid === "function" && process.getuid() === 0) {
+    t.skip("root can read mode-000 files, so this fixture cannot trigger a copy failure");
+    return;
+  }
+  const root = mkdtempSync(join(tmpdir(), "evidra-stage-partial-cleanup-"));
+  const blocked = join(root, "challenge", "data", "blocked.bin");
+  const destination = join(root, ".sota", "worktrees", "exp-1", "challenge", "data");
+  try {
+    mkdirSync(join(root, "challenge", "data"), { recursive: true });
+    mkdirSync(join(root, ".sota", "worktrees", "exp-1"), { recursive: true });
+    writeFileSync(blocked, "cannot copy this file\n");
+    chmodSync(blocked, 0);
+    assert.throws(() => stageExperimentInputs({ projectRoot: root, workspaceRoot: join(root, "challenge"), worktreeRoot: join(root, ".sota", "worktrees", "exp-1"), dataPaths: ["data"] }));
+    assert.equal(existsSync(destination), false, "failed copy must not leave a partial dataset that looks stageable");
+  } finally {
+    chmodSync(blocked, 0o600);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("experiment data can be staged into an explicitly configured external worktree root", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-stage-external-project-"));
+  const externalBase = mkdtempSync(join(tmpdir(), "evidra-stage-external-worktrees-"));
+  try {
+    const workspace = join(root, "challenge");
+    const worktree = join(externalBase, "exp-large-data");
+    mkdirSync(join(workspace, "data"), { recursive: true });
+    mkdirSync(worktree, { recursive: true });
+    writeFileSync(join(workspace, "data", "large-input.bin"), Buffer.alloc(1024, 7));
+
+    stageExperimentInputs({ projectRoot: root, workspaceRoot: workspace, worktreeRoot: worktree, worktreeBase: externalBase, dataPaths: ["data"] });
+    assert.deepEqual(readFileSync(join(worktree, "challenge", "data", "large-input.bin")), Buffer.alloc(1024, 7));
+    assert.throws(() => stageExperimentInputs({ projectRoot: root, workspaceRoot: workspace, worktreeRoot: worktree, dataPaths: ["data"] }), /configured worktree root/);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(externalBase, { recursive: true, force: true }); }
+});
+
+test("experiment input staging rejects path traversal and symlink escapes", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-stage-inputs-safe-"));
+  try {
+    const workspace = join(root, "challenge");
+    const worktree = join(root, ".sota", "worktrees", "exp-1");
+    mkdirSync(workspace, { recursive: true });
+    mkdirSync(join(worktree, "challenge"), { recursive: true });
+    writeFileSync(join(root, "outside.py"), "secret\n");
+    symlinkSync(join(root, "outside.py"), join(workspace, "escape.py"));
+    symlinkSync(join(root, "outside.py"), join(worktree, "challenge", "destination.py"));
+    const opts = { projectRoot: root, workspaceRoot: workspace, worktreeRoot: worktree };
+    assert.throws(() => stageExperimentInputs({ ...opts, supportFiles: ["../outside.py"] }), /missing or escapes/);
+    assert.throws(() => stageExperimentInputs({ ...opts, supportFiles: ["escape.py"] }), /resolves outside the workspace/);
+    mkdirSync(join(workspace, "data"), { recursive: true });
+    symlinkSync(join(root, "outside.py"), join(workspace, "data", "nested-escape.py"));
+    assert.throws(() => stageExperimentInputs({ ...opts, dataPaths: ["data"] }), /symlink that escapes the workspace/);
+    writeFileSync(join(workspace, "destination.py"), "support\n");
+    assert.throws(() => stageExperimentInputs({ ...opts, supportFiles: ["destination.py"] }), /cannot be a symlink/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("source retrieval refuses loopback hosts before fetching", async () => {
@@ -6981,15 +9171,77 @@ test("source retrieval bounds responses without trusting content-length", async 
   }
 });
 
+test("source retrieval aborts when a response body stalls after headers", async () => {
+  const previousFetch = globalThis.fetch;
+  const controller = new AbortController();
+  try {
+    globalThis.fetch = async () => new Response(new ReadableStream({
+      start(stream) { stream.enqueue(new TextEncoder().encode("partial response")); },
+    }), { status: 200, headers: { "content-type": "text/plain" } });
+    const retrieval = retrieveSource("http://93.184.216.34/stalled", controller.signal);
+    setTimeout(() => controller.abort(new Error("test body timeout")), 25);
+    await assert.rejects(retrieval, /test body timeout/);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("HTML source retrieval preserves channel rows and headings for typed insights", async () => {
   const previousFetch = globalThis.fetch;
   try {
     globalThis.fetch = async () => new Response("<html><title>Forum</title><body><h2>Baseline replication</h2><table><tr><td>1</td><td>alice</td><td>score: 0.812</td></tr><tr><td>2</td><td>bob</td><td>score: 0.799</td></tr></table></body></html>", { status: 200, headers: { "content-type": "text/html" } });
     const retrieved = await retrieveSource("http://93.184.216.34/channel");
-    assert.match(retrieved.text, /Baseline replication[\s\S]*1 alice score: 0\.812/);
+    assert.match(retrieved.text, /Baseline replication[\s\S]*1 \| alice \| score: 0\.812/);
     assert.equal(extractCompetitionInsights(retrieved.text, "discussion").discussions[0]?.title, "Baseline replication");
     assert.equal(extractCompetitionInsights(retrieved.text, "leaderboard").leaderboard[0]?.participant, "alice");
+    assert.equal(extractCompetitionInsights(retrieved.text, "leaderboard").leaderboard[0]?.score, 0.812);
   } finally { globalThis.fetch = previousFetch; }
+});
+
+test("leaderboard extraction maps declared table columns instead of treating every number as a score", () => {
+  const text = [
+    "| Δ | # | Participants | Adjusted Score | Final Layer MSE | Compute utilisation | MLPs failed | Entries | Last Submission |",
+    "| - | 01 | J2W | 0.0000000017 | 0.0000000162 | 0.1082250789 | 0.0000000000 | 349 | Sun 27 Sep 2026 |",
+    "| +1 | 02 | Luna | 0.0000000019 | 0.0000000142 | 0.1341316690 | 0.0000000000 | 13 | Sun 27 Sep 2026 |",
+  ].join("\n");
+  const parsed = extractCompetitionInsights(text, "leaderboard").leaderboard;
+  assert.deepEqual(parsed.map(({ rank, participant, score }) => ({ rank, participant, score })), [
+    { rank: 1, participant: "J2W", score: 1.7e-9 },
+    { rank: 2, participant: "Luna", score: 1.9e-9 },
+  ]);
+});
+
+test("leaderboard extraction tolerates pagination markup between table headers and rows", () => {
+  const text = [
+    "| Δ | # | Participants | Adjusted Score | Final Layer MSE | Entries |",
+    'load-more#load_more_data" data-total-pages="5">',
+    '| | 01 | J2W participants#getUserProfile"> | 0.0000000017 | 0.0000000162 | 349 |',
+    '| | 02 | Luna participants#getUserProfile"> | 0.0000000019 | 0.0000000142 | 13 |',
+  ].join("\n");
+  const parsed = extractCompetitionInsights(text, "leaderboard").leaderboard;
+  assert.deepEqual(parsed.map(({ rank, participant, score }) => ({ rank, participant, score })), [
+    { rank: 1, participant: "J2W", score: 1.7e-9 },
+    { rank: 2, participant: "Luna", score: 1.9e-9 },
+  ]);
+});
+
+test("HTML table extraction keeps nested leaderboard cells on their source row", async () => {
+  const previousFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response(`<table><thead><tr><th><div>Δ</div></th><th><div>#</div></th><th><div>Participants</div></th><th><div>Adjusted Score</div></th><th><div>Final Layer MSE</div></th><th><div>Entries</div></th></tr></thead><tbody><tr><td><div>−</div></td><td><div>01</div></td><td><div><a href="/participants/j2w">J2W</a></div><span>participants#getUserProfile"></span></td><td><div>0.0000000017</div></td><td><div>0.0000000162</div></td><td><div>349</div></td></tr><tr><td><div>+1</div></td><td><div>02</div></td><td><div>Luna</div></td><td><div>0.0000000019</div></td><td><div>0.0000000142</div></td><td><div>13</div></td></tr></tbody></table>`, { status: 200, headers: { "content-type": "text/html" } });
+    const retrieved = await retrieveSource("http://93.184.216.34/leaderboard");
+    assert.match(retrieved.text, /\| 01 \| J2W participants#getUserProfile\"> \| 0\.0000000017/);
+    const rows = extractCompetitionInsights(retrieved.text, "leaderboard").leaderboard;
+    assert.deepEqual(rows.map(({ rank, participant, score }) => ({ rank, participant, score })), [
+      { rank: 1, participant: "J2W", score: 1.7e-9 },
+      { rank: 2, participant: "Luna", score: 1.9e-9 },
+    ]);
+  } finally { globalThis.fetch = previousFetch; }
+});
+
+test("leaderboard extraction ignores bare numeric rows and does not invent scores", () => {
+  const parsed = extractCompetitionInsights(["01", "1.7e-9", "349", "2"].join("\n"), "leaderboard").leaderboard;
+  assert.deepEqual(parsed, []);
 });
 
 test("PDF source extraction reads common text operators without binary garbage", () => {
@@ -6997,6 +9249,28 @@ test("PDF source extraction reads common text operators without binary garbage",
   const text = extractPdfText(pdf);
   assert.match(text, /experimental method improves accuracy/);
   assert.doesNotMatch(text, /%PDF|endstream/);
+});
+
+test("PDF source extraction skips compressed streams that exceed its decompression budget", () => {
+  const compressed = deflateSync(Buffer.alloc(3 * 1024 * 1024, 65));
+  const pdf = Buffer.concat([
+    Buffer.from("%PDF-1.4\n<< /Filter /FlateDecode >>\nstream\n", "latin1"),
+    compressed,
+    Buffer.from("\nendstream\n%%EOF\n", "latin1"),
+  ]);
+  assert.equal(extractPdfText(pdf), "");
+});
+
+test("PDF source extraction declines oversized documents before regex parsing", () => {
+  const pdf = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(300 * 1024, 65)]);
+  assert.equal(extractPdfText(pdf), "");
+});
+
+test("managed processes receive EOF when Evidra has no stdin payload", async () => {
+  const result = await runProcess([process.execPath, "-e", "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write('stdin-eof'))"], process.cwd(), 2_000);
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, "stdin-eof");
+  assert(result.durationMs < 1_000, `child unexpectedly waited ${result.durationMs}ms for stdin`);
 });
 
 test("process interruption terminates the detached worker group", async () => {
@@ -7154,6 +9428,34 @@ test("worktree isolation supports arbitrary repositories", async () => {
     assert.equal(existsSync(join(worktree, ".git")), true);
     await runProcess(["git", "worktree", "remove", "--force", worktree], repo);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("worktrees can use an explicitly configured directory outside the project", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-worktree-external-project-"));
+  const externalBase = mkdtempSync(join(tmpdir(), "evidra-worktree-external-root-"));
+  const repo = join(root, "repo");
+  const previousBase = process.env.EVIDRA_WORKTREE_ROOT;
+  mkdirSync(repo, { recursive: true });
+  try {
+    for (const command of [
+      ["git", "init", "-q"],
+      ["git", "config", "user.email", "evidra@test.invalid"],
+      ["git", "config", "user.name", "Evidra Test"],
+    ]) assert.equal((await runProcess(command, repo)).exitCode, 0);
+    writeFileSync(join(repo, "solution.txt"), "candidate\n");
+    assert.equal((await runProcess(["git", "add", "solution.txt"], repo)).exitCode, 0);
+    assert.equal((await runProcess(["git", "commit", "-qm", "initial"], repo)).exitCode, 0);
+    process.env.EVIDRA_WORKTREE_ROOT = externalBase;
+    const worktree = await ensureWorktree(repo, root, "exp-external-root");
+    assert.equal(worktree, join(externalBase, "exp-external-root"));
+    assert.equal(existsSync(join(worktree, "solution.txt")), true);
+    assert.equal((await runProcess(["git", "worktree", "remove", "--force", worktree], repo)).exitCode, 0);
+  } finally {
+    if (previousBase === undefined) delete process.env.EVIDRA_WORKTREE_ROOT;
+    else process.env.EVIDRA_WORKTREE_ROOT = previousBase;
+    rmSync(root, { recursive: true, force: true });
+    rmSync(externalBase, { recursive: true, force: true });
+  }
 });
 
 test("blocked phase goals remain the next resumable goal", () => {
@@ -8322,6 +10624,15 @@ test("cross-pollination preserves agreement, tension, and evidence provenance", 
   assert.deepEqual(board.discriminatingTests, ["compare grouped and random splits on a locked site-disjoint holdout"]);
 });
 
+test("adaptive peer review runs only for contested multi-lane boards outside safe mode", () => {
+  const base = { needsAdversarialReview: false, peerReviewEnabled: true, teamRecommended: true, completedLaneCount: 4, autonomy: "fast" };
+  assert.equal(shouldRunPeerReview(base), false, "enabling peer review does not itself force a redundant second wave");
+  assert.equal(shouldRunPeerReview({ ...base, needsAdversarialReview: true }), true);
+  assert.equal(shouldRunPeerReview({ ...base, needsAdversarialReview: true, peerReviewEnabled: false, teamRecommended: false }), false);
+  assert.equal(shouldRunPeerReview({ ...base, needsAdversarialReview: true, autonomy: "safe" }), false);
+  assert.equal(shouldRunPeerReview({ ...base, needsAdversarialReview: true, completedLaneCount: 1 }), false);
+});
+
 test("cross-pollination does not call generic vocabulary consensus", () => {
   const board = synthesizeLaneReports([
     { role: "lane-a", status: "completed", findings: ["the model uses data to improve the result"], recommendations: [], uncertainties: [], evidence: ["a.json"] },
@@ -8414,8 +10725,10 @@ test("specification-gaming guard detects evaluator mutations", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-integrity-"));
   try {
     writeFileSync(join(root, "eval.py"), "print('score')\n");
+    writeFileSync(join(root, "estimator.py"), "def predict(): return 1\n");
     writeFileSync(join(root, "submission.csv"), "score\n");
-    const snapshot = captureProtectedFiles(root, [["python", "eval.py", "--submission-file", "submission.csv"]]);
+    const snapshot = captureProtectedFiles(root, [["python", "eval.py", "--estimator", "estimator.py", "--submission-file", "submission.csv"]], [], ["estimator.py"]);
+    writeFileSync(join(root, "estimator.py"), "def predict(): return 2\n");
     writeFileSync(join(root, "eval.py"), "print('cheat')\n");
     assert.deepEqual(changedProtectedFiles(snapshot, root), ["eval.py"]);
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -8424,6 +10737,10 @@ test("specification-gaming guard detects evaluator mutations", () => {
 test("experiment manifests preserve multiple independent verifiers", () => {
   const manifest = createExperimentManifest({ id: "multi-verify", hypothesisId: "hyp-1", gitCommit: "abc123", datasetVersion: "data", verificationCommands: [["python", "check_unit.py"], ["python", "check_reference.py"]] }, { id: "test", name: "Test", taskType: "general", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["python", "eval.py"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["python", "baseline.py"], experimentCommand: ["python", "run.py"] });
   assert.deepEqual(manifest.evaluation.verificationCommands, [["python", "check_unit.py"], ["python", "check_reference.py"]]);
+  const metricOnly = createExperimentManifest({ id: "metric-no-verifiers", hypothesisId: "hyp-metric", gitCommit: "abc123", datasetVersion: "data", verificationCommands: [] }, { id: "test", name: "Test", taskType: "general", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["python", "eval.py"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["python", "baseline.py"], experimentCommand: ["python", "run.py"] });
+  assert.equal(Object.hasOwn(metricOnly.evaluation, "verificationCommands"), false, "an empty optional list must be omitted from metric experiment manifests");
+  const configuredVerifiers = createExperimentManifest({ id: "metric-configured-verifiers", hypothesisId: "hyp-metric", gitCommit: "abc123", datasetVersion: "data", verificationCommands: [] }, { id: "test", name: "Test", taskType: "general", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["python", "eval.py"] }, execution: { verificationCommands: [["python", "verify.py"]] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["python", "baseline.py"], experimentCommand: ["python", "run.py"] });
+  assert.deepEqual(configuredVerifiers.evaluation.verificationCommands, [["python", "verify.py"]], "empty hypothesis defaults must not shadow competition-level verifiers");
   assert.throws(() => createExperimentManifest({ id: "duplicate-verify", hypothesisId: "hyp-1", gitCommit: "abc123", datasetVersion: "data", verificationCommand: ["python", "check_unit.py"], verificationCommands: [["python", "check_unit.py"]] }, { id: "test", name: "Test", taskType: "general", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["python", "eval.py"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["python", "baseline.py"], experimentCommand: ["python", "run.py"] }), /duplicate commands are not independent evidence/);
 });
 
@@ -8505,6 +10822,14 @@ test("competition research channels are typed, deduplicated, and preserve refres
   ]);
   assert.equal(competitionResearchClaimType("paper"), "literature");
   assert.equal(competitionResearchClaimType("discussion"), "external_source");
+});
+
+test("mutable competition channels receive short generic refresh defaults", () => {
+  assert.equal(competitionSourceRefreshMs({ kind: "rules", url: "https://example.org/rules" }), 60 * 60_000);
+  assert.equal(competitionSourceRefreshMs({ kind: "discussion", url: "https://example.org/forum" }), 30 * 60_000);
+  assert.equal(competitionSourceRefreshMs({ kind: "leaderboard", url: "https://example.org/score" }), 15 * 60_000);
+  assert.equal(competitionSourceRefreshMs({ kind: "paper", url: "https://example.org/paper" }), 6 * 60 * 60_000);
+  assert.equal(competitionSourceRefreshMs({ kind: "rules", url: "https://example.org/rules", refreshMinutes: 5 }), 5 * 60_000);
 });
 
 test("competition source configuration deduplicates canonical URL variants", () => {
@@ -8741,7 +11066,10 @@ test("external evaluator evidence can be required as a separate experiment gate"
   const pending = auditExperiment(manifest, run, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, externalScoreRequired: true, externalScoreObserved: false });
   const accepted = auditExperiment(manifest, run, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true, externalScoreRequired: true, externalScoreObserved: true });
   assert.equal(pending.gates.externalScoreObserved, false);
+  assert.equal(pending.accepted, false);
+  assert.match(pending.reasons.join(" "), /external evaluator score has not been observed/);
   assert.equal(accepted.gates.externalScoreObserved, true);
+  assert.equal(accepted.accepted, true);
   assert.equal(externalScoreObservedForExperiment("external-exp", [{ experimentId: "external-exp", status: "scored", payload: { publicScore: 0.91 } }]), true);
   assert.equal(externalScoreObservedForExperiment("external-exp", [{ experimentId: "external-exp", status: "scored", payload: { publicScore: 0.91, runId: "other-run" } }], "external-run"), false);
   assert.equal(externalScoreObservedForExperiment("external-exp", [{ experimentId: "external-exp", status: "scored", payload: { publicScore: 0.91, runId: "external-run" } }], "external-run"), true);
@@ -8751,6 +11079,34 @@ test("external evaluator evidence can be required as a separate experiment gate"
   const externalAudit = auditExperimentSubtask(manifest, pending, ["external-run"]);
   const refreshed = refreshAuditWithExternalScore(externalAudit, "submission:external-bundle");
   assert.equal(refreshed.criteria.find((criterion) => criterion.id === "gate:externalScoreObserved")?.satisfied, true);
+});
+
+test("required replication is an acceptance gate, not just audit metadata", () => {
+  const competition = { id: "replication-gate", name: "Replication Gate", taskType: "metric", datasetRevision: "data", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["true"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["true"], experimentCommand: ["true"] };
+  const manifest = createExperimentManifest({ id: "replication-required", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "data", outcomeType: "metric", requireReplication: true }, competition);
+  const run = { runId: "replication-run", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 1 }, artifacts: {}, verification: { declared: 0, executed: 0, passed: 0, failed: 0, independent: false } };
+  const pending = auditExperiment(manifest, run, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: false });
+  assert.equal(pending.gates.replicationObserved, false);
+  assert.equal(pending.accepted, false);
+  assert.match(pending.reasons.join(" "), /independent replication is required/);
+  const replicated = auditExperiment(manifest, run, { currentCommit: "abc", datasetVersion: "data", splitVersion: manifest.splitVersion, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true });
+  assert.equal(replicated.accepted, true);
+});
+
+test("verification-only metric audits reject unpinned historical source runs", () => {
+  const competition = { id: "source-pin-audit", name: "Source Pin Audit", taskType: "metric", datasetRevision: "data", metric: { name: "score", direction: "minimize" }, evaluator: { command: ["python", "evaluate.py"] }, researchSources: [], evaluatorTimeoutMinutes: 1, workspacePath: ".", baselineCommand: ["python", "evaluate.py"], experimentCommand: ["python", "evaluate.py"] };
+  const base = createExperimentManifest({ id: "source-pin-run", hypothesisId: "hyp", gitCommit: "abc", datasetVersion: "data", outcomeType: "metric", implementationMode: "verify", configPatch: { estimatorPath: "estimator.py" } }, competition);
+  const run = { runId: "source-pin-run-1", status: "completed", exitCode: 0, durationSeconds: 1, metrics: { score: 0.1 }, artifacts: {}, verification: { declared: 0, executed: 0, passed: 0, failed: 0, independent: false } };
+  const context = { currentCommit: "abc", datasetVersion: "data", splitVersion: base.splitVersion, leakageAuditPassed: true, reviewerApproved: true, independentReplicationObserved: true };
+  const unpinned = auditExperiment(base, run, context);
+  assert.equal(unpinned.gates.implementationSourcePinDeclared, false);
+  assert.equal(unpinned.accepted, false);
+  assert.match(unpinned.reasons.join(" "), /implementationSource\.path and a SHA-256 pin/);
+
+  const pinned = { ...base, change: { configPatch: { estimatorPath: "estimator.py", implementationSource: { path: "baseline/estimator.py", sha256: `sha256:${"a".repeat(64)}`, targetPath: "estimator.py" } } } };
+  const verified = auditExperiment(pinned, run, context);
+  assert.equal(verified.gates.implementationSourcePinDeclared, true);
+  assert.equal(verified.accepted, true);
 });
 
 test("scientific task runner verifies intermediate stages and resumes verified snapshots", async () => {
@@ -8875,6 +11231,8 @@ test("dashboard read model is bounded and secret-redacted", () => {
     store.appendEvent("test.dashboard", { token: "sk-test-dashboard-secret-value", command: ["tool", "--token", "secret-value"] });
     store.appendEvent("research.agent.reviewed", { objective: "dashboard review objective", source: "test", reviews: [], interventions: [{ role: "model researcher", action: "coach", priority: "high", reason: "blocked playbook step" }], coachingDirectiveIds: [42] });
     store.appendEvent("research.agent.coaching.evaluated", { evidenceAt: "2026-09-25T00:01:00.000Z", outcomes: [{ role: "model researcher", verdict: "improved", delta: 0.1, directiveIds: [42] }] });
+    store.saveSource({ id: "dashboard-source", payload: { title: "Test source", url: "https://example.test/paper" } });
+    store.saveClaim({ id: "dashboard-claim", payload: { statement: "A bounded test claim", scope: "dashboard test", confidence: 0.8, sourceType: "literature", sourceId: "dashboard-source", status: "active" } });
     store.recordAgentActivity({ role: "model researcher", taskId: "dashboard-task", kind: "progress", message: "inspecting evidence" });
     const dashboardDirective = store.enqueueAgentDirective("model researcher", "inspect the result", null, "research director");
     store.consumeAgentDirectives("model researcher");
@@ -8909,6 +11267,8 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.equal(snapshot.agentDirectiveOutcomes[0]?.directiveId, dashboardDirective.id);
     assert.deepEqual(snapshot.staleAgentDirectives, []);
     assert.equal(snapshot.tools[0].status, "disabled");
+    assert.equal(snapshot.sources[0].title, "Test source");
+    assert.equal(snapshot.claims[0].statement, "A bounded test claim");
     assert.match(dashboardHtml(), /EVIDRA<\/span> \/ DASHBOARD/);
     assert.match(dashboardHtml(), /\/api\/status/);
     assert.match(dashboardHtml(), /id="stages"/);
@@ -8918,10 +11278,17 @@ test("dashboard read model is bounded and secret-redacted", () => {
     assert.match(dashboardHtml(), /requires /);
     assert.match(dashboardHtml(), /handoff outcomes/);
     assert.match(dashboardHtml(), /organization-map/);
+    const workbench = workbenchHtml("0123456789abcdef");
+    assert.match(workbench, /Research/);
+    assert.match(workbench, /Challenge/);
+    assert.match(workbench, /Build \/ Engineering/);
+    assert.match(workbench, /data-theme="light"/);
+    assert.match(workbench, /DARK MODE/);
+    assert.ok(workbench.includes("/api/workbench/action"));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("dashboard CLI exposes a healthy, security-headered read-only endpoint", async () => {
+test("dashboard CLI serves the workbench and protects local control actions", async () => {
   const { spawn } = await import("node:child_process");
   const root = mkdtempSync(join(tmpdir(), "evidra-dashboard-cli-"));
   const port = 45000 + Math.floor(Math.random() * 1000);
@@ -8944,6 +11311,18 @@ test("dashboard CLI exposes a healthy, security-headered read-only endpoint", as
     assert.equal(health.headers.get("x-frame-options"), "DENY");
     const page = await fetch(`http://127.0.0.1:${port}/`);
     assert.match(page.headers.get("content-security-policy") ?? "", /default-src 'none'/);
+    const workbenchResponse = await fetch(`http://127.0.0.1:${port}/workbench`);
+    assert.equal(workbenchResponse.status, 200);
+    assert.match(workbenchResponse.headers.get("content-security-policy") ?? "", /connect-src 'self'/);
+    const workbench = await workbenchResponse.text();
+    const token = workbench.match(/name="evidra-token" content="([a-f0-9]+)"/)?.[1];
+    assert.ok(token);
+    const actionUrl = `http://127.0.0.1:${port}/api/workbench/action`;
+    const origin = `http://127.0.0.1:${port}`;
+    const forbidden = await fetch(actionUrl, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ action: "start" }) });
+    assert.equal(forbidden.status, 403);
+    const invalid = await fetch(actionUrl, { method: "POST", headers: { origin, "content-type": "application/json", "x-evidra-token": token }, body: JSON.stringify({ action: "arbitrary-command" }) });
+    assert.equal(invalid.status, 400);
     assert.equal((await fetch(`http://127.0.0.1:${port}/missing`)).status, 404);
   } finally {
     if (child && child.exitCode === null) child.kill("SIGINT");
@@ -9451,6 +11830,15 @@ test("headless channel inspection has a stable JSON contract before ingestion", 
     assert.equal(parsed.evidenceClass, "untrusted_channel_discovery");
     assert.deepEqual(parsed.channels, []);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Modal controller image installs Python tools in a PEP 668-safe virtualenv", () => {
+  const source = readFileSync(join(process.cwd(), "modal_controller.py"), "utf8");
+  assert.match(source, /python3-venv/);
+  assert.match(source, /python3 -m venv \/opt\/evidra-python/);
+  assert.match(source, /\/opt\/evidra-python\/bin\/pip install --no-cache-dir uv modal/);
+  assert.match(source, /\.env\(\{\"PATH\": \"\/opt\/evidra-python\/bin:/);
+  assert.doesNotMatch(source, /\.pip_install\(\"uv\", \"modal\"\)/);
 });
 
 test("benchmark protocol rejects mismatched reasoning effort", () => {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { ResearchDecisionSchema, type ResearchDecision } from "./types.js";
 import { ResearchStore } from "./store.js";
 import { createAblationPlan } from "./ablation.js";
@@ -23,6 +24,139 @@ function hypothesisFingerprint(hypothesis: ResearchDecision["hypotheses"][number
     .join("\u001f");
 }
 
+/** Make external score observations citeable without pretending they are literature. */
+export function materializeExternalScoreSources(store: ResearchStore): Map<string, string> {
+  type ScoreObservation = { id: string; externalId?: string; score: number; platform: string; observedAt: string; externalUrl?: string; bundleId?: string };
+  const aliases = new Map<string, string>();
+  const latest = new Map<string, ScoreObservation>();
+  const byProviderId = new Map<string, string>();
+  for (const submission of store.submissions()) {
+    const payload = submission.payload && typeof submission.payload === "object" ? submission.payload as Record<string, unknown> : {};
+    const receipt = payload.receipt && typeof payload.receipt === "object" ? payload.receipt as Record<string, unknown> : {};
+    const providerIds = new Set<string>();
+    for (const candidate of [receipt.submissionId, payload.providerSubmissionId, payload.externalId]) {
+      if (typeof candidate === "string" && candidate.trim()) providerIds.add(candidate.trim());
+    }
+    // Command adapters may preserve the provider's receipt text without a
+    // normalized ID field. Recover only the explicit "submission id …" form;
+    // never infer an ID from a URL or arbitrary receipt prose.
+    if (typeof receipt.stdout === "string") {
+      for (const match of receipt.stdout.matchAll(/\bsubmission\s+id\s+([A-Za-z0-9_-]+)/gi)) providerIds.add(match[1]);
+    }
+    for (const providerId of providerIds) byProviderId.set(providerId, submission.id);
+    if (submission.status !== "scored" || typeof payload.publicScore !== "number" || !Number.isFinite(payload.publicScore)) continue;
+    const externalId = providerIds.values().next().value as string | undefined;
+    latest.set(submission.id, {
+      id: submission.id,
+      ...(externalId ? { externalId } : {}),
+      score: payload.publicScore,
+      platform: typeof payload.platform === "string" ? payload.platform : "external evaluator",
+      observedAt: typeof payload.recordedAt === "string" && Number.isFinite(Date.parse(payload.recordedAt)) ? payload.recordedAt : submission.updatedAt,
+      bundleId: submission.id,
+    });
+  }
+  for (const event of store.eventsByTypes(["submission.score.observed", "submission.score.recorded", "submission.score.polled"])) {
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    if (typeof payload.score !== "number" || !Number.isFinite(payload.score)) continue;
+    const externalId = [payload.externalId, payload.providerSubmissionId].find((value): value is string => typeof value === "string" && Boolean(value.trim()))?.trim();
+    const statedId = typeof payload.id === "string" && payload.id.trim() ? payload.id.trim() : externalId;
+    if (!statedId) continue;
+    const bundleId = store.submissions().find((submission) => submission.id === statedId)?.id
+      ?? (externalId ? byProviderId.get(externalId) : undefined);
+    const id = bundleId ?? statedId;
+    const observedAt = [payload.observedAt, payload.recordedAt, event.createdAt].find((value): value is string => typeof value === "string" && Number.isFinite(Date.parse(value))) ?? new Date().toISOString();
+    const prior = latest.get(id);
+    if (prior && Date.parse(prior.observedAt) > Date.parse(observedAt)) continue;
+    // Later score-recorded events often contain only the internal bundle ID.
+    // Preserve the provider ID recovered from the receipt instead of erasing
+    // the alias when an equally-timestamped event is replayed.
+    const resolvedExternalId = externalId ?? prior?.externalId;
+    latest.set(id, {
+      id,
+      ...(resolvedExternalId ? { externalId: resolvedExternalId } : {}),
+      score: payload.score,
+      platform: typeof payload.platform === "string" ? payload.platform : "external evaluator",
+      observedAt,
+      ...(typeof payload.sourceUrl === "string" && /^https:\/\//i.test(payload.sourceUrl) ? { externalUrl: payload.sourceUrl } : {}),
+      ...(bundleId ? { bundleId } : {}),
+    });
+  }
+
+  const existing = new Map(store.sources().map((source) => [source.id, source]));
+  for (const observation of latest.values()) {
+    const url = `https://evidra.local/external-score/${encodeURIComponent(observation.id)}`;
+    const contentHash = createHash("sha256").update(JSON.stringify(observation)).digest("hex");
+    const prior = existing.get(observation.id);
+    const priorPayload = prior?.payload && typeof prior.payload === "object" ? prior.payload as Record<string, unknown> : {};
+    if (!prior || priorPayload.sourceType === "external_score") {
+      if (priorPayload.contentHash !== contentHash) {
+        store.saveSource({
+          id: observation.id,
+          payload: {
+            id: observation.id,
+            title: `External score observation · ${observation.platform} · ${observation.id}`,
+            url,
+            retrievedAt: observation.observedAt,
+            contentHash,
+            evidenceClass: observation.externalUrl ? "official" : "discovery",
+            sourceType: "external_score",
+            platform: observation.platform,
+            score: observation.score,
+            externalId: observation.externalId ?? null,
+            externalUrl: observation.externalUrl ?? null,
+            bundleId: observation.bundleId ?? null,
+            claims: [`${observation.platform} reported external score ${observation.score} for ${observation.externalId ?? observation.id}.`],
+          },
+        });
+      }
+      aliases.set(observation.id, observation.id);
+    }
+    if (observation.externalId && (observation.bundleId || !existing.has(observation.externalId))) {
+      aliases.set(observation.externalId, observation.id);
+    }
+  }
+  return aliases;
+}
+
+/** Materialize persisted workspace observations as citeable local evidence. */
+function materializeResearchObservationSources(store: ResearchStore): Map<string, string> {
+  const aliases = new Map<string, string>();
+  const existing = new Set(store.sources().map((source) => source.id));
+  for (const event of store.eventsByType("research.observation")) {
+    const observation = event.payload && typeof event.payload === "object"
+      ? event.payload as Record<string, unknown>
+      : {};
+    const id = typeof observation.sourceId === "string" ? observation.sourceId
+      : typeof observation.id === "string" ? observation.id
+        : undefined;
+    if (!id) continue;
+    aliases.set(id, id);
+    if (existing.has(id)) continue;
+    const serialized = JSON.stringify(observation);
+    const claims = [observation.result, observation.summary]
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .map((value) => value.trim().slice(0, 2_000));
+    store.saveSource({
+      id,
+      payload: {
+        id,
+        title: typeof observation.objective === "string"
+          ? `Workspace observation · ${observation.objective.slice(0, 180)}`
+          : `Workspace observation · ${id}`,
+        url: `https://evidra.local/observation/${encodeURIComponent(id)}`,
+        retrievedAt: event.createdAt,
+        contentHash: createHash("sha256").update(serialized).digest("hex"),
+        evidenceClass: "implementation",
+        sourceType: "observation",
+        observation,
+        claims,
+      },
+    });
+    existing.add(id);
+  }
+  return aliases;
+}
+
 /** Turn a validated director decision into durable graph entities. */
 export function materializeResearchDecision(store: ResearchStore, value: ResearchDecision, options: { evidenceSourceId?: string; evidenceScope?: string } = {}): MaterializedDecision {
   const parsedDecision = ResearchDecisionSchema.parse(value);
@@ -30,10 +164,16 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
   // rather than the concrete source ID. Resolve only known aliases from the
   // latest persisted records; all other IDs remain strict and are rejected.
   const latestBaseline = store.eventsByType("baseline.completed").at(-1)?.payload as { runId?: unknown } | undefined;
-  const latestObservation = store.eventsByType("research.observation").at(-1)?.payload as { sourceId?: unknown } | undefined;
-  const aliases = new Map<string, string>();
+  const latestObservationEvent = store.eventsByType("research.observation").at(-1);
+  const latestObservation = latestObservationEvent?.payload && typeof latestObservationEvent.payload === "object"
+    ? latestObservationEvent.payload as { sourceId?: unknown; id?: unknown }
+    : undefined;
+  const aliases = materializeExternalScoreSources(store);
+  for (const [id, sourceId] of materializeResearchObservationSources(store)) aliases.set(id, sourceId);
   if (typeof latestBaseline?.runId === "string") aliases.set("baseline.completed", latestBaseline.runId);
-  if (typeof latestObservation?.sourceId === "string") aliases.set("research.observation", latestObservation.sourceId);
+  const latestObservationId = typeof latestObservation?.sourceId === "string" ? latestObservation.sourceId
+    : typeof latestObservation?.id === "string" ? latestObservation.id : undefined;
+  if (latestObservationId) aliases.set("research.observation", latestObservationId);
   // Older controllers exposed baseline event timestamps and experiment IDs to
   // the director before materializing them as durable sources. Backfill those
   // execution records on reopen so a resumed campaign cannot crash merely
@@ -48,10 +188,11 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
     if (durableSourceIdsBeforeExecutionBackfill.has(experiment.id)) continue;
     const payload = experiment.payload as { status?: unknown; runId?: unknown; metric?: unknown; title?: unknown };
     const run = typeof payload.runId === "string" ? store.runs().find((entry) => entry.id === payload.runId) : undefined;
-    if (payload.status !== "completed" && !run) continue;
-    const metric = run && typeof (run.payload as { metrics?: Record<string, unknown> }).metrics?.metric === "number"
+    const completedRun = run?.status === "completed";
+    if (payload.status !== "completed" && !completedRun) continue;
+    const metric = completedRun && typeof (run.payload as { metrics?: Record<string, unknown> }).metrics?.metric === "number"
       ? (run.payload as { metrics: { metric: number } }).metrics.metric
-      : typeof payload.metric === "number" ? payload.metric : null;
+      : payload.status === "completed" && typeof payload.metric === "number" ? payload.metric : null;
     store.saveSource({
       id: experiment.id,
       payload: {
@@ -154,9 +295,15 @@ export function materializeResearchDecision(store: ResearchStore, value: Researc
     hypothesis.evidence.forEach((statement, evidenceIndex) => {
       const claimId = `claim_${stamp}_${String(index + 1).padStart(2, "0")}_${evidenceIndex + 1}`;
       claimIds.push(claimId);
-      const literature = linkedSourceIds.length > 0;
-      store.saveClaim({ id: claimId, payload: { id: claimId, statement, scope: options.evidenceScope ?? (literature ? "durable literature source" : "director decision context"), confidence: literature ? 0.35 : 0.5, sourceType: literature ? "literature" : "observation", sourceId: linkedSourceIds[0] ?? `decision_${decisionId}`, status: "active" } });
-      store.saveEdge({ id: `edge_${claimId}_${hypothesisId}`, fromId: claimId, toId: hypothesisId, relation: "supports", confidence: literature ? 0.35 : 0.5, evidenceIds: [claimId] });
+      const primarySource = linkedSourceIds.length ? durableSources.find((source) => source.id === linkedSourceIds[0]) : undefined;
+      const sourcePayload = primarySource?.payload && typeof primarySource.payload === "object" ? primarySource.payload as Record<string, unknown> : {};
+      const sourceType = sourcePayload.sourceType === "external_score" ? "external_score"
+        : sourcePayload.evidenceClass === "implementation" ? "run"
+        : sourcePayload.evidenceClass === "official" || sourcePayload.evidenceClass === "discovery" ? "external_source"
+        : linkedSourceIds.length ? "literature" : "observation";
+      const confidence = sourceType === "literature" ? 0.35 : sourceType === "observation" ? 0.5 : 0.6;
+      store.saveClaim({ id: claimId, payload: { id: claimId, statement, scope: options.evidenceScope ?? (linkedSourceIds.length ? "durable evidence source" : "director decision context"), confidence, sourceType, sourceId: linkedSourceIds[0] ?? `decision_${decisionId}`, status: "active" } });
+      store.saveEdge({ id: `edge_${claimId}_${hypothesisId}`, fromId: claimId, toId: hypothesisId, relation: "supports", confidence, evidenceIds: [claimId] });
       for (const sourceId of linkedSourceIds) store.saveEdge({ id: `edge_${claimId}_${sourceId}`, fromId: claimId, toId: sourceId, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
     });
   });

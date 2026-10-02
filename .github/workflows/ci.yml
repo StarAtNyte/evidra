@@ -12,6 +12,10 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22.19.0, 24.x]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,7 +23,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22.19.0
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies
@@ -36,3 +40,23 @@ jobs:
 
       - name: Verify distributable package
         run: npm pack --dry-run
+
+      - name: Install and execute the production package
+        run: |
+          install_root="$(mktemp -d)"
+          trap 'rm -rf "$install_root"' EXIT
+          package_name="$(node -p "require('./package.json').name")"
+          package_version="$(node -p "require('./package.json').version")"
+          npm pack --ignore-scripts --pack-destination "$install_root" --silent
+          npm install --prefix "$install_root/prefix" --omit=dev --no-audit --no-fund \
+            "$install_root/$package_name-$package_version.tgz"
+          "$install_root/prefix/node_modules/.bin/evidra" --version
+          "$install_root/prefix/node_modules/.bin/evidra" --help >/dev/null
+          mkdir -p "$install_root/workspace"
+          (
+            cd "$install_root/workspace"
+            EVIDRA_STATE_DIR="$install_root/state" \
+              "$install_root/prefix/node_modules/.bin/evidra" init local-research
+            EVIDRA_STATE_DIR="$install_root/state" \
+              "$install_root/prefix/node_modules/.bin/evidra" status
+          )
