@@ -32,6 +32,27 @@ export function dashboardSnapshot(store: ResearchStore, root?: string): Record<s
   const attention = operatorAttention(store, root);
   const campaignStartedAt = campaign && typeof (campaign as { startedAt?: unknown }).startedAt === "string" ? (campaign as { startedAt: string }).startedAt : "";
   const agentBudget = campaignStartedAt ? agentBudgetLedger(agentEvents, campaignStartedAt, typeof (campaign?.runtime as { agentTokenBudget?: unknown } | undefined)?.agentTokenBudget === "number" ? (campaign?.runtime as { agentTokenBudget: number }).agentTokenBudget : null) : agentBudgetLedger([], "", null);
+  const paintingJobs = new Map<string, Record<string, unknown>>();
+  for (const event of store.recentEvents(256)) {
+    if (!event.type.startsWith("painting.")) continue;
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    if (typeof payload.id !== "string") continue;
+    const prior = paintingJobs.get(payload.id) ?? { id: payload.id };
+    const status = event.type === "painting.completed" ? "completed" : event.type === "painting.failed" ? "failed" : event.type === "painting.started" ? "running" : prior.status;
+    paintingJobs.set(payload.id, {
+      ...prior,
+      ...(typeof payload.title === "string" ? { title: payload.title.slice(0, 160) } : {}),
+      ...(typeof payload.subject === "string" ? { subject: payload.subject.slice(0, 240) } : {}),
+      ...(typeof payload.style === "string" ? { style: payload.style.slice(0, 180) } : {}),
+      ...(typeof payload.provider === "string" ? { provider: payload.provider.slice(0, 40) } : {}),
+      ...(typeof payload.model === "string" ? { model: payload.model.slice(0, 160) } : {}),
+      ...(typeof payload.outputPath === "string" ? { outputPath: payload.outputPath.slice(0, 500) } : {}),
+      ...(typeof payload.logPath === "string" ? { logPath: payload.logPath.slice(0, 500) } : {}),
+      ...(typeof payload.message === "string" ? { message: payload.message.slice(0, 300) } : {}),
+      status,
+      updatedAt: event.createdAt,
+    });
+  }
   const snapshot = {
     generatedAt: new Date().toISOString(),
     workspaceId: store.workspaceId(),
@@ -101,6 +122,7 @@ export function dashboardSnapshot(store: ResearchStore, root?: string): Record<s
       return { id: entry.id, status: payload.status, hypothesisId: payload.hypothesisId, executor: (payload.resources as Record<string, unknown> | undefined)?.executor, createdAt: entry.createdAt };
     }),
     runs: runs.slice(0, 40).map((entry) => ({ id: entry.id, experimentId: entry.experimentId, status: entry.status, metrics: (entry.payload as Record<string, unknown> | null)?.metrics, updatedAt: entry.updatedAt })),
+    paintings: [...paintingJobs.values()].slice(-24),
     // The browser only needs the event stream's index. Do not ship arbitrary
     // event payloads or long tool traces into a local web page.
     events: store.recentEvents(60).map((event) => ({ type: event.type, createdAt: event.createdAt })),

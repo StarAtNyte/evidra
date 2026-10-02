@@ -7,6 +7,8 @@ import { dirname, join, resolve } from "node:path";
  * uninitialised directory; in that case the starting directory is retained.
  */
 export function findWorkspaceRoot(start = process.cwd()): string {
+  const explicitlySelected = process.env.EVIDRA_WORKSPACE_ROOT?.trim();
+  if (explicitlySelected) return resolve(explicitlySelected);
   const startingDirectory = resolve(start);
   let cursor = startingDirectory;
   while (true) {

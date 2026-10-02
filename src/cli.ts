@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { appendFileSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync, realpathSync } from "node:fs";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { externalActionNeedsReconciliation, ResearchStore, queueEffectivePriority, routineRetryDelaySeconds } from "./core/store.js";
 import { externalScoreEvidenceContext, hashExternalArtifact } from "./core/submission-feedback.js";
 import { campaignEvidenceConflictCounts, mergeCampaignToolFailures, recordsForCampaign } from "./core/campaign-scope.js";
@@ -71,6 +71,7 @@ import { createBlendCandidate, diversityReport, loadPredictionVector, safePredic
 import { formatResearchDecision, runResearchDirector } from "./agents/research-director.js";
 import { boundedPeerBoard, laneToolObservationContext, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic, runResearchSemanticAuditor, type ResearchSemanticAudit } from "./agents/research-lanes.js";
+import { createPaintingJob, runPaintingJob } from "./agents/painting.js";
 import { checkProvider, codexLoginStatus, codexResearchModelPool, CodexExecAgent, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listCodexModels, listLocalModels, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
@@ -1131,6 +1132,16 @@ program.command("dashboard").alias("web")
       "content-type": "application/json; charset=utf-8",
     };
     const workbenchToken = `${randomUUID().replaceAll("-", "")}${randomUUID().replaceAll("-", "")}`;
+    const workspaceFor = (value: unknown): { workspace: string; database: string; key: string } => {
+      const key = typeof value === "string" ? value : ".";
+      if (key !== "." && (key.includes("/") || key.includes("\\") || key.startsWith("."))) throw new Error("Choose a listed workspace folder.");
+      const workspace = resolve(root, key === "." ? "." : key);
+      const realRoot = realpathSync(root);
+      const realWorkspace = realpathSync(workspace);
+      if (realWorkspace !== realRoot && !realWorkspace.startsWith(`${realRoot}/`)) throw new Error("Workspace folder is outside the project root.");
+      if (!statSync(realWorkspace).isDirectory()) throw new Error("Workspace selection must be a directory.");
+      return { workspace: realWorkspace, database: key === "." ? statePath : join(realWorkspace, ".sota", "database.sqlite"), key };
+    };
     const server = createServer((request, response) => {
       if (request.method === "POST" && request.url === "/api/workbench/action") {
         void (async () => {
@@ -1155,25 +1166,48 @@ program.command("dashboard").alias("web")
             for await (const chunk of request) {
               const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
               size += bytes.length;
-              if (size > 16_384) { fail(413, "Workbench action payload is too large."); request.destroy(); return; }
+              if (size > 12_000_000) { fail(413, "Workbench action payload is too large."); request.destroy(); return; }
               chunks.push(bytes);
             }
             let body: Record<string, unknown>;
             try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>; }
             catch { fail(400, "Action body must be valid JSON."); return; }
             const action = body.action;
-            if (action !== "start" && action !== "pause" && action !== "resume" && action !== "stop" && action !== "steer") { fail(400, "Unsupported workbench action."); return; }
-            const store = new ResearchStore(statePath);
+            if (action !== "start" && action !== "pause" && action !== "resume" && action !== "stop" && action !== "steer" && action !== "paint") { fail(400, "Unsupported workbench action."); return; }
+            const selected = workspaceFor(body.workspace);
+            const store = new ResearchStore(selected.database);
             const saved = store.campaign() as { status?: string; runtime?: { mode?: unknown } } | undefined;
             const savedMode = saved?.runtime?.mode === "challenge" ? "challenge" : "research";
             store.close();
-            const mode = action === "start"
+            const mode = action === "paint" ? "painting" : action === "start"
               ? body.mode === "challenge" ? "challenge" : body.mode === "research" ? "research" : undefined
               : body.mode === savedMode ? savedMode : undefined;
             if (!mode) { fail(400, "Choose Research or Challenge, or reload to sync the active campaign mode."); return; }
             const script = process.argv[1];
             if (!script) { fail(500, "Unable to locate the Evidra CLI entrypoint."); return; }
             let args: string[];
+            if (action === "paint") {
+              const provider = body.provider === "codex" ? "codex" : body.provider === "local" ? "local" : undefined;
+              if (provider !== "codex") { fail(400, "Painting requires the Codex provider because it uses image viewing and simulator tools."); return; }
+              const model = typeof body.model === "string" ? body.model : "";
+              const job = createPaintingJob(selected.workspace, selected.database, {
+                subject: typeof body.subject === "string" ? body.subject : "",
+                style: typeof body.style === "string" ? body.style : "",
+                provider,
+                model,
+                reference: body.reference && typeof body.reference === "object" && typeof (body.reference as Record<string, unknown>).mimeType === "string" && typeof (body.reference as Record<string, unknown>).data === "string"
+                  ? { mimeType: (body.reference as { mimeType: string }).mimeType, data: (body.reference as { data: string }).data }
+                  : undefined,
+              });
+              const child = spawn(process.execPath, [script, "painting-agent", job.manifestPath], {
+                cwd: selected.workspace, detached: true, stdio: "ignore",
+                env: { ...process.env, EVIDRA_WORKSPACE_ROOT: selected.workspace, EVIDRA_STATE_DIR: dirname(selected.database) },
+              });
+              child.once("error", () => undefined); child.unref();
+              response.writeHead(202, jsonHeaders);
+              response.end(JSON.stringify({ accepted: true, action, id: job.id, title: job.title, message: "Painting studio started. Progress and the finished canvas will appear here." }));
+              return;
+            }
             if (action === "start") {
               const goal = typeof body.goal === "string" ? body.goal.trim() : "";
               const budget = typeof body.budget === "string" ? body.budget.trim() : "";
@@ -1190,10 +1224,11 @@ program.command("dashboard").alias("web")
                 custom: "Custom profile: follow the goal and any workspace guidance; ask for missing constraints before consequential work.",
               };
               const finalGoal = profileGuidance[profile] ? `${goal}\n\n${profileGuidance[profile]}` : goal;
-              const model = provider === "codex" ? DEFAULT_CODEX_MODEL : await resolveLocalFallbackModel("auto");
-              await checkProvider({ provider, model, cwd: root });
-              if (mode === "challenge") requireCompetitionContract(activeCompetition());
-              args = [script, "research", "--mode", mode, "--goal", finalGoal, "--budget", budget, "--provider", provider, "--model", model, "--thinking", "medium", "--lanes", "3", "--autonomy", "safe", "--limit-policy", "auto", "--executor", "local"];
+              const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : provider === "codex" ? DEFAULT_CODEX_MODEL : await resolveLocalFallbackModel("auto");
+              const stop = typeof body.stop === "string" ? body.stop.trim() : "";
+              if (stop.length < 3 || stop.length > 4_000) { fail(400, "Add a measurable stopping condition."); return; }
+              await checkProvider({ provider, model, cwd: selected.workspace });
+              args = [script, "research", "--mode", mode, "--goal", finalGoal, "--stop", stop, "--budget", budget, "--provider", provider, "--model", model, "--thinking", typeof body.thinking === "string" ? body.thinking : "medium", "--lanes", "3", "--autonomy", "safe", "--limit-policy", "auto", "--executor", "local"];
             } else if (action === "steer") {
               const message = typeof body.message === "string" ? body.message.trim() : "";
               if (message.length < 1 || message.length > 4_000) { fail(400, "Steering text must be between 1 and 4,000 characters."); return; }
@@ -1202,7 +1237,7 @@ program.command("dashboard").alias("web")
               if (!saved) { fail(409, `No ${mode} campaign exists.`); return; }
               args = [script, mode, action];
             }
-            const child = spawn(process.execPath, args, { cwd: root, detached: true, stdio: "ignore", env: process.env });
+            const child = spawn(process.execPath, args, { cwd: selected.workspace, detached: true, stdio: "ignore", env: { ...process.env, EVIDRA_WORKSPACE_ROOT: selected.workspace, EVIDRA_STATE_DIR: dirname(selected.database) } });
             child.once("error", () => undefined);
             child.unref();
             response.writeHead(202, jsonHeaders);
@@ -1218,7 +1253,7 @@ program.command("dashboard").alias("web")
         response.writeHead(200, {
           ...baseHeaders,
           "content-type": "text/html; charset=utf-8",
-          "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'",
+          "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' blob: data:; form-action 'self'; base-uri 'none'",
         });
         response.end(workbenchHtml(workbenchToken));
         return;
@@ -1247,11 +1282,41 @@ program.command("dashboard").alias("web")
         }
         return;
       }
-      if (request.url === "/api/status") {
+      const requestUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
+      if (requestUrl.pathname === "/api/workbench/folders") {
+        try {
+          const excluded = new Set([".git", ".sota", "node_modules", "dist", "target", ".superdesign"]);
+          const folders = [{ path: ".", name: `${basename(root)} · workspace root` }, ...readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory() && !entry.name.startsWith(".") && !excluded.has(entry.name)).map(entry => ({ path: entry.name, name: entry.name }))];
+          response.writeHead(200, jsonHeaders); response.end(JSON.stringify({ folders }));
+        } catch (error) { response.writeHead(500, jsonHeaders); response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) })); }
+        return;
+      }
+      if (requestUrl.pathname === "/api/workbench/models") {
+        void (async () => {
+          const provider = requestUrl.searchParams.get("provider");
+          const models = provider === "codex" ? await listCodexModels() : provider === "local" ? await listLocalModels() : [];
+          const defaultModel = provider === "codex" ? DEFAULT_CODEX_MODEL : provider === "local" ? await resolveLocalFallbackModel("auto").catch(() => "") : "";
+          response.writeHead(200, jsonHeaders); response.end(JSON.stringify({ models: models.map(m => ({ id: m.id, displayName: m.displayName ?? m.id })), defaultModel }));
+        })().catch(error => { response.writeHead(500, jsonHeaders); response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) })); });
+        return;
+      }
+      if (requestUrl.pathname.startsWith("/api/workbench/painting/")) {
+        const id = requestUrl.pathname.split("/").at(-1) ?? "";
+        if (!/^[0-9a-f-]{36}$/i.test(id)) { response.writeHead(404, baseHeaders); response.end(); return; }
+        try {
+          const selected = workspaceFor(requestUrl.searchParams.get("workspace"));
+          const imagePath = resolve(selected.workspace, ".sota", "paintings", id, "studio", "out", "painting.png");
+          if (!imagePath.startsWith(`${resolve(selected.workspace)}/.sota/paintings/${id}/studio/out/`) || !existsSync(imagePath) || !readFileSync(imagePath).subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw new Error("Painting is not ready.");
+          response.writeHead(200, { ...baseHeaders, "content-type": "image/png" }); response.end(readFileSync(imagePath));
+        } catch { response.writeHead(404, baseHeaders); response.end(); }
+        return;
+      }
+      if (requestUrl.pathname === "/api/status") {
         let store: ResearchStore | undefined;
         try {
-          store = new ResearchStore(statePath);
-          const snapshot = dashboardSnapshot(store, root);
+          const selected = workspaceFor(requestUrl.searchParams.get("workspace"));
+          store = new ResearchStore(selected.database);
+          const snapshot = dashboardSnapshot(store, selected.workspace);
           response.writeHead(200, jsonHeaders);
           response.end(JSON.stringify(snapshot));
         } catch (error) {
@@ -1273,6 +1338,13 @@ program.command("dashboard").alias("web")
       server.listen(port, "127.0.0.1", () => console.log(`Evidra dashboard: http://127.0.0.1:${port}\nEvidra workbench: http://127.0.0.1:${port}/workbench`));
     });
   });
+
+program.command("painting-agent").argument("<manifest>").description("Run an isolated painting studio worker").action(async (manifest: string) => {
+  const manifestPath = resolve(manifest);
+  const paintingsRoot = resolve(stateDirectory, "paintings");
+  if (!manifestPath.startsWith(`${paintingsRoot}/`) || !existsSync(manifestPath)) throw new Error("Painting manifest is outside the current workspace.");
+  await runPaintingJob(manifestPath, statePath);
+});
 
 const controller = new Command("controller").description("Inspect or control a headless Modal Evidra controller");
 function controllerEntrypoint(): string {
