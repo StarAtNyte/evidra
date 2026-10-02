@@ -103,7 +103,7 @@ export function createPaintingJob(workspace: string, statePath: string, input: P
   return { id, title: subject.slice(0, 72), manifestPath };
 }
 
-export async function runPaintingJob(manifestPath: string, statePath: string): Promise<void> {
+export async function runPaintingJob(manifestPath: string, statePath: string, onProgress?: (message: string) => void): Promise<void> {
   const job = JSON.parse(readFileSync(manifestPath, "utf8")) as PaintingJob;
   const workspace = resolve(job.workspace);
   const studio = resolve(job.studio);
@@ -111,6 +111,7 @@ export async function runPaintingJob(manifestPath: string, statePath: string): P
   const easelSource = join(paintRepository, "target", "release", "easel");
   const easelGuide = join(paintRepository, "notes", "easel_guide.md");
   const progress = (message: string): void => {
+    onProgress?.(message);
     try { storeEvent(statePath, "painting.progress", { id: job.id, message: progressLine(message, 240) }); }
     catch { /* preserve the painting if a progress event cannot be recorded */ }
   };

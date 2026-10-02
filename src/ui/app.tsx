@@ -90,10 +90,12 @@ import { createTransferableMethod } from "../core/method-transfer.js";
 import { createAblationPlan, evaluateAblationEvidence } from "../core/ablation.js";
 import { buildMlflowRunExports } from "../core/mlflow.js";
 import { summarizeForecastAssessments } from "../core/forecast-calibration.js";
+import { createPaintingJob, runPaintingJob } from "../agents/painting.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
 type QueuedRequest = { id: string; text: string; dispatched?: boolean };
 type WorkbenchMode = "research" | "challenge";
+type SelectableWorkbenchMode = WorkbenchMode | "painting";
 type AutonomyLevel = "safe" | "fast" | "yolo";
 type ResearchCampaign = { goal: string; goalSetId?: string; budgetMinutes: number; budgetExhausted?: boolean; gpuBudgetHours?: number; stopCondition: string; startedAt: string; status: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; nextAttemptAt?: string; limitMessage?: string; autoExecuteExperiments?: boolean; currentCycle?: number; currentStep?: string; checkpointedAt?: string; runtime?: CampaignRuntimeConfig & { fingerprint: string }; runtimeFingerprint?: string };
 type LimitPolicy = "auto" | "wait" | "fallback" | "stop";
@@ -228,7 +230,7 @@ const AGENT_ROLES = ["research director", "domain researcher", "method researche
 const SUBCOMMANDS: Record<string, readonly (readonly [string, string])[]> = {
   "/workbench": [["/workbench research", "Enter Research mode"], ["/workbench challenge", "Enter Challenge mode"]],
   "/budget": [["/budget", "Show campaign and role token budgets"], ["/budget tokens ", "Set the aggregate token ceiling"], ["/budget role ", "Set a per-role token ceiling"]],
-  "/mode": [["/mode research", "Enter Research mode"], ["/mode challenge", "Enter Challenge mode"]],
+  "/mode": [["/mode research", "Enter Research mode"], ["/mode challenge", "Enter Challenge mode"], ["/mode painting", "Paint with the physical easel simulator"]],
   "/experience": [["/experience", "Show capability profile and curriculum"], ["/experience export", "Export admissible experiences as JSONL"]],
   "/autonomy": [["/autonomy safe", "Approval-gated"], ["/autonomy fast", "Run local work automatically"], ["/autonomy yolo", "Run routine work automatically"]],
   "/permissions": [["/permissions safe", "Approval-gated"], ["/permissions fast", "Run local work automatically"], ["/permissions yolo", "Run routine work automatically"]],
@@ -318,7 +320,7 @@ function parseBudgetMinutes(value: string): number | undefined {
 function help(): string {
   return [
     "/help                         Show commands",
-    "/mode [research|challenge]   Show or switch active mode",
+    "/mode [research|challenge|painting] Show or switch active mode",
     "/research [plan|next|question] Configure autonomous research or run one cycle",
     "/challenge [start|status]    Start or inspect the active challenge",
     "/experiment [propose|run]    Create or run a reproducible experiment",
@@ -438,6 +440,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [setupStep, setSetupStep] = useState<"goal" | "budget" | "stop" | null>(null);
   const [setupDraft, setSetupDraft] = useState<{ goal?: string; budgetMinutes?: number }>({});
+  const [paintingMode, setPaintingMode] = useState(false);
+  const [paintingSetupStep, setPaintingSetupStep] = useState<"style" | "reference" | null>(null);
+  const [paintingDraft, setPaintingDraft] = useState<{ subject?: string; style?: string }>({});
   const [routineSetupStep, setRoutineSetupStep] = useState<"name" | "goal" | "interval" | "budget" | "trigger" | "catchUp" | null>(null);
   const [routineSetupDraft, setRoutineSetupDraft] = useState<{ name?: string; goal?: string; intervalSeconds?: number; budgetMinutes?: number; triggerEvent?: string | null; catchUpPolicy?: "coalesce" | "replay" }>({});
   const [inputMount, setInputMount] = useState(0);
@@ -544,7 +549,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const activeModel = availableModels.find((model) => model.id === config.model) ?? selectedModel;
   const reasoningChoices = activeModel?.supportedReasoningEfforts?.length ? activeModel.supportedReasoningEfforts : REASONING_LEVELS;
   const providerChoices: readonly AgentProvider[] = ["codex", "local"];
-  const modeChoices: readonly WorkbenchMode[] = ["research", "challenge"];
+  const modeChoices: readonly SelectableWorkbenchMode[] = ["research", "challenge", "painting"];
   const permissionChoices: readonly AutonomyLevel[] = ["safe", "fast", "yolo"];
 
   useEffect(() => {
@@ -781,8 +786,14 @@ export function App({ root }: { root: string }): React.JSX.Element {
           setPicker(null);
         } else if (picker === "mode") {
           const mode = modeChoices[pickerIndex];
-          setConfig((current) => ({ ...current, mode }));
-          append("assistant", `Mode selected: ${mode}`);
+          if (mode === "painting") {
+            setPaintingMode(true); setPaintingSetupStep(null); setPaintingDraft({});
+            append("assistant", "Painting mode active. Describe the subject you want painted; I’ll ask for style and an optional reference image path.");
+          } else {
+            setPaintingMode(false); setPaintingSetupStep(null); setPaintingDraft({});
+            setConfig((current) => ({ ...current, mode }));
+            append("assistant", `Mode selected: ${mode}`);
+          }
           setPicker(null);
         } else {
           const autonomy = permissionChoices[pickerIndex];
@@ -2561,6 +2572,55 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     interruptedProcess.current = false;
     if (!fromQueue) append("user", request);
+    if (request === "/mode painting" || request === "/workbench painting" || request === "/paint" || request.startsWith("/paint ")) {
+      const subject = request.startsWith("/paint ") ? request.slice("/paint ".length).trim() : "";
+      setPaintingMode(true); setPaintingSetupStep(subject ? "style" : null); setPaintingDraft(subject ? { subject } : {});
+      append("assistant", subject
+        ? "Painting mode active. What style or artist should guide the painting? Type a name or describe the look, or answer ‘none’ for me to choose."
+        : "Painting mode active. Describe the subject you want painted; I’ll ask for style and an optional reference image path.");
+      return;
+    }
+    if (request === "/mode research" || request === "/workbench research") {
+      setPaintingMode(false); setPaintingSetupStep(null); setPaintingDraft({});
+    }
+    if (request === "/mode challenge" || request === "/workbench challenge") {
+      setPaintingMode(false); setPaintingSetupStep(null); setPaintingDraft({});
+    }
+    if (paintingMode && !request.startsWith("/")) {
+      if (!paintingSetupStep) {
+        setPaintingDraft({ subject: request }); setPaintingSetupStep("style");
+        append("assistant", "What style or artist should guide the painting? Type a name or describe the look, or answer ‘none’ for me to choose.");
+        return;
+      }
+      if (paintingSetupStep === "style") {
+        const style = /^(none|skip|surprise me)$/i.test(request) ? "" : request;
+        setPaintingDraft((current) => ({ ...current, style })); setPaintingSetupStep("reference");
+        append("assistant", "Add a reference image path if you have one (PNG, JPEG, or WebP), or answer ‘none’ to paint from the description alone.");
+        return;
+      }
+      const subject = paintingDraft.subject ?? "";
+      const style = paintingDraft.style ?? "";
+      const referenceInput = /^(none|skip)$/i.test(request) ? "" : request;
+      setPaintingSetupStep(null); setPaintingDraft({}); setBusy(true); setProgress("Preparing painting studio...");
+      try {
+        let reference: { mimeType: string; data: string } | undefined;
+        if (referenceInput) {
+          const imagePath = resolve(root, referenceInput);
+          if (!existsSync(imagePath) || !statSync(imagePath).isFile()) throw new Error("Reference image file was not found. Enter a path inside the current workspace, or answer ‘none’.");
+          const ext = imagePath.toLowerCase().split(".").pop();
+          const mimeType = ext === "png" ? "image/png" : ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "webp" ? "image/webp" : "";
+          if (!mimeType) throw new Error("Reference images must be PNG, JPEG, or WebP.");
+          reference = { mimeType, data: readFileSync(imagePath).toString("base64") };
+        }
+        const statePath = join(root, ".sota", "database.sqlite");
+        const job = createPaintingJob(root, statePath, { subject, style, provider: configRef.current.provider, model: configRef.current.model, reference });
+        await runPaintingJob(job.manifestPath, statePath, setProgress);
+        append("assistant", `Painting complete.\n  Canvas: .sota/paintings/${job.id}/studio/out/painting.png\n  Replayable log: .sota/paintings/${job.id}/studio/paintings/lua/painting.lua`);
+      } catch (error) {
+        append("assistant", `Painting failed: ${error instanceof Error ? error.message : String(error)}`);
+      } finally { setBusy(false); setProgress(""); }
+      return;
+    }
     if (routineSetupStep) {
       if (request === "/cancel") {
         setRoutineSetupStep(null); setRoutineSetupDraft({}); append("assistant", "Routine setup cancelled."); return;
@@ -2663,8 +2723,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request === "/mode") {
       setPicker("mode");
-      setPickerIndex(Math.max(0, modeChoices.indexOf(config.mode)));
-      append("assistant", "Select mode with ↑/↓ and Enter. Research gathers evidence; Challenge runs experiments.");
+      setPickerIndex(paintingMode ? modeChoices.indexOf("painting") : Math.max(0, modeChoices.indexOf(config.mode)));
+      append("assistant", "Select mode with ↑/↓ and Enter. Research gathers evidence, Challenge runs experiments, and Painting creates simulator artwork.");
       return;
     }
     if (request === "/mode" || request === "/workbench") {
