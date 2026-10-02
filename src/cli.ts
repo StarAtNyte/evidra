@@ -149,6 +149,13 @@ import { assessCodeHealth, assessScopedCodeHealthTrend, snapshotCodeHealth, type
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
 const statePath = join(stateDirectory, "database.sqlite");
+class CampaignAgentTokenBudgetExceeded extends Error {
+  constructor(readonly usedTokens: number, readonly budgetTokens: number) {
+    super(`Aggregate agent-token budget exhausted (${usedTokens}/${budgetTokens}).`);
+    this.name = "CampaignAgentTokenBudgetExceeded";
+  }
+}
+
 const program = new Command();
 const activeCompetition = () => {
   const store = new ResearchStore(statePath);
@@ -4314,7 +4321,7 @@ challenge.command("start")
   .option("--thinking <effort>", "reasoning effort", "medium")
   .option("--lanes <count>", "maximum concurrent research lanes (non-safe teams may use bounded waves)", "3")
   .option("--lane-budget <duration>", "optional hard budget per specialist lane, e.g. 20m or 1h")
-  .option("--agent-token-budget <tokens>", "aggregate model-token ceiling for this campaign; 0 means unlimited", "0")
+  .option("--agent-token-budget <tokens>", "aggregate campaign token budget; pauses after a provider turn reaches it (0 means unlimited)", "0")
   .option("--role-token-budgets <spec>", "per-role token ceilings, e.g. validation scientist=20000,model researcher=30000")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: auto, wait, fallback, or stop", "auto")
@@ -4463,7 +4470,7 @@ research
   .option("--thinking <effort>", "reasoning effort", "medium")
   .option("--lanes <count>", "maximum concurrent research lanes (non-safe teams may use bounded waves)", "3")
   .option("--lane-budget <duration>", "optional hard budget per specialist lane, e.g. 20m or 1h")
-  .option("--agent-token-budget <tokens>", "aggregate model-token ceiling for this campaign; 0 means unlimited", "0")
+  .option("--agent-token-budget <tokens>", "aggregate campaign token budget; pauses after a provider turn reaches it (0 means unlimited)", "0")
   .option("--role-token-budgets <spec>", "per-role token ceilings, e.g. validation scientist=20000,model researcher=30000")
   .option("--autonomy <level>", "autonomous tool policy: safe, fast, or yolo", "safe")
   .option("--limit-policy <policy>", "on provider usage limit: auto, wait, fallback, or stop", "auto")
@@ -5224,11 +5231,19 @@ research
       const toolTrace = createToolTraceRecorder(tracePrefix, { onEvent: (event) => {
         try { appendFileSync(tracePath, `${JSON.stringify(event)}\n`, "utf8"); } catch { /* Partial trace persistence is best-effort. */ }
       } });
+      let agentTokenBudgetExceeded: CampaignAgentTokenBudgetExceeded | undefined;
       const recordAgentUsage = (usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningOutputTokens?: number } | undefined, provider: string, model: string, role: string, attribution?: AgentUsageAttribution): void => {
         const usageStore = new ResearchStore(statePath);
         usageStore.appendEvent("research.agent.usage", { cycle, campaignStartedAt: campaign.startedAt, role, provider, model, ...(attribution ?? {}), inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, cacheWriteInputTokens: usage?.cacheWriteInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens });
+        const agentTokenBudget = campaign.runtime.agentTokenBudget ?? 0;
+        const usedTokens = agentTokenBudget > 0 ? campaignAgentTokens(usageStore.eventsByType("research.agent.usage"), campaign.startedAt) : 0;
         usageStore.close();
+        if (agentTokenBudget > 0 && usedTokens >= agentTokenBudget) {
+          agentTokenBudgetExceeded = new CampaignAgentTokenBudgetExceeded(usedTokens, agentTokenBudget);
+          throw agentTokenBudgetExceeded;
+        }
       };
+      const assertAgentTokenBudget = (): void => { if (agentTokenBudgetExceeded) throw agentTokenBudgetExceeded; };
       let researchAttempt = 0;
       // Keep the complete cycle guidance on the first attempt. Retries replace
       // this objective with an explicit alternate-route instruction so a
@@ -5304,6 +5319,7 @@ research
             onAssistant: toolTrace.onAssistant,
             onUsage: recordAgentUsage,
           });
+          assertAgentTokenBudget();
           crossPollination = synthesizeLaneReports(laneReports);
           // Independent groups should be able to challenge one another before
           // the director commits to an experiment. Keep this bounded: the
@@ -5362,6 +5378,7 @@ research
                 onUsage: recordAgentUsage,
               },
             );
+            assertAgentTokenBudget();
             laneReports = [
               ...laneReports,
               ...peerReports.map((lane) => ({ ...lane, role: `${lane.role} peer-review` })),
@@ -5390,6 +5407,7 @@ research
             steeringStore.close();
             return messages;
           } });
+          assertAgentTokenBudget();
           recordCampaignCheckpoint(campaign, mode, cycle, "research-critic");
           criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
             provider: options.provider as "codex" | "local",
@@ -5413,6 +5431,7 @@ research
             onAssistant: toolTrace.onAssistant,
             onUsage: recordAgentUsage,
           });
+          assertAgentTokenBudget();
           semanticAudit = await runResearchSemanticAuditor(cycleObjective, decision, {
             observation,
             phaseGoal,
@@ -5440,6 +5459,7 @@ research
             onAssistant: toolTrace.onAssistant,
             onUsage: recordAgentUsage,
           }, phaseGoal?.completionCriteria.map((description, index) => ({ id: `criterion_${index + 1}`, description })) ?? []);
+          assertAgentTokenBudget();
           if (semanticAudit.verdict !== "pass") {
             decision = { ...decision, decision: "inspect", goalStatus: "active", nextAction: `${decision.nextAction} (semantic audit: ${[...semanticAudit.findings, ...semanticAudit.requiredChecks].join(", ")})` };
             const auditStore = new ResearchStore(statePath);
@@ -5460,6 +5480,18 @@ research
           }
           break;
         } catch (error) {
+          if (error instanceof CampaignAgentTokenBudgetExceeded) {
+            finishCycleTask("failed", { recoverable: true, reason: error.message });
+            const budgetStore = new ResearchStore(statePath);
+            campaign = pauseCampaign(campaign);
+            budgetStore.saveCampaign(campaign);
+            const cancelledTasks = budgetStore.cancelQueuedTasksForCampaign(campaign.startedAt);
+            budgetStore.setSchedulerState({ status: "paused", mode, currentStep: "agent-token-budget" });
+            budgetStore.appendEvent("research.agent_budget.exhausted", { cycle, campaignStartedAt: campaign.startedAt, usedTokens: error.usedTokens, budgetTokens: error.budgetTokens, cancelledTasks, action: "pause-immediately-after-agent-turn", checkpointPreserved: true });
+            budgetStore.close();
+            console.log(`Agent token budget exhausted (${error.usedTokens}/${error.budgetTokens}); paused immediately after the active agent turn. The cycle checkpoint is preserved.`);
+            break campaignLoop;
+          }
           if (isProviderUsageLimit(error)) {
             if (options.limitPolicy !== "wait" && options.limitPolicy !== "auto") throw error;
             const delay = providerRetryAfterMs(error);
