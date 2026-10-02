@@ -6,6 +6,7 @@
   "type": "module",
   "files": [
     "dist",
+    "vendor/claude-paint",
     "README.md",
     "modal_app.py",
     "modal_controller.py"

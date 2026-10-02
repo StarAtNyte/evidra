@@ -88,6 +88,9 @@ export interface ExecAgentOptions {
   threadId?: string;
   reasoningEffort?: string;
   sandbox?: CodexSandboxMode;
+  /** The painting runner uses a newly created, per-job studio and must expose
+   * simulator output to its frame watcher. Callers must opt in explicitly. */
+  allowUnisolatedDangerSandbox?: boolean;
   /** Enable Codex-native web retrieval only for explicitly research routes. */
   networkAccessEnabled?: boolean;
   webSearchMode?: CodexWebSearchMode;
@@ -532,7 +535,7 @@ export class CodexExecAgent {
     const submissionBoundary = task.role === "experiment engineer"
       ? "You may create and validate local experiment outputs and evaluator artifacts required by the task, but never submit externally or expose credentials."
       : "Do not submit anything or expose credentials.";
-    const responseInstruction = task.role === "experiment engineer"
+    const responseInstruction = task.role === "experiment engineer" || task.role === "painting artist"
       ? "Execute the task through to its required local artifact; only summarize after the artifact and verification are complete."
       : "Return a concise, evidence-oriented answer.";
     const prompt = `${task.objective}\n\nResearch context:\n${JSON.stringify(task.context, null, 2)}\n\n` +
@@ -582,7 +585,9 @@ export class CodexExecAgent {
     };
     onProcess?.(control);
     const sandboxMode = sandboxOverride ?? effectiveCodexSandbox(this.options.sandbox);
-    const isolatedWorkspace = sandboxMode === "danger-full-access" && this.options.sandbox !== "workspace-write";
+    const isolatedWorkspace = sandboxMode === "danger-full-access"
+      && this.options.sandbox !== "workspace-write"
+      && !this.options.allowUnisolatedDangerSandbox;
     const isolated = isolatedWorkspace ? createIsolatedCodexWorkspace(this.options.cwd) : undefined;
     const model = effectiveCodexModel(this.options.model);
 

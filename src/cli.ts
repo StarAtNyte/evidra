@@ -1305,8 +1305,12 @@ program.command("dashboard").alias("web")
         if (!/^[0-9a-f-]{36}$/i.test(id)) { response.writeHead(404, baseHeaders); response.end(); return; }
         try {
           const selected = workspaceFor(requestUrl.searchParams.get("workspace"));
-          const imagePath = resolve(selected.workspace, ".sota", "paintings", id, "studio", "out", "painting.png");
-          if (!imagePath.startsWith(`${resolve(selected.workspace)}/.sota/paintings/${id}/studio/out/`) || !existsSync(imagePath) || !readFileSync(imagePath).subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw new Error("Painting is not ready.");
+          const imageName = requestUrl.searchParams.get("preview") === "1" ? "painting-preview.png" : "painting.png";
+          const jobDirectory = resolve(selected.workspace, ".sota", "paintings", id.replaceAll("-", "").slice(0, 16));
+          const job = JSON.parse(readFileSync(join(jobDirectory, "job.json"), "utf8")) as { id?: unknown; workspace?: unknown };
+          if (job.id !== id || resolve(String(job.workspace)) !== selected.workspace) throw new Error("Painting job does not belong to this workspace.");
+          const imagePath = resolve(jobDirectory, "studio", "out", imageName);
+          if (!imagePath.startsWith(`${jobDirectory}/studio/out/`) || !existsSync(imagePath) || !readFileSync(imagePath).subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw new Error("Painting preview is not ready.");
           response.writeHead(200, { ...baseHeaders, "content-type": "image/png" }); response.end(readFileSync(imagePath));
         } catch { response.writeHead(404, baseHeaders); response.end(); }
         return;
@@ -1339,7 +1343,7 @@ program.command("dashboard").alias("web")
     });
   });
 
-program.command("painting-agent").argument("<manifest>").description("Run an isolated painting studio worker").action(async (manifest: string) => {
+program.command("painting-agent").argument("<manifest>").description("Run a painting studio worker").action(async (manifest: string) => {
   const manifestPath = resolve(manifest);
   const paintingsRoot = resolve(stateDirectory, "paintings");
   if (!manifestPath.startsWith(`${paintingsRoot}/`) || !existsSync(manifestPath)) throw new Error("Painting manifest is outside the current workspace.");

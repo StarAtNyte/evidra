@@ -1,4 +1,4 @@
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +9,33 @@ import type { AgentTask } from "../core/types.js";
 
 const MAX_REFERENCE_BYTES = 8 * 1024 * 1024;
 const PAINTING_TIMEOUT_MS = 45 * 60_000;
-const paintRepository = resolve(dirname(fileURLToPath(import.meta.url)), "../../claude-paint");
+const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+
+function findPaintingRepository(workspace: string): string {
+  const candidates = [
+    process.env.EVIDRA_PAINT_REPOSITORY,
+    resolve(moduleDirectory, "../../vendor/claude-paint"),
+    resolve(workspace, "claude-paint"),
+    resolve(moduleDirectory, "../../claude-paint"),
+    resolve(moduleDirectory, "../../../claude-paint"),
+    resolve(process.cwd(), "claude-paint"),
+  ].filter((value): value is string => Boolean(value));
+  let cursor = resolve(workspace);
+  while (true) {
+    candidates.push(join(cursor, "claude-paint"));
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const path = resolve(candidate);
+    if (seen.has(path)) continue;
+    seen.add(path);
+    if (existsSync(join(path, "Cargo.toml")) && existsSync(join(path, "notes", "easel_guide.md"))) return path;
+  }
+  throw new Error(`Could not find claude-paint with Cargo.toml and notes/easel_guide.md. Checked: ${[...seen].join(", ")}`);
+}
 
 export interface PaintingJobInput {
   subject: string;
@@ -58,12 +84,18 @@ export function createPaintingJob(workspace: string, statePath: string, input: P
 
   const id = randomUUID();
   const createdAt = new Date().toISOString();
-  const jobDirectory = resolve(workspace, ".sota", "paintings", id);
+  // Keep the simulator's Unix socket below the platform's path length limit.
+  const jobDirectory = resolve(workspace, ".sota", "paintings", id.replaceAll("-", "").slice(0, 16));
   const studio = join(jobDirectory, "studio");
   mkdirSync(join(studio, "bin"), { recursive: true });
   mkdirSync(join(studio, "notes"), { recursive: true });
   mkdirSync(join(studio, "paintings", "lua"), { recursive: true });
   mkdirSync(join(studio, "out", "easel", "painting"), { recursive: true });
+  // The developer/replay easel discovers its workspace root by finding this
+  // manifest above its current directory. A copied binary otherwise falls
+  // back to the claude-paint checkout it was built from.
+  mkdirSync(join(studio, "crates", "easel"), { recursive: true });
+  writeFileSync(join(studio, "crates", "easel", "Cargo.toml"), "[package]\nname = \"painting-studio-root\"\n", { mode: 0o600, flag: "wx" });
 
   let referencePath: string | undefined;
   if (input.reference) {
@@ -107,16 +139,19 @@ export async function runPaintingJob(manifestPath: string, statePath: string, on
   const job = JSON.parse(readFileSync(manifestPath, "utf8")) as PaintingJob;
   const workspace = resolve(job.workspace);
   const studio = resolve(job.studio);
-  if (!studio.startsWith(`${resolve(workspace)}/.sota/paintings/${job.id}/studio`)) throw new Error("Painting studio is outside its workspace.");
-  const easelSource = join(paintRepository, "target", "release", "easel");
-  const easelGuide = join(paintRepository, "notes", "easel_guide.md");
+  const jobsRoot = resolve(workspace, ".sota", "paintings");
+  const jobDirectory = resolve(dirname(manifestPath));
+  if (relative(jobsRoot, jobDirectory).startsWith("..") || studio !== resolve(jobDirectory, "studio")) throw new Error("Painting studio is outside its workspace.");
   const progress = (message: string): void => {
     onProgress?.(message);
     try { storeEvent(statePath, "painting.progress", { id: job.id, message: progressLine(message, 240) }); }
     catch { /* preserve the painting if a progress event cannot be recorded */ }
   };
+  let previewTimer: ReturnType<typeof setInterval> | undefined;
   try {
-    if (!existsSync(join(paintRepository, "Cargo.toml")) || !existsSync(easelGuide)) throw new Error("The claude-paint checkout or easel guide is missing. Clone it beside Evidra and retry.");
+    const paintRepository = findPaintingRepository(workspace);
+    const easelSource = join(paintRepository, "target", "release", "easel");
+    const easelGuide = join(paintRepository, "notes", "easel_guide.md");
     if (!existsSync(easelSource)) {
       progress("Building the oil-paint simulator…");
       const build = await runProcess(["cargo", "build", "--release", "-p", "easel"], paintRepository, 60 * 60_000, (_stream, chunk) => {
@@ -131,14 +166,42 @@ export async function runPaintingJob(manifestPath: string, statePath: string, on
     chmodSync(easel, 0o755);
     copyFileSync(easelGuide, join(studio, "notes", "easel_guide.md"));
 
+    const opened = await runProcess(["./bin/easel", "open", "painting"], studio, 60_000);
+    if (opened.exitCode !== 0) throw new Error(`Unable to open the easel: ${progressLine(opened.stderr || opened.stdout, 500)}`);
+    const frames = await runProcess(["./bin/easel", "frames", "on"], studio, 30_000);
+    if (frames.exitCode !== 0) throw new Error(`Unable to enable live canvas frames: ${progressLine(frames.stderr || frames.stdout, 500)}`);
+    const framesDirectory = join(studio, "out", "easel", "painting", "frames");
+    const previewPath = join(studio, "out", "painting-preview.png");
+    let latestFrame = "";
+    const syncPreview = (): void => {
+      try {
+        const frame = readdirSync(framesDirectory).filter((name) => /^\d+\.png$/.test(name)).sort((a, b) => Number(a.slice(0, -4)) - Number(b.slice(0, -4))).at(-1);
+        if (!frame || frame === latestFrame) return;
+        const framePath = join(framesDirectory, frame);
+        const signature = readFileSync(framePath).subarray(0, 8);
+        if (signature.toString("hex") !== "89504e470d0a1a0a") return;
+        copyFileSync(framePath, previewPath);
+        latestFrame = frame;
+        storeEvent(statePath, "painting.preview", {
+          id: job.id,
+          frame: Number(frame.slice(0, -4)),
+          previewPath: relative(workspace, previewPath),
+          message: `Canvas update · frame ${Number(frame.slice(0, -4))}`,
+        });
+      } catch { /* a chunk may still be writing its next frame */ }
+    };
+    previewTimer = setInterval(syncPreview, 600);
+    previewTimer.unref();
+
     progress("The easel is ready. The artist is planning the composition…");
     const task: AgentTask = {
       role: "painting artist",
       objective: [
-        "Read BRIEF.md and notes/easel_guide.md. Paint an original, finished work with the physical oil simulator bundled at ./bin/easel.",
-        "If a reference image is listed, inspect it with the image viewing tool before painting. Use it to understand composition, palette and mood; do not trace or copy the image.",
-        "Use the easel's physical brushes, pigment tubes and wet paint. Start with `./bin/easel open`, make useful successive `./bin/easel do` calls, inspect the canvas with `./bin/easel look`, and use the image viewing tool on the saved look to guide revisions. Keep each Lua chunk purposeful and small enough to recover from errors.",
-        "Write the complete, replayable painting log to paintings/lua/painting.lua. Include the required first `canvas{...}` chunk and mark later chunks as the guide specifies. Finish by replaying it with `./bin/easel run paintings/lua/painting.lua --out out/painting.png` and confirm the PNG exists.",
+        "This is an execution task. Use the shell tools to create the painting artifacts; do not return only a plan or claim success without producing them.",
+        "Read BRIEF.md and notes/easel_guide.md, and run `./bin/easel tubes --markdown` to inspect the available pigments. Paint an original finished work with the physical simulator bundled at ./bin/easel.",
+        "If a reference image is listed, inspect it before painting and use its composition, palette and mood as guidance. Create an original painting rather than tracing or copying it.",
+        "Run `./bin/easel open painting`, then paint in purposeful Lua chunks with `./bin/easel do`. Inspect the live canvas with `./bin/easel look` and revise it based on what you see. Use the physical brushes, pigment tubes, and wet paint; do not draw a flat vector or substitute another renderer.",
+        "Write the complete, replayable log to paintings/lua/painting.lua. It must start with a valid `canvas{...}` chunk and include all later marks. Finish by running `./bin/easel run paintings/lua/painting.lua --out out/painting.png`, then verify both files exist and the PNG opens as an image.",
         "Keep all changes inside this painting studio. Do not use network access, install packages, submit anything, or modify files outside this folder. Do not claim the work is complete unless the simulator wrote both the PNG and painting log.",
         "When done, reply with the painting's title, a short description, and the relative paths of the PNG and replayable log.",
       ].join("\n\n"),
@@ -148,6 +211,7 @@ export async function runPaintingJob(manifestPath: string, statePath: string, on
         subject: job.subject,
         styleOrArtistInfluence: job.style || null,
         referenceImage: job.referencePath ? relative(studio, job.referencePath) : null,
+        easelGuide: readFileSync(easelGuide, "utf8"),
         simulator: "claude-paint Rust easel; physical oil paint; isolated per-painting studio",
       },
     };
@@ -155,7 +219,12 @@ export async function runPaintingJob(manifestPath: string, statePath: string, on
       provider: job.provider,
       model: job.model,
       cwd: studio,
-      sandbox: "workspace-write",
+      // The host cannot create Codex's workspace-write bwrap namespace. Each
+      // painting already runs in a fresh, dedicated studio under .sota; use
+      // full access there so the simulator can run, while keeping all output
+      // visible to the live frame watcher.
+      sandbox: "danger-full-access",
+      allowUnisolatedDangerSandbox: true,
       networkAccessEnabled: false,
       webSearchMode: "disabled",
       reasoningEffort: "high",
@@ -165,10 +234,12 @@ export async function runPaintingJob(manifestPath: string, statePath: string, on
       maxFailedCommands: 5,
       onActivity: (_source, activity) => progress(activity),
     }).run(task, progress);
+    clearInterval(previewTimer);
+    syncPreview();
     const outputPath = join(studio, "out", "painting.png");
     const logPath = join(studio, "paintings", "lua", "painting.lua");
     if (!existsSync(outputPath) || !existsSync(logPath)) {
-      throw new Error("The artist's session ended without both the finished painting PNG and replayable Lua log.");
+      throw new Error(`The artist's session ended without both the finished painting PNG and replayable Lua log. Agent reply: ${cleanText(typeof result.output === "string" ? result.output : "(no final reply)", 900)}`);
     }
     const outputStats = statSync(outputPath);
     if (!outputStats.isFile() || outputStats.size < 100 || outputStats.size > 100 * 1024 * 1024) throw new Error("The simulator produced an invalid or oversized image.");
@@ -184,5 +255,8 @@ export async function runPaintingJob(manifestPath: string, statePath: string, on
     const message = cleanText(error instanceof Error ? error.message : String(error), 800);
     storeEvent(statePath, "painting.failed", { id: job.id, subject: job.subject, style: job.style, provider: job.provider, model: job.model, message });
     throw error;
+  } finally {
+    if (previewTimer) clearInterval(previewTimer);
+    try { await runProcess(["./bin/easel", "close"], studio, 30_000); } catch { /* the live session may not have started */ }
   }
 }
