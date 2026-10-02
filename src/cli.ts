@@ -4620,15 +4620,16 @@ challenge.command("status").action(() => {
   const store = new ResearchStore(statePath);
   const active = store.project();
   const adapter = activeCompetition();
-  const campaign = store.campaign() as { status?: string; goal?: string; budgetMinutes?: number; gpuBudgetHours?: number; autoExecuteExperiments?: boolean; currentCycle?: number; currentStep?: string; checkpointedAt?: string; runtime?: { autonomy?: string } } | undefined;
+  const campaign = store.campaign() as { status?: string; goal?: string; startedAt?: string; budgetMinutes?: number; gpuBudgetHours?: number; autoExecuteExperiments?: boolean; currentCycle?: number; currentStep?: string; checkpointedAt?: string; runtime?: { autonomy?: string; agentTokenBudget?: number } } | undefined;
   const checkpoint = readCampaignCheckpoint(campaign);
   const liveTaskIds = new Set(activeCampaignTaskIds(store.queueTasks()));
   const visibleActiveTaskIds = checkpoint?.activeTaskIds?.filter((id) => liveTaskIds.has(id)) ?? [];
   const gpuUsed = observedGpuHours(store.runAttempts(), store.experiments(), store.hypotheses());
   const gpuReserved = store.reservedComputeGpuHours();
+  const campaignTokens = campaign?.startedAt ? campaignAgentTokens(store.eventsByType("research.agent.usage"), campaign.startedAt) : null;
   const autonomous = campaign?.autoExecuteExperiments === true || campaign?.runtime?.autonomy === "fast" || campaign?.runtime?.autonomy === "yolo";
   const lease = store.liveControllerLease();
-  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}${campaign ? `\nCampaign: ${campaign.status ?? "unknown"}\nGoal: ${campaign.goal ?? "(none)"}\nBudget: ${campaign.budgetMinutes ?? "?"}\nCheckpoint: ${checkpoint ? `cycle ${checkpoint.currentCycle} · ${checkpoint.currentStep} · ${checkpoint.checkpointedAt}${visibleActiveTaskIds.length ? `\nActive work: ${visibleActiveTaskIds.join(", ")}` : ""}` : "unavailable or legacy state"}\nGPU usage: ${gpuUsed.toFixed(3)} observed + ${gpuReserved.toFixed(3)} reserved / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed - gpuReserved).toFixed(3)} available)` : ""}\nAutonomous experiments: ${autonomous ? "enabled" : "approval-gated"}` : "\nCampaign: none"}${lease ? `\nController: running (pid ${lease.pid}, step ${lease.currentStep ?? "unknown"})` : "\nController: idle"}`);
+  console.log(`Challenge: ${adapter.config.name}\nInitialized: ${active?.competitionId === adapter.id ? "yes" : "no"}${campaign ? `\nCampaign: ${campaign.status ?? "unknown"}\nGoal: ${campaign.goal ?? "(none)"}\nBudget: ${campaign.budgetMinutes ?? "?"}\nAgent tokens: ${campaignTokens ?? "unknown"}${campaign.runtime?.agentTokenBudget ? ` / ${campaign.runtime.agentTokenBudget} (${Math.max(0, campaign.runtime.agentTokenBudget - (campaignTokens ?? 0))} remaining)` : " / unlimited"}\nCheckpoint: ${checkpoint ? `cycle ${checkpoint.currentCycle} · ${checkpoint.currentStep} · ${checkpoint.checkpointedAt}${visibleActiveTaskIds.length ? `\nActive work: ${visibleActiveTaskIds.join(", ")}` : ""}` : "unavailable or legacy state"}\nGPU usage: ${gpuUsed.toFixed(3)} observed + ${gpuReserved.toFixed(3)} reserved / ${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? `${campaign.gpuBudgetHours} hours` : "unlimited"}${campaign.gpuBudgetHours && campaign.gpuBudgetHours > 0 ? ` (${Math.max(0, campaign.gpuBudgetHours - gpuUsed - gpuReserved).toFixed(3)} available)` : ""}\nAutonomous experiments: ${autonomous ? "enabled" : "approval-gated"}` : "\nCampaign: none"}${lease ? `\nController: running (pid ${lease.pid}, step ${lease.currentStep ?? "unknown"})` : "\nController: idle"}`);
   store.close();
 });
 for (const action of ["pause", "resume", "stop"] as const) {
@@ -4819,13 +4820,14 @@ research.command("status")
   .description("Show durable research campaign and three-stage progress")
   .action(() => {
     const store = new ResearchStore(statePath);
-    const campaign = store.campaign() as { goal?: string; goalSetId?: string; status?: string; budgetMinutes?: number; stopCondition?: string; currentCycle?: number; currentStep?: string; checkpointedAt?: string; triggerContext?: { eventType?: string; eventCreatedAt?: string }; runtime?: { mode?: unknown; provider?: unknown; model?: unknown; thinking?: unknown; executor?: unknown } } | undefined;
+    const campaign = store.campaign() as { goal?: string; goalSetId?: string; startedAt?: string; status?: string; budgetMinutes?: number; stopCondition?: string; currentCycle?: number; currentStep?: string; checkpointedAt?: string; triggerContext?: { eventType?: string; eventCreatedAt?: string }; runtime?: { mode?: unknown; provider?: unknown; model?: unknown; thinking?: unknown; executor?: unknown; agentTokenBudget?: number } } | undefined;
     const scheduler = store.schedulerState();
     const mode = resolveCampaignMode(campaign?.runtime?.mode, scheduler.mode);
     const goals = phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, campaign?.goalSetId);
     const active = activePhaseGoal(goals);
     const stages = researchStageProgress(goals);
     const checkpoint = readCampaignCheckpoint(campaign);
+    const campaignTokens = campaign?.startedAt ? campaignAgentTokens(store.eventsByType("research.agent.usage"), campaign.startedAt) : null;
     const liveTaskIds = new Set(activeCampaignTaskIds(store.queueTasks()));
     const visibleActiveTaskIds = checkpoint?.activeTaskIds?.filter((id) => liveTaskIds.has(id)) ?? [];
     store.close();
@@ -4833,7 +4835,7 @@ research.command("status")
       console.log("No research campaign configured. Start with: evidra research --goal \"...\"");
       return;
     }
-    console.log(`Research campaign\nStatus        ${campaign.status ?? "unknown"}\nMode          ${mode}\nGoal          ${campaign.goal ?? "(none)"}\nBudget        ${campaign.budgetMinutes ?? "?"} minutes\nScheduler     ${scheduler.status} · ${scheduler.currentStep ?? "idle"}\nActive phase  ${active?.phase ?? "none"}${active?.title ? ` · ${active.title}` : ""}\nStages        ${stages.map((stage) => `${stage.stage} ${stage.completed}/${stage.total} ${stage.status}`).join(" · ")}\nCheckpoint    ${checkpoint ? `cycle ${checkpoint.currentCycle} · ${checkpoint.currentStep} · ${checkpoint.checkpointedAt}${visibleActiveTaskIds.length ? `\nActive work  ${visibleActiveTaskIds.join(", ")}` : ""}` : "unavailable or legacy state"}${campaign.triggerContext ? `\nTriggered by  ${campaign.triggerContext.eventType ?? "event"} @ ${campaign.triggerContext.eventCreatedAt ?? "unknown"}` : ""}\nRoute         ${campaign.runtime ? `${String(campaign.runtime.provider)}/${String(campaign.runtime.model)} · thinking ${String(campaign.runtime.thinking)} · executor ${String(campaign.runtime.executor)}` : "legacy route unavailable"}\nStop          ${campaign.stopCondition ?? "(none)"}`);
+    console.log(`Research campaign\nStatus        ${campaign.status ?? "unknown"}\nMode          ${mode}\nGoal          ${campaign.goal ?? "(none)"}\nBudget        ${campaign.budgetMinutes ?? "?"} minutes\nAgent tokens  ${campaignTokens ?? "unknown"}${campaign.runtime?.agentTokenBudget ? ` / ${campaign.runtime.agentTokenBudget} (${Math.max(0, campaign.runtime.agentTokenBudget - (campaignTokens ?? 0))} remaining)` : " / unlimited"}\nScheduler     ${scheduler.status} · ${scheduler.currentStep ?? "idle"}\nActive phase  ${active?.phase ?? "none"}${active?.title ? ` · ${active.title}` : ""}\nStages        ${stages.map((stage) => `${stage.stage} ${stage.completed}/${stage.total} ${stage.status}`).join(" · ")}\nCheckpoint    ${checkpoint ? `cycle ${checkpoint.currentCycle} · ${checkpoint.currentStep} · ${checkpoint.checkpointedAt}${visibleActiveTaskIds.length ? `\nActive work  ${visibleActiveTaskIds.join(", ")}` : ""}` : "unavailable or legacy state"}${campaign.triggerContext ? `\nTriggered by  ${campaign.triggerContext.eventType ?? "event"} @ ${campaign.triggerContext.eventCreatedAt ?? "unknown"}` : ""}\nRoute         ${campaign.runtime ? `${String(campaign.runtime.provider)}/${String(campaign.runtime.model)} · thinking ${String(campaign.runtime.thinking)} · executor ${String(campaign.runtime.executor)}` : "legacy route unavailable"}\nStop          ${campaign.stopCondition ?? "(none)"}`);
   });
 for (const action of ["pause", "resume", "stop"] as const) {
   research.command(action)
