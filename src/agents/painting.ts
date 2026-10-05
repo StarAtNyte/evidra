@@ -67,6 +67,29 @@ function cleanText(value: string, max: number): string {
   return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, max);
 }
 
+function paintingStage(message: string): string {
+  if (/compil|building the oil-paint simulator/i.test(message)) return "preparing";
+  if (/planning|composition|thinking|easel is ready/i.test(message)) return "composing";
+  if (/repair|refin/i.test(message)) return "refining";
+  if (/painting canvas|paint layer|applying paint/i.test(message)) return "painting";
+  if (/replay|rendering final|^chunk \d|wrote out/i.test(message)) return "rendering";
+  return "painting";
+}
+
+function friendlyProgress(message: string): string {
+  const value = cleanText(message, 240);
+  if (/^Compiling\s/i.test(value) || /Building the oil-paint simulator/i.test(value)) return "Preparing the oil paint simulator…";
+  if (/^Finished .*release profile/i.test(value)) return "Oil paint simulator ready.";
+  if (/^Thinking\.\.\.$/i.test(value)) return "Planning the composition from your brief…";
+  if (/^Completed\.$/i.test(value)) return "Composition planned. Getting the canvas ready…";
+  if (/^Running:|^Finished:|^Command failed:/i.test(value)) {
+    if (/easel.*\blook\b/i.test(value)) return "Taking a closer look at the canvas…";
+    if (/easel.*\bdo\b/i.test(value)) return "Applying paint to the canvas…";
+    return "Preparing the next paint layer…";
+  }
+  return value;
+}
+
 function imageExtension(mimeType: string): string {
   if (mimeType === "image/png") return ".png";
   if (mimeType === "image/jpeg") return ".jpg";
@@ -143,8 +166,9 @@ export async function runPaintingJob(manifestPath: string, statePath: string, on
   const jobDirectory = resolve(dirname(manifestPath));
   if (relative(jobsRoot, jobDirectory).startsWith("..") || studio !== resolve(jobDirectory, "studio")) throw new Error("Painting studio is outside its workspace.");
   const progress = (message: string): void => {
-    onProgress?.(message);
-    try { storeEvent(statePath, "painting.progress", { id: job.id, message: progressLine(message, 240) }); }
+    const readable = friendlyProgress(message);
+    onProgress?.(readable);
+    try { storeEvent(statePath, "painting.progress", { id: job.id, message: readable, stage: paintingStage(readable) }); }
     catch { /* preserve the painting if a progress event cannot be recorded */ }
   };
   let previewTimer: ReturnType<typeof setInterval> | undefined;
@@ -154,9 +178,11 @@ export async function runPaintingJob(manifestPath: string, statePath: string, on
     const easelGuide = join(paintRepository, "notes", "easel_guide.md");
     if (!existsSync(easelSource)) {
       progress("Building the oil-paint simulator…");
+      let reportedReady = false;
       const build = await runProcess(["cargo", "build", "--release", "-p", "easel"], paintRepository, 60 * 60_000, (_stream, chunk) => {
         const compact = progressLine(chunk, 180);
-        if (/Compiling|Finished|error:/i.test(compact)) progress(compact);
+        if (/error:/i.test(compact)) progress(`Simulator setup error: ${compact}`);
+        else if (/Finished .*release profile/i.test(compact) && !reportedReady) { reportedReady = true; progress("Oil paint simulator ready."); }
       });
       if (build.exitCode !== 0) throw new Error(`The easel build failed: ${progressLine(build.stderr || build.stdout, 700)}`);
     }
@@ -199,7 +225,7 @@ export async function runPaintingJob(manifestPath: string, statePath: string, on
       objective: [
         "Design an original oil painting for the subject and style in the brief. Use the attached reference image, if any, for composition, palette, light, and mood without tracing it.",
         "Return JSON matching the schema: title, a concise summary, and 5 to 20 Lua chunks. The first chunk must start with canvas{...}. Each later chunk is executed in the same persistent easel session, so globals defined in earlier chunks remain available.",
-        "Use only the painting simulator's Lua DSL described in the guide. Use physical pigment piles, brushes, shapes, work(), and blending. Plan a complete scene with foreground, middle distance, and background where appropriate. Make marks large enough for the 2400px replay, and keep each chunk purposeful and bounded.",
+        "Use only the painting simulator's Lua DSL described in the guide. Use physical pigment piles, brushes, shapes, work(), and blending. Use a restrained hierarchy of mark sizes: short, fine strokes for edges and features; short-to-medium strokes for forms; use broad strokes only for a small number of underpainting passages. Do not use broad strokes to texture or fill the whole sky or ground. Use body, detail, and hatch handling for most passages; keep individual visible marks mostly under 35 canvas units, and reserve 80+ unit marks for occasional block-in only. Cover the intended masks evenly so the linen ground does not show through as accidental confetti or large holes. Build the scene in layers: a continuous underpainting, clearly separated silhouettes and forms, then smaller directional accents. Favor an asymmetrical, carefully composed scene with readable focal point, atmospheric depth, controlled palette, and specific details. Avoid repeated generic shapes, oversized stars, empty flat bands, and marks that obscure the subject. Use varied but deliberate brushwork, with detail and contrast concentrated near the focal point, and keep each chunk purposeful and bounded for the 2400px replay.",
         "Return Lua only inside the JSON strings. Do not include shell commands, Markdown fences, explanations, or code that accesses files, processes, networking, or operating-system APIs.",
       ].join("\n\n"),
       context: {

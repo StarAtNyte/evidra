@@ -22,7 +22,7 @@ import { planVerificationExecution } from "./core/verification-execution.js";
 import { canonicalSourceUrl, retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceFrontier, sourceSearchText, sourceIsFresh, SOURCE_SEARCH_RANKING_VERSION } from "./core/sources.js";
 import { competitionResearchClaimType, competitionResearchSources, competitionSourceRefreshMs } from "./core/competition-sources.js";
 import { extractCompetitionInsights } from "./core/competition-insights.js";
-import { dashboardHtml, dashboardSnapshot } from "./core/dashboard.js";
+import { dashboardHtml, dashboardSnapshot, paintingJobsSnapshot } from "./core/dashboard.js";
 import { workbenchHtml } from "./core/dashboard-web.js";
 import { pauseForGoalAlignment } from "./core/goal-alignment.js";
 import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "./core/literature-bench.js";
@@ -1311,8 +1311,23 @@ program.command("dashboard").alias("web")
           if (job.id !== id || resolve(String(job.workspace)) !== selected.workspace) throw new Error("Painting job does not belong to this workspace.");
           const imagePath = resolve(jobDirectory, "studio", "out", imageName);
           if (!imagePath.startsWith(`${jobDirectory}/studio/out/`) || !existsSync(imagePath) || !readFileSync(imagePath).subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw new Error("Painting preview is not ready.");
-          response.writeHead(200, { ...baseHeaders, "content-type": "image/png" }); response.end(readFileSync(imagePath));
+          response.writeHead(200, { ...baseHeaders, "cache-control": "private, max-age=31536000, immutable", "content-type": "image/png" }); response.end(readFileSync(imagePath));
         } catch { response.writeHead(404, baseHeaders); response.end(); }
+        return;
+      }
+      if (requestUrl.pathname === "/api/workbench/painting-status") {
+        let store: ResearchStore | undefined;
+        try {
+          const selected = workspaceFor(requestUrl.searchParams.get("workspace"));
+          store = new ResearchStore(selected.database);
+          response.writeHead(200, jsonHeaders);
+          response.end(JSON.stringify({ paintings: paintingJobsSnapshot(store) }));
+        } catch (error) {
+          response.writeHead(500, jsonHeaders);
+          response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+        } finally {
+          store?.close();
+        }
         return;
       }
       if (requestUrl.pathname === "/api/status") {
