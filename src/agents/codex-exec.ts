@@ -90,6 +90,8 @@ export interface ExecAgentOptions {
   sandbox?: CodexSandboxMode;
   /** Local reference images attached to the first Codex turn. */
   images?: string[];
+  /** Disable Codex-configured MCP servers for tightly scoped agent roles. */
+  disableMcpServers?: boolean;
   /** Enable Codex-native web retrieval only for explicitly research routes. */
   networkAccessEnabled?: boolean;
   webSearchMode?: CodexWebSearchMode;
@@ -550,16 +552,16 @@ export class CodexExecAgent {
 
     const loggedIn = await (this.dependencies.isLoggedIn?.() ?? codexIsLoggedInAsync());
     if (!loggedIn) throw new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription.");
-    const result = await this.runCodexSdk(prompt, onProgress, onProcess, task.outputSchema, task.role);
+    const result = await this.runCodexSdk(prompt, onProgress, onProcess, task.outputSchema, task.role, this.options.disableMcpServers ?? false);
     this.options.onUsage?.(result.usage, result.provider, result.model ?? this.options.model, task.role);
     return result;
   }
 
-  private async runCodexSdk(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void, outputSchemaText?: string, role = "conversation assistant"): Promise<AgentResult> {
-    return await this.runCodexSdkAttempt(prompt, onProgress, onProcess, outputSchemaText, role);
+  private async runCodexSdk(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void, outputSchemaText?: string, role = "conversation assistant", disableMcpServers = false): Promise<AgentResult> {
+    return await this.runCodexSdkAttempt(prompt, onProgress, onProcess, outputSchemaText, role, undefined, disableMcpServers);
   }
 
-  private async runCodexSdkAttempt(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void, outputSchemaText?: string, role = "conversation assistant", sandboxOverride?: CodexSandboxMode): Promise<AgentResult> {
+  private async runCodexSdkAttempt(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void, outputSchemaText?: string, role = "conversation assistant", sandboxOverride?: CodexSandboxMode, disableMcpServers = false): Promise<AgentResult> {
     const abort = new AbortController();
     let timedOut = false;
     let abortReason: string | undefined;
@@ -596,9 +598,14 @@ export class CodexExecAgent {
       // user's permission choice. Preserve native shell only for explicitly
       // writable modes.
       const codexConfig = sandboxMode === "read-only" ? { features: { shell_tool: false } } : undefined;
+      const codexOptions = {
+        codexPathOverride: resolveCodexBinary(),
+        ...(codexConfig ? { config: codexConfig } : {}),
+        ...(disableMcpServers ? { configOverrides: ["mcp_servers={}"] } : {}),
+      };
       const codex = this.dependencies.createClient
-        ? this.dependencies.createClient({ codexPathOverride: resolveCodexBinary(), ...(codexConfig ? { config: codexConfig } : {}) })
-        : new Codex({ codexPathOverride: resolveCodexBinary(), ...(codexConfig ? { config: codexConfig } : {}) });
+        ? this.dependencies.createClient(codexOptions)
+        : new Codex(codexOptions);
       const thread = this.options.threadId
         ? codex.resumeThread(this.options.threadId, {
           threadSource: role === "research director" ? "evidra-research" : role === "experiment engineer" ? "evidra-experiment" : "evidra-chat",
