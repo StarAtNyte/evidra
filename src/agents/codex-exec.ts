@@ -69,7 +69,12 @@ export function createIsolatedCodexWorkspace(source: string): { path: string; cl
       // sandbox.
       if (first === "node_modules") return false;
       if (first === ".venv" || name === ".whest-data") return false;
-      if (first === ".sota" && ["worktrees", "artifacts", "database.sqlite"].includes(parts[1] ?? name)) return false;
+      if (first === ".sota" && ["worktrees", "artifacts"].includes(parts[1] ?? name)) return false;
+      // SQLite creates/removes WAL and shared-memory sidecars while the live
+      // controller is writing. Copying any of these files can race with that
+      // lifecycle (ENOENT from cpSync), and they are private runtime state in
+      // any case. Exclude the whole database family, not only the main file.
+      if (first === ".sota" && /^database\.sqlite(?:-(?:shm|wal))?$/.test(name)) return false;
       if (/^\.env(?:\.|$)/i.test(name) || /(?:credentials|token|secret|private).*\.(?:json|ya?ml|toml|pem|key)$/i.test(name)) return false;
       return true;
     },

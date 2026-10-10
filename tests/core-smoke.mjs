@@ -1588,6 +1588,9 @@ test("full-access research workspaces cannot modify the controller checkout", ()
     writeFileSync(join(root, "controller.txt"), "original\n");
     mkdirSync(join(root, ".sota"));
     writeFileSync(join(root, ".sota", "private.txt"), "controller state\n");
+    writeFileSync(join(root, ".sota", "database.sqlite"), "db\n");
+    writeFileSync(join(root, ".sota", "database.sqlite-shm"), "shared memory\n");
+    writeFileSync(join(root, ".sota", "database.sqlite-wal"), "write-ahead log\n");
     mkdirSync(join(root, ".sota", "artifacts"));
     writeFileSync(join(root, ".sota", "artifacts", "large.log"), "artifact\n");
     mkdirSync(join(root, ".whest-data"));
@@ -1598,6 +1601,9 @@ test("full-access research workspaces cannot modify the controller checkout", ()
       assert.equal(readFileSync(join(root, "controller.txt"), "utf8"), "original\n");
       assert.equal(existsSync(join(isolated.path, ".sota")), true);
       assert.equal(existsSync(join(isolated.path, ".sota", "private.txt")), true);
+      assert.equal(existsSync(join(isolated.path, ".sota", "database.sqlite")), false);
+      assert.equal(existsSync(join(isolated.path, ".sota", "database.sqlite-shm")), false);
+      assert.equal(existsSync(join(isolated.path, ".sota", "database.sqlite-wal")), false);
       assert.equal(existsSync(join(isolated.path, ".sota", "artifacts")), false);
       assert.equal(existsSync(join(isolated.path, ".whest-data")), false);
     } finally {
