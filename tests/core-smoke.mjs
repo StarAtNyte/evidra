@@ -4141,6 +4141,13 @@ test("autonomous loop detects repeated unresolved decisions", () => {
   assert.equal(detectStagnation([paraphrasedDuplicate, duplicateObservation, { ...decision, decision: "run" }]).stagnant, true, "an older run must not mask two newest unchanged inspections");
   assert.equal(detectStagnation([paraphrasedDuplicate, decision]).stagnant, false, "ordinary inspection without a no-progress signal should remain exploratory");
   assert.equal(detectStagnation([{ ...duplicateObservation, phase: "implementation" }, duplicateObservation]).stagnant, false, "phase changes should reset the no-progress route");
+  const failureAuditA = { ...decision, phase: "data_audit", bottleneck: "Recent evaluator failure lacks attribution", nextAction: "Find the failed run and recover its runner identity" };
+  const failureAuditB = { ...failureAuditA, bottleneck: "Unknown run failure remains unresolved", nextAction: "Inspect evaluator logs and candidate inputs for the recent error" };
+  const failureAuditC = { ...failureAuditA, selectedHypothesis: "Reproduce a crashed estimator", bottleneck: "No estimator failure record is linked", nextAction: "Search recent run telemetry for the failure signature" };
+  assert.equal(detectStagnation([failureAuditC, failureAuditB, failureAuditA]).stagnant, true, "paraphrased failure-provenance inspections should trigger diversification");
+  const dataAudit = { ...decision, phase: "data_audit", bottleneck: "Dataset integrity is unclear", nextAction: "Check data hashes for duplicates and leakage" };
+  assert.equal(detectStagnation([dataAudit, dataAudit, dataAudit]).stagnant, true, "repeated data-integrity inspections should trigger diversification");
+  assert.equal(detectStagnation([failureAuditA, dataAudit, failureAuditB]).stagnant, false, "different audit intents should remain exploratory");
 });
 
 test("phase completion requires durable evidence instead of model status alone", () => {
