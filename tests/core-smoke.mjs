@@ -4148,6 +4148,11 @@ test("autonomous loop detects repeated unresolved decisions", () => {
   const dataAudit = { ...decision, phase: "data_audit", bottleneck: "Dataset integrity is unclear", nextAction: "Check data hashes for duplicates and leakage" };
   assert.equal(detectStagnation([dataAudit, dataAudit, dataAudit]).stagnant, true, "repeated data-integrity inspections should trigger diversification");
   assert.equal(detectStagnation([failureAuditA, dataAudit, failureAuditB]).stagnant, false, "different audit intents should remain exploratory");
+  const readinessA = { ...decision, phase: "hypothesis", bottleneck: "No candidate manifest is available", nextAction: "Inspect the experiment manifest and define its cost cap" };
+  const readinessB = { ...readinessA, bottleneck: "Candidate and control identity are missing", nextAction: "Capture paired locked-run identities and falsification criteria" };
+  const readinessC = { ...readinessA, bottleneck: "Experiment is not ready for a valid screen", nextAction: "Find the candidate source, control hash, and finite budget" };
+  assert.equal(detectStagnation([readinessC, readinessB, readinessA]).stagnant, true, "paraphrased experiment-readiness inspections should trigger diversification");
+  assert.equal(detectStagnation([readinessA, { ...readinessA, nextAction: "Search recent literature for a distinct estimator family" }, readinessB]).stagnant, false, "a materially different research action should reset the readiness loop");
 });
 
 test("phase completion requires durable evidence instead of model status alone", () => {

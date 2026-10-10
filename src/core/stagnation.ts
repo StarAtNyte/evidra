@@ -14,9 +14,14 @@ export function decisionSignature(decision: Pick<ResearchDecision, "phase" | "de
 /** Stable research intent for common inspection loops whose prose keeps changing. */
 export function decisionIntentSignature(decision: Pick<ResearchDecision, "phase" | "decision" | "bottleneck" | "selectedHypothesis" | "nextAction">): string | undefined {
   if (decision.decision !== "inspect") return undefined;
-  const text = `${decision.bottleneck} ${decision.selectedHypothesis ?? ""} ${decision.nextAction}`.toLowerCase();
+  // Key the route on the requested action, not merely the bottleneck: an
+  // agent can acknowledge the same open concern while switching to a distinct
+  // experiment or literature search, which is genuine diversification.
+  const text = `${decision.selectedHypothesis ?? ""} ${decision.nextAction}`.toLowerCase();
   const intent = /(?:fail(?:ure|ed)?|error|crash|unknown).{0,100}(?:run|evaluat|runner|estimator|input|telemetry|log)|(?:run|evaluat|runner|estimator|input|telemetry|log).{0,100}(?:fail(?:ure|ed)?|error|crash|unknown)/.test(text)
     ? "failure-provenance"
+    : /(?:experiment|candidate|control).{0,100}(?:manifest|identit|paired|locked|cost|budget|falsif|screen|run)|(?:manifest|identit|paired|locked|cost|budget|falsif|screen|run).{0,100}(?:experiment|candidate|control)|\bpaired\b.{0,100}\b(?:locked|identit|falsif)\b/.test(text)
+      ? "experiment-readiness"
     : /(?:data|dataset|parquet).{0,100}(?:audit|leak|duplicat|integrity|schema|hash)|(?:audit|leak|duplicat|integrity|schema|hash).{0,100}(?:data|dataset|parquet)/.test(text)
       ? "data-integrity"
       : undefined;
