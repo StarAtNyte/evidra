@@ -16,15 +16,19 @@ this result.
 - Archived `estimator.py` SHA-256: `89395749c6a1b3cc12ff230a770c85d0bdb26f2f68d85023dfab12bd27920315`
 - Public Mini data fingerprint: `264fa1f416d16a40821fb5e8e94f5d2da4698a201d40da999616225b38b464f1`
 - MLP ID: `80`
+- Independent MLP ID: `81`
 - Diagnostic hook: records exact-zero fractions at each unchanged `_dslices`
   call, then invokes the original method with unchanged arguments.
 - Result artifact: `.sota/runs/whest-v30-source-leg-density-80-20261010.json`
+- Independent result: `.sota/runs/whest-v30-source-leg-density-81-20261010.json`
 
-Across 30 `A_st`/`P_st` observations (15 calls, both legs), mean exact-zero
-density was `3.3833e-8`; the maximum was `3.1789e-7`. Most observed stacks had
-no exact zeros. Against a 1% structural-sparsity screen (a post-measurement
+Across 30 `A_st`/`P_st` observations (15 calls, both legs) on ID 80, mean
+exact-zero density was `3.3833e-8`; the maximum was `3.1789e-7`. An independent
+run on locked ID 81 found mean `4.1326e-8` and maximum `4.7684e-7`. Across both
+MLPs (60 observations), the pooled mean was `3.7579e-8` and the maximum
+`4.7684e-7`. Against a 1% structural-sparsity screen (a post-measurement
 interpretation threshold, not preregistered), exact-zero density is lower by
-more than six orders of magnitude.
+more than four orders of magnitude.
 
 ## Interpretation and limits
 

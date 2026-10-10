@@ -8,7 +8,7 @@ contraction proposal has structural zeros to exploit.
 from __future__ import annotations
 
 import hashlib
-import io
+import argparse
 import json
 import sys
 import tarfile
@@ -47,7 +47,13 @@ def sha256(path: Path) -> str:
 
 
 def main() -> None:
-    wanted = {80}
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ids", default="80", help="locked Mini MLP IDs, comma-separated")
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+    wanted = {int(value) for value in args.ids.split(",") if value}
+    if not wanted or any(value < 0 or value >= 100 for value in wanted):
+        parser.error("--ids must be a nonempty subset of 0..99")
     records: list[dict] = []
     original = Estimator._dslices
 
@@ -89,6 +95,7 @@ def main() -> None:
 
     if set(used) != wanted:
         raise RuntimeError(f"missing requested MLP IDs: {sorted(wanted - set(used))}")
+    exact_zero_fractions = [record["exact_zero_fraction"] for record in records]
     result = {
         "experiment": "V30 transported K3 source-leg exact-zero density diagnostic",
         "candidate": str(ARCHIVE.relative_to(ROOT)),
@@ -96,10 +103,17 @@ def main() -> None:
         "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
         "dataset_sha256": "264fa1f416d16a40821fb5e8e94f5d2da4698a201d40da999616225b38b464f1",
         "mlp_ids": sorted(used),
+        "summary": {
+            "observations": len(records),
+            "mean_exact_zero_fraction": float(np.mean(exact_zero_fractions)),
+            "max_exact_zero_fraction": float(np.max(exact_zero_fractions)),
+            "interpretation_threshold_not_preregistered": 0.01,
+            "decision": "reject exact-zero sparse-contraction direction",
+        },
         "records": records,
         "limitations": ["diagnostic only; no sparse approximation tested", "exact zeros do not measure near-zero approximation safety"],
     }
-    out = ROOT / ".sota/runs/whest-v30-source-leg-density-80-20261010.json"
+    out = args.output or ROOT / f".sota/runs/whest-v30-source-leg-density-{min(used)}-20261010.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2) + "\n")
     vals = np.asarray([r["exact_zero_fraction"] for r in records])
