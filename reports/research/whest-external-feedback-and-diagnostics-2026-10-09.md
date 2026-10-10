@@ -283,3 +283,46 @@ improves the score with zero failures. Regardless of that result, do not claim
 D8b transfer validation from this eight-network pilot. Finish the remaining
 correctly aligned D8b captures and repeat grouped CV on a materially larger,
 predeclared network set before spending another slot on this correction family.
+
+## D8b residual screen against the actual incumbent — 2026-10-10
+
+Completed the correctly aligned 15-network D8b capture (IDs 16 through 240 in
+steps of 16), and combined it with the separate ID 0 capture for 16 networks.
+Each weight-bank row was checked against both its corpus ID and SHA-256
+manifest before prediction. Whole-network four-fold CV now evaluates the
+candidate replacement against the existing V30 corrected predictions, not
+against the uncorrected base.
+
+The best of nine polynomial-ridge configurations (degree 2, alpha 100) is
+**+0.495% relative MSE vs V30**, with only 7/16 networks improving and a
+network-bootstrap 95% interval of `[-0.196%, +1.209%]`. The same model is
+`−0.526%` vs the uncorrected base. This is direct evidence that the D8b residual
+model recovers a small part of the existing correction but does not improve on
+V30; keep the family rejected for promotion. AIcrowd #335132 remains a
+user-authorized exploratory transfer submission, and its eventual grade is a
+separate check, not evidence that the 16-network CV passed.
+
+The capture also enables a targeted test of the published Phase-1 observation
+that closure error can concentrate in a small, weight-derived Lyapunov
+subspace. This has not yet been shown to transfer to Phase 2's width-1024,
+depth-16 setting. The probe computes closure gate probabilities and the
+Jacobian-product singular subspace for an independent D8b network; it will
+measure residual energy in the top six directions against random-subspace
+controls before any correction is attempted.
+
+## Final 16-network D8b fit: exploratory submission — 2026-10-10
+
+At the user's direction, packaged the final grouped-CV fit as V33, distinct
+from the earlier eight-network V32 package. The package passed
+`whest validate-package` (WhestBench 0.16.1); estimator SHA-256
+`120623f4ac36cfce368b2bae584a7994e78de67cf3a99b2a308912a3bed8018c`,
+archive SHA-256
+`781c5e249d8f9652fc9c3d39e2c91700afcfdc00f62c10352b80fc1fe3b1b3c7`.
+AIcrowd accepted it as [submission #335136](https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026/submissions/335136)
+with `Successfully enqueued 1 Job`; status was `submitted` (grade pending)
+after the 10-minute watcher. This is explicitly an exploratory test, not a
+promotion: the local whole-network CV was +0.495% relative MSE against V30.
+Keep #335034 as incumbent unless the official grade beats it with zero failed
+MLPs. No other distinct, unsubmitted candidate was found in the current
+candidate inventory; the other packaged variants are duplicates of earlier
+submissions or lack stronger evidence.
