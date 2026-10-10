@@ -1804,6 +1804,7 @@ test("typed tool failures share recovery classification with provider failures",
   assert.equal(researchToolFailureClass({ ok: false, error: "File does not exist: reports/a.md reports/b.md", trust: "controller_observation" }), undefined);
   assert.equal(researchToolFailureClass({ ok: false, error: "No space left on device", trust: "controller_observation" }), "disk");
   assert.equal(researchToolFailureClass({ ok: false, error: "Cannot create a string longer than 0x1fffffe8 characters", trust: "controller_observation" }), "memory_exhausted");
+  assert.equal(researchToolFailureClass({ ok: false, error: "Unexpected response from tool adapter", trust: "controller_observation" }), undefined);
   assert.equal(researchToolFailureClass({ ok: true, trust: "untrusted_content" }), undefined);
 });
 
@@ -7726,6 +7727,7 @@ test("native provider failures map into generic recovery routes", () => {
   assert.equal(providerActivityFailureClass("Command failed: request timed out"), "timeout");
   assert.equal(providerActivityFailureClass("Codex item error: rate limit reached"), "rate_limit");
   assert.equal(providerActivityFailureClass("Tool failed: MCP/registry (module not found)"), "dependency");
+  assert.equal(providerActivityFailureClass("Tool failed: unrecognized provider response"), undefined);
   assert.equal(providerActivityFailureClass("Reasoning: reconsidering"), undefined);
 });
 

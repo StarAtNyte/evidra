@@ -101,17 +101,21 @@ export function parsePersistedTrace(text: string, maxEvents = 256, maxBytes = MA
 }
 
 /** Map redacted native provider failures to the controller's generic recovery vocabulary. */
-export function providerActivityFailureClass(activity: string): "timeout" | "rate_limit" | "auth" | "dependency" | "unknown" | undefined {
+export function providerActivityFailureClass(activity: string): "timeout" | "rate_limit" | "auth" | "dependency" | undefined {
   if (!/^(?:Command failed|Tool failed|File change failed|Codex item error):?/i.test(activity)) return undefined;
   if (/rate limit|quota|too many requests|429/i.test(activity)) return "rate_limit";
   if (/not logged in|auth|credential|permission denied|unauthorized|forbidden/i.test(activity)) return "auth";
   if (/timeout|timed out|network|unreachable|connection|econnreset|ePIPE|502|503|504/i.test(activity)) return "timeout";
   if (/module not found|dependency|package|executable not found|command not found/i.test(activity)) return "dependency";
-  return "unknown";
+  // An unrecognized provider/tool message is not enough evidence to route the
+  // entire research campaign into infrastructure recovery. Keep it in the
+  // trajectory for diagnosis; reserve "unknown" for actual failed run
+  // records, where the evaluator invocation and artifacts can be inspected.
+  return undefined;
 }
 
 /** Map a typed research-tool failure to the same recovery vocabulary as executors. */
-export function researchToolFailureClass(result: Pick<ResearchToolResult, "ok" | "error" | "trust" | "securityWarnings">): "timeout" | "rate_limit" | "auth" | "dependency" | "sandbox" | "disk" | "memory_exhausted" | "unknown" | undefined {
+export function researchToolFailureClass(result: Pick<ResearchToolResult, "ok" | "error" | "trust" | "securityWarnings">): "timeout" | "rate_limit" | "auth" | "dependency" | "sandbox" | "disk" | "memory_exhausted" | undefined {
   if (result.ok || result.trust === "permission_boundary") return undefined;
   const text = `${result.error ?? ""} ${(result.securityWarnings ?? []).join(" ")}`;
   // A malformed/unsupported agent tool call is useful quality telemetry, but
@@ -125,7 +129,11 @@ export function researchToolFailureClass(result: Pick<ResearchToolResult, "ok" |
   if (/out of memory|memory exhausted|heap out of memory|allocation failed|cannot create a string longer|enomem|failed to allocate/i.test(text)) return "memory_exhausted";
   if (/disk full|no space left|enospc/i.test(text)) return "disk";
   if (/sandbox|loopback|bwrap|escapes the workspace|symlink/i.test(text)) return "sandbox";
-  return "unknown";
+  // Typed-tool errors are often recoverable planning/argument mistakes. They
+  // remain visible in trajectory quality and the director's immediate
+  // replanning context, but must not masquerade as failed experiment runs in
+  // campaign-level allocation.
+  return undefined;
 }
 
 /** Capture interleaved tool activity without retaining provider protocol noise or credentials. */
