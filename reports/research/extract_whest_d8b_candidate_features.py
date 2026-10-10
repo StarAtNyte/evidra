@@ -44,14 +44,20 @@ def main() -> None:
         default=1,
         help="atomically persist completed network rows at this interval (default: every row)",
     )
+    parser.add_argument("--capture-layer-gates", action="store_true",
+                        help="capture per-layer Gaussian gate probabilities for a research probe")
     args = parser.parse_args()
 
     os.environ["EVIDRA_CAPTURE_FINAL_FEATURES"] = "1"
+    if args.capture_layer_gates:
+        os.environ["EVIDRA_CAPTURE_LAYER_GATES"] = "1"
     spec = importlib.util.spec_from_file_location("evidra_v30_probe", args.candidate)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot import candidate: {args.candidate}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    if args.capture_layer_gates and not hasattr(module, "CAPTURED_LAYER_GATES"):
+        raise RuntimeError("candidate does not expose opt-in CAPTURED_LAYER_GATES")
 
     weight_bank = np.load(args.weights, mmap_mode="r", allow_pickle=False)
     with np.load(args.targets, allow_pickle=False) as data:
@@ -86,6 +92,7 @@ def main() -> None:
         )
     )
     all_features, all_base, all_targets, all_candidate, elapsed_rows, completed_indices = [], [], [], [], [], []
+    all_gate_probs = []
     if args.output.exists():
         with np.load(args.output, allow_pickle=False) as saved:
             completed_indices = np.asarray(saved["indices"], dtype=np.int64).tolist()
@@ -94,11 +101,17 @@ def main() -> None:
             all_targets = [row for row in np.asarray(saved["target"], dtype=np.float64)]
             all_candidate = [row for row in np.asarray(saved["candidate_prediction"], dtype=np.float64)]
             elapsed_rows = np.asarray(saved["elapsed_s"], dtype=np.float64).tolist()
+            if args.capture_layer_gates:
+                if "layer_gate_probs" not in saved.files:
+                    raise ValueError("cannot resume gate capture from a checkpoint without gate arrays")
+                all_gate_probs = [row for row in np.asarray(saved["layer_gate_probs"], dtype=np.float64)]
         requested_ids = set(indices[args.start : args.start + args.count].tolist())
         if len(set(completed_indices)) != len(completed_indices) or not set(completed_indices).issubset(requested_ids):
             raise ValueError("existing checkpoint has duplicate or out-of-range corpus IDs")
         lengths = {len(completed_indices), len(all_features), len(all_base), len(all_targets),
                    len(all_candidate), len(elapsed_rows)}
+        if args.capture_layer_gates:
+            lengths.add(len(all_gate_probs))
         if len(lengths) != 1:
             raise ValueError("existing checkpoint arrays have inconsistent row counts")
         print(f"resuming {len(completed_indices)}/{args.count} saved networks", flush=True)
@@ -118,6 +131,7 @@ def main() -> None:
                     candidate_prediction=np.stack(all_candidate),
                     target=np.stack(all_targets),
                     elapsed_s=np.asarray(elapsed_rows, dtype=np.float64),
+                    **({"layer_gate_probs": np.stack(all_gate_probs)} if args.capture_layer_gates else {}),
                 )
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -138,6 +152,8 @@ def main() -> None:
         weights = [fnp.asarray(w, dtype=fnp.float32) for w in weight_bank[offset]]
         mlp = MLP(width=1024, depth=16, weights=weights, seed=seed)
         module.CAPTURED_FINAL_FEATURES.clear()
+        if args.capture_layer_gates:
+            module.CAPTURED_LAYER_GATES.clear()
         t0 = time.monotonic()
         with flops.BudgetContext(flop_budget=2**41, wall_time_limit_s=120.0, quiet=True):
             prediction = estimator.predict(mlp, 2**41)
@@ -145,6 +161,11 @@ def main() -> None:
         captured = module.CAPTURED_FINAL_FEATURES
         if len(captured) != 1:
             raise RuntimeError(f"row {offset}: expected one feature capture; got {len(captured)}")
+        if args.capture_layer_gates:
+            gates = module.CAPTURED_LAYER_GATES
+            if len(gates) != len(mlp.weights):
+                raise RuntimeError(f"row {offset}: expected {len(mlp.weights)} gate vectors; got {len(gates)}")
+            all_gate_probs.append(np.stack([np.asarray(g, dtype=np.float64).reshape(-1) for g in gates]))
         features, base_prediction = captured[0]
         y = targets[offset].reshape(-1)
         pred = np.asarray(prediction, dtype=np.float64).reshape(-1)[-1024:]

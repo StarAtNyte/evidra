@@ -49,23 +49,30 @@ def main() -> None:
                 "indices": np.asarray([z["seed"]], dtype=np.int64),
                 "features": z["features"][None, ...],
                 "base_prediction": z["base_prediction"][None, ...],
+                # Legacy one-network probes stored the whole layer stack; score
+                # only the final 1024 outputs to match the grouped capture.
+                "reference_prediction": z["candidate_prediction"][-1024:][None, ...],
                 "target": z["target"][None, ...],
             })
     with np.load(args.capture, allow_pickle=False) as z:
         blocks.append({k: np.asarray(z[k]) for k in ("indices", "features", "base_prediction", "target")})
+        blocks[-1]["reference_prediction"] = np.asarray(z["candidate_prediction"])
     ids = np.concatenate([b["indices"] for b in blocks]).astype(np.int64)
     x_net = np.concatenate([b["features"] for b in blocks]).astype(np.float64)
     base = np.concatenate([b["base_prediction"] for b in blocks]).astype(np.float64)
+    reference = np.concatenate([b["reference_prediction"] for b in blocks]).astype(np.float64)
     target = np.concatenate([b["target"] for b in blocks]).astype(np.float64)
     if len(np.unique(ids)) != len(ids) or x_net.ndim != 3 or x_net.shape[1:] != (1024, 13):
         raise SystemExit("duplicate IDs or unexpected feature tensor shape")
-    if base.shape != target.shape or base.shape != x_net.shape[:2]:
-        raise SystemExit("base/target arrays do not align with per-neuron features")
+    if base.shape != target.shape or base.shape != x_net.shape[:2] or reference.shape != target.shape:
+        raise SystemExit("base/reference/target arrays do not align with per-neuron features")
 
     n = len(ids)
     if n < args.folds * 2:
         raise SystemExit(f"need at least {args.folds * 2} whole networks; found {n}")
     residual = target - base
+    reference_mse = network_mse(target, reference)
+    base_mse = network_mse(target, base)
     order = np.random.default_rng(20261010).permutation(n)
     fold_of = np.empty(n, dtype=np.int64)
     fold_of[order] = np.arange(n) % args.folds
@@ -79,6 +86,7 @@ def main() -> None:
         for alpha in args.alphas:
             per_network = np.zeros(n, dtype=np.float64)
             gains = np.zeros(n, dtype=np.float64)
+            gains_vs_uncorrected = np.zeros(n, dtype=np.float64)
             for fold in range(args.folds):
                 train_mask = fold_of != fold
                 valid_mask = ~train_mask
@@ -94,15 +102,17 @@ def main() -> None:
                 gram = a.T @ a
                 coef = np.linalg.solve(gram + alpha * np.eye(p), a.T @ (y - y_mean))
                 delta = (b @ coef + y_mean).reshape(int(valid_mask.sum()), 1024)
-                baseline_loss = network_mse(target[valid_mask], base[valid_mask])
                 corrected_loss = network_mse(target[valid_mask], base[valid_mask] + delta)
                 per_network[valid_mask] = corrected_loss
-                gains[valid_mask] = corrected_loss / baseline_loss - 1.0
+                gains[valid_mask] = corrected_loss / reference_mse[valid_mask] - 1.0
+                gains_vs_uncorrected[valid_mask] = corrected_loss / base_mse[valid_mask] - 1.0
             result = {
                 "degree": degree,
                 "alpha": alpha,
                 "feature_count": p,
                 "mean_relative_mse_change": float(gains.mean()),
+                "comparison_reference": "existing V30 full prediction on held-out network",
+                "mean_relative_mse_change_vs_uncorrected_base": float(gains_vs_uncorrected.mean()),
                 "median_relative_mse_change": float(np.median(gains)),
                 "improved_networks": int(np.sum(gains < 0)),
                 "n_networks": n,
