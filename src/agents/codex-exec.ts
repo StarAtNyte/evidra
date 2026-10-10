@@ -77,12 +77,17 @@ export function createIsolatedCodexWorkspace(source: string): { path: string; cl
   // Modified tracked files are copied from the working tree, so current source
   // edits remain visible; untracked runtime evidence remains available through
   // Evidra's bounded workspace tools rather than being cloned here.
+  let tracked: string[] | undefined;
   try {
-    const tracked = execFileSync("git", ["-C", source, "ls-files", "-z"], {
+    tracked = execFileSync("git", ["-C", source, "ls-files", "-z"], {
       encoding: "utf8",
       maxBuffer: 16 * 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"],
     }).split("\0").filter(Boolean);
+  } catch {
+    // Unit tests and embedded callers may provide a plain, non-Git directory.
+  }
+  if (tracked) {
     for (const relativePath of tracked) {
       if (excluded(relativePath)) continue;
       const from = join(source, relativePath);
@@ -95,7 +100,7 @@ export function createIsolatedCodexWorkspace(source: string): { path: string; cl
       mkdirSync(dirname(to), { recursive: true });
       copyFileSync(from, to);
     }
-  } catch {
+  } else {
     // Unit tests and embedded callers may provide a plain, non-Git directory.
     // Keep that supported with the same exclusions and without copying links.
     cpSync(source, path, {
