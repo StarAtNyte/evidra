@@ -33,16 +33,25 @@ Maintain two distinct records:
 
 1. **Score reference:** #335034 / V30, with its public-Mini-fitted residual
    calibration clearly disclosed.
-2. **Target-clean research baseline:** not yet established by this audit. Audit
-   and measure the analytic parent without target-fitted residual coefficients
-   before treating it as the clean control.
+2. **Target-clean local research baseline:** V29, estimator SHA-256
+   `86d9ca9b28e6fe2b6c74750a0b6ae4bba4c14f742ddc3f5f56bc7fb4ec9d8e27`,
+   with `V26_STRASSEN=4`. The integrity report records 100/100 rows, zero
+   failures, adjusted score `5.898624886930093e-9`, and raw MSE
+   `2.228543495519375e-8`. Source and coefficient provenance were inspected:
+   `V17_NO_CORR` defaults to `1`, disabling `CORR_BETA`, the separately
+   calibrated online mean-correction rider. The shipped `LAM` fit relates internal
+   propagated cumulant/covariance states; `REF_R` and `BETA` are derived from
+   internal state ratios; static term coefficients are exact Wick/Hermite
+   coefficients. These do not consume reference target values. Use this V29
+   artifact as the target-clean paired local comparator.
 
-This finding resolves the provenance question for the V30 residual component;
-it does not establish whether the competition's formal rules permit fitting on
-public Mini targets. That rule question must be answered from the current
-official rules or organizers. Regardless, this campaign's stricter target-free
-deployment constraint excludes those fitted residual coefficients. No claim is
-made here that the organizer has ruled on this specific method.
+This resolves the V30 residual provenance and identifies a separate
+target-clean local comparator. It does not establish whether the competition's
+formal rules permit fitting on public Mini targets. That rule question must be
+answered from the current official rules or organizers. Regardless, this
+campaign's stricter target-free deployment constraint excludes the V30-fitted
+residual coefficients. No claim is made here that the organizer has ruled on
+this specific method.
 
 The data-integrity reports establish checksums and row identity for the public
 Mini release, but neither checksum integrity nor a public leaderboard grade
@@ -56,3 +65,6 @@ this report.
 - `reports/research/whest-data-audit-repeat-2026-10-10.md`
 - `.sota/research/whest-p2-cumulant-k3/harness/confirm_v29_residual.py`
 - `.sota/candidates/whest-v30-cubic-residual-strassen8-20261009/ATTRIBUTION.md`
+- `reports/research/whest-v29-artifact-integrity-2026-09-30.md`
+- `.sota/research/whest-p2-cumulant-k3/estimators/estimator_v29.py`
+- `.sota/research/whest-p2-cumulant-k3/docs/claims_evidence.md`
