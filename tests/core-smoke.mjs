@@ -1586,6 +1586,8 @@ test("full-access research workspaces cannot modify the controller checkout", ()
   const root = mkdtempSync(join(tmpdir(), "evidra-codex-isolation-"));
   try {
     writeFileSync(join(root, "controller.txt"), "original\n");
+    execFileSync("git", ["init", "--quiet"], { cwd: root });
+    execFileSync("git", ["add", "controller.txt"], { cwd: root });
     mkdirSync(join(root, ".sota"));
     writeFileSync(join(root, ".sota", "private.txt"), "controller state\n");
     writeFileSync(join(root, ".sota", "database.sqlite"), "db\n");
@@ -1595,17 +1597,15 @@ test("full-access research workspaces cannot modify the controller checkout", ()
     writeFileSync(join(root, ".sota", "artifacts", "large.log"), "artifact\n");
     mkdirSync(join(root, ".whest-data"));
     writeFileSync(join(root, ".whest-data", "weights.bin"), "dataset\n");
+    mkdirSync(join(root, "unrelated-large-project"));
+    writeFileSync(join(root, "unrelated-large-project", "payload.bin"), "untracked\n");
     const isolated = createIsolatedCodexWorkspace(root);
     try {
       writeFileSync(join(isolated.path, "controller.txt"), "provider edit\n");
       assert.equal(readFileSync(join(root, "controller.txt"), "utf8"), "original\n");
-      assert.equal(existsSync(join(isolated.path, ".sota")), true);
-      assert.equal(existsSync(join(isolated.path, ".sota", "private.txt")), true);
-      assert.equal(existsSync(join(isolated.path, ".sota", "database.sqlite")), false);
-      assert.equal(existsSync(join(isolated.path, ".sota", "database.sqlite-shm")), false);
-      assert.equal(existsSync(join(isolated.path, ".sota", "database.sqlite-wal")), false);
-      assert.equal(existsSync(join(isolated.path, ".sota", "artifacts")), false);
+      assert.equal(existsSync(join(isolated.path, ".sota")), false);
       assert.equal(existsSync(join(isolated.path, ".whest-data")), false);
+      assert.equal(existsSync(join(isolated.path, "unrelated-large-project")), false);
     } finally {
       isolated.cleanup();
     }

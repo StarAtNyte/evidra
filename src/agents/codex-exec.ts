@@ -1,6 +1,6 @@
-import { cpSync, mkdtempSync, rmSync } from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
-import { basename, join, relative } from "node:path";
+import { copyFileSync, cpSync, lstatSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { dirname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { Codex, type Input } from "@openai/codex-sdk";
 import type { AgentResult, AgentTask } from "../core/types.js";
@@ -49,6 +49,8 @@ export function researchSandboxMode(): CodexSandboxMode {
   return process.env.EVIDRA_CODEX_ISOLATED_RESEARCH === "1" ? "danger-full-access" : "read-only";
 }
 
+const FALLBACK_EXCLUDED_DIRS = new Set(["data", "datasets", "cache", ".cache", "models", "checkpoints", "outputs", "artifacts", "vendor", "target", "build"]);
+
 /**
  * A full-access provider sandbox must never share Evidra's controller checkout.
  * This is intentionally a copy, rather than a Git worktree: research agents are
@@ -57,28 +59,63 @@ export function researchSandboxMode(): CodexSandboxMode {
  */
 export function createIsolatedCodexWorkspace(source: string): { path: string; cleanup: () => void } {
   const path = mkdtempSync(join(tmpdir(), "evidra-codex-research-"));
-  cpSync(source, path, {
-    recursive: true,
-    filter: (entry) => {
-      const parts = relative(source, entry).split("/");
-      const first = parts[0] ?? basename(entry);
-      const name = basename(entry);
-      // Keep .git and .sota so the provider can inspect the same project
-      // context as the controller. Never copy dependencies, generated
-      // experiment worktrees, or common credential files into the provider
-      // sandbox.
-      if (first === "node_modules") return false;
-      if (first === ".venv" || name === ".whest-data") return false;
-      if (first === ".sota" && ["worktrees", "artifacts"].includes(parts[1] ?? name)) return false;
-      // SQLite creates/removes WAL and shared-memory sidecars while the live
-      // controller is writing. Copying any of these files can race with that
-      // lifecycle (ENOENT from cpSync), and they are private runtime state in
-      // any case. Exclude the whole database family, not only the main file.
-      if (first === ".sota" && /^database\.sqlite(?:-(?:shm|wal))?$/.test(name)) return false;
-      if (/^\.env(?:\.|$)/i.test(name) || /(?:credentials|token|secret|private).*\.(?:json|ya?ml|toml|pem|key)$/i.test(name)) return false;
-      return true;
-    },
-  });
+  const excluded = (relativePath: string): boolean => {
+    const parts = relativePath.split(/[\\/]+/);
+    const first = parts[0] ?? "";
+    const name = parts.at(-1) ?? "";
+    // This disposable copy is for provider-native code and documentation
+    // inspection, not a clone of runtime state. The controller's bounded
+    // tools expose experiment artifacts and repository metadata separately.
+    if (first === ".git" || first === ".sota" || first === "node_modules") return true;
+    if (parts.includes(".venv") || parts.includes(".whest-data")) return true;
+    if (/^\.env(?:\.|$)/i.test(name) || /(?:credentials|token|secret|private).*\.(?:json|ya?ml|toml|pem|key)$/i.test(name)) return true;
+    return false;
+  };
+  // Copy only files known to Git. A research workspace can contain unrelated
+  // nested repositories, datasets, model caches, and multi-GB ignored output;
+  // a recursive copy turns each Codex turn into a full backup of all of them.
+  // Modified tracked files are copied from the working tree, so current source
+  // edits remain visible; untracked runtime evidence remains available through
+  // Evidra's bounded workspace tools rather than being cloned here.
+  try {
+    const tracked = execFileSync("git", ["-C", source, "ls-files", "-z"], {
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).split("\0").filter(Boolean);
+    for (const relativePath of tracked) {
+      if (excluded(relativePath)) continue;
+      const from = join(source, relativePath);
+      try {
+        if (!lstatSync(from).isFile()) continue; // never follow repository symlinks
+      } catch {
+        continue; // a tracked file may disappear during an active edit
+      }
+      const to = join(path, relativePath);
+      mkdirSync(dirname(to), { recursive: true });
+      copyFileSync(from, to);
+    }
+  } catch {
+    // Unit tests and embedded callers may provide a plain, non-Git directory.
+    // Keep that supported with the same exclusions and without copying links.
+    cpSync(source, path, {
+      recursive: true,
+      filter: (entry) => {
+        const relativePath = relative(source, entry);
+        if (!relativePath) return true;
+        if (excluded(relativePath)) return false;
+        try {
+          const info = lstatSync(entry);
+          if (info.isDirectory()) {
+            const name = relativePath.split(/[\\/]+/).at(-1) ?? "";
+            return !FALLBACK_EXCLUDED_DIRS.has(name);
+          }
+          return info.isFile() && info.size <= 16 * 1024 * 1024;
+        }
+        catch { return false; }
+      },
+    });
+  }
   return {
     path,
     cleanup: () => rmSync(path, { recursive: true, force: true }),
