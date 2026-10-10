@@ -302,13 +302,9 @@ V30; keep the family rejected for promotion. AIcrowd #335132 remains a
 user-authorized exploratory transfer submission, and its eventual grade is a
 separate check, not evidence that the 16-network CV passed.
 
-The capture also enables a targeted test of the published Phase-1 observation
-that closure error can concentrate in a small, weight-derived Lyapunov
-subspace. This has not yet been shown to transfer to Phase 2's width-1024,
-depth-16 setting. The probe computes closure gate probabilities and the
-Jacobian-product singular subspace for an independent D8b network; it will
-measure residual energy in the top six directions against random-subspace
-controls before any correction is attempted.
+The capture enabled a targeted test of whether closure error concentrates in
+a weight-derived Lyapunov subspace under Phase 2's width-1024, depth-16 setting;
+see the result below.
 
 ## Final 16-network D8b fit: exploratory submission — 2026-10-10
 
@@ -326,3 +322,70 @@ Keep #335034 as incumbent unless the official grade beats it with zero failed
 MLPs. No other distinct, unsubmitted candidate was found in the current
 candidate inventory; the other packaged variants are duplicates of earlier
 submissions or lack stronger evidence.
+
+## Phase-2 Lyapunov-subspace transfer and correction screen — 2026-10-10
+
+Using the manifest-verified independent D8b corpus networks at IDs 0, 16, ...,
+240 (16 whole networks), captured V30's closure gate probabilities and formed
+the full product of gated Jacobians. For every network, the exact top-six
+left-singular subspace captured more final residual energy than 64 random
+six-dimensional subspaces: mean **4.96%** (median 4.30%) versus random mean
+**0.568%**, an 8.7x ratio. A randomized matrix-free range finder
+(oversampling 8, two power iterations) approximated the subspace with median
+minimum principal cosine 0.962 (minimum 0.861); its mean projected residual
+energy was 5.25%. This supports transfer of the geometric concentration and
+shows a deployable low-rank approximation is computationally plausible.
+
+The target-free correction direction `d = U Uᵀ prediction` did not transfer
+strongly enough. Fitting one scalar shrinkage on the other 15 networks in each
+fold yielded only **0.103% mean leave-one-network-out MSE reduction** (11/16
+networks improved; network-bootstrap 95% interval `[-0.377%, +0.535%]`). The
+randomized subspace version was similarly weak at 0.090%. A nested ridge model
+predicting per-network shrinkage from target-free feature summaries regressed
+by 0.659% on average. Thus the subspace is real but the current observable does
+not identify its residual coordinates; no candidate was built or submitted.
+
+Reproduce with `reports/research/probe_whest_lyapunov_subspace.py`; capture
+artifact `.sota/data/whest-d8b-probe/capture-lyapunov-id000-240-full.npz`,
+weight manifest `.sota/data/whest-d8b-probe/weights-idx16-stride16.manifest.json`,
+and per-network JSONs `.sota/runs/whest-lyapunov-full-id*-20261010.json`.
+Next work should derive an observable for the signed coefficients inside this
+subspace, not spend more compute tuning the scalar projection shrinkage.
+
+## Projected-feature ridge follow-up — 2026-10-10
+
+Tested whether the 13 target-free V30 final-feature directions, projected into
+the rank-6 closure-gated Lyapunov subspace, jointly identify its residual
+coordinates. The test uses only saved per-network Gram matrices and feature /
+residual cross-products; each held-out network is excluded from the fit, and
+ridge strength is selected by an inner leave-one-network-out loop. The inputs
+are the manifest-verified D8b IDs `0, 16, ..., 240` (16 whole networks).
+
+Nested grouped LOO yields **+0.0348% mean relative MSE reduction**, with 11/16
+networks improving. A 100,000-draw network bootstrap gives a 95% interval of
+`[-0.277%, +0.306%]` and only 60.9% positive resamples. The median gain is
+larger (+0.291%) because a few networks regress by 0.76–1.32%. This remains
+statistically indistinguishable from no gain and far below a useful score move;
+reject it for candidate promotion or submission. Reproduce with
+`reports/research/evaluate_whest_lyapunov_feature_ridge.py`; result:
+`.sota/runs/whest-lyapunov-feature-ridge-nested-loo-20261010.json`.
+
+### Research implication: decouple the scored terminal objective
+
+An independent public-forensics post reports that strong Phase-1 estimators
+often had very poor intermediate-layer estimates but much better scored-layer
+MSE, including one estimator with about a 113x L30-to-L31 error drop. This is
+evidence that the scored terminal layer can behave differently from errors
+measured along the propagated trajectory; it is not an explanation of the
+method and must not be treated as a reusable technique by itself. Source:
+[AIcrowd public-submission analysis](https://discourse.aicrowd.com/t/current-top-9-notes-on-phase-1-board-score-variance-the-truth-energy-ladder-and-four-corrections-to-published-figures/18164).
+
+The first terminal-only correction trials in this repository were small and
+mostly weak, and the earlier V29 terminal-ridge submission lost externally on
+the compute multiplier. Therefore the actionable question is not “fit another
+small output ridge,” but whether a separately derived terminal estimator can
+compute the final-layer mean directly from target-free input/weight structure,
+without paying for a full hidden-layer output trajectory. Any such approach
+must be tested against the frozen current incumbent with the official score,
+full-Mini zero-failure gate, and external grade; the forensic observation alone
+does not justify a candidate.
