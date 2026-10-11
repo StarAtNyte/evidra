@@ -58,6 +58,26 @@ external evaluator.
 
 ## Latest repository state
 
+- The 2026-10-11 production audit maps the user's harness-design paper to actual
+  Evidra boundaries and keeps the remaining gates explicit in
+  [`production-readiness.md`](production-readiness.md). Execution now waits for
+  process-group cleanup, preserves timeout/interruption/early-stop outcomes
+  through graceful zero exits, drains shutdown evidence, and cleans up callback
+  failures. Captured Unicode logs obey the byte cap. Context packing accounts
+  for serialized JSON and bounded report metadata; current steering, phase
+  state, and recent failure/trust metadata survive bulk history. Provider
+  prompts use the counted compact representation, and lane directives enter
+  packing before provider submission. Early-stopping telemetry now retains a
+  bounded line and constant progress state, rejects oversized suffixes and
+  nonfinite/blank numbers, and rebuilds patience after stale or corrected steps.
+  Its declared policy/reference are immutable launch snapshots, and ordered
+  decisions match the batch rule in both directions. The final local tree
+  passed 687 tests on both Node 22.19.0 and Node 24.21.0, nine safety probes,
+  typechecking/build, and a fresh production-only package install with event
+  verification and an independently reopened backup. Full provider token
+  budgets, live backend recovery, soak/restart evidence, hosted CI, and matched
+  external runs remain open.
+
 - The Paperclip-inspired campaign organization projection is now durable and shared across the dashboard, CLI, and TUI. `evidra organization --json` and `/organization` expose the mission, active campaign phases, reporting lines, queue ownership, specialist directives, and bounded accountability signals. The projection respects deterministic campaign/mode goal-set identity: foreign phases are not presented as current work, and live work is separately classified as ownerless, unscoped, mis-scoped, or unbudgeted. Mis-scoped work is critical operator attention; ordinary missing ownership or task budgets remain warnings so intentionally scheduler-owned work is not blocked.
 - Custom/external roles now have an explicit admission boundary. Built-in roles are approved by their durable contract; dynamic roles appear as `review` and cannot start an external running heartbeat until an operator approves them with `evidra agents approve <role>` or `/agents approve <role>`. Revocation is durable and auditable via `evidra agents revoke <role>`.
 - Queue bridges enforce the same boundary: `/tasks/claim` requires a fresh accepted heartbeat for an admitted role, so a worker token alone cannot silently acquire research tickets.

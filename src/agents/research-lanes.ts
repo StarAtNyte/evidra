@@ -1301,7 +1301,6 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
       let modelStartedAt = 0;
       let modelBudgetExhausted = false;
       try {
-        const bounded = boundResearchContext({ ...context, laneToolResults: toolResults });
         modelStartedAt = Date.now();
         const review = options.roleReviews?.find((candidate) => candidate.role === role);
         consumeDirectives();
@@ -1314,7 +1313,8 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
           guidanceStore.appendEvent("research.role_guidance.loaded", { role, paths: roleGuidance.paths, contentHash: roleGuidance.contentHash, truncated: roleGuidance.truncated });
           guidanceStore.close();
         }
-        const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective, review, directives.slice(-4), roleGuidance, persistedContract ? agentRoleContract(role, persistedContract) : undefined), context: { ...bounded.context, ...(directives.length ? { agentDirectives: directives.slice(-4) } : {}) }, outputSchema: RESEARCH_LANE_OUTPUT_SCHEMA }, {
+        const bounded = boundResearchContext({ ...context, laneToolResults: toolResults, ...(directives.length ? { agentDirectives: directives.slice(-4) } : {}) });
+        const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective, review, directives.slice(-4), roleGuidance, persistedContract ? agentRoleContract(role, persistedContract) : undefined), context: bounded.context, outputSchema: RESEARCH_LANE_OUTPUT_SCHEMA }, {
           provider,
           model,
           ...(provider === "codex" && model === laneRoute.model && resumableThreadId ? { threadId: resumableThreadId } : {}),

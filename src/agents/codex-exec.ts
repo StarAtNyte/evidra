@@ -7,6 +7,7 @@ import type { AgentResult, AgentTask } from "../core/types.js";
 import type { ProcessControl } from "../core/process.js";
 import { redactSecrets } from "../core/redaction.js";
 import { evidraVersion } from "../version.js";
+import { serializeResearchContext } from "../core/context-budget.js";
 
 export type AgentProvider = "codex" | "local";
 
@@ -586,7 +587,7 @@ export class CodexExecAgent {
     const responseInstruction = task.role === "experiment engineer"
       ? "Execute the task through to its required local artifact; only summarize after the artifact and verification are complete."
       : "Return a concise, evidence-oriented answer.";
-    const prompt = `${task.objective}\n\nResearch context:\n${JSON.stringify(task.context, null, 2)}\n\n` +
+    const prompt = `${task.objective}\n\nResearch context:\n${serializeResearchContext(task.context)}\n\n` +
       "You are Evidra, the research and experimentation workbench assistant. The selected provider is only an implementation detail; never introduce yourself as Codex, OpenAI, Ollama, or another underlying model. " +
       (task.role === "research director" ? "Act as Evidra's research director. " : "Act as Evidra's conversational assistant. ") +
       responseInstruction + " " +

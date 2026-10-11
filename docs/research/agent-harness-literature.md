@@ -576,6 +576,14 @@ long strings, and records dropped/truncated sections in `contextBudget`. This
 prevents long-lived campaigns from turning accumulated memory into uncontrolled
 prompt growth while preserving provenance about what the model actually saw.
 
+The serialized context ceiling now includes JSON escaping and bounded audit
+metadata, and provider prompts use that same compact JSON. Current steering,
+phase state, and recent tool failures take precedence over older material;
+shortened tool evidence retains its outcome and trust metadata. See the
+[production readiness audit](../production-readiness.md) for the component
+mapping to the user's harness-design paper and the remaining token-budget,
+transcript-policy, backend, and external-evaluation gates.
+
 The same principle now applies below the benchmark layer: recent executor
 failure classes are fed directly into the next allocation. An invalid metric or
 corrupt artifact prioritizes verifier repair, a missing-data failure prioritizes

@@ -213,11 +213,11 @@ import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock,
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { codexIsLoggedInAsync, createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexModel, effectiveCodexSandbox, isProviderFallbackEligible, isProviderUsageLimit, listCodexModels, MAX_PROVIDER_RESET_WAIT_MS, providerRetryAfterMs, queueCodexMessage, researchSandboxMode, resolveCodexBinary, resolveCodexModel, shouldUseLocalFallback } from "../dist/agents/codex-exec.js";
 import { analyzeHarnessComponentFailures, assessHarnessChangePresence, evaluateHarnessChange, inventoryHarnessComponents, parseHarnessChangeContract, planHarnessInterventions } from "../dist/core/harness-evolution.js";
-import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
+import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, MAX_PROGRESS_LINE_CHARS, parseLearningCurve } from "../dist/core/early-stopping.js";
 import { assessStopPolicy, betaPosteriorTail } from "../dist/core/stop-policy.js";
 import { classifyVerifier, verifierKind } from "../dist/core/formal-verification.js";
 import { detectRouteDrift } from "../dist/core/drift-detection.js";
-import { boundResearchContext } from "../dist/core/context-budget.js";
+import { boundResearchContext, serializeResearchContext } from "../dist/core/context-budget.js";
 import { workspaceObservationEvidence } from "../dist/core/observation-evidence.js";
 
 test("runtime version is sourced from package metadata", () => {
@@ -235,6 +235,85 @@ test("research context packing preserves priority and records truncation", () =>
   assert.ok(packed.report.usedChars <= packed.report.maxChars + 100);
   assert.ok(packed.report.truncated.length > 0 || packed.report.dropped.length > 0);
   assert.ok(packed.context.contextBudget);
+});
+
+test("context budgets count escaped JSON and the serialized audit report", () => {
+  const packed = boundResearchContext({
+    observation: { output: '\u0000"\\'.repeat(4_000) },
+    phaseGoal: { phase: "validation", objective: "preserve the evaluation contract" },
+  }, 4_000);
+  assert.ok(JSON.stringify(packed.context).length <= 4_000);
+  assert.equal(packed.report.usedChars, JSON.stringify(packed.context).length);
+  assert.equal(packed.context.phaseGoal.objective, "preserve the evaluation contract");
+});
+
+test("context diagnostics remain bounded when many long section names are dropped", () => {
+  const input = { phaseGoal: { phase: "validation" } };
+  for (let index = 0; index < 500; index += 1) input[`history-${index}-${"x".repeat(150)}`] = "old evidence ".repeat(100);
+  const packed = boundResearchContext(input, 4_000);
+  assert.ok(JSON.stringify(packed.context).length <= 4_000);
+  assert.equal(packed.report.usedChars, JSON.stringify(packed.context).length);
+  assert.ok(packed.report.dropped.length > 100, "the controller retains complete diagnostics");
+  assert.equal(packed.context.contextBudget.droppedCount, packed.report.dropped.length);
+});
+
+test("invalid context ceilings use the finite default instead of disabling bounds", () => {
+  for (const ceiling of [NaN, Infinity, -Infinity]) {
+    const packed = boundResearchContext({ observation: "x".repeat(100_000) }, ceiling);
+    assert.equal(packed.report.maxChars, 48_000);
+    assert.ok(JSON.stringify(packed.context).length <= 48_000);
+  }
+});
+
+test("current operator steering survives bulky observations and historical memory", () => {
+  const steering = ["Stop expanding the search. Verify the candidate against the locked evaluator."];
+  const packed = boundResearchContext({
+    operatorSteering: steering,
+    toolInstruction: "A tool failed. Change the route; do not repeat the failed action.",
+    observation: { output: "inventory ".repeat(10_000) },
+    phaseGoal: { phase: "validation", objective: "verify candidate" },
+    researchMemory: { claims: ["history ".repeat(10_000)] },
+  }, 4_000);
+  assert.deepEqual(packed.context.operatorSteering, steering);
+  assert.match(packed.context.toolInstruction, /Change the route/);
+  assert.equal(packed.context.phaseGoal.objective, "verify candidate");
+  assert.ok(JSON.stringify(packed.context).length <= 4_000);
+});
+
+test("context packing keeps recent failure status and marks shortened tool evidence", () => {
+  const latest = { output: { text: "decisive failure detail ".repeat(1_000), truncated: false }, ok: false, name: "workspace.read", trust: "untrusted_content" };
+  const packed = boundResearchContext({ toolResults: [
+    ...Array.from({ length: 100 }, (_, index) => ({ name: `old-${index}`, output: "old chatter ".repeat(100) })),
+    latest,
+  ] }, 4_000);
+  const observed = packed.context.toolResults.at(-1);
+  assert.equal(observed.name, "workspace.read");
+  assert.equal(observed.ok, false);
+  assert.equal(observed.trust, "untrusted_content");
+  assert.equal(observed.output.truncated, true);
+  assert.match(observed.output.text, /decisive failure detail/);
+  assert.equal(latest.output.truncated, false, "packing must not mutate durable evidence");
+  assert.ok(JSON.stringify(packed.context).length <= 4_000);
+});
+
+test("context packing accounts for nested punctuation and prototype-shaped section names", () => {
+  const input = JSON.parse('{"__proto__":{"status":"untrusted"},"constructor":"workspace-data","toString":"workspace-data"}');
+  const packed = boundResearchContext(input, 4_000);
+  assert.equal(Object.getPrototypeOf(packed.context), Object.prototype);
+  assert.equal(Object.hasOwn(packed.context, "__proto__"), true);
+  assert.equal(packed.context.toString, "workspace-data");
+  for (const character of ['"', '\\', '\u0000', '🧪', '\n']) {
+    for (const budget of [4_000, 8_000, 16_000]) {
+      const nested = boundResearchContext({
+        phaseGoal: { phase: "evaluation", objective: "retain the locked test" },
+        toolResults: Array.from({ length: 80 }, (_, index) => ({ name: "workspace.read", ok: index % 2 === 0, output: { path: `result-${index}.md`, text: character.repeat(600), truncated: false } })),
+        laneToolResults: [0, 1, 2].map((index) => ({ role: `lane-${index}`, observations: [{ tool: "workspace.read", output: { text: character.repeat(2_000) } }] })),
+      }, budget);
+      assert.ok(serializeResearchContext(nested.context).length <= budget, `serialized payload exceeds ${budget} for ${JSON.stringify(character)}`);
+      assert.equal(nested.report.usedChars, serializeResearchContext(nested.context).length);
+      assert.equal(nested.context.phaseGoal.objective, "retain the locked test");
+    }
+  }
 });
 
 test("current authoritative evidence survives context packing ahead of learned-memory summaries", () => {
@@ -7749,6 +7828,29 @@ test("Codex failure events preserve nested provider diagnostics", () => {
   assert.equal(codexEventErrorMessage({ type: "turn.failed" }), "Codex turn failed.");
 });
 
+test("Codex provider prompts use the same serialized context counted by the packer", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-context-provider-"));
+  let providerPrompt;
+  try {
+    const packed = boundResearchContext({ observation: { output: '\u0000"\\'.repeat(3_000) }, phaseGoal: { phase: "validation" } }, 4_000);
+    const agent = new CodexExecAgent({ provider: "codex", model: "gpt-test", cwd: root }, {
+      isLoggedIn: async () => true,
+      createClient: () => ({ startThread: () => ({ runStreamed: async (prompt) => {
+        providerPrompt = prompt;
+        return { events: (async function* () {
+          yield { type: "item.completed", item: { type: "agent_message", text: "checked" } };
+          yield { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } };
+        })() };
+      } }) }),
+    });
+    await agent.run({ role: "research director", objective: "verify", context: packed.context });
+    const sent = providerPrompt.split("Research context:\n")[1].split("\n\n")[0];
+    assert.equal(sent, serializeResearchContext(packed.context));
+    assert.equal(sent.length, packed.report.usedChars);
+    assert.ok(sent.length <= 4_000);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("Codex adapter accepts only a completed injected stream", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-codex-stream-"));
   let threadOptions;
@@ -9320,6 +9422,82 @@ test("SIGINT marks the process result interrupted and kills its detached group",
   assert.match(result.stderr, /Interrupted by Evidra/);
 });
 
+test("explicit cancellation cannot become success through a graceful zero exit", async () => {
+  let control;
+  const script = "process.on('SIGTERM', () => { console.log('accuracy=0.99'); process.exit(0); }); console.log('ready'); setInterval(() => {}, 1000);";
+  const result = await runProcess([process.execPath, "-e", script], process.cwd(), 5_000,
+    (_stream, chunk) => { if (chunk.includes("ready")) control.terminate(); },
+    (value) => { control = value; });
+  assert.equal(result.exitCode, 130);
+  assert.match(result.stderr, /Interrupted by Evidra/);
+  assert.match(result.stdout, /accuracy=0.99/);
+});
+
+test("timeouts drain graceful shutdown output without accepting a zero exit", async () => {
+  const script = "process.on('SIGTERM', () => { console.log('shutdown-evidence'); process.exit(0); }); console.log('ready'); setInterval(() => {}, 1000);";
+  const result = await runProcess([process.execPath, "-e", script], process.cwd(), 500);
+  assert.equal(result.exitCode, 124);
+  assert.match(result.stderr, /Timed out/);
+  assert.match(result.stdout, /shutdown-evidence/);
+});
+
+test("paused worker timeouts resume and reap resistant workers before returning", async () => {
+  let control;
+  let workerPid;
+  let observedPause = false;
+  try {
+    const script = "process.on('SIGTERM', () => console.log('termination-requested')); console.log('ready=' + process.pid); setInterval(() => {}, 1000);";
+    const result = await runProcess([process.execPath, "-e", script], process.cwd(), 500,
+      (_stream, chunk) => {
+        const match = chunk.match(/ready=(\d+)/);
+        if (match) { workerPid = Number(match[1]); control.pause(); observedPause = control.paused; }
+      }, (value) => { control = value; });
+    assert.equal(observedPause, true);
+    assert.equal(result.exitCode, 124);
+    assert.equal(control.paused, false);
+    assert.match(result.stdout, /termination-requested/);
+    assert.throws(() => process.kill(workerPid, 0), "timeout result must wait for worker exit");
+  } finally {
+    if (workerPid) { try { process.kill(workerPid, "SIGKILL"); } catch { /* reaped */ } }
+  }
+});
+
+test("output callback failures reject after reaping the managed worker", async () => {
+  const failure = new Error("observer failed");
+  let workerPid;
+  const listeners = [process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")];
+  await assert.rejects(runProcess([process.execPath, "-e", "console.log(process.pid); setInterval(() => {}, 1000)"], process.cwd(), 5_000,
+    (_stream, chunk) => { workerPid = Number(chunk.trim()); throw failure; }), (error) => error === failure);
+  assert.ok(workerPid > 0);
+  assert.throws(() => process.kill(workerPid, 0));
+  assert.deepEqual([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")], listeners);
+});
+
+test("process registration callback failures clean up signal listeners", async () => {
+  const failure = new Error("registration failed");
+  const listeners = [process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")];
+  await assert.rejects(runProcess([process.execPath, "-e", "setInterval(() => {}, 1000)"], process.cwd(), 5_000,
+    undefined, () => { throw failure; }), (error) => error === failure);
+  assert.deepEqual([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")], listeners);
+});
+
+test("early stopping cannot become success through a graceful zero exit", async () => {
+  const script = "process.on('SIGTERM', () => process.exit(0)); console.log(JSON.stringify({step:1,accuracy:0.1})); setInterval(() => {}, 1000);";
+  const result = await runProcess([process.execPath, "-e", script], process.cwd(), 5_000, undefined, undefined, undefined, {
+    enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 1, patience: 1, minimumImprovement: 0.01,
+    reference: [{ step: 1, metric: 0.9 }],
+  });
+  assert.notEqual(result.exitCode, 0);
+  assert.match(result.stderr, /Early stopped by Evidra/);
+});
+
+test("process capture decodes UTF-8 split across output chunks", async () => {
+  const script = "const value=Buffer.from('evidence: 🧪'); process.stdout.write(value.subarray(0,value.length-2)); setTimeout(() => process.stdout.write(value.subarray(value.length-2)), 50);";
+  const result = await runProcess([process.execPath, "-e", script], process.cwd(), 5_000);
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, "evidence: 🧪");
+});
+
 test("normal process completion cleans up launcher descendants", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-process-cleanup-"));
   const pidFile = join(root, "worker.pid");
@@ -9336,6 +9514,24 @@ test("normal process completion cleans up launcher descendants", async () => {
     }
     assert.throws(() => process.kill(workerPid, 0));
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("launcher exit cleans up descendants holding inherited output pipes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-process-pipes-"));
+  const pidFile = join(root, "worker.pid");
+  try {
+    const workerScript = "process.on('SIGTERM', () => {}); process.stdout.write('worker-ready\\n'); setInterval(() => {}, 30000)";
+    const launcherScript = `const { spawn } = require('node:child_process'); const { writeFileSync } = require('node:fs'); const worker = spawn(process.execPath, ['-e', ${JSON.stringify(workerScript)}], { stdio: ['ignore', 'pipe', 'inherit'] }); writeFileSync(process.argv[1], String(worker.pid)); worker.stdout.once('data', chunk => { process.stdout.write(chunk); process.exit(0); });`;
+    const result = await runProcess([process.execPath, "-e", launcherScript, pidFile], root, 5_000);
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /worker-ready/);
+    assert.ok(result.durationMs < 3_000, "cleanup must not wait for the command timeout");
+  } finally {
+    if (existsSync(pidFile)) {
+      try { process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL"); } catch { /* already cleaned up */ }
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("long-running execution emits durable run heartbeats", async () => {
@@ -9374,6 +9570,15 @@ test("process output capture is bounded while retaining the tail", async () => {
   assert.ok(Buffer.byteLength(result.stdout) <= 16 * 1024 * 1024 + 200);
   assert.match(result.stdout, /output truncated by Evidra/);
   assert.match(result.stdout, /FINAL_METRIC=0\.123/);
+});
+
+test("non-ASCII process logs obey the byte cap and retain final metric evidence", async () => {
+  const result = await runProcess([process.execPath, "-e", "process.stdout.write('🧪'.repeat(5 * 1024 * 1024)); process.stdout.write('FINAL_METRIC=0.123')"], process.cwd(), 35_000);
+  assert.equal(result.exitCode, 0);
+  assert.ok(Buffer.byteLength(result.stdout) <= 16 * 1024 * 1024);
+  assert.match(result.stdout, /output truncated by Evidra/);
+  assert.match(result.stdout, /FINAL_METRIC=0\.123/);
+  assert.ok(!result.stdout.includes('\uFFFD'), "capture previews must not split Unicode code points");
 });
 
 test("process early stopping terminates a persistently underperforming worker", async () => {
@@ -10415,6 +10620,108 @@ test("early stopping requires persistent underperformance against a reference cu
     [{ step: 1, metric: 0.7 }, { step: 2, metric: 0.8 }],
     [{ step: 1, metric: 0.72 }, { step: 2, metric: 0.78 }],
   ]), [{ step: 1, metric: 0.7 }, { step: 2, metric: 0.78 }]);
+});
+
+test("early stopping discards oversized records without parsing their metric suffix", () => {
+  const config = { enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 0, patience: 2, minimumImprovement: 0 };
+  const monitor = new EarlyStoppingMonitor(config, [{ step: 1, metric: 0.9 }]);
+  monitor.observe('{"step":1,"accuracy":0.1}\n');
+  for (let index = 0; index < 100; index += 1) monitor.observe("x".repeat(4_096));
+  assert.equal(monitor.observe(' step=2 accuracy=0.1\n').stop, false, "an oversized record must not contribute a point");
+  assert.equal(monitor.observe('{"step":3,"accuracy":0.1}\n').stop, false);
+  assert.equal(monitor.observe('{"step":4,"accuracy":0.1}\n').stop, true);
+  assert.ok(JSON.stringify(monitor).length < MAX_PROGRESS_LINE_CHARS + 1_000);
+});
+
+test("early stopping enforces line limits across single and fragmented chunks", () => {
+  const config = { enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 0, patience: 2, minimumImprovement: 0 };
+  const reference = [{ step: 1, metric: 0.9 }];
+  const record = '{"step":1,"accuracy":0.1}';
+  const boundary = record + " ".repeat(MAX_PROGRESS_LINE_CHARS - record.length);
+  const oversized = "x".repeat(MAX_PROGRESS_LINE_CHARS + 1) + ' step=2 accuracy=0.1';
+  for (const chunkSize of [1_023, MAX_PROGRESS_LINE_CHARS * 2]) {
+    const monitor = new EarlyStoppingMonitor(config, reference);
+    const stream = boundary + "\n" + oversized + "\n" + '{"step":3,"accuracy":0.1}\n';
+    let decision;
+    for (let offset = 0; offset < stream.length; offset += chunkSize) decision = monitor.observe(stream.slice(offset, offset + chunkSize));
+    assert.equal(decision.stop, false);
+    assert.equal(decision.underperformingPoints, 1);
+    assert.deepEqual(parseLearningCurve(boundary + "\n" + oversized + "\n", "accuracy"), [{ step: 1, metric: 0.1 }]);
+  }
+});
+
+test("verbose worker output cannot trigger early stopping from an oversized suffix", async () => {
+  const script = "console.log(JSON.stringify({step:1,accuracy:0.1})); process.stdout.write('x'.repeat(128*1024) + ' step=2 accuracy=0.1\\n', () => console.log('worker-completed'));";
+  const result = await runProcess([process.execPath, "-e", script], process.cwd(), 5_000, undefined, undefined, undefined, {
+    enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 0, patience: 2, minimumImprovement: 0,
+    reference: [{ step: 1, metric: 0.9 }],
+  });
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /worker-completed/);
+  assert.doesNotMatch(result.stderr, /Early stopped/);
+});
+
+test("early stopping retains constant telemetry state during long worker streams", () => {
+  const config = { enabled: true, metric: "loss", direction: "minimize", warmupSteps: 0, patience: 3, minimumImprovement: 0 };
+  const monitor = new EarlyStoppingMonitor(config, [{ step: 1, metric: 0.5 }]);
+  for (let step = 1; step <= 10_000; step += 1) assert.equal(monitor.observe(JSON.stringify({ step, loss: 0.1 }) + "\n").stop, false);
+  assert.ok(JSON.stringify(monitor).length < 2_000, "telemetry retention must not grow with the number of progress points");
+  assert.equal(monitor.observe('{"step":10001,"loss":0.9}\n').stop, false);
+  assert.equal(monitor.observe('{"step":10002,"loss":0.9}\n').stop, false);
+  assert.equal(monitor.observe('{"step":10003,"loss":0.9}\n').stop, true);
+});
+
+test("streaming early stopping matches batch decisions for ordered chunked telemetry", () => {
+  for (const direction of ["minimize", "maximize"]) {
+    const config = { enabled: true, metric: "quality", direction, warmupSteps: 3, patience: 4, minimumImprovement: 0.01 };
+    const reference = [{ step: 12, metric: 0.7 }, { step: 1, metric: 0.5 }, { step: 5, metric: 0.6 }];
+    const monitor = new EarlyStoppingMonitor(config, reference);
+    const points = [];
+    for (let step = 1; step <= 30; step += 1) {
+      const point = { step, metric: step % 7 < 2 ? 0.8 : 0.2 };
+      points.push(point);
+      const record = JSON.stringify({ step, quality: point.metric }) + "\n";
+      for (let offset = 0; offset < record.length - 1; offset += 1) monitor.observe(record[offset]);
+      assert.deepEqual(monitor.observe("\n"), assessEarlyStopping(points, reference, config));
+    }
+  }
+});
+
+test("early stopping rebuilds patience after corrected or out-of-order steps", () => {
+  const config = { enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 0, patience: 3, minimumImprovement: 0 };
+  const reference = [{ step: 1, metric: 0.9 }];
+  const monitor = new EarlyStoppingMonitor(config, reference);
+  monitor.observe('{"step":1,"accuracy":0.1}\n');
+  monitor.observe('{"step":2,"accuracy":0.1}\n');
+  assert.equal(monitor.observe('{"step":1,"accuracy":0.95}\n').stop, false);
+  assert.equal(monitor.observe('{"step":3,"accuracy":0.1}\n').stop, false);
+  assert.equal(monitor.observe('{"step":3,"accuracy":0.95}\n').stop, false);
+  for (let index = 0; index < 10; index += 1) assert.equal(monitor.observe('{"step":4,"accuracy":0.1}\n').stop, false);
+  assert.equal(monitor.observe('{"step":5,"accuracy":0.1}\n').stop, false);
+  assert.equal(monitor.observe('{"step":6,"accuracy":0.1}\n').stop, true);
+  assert.equal(assessEarlyStopping(Array.from({ length: 10 }, () => ({ step: 1, metric: 0.1 })), reference, config).stop, false);
+});
+
+test("progress parsing treats metric metacharacters literally and rejects infinities", () => {
+  assert.deepEqual(parseLearningCurve('epoch=1 loss[eval]=0.25\nepoch=2 lossXeval=0.99\nepoch=3 loss[eval]=1e999\n', "loss[eval]"), [{ step: 1, metric: 0.25 }]);
+  assert.deepEqual(parseLearningCurve('step=1 quality(held.out)+=0.125\n', "quality(held.out)+"), [{ step: 1, metric: 0.125 }]);
+});
+
+test("early stopping rejects blank numeric telemetry instead of treating it as zero", () => {
+  assert.deepEqual(parseLearningCurve('{"step":"","accuracy":0.1}\n{"step":1,"accuracy":" "}\n{"step":"2","accuracy":"0.2"}\n', "accuracy"), [{ step: 2, metric: 0.2 }]);
+  const config = { enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 0, patience: 2, minimumImprovement: 0 };
+  const monitor = new EarlyStoppingMonitor(config, [{ step: 1, metric: 0.9 }]);
+  assert.equal(monitor.observe('{"step":1,"accuracy":""}\n{"step":2,"accuracy":" "}\n').stop, false);
+});
+
+test("early stopping snapshots the declared policy and historical reference", () => {
+  const config = { enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 0, patience: 2, minimumImprovement: 0 };
+  const reference = [{ step: 1, metric: 0.9 }];
+  const monitor = new EarlyStoppingMonitor(config, reference);
+  config.enabled = false;
+  reference[0].metric = 0;
+  monitor.observe('{"step":1,"accuracy":0.1}\n');
+  assert.equal(monitor.observe('{"step":2,"accuracy":0.1}\n').stop, true);
 });
 
 test("successive halving budgets cheap screens and promotes only measured survivors", () => {

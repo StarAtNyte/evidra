@@ -1117,9 +1117,18 @@ learning-curve stop policy in `resources.earlyStopping`:
 
 Workers can emit JSON progress lines such as `{"step": 200, "validation_score": 0.51}`.
 Evidra stops only after persistent underperformance against the comparable reference curve;
-one noisy observation cannot discard a run. The result is recorded as `early_stopped`, preserving
+the configured patience counts distinct increasing progress steps. The result is recorded as `early_stopped`, preserving
 the progress log and the reason for the decision. A missing reference curve disables the policy,
 so an uncalibrated controller never stops work merely because a model guessed poorly.
+
+Live telemetry retains only the latest point, a streak counter, the immutable
+reference curve, and at most 65,536 characters of an unfinished line. Oversized
+records are discarded in full, including later suffixes. Late or corrected steps
+break the streak and require fresh progress before stopping; identical repeats
+of the latest point do not add patience evidence. Metric names are literal and
+numeric records must be finite and nonblank. The full learning-curve extractor
+also rejects oversized records; complete captured output remains available
+under the process-log byte cap for audit.
 
 ## State and provenance
 
@@ -1260,6 +1269,9 @@ The director can request a configured channel directly with the bounded
 Evidra never extracts subscription tokens or implements unofficial ChatGPT API calls. Provider availability is checked before work begins, and local fallback is used only for configured `auto`/`fallback` policies when a local model is available and the Codex failure is classified as safely route-changeable.
 
 ## Development
+
+The current release boundaries, paper alignment, verification commands, and
+remaining production gates are tracked in [Production readiness](docs/production-readiness.md).
 
     npm install
     npm run check       # TypeScript type-check only
