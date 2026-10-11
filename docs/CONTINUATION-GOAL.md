@@ -58,6 +58,13 @@ external evaluator.
 
 ## Latest repository state
 
+- Modal worker output now uses bounded 64 KiB pipe reads instead of blocking
+  line reads. Capture is limited before decoding, UTF-8 streaming preserves
+  fragmented characters, and invalid bytes become replacement characters.
+  Progress frames cannot merge unterminated output with the final envelope.
+  Actual Python subprocess tests cover partial lines with saturated stderr,
+  capture bounds, fragmented Unicode and invalid bytes; live RPC remains open.
+
 - The actual Modal Python entrypoint now returns client success after emitting
   a valid worker envelope, even for failed workers. RPC errors still propagate;
   signal termination becomes portable exit status 128+signal. Python execution

@@ -13,6 +13,7 @@ import re
 import subprocess
 import base64
 import selectors
+import codecs
 from pathlib import Path
 
 import modal
@@ -28,6 +29,7 @@ WORKER_ENV_KEYS = {
     "NVIDIA_DRIVER_CAPABILITIES", "LD_LIBRARY_PATH", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
 }
 MAX_CAPTURE_BYTES = 16 * 1024 * 1024
+STREAM_CHUNK_BYTES = 64 * 1024
 
 
 def worker_environment() -> dict[str, str]:
@@ -104,30 +106,35 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]") -> dict[str
     # Stream worker output for long GPU jobs while retaining a bounded copy for
     # the controller's structured RunResult. Buffering the whole subprocess
     # made Modal experiments appear hung and could grow memory without bound.
-    process = subprocess.Popen(command, cwd=working_directory, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
+    process = subprocess.Popen(command, cwd=working_directory, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
     assert process.stdout is not None and process.stderr is not None
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
     selector.register(process.stderr, selectors.EVENT_READ, "stderr")
-    captured: dict[str, list[str]] = {"stdout": [], "stderr": []}
-    captured_bytes = {"stdout": 0, "stderr": 0}
+    captured = {"stdout": bytearray(), "stderr": bytearray()}
+    decoders = {stream: codecs.getincrementaldecoder("utf-8")(errors="replace") for stream in captured}
     while selector.get_map():
         for key, _ in selector.select(timeout=1.0):
-            line = key.fileobj.readline()
-            if line == "":
-                selector.unregister(key.fileobj)
-                continue
+            # Read available bytes, never wait for a newline while the other
+            # pipe fills. Each allocation is bounded even for enormous lines.
+            chunk = os.read(key.fileobj.fileno(), STREAM_CHUNK_BYTES)
             stream = key.data
-            print(f"[evidra-worker:{stream}] {line}", end="", flush=True)
-            encoded = line.encode("utf-8", errors="replace")
-            remaining = MAX_CAPTURE_BYTES - captured_bytes[stream]
+            text = decoders[stream].decode(chunk, final=not chunk)
+            if text:
+                # Frame progress separately so unterminated worker output
+                # cannot swallow the final JSON completion envelope.
+                print(f"[evidra-worker:{stream}] {text}", flush=True)
+            if not chunk:
+                selector.unregister(key.fileobj)
+                key.fileobj.close()
+                continue
+            remaining = MAX_CAPTURE_BYTES - len(captured[stream])
             if remaining > 0:
-                portion = encoded[:remaining].decode("utf-8", errors="replace")
-                captured[stream].append(portion)
-                captured_bytes[stream] += len(portion.encode("utf-8", errors="replace"))
+                captured[stream].extend(chunk[:remaining])
+    selector.close()
     process.wait()
-    completed_stdout = "".join(captured["stdout"])
-    completed_stderr = "".join(captured["stderr"])
+    completed_stdout = captured["stdout"].decode("utf-8", errors="replace")
+    completed_stderr = captured["stderr"].decode("utf-8", errors="replace")
     artifact_payload: dict[str, str] = {}
     for artifact in json.loads(artifacts_json):
         relative_artifact = Path(artifact)

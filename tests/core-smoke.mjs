@@ -9064,7 +9064,7 @@ test("Modal requires successful client completion before accepting worker eviden
   } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
 });
 
-test("actual Modal Python entrypoint separates worker failures from client failures", () => {
+test("actual Modal Python worker bounds pipe reads and separates worker failures from client failures", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-modal-python-"));
   const script = `
 import json, pathlib, runpy, sys, types
@@ -9085,14 +9085,28 @@ sys.modules['modal'] = types.SimpleNamespace(Image=Image, App=App)
 worker = runpy.run_path(sys.argv[1])
 worker['execute'].__globals__['REMOTE_WORKSPACE'] = pathlib.Path(sys.argv[2])
 mode = sys.argv[3]
+if mode in ('partial-lines', 'unicode', 'invalid-utf8'):
+    namespace = worker['execute'].__globals__
+    namespace['MAX_CAPTURE_BYTES'] = 128
+    progress = []
+    namespace['print'] = lambda text, **kwargs: progress.append(len(text))
+    codes = {
+        'partial-lines': 'import os; os.write(1, b\"partial\"); os.write(2, b\"y\"*200000); os.write(1, b\"x\"*200000)',
+        'unicode': 'import os, time; [(os.write(1, bytes([value])), time.sleep(0.005)) for value in \"नमस्ते\".encode()]',
+        'invalid-utf8': 'import os; os.write(1, bytes([255])); os.write(2, bytes([254]))',
+    }
+    result = worker['execute'](json.dumps([sys.executable, '-c', codes[mode]]), '.')
+    print(json.dumps(dict(result, maxProgressChars=max(progress), progressEvents=len(progress))))
+    sys.exit(0)
 if mode == 'rpc-error':
     def fail(*args): raise RuntimeError('RPC completion unconfirmed')
     worker['execute'].remote = fail
 code = 'import sys; print(\"worker evidence\"); sys.exit(7)' if mode == 'failed' else 'import os, signal; os.kill(os.getpid(), signal.SIGTERM)' if mode == 'signal' else 'print(\"worker evidence\")'
+if mode == 'unterminated': code = 'import sys; sys.stdout.write("worker evidence")'
 worker['run'](json.dumps([sys.executable, '-c', code]))
 `;
   try {
-    for (const mode of ["completed", "failed", "signal", "rpc-error"]) {
+    for (const mode of ["completed", "failed", "signal", "rpc-error", "partial-lines", "unicode", "invalid-utf8", "unterminated"]) {
       const result = spawnSync("python3", ["-c", script, join(process.cwd(), "modal_app.py"), root, mode], { encoding: "utf8", timeout: 10_000 });
       assert.equal(result.error, undefined);
       if (mode === "rpc-error") {
@@ -9103,7 +9117,15 @@ worker['run'](json.dumps([sys.executable, '-c', code]))
         assert.equal(result.status, 0, result.stderr);
         const envelope = parseModalWorkerResult(result.stdout);
         assert.equal(envelope?.exitCode, mode === "failed" ? 7 : mode === "signal" ? 143 : 0);
-        if (mode !== "signal") assert.match(envelope.stdout, /worker evidence/);
+        if (mode === "partial-lines") {
+          assert.equal(envelope.stdout, `partial${"x".repeat(121)}`);
+          assert.equal(envelope.stderr, "y".repeat(128));
+          const details = JSON.parse(result.stdout);
+          assert(details.maxProgressChars <= 65536 + 30);
+          assert(details.progressEvents > 2);
+        } else if (mode === "unicode") assert.equal(envelope.stdout, "नमस्ते");
+        else if (mode === "invalid-utf8") { assert.equal(envelope.stdout, "�"); assert.equal(envelope.stderr, "�"); }
+        else if (mode !== "signal") assert.match(envelope.stdout, /worker evidence/);
       }
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
