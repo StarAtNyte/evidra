@@ -11,6 +11,17 @@ import { serializeResearchContext } from "../core/context-budget.js";
 
 export type AgentProvider = "codex" | "local";
 
+/** Share one base URL across discovery, health checks, and generation. */
+export function ollamaEndpoint(endpoint: "tags" | "show" | "chat"): string {
+  const url = new URL(process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434");
+  if (!["http:", "https:"].includes(url.protocol)) throw new Error("OLLAMA_HOST must use HTTP or HTTPS.");
+  const base = url.pathname.replace(/\/+$/, "").replace(/\/api\/(?:tags|show|chat)$/, "");
+  url.pathname = `${base}/api/${endpoint}`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
 /** Cost-conscious Codex default used by the CLI, TUI, and autonomous tests. */
 export const DEFAULT_CODEX_MODEL = "gpt-6-luna";
 
@@ -521,7 +532,7 @@ export async function resolveCodexModel(preferred = "default"): Promise<string> 
 }
 
 export async function listLocalModels(): Promise<AvailableModel[]> {
-  const response = await fetch(`${process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434"}/api/tags`);
+  const response = await fetch(ollamaEndpoint("tags"));
   if (!response.ok) throw new Error(`Local Ollama is unavailable (${response.status}). Start Ollama and try again.`);
   const payload = await response.json() as { models?: Array<{ name?: string; model?: string; details?: { parameter_size?: string } }> };
   return (payload.models ?? []).map((entry) => {
@@ -545,7 +556,7 @@ export async function checkProvider(options: ExecAgentOptions): Promise<void> {
     return;
   }
 
-  const response = await fetch(`${process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434"}/api/tags`);
+  const response = await fetch(ollamaEndpoint("tags"));
   if (!response.ok) throw new Error(`Local Ollama is unavailable (${response.status}). Start Ollama and try again.`);
   const payload = await response.json() as { models?: Array<{ name?: string; model?: string }> };
   const models = payload.models ?? [];
@@ -556,7 +567,7 @@ export async function checkProvider(options: ExecAgentOptions): Promise<void> {
   // `/api/tags` only proves that Ollama has a registry entry. Probe model
   // metadata too so corrupt/missing blobs are rejected before an autonomous
   // campaign commits to the local route.
-  const probe = await fetch(`${process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434"}/api/show`, {
+  const probe = await fetch(ollamaEndpoint("show"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: options.model }),
@@ -593,8 +604,7 @@ export class CodexExecAgent {
       responseInstruction + " " +
       submissionBoundary;
     if (this.options.provider === "local") {
-      const result = await this.runOllama(prompt, onProgress, onProcess);
-      this.options.onUsage?.(result.usage, result.provider, result.model ?? this.options.model, task.role);
+      const result = await this.runOllama(prompt, onProgress, onProcess, task.outputSchema, task.role);
       return result;
     }
 
@@ -767,7 +777,7 @@ export class CodexExecAgent {
     }
   }
 
-  private async runOllama(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
+  private async runOllama(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void, outputSchemaText?: string, role = "conversation assistant"): Promise<AgentResult> {
     onProgress?.("Calling local Ollama model...");
     const abort = new AbortController();
     let timedOut = false;
@@ -784,9 +794,16 @@ export class CodexExecAgent {
       terminate: () => abort.abort(),
       get paused() { return paused; },
     };
-    onProcess?.(control);
     try {
-      const response = await fetch(process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434/api/chat", {
+      if (this.options.interruptSignal?.aborted) abort.abort();
+      onProcess?.(control);
+      let format: unknown;
+      if (outputSchemaText) {
+        try { format = JSON.parse(outputSchemaText); }
+        catch { throw new Error("The configured local output schema is invalid JSON."); }
+        if (!format || typeof format !== "object" || Array.isArray(format)) throw new Error("The configured local output schema must be a JSON object.");
+      }
+      const response = await fetch(ollamaEndpoint("chat"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -794,16 +811,24 @@ export class CodexExecAgent {
           stream: false,
           messages: [{ role: "user", content: prompt }],
           options: { temperature: 0.2 },
+          ...(format ? { format } : {}),
         }),
         signal: abort.signal,
       });
       if (!response.ok) throw new Error(`Ollama request failed: ${response.status} ${await response.text()}`);
-      const payload = await response.json() as { message?: { content?: string } };
+      const payload = await response.json() as { done?: boolean; done_reason?: string; error?: unknown; message?: { content?: unknown }; prompt_eval_count?: unknown; eval_count?: unknown; prompt_eval_cached_count?: unknown };
+      const count = (value: unknown): number | undefined => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+      const counts = { inputTokens: count(payload.prompt_eval_count), outputTokens: count(payload.eval_count), cachedInputTokens: count(payload.prompt_eval_cached_count) };
+      const usage = Object.values(counts).some((value) => value !== undefined) ? counts : undefined;
+      // A truncated or failed response still consumed inference budget.
+      this.options.onUsage?.(usage, "local", this.options.model, role);
+      if (payload.error) throw new Error("Ollama returned an error response.");
+      if (payload.done !== true || (payload.done_reason !== undefined && payload.done_reason !== "stop")) throw new Error("Ollama did not complete the response successfully.");
       const text = payload.message?.content;
-      if (!text) throw new Error("Ollama returned no message content.");
+      if (typeof text !== "string" || !text.trim()) throw new Error("Ollama returned no message content.");
       this.options.onAssistant?.("local", text);
       onProgress?.("Completed.");
-      return { provider: "local", model: this.options.model, output: text };
+      return { provider: "local", model: this.options.model, output: text, usage };
     } catch (error) {
       if (abort.signal.aborted) throw new Error(timedOut ? "Local model request timed out." : "Local model request interrupted.");
       throw error;

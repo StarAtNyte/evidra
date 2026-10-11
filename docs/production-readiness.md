@@ -77,6 +77,20 @@ remain open: the current pause control only pauses a local polling process.
 
 ## Release checks
 
+The local Ollama route shares one endpoint resolver for discovery, health,
+and chat, including base hosts, trailing slashes, proxy prefixes, and legacy
+`/api/chat` URLs. Structured schemas are sent as `format`; invalid schema JSON
+is rejected before inference. Non-streaming replies require `done: true` and
+an absent or `stop` finish reason. Partial, length-limited, error, and non-text
+responses cannot establish success. Valid reported prompt/output/cache counts
+are attributed even when the completion gate rejects the response. Missing
+usage stays unknown. Pre-aborted calls send no request, and callback exceptions
+release signal listeners and timers.
+
+These contracts do not establish local tokenizer limits or prevent server-side
+input truncation. Explicit model/context metadata, generation headroom, and
+provider-owned transcript growth remain part of the next token-budget gate.
+
 Git and ripgrep (`rg`) are required workspace runtimes in addition to Node.
 The installer checks both before downloading; `doctor --json` includes
 `requiredTools` and does not report overall readiness when either is missing.

@@ -7242,7 +7242,7 @@ test("research lane teams share only cacheable observations within one invocatio
     request.on("data", (chunk) => { body += chunk.toString(); });
     request.on("end", () => {
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ message: { content: JSON.stringify({ role: "peer", summary: "bounded report", findings: [], recommendations: [], uncertainties: [], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0.5 }) } }));
+      response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify({ role: "peer", summary: "bounded report", findings: [], recommendations: [], uncertainties: [], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0.5 }) } }));
     });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -7613,7 +7613,7 @@ test("research director executes typed tools and reasons over returned evidence"
       if (body.includes("sha256:refreshed-state")) observedRefreshedState = true;
       if (body.includes("Use only exact tool names") && body.includes("workspace.read")) observedExactToolGuidance = true;
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+      response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(decision) } }));
     });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -7658,7 +7658,7 @@ test("research director converts exhausted tool rounds into a durable conservati
     request.on("end", () => {
       if (calls === 3) finalizationContext = JSON.parse(body).messages?.at(-1)?.content ?? body;
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ message: { content: JSON.stringify({
+      response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify({
         phase: "orientation", goalStatus: "active", decision: calls === 3 ? "propose" : "inspect", bottleneck: "Evidence is sufficient to choose a bounded next step",
         rationale: "The existing workspace inventory and collected search result support a concrete next step.", hypotheses: [], selectedHypothesis: null,
         nextAction: calls === 3 ? "Run the focused validation check" : "Inspect the next evidence source", toolCalls: calls === 1
@@ -7710,7 +7710,7 @@ test("research director keeps the finalization-only turn inside the hard tool ca
         nextAction: "Inspect another source", toolCalls: [{ name: calls === 1 ? "workspace.files" : "workspace.search", arguments: calls === 1 ? {} : { query: "more" } }],
       };
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+      response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(decision) } }));
     });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -7754,7 +7754,7 @@ test("research director changes to an untried model after a retryable route fail
         return;
       }
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+      response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(decision) } }));
     });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -7775,6 +7775,69 @@ test("research director changes to an untried model after a retryable route fail
     else process.env.OLLAMA_HOST = previousHost;
     await new Promise((resolve) => server.close(resolve));
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("local provider preserves the endpoint, schema, completion, and usage contracts", async () => {
+  const previousHost = process.env.OLLAMA_HOST;
+  const requests = [];
+  let payload = { done: true, done_reason: "stop", message: { content: '{"answer":"verified"}' }, prompt_eval_count: 123, eval_count: 17, prompt_eval_cached_count: 8 };
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      requests.push({ path: request.url, body: JSON.parse(body) });
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify(payload));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const host = `http://127.0.0.1:${server.address().port}`;
+  const schema = { type: "object", properties: { answer: { type: "string" } }, required: ["answer"] };
+  const task = { role: "research director", objective: "Keep the full objective", context: { evidence: "observed" }, outputSchema: JSON.stringify(schema) };
+  let reportedUsage;
+  const agent = new CodexExecAgent({ provider: "local", model: "test", cwd: process.cwd(), onUsage: (usage) => { reportedUsage = usage; } });
+  try {
+    for (const suffix of ["", "/", "/api/chat", "/proxy/api/chat"]) {
+      process.env.OLLAMA_HOST = host + suffix;
+      const result = await agent.run(task);
+      assert.equal(requests.at(-1).path, suffix.startsWith("/proxy") ? "/proxy/api/chat" : "/api/chat");
+      assert.deepEqual(requests.at(-1).body.format, schema);
+      assert.match(requests.at(-1).body.messages[0].content, /Keep the full objective/);
+      assert.deepEqual(result.usage, { inputTokens: 123, outputTokens: 17, cachedInputTokens: 8 });
+      assert.deepEqual(reportedUsage, result.usage);
+    }
+    for (const invalid of [
+      { message: { content: "partial" } },
+      { done: false, message: { content: "partial" } },
+      { done: true, done_reason: "length", message: { content: "truncated" } },
+      { done: true, error: "failed", message: { content: "untrusted" } },
+      { done: true, message: { content: 42 } },
+    ]) {
+      payload = invalid;
+      await assert.rejects(() => agent.run(task), /Ollama/);
+    }
+    payload = { done: true, done_reason: "length", message: { content: "truncated" }, prompt_eval_count: 150, eval_count: 30 };
+    await assert.rejects(() => agent.run(task), /did not complete/);
+    assert.equal(reportedUsage.inputTokens, 150);
+    assert.equal(reportedUsage.outputTokens, 30);
+    payload = { done: true, message: { content: "legacy terminal response" }, prompt_eval_count: -1, eval_count: 1.5 };
+    assert.equal((await agent.run(task)).usage, undefined);
+    const before = requests.length;
+    await assert.rejects(() => agent.run({ ...task, outputSchema: "not JSON" }), /schema is invalid JSON/);
+    assert.equal(requests.length, before);
+    const interrupt = new AbortController();
+    interrupt.abort();
+    await assert.rejects(() => new CodexExecAgent({ provider: "local", model: "test", cwd: process.cwd(), interruptSignal: interrupt.signal }).run(task), /interrupted/);
+    assert.equal(requests.length, before);
+    const listeners = [process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")];
+    await assert.rejects(() => agent.run(task, undefined, () => { throw new Error("registration failed"); }), /registration failed/);
+    assert.deepEqual([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")], listeners);
+    assert.equal(requests.length, before);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 
@@ -8112,7 +8175,7 @@ test("research director honors the bounded provider-attempt policy", async () =>
   const server = createServer((_request, response) => {
     calls += 1;
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ message: { content: "not valid research JSON" } }));
+    response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: "not valid research JSON" } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -8139,7 +8202,7 @@ test("research director reuses successful read-only observations within a turn",
       ? { phase: "orientation", goalStatus: "active", decision: "inspect", bottleneck: "Need evidence", rationale: "Inspect once.", hypotheses: [], selectedHypothesis: null, nextAction: "Inspect files", toolCalls: [{ name: "workspace.files", arguments: {} }, { name: "workspace.files", arguments: {} }] }
       : { phase: "orientation", goalStatus: "active", decision: "inspect", bottleneck: "Evidence collected", rationale: "The cached observation is sufficient.", hypotheses: [], selectedHypothesis: null, nextAction: "Continue", toolCalls: [] };
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+    response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(decision) } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -8171,7 +8234,7 @@ test("research director stops a repeated read-only request instead of burning to
   const server = createServer((_request, response) => {
     calls += 1;
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ message: { content: JSON.stringify(repeated) } }));
+    response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(repeated) } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
@@ -8203,7 +8266,7 @@ test("research director does not rerun an identical read-only shell command with
   const server = createServer((_request, response) => {
     calls += 1;
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ message: { content: JSON.stringify(repeated) } }));
+    response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(repeated) } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
@@ -8236,7 +8299,7 @@ test("research director does not retry a policy-denied tool route across tool ro
   const server = createServer((_request, response) => {
     calls += 1;
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ message: { content: JSON.stringify(deniedTool) } }));
+    response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(deniedTool) } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
@@ -8269,7 +8332,7 @@ test("research director suppresses an unchanged malformed tool request after ret
   const server = createServer((_request, response) => {
     calls += 1;
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ message: { content: JSON.stringify(invalidTool) } }));
+    response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(invalidTool) } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
@@ -8304,7 +8367,7 @@ test("research director stops when different read-only searches return no new ob
     const query = calls === 1 ? "332302" : "different-term";
     const decision = { phase: "data_audit", goalStatus: "active", decision: "inspect", bottleneck: "Search yielded no result", rationale: "Try a different query.", hypotheses: [], selectedHypothesis: null, nextAction: "Search again", toolCalls: [{ name: "workspace.search", arguments: { query } }] };
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+    response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(decision) } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;

@@ -58,6 +58,16 @@ external evaluator.
 
 ## Latest repository state
 
+- Local Ollama requests now share endpoint resolution across discovery/health/
+  generation, forward structured output schemas, reject partial or truncated
+  replies, and report valid inference usage even for rejected completions.
+  Pre-aborted requests and callback failures clean up without sending work.
+  HTTP regressions cover endpoint paths, schemas, completion evidence, usage,
+  cancellation, and listener cleanup. Model-aware input limits and output
+  headroom remain open; this does not claim a token-budget guarantee.
+- Slurm hardening at `3383977` passed hosted CI on Node 22.19.0 and Node 24,
+  including package checks: run 38116795772. All 698 local regressions passed.
+
 - Slurm protocol hardening now uses exact terminal allocation accounting with
   actual exit status/signals, joined cancellation requests, cluster-aware
   control commands, and scheduler requeue disabled. Ambiguous outcomes and
