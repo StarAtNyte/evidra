@@ -53,7 +53,10 @@ The model proposes. Evidra measures, records, verifies, and decides whether the 
 
 ### Install globally
 
-Requires Node.js 22.19.0 or newer:
+Requires Node.js 22.19.0 or newer, Git, and ripgrep (`rg`) on PATH. Git owns
+isolated experiment worktrees; ripgrep powers workspace inventory and search.
+`evidra doctor --json` reports required tooling separately from optional providers
+and execution backends.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/StarAtNyte/evidra/master/install.sh | sh

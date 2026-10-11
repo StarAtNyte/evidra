@@ -22,6 +22,12 @@ if ! command -v git >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v rg >/dev/null 2>&1; then
+  echo "Evidra requires ripgrep (rg) for workspace inventory and search."
+  echo "Install ripgrep with your system package manager, then rerun this installer."
+  exit 1
+fi
+
 INSTALL_DIR=$(mktemp -d "${TMPDIR:-/tmp}/evidra-install.XXXXXX")
 PROGRESS_PID=""
 cleanup() {

@@ -1070,7 +1070,7 @@ program.command("doctor")
     { name: "workspace", status: "ok", detail: root },
     { name: "node", status: "ok", detail: process.versions.node },
   ];
-  for (const command of ["git", "uv", "ollama", "modal", "docker", "podman", "sbatch", "squeue", "sacct"]) {
+  for (const command of ["git", "rg", "uv", "ollama", "modal", "docker", "podman", "sbatch", "squeue", "sacct"]) {
     const result = await runProcess(["which", command], root, 5_000);
     const detail = result.exitCode === 0 ? result.stdout.trim() : "not found";
     checks.push(`${command.padEnd(13)}${detail}`);
@@ -1099,14 +1099,17 @@ program.command("doctor")
   }
   const modalAuth = process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET
     ? "environment credentials"
-    : (await runProcess(["modal", "profile", "current"], root, 10_000)).exitCode === 0 ? "CLI profile selected" : "not configured";
+    : diagnostics.find((check) => check.name === "modal")?.status === "ok"
+      && (await runProcess(["modal", "profile", "current"], root, 10_000).catch(() => undefined))?.exitCode === 0
+      ? "CLI profile selected" : "not configured";
   checks.push(`modal auth    ${modalAuth}`);
   diagnostics.push({ name: "modal-auth", status: modalAuth === "not configured" ? "unavailable" : "ok", detail: modalAuth });
   if (options.json) {
     console.log(JSON.stringify({
       workspace: root,
       node: process.versions.node,
-      ready: codexReady || localModelsReady,
+      ready: (codexReady || localModelsReady) && ["git", "rg"].every((name) => diagnostics.some((check) => check.name === name && check.status === "ok")),
+      requiredTools: Object.fromEntries(["git", "rg"].map((name) => [name, diagnostics.some((check) => check.name === name && check.status === "ok")])),
       providers: { codex: codexReady, local: localModelsReady, fallback: localModelsReady },
       checks: diagnostics,
     }, null, 2));

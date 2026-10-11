@@ -11548,6 +11548,22 @@ test("doctor exposes a bounded machine-readable diagnostics contract", () => {
   assert.doesNotMatch(output, /sk-[A-Za-z0-9]{12,}|Bearer\s+[A-Za-z0-9._-]+/i);
 });
 
+test("doctor reports missing optional backends and required tools without crashing", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-doctor-missing-tools-"));
+  try {
+    writeFileSync(join(root, "which"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const environment = { ...process.env, PATH: root, EVIDRA_CODEX_BIN: "evidra-missing-codex", OLLAMA_HOST: "http://127.0.0.1:1/api/chat" };
+    delete environment.MODAL_TOKEN_ID;
+    delete environment.MODAL_TOKEN_SECRET;
+    const result = execFileSync(process.execPath, [join(process.cwd(), "dist", "cli.js"), "doctor", "--json"], { encoding: "utf8", env: environment, timeout: 30_000 });
+    const report = JSON.parse(result);
+    assert.equal(report.ready, false);
+    assert.deepEqual(report.requiredTools, { git: false, rg: false });
+    assert.equal(report.checks.find((check) => check.name === "modal").status, "missing");
+    assert.equal(report.checks.find((check) => check.name === "modal-auth").status, "unavailable");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("dashboard read model is bounded and secret-redacted", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-dashboard-"));
   try {

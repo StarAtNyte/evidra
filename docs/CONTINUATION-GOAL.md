@@ -58,6 +58,14 @@ external evaluator.
 
 ## Latest repository state
 
+- Hosted verification of `6d66564` exposed missing `rg` on the runner and an
+  optional Modal-profile spawn failure in `doctor`. Git/ripgrep are now explicit
+  required tooling, the installer rejects missing ripgrep before downloading,
+  CI provisions it, and doctor readiness includes required-tool health while
+  absent optional backends remain structured unavailable diagnostics. A
+  minimal-PATH CLI regression exercises the failure mode independently of the
+  developer machine's installed backends.
+
 - The 2026-10-11 production audit maps the user's harness-design paper to actual
   Evidra boundaries and keeps the remaining gates explicit in
   [`production-readiness.md`](production-readiness.md). Execution now waits for

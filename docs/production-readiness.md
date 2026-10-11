@@ -62,6 +62,12 @@ nonblank, and metacharacters in metric names are interpreted literally.
 
 ## Release checks
 
+Git and ripgrep (`rg`) are required workspace runtimes in addition to Node.
+The installer checks both before downloading; `doctor --json` includes
+`requiredTools` and does not report overall readiness when either is missing.
+Optional backend probes must remain diagnostic when their CLIs are absent.
+CI provisions ripgrep explicitly rather than depending on runner-image contents.
+
 Run against the final source tree:
 
 ```sh
@@ -82,7 +88,7 @@ minimum-version job passed.
 
 ### Verified on 2026-10-11
 
-On Linux with Node 22.19.0 and Node 24.21.0, the updated tree passed
+At commit `6d66564`, Linux with Node 22.19.0 and Node 24.21.0 passed
 typechecking, compilation, all 687 regression tests on each runtime, and all
 nine local safety probes. The Node 22 checks ran after a clean dependency
 installation in an independent source copy. The whitespace check passed, and
@@ -92,6 +98,12 @@ status, event-chain verification (`valid`, one checked event), and SQLite backup
 creation. The installed package's backup reopened independently with a valid
 event chain. Hosted CI, remote execution, soak behavior, and external performance
 are not established by those results.
+
+The first hosted run of that commit exposed a missing ripgrep prerequisite and
+a Modal-absent `doctor` crash. The follow-up adds the required-tool preflight,
+explicit CI provisioning, and a minimal-PATH diagnostics regression. Preserve
+the [failed run](https://github.com/StarAtNyte/evidra/actions/runs/38115532722)
+as failure evidence; a local full-suite pass did not prove runner compatibility.
 
 ## Next production gates
 

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { spawnSync } from 'node:child_process';
 
@@ -44,4 +46,16 @@ test('installer uses the committed dependency lockfile for reproducible builds',
   assert.ok(readFileSync(lockfile).byteLength > 0, 'a committed npm lockfile is available');
   assert.match(installer, /run_stage "2\/5 Installing locked dependencies and building" npm ci/);
   assert.doesNotMatch(installer, /run_stage "2\/5 [^"]*" npm install/);
+});
+
+
+test('installer rejects missing ripgrep before downloading dependencies', () => {
+  const root = mkdtempSync(join(tmpdir(), 'evidra-installer-tooling-'));
+  try {
+    for (const command of ['node', 'git']) writeFileSync(join(root, command), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const result = spawnSync('/bin/sh', [new URL('../install.sh', import.meta.url).pathname], { encoding: 'utf8', env: { ...process.env, PATH: root }, timeout: 5000 });
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /requires ripgrep/);
+    assert.doesNotMatch(result.stdout, /Downloading Evidra/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
