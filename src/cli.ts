@@ -7125,8 +7125,9 @@ experiment.command("gate")
 experiment.command("reconcile")
   .argument("<id>", "experiment identifier")
   .description("Release a remote quarantine only when every allocation has durable termination evidence")
-  .action(async (id: string) => {
-    const result = await reconcileRemoteExperiment(statePath, root, id);
+  .option("--cancel-container", "remove unresolved owned Docker workers and their anonymous volumes before reconciliation")
+  .action(async (id: string, options: { cancelContainer?: boolean }) => {
+    const result = await reconcileRemoteExperiment(statePath, root, id, { cancelContainer: options.cancelContainer });
     if (!result.released) throw new Error(`Experiment ${id} has no complete terminal allocation evidence; quarantine remains in place.`);
     console.log(`Experiment ${id}: remote termination reconciled; measurement remains unvalidated.`);
   });

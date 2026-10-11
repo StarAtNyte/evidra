@@ -9060,6 +9060,81 @@ test("Docker recovery checks daemon identity and exact terminal worker evidence"
   } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
 });
 
+test("explicit Docker orphan cancellation requires durable ownership and verified removal", async () => {
+  const previousPath = process.env.PATH;
+  const daemonId = "dddddddd-dddd-dddd-dddd-dddddddddddd", submissionId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", cid = "b".repeat(64);
+  const allocationName = `evidra-${submissionId}`;
+  const modes = ["known", "adopt", "wrong-daemon", "changed-before-removal", "changed-after-removal", "wrong-name", "wrong-label", "wrong-id", "removal-failed", "nonempty-query", "query-failed", "timeout", "interrupted", "missing-worker", "receipt-write-failed", "intent-write-failed"];
+  const originalReceipt = ResearchStore.prototype.recordContainerReceiptEvidence;
+  const originalAppend = ResearchStore.prototype.appendEvent;
+  try {
+    for (const mode of modes) {
+      const root = mkdtempSync(join(tmpdir(), "evidra-docker-cancel-")), bin = join(root, "bin"), db = join(root, "state.sqlite"); mkdirSync(bin);
+      try {
+        const snapshot = [mode === "wrong-id" ? "c".repeat(64) : cid, mode === "wrong-name" ? "/other" : `/${allocationName}`, { "org.evidra.allocation": mode === "wrong-label" ? "other" : allocationName }, { Status: "running", Running: true, Pid: 123 }, "no"];
+        writeFileSync(join(bin, "docker"), `#!${process.execPath}
+          const fs=require('node:fs'), args=process.argv.slice(2),mode=${JSON.stringify(mode)},cid=${JSON.stringify(cid)};
+          fs.appendFileSync('commands',JSON.stringify(args)+'\\n');
+          if(args[0]==='info') {
+            const count=fs.existsSync('info-count')?Number(fs.readFileSync('info-count','utf8')):0;fs.writeFileSync('info-count',String(count+1));
+            console.log(mode==='wrong-daemon'||mode==='changed-before-removal'&&count>0||mode==='changed-after-removal'&&count>1?'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee':${JSON.stringify(daemonId)});
+          }else if(args[0]==='inspect') {
+            if(mode==='missing-worker')process.exit(1);
+            console.log(${JSON.stringify(JSON.stringify(snapshot))});
+          }else if(args[0]==='rm') {
+            if(JSON.stringify(args)!==JSON.stringify(['rm','--force','--volumes',cid]))process.exit(9);
+            const Database=require(${JSON.stringify(join(process.cwd(), "node_modules", "better-sqlite3"))});
+            const database=new Database('state.sqlite',{readonly:true});
+            const records=database.prepare("SELECT type,payload_json FROM events WHERE type IN ('run.remote.submitted','run.remote.cleanup.requested') ORDER BY id").all();database.close();
+            if(records.length!==2||records.some(record=>JSON.parse(record.payload_json).containerId!==cid))process.exit(8);
+            fs.writeFileSync('removal-requested','yes');
+            if(mode==='timeout'){setInterval(()=>{},1000);}
+            else if(mode==='interrupted')process.exit(130);
+            else if(mode==='removal-failed')process.exit(2);
+            else fs.writeFileSync('removed','yes');
+          }else if(args[0]==='ps') {
+            if(mode==='query-failed')process.exit(2);
+            if(mode==='nonempty-query'||!fs.existsSync('removed'))console.log(cid);
+          }else process.exit(9);
+        `, { mode: 0o755 });
+        process.env.PATH = `${bin}:${previousPath ?? ""}`;
+        const store = new ResearchStore(db);
+        store.saveExperiment({ id: "cancel", payload: { id: "cancel", status: "running", resources: { executor: "container" } } });
+        store.reserveComputeBudget({ experimentId: "cancel", budgetGpuHours: 10, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" });
+        const common = { executor: "container", experimentId: "cancel", submissionId, allocationName, runtime: "docker", daemonId, at: new Date().toISOString() };
+        store.appendEvent("run.remote.submitting", { ...common, phase: "submitting" });
+        if (!["adopt", "missing-worker", "receipt-write-failed"].includes(mode)) store.appendEvent("run.remote.submitted", { ...common, phase: "submitted", containerId: cid });
+        store.recoverStaleExperiments(0); store.close();
+        if (mode === "receipt-write-failed") ResearchStore.prototype.recordContainerReceiptEvidence = () => { throw new Error("database unavailable"); };
+        if (mode === "intent-write-failed") ResearchStore.prototype.appendEvent = function(type, payload) { if (type === "run.remote.cleanup.requested") throw new Error("database unavailable"); return originalAppend.call(this, type, payload); };
+        const result = await reconcileRemoteExperiment(db, root, "cancel", { cancelContainer: true, timeoutMs: mode === "timeout" ? 1500 : 5000 });
+        ResearchStore.prototype.recordContainerReceiptEvidence = originalReceipt; ResearchStore.prototype.appendEvent = originalAppend;
+        const released = ["known", "adopt"].includes(mode);
+        assert.equal(result.released, released, mode);
+        const reopened = new ResearchStore(db);
+        assert.equal(reopened.reservedComputeGpuHours(), released ? 0 : 2, mode);
+        assert.equal(reopened.experiments()[0].payload.status, released ? "failed" : "blocked", mode);
+        assert.equal(reopened.runs().length, 0);
+        if (released) {
+          const proof = reopened.eventsByType("run.remote.terminal")[0].payload;
+          assert.equal(proof.containerId, cid); assert.equal(proof.state, "REMOVED");
+          assert.equal(reopened.eventsByType("run.remote.submitted").length, 1);
+          const request = reopened.eventsByType("run.remote.cleanup.requested")[0].payload, observed = reopened.eventsByType("run.remote.cleanup.observed")[0].payload;
+          assert.equal(request.requestId, observed.requestId); assert.equal(observed.verifiedAbsent, true);
+          assert.equal(observed.exitCode, 0);
+        } else assert.equal(reopened.eventsByType("run.remote.terminal").length, 0, mode);
+        assert.equal(reopened.verifyEventChain().status, "valid"); reopened.close();
+        const removalExpected = ["known", "adopt", "changed-after-removal", "removal-failed", "nonempty-query", "query-failed", "timeout", "interrupted"].includes(mode);
+        assert.equal(existsSync(join(root, "removal-requested")), removalExpected, mode);
+        assert.doesNotMatch(readFileSync(join(root, "commands"), "utf8"), /"run"|"stop"|"kill"/);
+      } finally {
+        ResearchStore.prototype.recordContainerReceiptEvidence = originalReceipt; ResearchStore.prototype.appendEvent = originalAppend;
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
+});
+
 test("Slurm executor command preserves argv boundaries and declared resources", () => {
   const command = slurmCommand("exp with spaces", "/tmp/evidra-worktree", ["python", "train.py", "--name", "O'Reilly"], "/tmp/out.log", "/tmp/err.log", 12.4, "A100:1");
   assert.equal(command[0], "sbatch");

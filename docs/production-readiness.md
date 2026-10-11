@@ -149,9 +149,28 @@ exited, released compute, and left the measurement failed/unvalidated. See
 [Docker crash evidence](research/evidence/container-crash-recovery-2026-10-11.json).
 Query failures, wrong daemon/worker identities, malformed output, automatic
 restart, running workers, and interrupted/bounded queries have fake-runtime
-regressions. Recovery does not remove stopped containers or their volumes;
-the live probe cleaned up its own fixture separately. Live alternate-daemon
-verification, orphan cancellation/cleanup, and Podman recovery remain open.
+regressions. Default recovery leaves stopped containers and their volumes for
+explicit cleanup. Live alternate-daemon verification and Podman recovery remain open.
+
+`evidra experiment reconcile <id> --cancel-container` explicitly removes
+unresolved, owned Docker workers before reconciliation. It verifies the daemon,
+exact ID/name and ownership label, persists a full receipt and cleanup request,
+then awaits `docker rm --force --volumes <full-id>`. Removal uses SIGKILL and
+removes anonymous volumes as described in the
+[Docker command reference](https://docs.docker.com/reference/cli/docker/container/rm/).
+It records the outcome and requires successful removal, an empty exact-ID daemon
+query, and matching daemon identity before recording termination. Durability
+failures, wrong identities, command failures, timeouts, interruptions, and
+nonempty/failed verification retain quarantine. Slurm and Modal cannot use this
+container cancellation option. Already reconciled records are outside its scope.
+
+A live controller SIGKILL probe verified default quarantine for a running
+worker, followed by explicit cancellation, compute release, and independent
+absence checks for both the container and its anonymous volume. The measurement
+remained failed/unvalidated; see
+[orphan cancellation evidence](research/evidence/container-orphan-cancellation-2026-10-11.json).
+Automatic orphan cancellation and cleanup of already reconciled stopped
+containers remain separate release work.
 
 Slurm allocations now use a UUID-based job name stored in every lifecycle
 record. Both normal accounting and post-restart queries request duplicate

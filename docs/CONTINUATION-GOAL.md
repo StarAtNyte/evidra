@@ -58,6 +58,16 @@ external evaluator.
 
 ## Latest repository state
 
+- `experiment reconcile <id> --cancel-container` now supports explicit removal
+  of unresolved owned Docker workers after controller loss. It persists the
+  receipt and cleanup request before the exact-ID RPC, then verifies removal
+  and daemon identity before releasing compute. Default reconciliation remains
+  read-only. Failure and ownership regressions plus a live SIGKILL/cancellation
+  probe cover the boundary; evidence is in
+  `docs/research/evidence/container-orphan-cancellation-2026-10-11.json`.
+  Podman, live alternate-daemon verification, automatic orphan cancellation,
+  cleanup of already reconciled containers, and campaign soaks remain open.
+
 - Docker recovery now matches the daemon ID recorded before launch, exact
   worker identity and ownership label, and stopped state with restart disabled.
   It can recover a missing receipt from the durable worker name, or prove a
@@ -66,7 +76,7 @@ external evaluator.
   A live controller SIGKILL probe verified running-worker quarantine followed
   by exited-worker recovery without validating the measurement; evidence is in
   `docs/research/evidence/container-crash-recovery-2026-10-11.json`.
-  Podman, live alternate-daemon verification, orphan cancellation/cleanup,
+  Podman, live alternate-daemon verification, automatic orphan cancellation,
   and long campaign soak tests remain open release gates.
 
 - Container execution now persists unique launch intent before the runtime

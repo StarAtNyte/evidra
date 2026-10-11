@@ -1,9 +1,12 @@
 import { ResearchStore } from "./store.js";
 import { parseSlurmAccounting } from "./executors.js";
 import { runProcess } from "./process.js";
+import { randomUUID } from "node:crypto";
 
-/** Recovery observes remote state; it never starts or cancels workers. */
-export async function reconcileRemoteExperiment(storePath: string, cwd: string, experimentId: string, options: { timeoutMs?: number } = {}): Promise<{ released: boolean; queried: number }> {
+export interface RemoteReconciliationOptions { timeoutMs?: number; cancelContainer?: boolean }
+
+/** Recovery is read-only unless container cancellation is explicitly requested. */
+export async function reconcileRemoteExperiment(storePath: string, cwd: string, experimentId: string, options: RemoteReconciliationOptions = {}): Promise<{ released: boolean; queried: number }> {
   const store = new ResearchStore(storePath);
   let executor: unknown;
   try {
@@ -11,10 +14,11 @@ export async function reconcileRemoteExperiment(storePath: string, cwd: string, 
     executor = (entry?.payload as { resources?: { executor?: unknown } } | undefined)?.resources?.executor;
   } finally { store.close(); }
   if (executor === "container") return reconcileContainerExperiment(storePath, cwd, experimentId, options);
+  if (options.cancelContainer) throw new Error("Container cancellation requires a quarantined container experiment.");
   return reconcileSlurmExperiment(storePath, cwd, experimentId, options);
 }
 
-export async function reconcileContainerExperiment(storePath: string, cwd: string, experimentId: string, options: { timeoutMs?: number } = {}): Promise<{ released: boolean; queried: number }> {
+export async function reconcileContainerExperiment(storePath: string, cwd: string, experimentId: string, options: RemoteReconciliationOptions = {}): Promise<{ released: boolean; queried: number }> {
   const store = new ResearchStore(storePath);
   const environment = { ...process.env };
   const duration = Math.max(1, Math.min(15_000, Number.isFinite(options.timeoutMs) ? options.timeoutMs! : 15_000));
@@ -58,9 +62,28 @@ export async function reconcileContainerExperiment(storePath: string, cwd: strin
           if (!Array.isArray(value) || value.length !== 5) continue;
           const [id, name, labels, status, restart] = value;
           if (typeof id !== "string" || !/^[a-f0-9]{64}$/.test(id) || name !== `/${allocationName}` || labels?.["org.evidra.allocation"] !== allocationName || receipt && id !== receipt.containerId) continue;
-          // A stopped snapshot is insufficient if automatic restart is enabled.
-          if (restart !== "no" || status?.Status !== "exited" || status.Running !== false || status.Restarting !== false || status.Paused !== false || status.Pid !== 0 || !Number.isInteger(status.ExitCode) || status.ExitCode < 0 || status.ExitCode > 255) continue;
-          containerId = id; state = "EXITED"; exitCode = status.ExitCode;
+          if (options.cancelContainer) {
+            const event = { experimentId, submissionId, allocationName: String(allocationName), runtime: "docker" as const, daemonId, containerId: id, at: new Date().toISOString() };
+            // Persist the exact receipt before requesting daemon-side removal.
+            if (!store.recordContainerReceiptEvidence({ ...event, recovered: !receipt })) continue;
+            const current = await query(["docker", "info", "--format", "{{.ID}}"]);
+            if (current?.exitCode === 130) break;
+            if (current?.exitCode !== 0 || current.stdout.trim() !== daemonId) continue;
+            const requestId = randomUUID();
+            store.appendEvent("run.remote.cleanup.requested", { ...event, requestId, command: ["docker", "rm", "--force", "--volumes", id] });
+            const removed = await query(["docker", "rm", "--force", "--volumes", id]);
+            if (removed?.exitCode === 130) break;
+            const absent = await query(["docker", "ps", "--all", "--no-trunc", "--filter", `id=${id}`, "--format", "{{.ID}}"]);
+            if (absent?.exitCode === 130) break;
+            const verifiedAbsent = absent?.exitCode === 0 && !absent.stdout.trim();
+            store.appendEvent("run.remote.cleanup.observed", { ...event, at: new Date().toISOString(), requestId, exitCode: removed?.exitCode ?? null, verifiedAbsent });
+            if (removed?.exitCode !== 0 || !verifiedAbsent) continue;
+            containerId = id; state = "REMOVED";
+          } else {
+            // A stopped snapshot is insufficient if automatic restart is enabled.
+            if (restart !== "no" || status?.Status !== "exited" || status.Running !== false || status.Restarting !== false || status.Paused !== false || status.Pid !== 0 || !Number.isInteger(status.ExitCode) || status.ExitCode < 0 || status.ExitCode > 255) continue;
+            containerId = id; state = "EXITED"; exitCode = status.ExitCode;
+          }
         } catch { continue; }
       } else if (receipt) {
         const absent = await query(["docker", "ps", "--all", "--no-trunc", "--filter", `id=${receipt.containerId}`, "--format", "{{.ID}}"]);
