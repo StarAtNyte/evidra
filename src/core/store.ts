@@ -3752,7 +3752,7 @@ export class ResearchStore {
       records = this.eventsByTypes(["run.remote.submitting", "run.remote.submitted", "run.remote.terminal"]);
     }
     const events = records.map((event) => ({ phase: event.type.slice("run.remote.".length), payload: event.payload as Record<string, unknown> }))
-      .filter((event) => event.payload?.experimentId === experimentId && ["slurm", "container"].includes(String(event.payload.executor)));
+      .filter((event) => event.payload?.experimentId === experimentId && ["slurm", "container", "modal"].includes(String(event.payload.executor)));
     const intents = events.filter((event) => event.phase === "submitting");
     if (!events.length) return { recorded: false, confirmed: false, submissionIds: [] };
     const unresolved = { recorded: true, confirmed: false, submissionIds: [] };
@@ -3770,6 +3770,10 @@ export class ResearchStore {
       if (events.indexOf(intent) >= events.indexOf(submitted[0]) || events.indexOf(submitted[0]) >= events.indexOf(terminal[0])) return unresolved;
       if (receipt.executor !== intent.payload.executor || proof.executor !== intent.payload.executor) return unresolved;
       if (receipt.allocationName !== intent.payload.allocationName || proof.allocationName !== intent.payload.allocationName) return unresolved;
+      if (intent.payload.executor === "modal") {
+        if (receipt.completionEvidence !== "client-envelope" || proof.completionEvidence !== "client-envelope" || proof.state !== "COMPLETED" || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255) return unresolved;
+        continue;
+      }
       if (intent.payload.executor === "container") {
         if (!["docker", "podman"].includes(String(intent.payload.runtime)) || receipt.runtime !== intent.payload.runtime || proof.runtime !== intent.payload.runtime || receipt.daemonId !== intent.payload.daemonId || proof.daemonId !== intent.payload.daemonId || typeof receipt.containerId !== "string" || !/^[a-f0-9]{64}$/.test(receipt.containerId) || proof.containerId !== receipt.containerId) return unresolved;
         if (proof.state !== "REMOVED" && !(proof.state === "EXITED" && proof.runtime === "docker" && typeof proof.daemonId === "string" && /^[A-Za-z0-9][A-Za-z0-9:-]{15,127}$/.test(proof.daemonId))) return unresolved;
@@ -3821,7 +3825,7 @@ export class ResearchStore {
     const payload = entry?.payload && typeof entry.payload === "object" ? entry.payload as Record<string, unknown> : undefined;
     if (!payload || payload.remoteReconciliationRequired !== true) return false;
     const resources = payload.resources as { executor?: unknown } | undefined;
-    if (!["slurm", "container"].includes(String(resources?.executor))) return false;
+    if (!["slurm", "container", "modal"].includes(String(resources?.executor))) return false;
     const evidence = this.remoteExecutionState(experimentId);
     if (!evidence.confirmed) return false;
     this.db.transaction(() => {

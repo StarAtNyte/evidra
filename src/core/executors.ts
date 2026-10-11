@@ -8,7 +8,7 @@ import type { ExperimentExecutorKind, ExperimentManifest, ProcessResult, RunResu
 import { randomUUID } from "node:crypto";
 
 export interface RemoteExecutionEvent {
-  executor: "slurm" | "container";
+  executor: "slurm" | "container" | "modal";
   experimentId: string;
   submissionId: string;
   phase: "submitting" | "submitted" | "terminal";
@@ -21,6 +21,7 @@ export interface RemoteExecutionEvent {
   runtime?: "docker" | "podman";
   containerId?: string;
   daemonId?: string;
+  completionEvidence?: "client-envelope";
 }
 export type RemoteExecutionObserver = (event: RemoteExecutionEvent) => void;
 
@@ -715,7 +716,7 @@ export class SlurmExecutor implements ExperimentExecutor {
 export class ModalExecutor implements ExperimentExecutor {
   readonly kind = "modal" as const;
 
-  constructor(private readonly workspaceRoot?: string) {}
+  constructor(private readonly workspaceRoot?: string, private readonly onRemoteExecution?: RemoteExecutionObserver) {}
 
   async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
     const experimentEnvironment = { ...prepareExperimentEnvironment(manifest, cwd), ...environment };
@@ -729,6 +730,13 @@ export class ModalExecutor implements ExperimentExecutor {
     // The worker image must contain the isolated worktree. Mounting the repo
     // root would omit `.sota/worktrees` and silently execute the wrong source.
     const args = ["modal", "run", modalEntrypoint, "--command-json", commandJson, "--cwd", ".", "--artifacts-json", JSON.stringify(manifest.evaluation?.requiredArtifacts ?? []), "--timeout-seconds", String(timeoutSeconds)];
+    const submissionId = randomUUID();
+    const observe = (phase: RemoteExecutionEvent["phase"], details: Partial<RemoteExecutionEvent> = {}): void => {
+      this.onRemoteExecution?.({ ...details, executor: "modal", experimentId: manifest.id, submissionId, allocationName: `evidra-${submissionId}`, phase, at: new Date().toISOString() });
+    };
+    // Persist before launch: losing the client cannot prove the remote worker
+    // stopped, even when the local process exits or never returns a receipt.
+    observe("submitting");
     let result: ProcessResult;
     try {
       result = await runProcess(args, launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, {
@@ -748,6 +756,9 @@ export class ModalExecutor implements ExperimentExecutor {
     if (result.exitCode !== 0 || !payload) {
       return { ...toRunResult(manifest, { ...result, command, cwd, exitCode: result.exitCode === 0 ? 65 : result.exitCode, stdout: "", stderr: boundProcessOutput([result.stderr, "Modal worker completion is unconfirmed; reconcile before replay."].filter(Boolean).join("\n")) }, metricName, true), stdout: result.stdout, artifacts: {}, failureClass: "unknown" };
     }
+    // These are synchronous completion receipts, not Modal call identifiers.
+    observe("submitted", { completionEvidence: "client-envelope" });
+    observe("terminal", { completionEvidence: "client-envelope", state: "COMPLETED", exitCode: payload.exitCode });
     const allowedArtifacts = new Set(manifest.evaluation?.requiredArtifacts ?? []);
     for (const [name, encoded] of Object.entries(payload.artifacts ?? {})) {
       if (!allowedArtifacts.has(name)) continue;
@@ -763,7 +774,7 @@ export class ModalExecutor implements ExperimentExecutor {
 }
 
 export function executorFor(kind: ExperimentManifest["resources"]["executor"], workspaceRoot?: string, onRemoteExecution?: RemoteExecutionObserver): ExperimentExecutor {
-  if (kind === "modal") return new ModalExecutor(workspaceRoot);
+  if (kind === "modal") return new ModalExecutor(workspaceRoot, onRemoteExecution);
   if (kind === "container") return new ContainerExecutor(workspaceRoot, onRemoteExecution);
   if (kind === "slurm") return new SlurmExecutor(workspaceRoot, onRemoteExecution);
   return new LocalExecutor();

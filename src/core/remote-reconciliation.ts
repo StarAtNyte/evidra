@@ -15,6 +15,11 @@ export async function reconcileRemoteExperiment(storePath: string, cwd: string, 
   } finally { store.close(); }
   if (executor === "container") return reconcileContainerExperiment(storePath, cwd, experimentId, options);
   if (options.cancelContainer) throw new Error("Container cancellation requires a quarantined container experiment.");
+  if (executor === "modal") {
+    const evidence = new ResearchStore(storePath);
+    try { return { released: evidence.reconcileRemoteExperiment(experimentId), queried: 0 }; }
+    finally { evidence.close(); }
+  }
   return reconcileSlurmExperiment(storePath, cwd, experimentId, options);
 }
 

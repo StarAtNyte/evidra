@@ -9024,13 +9024,33 @@ test("Modal requires successful client completion before accepting worker eviden
         `, { mode: 0o755 });
         process.env.PATH = `${bin}:${previousPath ?? ""}`;
         const manifest = { id: "modal-contract", resources: { executor: "modal", timeoutMinutes: mode === "timeout" ? 0.01 : 1 }, evaluation: { requiredArtifacts: ["result.json"] } };
+        const database = join(root, "state.sqlite");
+        const store = new ResearchStore(database);
+        store.saveExperiment({ id: manifest.id, payload: { ...manifest, status: "running" } });
+        store.reserveComputeBudget({ experimentId: manifest.id, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
         let timer;
-        const result = await new ModalExecutor(root).run(manifest, root, ["train"], mode === "interrupted" ? (control) => {
+        const result = await new ModalExecutor(root, (event) => store.appendEvent(`run.remote.${event.phase}`, event)).run(manifest, root, ["train"], mode === "interrupted" ? (control) => {
           timer = setInterval(() => { if (existsSync(join(root, "ready"))) { clearInterval(timer); control.terminate(); } }, 10);
         } : undefined, "accuracy");
         if (timer) clearInterval(timer);
         assert.equal(result.status, mode === "completed" ? "completed" : "failed", mode);
         const confirmed = ["completed", "worker-failed"].includes(mode);
+        assert.equal(store.remoteExecutionState(manifest.id).confirmed, confirmed, mode);
+        assert.equal(store.eventsByType("run.remote.submitting").length, 1);
+        assert.equal(store.eventsByType("run.remote.terminal").length, confirmed ? 1 : 0);
+        store.saveExperiment({ id: manifest.id, payload: { ...manifest, status: result.status } });
+        store.close();
+        const reopened = new ResearchStore(database);
+        try {
+          assert.equal(reopened.reservedComputeGpuHours(), confirmed ? 0 : 1, mode);
+          assert.equal(reopened.remoteExecutionState(manifest.id).confirmed, confirmed, mode);
+          if (!confirmed) {
+            assert.equal(reopened.experiments()[0].payload.status, "blocked");
+            assert.equal(reopened.releaseComputeReservation(manifest.id), false);
+            assert.equal(reopened.reconcileRemoteExperiment(manifest.id), false);
+            assert.throws(() => reopened.saveExperiment({ id: manifest.id, payload: { ...manifest, status: "running" } }), /reconcil/);
+          }
+        } finally { reopened.close(); }
         assert.equal(existsSync(join(root, "result.json")), confirmed, mode);
         if (!confirmed) { assert.deepEqual(result.metrics, {}); assert.deepEqual(result.artifacts, {}); assert.match(result.stdout, /accuracy/); assert.equal(result.failureClass, "unknown"); assert.match(result.stderr, /completion is unconfirmed/); }
         else assert.equal(readFileSync(join(root, "result.json"), "utf8"), "verified artifact");
@@ -9042,6 +9062,33 @@ test("Modal requires successful client completion before accepting worker eviden
       } finally { rmSync(root, { recursive: true, force: true }); }
     }
   } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
+});
+
+test("Modal reconciliation requires ordered completion evidence for every invocation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-modal-ledger-"));
+  try {
+    for (const mode of ["confirmed", "missing", "duplicate", "reordered", "wrong-receipt", "wrong-exit", "extra-intent"]) {
+      const db = join(root, `${mode}.sqlite`);
+      const store = new ResearchStore(db);
+      const id = `modal-${mode}`;
+      const common = { executor: "modal", experimentId: id, submissionId: "12345678-1234-1234-1234-123456789abc", allocationName: "evidra-12345678-1234-1234-1234-123456789abc" };
+      store.saveExperiment({ id, payload: { id, status: "running", resources: { executor: "modal" } } });
+      store.reserveComputeBudget({ experimentId: id, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+      const intent = { ...common, phase: "submitting" };
+      const receipt = { ...common, phase: "submitted", completionEvidence: mode === "wrong-receipt" ? "unverified" : "client-envelope" };
+      const terminal = { ...common, phase: "terminal", completionEvidence: "client-envelope", state: "COMPLETED", exitCode: mode === "wrong-exit" ? 256 : 7 };
+      const records = mode === "missing" ? [intent] : mode === "reordered" ? [terminal, intent, receipt] : [intent, receipt, terminal];
+      if (mode === "duplicate") records.push(terminal);
+      if (mode === "extra-intent") records.push({ ...intent, submissionId: "aaaaaaaa-1234-1234-1234-123456789abc", allocationName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc" });
+      for (const event of records) store.appendEvent(`run.remote.${event.phase}`, event);
+      store.recoverStaleExperiments(0);
+      store.close();
+      assert.deepEqual(await reconcileRemoteExperiment(db, root, id), { released: mode === "confirmed", queried: 0 }, mode);
+      const reopened = new ResearchStore(db);
+      try { assert.equal(reopened.reservedComputeGpuHours(), mode === "confirmed" ? 0 : 1, mode); }
+      finally { reopened.close(); }
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("container executor command mounts only the isolated worktree", () => {

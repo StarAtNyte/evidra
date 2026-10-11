@@ -58,6 +58,13 @@ external evaluator.
 
 ## Latest repository state
 
+- Modal now persists a launch intent before starting the runtime client and
+  records synchronous completion evidence only after a successful client exit
+  and valid worker envelope. Uncertain failures, timeouts, interruptions and
+  missing envelopes retain compute reservations and block replay across restart.
+  Completion receipts are local invocation evidence, not remote call IDs;
+  discovering and cancelling orphaned Modal calls remains unimplemented.
+
 - Modal completion parsing now rejects duplicate envelopes, malformed terminal
   evidence in either order, and noncanonical artifact base64 instead of falling
   back to an earlier success. Ordinary progress logs remain accepted. This does
@@ -68,7 +75,7 @@ external evaluator.
   overwrite client failure, timeout, or interruption; unconfirmed outcomes keep
   raw output as diagnostics and return nonretryable unknown failure. Tests cover
   graceful-zero termination, missing envelopes, and confirmed worker failures.
-  Durable Modal call identity, remote cancellation and compute fencing remain
+  Durable Modal call identity, remote cancellation and live orphan recovery remain
   open gates. No live Ollama server was reachable for runner-overflow trials.
 
 - Local health and every generation now probe the server version and require
