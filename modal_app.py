@@ -14,6 +14,8 @@ import subprocess
 import base64
 import selectors
 import codecs
+import signal
+import time
 from pathlib import Path
 
 import modal
@@ -77,7 +79,9 @@ app = modal.App("evidra-experiment")
     gpu=GPU,
     timeout=int(os.environ.get("EVIDRA_MODAL_TIMEOUT_SECONDS", "3600")),
 )
-def execute(command_json: str, cwd: str, artifacts_json: str = "[]") -> dict[str, object]:
+def execute(command_json: str, cwd: str, artifacts_json: str = "[]", timeout_seconds: int = 3600) -> dict[str, object]:
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or timeout_seconds <= 0:
+        raise ValueError("Evidra Modal timeout must be a positive integer")
     command = json.loads(command_json)
     if not isinstance(command, list) or not command or not all(isinstance(value, str) for value in command):
         raise ValueError("Evidra Modal command must be a non-empty argv array")
@@ -106,33 +110,47 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]") -> dict[str
     # Stream worker output for long GPU jobs while retaining a bounded copy for
     # the controller's structured RunResult. Buffering the whole subprocess
     # made Modal experiments appear hung and could grow memory without bound.
-    process = subprocess.Popen(command, cwd=working_directory, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
+    process = subprocess.Popen(command, cwd=working_directory, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment, start_new_session=True)
     assert process.stdout is not None and process.stderr is not None
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
     selector.register(process.stderr, selectors.EVENT_READ, "stderr")
     captured = {"stdout": bytearray(), "stderr": bytearray()}
     decoders = {stream: codecs.getincrementaldecoder("utf-8")(errors="replace") for stream in captured}
-    while selector.get_map():
-        for key, _ in selector.select(timeout=1.0):
-            # Read available bytes, never wait for a newline while the other
-            # pipe fills. Each allocation is bounded even for enormous lines.
-            chunk = os.read(key.fileobj.fileno(), STREAM_CHUNK_BYTES)
-            stream = key.data
-            text = decoders[stream].decode(chunk, final=not chunk)
-            if text:
-                # Frame progress separately so unterminated worker output
-                # cannot swallow the final JSON completion envelope.
-                print(f"[evidra-worker:{stream}] {text}", flush=True)
-            if not chunk:
-                selector.unregister(key.fileobj)
-                key.fileobj.close()
-                continue
-            remaining = MAX_CAPTURE_BYTES - len(captured[stream])
-            if remaining > 0:
-                captured[stream].extend(chunk[:remaining])
-    selector.close()
-    process.wait()
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        while selector.get_map() or process.poll() is None:
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                raise TimeoutError("Evidra Modal worker exceeded its subprocess deadline; remote completion remains unconfirmed")
+            for key, _ in selector.select(timeout=min(0.1, remaining_seconds)):
+                # Read available bytes, never wait for a newline while the other
+                # pipe fills. Each allocation is bounded even for enormous lines.
+                chunk = os.read(key.fileobj.fileno(), STREAM_CHUNK_BYTES)
+                stream = key.data
+                text = decoders[stream].decode(chunk, final=not chunk)
+                if text:
+                    # Frame progress separately so unterminated worker output
+                    # cannot swallow the final JSON completion envelope.
+                    print(f"[evidra-worker:{stream}] {text}", flush=True)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    key.fileobj.close()
+                    continue
+                remaining = MAX_CAPTURE_BYTES - len(captured[stream])
+                if remaining > 0:
+                    captured[stream].extend(chunk[:remaining])
+    finally:
+        # Also terminate children after the leader exits; cleanup is scoped to
+        # this invocation's new session, never the Modal runtime's process group.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        selector.close()
+        process.stdout.close()
+        process.stderr.close()
+        process.wait(timeout=5)
     completed_stdout = captured["stdout"].decode("utf-8", errors="replace")
     completed_stderr = captured["stderr"].decode("utf-8", errors="replace")
     artifact_payload: dict[str, str] = {}
@@ -157,10 +175,7 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]") -> dict[str
 
 @app.local_entrypoint()
 def run(command_json: str, cwd: str = ".", artifacts_json: str = "[]", timeout_seconds: int = 3600) -> None:
-    # timeout_seconds is included in the CLI contract for observability; the
-    # function timeout is set when the app module is loaded.
-    del timeout_seconds
-    result = execute.remote(command_json, cwd, artifacts_json)
+    result = execute.remote(command_json, cwd, artifacts_json, timeout_seconds)
     print(json.dumps(result))
     # Returning an envelope completes the runtime-client contract. Worker
     # failure is represented inside it; RPC/client errors must still propagate.

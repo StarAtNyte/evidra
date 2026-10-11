@@ -58,6 +58,14 @@ external evaluator.
 
 ## Latest repository state
 
+- Modal forwards the declared timeout to the Python subprocess worker, which
+  enforces a monotonic deadline even after both output pipes close. Each command
+  gets a new process group, killed during cleanup on success or failure.
+  Timeout exceptions emit no completion envelope and preserve reconciliation
+  fences. Tests execute sleeping workers, closed pipes and inherited child
+  pipes. Detached sessions, live Modal RPC cancellation and orphan discovery
+  remain unverified; process-group cleanup is not full remote termination proof.
+
 - Modal worker output now uses bounded 64 KiB pipe reads instead of blocking
   line reads. Capture is limited before decoding, UTF-8 streaming preserves
   fragmented characters, and invalid bytes become replacement characters.

@@ -9103,16 +9103,33 @@ if mode == 'rpc-error':
     worker['execute'].remote = fail
 code = 'import sys; print(\"worker evidence\"); sys.exit(7)' if mode == 'failed' else 'import os, signal; os.kill(os.getpid(), signal.SIGTERM)' if mode == 'signal' else 'print(\"worker evidence\")'
 if mode == 'unterminated': code = 'import sys; sys.stdout.write("worker evidence")'
-worker['run'](json.dumps([sys.executable, '-c', code]))
+if mode == 'timeout': code = 'import time; time.sleep(30)'
+if mode == 'closed-pipes': code = 'import os,time; os.close(1); os.close(2); time.sleep(30)'
+if mode == 'child-pipe': code = 'import subprocess,sys,pathlib; child=subprocess.Popen([sys.executable,"-c","import time; time.sleep(30)"]); pathlib.Path("child.pid").write_text(str(child.pid))'
+worker['run'](json.dumps([sys.executable, '-c', code]), timeout_seconds=1 if mode in ('timeout', 'closed-pipes', 'child-pipe') else 3600)
 `;
   try {
-    for (const mode of ["completed", "failed", "signal", "rpc-error", "partial-lines", "unicode", "invalid-utf8", "unterminated"]) {
+    for (const mode of ["completed", "failed", "signal", "rpc-error", "partial-lines", "unicode", "invalid-utf8", "unterminated", "timeout", "closed-pipes", "child-pipe"]) {
       const result = spawnSync("python3", ["-c", script, join(process.cwd(), "modal_app.py"), root, mode], { encoding: "utf8", timeout: 10_000 });
       assert.equal(result.error, undefined);
-      if (mode === "rpc-error") {
+      if (["rpc-error", "timeout", "closed-pipes", "child-pipe"].includes(mode)) {
         assert.notEqual(result.status, 0);
         assert.equal(parseModalWorkerResult(result.stdout), undefined);
-        assert.match(result.stderr, /RPC completion unconfirmed/);
+        assert.match(result.stderr, mode === "rpc-error" ? /RPC completion unconfirmed/ : /exceeded its subprocess deadline/);
+        if (mode === "child-pipe") {
+          const pid = readFileSync(join(root, "child.pid"), "utf8");
+          const stopped = execFileSync("python3", ["-c", `
+import pathlib, sys, time
+status = pathlib.Path('/proc') / sys.argv[1] / 'status'
+for _ in range(100):
+    if not status.exists(): break
+    if any(line.startswith('State:') and ('Z' in line or 'X' in line) for line in status.read_text().splitlines()): break
+    time.sleep(0.01)
+else: raise RuntimeError('owned child is still running')
+print('stopped')
+`, pid], { encoding: "utf8", timeout: 3000 });
+          assert.equal(stopped.trim(), "stopped");
+        }
       } else {
         assert.equal(result.status, 0, result.stderr);
         const envelope = parseModalWorkerResult(result.stdout);
