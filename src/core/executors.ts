@@ -8,7 +8,7 @@ import type { ExperimentExecutorKind, ExperimentManifest, ProcessResult, RunResu
 import { randomUUID } from "node:crypto";
 
 export interface RemoteExecutionEvent {
-  executor: "slurm";
+  executor: "slurm" | "container";
   experimentId: string;
   submissionId: string;
   phase: "submitting" | "submitted" | "terminal";
@@ -18,6 +18,8 @@ export interface RemoteExecutionEvent {
   cluster?: string;
   state?: string;
   exitCode?: number;
+  runtime?: "docker" | "podman";
+  containerId?: string;
 }
 export type RemoteExecutionObserver = (event: RemoteExecutionEvent) => void;
 
@@ -448,7 +450,7 @@ export function containerCommand(runtime: "docker" | "podman", image: string, cw
 export class ContainerExecutor implements ExperimentExecutor {
   readonly kind = "container" as const;
 
-  constructor(private readonly workspaceRoot?: string) {}
+  constructor(private readonly workspaceRoot?: string, private readonly onRemoteExecution?: RemoteExecutionObserver) {}
 
   async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
     prepareExperimentEnvironment(manifest, cwd, environment);
@@ -470,7 +472,14 @@ export class ContainerExecutor implements ExperimentExecutor {
       return toRunResult(manifest, { command, cwd, exitCode: 127, durationMs: 0, stdout: "", stderr: "No Docker or Podman runtime was found. Install one or select the local executor." }, metricName);
     }
     const receiptRoot = mkdtempSync(join(tmpdir(), "evidra-container-"));
-    const identity = { name: `evidra-${randomUUID()}`, cidFile: join(receiptRoot, "container-id") };
+    const submissionId = randomUUID();
+    const identity = { name: `evidra-${submissionId}`, cidFile: join(receiptRoot, "container-id") };
+    const observe = (phase: RemoteExecutionEvent["phase"], details: Partial<RemoteExecutionEvent> = {}): void => {
+      this.onRemoteExecution?.({ ...details, executor: "container", experimentId: manifest.id, submissionId, allocationName: identity.name, runtime, phase, at: new Date().toISOString() });
+    };
+    // An interrupted runtime client can leave a daemon-owned worker running.
+    try { observe("submitting"); }
+    catch (error) { rmSync(receiptRoot, { recursive: true, force: true }); throw error; }
     const started = Date.now();
     try {
       let result: ProcessResult;
@@ -484,6 +493,11 @@ export class ContainerExecutor implements ExperimentExecutor {
       catch (error) { result = processFailureResult(command, cwd, error); }
       const receipt = boundedFile(receiptRoot, "container-id").trim();
       const containerId = /^[a-f0-9]{64}$/.test(receipt) ? receipt : undefined;
+      let receiptError: unknown;
+      if (containerId) {
+        try { observe("submitted", { containerId }); }
+        catch (error) { receiptError = error instanceof Error ? error : new Error(String(error)); }
+      }
       const control = async (argv: string[]): Promise<ProcessResult> => {
         try { return await runProcess(argv, launchRoot, 10_000, undefined, undefined, runtimeEnvironment); }
         catch (error) { return processFailureResult(argv, launchRoot, error); }
@@ -491,13 +505,15 @@ export class ContainerExecutor implements ExperimentExecutor {
       const removed = await control([runtime, "rm", "--force", "--volumes", containerId ?? identity.name]);
       const inspected = await control([runtime, "ps", "--all", "--no-trunc", "--filter", containerId ? `id=${containerId}` : `name=${identity.name}`, "--format", "{{.ID}}"]);
       const confirmed = containerId !== undefined && inspected.exitCode === 0 && !inspected.stdout.trim();
+      if (confirmed && !receiptError) observe("terminal", { containerId, state: "REMOVED", exitCode: 0 });
       const stderr = boundProcessOutput([result.stderr,
         confirmed ? `Container ${containerId}: removed and verified absent.` : "",
         removed.exitCode !== 0 ? `Container removal request exited ${removed.exitCode}: ${removed.stderr}` : "",
         !confirmed ? `Container termination is unconfirmed (${runtime}, ${containerId ?? identity.name}); reconcile before replay. ${inspected.stderr}` : "",
+        receiptError ? `Container receipt durability failed: ${String(receiptError)}` : "",
       ].filter(Boolean).join("\n"));
       const outcome = toRunResult(manifest, { ...result, command, cwd, durationMs: Date.now() - started, stderr, exitCode: !confirmed && result.exitCode === 0 ? 1 : result.exitCode }, metricName);
-      return confirmed ? outcome : { ...outcome, failureClass: "unknown" };
+      return confirmed && !receiptError ? outcome : { ...outcome, status: "failed", failureClass: "unknown", exitCode: outcome.exitCode === 0 ? 1 : outcome.exitCode };
     } catch (error) {
       return { ...toRunResult(manifest, { command, cwd, exitCode: 126, durationMs: Date.now() - started, stdout: "", stderr: `Container termination is unconfirmed (${identity.name}): ${error instanceof Error ? error.message : String(error)}` }, metricName), failureClass: "unknown" };
     } finally { rmSync(receiptRoot, { recursive: true, force: true }); }
@@ -728,7 +744,7 @@ export class ModalExecutor implements ExperimentExecutor {
 
 export function executorFor(kind: ExperimentManifest["resources"]["executor"], workspaceRoot?: string, onRemoteExecution?: RemoteExecutionObserver): ExperimentExecutor {
   if (kind === "modal") return new ModalExecutor(workspaceRoot);
-  if (kind === "container") return new ContainerExecutor(workspaceRoot);
+  if (kind === "container") return new ContainerExecutor(workspaceRoot, onRemoteExecution);
   if (kind === "slurm") return new SlurmExecutor(workspaceRoot, onRemoteExecution);
   return new LocalExecutor();
 }

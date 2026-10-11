@@ -3749,10 +3749,10 @@ export class ResearchStore {
       const rows = this.db.prepare("SELECT type, payload_json FROM events WHERE type IN ('run.remote.submitting', 'run.remote.submitted', 'run.remote.terminal') AND json_extract(payload_json, '$.experimentId') = ? ORDER BY id").all(experimentId) as Array<{ type: string; payload_json: string }>;
       records = rows.map((row) => ({ type: row.type, payload: JSON.parse(row.payload_json) }));
     } catch {
-      records = ["submitting", "submitted", "terminal"].flatMap((phase) => this.eventsByType(`run.remote.${phase}`));
+      records = this.eventsByTypes(["run.remote.submitting", "run.remote.submitted", "run.remote.terminal"]);
     }
     const events = records.map((event) => ({ phase: event.type.slice("run.remote.".length), payload: event.payload as Record<string, unknown> }))
-      .filter((event) => event.payload?.experimentId === experimentId && event.payload.executor === "slurm");
+      .filter((event) => event.payload?.experimentId === experimentId && ["slurm", "container"].includes(String(event.payload.executor)));
     const intents = events.filter((event) => event.phase === "submitting");
     if (!events.length) return { recorded: false, confirmed: false, submissionIds: [] };
     const unresolved = { recorded: true, confirmed: false, submissionIds: [] };
@@ -3768,13 +3768,28 @@ export class ResearchStore {
       const receipt = submitted[0].payload;
       const proof = terminal[0].payload;
       if (events.indexOf(intent) >= events.indexOf(submitted[0]) || events.indexOf(submitted[0]) >= events.indexOf(terminal[0])) return unresolved;
+      if (receipt.executor !== intent.payload.executor || proof.executor !== intent.payload.executor) return unresolved;
       if (receipt.allocationName !== intent.payload.allocationName || proof.allocationName !== intent.payload.allocationName) return unresolved;
+      if (intent.payload.executor === "container") {
+        if (!["docker", "podman"].includes(String(intent.payload.runtime)) || receipt.runtime !== intent.payload.runtime || proof.runtime !== intent.payload.runtime || typeof receipt.containerId !== "string" || !/^[a-f0-9]{64}$/.test(receipt.containerId) || proof.containerId !== receipt.containerId || proof.state !== "REMOVED" || proof.exitCode !== 0) return unresolved;
+        continue;
+      }
       if (receipt.cluster !== undefined && (typeof receipt.cluster !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(receipt.cluster))) return unresolved;
       if (typeof receipt.jobId !== "string" || !/^\d+$/.test(receipt.jobId) || proof.jobId !== receipt.jobId || proof.cluster !== receipt.cluster || !terminalStates.has(String(proof.state)) || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255) return unresolved;
     }
     // Every attempt needs an intent; unmatched ledger records cannot release a fence.
     if (events.some((event) => !intents.some((intent) => intent.payload.submissionId === event.payload.submissionId))) return unresolved;
     return { recorded: true, confirmed: true, submissionIds: intents.map((intent) => String(intent.payload.submissionId)) };
+  }
+
+  /** A cleanup proof is distinct from a successful experiment measurement. */
+  recordContainerTerminalEvidence(event: { experimentId: string; submissionId: string; allocationName: string; runtime: "docker" | "podman"; containerId: string; state: string; exitCode: number; at: string }): boolean {
+    return this.db.transaction(() => {
+      const existing = this.eventsByType("run.remote.terminal").map((record) => record.payload as Record<string, unknown>).filter((record) => record.experimentId === event.experimentId && record.submissionId === event.submissionId);
+      if (existing.length) return existing.length === 1 && existing[0].executor === "container" && ["runtime", "containerId", "allocationName", "state", "exitCode"].every((key) => existing[0][key] === (event as unknown as Record<string, unknown>)[key]);
+      this.appendEvent("run.remote.terminal", { ...event, executor: "container", phase: "terminal" });
+      return true;
+    })();
   }
 
   /** Concurrent recovery observers must not create duplicate terminal proofs. */
@@ -3787,21 +3802,21 @@ export class ResearchStore {
     })();
   }
 
-  /** Release a restart fence only after every Slurm intent has terminal evidence. */
+  /** Release a restart fence only after every allocation has terminal evidence. */
   reconcileRemoteExperiment(experimentId: string): boolean {
     if (this.verifyEventChain().status !== "valid") return false;
     const entry = this.experiments().find((experiment) => experiment.id === experimentId);
     const payload = entry?.payload && typeof entry.payload === "object" ? entry.payload as Record<string, unknown> : undefined;
     if (!payload || payload.remoteReconciliationRequired !== true) return false;
     const resources = payload.resources as { executor?: unknown } | undefined;
-    if (resources?.executor !== "slurm") return false;
+    if (!["slurm", "container"].includes(String(resources?.executor))) return false;
     const evidence = this.remoteExecutionState(experimentId);
     if (!evidence.confirmed) return false;
     this.db.transaction(() => {
       const updated = { ...payload, remoteReconciliationRequired: false, status: "failed", recoveryAttempted: false, remoteReconciledAt: new Date().toISOString() };
       this.db.prepare("UPDATE experiments SET payload_json = ? WHERE id = ?").run(safeJson(updated), experimentId);
-      this.releaseComputeReservation(experimentId, "all recorded Slurm allocations have terminal accounting");
-      this.appendEvent("experiment.remote.reconciled", { experimentId, executor: "slurm", submissionIds: evidence.submissionIds, result: "termination proven; measurement remains unvalidated" });
+      this.releaseComputeReservation(experimentId, "all recorded remote allocations have terminal evidence");
+      this.appendEvent("experiment.remote.reconciled", { experimentId, executor: resources?.executor, submissionIds: evidence.submissionIds, result: "termination proven; measurement remains unvalidated" });
     })();
     return true;
   }

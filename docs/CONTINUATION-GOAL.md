@@ -58,6 +58,16 @@ external evaluator.
 
 ## Latest repository state
 
+- Container execution now persists unique launch intent before the runtime
+  RPC and records full-ID receipts and verified absence proof. CLI/TUI share
+  this mandatory ledger. Unconfirmed cleanup or durability failures keep
+  compute reserved and block replay even without a controller restart.
+  A SIGKILL regression verifies recovery of the durable worker name; live
+  Docker normal-finalization evidence is recorded in
+  `docs/research/evidence/container-ledger-2026-10-11.json`.
+  Container reconciliation accepts existing durable cleanup proof only;
+  querying orphaned workers across daemon endpoints remains an open gate.
+
 - Slurm recovery now rejects out-of-order lifecycle evidence and malformed
   cluster identities; expanded ledger regressions verify that compute remains
   reserved for these cases. Container controller-crash reconciliation remains
@@ -69,7 +79,7 @@ external evaluator.
   A local Docker image with observable startup hooks verified direct command
   execution, absent hook markers, and container/volume removal; evidence is in
   `docs/research/evidence/container-image-contract-2026-10-11.json`.
-  Podman, durable container recovery, and unconfirmed-outcome fencing remain open.
+  Podman live verification and orphaned-container reconciliation remain open.
 - Exact container cleanup at `5a33e02` passed hosted CI on both Node versions,
   including package checks: run 38120074055; 707 local tests passed.
 

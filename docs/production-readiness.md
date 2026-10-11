@@ -108,7 +108,7 @@ allocation name. Submission ambiguity, legacy identity gaps, live cluster
 verification, and container/Modal reconciliation remain open.
 
 The same allocation-evidence check now protects normal finalization and compute
-release, without waiting for a restart. An unconfirmed Slurm ledger blocks
+release, without waiting for a restart. An unconfirmed Slurm or container ledger blocks
 running/scheduled/completed updates; failed, invalid, rejected, cancelled, or
 blocked updates retain a reconciliation fence and their original requested
 status in `remoteOutcomeStatus`. Direct reservation release and reservation
@@ -116,6 +116,22 @@ recovery retain that compute until matching terminal evidence exists and the
 quarantine is reconciled. CLI/TUI replay checks consult the ledger even before
 a quarantine flag has been materialized. Allocation lookups use an indexed
 experiment-specific query, with a compatibility fallback for SQLite JSON1.
+
+Containers now persist a UUID-based worker name and runtime before launch,
+then a full container-ID receipt and terminal proof after verified daemon-side
+absence. Both CLI and TUI use the durable observer; a missing intent write
+prevents launch. Receipt-write failures still run cleanup, but retain the fence
+until complete evidence exists. Proof writes are idempotent and conflicting
+proofs cannot replace the original. Reconciliation can release a container
+quarantine backed by complete existing proof, leaving its measurement failed
+and unvalidated. It does not query or cancel orphaned containers yet.
+
+Regressions cover SIGKILL during launch, reopened SQLite state, uncertain normal
+finalization, durability failures, conflicting identities, reordered records,
+and ordering under the SQLite compatibility fallback. A live Docker run
+verified the ordered ledger, independent exact-ID absence, and compute release;
+see [container ledger evidence](research/evidence/container-ledger-2026-10-11.json).
+Live orphan recovery across daemon endpoints and Podman remain unverified.
 
 Slurm allocations now use a UUID-based job name stored in every lifecycle
 record. Both normal accounting and post-restart queries request duplicate

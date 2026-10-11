@@ -2,6 +2,18 @@ import { ResearchStore } from "./store.js";
 import { parseSlurmAccounting } from "./executors.js";
 import { runProcess } from "./process.js";
 
+/** Container recovery currently accepts only previously durable cleanup proof. */
+export async function reconcileRemoteExperiment(storePath: string, cwd: string, experimentId: string, options: { timeoutMs?: number } = {}): Promise<{ released: boolean; queried: number }> {
+  const store = new ResearchStore(storePath);
+  let executor: unknown;
+  try {
+    const entry = store.experiments().find((item) => item.id === experimentId);
+    executor = (entry?.payload as { resources?: { executor?: unknown } } | undefined)?.resources?.executor;
+    if (executor === "container") return { released: store.reconcileRemoteExperiment(experimentId), queried: 0 };
+  } finally { store.close(); }
+  return reconcileSlurmExperiment(storePath, cwd, experimentId, options);
+}
+
 /** Read accounting only; never cancel or relaunch an allocation during recovery. */
 export async function reconcileSlurmExperiment(storePath: string, cwd: string, experimentId: string, options: { timeoutMs?: number } = {}): Promise<{ released: boolean; queried: number }> {
   const store = new ResearchStore(storePath);

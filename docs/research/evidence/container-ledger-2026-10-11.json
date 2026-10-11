@@ -1,0 +1,60 @@
+{
+  "verifiedAt": "2026-10-11T07:30:22.791Z",
+  "nodeVersion": "v24.21.0",
+  "executorSourceSHA256": "1c42d2dc7e794ae55095ca7db3a3dd951c06a86a3d7f182c62d72f6d95012b3f",
+  "dockerVersion": "29.8.1",
+  "image": "postgres:16-alpine",
+  "command": [
+    "/bin/sh",
+    "-c",
+    "echo accuracy=0.9"
+  ],
+  "ledger": [
+    {
+      "type": "run.remote.submitting",
+      "payload": {
+        "executor": "container",
+        "experimentId": "live-container-ledger",
+        "submissionId": "c53c617b-632a-4477-a9a1-792a863daa5b",
+        "allocationName": "evidra-c53c617b-632a-4477-a9a1-792a863daa5b",
+        "runtime": "docker",
+        "phase": "submitting",
+        "at": "2026-10-11T07:30:22.436Z"
+      }
+    },
+    {
+      "type": "run.remote.submitted",
+      "payload": {
+        "containerId": "dc2c10614b70ca3572a61ff73807cd7b62991c0e7a6b1faae634438b35d47669",
+        "executor": "container",
+        "experimentId": "live-container-ledger",
+        "submissionId": "c53c617b-632a-4477-a9a1-792a863daa5b",
+        "allocationName": "evidra-c53c617b-632a-4477-a9a1-792a863daa5b",
+        "runtime": "docker",
+        "phase": "submitted",
+        "at": "2026-10-11T07:30:22.685Z"
+      }
+    },
+    {
+      "type": "run.remote.terminal",
+      "payload": {
+        "containerId": "dc2c10614b70ca3572a61ff73807cd7b62991c0e7a6b1faae634438b35d47669",
+        "state": "REMOVED",
+        "exitCode": 0,
+        "executor": "container",
+        "experimentId": "live-container-ledger",
+        "submissionId": "c53c617b-632a-4477-a9a1-792a863daa5b",
+        "allocationName": "evidra-c53c617b-632a-4477-a9a1-792a863daa5b",
+        "runtime": "docker",
+        "phase": "terminal",
+        "at": "2026-10-11T07:30:22.758Z"
+      }
+    }
+  ],
+  "status": "completed",
+  "exitCode": 0,
+  "independentlyVerifiedContainerAbsent": true,
+  "computeReservationReleased": true,
+  "eventChain": "valid",
+  "scope": "Live Docker normal finalization only. Controller SIGKILL covered with fake daemon regression; live orphan reconciliation remains unverified."
+}

@@ -1,4 +1,4 @@
-import { reconcileSlurmExperiment } from "../dist/core/remote-reconciliation.js";
+import { reconcileRemoteExperiment, reconcileSlurmExperiment } from "../dist/core/remote-reconciliation.js";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8788,7 +8788,7 @@ test("container completion awaits exact daemon cleanup and rejects uncertain out
   const previousHost = process.env.DOCKER_HOST;
   const cid = "a".repeat(64);
   try {
-    for (const mode of ["completed", "timeout", "interrupted", "removal-failed", "query-failed", "missing-receipt"]) {
+    for (const mode of ["completed", "timeout", "interrupted", "removal-failed", "query-failed", "missing-receipt", "receipt-durability-failed", "terminal-durability-failed"]) {
       const root = mkdtempSync(join(tmpdir(), "evidra-container-contract-"));
       try {
         const bin = join(root, "bin"); mkdirSync(bin);
@@ -8796,6 +8796,7 @@ test("container completion awaits exact daemon cleanup and rejects uncertain out
           const fs=require('node:fs'), args=process.argv.slice(2), mode=${JSON.stringify(mode)}, cid=${JSON.stringify(cid)};
           if(process.env.DOCKER_HOST!=='tcp://test.invalid:2375') process.exit(11);
           if(args[0]==='run') {
+            if(!fs.existsSync('intent-persisted')) process.exit(12);
             if(args.includes('--rm')) process.exit(8);
             if(mode!=='missing-receipt') fs.writeFileSync(args[args.indexOf('--cidfile')+1],cid);
             fs.writeFileSync('active',cid);
@@ -8815,7 +8816,17 @@ test("container completion awaits exact daemon cleanup and rejects uncertain out
         process.env.EVIDRA_CONTAINER_RUNTIME = "docker";
         process.env.DOCKER_HOST = "tcp://test.invalid:2375";
         const manifest = { id: "container-contract", resources: { executor: "container", image: "test:latest", timeoutMinutes: mode === "timeout" ? 0.004 : 1 }, evaluation: { requiredArtifacts: [] } };
-        const result = await new ContainerExecutor(root).run(manifest, root, ["train"], mode === "interrupted" ? (control) => { setTimeout(() => control.terminate(), 160); } : undefined, "accuracy");
+        const db = join(root, "state.sqlite");
+        const store = new ResearchStore(db);
+        store.saveExperiment({ id: manifest.id, payload: { ...manifest, status: "running" } });
+        store.reserveComputeBudget({ experimentId: manifest.id, budgetGpuHours: 10, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" });
+        store.close();
+        const result = await new ContainerExecutor(root, (event) => {
+          if (mode === "receipt-durability-failed" && event.phase === "submitted") throw undefined;
+          if (mode === "terminal-durability-failed" && event.phase === "terminal") throw new Error("ledger unavailable");
+          recordRemoteExecution(db, event);
+          if (event.phase === "submitting") writeFileSync(join(root, "intent-persisted"), "durable");
+        }).run(manifest, root, ["train"], mode === "interrupted" ? (control) => { setTimeout(() => control.terminate(), 160); } : undefined, "accuracy");
         assert.equal(result.status, mode === "completed" ? "completed" : "failed");
         if (mode === "timeout") assert.equal(result.exitCode, 124);
         if (mode === "interrupted") assert.equal(result.exitCode, 130);
@@ -8827,6 +8838,14 @@ test("container completion awaits exact daemon cleanup and rejects uncertain out
           assert.equal(existsSync(join(root, "cleanup-completed")), true);
           assert.ok(result.durationSeconds >= 0.08);
         }
+        const reopened = new ResearchStore(db);
+        const confirmed = ["completed", "timeout", "interrupted"].includes(mode);
+        assert.equal(reopened.remoteExecutionState(manifest.id).confirmed, confirmed);
+        reopened.saveExperiment({ id: manifest.id, payload: { ...manifest, status: result.status } });
+        assert.equal(reopened.reservedComputeGpuHours(), confirmed ? 0 : 2);
+        assert.equal(reopened.experiments()[0].payload.status, confirmed ? result.status : "blocked");
+        assert.equal(reopened.verifyEventChain().status, "valid");
+        reopened.close();
       } finally { rmSync(root, { recursive: true, force: true }); }
     }
   } finally {
@@ -8834,6 +8853,118 @@ test("container completion awaits exact daemon cleanup and rejects uncertain out
     if (previousHost === undefined) delete process.env.DOCKER_HOST; else process.env.DOCKER_HOST = previousHost;
     if (previousRuntime === undefined) delete process.env.EVIDRA_CONTAINER_RUNTIME; else process.env.EVIDRA_CONTAINER_RUNTIME = previousRuntime;
   }
+});
+
+test("container launch refuses missing durability and retains identity after controller SIGKILL", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-container-crash-"));
+  const bin = join(root, "bin"); mkdirSync(bin);
+  const db = join(root, "state.sqlite");
+  try {
+    writeFileSync(join(bin, "docker"), `#!${process.execPath}
+      const fs=require('node:fs'), args=process.argv.slice(2);
+      if(args[0]==='run') {
+        const receipt=args[args.indexOf('--cidfile')+1];
+        fs.writeFileSync(receipt,'b'.repeat(64));
+        fs.writeFileSync('daemon-worker',JSON.stringify({name:args[args.indexOf('--name')+1],receipt}));
+        process.kill(process.ppid,'SIGKILL');
+      }
+    `, { mode: 0o755 });
+    const imports = `
+      import { ContainerExecutor } from ${JSON.stringify(new URL("../dist/core/executors.js", import.meta.url).href)};
+      import { ResearchStore } from ${JSON.stringify(new URL("../dist/core/store.js", import.meta.url).href)};
+      import { recordRemoteExecution } from ${JSON.stringify(new URL("../dist/core/execution-heartbeat.js", import.meta.url).href)};
+      const root=${JSON.stringify(root)}, db=${JSON.stringify(db)};
+      const manifest={id:'crash',resources:{executor:'container',image:'test:latest',timeoutMinutes:1},evaluation:{requiredArtifacts:[]}};
+    `;
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, EVIDRA_CONTAINER_RUNTIME: "docker" };
+    const refused = spawnSync(process.execPath, ["--input-type=module", "-e", imports + `
+      try { await new ContainerExecutor(root,()=>{throw new Error('ledger unavailable')}).run(manifest,root,['train']); process.exit(9); }
+      catch(error) { if(!String(error).includes('ledger unavailable')) process.exit(8); }
+    `], { cwd: root, env, encoding: "utf8", timeout: 10_000 });
+    assert.equal(refused.status, 0, refused.stderr);
+    assert.equal(existsSync(join(root, "daemon-worker")), false);
+    const crashed = spawnSync(process.execPath, ["--input-type=module", "-e", imports + `
+      const store=new ResearchStore(db);
+      store.saveExperiment({id:manifest.id,payload:{...manifest,status:'running'}});
+      store.reserveComputeBudget({experimentId:manifest.id,budgetGpuHours:10,usedGpuHours:0,requestedGpuHours:2,gpu:'A100'});
+      store.close();
+      await new ContainerExecutor(root,event=>recordRemoteExecution(db,event)).run(manifest,root,['train']);
+    `], { cwd: root, env, encoding: "utf8", timeout: 10_000 });
+    assert.equal(crashed.signal, "SIGKILL", crashed.stderr);
+    const worker = JSON.parse(readFileSync(join(root, "daemon-worker"), "utf8"));
+    const reopened = new ResearchStore(db);
+    const intent = reopened.eventsByType("run.remote.submitting")[0].payload;
+    assert.equal(intent.executor, "container");
+    assert.equal(intent.runtime, "docker");
+    assert.equal(intent.allocationName, worker.name);
+    assert.equal(intent.allocationName, `evidra-${intent.submissionId}`);
+    assert.equal(reopened.eventsByType("run.remote.terminal").length, 0);
+    reopened.recoverStaleExperiments(0);
+    assert.equal(reopened.reservedComputeGpuHours(), 2);
+    assert.equal(reopened.experiments()[0].payload.status, "blocked");
+    assert.equal(reopened.reconcileRemoteExperiment("crash"), false);
+    assert.throws(() => reopened.saveExperiment({id:'crash',payload:{...reopened.experiments()[0].payload,status:'running'}}), /remote reconciliation/);
+    assert.equal(reopened.verifyEventChain().status, "valid");
+    reopened.close();
+    rmSync(join(worker.receipt, ".."), { recursive: true, force: true });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("container reconciliation requires ordered matching cleanup evidence and never validates measurements", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-container-proof-"));
+  const db = join(root, "state.sqlite");
+  try {
+    const store = new ResearchStore(db);
+    const common = { executor: "container", experimentId: "proof", submissionId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", allocationName: "evidra-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", runtime: "docker", at: new Date().toISOString() };
+    const intent = { ...common, phase: "submitting" };
+    const receipt = { ...common, phase: "submitted", containerId: "b".repeat(64) };
+    const terminal = { ...receipt, phase: "terminal", state: "REMOVED", exitCode: 0 };
+    const originalPrepare = store.db.prepare;
+    store.db.prepare = function(sql) {
+      if (sql.includes("json_extract(payload_json, '$.experimentId')")) throw new Error("simulate SQLite without JSON1");
+      return originalPrepare.call(this, sql);
+    };
+    const invalid = [
+      [intent, receipt], [receipt, intent, terminal], [intent, terminal, receipt],
+      [intent, receipt, { ...terminal, containerId: "c".repeat(64) }],
+      [intent, receipt, { ...terminal, runtime: "podman" }],
+      [intent, receipt, { ...terminal, executor: "slurm" }],
+      [intent, receipt, { ...terminal, state: "RUNNING" }],
+      [intent, receipt, { ...terminal, exitCode: 1 }],
+      [intent, { ...receipt, containerId: "short" }, { ...terminal, containerId: "short" }],
+      [intent, receipt, terminal, terminal],
+    ];
+    for (const [index, ledger] of invalid.entries()) {
+      const id = `invalid-${index}`;
+      store.saveExperiment({ id, payload: { id, status: "running", resources: { executor: "container" } } });
+      store.reserveComputeBudget({ experimentId: id, budgetGpuHours: 100, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+      for (const event of ledger) store.appendEvent(`run.remote.${event.phase}`, { ...event, experimentId: id });
+      store.recoverStaleExperiments(0);
+      assert.equal(store.remoteExecutionState(id).confirmed, false);
+      assert.equal(store.reconcileRemoteExperiment(id), false);
+      assert.equal(store.releaseComputeReservation(id), false);
+    }
+    store.db.prepare = originalPrepare;
+    store.saveExperiment({ id: "proof", payload: { id: "proof", status: "running", resources: { executor: "container" } } });
+    store.reserveComputeBudget({ experimentId: "proof", budgetGpuHours: 100, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" });
+    store.appendEvent("run.remote.submitting", { ...common, phase: "submitting" });
+    store.appendEvent("run.remote.submitted", { ...common, phase: "submitted", containerId: "b".repeat(64) });
+    store.recoverStaleExperiments(0);
+    assert.equal(store.reconcileRemoteExperiment("proof"), false);
+    const proof = { ...common, containerId: "b".repeat(64), state: "REMOVED", exitCode: 0 };
+    assert.equal(store.recordContainerTerminalEvidence(proof), true);
+    assert.equal(store.recordContainerTerminalEvidence(proof), true);
+    assert.equal(store.recordContainerTerminalEvidence({ ...proof, containerId: "c".repeat(64) }), false);
+    assert.equal(store.eventsByType("run.remote.terminal").filter((event) => event.payload.experimentId === "proof").length, 1);
+    store.close();
+    assert.deepEqual(await reconcileRemoteExperiment(db, root, "proof"), { released: true, queried: 0 });
+    const reopened = new ResearchStore(db);
+    assert.equal(reopened.reservedComputeGpuHours(), invalid.length);
+    assert.equal(reopened.experiments().find((entry) => entry.id === "proof").payload.status, "failed");
+    assert.equal(reopened.experiments().find((entry) => entry.id === "proof").payload.remoteReconciliationRequired, false);
+    assert.equal(reopened.runs().length, 0);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("Slurm executor command preserves argv boundaries and declared resources", () => {
