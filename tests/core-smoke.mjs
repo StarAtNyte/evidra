@@ -9085,6 +9085,36 @@ sys.modules['modal'] = types.SimpleNamespace(Image=Image, App=App)
 worker = runpy.run_path(sys.argv[1])
 worker['execute'].__globals__['REMOTE_WORKSPACE'] = pathlib.Path(sys.argv[2])
 mode = sys.argv[3]
+if mode == 'artifacts':
+    import os
+    namespace = worker['execute'].__globals__
+    namespace['MAX_ARTIFACT_BYTES'] = 128
+    root = pathlib.Path(sys.argv[2])
+    (root / 'normal').write_bytes(b'verified artifact')
+    (root / 'large').write_bytes(b'x' * 129)
+    os.mkfifo(root / 'fifo')
+    (root / 'link').symlink_to(root / 'normal')
+    (root / 'parent').symlink_to(root, target_is_directory=True)
+    read = worker['read_worker_artifact']
+    assert read(root, 'normal') == b'verified artifact'
+    assert read(root, 'large') is None
+    assert read(root, 'missing') is None
+    for name in ('fifo', 'link', 'parent/normal', '../normal', '/etc/passwd'):
+        try: read(root, name)
+        except (OSError, ValueError): pass
+        else: raise AssertionError('unsafe artifact accepted: ' + name)
+    original_read = os.read
+    def mutate(descriptor, size):
+        (root / 'normal').write_bytes(b'changed artifact')
+        return original_read(descriptor, size)
+    os.read = mutate
+    try:
+        try: read(root, 'normal')
+        except ValueError: pass
+        else: raise AssertionError('changing artifact accepted')
+    finally: os.read = original_read
+    print('artifact checks passed')
+    sys.exit(0)
 if mode in ('partial-lines', 'unicode', 'invalid-utf8'):
     namespace = worker['execute'].__globals__
     namespace['MAX_CAPTURE_BYTES'] = 128
@@ -9109,9 +9139,10 @@ if mode == 'child-pipe': code = 'import subprocess,sys,pathlib; child=subprocess
 worker['run'](json.dumps([sys.executable, '-c', code]), timeout_seconds=1 if mode in ('timeout', 'closed-pipes', 'child-pipe') else 3600)
 `;
   try {
-    for (const mode of ["completed", "failed", "signal", "rpc-error", "partial-lines", "unicode", "invalid-utf8", "unterminated", "timeout", "closed-pipes", "child-pipe"]) {
+    for (const mode of ["completed", "failed", "signal", "rpc-error", "partial-lines", "unicode", "invalid-utf8", "unterminated", "timeout", "closed-pipes", "child-pipe", "artifacts"]) {
       const result = spawnSync("python3", ["-c", script, join(process.cwd(), "modal_app.py"), root, mode], { encoding: "utf8", timeout: 10_000 });
       assert.equal(result.error, undefined);
+      if (mode === "artifacts") { assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout.trim(), "artifact checks passed"); continue; }
       if (["rpc-error", "timeout", "closed-pipes", "child-pipe"].includes(mode)) {
         assert.notEqual(result.status, 0);
         assert.equal(parseModalWorkerResult(result.stdout), undefined);

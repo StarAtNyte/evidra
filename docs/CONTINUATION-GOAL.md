@@ -58,6 +58,12 @@ external evaluator.
 
 ## Latest repository state
 
+- Modal artifact collection now walks workspace-relative directory descriptors
+  with no-follow opens, rejects special files, reads at most the per-file cap
+  plus one byte, and rejects files that change during capture. Python tests
+  cover normal, missing, oversized, FIFO, symlink, parent-symlink and mutated
+  files. Aggregate artifact/envelope transport budgets remain follow-up work.
+
 - Modal forwards the declared timeout to the Python subprocess worker, which
   enforces a monotonic deadline even after both output pipes close. Each command
   gets a new process group, killed during cleanup on success or failure.

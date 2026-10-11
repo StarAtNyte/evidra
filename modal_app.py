@@ -16,6 +16,8 @@ import selectors
 import codecs
 import signal
 import time
+import stat
+from contextlib import ExitStack
 from pathlib import Path
 
 import modal
@@ -32,6 +34,42 @@ WORKER_ENV_KEYS = {
 }
 MAX_CAPTURE_BYTES = 16 * 1024 * 1024
 STREAM_CHUNK_BYTES = 64 * 1024
+MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+
+
+def read_worker_artifact(root: Path, name: str) -> bytes | None:
+    """Read a bounded, stable regular file through workspace-relative handles."""
+    path = Path(name)
+    if path.is_absolute() or ".." in path.parts or not path.parts:
+        raise ValueError(f"Invalid declared artifact path: {name}")
+    with ExitStack() as handles:
+        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        handles.callback(os.close, directory)
+        try:
+            for part in path.parts[:-1]:
+                directory = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+                handles.callback(os.close, directory)
+            descriptor = os.open(path.parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        except FileNotFoundError:
+            return None
+        handles.callback(os.close, descriptor)
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError(f"Declared artifact must be a regular file: {name}")
+        if before.st_size > MAX_ARTIFACT_BYTES:
+            return None
+        data = bytearray()
+        while len(data) <= MAX_ARTIFACT_BYTES:
+            chunk = os.read(descriptor, min(STREAM_CHUNK_BYTES, MAX_ARTIFACT_BYTES + 1 - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
+        after = os.fstat(descriptor)
+        if len(data) > MAX_ARTIFACT_BYTES:
+            return None
+        if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns) or len(data) != after.st_size:
+            raise ValueError(f"Declared artifact changed during capture: {name}")
+        return bytes(data)
 
 
 def worker_environment() -> dict[str, str]:
@@ -155,15 +193,9 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]", timeout_sec
     completed_stderr = captured["stderr"].decode("utf-8", errors="replace")
     artifact_payload: dict[str, str] = {}
     for artifact in json.loads(artifacts_json):
-        relative_artifact = Path(artifact)
-        if relative_artifact.is_absolute() or ".." in relative_artifact.parts:
-            raise ValueError(f"Invalid declared artifact path: {artifact}")
-        raw_artifact_path = working_directory / relative_artifact
-        if raw_artifact_path.is_symlink():
-            raise ValueError(f"Declared artifact may not be a symlink: {artifact}")
-        artifact_path = contained_path(working_directory, raw_artifact_path)
-        if artifact_path.is_file() and artifact_path.stat().st_size <= 64 * 1024 * 1024:
-            artifact_payload[str(relative_artifact)] = base64.b64encode(artifact_path.read_bytes()).decode("ascii")
+        data = read_worker_artifact(working_directory, artifact)
+        if data is not None:
+            artifact_payload[str(Path(artifact))] = base64.b64encode(data).decode("ascii")
     return {
         # Match the controller's portable 0..255 process-exit contract.
         "exitCode": process.returncode if process.returncode >= 0 else 128 - process.returncode,
