@@ -40,7 +40,7 @@ import { queueRecoveryAction } from "../dist/core/queue-recovery.js";
 import { executeResearchTool, normalizeResearchToolResult, availableResearchTools, RESEARCH_TOOLS, selectResearchTools, toolFailureTrust, untrustedContentWarnings, workspaceSearchFallbackTerms } from "../dist/core/tools.js";
 import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "../dist/core/external-tools.js";
 import { normalizeResearchDecisionPayload, normalizeResearchToolCall, researchDirectorAvailableTools, runResearchDirector } from "../dist/agents/research-director.js";
-import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
+import { CodexExecAgent, checkProvider, listLocalModels, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
 import { LocalExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, SlurmExecutor, parseSlurmAccounting, slurmCommand, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
@@ -7858,6 +7858,46 @@ test("local provider enforces the configured turn timeout", async () => {
     else process.env.OLLAMA_HOST = previousHost;
     await new Promise((resolve) => server.close(resolve));
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("local discovery and health probes bound stalled headers and bodies and honor interruption", async () => {
+  const previousHost = process.env.OLLAMA_HOST;
+  let mode = "headers";
+  let requests = 0;
+  const server = createServer((request, response) => {
+    requests += 1;
+    if (mode === "headers") return;
+    response.setHeader("content-type", "application/json");
+    if (mode === "body") { response.write('{"models":'); return; }
+    if (mode === "show" && request.url === "/api/show") { response.write('{"details":'); return; }
+    response.end(JSON.stringify({ models: [null, { name: 42 }, { name: "test" }] }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}/api/chat`;
+  try {
+    for (const stalled of ["headers", "body"]) {
+      mode = stalled;
+      await assert.rejects(() => listLocalModels({ timeoutMs: 100 }), /probe timed out/);
+    }
+    mode = "show";
+    await assert.rejects(() => checkProvider({ provider: "local", model: "test", cwd: process.cwd(), timeoutMs: 100 }), /probe timed out/);
+    mode = "headers";
+    const interrupt = new AbortController();
+    const pending = listLocalModels({ interruptSignal: interrupt.signal });
+    setTimeout(() => interrupt.abort(), 50);
+    await assert.rejects(() => pending, /probe interrupted/);
+    const before = requests;
+    await assert.rejects(() => listLocalModels({ interruptSignal: interrupt.signal }), /probe interrupted/);
+    assert.equal(requests, before);
+    mode = "healthy";
+    assert.deepEqual((await listLocalModels()).map((model) => model.id), ["test"]);
+    await checkProvider({ provider: "local", model: "test", cwd: process.cwd() });
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 

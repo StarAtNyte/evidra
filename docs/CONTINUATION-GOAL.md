@@ -58,6 +58,15 @@ external evaluator.
 
 ## Latest repository state
 
+- Local provider discovery and model-health probes now retain a bounded
+  deadline through headers and JSON body decoding, honor caller interruption,
+  and validate inventory/metadata. Startup and fallback selection pass caller
+  timeout/signal options through; an interrupted fallback is not converted
+  back into a provider-reset wait. HTTP regressions stall headers, inventory
+  bodies, and model-health bodies, and verify pre-aborted calls send nothing.
+- Local request-contract changes at `efce265` passed hosted CI on both Node
+  versions, including package checks: run 38117242384; 699 tests passed locally.
+
 - Local Ollama requests now share endpoint resolution across discovery/health/
   generation, forward structured output schemas, reject partial or truncated
   replies, and report valid inference usage even for rejected completions.

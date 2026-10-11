@@ -91,6 +91,15 @@ These contracts do not establish local tokenizer limits or prevent server-side
 input truncation. Explicit model/context metadata, generation headroom, and
 provider-owned transcript growth remain part of the next token-budget gate.
 
+Local discovery and model-health probes have a ten-second deadline per request,
+including JSON body decoding; shorter caller timeouts are respected. Startup
+and fallback selection propagate interruption into these probes. Invalid
+inventory/metadata fails health checks, and interruption during fallback is
+preserved rather than returned as the original provider exhaustion. Tests
+cover servers that stall before headers, during inventory bodies, and during
+model-health bodies. A multi-request startup path can consume multiple probe
+deadlines; these bounds do not claim one end-to-end startup deadline.
+
 Git and ripgrep (`rg`) are required workspace runtimes in addition to Node.
 The installer checks both before downloading; `doctor --json` includes
 `requiredTools` and does not report overall readiness when either is missing.

@@ -531,19 +531,52 @@ export async function resolveCodexModel(preferred = "default"): Promise<string> 
   return selected.id;
 }
 
-export async function listLocalModels(): Promise<AvailableModel[]> {
-  const response = await fetch(ollamaEndpoint("tags"));
-  if (!response.ok) throw new Error(`Local Ollama is unavailable (${response.status}). Start Ollama and try again.`);
-  const payload = await response.json() as { models?: Array<{ name?: string; model?: string; details?: { parameter_size?: string } }> };
-  return (payload.models ?? []).map((entry) => {
-    const id = entry.name ?? entry.model ?? "";
-    return { id, displayName: id, description: entry.details?.parameter_size ? `Ollama · ${entry.details.parameter_size}` : "Ollama local model" };
-  }).filter((model) => model.id);
+export interface ProviderProbeOptions {
+  timeoutMs?: number;
+  interruptSignal?: AbortSignal;
+}
+
+/** Keep the deadline active through body decoding, not only response headers. */
+async function probeOllama(endpoint: "tags" | "show", options: ProviderProbeOptions = {}, model?: string): Promise<Record<string, unknown>> {
+  const abort = new AbortController();
+  const duration = Math.max(1, Math.min(10_000, Number.isFinite(options.timeoutMs) ? options.timeoutMs! : 10_000));
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; abort.abort(); }, duration);
+  const interrupt = (): void => abort.abort();
+  options.interruptSignal?.addEventListener("abort", interrupt, { once: true });
+  try {
+    if (options.interruptSignal?.aborted) abort.abort();
+    const response = await fetch(ollamaEndpoint(endpoint), {
+      ...(model ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: model }) } : {}),
+      signal: abort.signal,
+    });
+    if (!response.ok) throw new Error(`Local Ollama ${endpoint} probe failed its health check (${response.status}).`);
+    const payload: unknown = await response.json();
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || "error" in payload) throw new Error(`Local Ollama ${endpoint} returned invalid health metadata.`);
+    return payload as Record<string, unknown>;
+  } catch (error) {
+    if (abort.signal.aborted) throw new Error(timedOut ? "Local Ollama probe timed out." : "Local Ollama probe interrupted.");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    options.interruptSignal?.removeEventListener("abort", interrupt);
+  }
+}
+
+export async function listLocalModels(options: ProviderProbeOptions = {}): Promise<AvailableModel[]> {
+  const payload = await probeOllama("tags", options);
+  if (!Array.isArray(payload.models)) throw new Error("Local Ollama returned invalid model inventory.");
+  return payload.models.flatMap((entry: unknown) => {
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry as { name?: unknown; model?: unknown; details?: { parameter_size?: unknown } };
+    const id = typeof item.name === "string" ? item.name : typeof item.model === "string" ? item.model : "";
+    return id.trim() ? [{ id, displayName: id, description: typeof item.details?.parameter_size === "string" ? `Ollama · ${item.details.parameter_size}` : "Ollama local model" }] : [];
+  });
 }
 
 /** Pick an installed local fallback without assuming one exact Ollama tag. */
-export async function resolveLocalFallbackModel(preferred = "auto"): Promise<string> {
-  const models = await listLocalModels();
+export async function resolveLocalFallbackModel(preferred = "auto", options: ProviderProbeOptions = {}): Promise<string> {
+  const models = await listLocalModels(options);
   if (!models.length) throw new Error("No local Ollama models are installed. Install a Qwen model or set EVIDRA_FALLBACK_MODEL.");
   if (preferred !== "auto" && models.some((model) => model.id === preferred)) return preferred;
   if (preferred !== "auto") throw new Error(`Local fallback model '${preferred}' is not installed. Available models: ${models.map((model) => model.id).join(", ")}`);
@@ -556,23 +589,12 @@ export async function checkProvider(options: ExecAgentOptions): Promise<void> {
     return;
   }
 
-  const response = await fetch(ollamaEndpoint("tags"));
-  if (!response.ok) throw new Error(`Local Ollama is unavailable (${response.status}). Start Ollama and try again.`);
-  const payload = await response.json() as { models?: Array<{ name?: string; model?: string }> };
-  const models = payload.models ?? [];
-  if (!models.some((entry) => entry.name === options.model || entry.model === options.model)) {
-    const available = models.map((entry) => entry.name ?? entry.model).filter(Boolean).join(", ");
-    throw new Error(`Local model '${options.model}' is not installed. Available models: ${available || "none"}.`);
+  const models = await listLocalModels(options);
+  if (!models.some((entry) => entry.id === options.model)) {
+    throw new Error(`Local model '${options.model}' is not installed. Available models: ${models.map((entry) => entry.id).join(", ") || "none"}.`);
   }
-  // `/api/tags` only proves that Ollama has a registry entry. Probe model
-  // metadata too so corrupt/missing blobs are rejected before an autonomous
-  // campaign commits to the local route.
-  const probe = await fetch(ollamaEndpoint("show"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: options.model }),
-  });
-  if (!probe.ok) throw new Error(`Local model '${options.model}' failed its health check (${probe.status}): ${await probe.text()}`);
+  // Inventory alone does not prove that model blobs are usable.
+  await probeOllama("show", options, options.model);
 }
 
 /** Validate the requested route, falling back before work starts when policy permits. */
@@ -582,7 +604,7 @@ export async function resolveStartupProvider(options: ExecAgentOptions, fallback
     return { provider: options.provider, model: options.model, fallback: false };
   } catch (error) {
     if (options.provider !== "codex" || !options.limitPolicy || !["auto", "fallback"].includes(options.limitPolicy) || !isProviderFallbackEligible(error)) throw error;
-    const model = await resolveLocalFallbackModel(fallbackModel);
+    const model = await resolveLocalFallbackModel(fallbackModel, options);
     await checkProvider({ ...options, provider: "local", model });
     return { provider: "local", model, fallback: true, reason: error instanceof Error ? error.message : String(error) };
   }
@@ -855,9 +877,9 @@ export async function runWithLocalFallback(
     if (!shouldUseLocalFallback(error, options, fallbackModel)) throw error;
     let localModel: string;
     try {
-      localModel = await resolveLocalFallbackModel(fallbackModel);
+      localModel = await resolveLocalFallbackModel(fallbackModel, options);
     } catch (fallbackError) {
-      if (options.limitPolicy !== "auto") throw fallbackError;
+      if (options.interruptSignal?.aborted || options.limitPolicy !== "auto") throw fallbackError;
       onProgress?.("No healthy local fallback is available; returning to the durable Codex reset policy...");
       // Let the outer campaign controller own the wait. It knows the
       // remaining campaign budget and can persist/stop at the correct
@@ -866,14 +888,14 @@ export async function runWithLocalFallback(
     }
     onProgress?.(`${limitReached ? "Codex usage limit reached" : "Codex route unavailable"}; switching to local/${localModel}...`);
     try {
-      await checkProvider({ provider: "local", model: localModel, cwd: options.cwd });
+      await checkProvider({ ...options, provider: "local", model: localModel });
       return await new CodexExecAgent({
         ...options,
         provider: "local",
         model: localModel,
       }).run(task, onProgress, onProcess);
     } catch (localError) {
-      if (options.limitPolicy !== "auto") throw localError;
+      if (options.interruptSignal?.aborted || options.limitPolicy !== "auto") throw localError;
       const detail = localError instanceof Error ? localError.message : String(localError);
       onProgress?.(`Local fallback is unhealthy (${detail}); returning to the durable Codex reset policy...`);
       throw error;
