@@ -1,0 +1,96 @@
+{
+  "at": "2026-10-11T18:51:21.547Z",
+  "executor": "modal",
+  "gpuRequested": false,
+  "timeoutMinutes": 1,
+  "result": {
+    "runId": "modal-live-client-crash-1791744681543",
+    "status": "failed",
+    "exitCode": 1,
+    "durationSeconds": 10.332,
+    "metrics": {},
+    "metricsByFold": {},
+    "learningCurve": [],
+    "subgroupDeltas": [],
+    "artifacts": {},
+    "stdout": "\u2713 Initialized. View run at \n[Modal run URL omitted]\n\u2713 Created objects.\n\u251c\u2500\u2500 \u2713 Uploaded /home/nitiz/Projects/Self/Harness/evidra/modal_app.py\n\u251c\u2500\u2500 \u2713 Uploaded /tmp/evidra-live-modal-crash-7REUe4/workspace\n\u2514\u2500\u2500 \u2713 Created Function execute.\n[evidra-call] {\"submissionId\": \"e013efa7-c022-4f26-97ba-445e14cb0e05\", \"callId\": \"fc-01M4P4W7YVD282AQ7QP8RXZA9Y\"}\n",
+    "stderr": "Modal worker completion is unconfirmed; reconcile before replay.",
+    "command": [
+      "python",
+      "probe.py"
+    ],
+    "cwd": "/tmp/evidra-live-modal-crash-7REUe4/workspace",
+    "failureClass": "unknown"
+  },
+  "events": [
+    {
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "modal-live-client-crash",
+      "submissionId": "e013efa7-c022-4f26-97ba-445e14cb0e05",
+      "allocationName": "evidra-e013efa7-c022-4f26-97ba-445e14cb0e05",
+      "phase": "submitting",
+      "at": "2026-10-11T18:51:11.206Z"
+    },
+    {
+      "callId": "fc-01M4P4W7YVD282AQ7QP8RXZA9Y",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "modal-live-client-crash",
+      "submissionId": "e013efa7-c022-4f26-97ba-445e14cb0e05",
+      "allocationName": "evidra-e013efa7-c022-4f26-97ba-445e14cb0e05",
+      "phase": "submitted",
+      "at": "2026-10-11T18:51:21.529Z"
+    }
+  ],
+  "artifact": null,
+  "workerSourceSha256": "11f67bb83ba10b5e7dca7de876f9311b676d9a1363671c14337e234cccd4e59b",
+  "crash": {
+    "method": "SIGKILL actual Modal CLI PID immediately after durably recording the SDK call receipt; PID launch record matched the submission nonce.",
+    "quarantinedBeforeRecovery": true,
+    "measurementsAcceptedBeforeRecovery": 0
+  },
+  "recovery": {
+    "released": true,
+    "queried": 1,
+    "terminal": {
+      "experimentId": "modal-live-client-crash",
+      "submissionId": "e013efa7-c022-4f26-97ba-445e14cb0e05",
+      "allocationName": "evidra-e013efa7-c022-4f26-97ba-445e14cb0e05",
+      "callId": "fc-01M4P4W7YVD282AQ7QP8RXZA9Y",
+      "state": "COMPLETED",
+      "exitCode": 0,
+      "completionEvidence": "sdk-result",
+      "at": "2026-10-11T18:51:59.836Z",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "phase": "terminal"
+    },
+    "importedRuns": 0,
+    "status": "failed"
+  },
+  "probeSource": "import os,json,pathlib,time\ntime.sleep(10)\nassert os.environ['EVIDRA_EXPERIMENT_ID']=='modal-live-client-crash'\nassert os.environ['EVIDRA_DATASET_VERSION']=='probe-data-v1'\nassert os.environ['EVIDRA_SPLIT_VERSION']=='probe-split-v1'\nassert os.environ['PROBE_VALUE']=='declared'\nassert os.environ['HOME']=='/tmp/evidra-worker-home'\nassert not pathlib.Path('.sota/controller-secret').exists()\nassert not pathlib.Path('.git/config').exists()\npathlib.Path('result.json').write_text(json.dumps({'probe':'passed'}))\nprint('accuracy=1.0')\n",
+  "modalVersion": "1.6.1",
+  "scope": "Actual local-client SIGKILL with live bounded CPU worker; durable quarantine and read-only recovery of successful worker completion. No worker metrics/artifacts imported after client loss. Server-side cancellation, GPU and concurrency remain unverified.",
+  "applicationCleanup": {
+    "appId": "ap-uRfCZNhVrnodfKWjesmrSX",
+    "beforeStop": {
+      "app_id": "ap-uRfCZNhVrnodfKWjesmrSX",
+      "description": "evidra-experiment",
+      "state": "ephemeral",
+      "tasks": "1",
+      "created_at": "2026-10-12 00:36:12+05:45",
+      "stopped_at": null
+    },
+    "explicitStopSucceeded": true,
+    "afterStop": {
+      "app_id": "ap-uRfCZNhVrnodfKWjesmrSX",
+      "description": "evidra-experiment",
+      "state": "stopped",
+      "tasks": "0",
+      "created_at": "2026-10-12 00:36:12+05:45",
+      "stopped_at": "2026-10-12 00:37:38+05:45"
+    }
+  },
+  "productionGap": "Read-only reconciliation currently releases quarantine on call completion although the crashed client can leave an ephemeral app container alive (one task observed). Call completion does not prove allocation quiescence. Recovery must retain allocation identity and require app/container termination proof before releasing compute."
+}

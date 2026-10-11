@@ -1163,6 +1163,17 @@ external evaluator.
   This is a recovery simulation against a real completed call, not a real
   client-crash/cancellation/GPU/concurrency test; those gates remain open.
 
+- A real Modal CLI SIGKILL after its durable call receipt preserved quarantine
+  and rejected measurements; reopening and SDK polling confirmed successful call
+  completion without importing measurements. However, live app inspection then
+  showed one container still alive. Explicit stop of the probe's own app yielded
+  stopped state and zero tasks. Evidence:
+  `docs/research/evidence/modal-live-client-crash-2026-10-12.json`.
+  **Production blocker in Modal compute recovery:** completed calls alone do not
+  prove allocation quiescence after client loss. Retain app/allocation identity
+  and require termination proof before releasing compute; do not treat the
+  current successful SDK poll as closure of this gate.
+
 ## Immediate next work
 
 1. Add/maintain real matched external benchmark adapters and run actual trials
