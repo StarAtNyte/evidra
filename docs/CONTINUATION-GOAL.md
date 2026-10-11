@@ -1153,6 +1153,16 @@ external evaluator.
   1.6.1's `run --help`, without launching remote compute; evidence is recorded
   in `docs/research/evidence/modal-installed-entrypoint-sdk-2026-10-12.json`.
 
+- A live Modal 1.6.1 CPU worker completed the bounded smoke experiment, verified
+  dataset/split/declared environment/private HOME and source exclusions, returned
+  accuracy=1, and restored its declared JSON artifact. The real call receipt
+  preceded completion. A separate reopened store deliberately omitted the
+  successful client's terminal event; read-only SDK recovery released its
+  quarantine without importing any measurements. Evidence and probe source:
+  `docs/research/evidence/modal-live-cpu-and-recovery-2026-10-12.json`.
+  This is a recovery simulation against a real completed call, not a real
+  client-crash/cancellation/GPU/concurrency test; those gates remain open.
+
 ## Immediate next work
 
 1. Add/maintain real matched external benchmark adapters and run actual trials
