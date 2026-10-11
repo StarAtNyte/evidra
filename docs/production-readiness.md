@@ -137,6 +137,18 @@ Live cluster recovery and container/Modal reconciliation remain unverified.
 
 ## Release checks
 
+Container execution sets the declared executable as `--entrypoint`, preserves
+the remaining argv verbatim, and disables image health checks. Empty or invalid
+commands fail rather than falling back to an image's default startup command.
+Images provide dependencies without replacing the registered worker command.
+Exact-ID cleanup also removes anonymous image-created volumes with `--volumes`.
+A local Docker probe used a temporary image with observable entrypoint and
+healthcheck hooks and an inherited anonymous volume: the declared argv ran,
+both hooks remained absent, and independent daemon queries confirmed removal
+of the container and its anonymous volume. See
+[recorded evidence](research/evidence/container-image-contract-2026-10-11.json).
+This evidence is specific to local Docker; Podman and crash recovery remain open.
+
 Container runs use a unique name and private controller-side `--cidfile`,
 retaining the full ID through explicit cleanup. After the launcher settles,
 Evidra force-removes that exact ID and queries all daemon containers to verify

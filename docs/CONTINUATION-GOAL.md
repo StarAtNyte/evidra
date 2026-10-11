@@ -58,6 +58,16 @@ external evaluator.
 
 ## Latest repository state
 
+- Container execution now bypasses image entrypoints, disables image health
+  checks, preserves the declared argv, and rejects implicit default commands.
+  Cleanup removes anonymous image-created volumes with the exact container.
+  A local Docker image with observable startup hooks verified direct command
+  execution, absent hook markers, and container/volume removal; evidence is in
+  `docs/research/evidence/container-image-contract-2026-10-11.json`.
+  Podman, durable container recovery, and unconfirmed-outcome fencing remain open.
+- Exact container cleanup at `5a33e02` passed hosted CI on both Node versions,
+  including package checks: run 38120074055; 707 local tests passed.
+
 - Container launchers now retain full IDs in private receipt files and await
   exact-ID removal plus daemon-side absence verification. Missing receipts or
   failed/nonempty daemon queries fail conservatively and cannot auto-retry;

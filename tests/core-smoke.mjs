@@ -8765,9 +8765,21 @@ test("container executor command mounts only the isolated worktree", () => {
   assert(command.includes("/tmp/evidra-worktree:/workspace:rw"));
   const imageIndex = command.indexOf("python:3.11-slim");
   assert(imageIndex > 0);
-  assert.equal(command[imageIndex + 1], "python");
-  assert.deepEqual(command.slice(-2), ["python", "run.py"]);
+  assert.equal(command[command.indexOf("--entrypoint") + 1], "python");
+  assert(command.includes("--no-healthcheck"));
+  assert.deepEqual(command.slice(imageIndex + 1), ["run.py"]);
   assert.throws(() => containerCommand("docker", "--privileged", "/tmp/evidra-worktree", ["sh"]), /plain image reference/);
+});
+
+test("container execution preserves declared argv and rejects implicit image commands", () => {
+  const argv = ["/usr/bin/python", "script with spaces.py", "literal; $(echo unexpected)", "", "--flag"];
+  for (const runtime of ["docker", "podman"]) {
+    const command = containerCommand(runtime, "test:latest", "/tmp/worktree", argv);
+    assert.equal(command[command.indexOf("--entrypoint") + 1], argv[0]);
+    assert.deepEqual(command.slice(command.indexOf("test:latest") + 1), argv.slice(1));
+    assert(command.includes("--no-healthcheck"));
+    for (const invalid of [[], [""], [" "], ["--privileged"], ["sh", "bad\0arg"]]) assert.throws(() => containerCommand(runtime, "test:latest", "/tmp/worktree", invalid), /non-empty executable/);
+  }
 });
 
 test("container completion awaits exact daemon cleanup and rejects uncertain outcomes", async () => {
@@ -8790,7 +8802,8 @@ test("container completion awaits exact daemon cleanup and rejects uncertain out
             console.log('accuracy=0.9');
             if(mode==='timeout'||mode==='interrupted') { process.on('SIGTERM',()=>process.exit(0)); setInterval(()=>{},1000); }
           } else if(args[0]==='rm') {
-            if(mode!=='missing-receipt' && args[2]!==cid) process.exit(9);
+            if(mode!=='missing-receipt' && args.at(-1)!==cid) process.exit(9);
+            if(!args.includes('--volumes')) process.exit(10);
             if(mode==='removal-failed') process.exit(2);
             setTimeout(()=>{fs.rmSync('active',{force:true});fs.writeFileSync('cleanup-completed','yes');},80);
           } else if(args[0]==='ps') {

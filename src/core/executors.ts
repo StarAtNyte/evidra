@@ -428,6 +428,7 @@ export class LocalExecutor implements ExperimentExecutor {
 }
 
 export function containerCommand(runtime: "docker" | "podman", image: string, cwd: string, command: string[], environment: Record<string, string> = {}, identity?: { name: string; cidFile: string }): string[] {
+  if (!command.length || command.some((part) => typeof part !== "string" || part.includes("\0")) || !command[0].trim() || command[0].startsWith("-")) throw new Error("Container commands require a non-empty executable and valid argv strings.");
   if (!/^[A-Za-z0-9][A-Za-z0-9._/@:-]*$/.test(image)) throw new Error("Container image must be a plain image reference, not a runtime option or shell expression.");
   const args = [runtime, "run", "--rm", "--init", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "512", "--network", "none", "--tmpfs", "/tmp:rw,nosuid,nodev", "--volume", `${cwd}:/workspace:rw`, "--workdir", "/workspace"];
   if (identity) {
@@ -440,7 +441,8 @@ export function containerCommand(runtime: "docker" | "podman", image: string, cw
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || /[\r\n]/.test(value)) throw new Error("Invalid container environment entry.");
     args.push("--env", `${key}=${value}`);
   }
-  return [...args, image, ...command];
+  // Images supply dependencies, not alternate startup code or background work.
+  return [...args, "--no-healthcheck", "--entrypoint", command[0], image, ...command.slice(1)];
 }
 
 export class ContainerExecutor implements ExperimentExecutor {
@@ -486,7 +488,7 @@ export class ContainerExecutor implements ExperimentExecutor {
         try { return await runProcess(argv, launchRoot, 10_000, undefined, undefined, runtimeEnvironment); }
         catch (error) { return processFailureResult(argv, launchRoot, error); }
       };
-      const removed = await control([runtime, "rm", "--force", containerId ?? identity.name]);
+      const removed = await control([runtime, "rm", "--force", "--volumes", containerId ?? identity.name]);
       const inspected = await control([runtime, "ps", "--all", "--no-trunc", "--filter", containerId ? `id=${containerId}` : `name=${identity.name}`, "--format", "{{.ID}}"]);
       const confirmed = containerId !== undefined && inspected.exitCode === 0 && !inspected.stdout.trim();
       const stderr = boundProcessOutput([result.stderr,
