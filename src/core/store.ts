@@ -834,6 +834,7 @@ export class ResearchStore {
     // events). Retain the bounded scan fallback on SQLite builds without JSON1.
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_type_task_id_id ON events(type, json_extract(payload_json, '$.taskId'), id)"); } catch { /* JSON1 unavailable; event APIs retain their compatibility fallback */ }
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_type_experiment_id_id ON events(type, json_extract(payload_json, '$.experimentId'), id)"); } catch { /* JSON1 unavailable; allocation lookups retain their compatibility fallback */ }
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_modal_call_id ON events(json_extract(payload_json, '$.callId'), id) WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal'"); } catch { /* JSON1 unavailable; call ownership uses a streaming fallback */ }
     this.db.prepare("INSERT OR IGNORE INTO workspace_identity (id, workspace_id, created_at) VALUES (1, ?, ?)").run(`ws_${randomUUID()}`, new Date().toISOString());
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_experiments_created_at ON experiments(created_at);
@@ -3814,8 +3815,20 @@ export class ResearchStore {
 
   /** A call receipt cannot be reused by another intent or experiment. */
   modalCallOwnershipConfirmed(experimentId: string, submissionId: string, callId: string): boolean {
-    const receipts = this.eventsByType("run.remote.submitted").map((event) => event.payload as Record<string, unknown>)
-      .filter((payload) => payload?.executor === "modal" && payload.callId === callId);
+    let receipts: Array<Record<string, unknown>>;
+    try {
+      const rows = this.db.prepare("SELECT payload_json FROM events WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal' AND json_extract(payload_json, '$.callId') = ? ORDER BY id LIMIT 2").all(callId) as Array<{ payload_json: string }>;
+      receipts = rows.map((row) => JSON.parse(row.payload_json) as Record<string, unknown>);
+    } catch {
+      receipts = [];
+      const rows = this.db.prepare("SELECT payload_json FROM events WHERE type = 'run.remote.submitted' ORDER BY id").iterate() as IterableIterator<{ payload_json: string }>;
+      for (const row of rows) {
+        const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+        if (payload?.executor !== "modal" || payload.callId !== callId) continue;
+        receipts.push(payload);
+        if (receipts.length === 2) break;
+      }
+    }
     return receipts.length === 1 && receipts[0].experimentId === experimentId && receipts[0].submissionId === submissionId && receipts[0].protocol === "modal-call-v1";
   }
 

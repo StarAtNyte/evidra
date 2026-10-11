@@ -9299,6 +9299,38 @@ class FunctionCall:
   }
 });
 
+test("Modal call ownership stays bounded and rejects aliases without SQLite JSON support", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-modal-ownership-"));
+  const store = new ResearchStore(join(root, "state.sqlite"));
+  const originalPrepare = store.db.prepare;
+  try {
+    for (let index = 0; index < 200; index += 1) store.appendEvent("run.remote.submitted", { executor: "modal", protocol: "modal-call-v1", callId: `fc-unrelated${index}`, experimentId: `other-${index}`, submissionId: `other-${index}` });
+    const receipt = { executor: "modal", protocol: "modal-call-v1", experimentId: "owned", submissionId: "intent", callId: "fc-owned" };
+    store.appendEvent("run.remote.submitted", receipt);
+    const plan = store.db.prepare("EXPLAIN QUERY PLAN SELECT payload_json FROM events WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal' AND json_extract(payload_json, '$.callId') = ? ORDER BY id LIMIT 2").all(receipt.callId);
+    assert(plan.some((row) => row.detail.includes("idx_events_modal_call_id")), JSON.stringify(plan));
+    store.eventsByType = () => { throw new Error("ownership must not materialize receipt history"); };
+    for (const portable of [false, true]) {
+      store.db.prepare = function(sql) {
+        if (portable && sql.includes("json_extract")) throw new Error("simulate SQLite without JSON1");
+        return originalPrepare.call(this, sql);
+      };
+      assert.equal(store.modalCallOwnershipConfirmed("owned", "intent", "fc-owned"), true);
+      assert.equal(store.modalCallOwnershipConfirmed("other", "intent", "fc-owned"), false);
+      assert.equal(store.modalCallOwnershipConfirmed("owned", "intent", "fc-missing"), false);
+    }
+    store.db.prepare = originalPrepare;
+    store.appendEvent("run.remote.submitted", { ...receipt, experimentId: "alias" });
+    for (const portable of [false, true]) {
+      store.db.prepare = function(sql) {
+        if (portable && sql.includes("json_extract")) throw new Error("simulate SQLite without JSON1");
+        return originalPrepare.call(this, sql);
+      };
+      assert.equal(store.modalCallOwnershipConfirmed("owned", "intent", "fc-owned"), false);
+    }
+  } finally { store.db.prepare = originalPrepare; store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
 test("Modal reconciliation requires ordered completion evidence for every invocation", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-modal-ledger-"));
   try {

@@ -58,6 +58,11 @@ external evaluator.
 
 ## Latest repository state
 
+- Modal ownership checks now use a partial call-ID index and read at most two
+  matching receipts. SQLite without JSON1 streams receipts and stops at the
+  second match instead of materializing history. Regression tests verify the
+  query plan and both paths against unrelated history and aliased ownership.
+
 - Modal call IDs now require one receipt owner across the durable store before
   querying or recording completion, and before releasing a fence. Reused IDs
   across launch intents or experiments retain reservations even if each copied
