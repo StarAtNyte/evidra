@@ -520,7 +520,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     const recoveredExperiments = recoveredStore.recoverStaleExperiments();
     const recoveredTraces = recoverUncommittedTraceFiles(root, recoveredStore);
     recoveredStore.close();
-    if (recoveredExperiments.length) append("assistant", `Recovered ${recoveredExperiments.length} experiment(s) left running by a previous controller; they are available for retry.`);
+    if (recoveredExperiments.length) append("assistant", `Recovered ${recoveredExperiments.length} experiment(s) left running by a previous controller; local work is available for retry; uncertain remote work requires reconciliation.`);
     if (recoveredTraces) append("assistant", `Recovered ${recoveredTraces} partial Codex trace(s) from a previous controller.`);
     if (!controllerHeartbeat.current) controllerHeartbeat.current = setInterval(() => {
       const heartbeatStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -1808,6 +1808,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const entry = store.experiments().find((experiment) => experiment.id === id);
     if (!entry) { store.close(); throw new Error(`Experiment not found: ${id}`); }
+    if ((entry.payload as { remoteReconciliationRequired?: unknown }).remoteReconciliationRequired === true) { store.close(); throw new Error(`Experiment ${id} requires remote reconciliation before replay.`); }
     const manifest = ExperimentManifestSchema.parse(entry.payload);
     const validationPolicyPath = join(root, ".sota", "validation-policy.json");
     const validationLockPath = join(root, ".sota", "validation-policy.lock.json");

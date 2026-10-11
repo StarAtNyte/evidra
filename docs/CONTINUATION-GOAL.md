@@ -58,6 +58,16 @@ external evaluator.
 
 ## Latest repository state
 
+- Restart recovery quarantines stale container/Modal/Slurm work instead of
+  treating controller loss as a retryable failure. Durable reconciliation flags
+  block replay and normal reschedule/completion updates, and retain compute
+  reservations across terminal-looking edits and database reopen. A SIGKILL
+  regression verifies this fence; local stale retries remain available.
+  Backend allocation identity, terminal reconciliation, and verified quarantine
+  release remain required follow-up work, not an achieved recovery gate.
+- Provider probe hardening at `ed8e32d` passed hosted CI on both Node versions,
+  including package checks: run 38117528116; all 700 local tests passed.
+
 - Local provider discovery and model-health probes now retain a bounded
   deadline through headers and JSON body decoding, honor caller interruption,
   and validate inventory/metadata. Startup and fallback selection pass caller

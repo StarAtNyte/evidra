@@ -7132,6 +7132,7 @@ experiment.command("run")
     const entry = store.experiments().find((candidate) => candidate.id === id);
     if (!entry) { store.close(); throw new Error(`Experiment ${id} is not registered. Run: evidra experiment propose`); }
     const entryPayload = entry.payload as Record<string, unknown>;
+    if (entryPayload.remoteReconciliationRequired === true) { store.close(); throw new Error(`Experiment ${id} requires remote reconciliation before replay.`); }
     const replay = experimentReplayDecision(entryPayload.status);
     if (!replay.allowed) { store.close(); throw new Error(replay.reason); }
     if (options.skipReduced && (entryPayload.status !== "screened" || typeof entryPayload.reducedRunId !== "string")) {

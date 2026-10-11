@@ -75,6 +75,21 @@ terminal record is reported as unconfirmed and requires reconciliation.
 Durable allocation fencing across controller restarts and remote pause/resume
 remain open: the current pause control only pauses a local polling process.
 
+Restart recovery now quarantines stale container, Modal, and Slurm experiments
+as blocked with durable `remoteReconciliationRequired` state. A lost heartbeat
+does not prove worker termination. Quarantined records cannot be scheduled,
+run, or marked complete through normal experiment updates; CLI and TUI replay
+paths reject them before execution. Their compute reservations remain held
+through terminal-looking updates and reservation reconciliation. Local stale
+work retains its bounded retry path. A SIGKILL regression verifies durable
+quarantine and reservation retention after reopening SQLite.
+
+This is a conservative restart fence, not completed remote recovery. Allocation
+identity capture, backend terminal-state verification, and a verified release
+path for quarantine are still required. It prevents replay of the quarantined
+experiment; it does not establish that remote workers have stopped or prohibit
+all new experiments in an unlimited-budget campaign.
+
 ## Release checks
 
 The local Ollama route shares one endpoint resolver for discovery, health,

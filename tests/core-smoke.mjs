@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { sha256File } from "../dist/core/evidence.js";
 import { deflateSync } from "node:zlib";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import test from "node:test";
 import Database from "better-sqlite3";
 import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../dist/core/statistics.js";
@@ -2491,6 +2491,46 @@ test("stale recovery preserves experiments with a fresh worker heartbeat", () =>
     assert.deepEqual(store.recoverStaleExperiments(), []);
     assert.equal(store.experiments()[0].payload.status, "running");
     store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("restart quarantine preserves uncertain remote allocations and reservations across database reopen", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-remote-recovery-"));
+  const db = join(root, "state.sqlite");
+  try {
+    const crashed = spawnSync(process.execPath, ["--input-type=module", "-e", `
+      import { ResearchStore } from ${JSON.stringify(new URL("../dist/core/store.js", import.meta.url).href)};
+      const store = new ResearchStore(${JSON.stringify(db)});
+      for (const executor of ["container", "modal", "slurm"]) {
+        store.saveExperiment({ id: executor, payload: { id: executor, status: "running", resources: { executor } } });
+        store.reserveComputeBudget({ experimentId: executor, budgetGpuHours: 10, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" });
+      }
+      process.kill(process.pid, "SIGKILL");
+    `], { timeout: 10_000, encoding: "utf8" });
+    assert.equal(crashed.signal, "SIGKILL", crashed.stderr);
+    const store = new ResearchStore(db);
+    assert.equal(store.recoverStaleExperiments().length, 3);
+    assert.equal(store.reservedComputeGpuHours(), 6);
+    store.close();
+    const reopened = new ResearchStore(db);
+    for (const executor of ["container", "modal", "slurm"]) {
+      const payload = reopened.experiments().find((entry) => entry.id === executor).payload;
+      assert.equal(payload.status, "blocked");
+      assert.equal(payload.remoteReconciliationRequired, true);
+      assert.equal(payload.recoveryAttempted, true);
+      assert.throws(() => reopened.saveExperiment({ id: executor, payload: { ...payload, status: "scheduled", remoteReconciliationRequired: false } }), /remote reconciliation/);
+      assert.throws(() => reopened.saveExperiment({ id: executor, payload: { ...payload, status: "running" } }), /remote reconciliation/);
+      assert.throws(() => reopened.saveExperiment({ id: executor, payload: { ...payload, status: "completed" } }), /remote reconciliation/);
+      reopened.saveExperiment({ id: executor, payload: { ...payload, status: "cancelled", remoteReconciliationRequired: false } });
+      assert.equal(reopened.experiments().find((entry) => entry.id === executor).payload.remoteReconciliationRequired, true);
+      assert.equal(reopened.releaseComputeReservation(executor, "unproven terminal status"), false);
+    }
+    assert.deepEqual(reopened.reconcileComputeReservations(), []);
+    assert.equal(reopened.reservedComputeGpuHours(), 6);
+    assert.deepEqual(reopened.recoverStaleExperiments(), []);
+    assert.equal(reopened.eventsByType("experiment.remote.reconciliation.required").length, 3);
+    assert.equal(reopened.verifyEventChain().status, "valid");
+    reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

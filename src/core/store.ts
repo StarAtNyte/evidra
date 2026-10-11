@@ -1138,6 +1138,8 @@ export class ResearchStore {
   }
 
   releaseComputeReservation(experimentId: string, reason = "experiment terminal"): boolean {
+    const experiment = this.db.prepare("SELECT payload_json FROM experiments WHERE id = ?").get(experimentId) as { payload_json: string } | undefined;
+    if (experiment && (JSON.parse(experiment.payload_json) as { remoteReconciliationRequired?: unknown }).remoteReconciliationRequired === true) return false;
     const now = new Date().toISOString();
     const result = this.db.prepare("UPDATE compute_reservations SET status = 'released', updated_at = ? WHERE experiment_id = ? AND status = 'reserved'").run(now, experimentId);
     if (result.changes === 1) this.appendEvent("compute.budget.released", { experimentId, reason });
@@ -1151,8 +1153,14 @@ export class ResearchStore {
   saveExperiment(experiment: { id: string; payload: unknown }): void {
     const existing = this.db.prepare("SELECT payload_json FROM experiments WHERE id = ?").get(experiment.id) as { payload_json: string } | undefined;
     const now = new Date().toISOString();
-    const safePayload = redactStructured(experiment.payload);
+    let safePayload = redactStructured(experiment.payload);
     if (existing) {
+      const previous = JSON.parse(existing.payload_json) as { remoteReconciliationRequired?: unknown };
+      if (previous.remoteReconciliationRequired === true) {
+        if (!safePayload || typeof safePayload !== "object" || Array.isArray(safePayload)) throw new Error(`Experiment ${experiment.id} requires remote reconciliation before replacement.`);
+        if (["running", "scheduled", "completed"].includes(String((safePayload as { status?: unknown }).status))) throw new Error(`Experiment ${experiment.id} requires remote reconciliation before execution or completion.`);
+        safePayload = { ...safePayload, remoteReconciliationRequired: true };
+      }
       const previousManifest = registeredManifest(JSON.parse(existing.payload_json));
       const nextManifest = registeredManifest(safePayload);
       if (previousManifest && nextManifest && JSON.stringify(canonicalValue(previousManifest)) !== JSON.stringify(canonicalValue(nextManifest))) {
@@ -1166,7 +1174,7 @@ export class ResearchStore {
       ON CONFLICT(id) DO UPDATE SET payload_json = excluded.payload_json
     `).run(experiment.id, JSON.stringify(safePayload), now);
     const status = (safePayload as { status?: unknown }).status;
-    if (["completed", "failed", "invalid", "rejected", "cancelled", "blocked"].includes(String(status))) this.releaseComputeReservation(experiment.id, `experiment status ${String(status)}`);
+    if ((safePayload as { remoteReconciliationRequired?: unknown }).remoteReconciliationRequired !== true && ["completed", "failed", "invalid", "rejected", "cancelled", "blocked"].includes(String(status))) this.releaseComputeReservation(experiment.id, `experiment status ${String(status)}`);
     this.appendEvent(existing ? "experiment.updated" : "experiment.created", { id: experiment.id, payload: safePayload });
   }
 
@@ -3691,7 +3699,7 @@ export class ResearchStore {
     return rows.map((row) => ({ id: row.id, payload: JSON.parse(row.payload_json), createdAt: row.created_at }));
   }
 
-  /** Mark experiments left running by a dead controller as failed and retryable. */
+  /** Recover local work; quarantine remote work until its termination is proven. */
   recoverStaleExperiments(staleAfterMs = 30_000): string[] {
     const recovered: string[] = [];
     const cutoff = Math.max(0, staleAfterMs);
@@ -3712,9 +3720,12 @@ export class ResearchStore {
         const age = now - Date.parse(heartbeatAt);
         if (Number.isFinite(age) && age >= 0 && age <= cutoff) continue;
       }
-      const updated = { ...payload, status: "failed", failure: "Controller exited before experiment finalization.", recoveredAt: new Date().toISOString(), stale: true, recoveryAttempted: false };
+      const resources = payload.resources && typeof payload.resources === "object" ? payload.resources as { executor?: unknown } : {};
+      const remote = ["container", "modal", "slurm"].includes(String(resources.executor));
+      const updated = { ...payload, status: remote ? "blocked" : "failed", failure: remote ? "Controller exited; worker termination is unconfirmed. Remote reconciliation is required before replay." : "Controller exited before experiment finalization.", recoveredAt: new Date().toISOString(), stale: true, recoveryAttempted: remote, ...(remote ? { remoteReconciliationRequired: true } : {}) };
       this.saveExperiment({ id: experiment.id, payload: updated });
       this.appendEvent("experiment.stale.recovered", { experimentId: experiment.id, previousStatus: "running" });
+      if (remote) this.appendEvent("experiment.remote.reconciliation.required", { experimentId: experiment.id, executor: resources.executor, reason: "stale controller heartbeat does not prove remote termination" });
       recovered.push(experiment.id);
     }
     this.reconcileComputeReservations();
@@ -3724,13 +3735,16 @@ export class ResearchStore {
   /** Release reservations whose experiment was never persisted or is terminal. */
   reconcileComputeReservations(): string[] {
     const terminal = new Set(["completed", "failed", "invalid", "rejected", "cancelled", "blocked"]);
-    const experiments = new Map(this.experiments().map((experiment) => {
+    const entries = this.experiments();
+    const uncertain = new Set(entries.filter((experiment) => (experiment.payload as { remoteReconciliationRequired?: unknown } | null)?.remoteReconciliationRequired === true).map((experiment) => experiment.id));
+    const experiments = new Map(entries.map((experiment) => {
       const payload = experiment.payload && typeof experiment.payload === "object" ? experiment.payload as { status?: unknown } : {};
       return [experiment.id, String(payload.status ?? "")] as const;
     }));
     const rows = this.db.prepare("SELECT experiment_id FROM compute_reservations WHERE status = 'reserved'").all() as Array<{ experiment_id: string }>;
     const released: string[] = [];
     for (const row of rows) {
+      if (uncertain.has(row.experiment_id)) continue;
       if (experiments.has(row.experiment_id) && !terminal.has(experiments.get(row.experiment_id) ?? "")) continue;
       if (this.releaseComputeReservation(row.experiment_id, experiments.has(row.experiment_id) ? "terminal experiment reconciliation" : "orphaned reservation reconciliation")) released.push(row.experiment_id);
     }
