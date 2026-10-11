@@ -1146,6 +1146,13 @@ external evaluator.
   evidence is in `docs/research/evidence/modal-workspace-mount-sdk-2026-10-12.json`.
   This proves local upload selection, not live remote mounting or cancellation.
 
+- The default Modal entrypoint now resolves from the installed package rather
+  than the caller's workspace. Explicit custom entrypoints remain unchanged.
+  CI exercises the installed executor from an unrelated workspace with a decoy
+  worker file. A local SDK probe verifies all shipped CLI flags through Modal
+  1.6.1's `run --help`, without launching remote compute; evidence is recorded
+  in `docs/research/evidence/modal-installed-entrypoint-sdk-2026-10-12.json`.
+
 ## Immediate next work
 
 1. Add/maintain real matched external benchmark adapters and run actual trials

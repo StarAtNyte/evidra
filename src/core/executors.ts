@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ExperimentExecutorKind, ExperimentManifest, ProcessResult, RunResult } from "./types.js";
 import { createHash, randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 export interface RemoteExecutionEvent {
   executor: "slurm" | "container" | "modal";
@@ -729,7 +730,7 @@ export class ModalExecutor implements ExperimentExecutor {
     // too; do not require secrets to be duplicated into Evidra's environment.
     const launchRoot = resolve(this.workspaceRoot ?? cwd);
     const experimentWorkspace = resolve(cwd);
-    const modalEntrypoint = process.env.EVIDRA_MODAL_ENTRYPOINT ?? "modal_app.py::run";
+    const modalEntrypoint = process.env.EVIDRA_MODAL_ENTRYPOINT ?? `${fileURLToPath(new URL("../../modal_app.py", import.meta.url))}::run`;
     const timeoutSeconds = Math.max(60, Math.round(manifest.resources.timeoutMinutes * 60));
     const commandJson = JSON.stringify(command);
     let preflight: ProcessResult;

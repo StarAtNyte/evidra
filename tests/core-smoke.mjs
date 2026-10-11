@@ -9105,6 +9105,39 @@ test("Modal distinguishes proven spawn failure from errors after the client star
   } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
 });
 
+test("Modal uses the shipped worker from an unrelated workspace and preserves custom entrypoints", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-modal-entrypoint-"));
+  const bin = join(root, "bin"), workspace = join(root, "workspace with spaces");
+  mkdirSync(bin); mkdirSync(workspace);
+  const previousPath = process.env.PATH, previousEntrypoint = process.env.EVIDRA_MODAL_ENTRYPOINT;
+  try {
+    writeFileSync(join(workspace, "modal_app.py"), "raise RuntimeError('workspace decoy must not be used')");
+    writeFileSync(join(bin, "modal"), `#!${process.execPath}
+      const fs=require('node:fs');
+      if(process.argv.includes('--version')){console.log('modal client version 1.6.1');process.exit(0);}
+      fs.writeFileSync('modal-entrypoint.json',JSON.stringify(process.argv[3]));
+      console.log('[evidra-call] '+JSON.stringify({submissionId:process.argv[process.argv.indexOf('--submission-id')+1],callId:'fc-entrypoint'}));
+      console.log(JSON.stringify({exitCode:0,stdout:'accuracy=0.9',stderr:'',artifacts:{}}));
+    `, { mode: 0o755 });
+    process.env.PATH = `${bin}:${previousPath ?? ""}`;
+    const manifest = { id: "shipped-entrypoint", resources: { executor: "modal", timeoutMinutes: 1 } };
+    delete process.env.EVIDRA_MODAL_ENTRYPOINT;
+    const shipped = await new ModalExecutor(workspace).run(manifest, workspace, ["train"], undefined, "accuracy");
+    assert.equal(shipped.status, "completed");
+    const entrypoint = JSON.parse(readFileSync(join(workspace, "modal-entrypoint.json"), "utf8"));
+    assert.equal(entrypoint, `${join(process.cwd(), "modal_app.py")}::run`);
+    assert.match(readFileSync(entrypoint.slice(0, -"::run".length), "utf8"), /Generic Evidra experiment worker/);
+    process.env.EVIDRA_MODAL_ENTRYPOINT = "custom worker.py::run";
+    const custom = await new ModalExecutor(workspace).run(manifest, workspace, ["train"], undefined, "accuracy");
+    assert.equal(custom.status, "completed");
+    assert.equal(JSON.parse(readFileSync(join(workspace, "modal-entrypoint.json"), "utf8")), "custom worker.py::run");
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+    if (previousEntrypoint === undefined) delete process.env.EVIDRA_MODAL_ENTRYPOINT; else process.env.EVIDRA_MODAL_ENTRYPOINT = previousEntrypoint;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Modal requires successful client completion before accepting worker evidence or artifacts", async () => {
   const previousPath = process.env.PATH;
   try {

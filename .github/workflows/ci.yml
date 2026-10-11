@@ -57,6 +57,7 @@ jobs:
             "$install_root/$package_name-$package_version.tgz"
           "$install_root/prefix/node_modules/.bin/evidra" --version
           "$install_root/prefix/node_modules/.bin/evidra" --help >/dev/null
+          node scripts/probe-installed-modal-worker.mjs "$install_root/prefix/node_modules/$package_name"
           mkdir -p "$install_root/workspace"
           (
             cd "$install_root/workspace"
