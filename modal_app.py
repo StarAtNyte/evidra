@@ -140,7 +140,8 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]") -> dict[str
         if artifact_path.is_file() and artifact_path.stat().st_size <= 64 * 1024 * 1024:
             artifact_payload[str(relative_artifact)] = base64.b64encode(artifact_path.read_bytes()).decode("ascii")
     return {
-        "exitCode": process.returncode,
+        # Match the controller's portable 0..255 process-exit contract.
+        "exitCode": process.returncode if process.returncode >= 0 else 128 - process.returncode,
         "stdout": completed_stdout,
         "stderr": completed_stderr,
         "artifacts": artifact_payload,
@@ -154,4 +155,5 @@ def run(command_json: str, cwd: str = ".", artifacts_json: str = "[]", timeout_s
     del timeout_seconds
     result = execute.remote(command_json, cwd, artifacts_json)
     print(json.dumps(result))
-    raise SystemExit(int(result["exitCode"]))
+    # Returning an envelope completes the runtime-client contract. Worker
+    # failure is represented inside it; RPC/client errors must still propagate.

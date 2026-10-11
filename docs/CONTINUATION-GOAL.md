@@ -58,6 +58,12 @@ external evaluator.
 
 ## Latest repository state
 
+- The actual Modal Python entrypoint now returns client success after emitting
+  a valid worker envelope, even for failed workers. RPC errors still propagate;
+  signal termination becomes portable exit status 128+signal. Python execution
+  tests with a stubbed Modal SDK verify real subprocess and entrypoint behavior;
+  they do not certify live Modal RPC termination or orphan cancellation.
+
 - Modal now persists a launch intent before starting the runtime client and
   records synchronous completion evidence only after a successful client exit
   and valid worker envelope. Uncertain failures, timeouts, interruptions and

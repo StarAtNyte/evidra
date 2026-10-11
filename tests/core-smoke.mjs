@@ -9064,6 +9064,51 @@ test("Modal requires successful client completion before accepting worker eviden
   } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
 });
 
+test("actual Modal Python entrypoint separates worker failures from client failures", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-modal-python-"));
+  const script = `
+import json, pathlib, runpy, sys, types
+class Image:
+    @classmethod
+    def debian_slim(cls, **kwargs): return cls()
+    def pip_install(self, *args): return self
+    def add_local_dir(self, *args, **kwargs): return self
+class App:
+    def __init__(self, *args): pass
+    def function(self, **kwargs):
+        def decorate(fn):
+            fn.remote = fn
+            return fn
+        return decorate
+    def local_entrypoint(self): return lambda fn: fn
+sys.modules['modal'] = types.SimpleNamespace(Image=Image, App=App)
+worker = runpy.run_path(sys.argv[1])
+worker['execute'].__globals__['REMOTE_WORKSPACE'] = pathlib.Path(sys.argv[2])
+mode = sys.argv[3]
+if mode == 'rpc-error':
+    def fail(*args): raise RuntimeError('RPC completion unconfirmed')
+    worker['execute'].remote = fail
+code = 'import sys; print(\"worker evidence\"); sys.exit(7)' if mode == 'failed' else 'import os, signal; os.kill(os.getpid(), signal.SIGTERM)' if mode == 'signal' else 'print(\"worker evidence\")'
+worker['run'](json.dumps([sys.executable, '-c', code]))
+`;
+  try {
+    for (const mode of ["completed", "failed", "signal", "rpc-error"]) {
+      const result = spawnSync("python3", ["-c", script, join(process.cwd(), "modal_app.py"), root, mode], { encoding: "utf8", timeout: 10_000 });
+      assert.equal(result.error, undefined);
+      if (mode === "rpc-error") {
+        assert.notEqual(result.status, 0);
+        assert.equal(parseModalWorkerResult(result.stdout), undefined);
+        assert.match(result.stderr, /RPC completion unconfirmed/);
+      } else {
+        assert.equal(result.status, 0, result.stderr);
+        const envelope = parseModalWorkerResult(result.stdout);
+        assert.equal(envelope?.exitCode, mode === "failed" ? 7 : mode === "signal" ? 143 : 0);
+        if (mode !== "signal") assert.match(envelope.stdout, /worker evidence/);
+      }
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("Modal reconciliation requires ordered completion evidence for every invocation", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-modal-ledger-"));
   try {
