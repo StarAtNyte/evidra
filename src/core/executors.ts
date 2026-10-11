@@ -20,6 +20,7 @@ export interface RemoteExecutionEvent {
   exitCode?: number;
   runtime?: "docker" | "podman";
   containerId?: string;
+  daemonId?: string;
 }
 export type RemoteExecutionObserver = (event: RemoteExecutionEvent) => void;
 
@@ -437,6 +438,7 @@ export function containerCommand(runtime: "docker" | "podman", image: string, cw
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(identity.name) || !isAbsolute(identity.cidFile)) throw new Error("Container identity requires a plain name and absolute receipt path.");
     args.splice(args.indexOf("--rm"), 1);
     args.push("--name", identity.name, "--cidfile", identity.cidFile);
+    args.push("--label", `org.evidra.allocation=${identity.name}`);
   }
   if (typeof process.getuid === "function" && typeof process.getgid === "function") args.push("--user", `${process.getuid()}:${process.getgid()}`);
   for (const [key, value] of Object.entries(environment)) {
@@ -471,11 +473,19 @@ export class ContainerExecutor implements ExperimentExecutor {
     if (!runtime) {
       return toRunResult(manifest, { command, cwd, exitCode: 127, durationMs: 0, stdout: "", stderr: "No Docker or Podman runtime was found. Install one or select the local executor." }, metricName);
     }
+    let daemonId: string | undefined;
+    if (runtime === "docker") {
+      try {
+        const info = await runProcess([runtime, "info", "--format", "{{.ID}}"], launchRoot, 10_000, undefined, undefined, runtimeEnvironment);
+        if (info.exitCode === 0 && /^[A-Za-z0-9][A-Za-z0-9:-]{15,127}$/.test(info.stdout.trim())) daemonId = info.stdout.trim();
+      } catch { /* Refuse launch when the daemon identity cannot be established. */ }
+      if (!daemonId) return toRunResult(manifest, { command, cwd, exitCode: 127, durationMs: 0, stdout: "", stderr: "Docker daemon identity is unavailable; container launch refused." }, metricName);
+    }
     const receiptRoot = mkdtempSync(join(tmpdir(), "evidra-container-"));
     const submissionId = randomUUID();
     const identity = { name: `evidra-${submissionId}`, cidFile: join(receiptRoot, "container-id") };
     const observe = (phase: RemoteExecutionEvent["phase"], details: Partial<RemoteExecutionEvent> = {}): void => {
-      this.onRemoteExecution?.({ ...details, executor: "container", experimentId: manifest.id, submissionId, allocationName: identity.name, runtime, phase, at: new Date().toISOString() });
+      this.onRemoteExecution?.({ ...details, executor: "container", experimentId: manifest.id, submissionId, allocationName: identity.name, runtime, ...(daemonId ? { daemonId } : {}), phase, at: new Date().toISOString() });
     };
     // An interrupted runtime client can leave a daemon-owned worker running.
     try { observe("submitting"); }
@@ -504,7 +514,8 @@ export class ContainerExecutor implements ExperimentExecutor {
       };
       const removed = await control([runtime, "rm", "--force", "--volumes", containerId ?? identity.name]);
       const inspected = await control([runtime, "ps", "--all", "--no-trunc", "--filter", containerId ? `id=${containerId}` : `name=${identity.name}`, "--format", "{{.ID}}"]);
-      const confirmed = containerId !== undefined && inspected.exitCode === 0 && !inspected.stdout.trim();
+      const daemonAfter = daemonId ? await control([runtime, "info", "--format", "{{.ID}}"]): undefined;
+      const confirmed = containerId !== undefined && inspected.exitCode === 0 && !inspected.stdout.trim() && (!daemonId || daemonAfter?.exitCode === 0 && daemonAfter.stdout.trim() === daemonId);
       if (confirmed && !receiptError) observe("terminal", { containerId, state: "REMOVED", exitCode: 0 });
       const stderr = boundProcessOutput([result.stderr,
         confirmed ? `Container ${containerId}: removed and verified absent.` : "",

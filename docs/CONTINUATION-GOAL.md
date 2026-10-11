@@ -58,6 +58,17 @@ external evaluator.
 
 ## Latest repository state
 
+- Docker recovery now matches the daemon ID recorded before launch, exact
+  worker identity and ownership label, and stopped state with restart disabled.
+  It can recover a missing receipt from the durable worker name, or prove a
+  known full ID absent. Queries are read-only and bounded; ambiguous/running
+  workers remain fenced. Receipts and proofs are idempotent across observers.
+  A live controller SIGKILL probe verified running-worker quarantine followed
+  by exited-worker recovery without validating the measurement; evidence is in
+  `docs/research/evidence/container-crash-recovery-2026-10-11.json`.
+  Podman, live alternate-daemon verification, orphan cancellation/cleanup,
+  and long campaign soak tests remain open release gates.
+
 - Container execution now persists unique launch intent before the runtime
   RPC and records full-ID receipts and verified absence proof. CLI/TUI share
   this mandatory ledger. Unconfirmed cleanup or durability failures keep
@@ -65,13 +76,12 @@ external evaluator.
   A SIGKILL regression verifies recovery of the durable worker name; live
   Docker normal-finalization evidence is recorded in
   `docs/research/evidence/container-ledger-2026-10-11.json`.
-  Container reconciliation accepts existing durable cleanup proof only;
-  querying orphaned workers across daemon endpoints remains an open gate.
+  Container reconciliation accepts durable cleanup proof; newer Docker intents
+  also support daemon-matched recovery queries as described above.
 
 - Slurm recovery now rejects out-of-order lifecycle evidence and malformed
   cluster identities; expanded ledger regressions verify that compute remains
-  reserved for these cases. Container controller-crash reconciliation remains
-  an open release gate.
+  reserved for these cases. Live Slurm cluster recovery remains an open gate.
 
 - Container execution now bypasses image entrypoints, disables image health
   checks, preserves the declared argv, and rejects implicit default commands.

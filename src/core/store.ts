@@ -3771,7 +3771,9 @@ export class ResearchStore {
       if (receipt.executor !== intent.payload.executor || proof.executor !== intent.payload.executor) return unresolved;
       if (receipt.allocationName !== intent.payload.allocationName || proof.allocationName !== intent.payload.allocationName) return unresolved;
       if (intent.payload.executor === "container") {
-        if (!["docker", "podman"].includes(String(intent.payload.runtime)) || receipt.runtime !== intent.payload.runtime || proof.runtime !== intent.payload.runtime || typeof receipt.containerId !== "string" || !/^[a-f0-9]{64}$/.test(receipt.containerId) || proof.containerId !== receipt.containerId || proof.state !== "REMOVED" || proof.exitCode !== 0) return unresolved;
+        if (!["docker", "podman"].includes(String(intent.payload.runtime)) || receipt.runtime !== intent.payload.runtime || proof.runtime !== intent.payload.runtime || receipt.daemonId !== intent.payload.daemonId || proof.daemonId !== intent.payload.daemonId || typeof receipt.containerId !== "string" || !/^[a-f0-9]{64}$/.test(receipt.containerId) || proof.containerId !== receipt.containerId) return unresolved;
+        if (proof.state !== "REMOVED" && !(proof.state === "EXITED" && proof.runtime === "docker" && typeof proof.daemonId === "string" && /^[A-Za-z0-9][A-Za-z0-9:-]{15,127}$/.test(proof.daemonId))) return unresolved;
+        if (!Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255 || proof.state === "REMOVED" && proof.exitCode !== 0) return unresolved;
         continue;
       }
       if (receipt.cluster !== undefined && (typeof receipt.cluster !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(receipt.cluster))) return unresolved;
@@ -3782,11 +3784,21 @@ export class ResearchStore {
     return { recorded: true, confirmed: true, submissionIds: intents.map((intent) => String(intent.payload.submissionId)) };
   }
 
+  /** Concurrent observers must agree on the immutable container receipt. */
+  recordContainerReceiptEvidence(event: { experimentId: string; submissionId: string; allocationName: string; runtime: "docker" | "podman"; containerId: string; daemonId?: string; at: string; recovered?: boolean }): boolean {
+    return this.db.transaction(() => {
+      const existing = this.eventsByType("run.remote.submitted").map((record) => record.payload as Record<string, unknown>).filter((record) => record.experimentId === event.experimentId && record.submissionId === event.submissionId);
+      if (existing.length) return existing.length === 1 && existing[0].executor === "container" && ["runtime", "containerId", "daemonId", "allocationName"].every((key) => existing[0][key] === (event as unknown as Record<string, unknown>)[key]);
+      this.appendEvent("run.remote.submitted", { ...event, executor: "container", phase: "submitted" });
+      return true;
+    })();
+  }
+
   /** A cleanup proof is distinct from a successful experiment measurement. */
-  recordContainerTerminalEvidence(event: { experimentId: string; submissionId: string; allocationName: string; runtime: "docker" | "podman"; containerId: string; state: string; exitCode: number; at: string }): boolean {
+  recordContainerTerminalEvidence(event: { experimentId: string; submissionId: string; allocationName: string; runtime: "docker" | "podman"; containerId: string; daemonId?: string; state: string; exitCode: number; at: string }): boolean {
     return this.db.transaction(() => {
       const existing = this.eventsByType("run.remote.terminal").map((record) => record.payload as Record<string, unknown>).filter((record) => record.experimentId === event.experimentId && record.submissionId === event.submissionId);
-      if (existing.length) return existing.length === 1 && existing[0].executor === "container" && ["runtime", "containerId", "allocationName", "state", "exitCode"].every((key) => existing[0][key] === (event as unknown as Record<string, unknown>)[key]);
+      if (existing.length) return existing.length === 1 && existing[0].executor === "container" && ["runtime", "containerId", "daemonId", "allocationName", "state", "exitCode"].every((key) => existing[0][key] === (event as unknown as Record<string, unknown>)[key]);
       this.appendEvent("run.remote.terminal", { ...event, executor: "container", phase: "terminal" });
       return true;
     })();

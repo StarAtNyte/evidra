@@ -2,16 +2,81 @@ import { ResearchStore } from "./store.js";
 import { parseSlurmAccounting } from "./executors.js";
 import { runProcess } from "./process.js";
 
-/** Container recovery currently accepts only previously durable cleanup proof. */
+/** Recovery observes remote state; it never starts or cancels workers. */
 export async function reconcileRemoteExperiment(storePath: string, cwd: string, experimentId: string, options: { timeoutMs?: number } = {}): Promise<{ released: boolean; queried: number }> {
   const store = new ResearchStore(storePath);
   let executor: unknown;
   try {
     const entry = store.experiments().find((item) => item.id === experimentId);
     executor = (entry?.payload as { resources?: { executor?: unknown } } | undefined)?.resources?.executor;
-    if (executor === "container") return { released: store.reconcileRemoteExperiment(experimentId), queried: 0 };
   } finally { store.close(); }
+  if (executor === "container") return reconcileContainerExperiment(storePath, cwd, experimentId, options);
   return reconcileSlurmExperiment(storePath, cwd, experimentId, options);
+}
+
+export async function reconcileContainerExperiment(storePath: string, cwd: string, experimentId: string, options: { timeoutMs?: number } = {}): Promise<{ released: boolean; queried: number }> {
+  const store = new ResearchStore(storePath);
+  const environment = { ...process.env };
+  const duration = Math.max(1, Math.min(15_000, Number.isFinite(options.timeoutMs) ? options.timeoutMs! : 15_000));
+  const deadline = Date.now() + duration;
+  let queried = 0;
+  const query = async (argv: string[]) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return undefined;
+    queried += 1;
+    try { return await runProcess(argv, cwd, remaining, undefined, undefined, environment); }
+    catch { return undefined; }
+  };
+  try {
+    if (store.verifyEventChain().status !== "valid") return { released: false, queried };
+    const entry = store.experiments().find((item) => item.id === experimentId);
+    const payload = entry?.payload as { remoteReconciliationRequired?: unknown; resources?: { executor?: unknown } } | undefined;
+    if (payload?.remoteReconciliationRequired !== true || payload.resources?.executor !== "container") return { released: false, queried };
+    if (store.reconcileRemoteExperiment(experimentId)) return { released: true, queried };
+    const records = store.eventsByTypes(["run.remote.submitting", "run.remote.submitted", "run.remote.terminal"])
+      .map((event) => ({ type: event.type, payload: event.payload as Record<string, unknown> }))
+      .filter((event) => event.payload?.experimentId === experimentId && event.payload.executor === "container");
+    for (const intent of records.filter((event) => event.type === "run.remote.submitting")) {
+      const { submissionId, allocationName, daemonId } = intent.payload;
+      if (intent.payload.runtime !== "docker" || typeof daemonId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9:-]{15,127}$/.test(daemonId) || typeof submissionId !== "string" || !/^[a-f0-9-]{36}$/.test(submissionId) || allocationName !== `evidra-${submissionId}` || intent.payload.phase !== "submitting") continue;
+      if (records.filter((record) => record.type === "run.remote.submitting" && record.payload.submissionId === submissionId).length !== 1 || records.some((record) => record.type === "run.remote.terminal" && record.payload.submissionId === submissionId)) continue;
+      const receipts = records.filter((record) => record.type === "run.remote.submitted" && record.payload.submissionId === submissionId);
+      if (receipts.length > 1) continue;
+      const receipt = receipts[0]?.payload;
+      if (receipt && (receipt.runtime !== "docker" || receipt.daemonId !== daemonId || receipt.allocationName !== allocationName || receipt.phase !== "submitted" || typeof receipt.containerId !== "string" || !/^[a-f0-9]{64}$/.test(receipt.containerId) || records.indexOf(receipts[0]) <= records.indexOf(intent))) continue;
+      const before = await query(["docker", "info", "--format", "{{.ID}}"]);
+      if (before?.exitCode === 130) break;
+      if (before?.exitCode !== 0 || before.stdout.trim() !== daemonId) continue;
+      const inspected = await query(["docker", "inspect", "--type", "container", "--format", "[{{json .Id}},{{json .Name}},{{json .Config.Labels}},{{json .State}},{{json .HostConfig.RestartPolicy.Name}}]", String(receipt?.containerId ?? allocationName)]);
+      if (inspected?.exitCode === 130) break;
+      let containerId: string | undefined;
+      let state: "EXITED" | "REMOVED" | undefined;
+      let exitCode = 0;
+      if (inspected?.exitCode === 0) {
+        try {
+          const value: unknown = JSON.parse(inspected.stdout);
+          if (!Array.isArray(value) || value.length !== 5) continue;
+          const [id, name, labels, status, restart] = value;
+          if (typeof id !== "string" || !/^[a-f0-9]{64}$/.test(id) || name !== `/${allocationName}` || labels?.["org.evidra.allocation"] !== allocationName || receipt && id !== receipt.containerId) continue;
+          // A stopped snapshot is insufficient if automatic restart is enabled.
+          if (restart !== "no" || status?.Status !== "exited" || status.Running !== false || status.Restarting !== false || status.Paused !== false || status.Pid !== 0 || !Number.isInteger(status.ExitCode) || status.ExitCode < 0 || status.ExitCode > 255) continue;
+          containerId = id; state = "EXITED"; exitCode = status.ExitCode;
+        } catch { continue; }
+      } else if (receipt) {
+        const absent = await query(["docker", "ps", "--all", "--no-trunc", "--filter", `id=${receipt.containerId}`, "--format", "{{.ID}}"]);
+        if (absent?.exitCode === 130) break;
+        if (absent?.exitCode === 0 && !absent.stdout.trim()) { containerId = String(receipt.containerId); state = "REMOVED"; }
+      }
+      if (!containerId || !state) continue;
+      const after = await query(["docker", "info", "--format", "{{.ID}}"]);
+      if (after?.exitCode === 130) break;
+      if (after?.exitCode !== 0 || after.stdout.trim() !== daemonId) continue;
+      const event = { experimentId, submissionId, allocationName: String(allocationName), runtime: "docker" as const, daemonId, containerId, at: new Date().toISOString() };
+      if (!receipt && !store.recordContainerReceiptEvidence({ ...event, recovered: true })) continue;
+      store.recordContainerTerminalEvidence({ ...event, state, exitCode });
+    }
+    return { released: store.reconcileRemoteExperiment(experimentId), queried };
+  } finally { store.close(); }
 }
 
 /** Read accounting only; never cancel or relaunch an allocation during recovery. */

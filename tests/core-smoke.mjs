@@ -8788,14 +8788,15 @@ test("container completion awaits exact daemon cleanup and rejects uncertain out
   const previousHost = process.env.DOCKER_HOST;
   const cid = "a".repeat(64);
   try {
-    for (const mode of ["completed", "timeout", "interrupted", "removal-failed", "query-failed", "missing-receipt", "receipt-durability-failed", "terminal-durability-failed"]) {
+    for (const mode of ["completed", "timeout", "interrupted", "removal-failed", "query-failed", "missing-receipt", "receipt-durability-failed", "terminal-durability-failed", "daemon-changed"]) {
       const root = mkdtempSync(join(tmpdir(), "evidra-container-contract-"));
       try {
         const bin = join(root, "bin"); mkdirSync(bin);
         writeFileSync(join(bin, "docker"), `#!${process.execPath}
           const fs=require('node:fs'), args=process.argv.slice(2), mode=${JSON.stringify(mode)}, cid=${JSON.stringify(cid)};
           if(process.env.DOCKER_HOST!=='tcp://test.invalid:2375') process.exit(11);
-          if(args[0]==='run') {
+          if(args[0]==='info') { console.log(mode==='daemon-changed'&&fs.existsSync('cleanup-completed')?'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee':'dddddddd-dddd-dddd-dddd-dddddddddddd'); }
+          else if(args[0]==='run') {
             if(!fs.existsSync('intent-persisted')) process.exit(12);
             if(args.includes('--rm')) process.exit(8);
             if(mode!=='missing-receipt') fs.writeFileSync(args[args.indexOf('--cidfile')+1],cid);
@@ -8830,7 +8831,7 @@ test("container completion awaits exact daemon cleanup and rejects uncertain out
         assert.equal(result.status, mode === "completed" ? "completed" : "failed");
         if (mode === "timeout") assert.equal(result.exitCode, 124);
         if (mode === "interrupted") assert.equal(result.exitCode, 130);
-        if (["removal-failed", "query-failed", "missing-receipt"].includes(mode)) {
+        if (["removal-failed", "query-failed", "missing-receipt", "daemon-changed"].includes(mode)) {
           assert.equal(result.failureClass, "unknown");
           assert.match(result.stderr, /termination is unconfirmed/);
         } else {
@@ -8862,7 +8863,8 @@ test("container launch refuses missing durability and retains identity after con
   try {
     writeFileSync(join(bin, "docker"), `#!${process.execPath}
       const fs=require('node:fs'), args=process.argv.slice(2);
-      if(args[0]==='run') {
+      if(args[0]==='info') { console.log('dddddddd-dddd-dddd-dddd-dddddddddddd'); }
+      else if(args[0]==='run') {
         const receipt=args[args.indexOf('--cidfile')+1];
         fs.writeFileSync(receipt,'b'.repeat(64));
         fs.writeFileSync('daemon-worker',JSON.stringify({name:args[args.indexOf('--name')+1],receipt}));
@@ -8948,7 +8950,10 @@ test("container reconciliation requires ordered matching cleanup evidence and ne
     store.saveExperiment({ id: "proof", payload: { id: "proof", status: "running", resources: { executor: "container" } } });
     store.reserveComputeBudget({ experimentId: "proof", budgetGpuHours: 100, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" });
     store.appendEvent("run.remote.submitting", { ...common, phase: "submitting" });
-    store.appendEvent("run.remote.submitted", { ...common, phase: "submitted", containerId: "b".repeat(64) });
+    const receiptEvidence = { ...common, containerId: "b".repeat(64) };
+    assert.equal(store.recordContainerReceiptEvidence(receiptEvidence), true);
+    assert.equal(store.recordContainerReceiptEvidence(receiptEvidence), true);
+    assert.equal(store.recordContainerReceiptEvidence({ ...receiptEvidence, containerId: "c".repeat(64) }), false);
     store.recoverStaleExperiments(0);
     assert.equal(store.reconcileRemoteExperiment("proof"), false);
     const proof = { ...common, containerId: "b".repeat(64), state: "REMOVED", exitCode: 0 };
@@ -8965,6 +8970,94 @@ test("container reconciliation requires ordered matching cleanup evidence and ne
     assert.equal(reopened.runs().length, 0);
     reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Docker refuses launch when daemon identity is missing or malformed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-docker-preflight-"));
+  const bin = join(root, "bin"); mkdirSync(bin);
+  const previousPath = process.env.PATH, previousRuntime = process.env.EVIDRA_CONTAINER_RUNTIME;
+  try {
+    process.env.PATH = `${bin}:${previousPath ?? ""}`; process.env.EVIDRA_CONTAINER_RUNTIME = "docker";
+    for (const response of ["process.exit(1)", "console.log('')", "console.log('bad identity with spaces')"]) {
+      writeFileSync(join(bin, "docker"), `#!${process.execPath}
+        const fs=require('node:fs'); if(process.argv[2]==='info'){${response};}else{fs.writeFileSync('launched','yes');}
+      `, { mode: 0o755 });
+      const events = [];
+      const result = await new ContainerExecutor(root, (event) => events.push(event)).run({id:'preflight',resources:{executor:'container',image:'test:latest',timeoutMinutes:1}},root,['train']);
+      assert.equal(result.exitCode, 127);
+      assert.match(result.stderr, /daemon identity.*launch refused/);
+      assert.equal(existsSync(join(root, "launched")), false);
+      assert.deepEqual(events, []);
+    }
+  } finally {
+    if(previousPath===undefined)delete process.env.PATH;else process.env.PATH=previousPath;
+    if(previousRuntime===undefined)delete process.env.EVIDRA_CONTAINER_RUNTIME;else process.env.EVIDRA_CONTAINER_RUNTIME=previousRuntime;
+    rmSync(root,{recursive:true,force:true});
+  }
+});
+
+test("Docker recovery checks daemon identity and exact terminal worker evidence", async () => {
+  const previousPath = process.env.PATH;
+  const daemonId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+  const submissionId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const allocationName = `evidra-${submissionId}`;
+  const cid = "b".repeat(64);
+  const modes = ["exited", "no-receipt", "removed", "running", "wrong-name", "wrong-label", "wrong-id", "restart-enabled", "before-wrong-daemon", "after-wrong-daemon", "query-failed", "malformed", "ambiguous-missing-receipt", "legacy", "duplicate", "timeout", "interrupted", "reordered"];
+  try {
+    for (const mode of modes) {
+      const root = mkdtempSync(join(tmpdir(), "evidra-docker-query-"));
+      const bin = join(root, "bin"); mkdirSync(bin);
+      const db = join(root, "state.sqlite");
+      try {
+        const state = { Status: mode === "running" ? "running" : "exited", Running: mode === "running", Restarting: false, Paused: false, Pid: mode === "running" ? 123 : 0, ExitCode: 7 };
+        const inspection = [mode === "wrong-id" ? "c".repeat(64) : cid, mode === "wrong-name" ? "/other" : `/${allocationName}`, { "org.evidra.allocation": mode === "wrong-label" ? "other" : allocationName }, state, mode === "restart-enabled" ? "always" : "no"];
+        writeFileSync(join(bin, "docker"), `#!${process.execPath}
+          const fs=require('node:fs'),args=process.argv.slice(2),mode=${JSON.stringify(mode)};
+          fs.appendFileSync('queries',JSON.stringify(args)+'\\n');
+          if(args[0]==='info') {
+            const count=fs.existsSync('info-count')?Number(fs.readFileSync('info-count','utf8')):0;
+            fs.writeFileSync('info-count',String(count+1));
+            if(mode==='interrupted') process.exit(130);
+            if(mode==='timeout') {setInterval(()=>{},1000);}
+            else console.log(mode==='before-wrong-daemon'||mode==='after-wrong-daemon'&&count>0?'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee':${JSON.stringify(daemonId)});
+          } else if(args[0]==='inspect') {
+            if(mode==='query-failed'||mode==='removed'||mode==='ambiguous-missing-receipt') process.exit(1);
+            if(mode==='malformed') console.log('not JSON');
+            else console.log(${JSON.stringify(JSON.stringify(inspection))});
+          } else if(args[0]==='ps') {if(mode==='query-failed') process.exit(1);}
+          else process.exit(9);
+        `, { mode: 0o755 });
+        process.env.PATH = `${bin}:${previousPath ?? ""}`;
+        const store = new ResearchStore(db);
+        store.saveExperiment({ id: "recovery", payload: { id: "recovery", status: "running", resources: { executor: "container" } } });
+        store.reserveComputeBudget({ experimentId: "recovery", budgetGpuHours: 10, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" });
+        const common = { executor: "container", experimentId: "recovery", submissionId, allocationName, runtime: "docker", ...(mode === "legacy" ? {} : { daemonId }), at: new Date().toISOString() };
+        const intent = { ...common, phase: "submitting" }, receipt = { ...common, phase: "submitted", containerId: cid };
+        if (mode === "reordered") store.appendEvent("run.remote.submitted", receipt);
+        store.appendEvent("run.remote.submitting", intent);
+        if (!["no-receipt", "ambiguous-missing-receipt", "reordered"].includes(mode)) store.appendEvent("run.remote.submitted", receipt);
+        if (mode === "duplicate") store.appendEvent("run.remote.submitting", intent);
+        store.recoverStaleExperiments(0); store.close();
+        const result = await reconcileRemoteExperiment(db, root, "recovery", { timeoutMs: mode === "timeout" ? 25 : 5000 });
+        const released = ["exited", "no-receipt", "removed"].includes(mode);
+        assert.equal(result.released, released, mode);
+        const reopened = new ResearchStore(db);
+        assert.equal(reopened.reservedComputeGpuHours(), released ? 0 : 2, mode);
+        assert.equal(reopened.experiments()[0].payload.status, released ? "failed" : "blocked", mode);
+        assert.equal(reopened.runs().length, 0);
+        if (released) {
+          const proof = reopened.eventsByType("run.remote.terminal")[0].payload;
+          assert.equal(proof.daemonId, daemonId);
+          assert.equal(proof.containerId, cid);
+          assert.equal(proof.state, mode === "removed" ? "REMOVED" : "EXITED");
+          assert.equal(proof.exitCode, mode === "removed" ? 0 : 7);
+          assert.deepEqual(await reconcileRemoteExperiment(db, root, "recovery"), { released: false, queried: 0 });
+        } else assert.equal(reopened.eventsByType("run.remote.terminal").length, 0, mode);
+        assert.equal(reopened.verifyEventChain().status, "valid"); reopened.close();
+        if (existsSync(join(root, "queries"))) assert.doesNotMatch(readFileSync(join(root, "queries"), "utf8"), /"run"|"rm"|"stop"|"kill"/);
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    }
+  } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
 });
 
 test("Slurm executor command preserves argv boundaries and declared resources", () => {

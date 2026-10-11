@@ -124,14 +124,34 @@ prevents launch. Receipt-write failures still run cleanup, but retain the fence
 until complete evidence exists. Proof writes are idempotent and conflicting
 proofs cannot replace the original. Reconciliation can release a container
 quarantine backed by complete existing proof, leaving its measurement failed
-and unvalidated. It does not query or cancel orphaned containers yet.
+and unvalidated. Recovery queries Docker workers without cancelling or
+relaunching them.
 
 Regressions cover SIGKILL during launch, reopened SQLite state, uncertain normal
 finalization, durability failures, conflicting identities, reordered records,
 and ordering under the SQLite compatibility fallback. A live Docker run
 verified the ordered ledger, independent exact-ID absence, and compute release;
 see [container ledger evidence](research/evidence/container-ledger-2026-10-11.json).
-Live orphan recovery across daemon endpoints and Podman remain unverified.
+Docker launches now record the daemon ID before submission and verify it again
+after cleanup. Missing or malformed daemon identity prevents launch. Recovery
+requires that identity to match before and after its queries. Known full-ID
+receipts can prove absence; a missing receipt can be recovered only from an
+existing worker with the exact durable name and ownership label. An absent
+worker without a receipt remains ambiguous. Exited workers require zero PID,
+no running/restarting/paused state, and automatic restart disabled. Recovered
+receipts and terminal proofs are idempotent across observers. Existing legacy
+cleanup proofs remain usable; legacy intents without daemon identity cannot
+gain new recovery proof.
+
+A live Docker controller received SIGKILL while its worker was running.
+Recovery kept it fenced, then recovered its missing receipt after the worker
+exited, released compute, and left the measurement failed/unvalidated. See
+[Docker crash evidence](research/evidence/container-crash-recovery-2026-10-11.json).
+Query failures, wrong daemon/worker identities, malformed output, automatic
+restart, running workers, and interrupted/bounded queries have fake-runtime
+regressions. Recovery does not remove stopped containers or their volumes;
+the live probe cleaned up its own fixture separately. Live alternate-daemon
+verification, orphan cancellation/cleanup, and Podman recovery remain open.
 
 Slurm allocations now use a UUID-based job name stored in every lifecycle
 record. Both normal accounting and post-restart queries request duplicate
