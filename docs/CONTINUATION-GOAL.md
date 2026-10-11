@@ -58,6 +58,12 @@ external evaluator.
 
 ## Latest repository state
 
+- Modal now runs a bounded, interruptible CLI version preflight before recording
+  launch intent. Broken/missing clients, interrupted checks and preflight
+  timeouts create no allocation ledger or GPU charge. Verified spawn failures
+  after a successful probe still use NOT_STARTED evidence; post-launch errors
+  remain fenced. Tests cover preflight failures and probe/launch races.
+
 - Process launch errors now preserve OS proof that the runtime client did not start. Modal
   records ordered NOT_STARTED evidence for verified spawn failures, allowing
   reservations to release without pretending a remote call ran. Post-launch

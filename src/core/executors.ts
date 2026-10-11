@@ -730,6 +730,16 @@ export class ModalExecutor implements ExperimentExecutor {
     const modalEntrypoint = process.env.EVIDRA_MODAL_ENTRYPOINT ?? "modal_app.py::run";
     const timeoutSeconds = Math.max(60, Math.round(manifest.resources.timeoutMinutes * 60));
     const commandJson = JSON.stringify(command);
+    let preflight: ProcessResult;
+    try {
+      preflight = await runProcess(["modal", "--version"], launchRoot, Math.min(10_000, manifest.resources.timeoutMinutes * 60_000), undefined, onProcess);
+    } catch (error) {
+      preflight = processFailureResult(["modal", "--version"], launchRoot, error);
+    }
+    if (preflight.exitCode !== 0) {
+      const exitCode = [124, 130].includes(preflight.exitCode) ? preflight.exitCode : 127;
+      return { ...toRunResult(manifest, { ...preflight, command, cwd, durationMs: 0, exitCode, stdout: "", stderr: boundProcessOutput([preflight.stderr, "Modal runtime preflight failed; no remote launch was attempted."].filter(Boolean).join("\n")) }, metricName, true), stdout: preflight.stdout, artifacts: {}, failureClass: exitCode === 124 ? "timeout" : exitCode === 130 ? "unknown" : "dependency" };
+    }
     // The worker image must contain the isolated worktree. Mounting the repo
     // root would omit `.sota/worktrees` and silently execute the wrong source.
     const submissionId = randomUUID();

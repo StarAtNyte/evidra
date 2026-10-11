@@ -9015,6 +9015,46 @@ test("Modal completion envelopes reject ambiguity and malformed terminal evidenc
   assert.deepEqual(parseModalWorkerResult(`{"progress":1}\n${success}\nFinished`), valid);
 });
 
+test("Modal runtime preflight failures never record allocation intent or charge worker compute", async () => {
+  const previousPath = process.env.PATH;
+  try {
+    for (const mode of ["missing", "broken", "timeout", "interrupted"]) {
+      const root = mkdtempSync(join(tmpdir(), "evidra-modal-preflight-"));
+      const bin = join(root, "bin"); mkdirSync(bin);
+      const db = join(root, "state.sqlite"), store = new ResearchStore(db);
+      try {
+        if (mode !== "missing") writeFileSync(join(bin, "modal"), `#!${process.execPath}
+          if(process.argv.includes('--version')){
+            if(${JSON.stringify(mode)}==='broken'){console.log('accuracy=0.9');console.error('ModuleNotFoundError: modal');process.exit(1);}
+            setInterval(()=>{},1000);
+          }else{require('node:fs').writeFileSync('launched','yes');process.exit(0);}
+        `, { mode: 0o755 });
+        process.env.PATH = bin;
+        const manifest = { id: mode, resources: { executor: "modal", timeoutMinutes: mode === "timeout" ? 0.001 : 1 }, evaluation: { requiredArtifacts: [] } };
+        store.saveExperiment({ id: mode, payload: { ...manifest, status: "running" } });
+        store.reserveComputeBudget({ experimentId: mode, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+        const result = await new ModalExecutor(root, (event) => recordRemoteExecution(db, event)).run(manifest, root, ["train"], mode === "interrupted" ? (control) => control.terminate() : undefined, "accuracy");
+        assert.equal(result.status, "failed");
+        assert.equal(result.exitCode, mode === "timeout" ? 124 : mode === "interrupted" ? 130 : 127);
+        assert.equal(result.durationSeconds, 0);
+        assert.deepEqual(result.metrics, {});
+        assert.deepEqual(result.artifacts, {});
+        assert.match(result.stderr, /preflight failed; no remote launch/);
+        assert.equal(existsSync(join(root, "launched")), false);
+        assert.equal(store.eventsByType("run.remote.submitting").length, 0);
+        assert.equal(store.eventsByType("run.remote.terminal").length, 0);
+        store.saveExperiment({ id: mode, payload: { ...manifest, status: result.status } });
+      } finally { store.close(); }
+      const reopened = new ResearchStore(db);
+      try {
+        assert.equal(reopened.reservedComputeGpuHours(), 0);
+        assert.equal(reopened.experiments()[0].payload.status, "failed");
+        assert.equal(reopened.remoteExecutionState(mode).recorded, false);
+      } finally { reopened.close(); rmSync(root, { recursive: true, force: true }); }
+    }
+  } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
+});
+
 test("Modal distinguishes proven spawn failure from errors after the client starts", async () => {
   const previousPath = process.env.PATH;
   try {
@@ -9024,10 +9064,16 @@ test("Modal distinguishes proven spawn failure from errors after the client star
       const db = join(root, "state.sqlite");
       const store = new ResearchStore(db);
       try {
-        if (mode !== "missing") writeFileSync(join(bin, "modal"), `#!${process.execPath}
+        writeFileSync(join(bin, "modal"), `#!${process.execPath}
+          if(process.argv.includes('--version')){
+            const fs=require('node:fs');
+            if(${JSON.stringify(mode)}==='missing')fs.unlinkSync(__filename);
+            if(${JSON.stringify(mode)}==='not-executable')fs.chmodSync(__filename,0o644);
+            console.log('modal client version 1.0.0');process.exit(0);
+          }
           console.log('[evidra-call] '+JSON.stringify({submissionId:process.argv[process.argv.indexOf('--submission-id')+1],callId:'fc-launched'}));
           console.log(JSON.stringify({exitCode:0,stdout:'accuracy=0.9',stderr:'',artifacts:{}}));
-        `, { mode: mode === "not-executable" ? 0o644 : 0o755 });
+        `, { mode: 0o755 });
         process.env.PATH = bin;
         const manifest = { id: mode, resources: { executor: "modal", timeoutMinutes: 1 }, evaluation: { requiredArtifacts: [] } };
         store.saveExperiment({ id: mode, payload: { ...manifest, status: "running" } });
@@ -9068,6 +9114,7 @@ test("Modal requires successful client completion before accepting worker eviden
         const payload = { exitCode: mode === "worker-failed" ? 7 : 0, stdout: "accuracy=0.9", stderr: "worker diagnostics", artifacts: { "result.json": Buffer.from("verified artifact").toString("base64") } };
         writeFileSync(join(bin, "modal"), `#!${process.execPath}
           const fs=require('node:fs'),mode=${JSON.stringify(mode)};
+          if(process.argv.includes('--version')){console.log('modal client version 1.0.0');process.exit(0);}
           const receipt='[evidra-call] '+JSON.stringify({submissionId:mode==='mismatched-receipt'?'wrong':process.argv[process.argv.indexOf('--submission-id')+1],callId:'fc-contract'});
           if(mode!=='missing-receipt')console.log(receipt);
           if(mode==='duplicate-receipt')console.log(receipt);
@@ -9084,6 +9131,7 @@ test("Modal requires successful client completion before accepting worker eviden
         store.reserveComputeBudget({ experimentId: manifest.id, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
         let timer;
         const result = await new ModalExecutor(root, (event) => store.appendEvent(`run.remote.${event.phase}`, event)).run(manifest, root, ["train"], mode === "interrupted" ? (control) => {
+          if (timer) clearInterval(timer);
           timer = setInterval(() => { if (existsSync(join(root, "ready"))) { clearInterval(timer); control.terminate(); } }, 10);
         } : undefined, "accuracy");
         if (timer) clearInterval(timer);
