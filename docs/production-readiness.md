@@ -137,6 +137,28 @@ Live cluster recovery and container/Modal reconciliation remain unverified.
 
 ## Release checks
 
+Container runs use a unique name and private controller-side `--cidfile`,
+retaining the full ID through explicit cleanup. After the launcher settles,
+Evidra force-removes that exact ID and queries all daemon containers to verify
+its absence. Timeout/interruption remain 124/130 even through graceful exits;
+cleanup time is included in runtime. Missing IDs and failed/nonempty daemon
+queries produce an unconfirmed, nonretryable outcome even when the client
+exited zero. Name-based removal is best-effort when no receipt exists and
+cannot establish termination because submission may still be in flight.
+Launch and cleanup use one controller-side client-environment snapshot, so
+endpoint overrides such as `DOCKER_HOST` cannot select different daemons.
+The controller environment is not passed wholesale through worker `--env`
+arguments; explicit experiment metadata remains the worker contract.
+
+Mock regressions cover completion, timeout, interruption, removal/query failure,
+and missing receipts. Local Docker 29.8.1 also passed live completion, timeout,
+and interruption probes using the preinstalled `postgres:16-alpine` image,
+with independent daemon queries confirming each exact container was absent;
+see [recorded evidence](research/evidence/container-cleanup-2026-10-11.json).
+This does not establish Podman behavior or controller-crash recovery. Durable
+container identity/reconciliation and retention of compute for unconfirmed
+active container outcomes remain required follow-up work.
+
 The local Ollama route shares one endpoint resolver for discovery, health,
 and chat, including base hosts, trailing slashes, proxy prefixes, and legacy
 `/api/chat` URLs. Structured schemas are sent as `format`; invalid schema JSON

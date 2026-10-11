@@ -58,6 +58,17 @@ external evaluator.
 
 ## Latest repository state
 
+- Container launchers now retain full IDs in private receipt files and await
+  exact-ID removal plus daemon-side absence verification. Missing receipts or
+  failed/nonempty daemon queries fail conservatively and cannot auto-retry;
+  timeout/interruption remain truthful, including cleanup runtime. Mock tests
+  cover cleanup failures. Local Docker 29.8.1 probes independently verified
+  completion, timeout, and interruption cleanup; recorded evidence is in
+  `docs/research/evidence/container-cleanup-2026-10-11.json`. Podman, durable
+  container crash recovery, and unconfirmed-outcome compute fencing remain open.
+- Slurm live-query protocol at `2d9c20d` passed hosted CI on both Node versions,
+  including package checks: run 38119441467; 706 tests passed locally.
+
 - Slurm uses a UUID-based allocation name in lifecycle evidence. Normal and
   post-restart accounting query duplicates and require job-ID/name agreement.
   `experiment reconcile` now queries known unresolved allocations on the

@@ -1,7 +1,8 @@
 import { boundProcessOutput, processFailureResult, runProcess, type ProcessControl } from "./process.js";
 import { parseLearningCurve } from "./early-stopping.js";
 import { redactStructured } from "./redaction.js";
-import { constants, openSync, closeSync, fstatSync, readSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { constants, openSync, closeSync, fstatSync, readSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ExperimentExecutorKind, ExperimentManifest, ProcessResult, RunResult } from "./types.js";
 import { randomUUID } from "node:crypto";
@@ -426,9 +427,14 @@ export class LocalExecutor implements ExperimentExecutor {
   }
 }
 
-export function containerCommand(runtime: "docker" | "podman", image: string, cwd: string, command: string[], environment: Record<string, string> = {}): string[] {
+export function containerCommand(runtime: "docker" | "podman", image: string, cwd: string, command: string[], environment: Record<string, string> = {}, identity?: { name: string; cidFile: string }): string[] {
   if (!/^[A-Za-z0-9][A-Za-z0-9._/@:-]*$/.test(image)) throw new Error("Container image must be a plain image reference, not a runtime option or shell expression.");
   const args = [runtime, "run", "--rm", "--init", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "512", "--network", "none", "--tmpfs", "/tmp:rw,nosuid,nodev", "--volume", `${cwd}:/workspace:rw`, "--workdir", "/workspace"];
+  if (identity) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(identity.name) || !isAbsolute(identity.cidFile)) throw new Error("Container identity requires a plain name and absolute receipt path.");
+    args.splice(args.indexOf("--rm"), 1);
+    args.push("--name", identity.name, "--cidfile", identity.cidFile);
+  }
   if (typeof process.getuid === "function" && typeof process.getgid === "function") args.push("--user", `${process.getuid()}:${process.getgid()}`);
   for (const [key, value] of Object.entries(environment)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || /[\r\n]/.test(value)) throw new Error("Invalid container environment entry.");
@@ -443,7 +449,10 @@ export class ContainerExecutor implements ExperimentExecutor {
   constructor(private readonly workspaceRoot?: string) {}
 
   async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
-    const experimentEnvironment = prepareExperimentEnvironment(manifest, cwd, environment);
+    prepareExperimentEnvironment(manifest, cwd, environment);
+    // Runtime clients need controller-side endpoint/auth configuration. Only
+    // explicit --env entries above cross into the worker container.
+    const runtimeEnvironment = { ...process.env };
     const requestedRuntime = process.env.EVIDRA_CONTAINER_RUNTIME;
     const candidates: Array<"docker" | "podman"> = requestedRuntime === "podman" ? ["podman"] : requestedRuntime === "docker" ? ["docker"] : requestedRuntime ? [] : ["docker", "podman"];
     const launchRoot = resolve(this.workspaceRoot ?? cwd);
@@ -458,18 +467,38 @@ export class ContainerExecutor implements ExperimentExecutor {
     if (!runtime) {
       return toRunResult(manifest, { command, cwd, exitCode: 127, durationMs: 0, stdout: "", stderr: "No Docker or Podman runtime was found. Install one or select the local executor." }, metricName);
     }
+    const receiptRoot = mkdtempSync(join(tmpdir(), "evidra-container-"));
+    const identity = { name: `evidra-${randomUUID()}`, cidFile: join(receiptRoot, "container-id") };
+    const started = Date.now();
     try {
-      const result = await runProcess(containerCommand(runtime, image, resolve(cwd), command, {
+      let result: ProcessResult;
+      try { result = await runProcess(containerCommand(runtime, image, resolve(cwd), command, {
         EVIDRA_EXPERIMENT_ID: manifest.id,
         EVIDRA_EXPERIMENT_CONFIG: "/workspace/.sota/experiment-config.json",
         EVIDRA_DATASET_VERSION: manifest.datasetVersion ?? "unknown",
         EVIDRA_SPLIT_VERSION: manifest.splitVersion ?? "unknown",
         EVIDRA_MATRIX_REQUIRED: manifest.evaluation?.matrixRequired ? "1" : "0",
-      }), launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, experimentEnvironment, manifest.resources.earlyStopping);
-      return toRunResult(manifest, { ...result, command, cwd }, metricName);
+      }, identity), launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, runtimeEnvironment, manifest.resources.earlyStopping); }
+      catch (error) { result = processFailureResult(command, cwd, error); }
+      const receipt = boundedFile(receiptRoot, "container-id").trim();
+      const containerId = /^[a-f0-9]{64}$/.test(receipt) ? receipt : undefined;
+      const control = async (argv: string[]): Promise<ProcessResult> => {
+        try { return await runProcess(argv, launchRoot, 10_000, undefined, undefined, runtimeEnvironment); }
+        catch (error) { return processFailureResult(argv, launchRoot, error); }
+      };
+      const removed = await control([runtime, "rm", "--force", containerId ?? identity.name]);
+      const inspected = await control([runtime, "ps", "--all", "--no-trunc", "--filter", containerId ? `id=${containerId}` : `name=${identity.name}`, "--format", "{{.ID}}"]);
+      const confirmed = containerId !== undefined && inspected.exitCode === 0 && !inspected.stdout.trim();
+      const stderr = boundProcessOutput([result.stderr,
+        confirmed ? `Container ${containerId}: removed and verified absent.` : "",
+        removed.exitCode !== 0 ? `Container removal request exited ${removed.exitCode}: ${removed.stderr}` : "",
+        !confirmed ? `Container termination is unconfirmed (${runtime}, ${containerId ?? identity.name}); reconcile before replay. ${inspected.stderr}` : "",
+      ].filter(Boolean).join("\n"));
+      const outcome = toRunResult(manifest, { ...result, command, cwd, durationMs: Date.now() - started, stderr, exitCode: !confirmed && result.exitCode === 0 ? 1 : result.exitCode }, metricName);
+      return confirmed ? outcome : { ...outcome, failureClass: "unknown" };
     } catch (error) {
-      return toRunResult(manifest, { command, cwd, exitCode: 126, durationMs: 0, stdout: "", stderr: error instanceof Error ? error.message : String(error) }, metricName);
-    }
+      return { ...toRunResult(manifest, { command, cwd, exitCode: 126, durationMs: Date.now() - started, stdout: "", stderr: `Container termination is unconfirmed (${identity.name}): ${error instanceof Error ? error.message : String(error)}` }, metricName), failureClass: "unknown" };
+    } finally { rmSync(receiptRoot, { recursive: true, force: true }); }
   }
 }
 

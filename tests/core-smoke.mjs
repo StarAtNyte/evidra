@@ -42,7 +42,7 @@ import { executeResearchTool, normalizeResearchToolResult, availableResearchTool
 import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "../dist/core/external-tools.js";
 import { normalizeResearchDecisionPayload, normalizeResearchToolCall, researchDirectorAvailableTools, runResearchDirector } from "../dist/agents/research-director.js";
 import { CodexExecAgent, checkProvider, listLocalModels, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
-import { LocalExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, SlurmExecutor, parseSlurmAccounting, slurmCommand, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
+import { LocalExecutor, ContainerExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, SlurmExecutor, parseSlurmAccounting, slurmCommand, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
 import { experienceReplayWorld } from "../dist/core/experience.js";
@@ -8768,6 +8768,59 @@ test("container executor command mounts only the isolated worktree", () => {
   assert.equal(command[imageIndex + 1], "python");
   assert.deepEqual(command.slice(-2), ["python", "run.py"]);
   assert.throws(() => containerCommand("docker", "--privileged", "/tmp/evidra-worktree", ["sh"]), /plain image reference/);
+});
+
+test("container completion awaits exact daemon cleanup and rejects uncertain outcomes", async () => {
+  const previousPath = process.env.PATH;
+  const previousRuntime = process.env.EVIDRA_CONTAINER_RUNTIME;
+  const previousHost = process.env.DOCKER_HOST;
+  const cid = "a".repeat(64);
+  try {
+    for (const mode of ["completed", "timeout", "interrupted", "removal-failed", "query-failed", "missing-receipt"]) {
+      const root = mkdtempSync(join(tmpdir(), "evidra-container-contract-"));
+      try {
+        const bin = join(root, "bin"); mkdirSync(bin);
+        writeFileSync(join(bin, "docker"), `#!${process.execPath}
+          const fs=require('node:fs'), args=process.argv.slice(2), mode=${JSON.stringify(mode)}, cid=${JSON.stringify(cid)};
+          if(process.env.DOCKER_HOST!=='tcp://test.invalid:2375') process.exit(11);
+          if(args[0]==='run') {
+            if(args.includes('--rm')) process.exit(8);
+            if(mode!=='missing-receipt') fs.writeFileSync(args[args.indexOf('--cidfile')+1],cid);
+            fs.writeFileSync('active',cid);
+            console.log('accuracy=0.9');
+            if(mode==='timeout'||mode==='interrupted') { process.on('SIGTERM',()=>process.exit(0)); setInterval(()=>{},1000); }
+          } else if(args[0]==='rm') {
+            if(mode!=='missing-receipt' && args[2]!==cid) process.exit(9);
+            if(mode==='removal-failed') process.exit(2);
+            setTimeout(()=>{fs.rmSync('active',{force:true});fs.writeFileSync('cleanup-completed','yes');},80);
+          } else if(args[0]==='ps') {
+            if(mode==='query-failed') process.exit(2);
+            if(fs.existsSync('active')) console.log(cid);
+          }
+        `, { mode: 0o755 });
+        process.env.PATH = `${bin}:${previousPath ?? ""}`;
+        process.env.EVIDRA_CONTAINER_RUNTIME = "docker";
+        process.env.DOCKER_HOST = "tcp://test.invalid:2375";
+        const manifest = { id: "container-contract", resources: { executor: "container", image: "test:latest", timeoutMinutes: mode === "timeout" ? 0.004 : 1 }, evaluation: { requiredArtifacts: [] } };
+        const result = await new ContainerExecutor(root).run(manifest, root, ["train"], mode === "interrupted" ? (control) => { setTimeout(() => control.terminate(), 160); } : undefined, "accuracy");
+        assert.equal(result.status, mode === "completed" ? "completed" : "failed");
+        if (mode === "timeout") assert.equal(result.exitCode, 124);
+        if (mode === "interrupted") assert.equal(result.exitCode, 130);
+        if (["removal-failed", "query-failed", "missing-receipt"].includes(mode)) {
+          assert.equal(result.failureClass, "unknown");
+          assert.match(result.stderr, /termination is unconfirmed/);
+        } else {
+          assert.equal(existsSync(join(root, "active")), false);
+          assert.equal(existsSync(join(root, "cleanup-completed")), true);
+          assert.ok(result.durationSeconds >= 0.08);
+        }
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    }
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+    if (previousHost === undefined) delete process.env.DOCKER_HOST; else process.env.DOCKER_HOST = previousHost;
+    if (previousRuntime === undefined) delete process.env.EVIDRA_CONTAINER_RUNTIME; else process.env.EVIDRA_CONTAINER_RUNTIME = previousRuntime;
+  }
 });
 
 test("Slurm executor command preserves argv boundaries and declared resources", () => {
