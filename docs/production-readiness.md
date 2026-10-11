@@ -107,6 +107,16 @@ It currently reads existing durable accounting evidence; it does not query the
 cluster after restart. Controller loss before terminal evidence, submission
 ambiguity, legacy records, and container/Modal reconciliation remain open.
 
+The same allocation-evidence check now protects normal finalization and compute
+release, without waiting for a restart. An unconfirmed Slurm ledger blocks
+running/scheduled/completed updates; failed, invalid, rejected, cancelled, or
+blocked updates retain a reconciliation fence and their original requested
+status in `remoteOutcomeStatus`. Direct reservation release and reservation
+recovery retain that compute until matching terminal evidence exists and the
+quarantine is reconciled. CLI/TUI replay checks consult the ledger even before
+a quarantine flag has been materialized. Allocation lookups use an indexed
+experiment-specific query, with a compatibility fallback for SQLite JSON1.
+
 ## Release checks
 
 The local Ollama route shares one endpoint resolver for discovery, health,

@@ -8886,6 +8886,38 @@ test("remote reconciliation rejects partial and contradictory allocation ledgers
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("unconfirmed Slurm outcomes retain compute and reject replay without a controller restart", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-live-remote-fence-"));
+  try {
+    const db = join(root, "state.sqlite");
+    const store = new ResearchStore(db);
+    const payload = { id: "live", status: "running", resources: { executor: "slurm" } };
+    store.saveExperiment({ id: "live", payload });
+    store.reserveComputeBudget({ experimentId: "live", budgetGpuHours: 4, usedGpuHours: 0, requestedGpuHours: 3, gpu: "A100" });
+    const event = { executor: "slurm", experimentId: "live", submissionId: "submission-1", at: new Date().toISOString() };
+    store.appendEvent("run.remote.submitting", { ...event, phase: "submitting" });
+    store.appendEvent("run.remote.submitted", { ...event, phase: "submitted", jobId: "123", cluster: "east" });
+    assert.equal(store.remoteExecutionState("live").confirmed, false);
+    assert.equal(store.releaseComputeReservation("live"), false);
+    assert.throws(() => store.saveExperiment({ id: "live", payload }), /unconfirmed remote/);
+    assert.throws(() => store.saveExperiment({ id: "live", payload: { ...payload, status: "completed" } }), /unconfirmed remote/);
+    store.saveExperiment({ id: "live", payload: { ...payload, status: "failed" } });
+    assert.equal(store.experiments()[0].payload.status, "blocked");
+    assert.equal(store.experiments()[0].payload.remoteReconciliationRequired, true);
+    assert.equal(store.experiments()[0].payload.remoteOutcomeStatus, "failed");
+    assert.deepEqual(store.reconcileComputeReservations(), []);
+    assert.equal(store.reserveComputeBudget({ experimentId: "other", budgetGpuHours: 4, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" }).allowed, false);
+    store.close();
+    const reopened = new ResearchStore(db);
+    assert.equal(reopened.reservedComputeGpuHours(), 3);
+    reopened.appendEvent("run.remote.terminal", { ...event, phase: "terminal", jobId: "123", cluster: "east", state: "CANCELLED", exitCode: 130 });
+    assert.equal(reopened.remoteExecutionState("live").confirmed, true);
+    assert.equal(reopened.reconcileRemoteExperiment("live"), true);
+    assert.equal(reopened.reservedComputeGpuHours(), 0);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("Slurm executor does not promote completed jobs with failed exit status", async () => {
   await withFakeSlurm({ sbatch: slurmReceipt, squeue: slurmQueueEmpty, sacct: "console.log('123|COMPLETED|7:0')" }, async ({ root, manifest, executor }) => {
     const result = await executor.run(manifest, root, ["train"]);

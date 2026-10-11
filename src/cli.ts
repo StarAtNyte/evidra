@@ -7142,6 +7142,8 @@ experiment.command("run")
     const entry = store.experiments().find((candidate) => candidate.id === id);
     if (!entry) { store.close(); throw new Error(`Experiment ${id} is not registered. Run: evidra experiment propose`); }
     const entryPayload = entry.payload as Record<string, unknown>;
+    const allocation = store.remoteExecutionState(id);
+    if (allocation.recorded && !allocation.confirmed) { store.close(); throw new Error(`Experiment ${id} has unconfirmed remote allocations; reconcile them before replay.`); }
     if (entryPayload.remoteReconciliationRequired === true) { store.close(); throw new Error(`Experiment ${id} requires remote reconciliation before replay.`); }
     const replay = experimentReplayDecision(entryPayload.status);
     if (!replay.allowed) { store.close(); throw new Error(replay.reason); }

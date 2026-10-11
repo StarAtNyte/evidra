@@ -1808,6 +1808,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
     const entry = store.experiments().find((experiment) => experiment.id === id);
     if (!entry) { store.close(); throw new Error(`Experiment not found: ${id}`); }
+    const allocation = store.remoteExecutionState(id);
+    if (allocation.recorded && !allocation.confirmed) { store.close(); throw new Error(`Experiment ${id} has unconfirmed remote allocations; reconcile them before replay.`); }
     if ((entry.payload as { remoteReconciliationRequired?: unknown }).remoteReconciliationRequired === true) { store.close(); throw new Error(`Experiment ${id} requires remote reconciliation before replay.`); }
     const manifest = ExperimentManifestSchema.parse(entry.payload);
     const validationPolicyPath = join(root, ".sota", "validation-policy.json");

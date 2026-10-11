@@ -58,6 +58,15 @@ external evaluator.
 
 ## Latest repository state
 
+- Normal Slurm finalization now consults allocation evidence as well as restart
+  flags. Unconfirmed outcomes cannot release compute, replay, or claim success;
+  failed terminal updates materialize a durable quarantine with the requested
+  outcome preserved. Indexed ledger queries avoid loading unrelated allocation
+  history. Regressions cover active-controller failure, reservation recovery,
+  budget exclusion, database reopen, and release after terminal reconciliation.
+- Allocation-ledger work at `749e46c` passed hosted CI on both Node versions,
+  including package checks: run 38118505961; all 704 local tests passed.
+
 - Slurm execution now persists unique submission intents before launch,
   accepted allocation/cluster receipts before polling, and exact terminal
   accounting afterward. CLI/TUI wire mandatory ledger persistence. The

@@ -833,6 +833,7 @@ export class ResearchStore {
     // event in its family and large research campaigns make status O(tasks ×
     // events). Retain the bounded scan fallback on SQLite builds without JSON1.
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_type_task_id_id ON events(type, json_extract(payload_json, '$.taskId'), id)"); } catch { /* JSON1 unavailable; event APIs retain their compatibility fallback */ }
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_type_experiment_id_id ON events(type, json_extract(payload_json, '$.experimentId'), id)"); } catch { /* JSON1 unavailable; allocation lookups retain their compatibility fallback */ }
     this.db.prepare("INSERT OR IGNORE INTO workspace_identity (id, workspace_id, created_at) VALUES (1, ?, ?)").run(`ws_${randomUUID()}`, new Date().toISOString());
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_experiments_created_at ON experiments(created_at);
@@ -1138,6 +1139,8 @@ export class ResearchStore {
   }
 
   releaseComputeReservation(experimentId: string, reason = "experiment terminal"): boolean {
+    const evidence = this.remoteExecutionState(experimentId);
+    if (evidence.recorded && !evidence.confirmed) return false;
     const experiment = this.db.prepare("SELECT payload_json FROM experiments WHERE id = ?").get(experimentId) as { payload_json: string } | undefined;
     if (experiment && (JSON.parse(experiment.payload_json) as { remoteReconciliationRequired?: unknown }).remoteReconciliationRequired === true) return false;
     const now = new Date().toISOString();
@@ -1166,6 +1169,14 @@ export class ResearchStore {
       if (previousManifest && nextManifest && JSON.stringify(canonicalValue(previousManifest)) !== JSON.stringify(canonicalValue(nextManifest))) {
         this.appendEvent("experiment.manifest.mutation.rejected", { id: experiment.id, reason: "pre-registered manifest is immutable", fields: IMMUTABLE_MANIFEST_FIELDS.filter((field) => JSON.stringify(canonicalValue(previousManifest[field])) !== JSON.stringify(canonicalValue(nextManifest[field]))) });
         throw new Error(`Experiment ${experiment.id} has an immutable pre-registered manifest; create a new experiment for protocol changes.`);
+      }
+    }
+    const evidence = this.remoteExecutionState(experiment.id);
+    if (evidence.recorded && !evidence.confirmed && safePayload && typeof safePayload === "object") {
+      const status = String((safePayload as { status?: unknown }).status);
+      if (["running", "scheduled", "completed"].includes(status)) throw new Error(`Experiment ${experiment.id} has unconfirmed remote allocations; reconcile them before execution or completion.`);
+      if (["failed", "invalid", "rejected", "cancelled", "blocked"].includes(status)) {
+        safePayload = { ...safePayload, remoteReconciliationRequired: true, status: "blocked", remoteOutcomeStatus: status };
       }
     }
     this.db.prepare(`
@@ -3732,6 +3743,37 @@ export class ResearchStore {
     return recovered;
   }
 
+  remoteExecutionState(experimentId: string): { recorded: boolean; confirmed: boolean; submissionIds: string[] } {
+    let records: Array<{ type: string; payload: unknown }>;
+    try {
+      const rows = this.db.prepare("SELECT type, payload_json FROM events WHERE type IN ('run.remote.submitting', 'run.remote.submitted', 'run.remote.terminal') AND json_extract(payload_json, '$.experimentId') = ? ORDER BY id").all(experimentId) as Array<{ type: string; payload_json: string }>;
+      records = rows.map((row) => ({ type: row.type, payload: JSON.parse(row.payload_json) }));
+    } catch {
+      records = ["submitting", "submitted", "terminal"].flatMap((phase) => this.eventsByType(`run.remote.${phase}`));
+    }
+    const events = records.map((event) => ({ phase: event.type.slice("run.remote.".length), payload: event.payload as Record<string, unknown> }))
+      .filter((event) => event.payload?.experimentId === experimentId && event.payload.executor === "slurm");
+    const intents = events.filter((event) => event.phase === "submitting");
+    if (!events.length) return { recorded: false, confirmed: false, submissionIds: [] };
+    const unresolved = { recorded: true, confirmed: false, submissionIds: [] };
+    if (this.verifyEventChain().status !== "valid" || !intents.length) return unresolved;
+    if (new Set(intents.map((intent) => intent.payload.submissionId)).size !== intents.length || events.some((event) => event.payload.phase !== event.phase)) return unresolved;
+    const terminalStates = new Set(["COMPLETED", "CANCELLED", "TIMEOUT", "FAILED", "OUT_OF_MEMORY", "NODE_FAIL", "PREEMPTED", "BOOT_FAIL", "DEADLINE", "REVOKED"]);
+    for (const intent of intents) {
+      const id = intent.payload.submissionId;
+      if (typeof id !== "string" || !id) return unresolved;
+      const submitted = events.filter((event) => event.phase === "submitted" && event.payload.submissionId === id);
+      const terminal = events.filter((event) => event.phase === "terminal" && event.payload.submissionId === id);
+      if (submitted.length !== 1 || terminal.length !== 1) return unresolved;
+      const receipt = submitted[0].payload;
+      const proof = terminal[0].payload;
+      if (typeof receipt.jobId !== "string" || !/^\d+$/.test(receipt.jobId) || proof.jobId !== receipt.jobId || proof.cluster !== receipt.cluster || !terminalStates.has(String(proof.state)) || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255) return unresolved;
+    }
+    // Every attempt needs an intent; unmatched ledger records cannot release a fence.
+    if (events.some((event) => !intents.some((intent) => intent.payload.submissionId === event.payload.submissionId))) return unresolved;
+    return { recorded: true, confirmed: true, submissionIds: intents.map((intent) => String(intent.payload.submissionId)) };
+  }
+
   /** Release a restart fence only after every Slurm intent has terminal evidence. */
   reconcileRemoteExperiment(experimentId: string): boolean {
     if (this.verifyEventChain().status !== "valid") return false;
@@ -3740,29 +3782,13 @@ export class ResearchStore {
     if (!payload || payload.remoteReconciliationRequired !== true) return false;
     const resources = payload.resources as { executor?: unknown } | undefined;
     if (resources?.executor !== "slurm") return false;
-    const events = ["submitting", "submitted", "terminal"].flatMap((phase) => this.eventsByType(`run.remote.${phase}`).map((event) => ({ phase, payload: event.payload as Record<string, unknown> })))
-      .filter((event) => event.payload?.experimentId === experimentId && event.payload.executor === "slurm");
-    const intents = events.filter((event) => event.phase === "submitting");
-    if (!intents.length) return false;
-    if (new Set(intents.map((intent) => intent.payload.submissionId)).size !== intents.length || events.some((event) => event.payload.phase !== event.phase)) return false;
-    const terminalStates = new Set(["COMPLETED", "CANCELLED", "TIMEOUT", "FAILED", "OUT_OF_MEMORY", "NODE_FAIL", "PREEMPTED", "BOOT_FAIL", "DEADLINE", "REVOKED"]);
-    for (const intent of intents) {
-      const id = intent.payload.submissionId;
-      if (typeof id !== "string" || !id) return false;
-      const submitted = events.filter((event) => event.phase === "submitted" && event.payload.submissionId === id);
-      const terminal = events.filter((event) => event.phase === "terminal" && event.payload.submissionId === id);
-      if (submitted.length !== 1 || terminal.length !== 1) return false;
-      const receipt = submitted[0].payload;
-      const proof = terminal[0].payload;
-      if (typeof receipt.jobId !== "string" || !/^\d+$/.test(receipt.jobId) || proof.jobId !== receipt.jobId || proof.cluster !== receipt.cluster || !terminalStates.has(String(proof.state)) || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255) return false;
-    }
-    // Every attempt needs an intent; unmatched ledger records cannot release a fence.
-    if (events.some((event) => !intents.some((intent) => intent.payload.submissionId === event.payload.submissionId))) return false;
+    const evidence = this.remoteExecutionState(experimentId);
+    if (!evidence.confirmed) return false;
     this.db.transaction(() => {
       const updated = { ...payload, remoteReconciliationRequired: false, status: "failed", recoveryAttempted: false, remoteReconciledAt: new Date().toISOString() };
       this.db.prepare("UPDATE experiments SET payload_json = ? WHERE id = ?").run(safeJson(updated), experimentId);
       this.releaseComputeReservation(experimentId, "all recorded Slurm allocations have terminal accounting");
-      this.appendEvent("experiment.remote.reconciled", { experimentId, executor: "slurm", submissionIds: intents.map((intent) => intent.payload.submissionId), result: "termination proven; measurement remains unvalidated" });
+      this.appendEvent("experiment.remote.reconciled", { experimentId, executor: "slurm", submissionIds: evidence.submissionIds, result: "termination proven; measurement remains unvalidated" });
     })();
     return true;
   }
